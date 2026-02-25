@@ -1,0 +1,73 @@
+import 'package:flutter/material.dart';
+
+import '../constants/design_tokens.dart';
+import 'offline_banner.dart';
+
+class AppScaffold extends StatelessWidget {
+  const AppScaffold({
+    required this.title,
+    required this.body,
+    this.actions,
+    this.floatingActionButton,
+    this.drawer,
+    this.bottomNavigationBar,
+    this.showOfflineBanner = true,
+    super.key,
+  });
+
+  final String title;
+  final Widget body;
+  final List<Widget>? actions;
+  final Widget? floatingActionButton;
+  final Widget? drawer;
+  final Widget? bottomNavigationBar;
+  final bool showOfflineBanner;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      appBar: AppBar(title: Text(title), actions: actions),
+      drawer: drawer,
+      floatingActionButton: floatingActionButton,
+      bottomNavigationBar: bottomNavigationBar,
+      body: SafeArea(
+        child: Column(
+          children: [
+            if (showOfflineBanner) const OfflineBanner(),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1280),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            scheme.surfaceContainerHighest.withValues(
+                              alpha: 0.35,
+                            ),
+                            scheme.surface.withValues(alpha: 0.0),
+                          ],
+                        ),
+                        borderRadius: AppRadii.lg,
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(AppSpacing.sm),
+                        child: body,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

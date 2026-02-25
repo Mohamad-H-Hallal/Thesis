@@ -1,0 +1,105 @@
+import 'package:flutter/material.dart';
+
+import '../../../../core/constants/design_tokens.dart';
+import '../../../../core/offline/local_models.dart';
+import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/status_chip.dart';
+import '../../domain/review_workflow.dart';
+
+Future<void> showDraftWorkflowSheet(
+  BuildContext context, {
+  required LocalDraftFeature draft,
+}) {
+  final snapshot = DraftWorkflowCodec.fromDraft(draft);
+
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (context) {
+      return DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.65,
+        minChildSize: 0.45,
+        maxChildSize: 0.9,
+        builder: (context, controller) {
+          return ListView(
+            controller: controller,
+            padding: const EdgeInsets.all(AppSpacing.md),
+            children: [
+              Text(
+                draft.projectName,
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  StatusChip(status: snapshot.status),
+                  const SizedBox(width: 8),
+                  Text('#${draft.id.substring(0, 8)}'),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'Workflow Timeline',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              if (snapshot.timeline.isEmpty)
+                const Text('No timeline events yet.')
+              else
+                ...snapshot.timeline.reversed.map(
+                  (event) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: AppCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                event.label,
+                                style: Theme.of(context).textTheme.titleSmall,
+                              ),
+                              Text(
+                                _formatDate(event.at),
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Actor: ${event.actor}',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          if (event.note != null &&
+                              event.note!.trim().isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Text(
+                                event.note!,
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      );
+    },
+  );
+}
+
+String _formatDate(DateTime dateTime) {
+  final d = dateTime.toLocal();
+  final month = d.month.toString().padLeft(2, '0');
+  final day = d.day.toString().padLeft(2, '0');
+  final hour = d.hour.toString().padLeft(2, '0');
+  final minute = d.minute.toString().padLeft(2, '0');
+  return '${d.year}-$month-$day $hour:$minute';
+}

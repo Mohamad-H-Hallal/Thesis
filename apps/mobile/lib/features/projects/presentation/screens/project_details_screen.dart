@@ -1,0 +1,170 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../../../core/constants/design_tokens.dart';
+import '../../../../core/providers/providers.dart';
+import '../../../../core/router/route_paths.dart';
+import '../../../../core/widgets/animated_reveal.dart';
+import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_empty_state.dart';
+import '../../../../core/widgets/section_header.dart';
+import '../../../../core/widgets/status_chip.dart';
+
+class ProjectDetailsScreen extends ConsumerWidget {
+  const ProjectDetailsScreen({required this.projectId, super.key});
+
+  final String projectId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final projectAsync = ref.watch(projectByIdProvider(projectId));
+
+    return projectAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (error, _) => AppEmptyState(
+        icon: Icons.error_outline,
+        title: 'Could not load project',
+        message: 'Error: $error',
+        actionLabel: 'Back',
+        onAction: () => Navigator.of(context).maybePop(),
+      ),
+      data: (project) {
+        if (project == null) {
+          return const AppEmptyState(
+            icon: Icons.search_off,
+            title: 'Project not found',
+            message:
+                'The requested project is unavailable or no longer assigned.',
+          );
+        }
+
+        return ListView(
+          children: [
+            const SectionHeader(
+              title: 'Project Details',
+              subtitle: 'Operational summary and field actions',
+            ),
+            const SizedBox(height: AppSpacing.md),
+            AnimatedReveal(
+              child: AppCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      project.name,
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(project.description),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        StatusChip(status: project.status),
+                        Chip(label: Text(project.category)),
+                        Chip(
+                          label: Text(
+                            'Pending reviews: ${project.pendingReviews}',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            AnimatedReveal(
+              delay: const Duration(milliseconds: 80),
+              child: AppCard(
+                child: Wrap(
+                  spacing: AppSpacing.sm,
+                  runSpacing: AppSpacing.sm,
+                  children: [
+                    _MetaTile(
+                      label: 'Assigned collectors',
+                      value: '${project.assignedCollectors}',
+                      icon: Icons.groups_outlined,
+                    ),
+                    _MetaTile(
+                      label: 'Queue',
+                      value: '${project.pendingReviews}',
+                      icon: Icons.pending_actions_outlined,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            AnimatedReveal(
+              delay: const Duration(milliseconds: 130),
+              child: Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  FilledButton.icon(
+                    onPressed: () => context.go(AppRoutes.map),
+                    icon: const Icon(Icons.map_outlined),
+                    label: const Text('Open Map'),
+                  ),
+                  FilledButton.icon(
+                    onPressed: () =>
+                        context.go(AppRoutes.addFeatureForProject(project.id)),
+                    icon: const Icon(Icons.add_location_alt_outlined),
+                    label: const Text('New Feature'),
+                  ),
+                  FilledButton.icon(
+                    onPressed: () => context.go(AppRoutes.drafts),
+                    icon: const Icon(Icons.description_outlined),
+                    label: const Text('Drafts'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _MetaTile extends StatelessWidget {
+  const _MetaTile({
+    required this.label,
+    required this.value,
+    required this.icon,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 180),
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      decoration: BoxDecoration(
+        borderRadius: AppRadii.md,
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 20),
+          const SizedBox(width: AppSpacing.xs),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: Theme.of(context).textTheme.bodySmall),
+                Text(value, style: Theme.of(context).textTheme.titleMedium),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

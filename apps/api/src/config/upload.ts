@@ -1,0 +1,62 @@
+import multer, { type FileFilterCallback } from 'multer';
+import path from 'node:path';
+import fs from 'node:fs';
+import { v4 as uuidv4 } from 'uuid';
+import type { Request } from 'express';
+
+// Ensure upload directories exist
+const uploadDir = process.env.UPLOAD_DIR ?? './uploads';
+const photosDir = path.join(uploadDir, 'photos');
+const thumbnailsDir = path.join(uploadDir, 'thumbnails');
+
+[uploadDir, photosDir, thumbnailsDir].forEach((dir) => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+});
+
+// Storage configuration
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, photosDir);
+  },
+  filename: (_req, file, cb) => {
+    const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
+    cb(null, uniqueName);
+  },
+});
+
+// File filter
+const fileFilter = (
+  _req: Request,
+  file: { originalname: string; mimetype: string },
+  cb: FileFilterCallback
+): void => {
+  // Accept only images
+  const allowedTypes = /jpeg|jpg|png|heic|heif/;
+  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+  const mimetype = allowedTypes.test(file.mimetype);
+
+  if (mimetype && extname) {
+    cb(null, true);
+    return;
+  }
+  cb(new Error('Only image files are allowed (jpeg, jpg, png, heic, heif)'));
+};
+
+// Multer configuration
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: Number.parseInt(process.env.PHOTO_MAX_SIZE ?? '5242880', 10), // 5MB default
+  },
+  fileFilter: fileFilter,
+});
+
+// Single photo upload
+const uploadSingle = upload.single('photo');
+
+// Multiple photos upload (max 10)
+const uploadMultiple = upload.array('photos', 10);
+
+export { uploadSingle, uploadMultiple, photosDir, thumbnailsDir };

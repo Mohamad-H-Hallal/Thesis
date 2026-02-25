@@ -1,0 +1,21 @@
+# Global
+.env
+*.log
+
+# Node
+**/node_modules/
+**/dist/
+**/coverage/
+
+# Flutter
+**/.dart_tool/
+**/build/
+**/.packages
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

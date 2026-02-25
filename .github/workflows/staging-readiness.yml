@@ -1,0 +1,85 @@
+name: Staging Readiness
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * 1'
+
+jobs:
+  staging-readiness:
+    name: Staging Data + Verification
+    runs-on: ubuntu-latest
+    services:
+      postgis:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: gis_app
+          POSTGRES_USER: gis_user
+          POSTGRES_PASSWORD: change_me
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gis_user -d gis_app"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: apps/api
+    env:
+      NODE_ENV: test
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: gis_app
+      DB_USER: gis_user
+      DB_PASSWORD: change_me
+      JWT_SECRET: phase11-ci-jwt-secret-12345678901234567890
+      JWT_SECRET_CURRENT: phase11-ci-jwt-secret-12345678901234567890
+      JWT_REFRESH_SECRET: phase11-ci-refresh-secret-1234567890123456
+      JWT_REFRESH_SECRET_CURRENT: phase11-ci-refresh-secret-1234567890123456
+      CORS_ORIGIN: http://localhost:3000
+      CORS_STRICT: false
+      STAGING_SEED_RESET: true
+      STAGING_SEED_PROJECTS: 16
+      STAGING_SEED_FEATURES_PER_PROJECT: 300
+      STAGING_SEED_CONTRIBUTORS: 48
+      STAGING_VERIFY_STRICT: true
+      STAGING_VERIFY_MIN_USERS: 35
+      STAGING_VERIFY_MIN_PROJECTS: 10
+      STAGING_VERIFY_MIN_ASSIGNMENTS: 50
+      STAGING_VERIFY_MIN_FEATURES: 1200
+      STAGING_VERIFY_MIN_PHOTOS: 250
+      STAGING_VERIFY_MIN_COMPLETED_EXPORTS: 5
+      STAGING_VERIFY_MAX_BBOX_MS: 500
+      PERF_BBOX_MAX_MS: 3000
+      PERF_EXPORT_MAX_MS: 45000
+      PERF_EXPORT_TIMEOUT_MS: 60000
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/api/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Wait for PostGIS
+        run: |
+          node -e "const { Client } = require('pg'); let retries = 30; const run = async () => { while (retries-- > 0) { const client = new Client({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT), database: process.env.DB_NAME, user: process.env.DB_USER, password: process.env.DB_PASSWORD }); try { await client.connect(); await client.query('select 1'); await client.end(); console.log('PostGIS is ready'); process.exit(0); } catch (err) { try { await client.end(); } catch {} if (retries <= 0) { console.error(err); process.exit(1); } await new Promise((r) => setTimeout(r, 2000)); } } }; run();"
+
+      - name: Migrate
+        run: npm run migrate
+
+      - name: Seed realistic staging profile
+        run: npm run seed:staging
+
+      - name: Verify staging baseline
+        run: npm run staging:verify
+
+      - name: Run API performance checks
+        run: npm run test:perf
