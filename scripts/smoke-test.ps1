@@ -1,5 +1,6 @@
 param(
   [string]$BaseUrl = "http://localhost",
+  [string]$ComposeFile = "compose.prod.yml",
   [switch]$SkipUp,
   [int]$TimeoutSeconds = 180
 )
@@ -10,7 +11,7 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
 Set-Location $repoRoot
 
 if (-not $SkipUp) {
-  docker compose -f docker-compose.yml up -d --build
+  docker compose -f $ComposeFile up -d --build
 }
 
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)

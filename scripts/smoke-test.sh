@@ -5,7 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 BASE_URL="${BASE_URL:-http://localhost}"
-COMPOSE_FILE_ARGS=(-f docker-compose.yml)
+COMPOSE_FILE="${COMPOSE_FILE:-compose.prod.yml}"
+COMPOSE_FILE_ARGS=(-f "$COMPOSE_FILE")
 
 if [[ "${SKIP_UP:-0}" != "1" ]]; then
   docker compose "${COMPOSE_FILE_ARGS[@]}" up -d --build
