@@ -1,0 +1,6 @@
+migrate-1  | {"level":"info","message":"Database connected successfully","timestamp":"2026-02-25 21:29:12"}
+migrate-1  | {"file":"0001_extensions.sql","level":"info","message":"Migration applied:","timestamp":"2026-02-25 21:29:12"}
+migrate-1  | {"file":"0002_core_schema.sql","level":"info","message":"Migration applied:","timestamp":"2026-02-25 21:29:12"}
+migrate-1  | {"file":"0003_indexes.sql","level":"info","message":"Migration applied:","timestamp":"2026-02-25 21:29:12"}
+migrate-1  | {"file":"0004_phase3_geospatial_constraints.sql","level":"info","message":"Migration applied:","timestamp":"2026-02-25 21:29:12"}
+migrate-1  | {"applied":["0001_extensions.sql","0002_core_schema.sql","0003_indexes.sql","0004_phase3_geospatial_constraints.sql"],"appliedCount":4,"level":"info","message":"Migration run complete","timestamp":"2026-02-25 21:29:12"}

@@ -2,112 +2,112 @@ PASS test/security.auth.test.js
   ● Console
 
     console.log
-      [dotenv@17.3.1] injecting env (35) from .env -- tip: 🤖 agentic secret storage: https://dotenvx.com/as2
+      [dotenv@17.3.1] injecting env (35) from .env -- tip: 🔐 encrypt with Dotenvx: https://dotenvx.com
 
       at _log (node_modules/dotenv/lib/main.js:139:11)
 
     console.log
-      2026-02-25 21:59:47 [info]: HTTP request completed {"requestId":"a8dbc12c-3e02-4175-bc04-a57d73dd145f","method":"POST","path":"/api/v1/auth/register","statusCode":400,"durationMs":21,"ip":"::ffff:127.0.0.1"}
+      2026-02-25 23:28:20 [info]: HTTP request completed {"requestId":"f4723218-8d3f-4bfc-a02c-c1e92ddf457c","method":"POST","path":"/api/v1/auth/register","statusCode":400,"durationMs":18,"ip":"::ffff:127.0.0.1"}
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:47 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:19:59:47 +0000] "POST /api/v1/auth/register HTTP/1.1" 400 177 "-" "-"
+      2026-02-25 23:28:20 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:21:28:20 +0000] "POST /api/v1/auth/register HTTP/1.1" 400 177 "-" "-"
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:48 [info]: Database connected successfully
+      2026-02-25 23:28:20 [info]: Database connected successfully
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:48 [info]: User logged in: {"userId":"380d825c-f1a6-43da-9858-333b89f5b80b","email":"security-admin-1772049587701-36586@example.com"}
+      2026-02-25 23:28:21 [info]: User logged in: {"userId":"26058ca0-bd05-459e-85e0-ab30d7bd0daf","email":"security-admin-1772054900641-85893@example.com"}
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:48 [info]: HTTP request completed {"requestId":"84128f38-f6ea-4fdc-b421-cbca0a2accdd","method":"POST","path":"/api/v1/auth/login","statusCode":200,"durationMs":314,"ip":"::ffff:127.0.0.1"}
+      2026-02-25 23:28:21 [info]: HTTP request completed {"requestId":"c80709b1-a449-4ba2-8ce6-2db56405fab4","method":"POST","path":"/api/v1/auth/login","statusCode":200,"durationMs":296,"ip":"::ffff:127.0.0.1"}
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:48 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:19:59:48 +0000] "POST /api/v1/auth/login HTTP/1.1" 200 664 "-" "-"
+      2026-02-25 23:28:21 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:21:28:21 +0000] "POST /api/v1/auth/login HTTP/1.1" 200 664 "-" "-"
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:48 [info]: User registered: {"userId":"21343efb-3a92-4a4c-a7dd-e38255313d1f","email":"security-contributor-1772049588326-56499@example.com"}
+      2026-02-25 23:28:21 [info]: User registered: {"userId":"00be9d5f-263d-4dc9-8478-7ee46941a0a6","email":"security-contributor-1772054901212-71472@example.com"}
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:48 [info]: HTTP request completed {"requestId":"16e738ea-57c0-4c6c-a13d-875d001e358b","method":"POST","path":"/api/v1/auth/register","statusCode":201,"durationMs":286,"ip":"::ffff:127.0.0.1"}
+      2026-02-25 23:28:21 [info]: HTTP request completed {"requestId":"9c7dd3bf-7dde-4202-91e8-739aa3a2bd8a","method":"POST","path":"/api/v1/auth/register","statusCode":201,"durationMs":284,"ip":"::ffff:127.0.0.1"}
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:48 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:19:59:48 +0000] "POST /api/v1/auth/register HTTP/1.1" 201 742 "-" "-"
+      2026-02-25 23:28:21 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:21:28:21 +0000] "POST /api/v1/auth/register HTTP/1.1" 201 742 "-" "-"
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:48 [info]: User registered: {"userId":"352a9f83-41bd-46d6-91b9-ff642bb89fd8","email":"security-target-1772049588618-58592@example.com"}
+      2026-02-25 23:28:21 [info]: User registered: {"userId":"c11a76f8-ead8-4f3e-8e0a-f1476a5420ff","email":"security-target-1772054901501-66066@example.com"}
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:48 [info]: HTTP request completed {"requestId":"668397c5-900d-4bc5-bf49-5376bedfb0b0","method":"POST","path":"/api/v1/auth/register","statusCode":201,"durationMs":280,"ip":"::ffff:127.0.0.1"}
+      2026-02-25 23:28:21 [info]: HTTP request completed {"requestId":"c13d5d8b-9826-4634-a09f-fe84995ca10d","method":"POST","path":"/api/v1/auth/register","statusCode":201,"durationMs":270,"ip":"::ffff:127.0.0.1"}
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:48 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:19:59:48 +0000] "POST /api/v1/auth/register HTTP/1.1" 201 732 "-" "-"
+      2026-02-25 23:28:21 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:21:28:21 +0000] "POST /api/v1/auth/register HTTP/1.1" 201 732 "-" "-"
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:49 [info]: User logged in: {"userId":"21343efb-3a92-4a4c-a7dd-e38255313d1f","email":"security-contributor-1772049588326-56499@example.com"}
+      2026-02-25 23:28:22 [info]: User logged in: {"userId":"00be9d5f-263d-4dc9-8478-7ee46941a0a6","email":"security-contributor-1772054901212-71472@example.com"}
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:49 [info]: HTTP request completed {"requestId":"0a994892-6a5f-4ec2-8ce9-ae0ddee10d89","method":"POST","path":"/api/v1/auth/login","statusCode":200,"durationMs":268,"ip":"::ffff:127.0.0.1"}
+      2026-02-25 23:28:22 [info]: HTTP request completed {"requestId":"4f1af282-78cd-403f-b192-e8e80796a040","method":"POST","path":"/api/v1/auth/login","statusCode":200,"durationMs":273,"ip":"::ffff:127.0.0.1"}
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:49 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:19:59:49 +0000] "POST /api/v1/auth/login HTTP/1.1" 200 690 "-" "-"
+      2026-02-25 23:28:22 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:21:28:22 +0000] "POST /api/v1/auth/login HTTP/1.1" 200 690 "-" "-"
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:49 [info]: HTTP request completed {"requestId":"246c442e-3f9a-4bae-9cfb-0de59b65cf79","method":"PUT","path":"/api/v1/users/352a9f83-41bd-46d6-91b9-ff642bb89fd8","statusCode":403,"durationMs":4,"userId":"21343efb-3a92-4a4c-a7dd-e38255313d1f","ip":"::ffff:127.0.0.1"}
+      2026-02-25 23:28:22 [info]: HTTP request completed {"requestId":"db6ad231-b860-477d-9975-5142c71a54a6","method":"PUT","path":"/api/v1/users/c11a76f8-ead8-4f3e-8e0a-f1476a5420ff","statusCode":403,"durationMs":4,"userId":"00be9d5f-263d-4dc9-8478-7ee46941a0a6","ip":"::ffff:127.0.0.1"}
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:49 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:19:59:49 +0000] "PUT /api/v1/users/352a9f83-41bd-46d6-91b9-ff642bb89fd8 HTTP/1.1" 403 68 "-" "-"
+      2026-02-25 23:28:22 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:21:28:22 +0000] "PUT /api/v1/users/c11a76f8-ead8-4f3e-8e0a-f1476a5420ff HTTP/1.1" 403 68 "-" "-"
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:49 [info]: User updated by admin: {"userId":"352a9f83-41bd-46d6-91b9-ff642bb89fd8","adminId":"380d825c-f1a6-43da-9858-333b89f5b80b"}
+      2026-02-25 23:28:22 [info]: User updated by admin: {"userId":"c11a76f8-ead8-4f3e-8e0a-f1476a5420ff","adminId":"26058ca0-bd05-459e-85e0-ab30d7bd0daf"}
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:49 [info]: HTTP request completed {"requestId":"ca355333-6b47-4bf9-8184-71a86c39e2c3","method":"PUT","path":"/api/v1/users/352a9f83-41bd-46d6-91b9-ff642bb89fd8","statusCode":200,"durationMs":8,"userId":"380d825c-f1a6-43da-9858-333b89f5b80b","ip":"::ffff:127.0.0.1"}
+      2026-02-25 23:28:22 [info]: HTTP request completed {"requestId":"f15c9891-9418-4931-b6a6-e5bc15642dfc","method":"PUT","path":"/api/v1/users/c11a76f8-ead8-4f3e-8e0a-f1476a5420ff","statusCode":200,"durationMs":7,"userId":"26058ca0-bd05-459e-85e0-ab30d7bd0daf","ip":"::ffff:127.0.0.1"}
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:49 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:19:59:49 +0000] "PUT /api/v1/users/352a9f83-41bd-46d6-91b9-ff642bb89fd8 HTTP/1.1" 200 250 "-" "-"
+      2026-02-25 23:28:22 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:21:28:22 +0000] "PUT /api/v1/users/c11a76f8-ead8-4f3e-8e0a-f1476a5420ff HTTP/1.1" 200 250 "-" "-"
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
     console.log
-      2026-02-25 21:59:49 [info]: Database pool closed
+      2026-02-25 23:28:22 [info]: Database pool closed
 
       at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
 
@@ -116,5 +116,5 @@ PASS test/security.metrics.test.js
 Test Suites: 2 passed, 2 total
 Tests:       5 passed, 5 total
 Snapshots:   0 total
-Time:        3.137 s, estimated 4 s
+Time:        2.885 s, estimated 3 s
 Ran all test suites matching test/security.auth.test.js|test/security.metrics.test.js.

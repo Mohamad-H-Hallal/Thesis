@@ -1,4 +1,4 @@
-NAME              IMAGE                                     COMMAND                  SERVICE   CREATED          STATUS                    PORTS
-gis_app-api-1     gis_app-api                               "docker-entrypoint.s…"   api       26 seconds ago   Up 19 seconds (healthy)   3000/tcp
-gis_app-db-1      postgis/postgis:16-3.4                    "docker-entrypoint.s…"   db        26 seconds ago   Up 26 seconds (healthy)   5432/tcp
-gis_app-nginx-1   nginxinc/nginx-unprivileged:1.27-alpine   "/docker-entrypoint.…"   nginx     26 seconds ago   Up 13 seconds             0.0.0.0:80->8080/tcp, [::]:80->8080/tcp
+NAME              IMAGE                                     COMMAND                  SERVICE   CREATED         STATUS                   PORTS
+gis_app-api-1     gis_app-api                               "api-entrypoint.sh n…"   api       4 minutes ago   Up 4 minutes (healthy)   3000/tcp
+gis_app-db-1      postgis/postgis:16-3.4                    "docker-entrypoint.s…"   db        4 minutes ago   Up 4 minutes (healthy)   5432/tcp
+gis_app-nginx-1   nginxinc/nginx-unprivileged:1.27-alpine   "/docker-entrypoint.…"   nginx     4 minutes ago   Up 4 minutes (healthy)   0.0.0.0:8088->8080/tcp, [::]:8088->8080/tcp

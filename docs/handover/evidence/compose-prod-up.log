@@ -1,0 +1,138 @@
+ Image gis_app-migrate Building 
+ Image gis_app-api Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 877B done
+#1 DONE 0.0s
+
+#2 [api internal] load build definition from Dockerfile
+#2 transferring dockerfile: 1.19kB done
+#2 DONE 0.0s
+
+#3 [auth] library/node:pull token for registry-1.docker.io
+#3 DONE 0.0s
+
+#4 [migrate internal] load metadata for docker.io/library/node:22-alpine
+#4 DONE 1.1s
+
+#5 [migrate internal] load .dockerignore
+#5 transferring context: 249B done
+#5 DONE 0.0s
+
+#6 [api build 1/9] FROM docker.io/library/node:22-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34
+#6 resolve docker.io/library/node:22-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 0.0s done
+#6 DONE 0.0s
+
+#7 [migrate internal] load build context
+#7 transferring context: 3.90kB 0.0s done
+#7 DONE 0.0s
+
+#8 [api runtime  5/10] COPY --from=build /app/apps/api/dist ./dist
+#8 CACHED
+
+#9 [api build 6/9] COPY apps/api/src ./src
+#9 CACHED
+
+#10 [api build 8/9] COPY infra/migrations /app/infra/migrations
+#10 CACHED
+
+#11 [api build 3/9] COPY apps/api/package*.json ./
+#11 CACHED
+
+#12 [api build 4/9] RUN npm ci
+#12 CACHED
+
+#13 [api build 7/9] COPY apps/api/docs ./docs
+#13 CACHED
+
+#14 [api build 2/9] WORKDIR /app/apps/api
+#14 CACHED
+
+#15 [api runtime  6/10] COPY --from=build /app/apps/api/docs ./docs
+#15 CACHED
+
+#16 [api runtime  3/10] COPY --from=build /app/apps/api/package*.json ./
+#16 CACHED
+
+#17 [api runtime  4/10] COPY --from=build /app/apps/api/node_modules ./node_modules
+#17 CACHED
+
+#18 [api build 5/9] COPY apps/api/tsconfig*.json ./
+#18 CACHED
+
+#19 [api runtime  7/10] COPY --from=build /app/infra/migrations /app/infra/migrations
+#19 CACHED
+
+#20 [api build 9/9] RUN npm run build   && npm prune --omit=dev   && npm cache clean --force
+#20 CACHED
+
+#21 [api runtime  8/10] COPY apps/api/.env.example ./.env.example
+#21 CACHED
+
+#22 [api runtime  9/10] COPY apps/api/docker/entrypoint.sh /usr/local/bin/api-entrypoint.sh
+#22 DONE 0.1s
+
+#23 [api runtime 10/10] RUN mkdir -p uploads exports   && chmod +x /usr/local/bin/api-entrypoint.sh   && chown -R node:node /app/apps/api /app/infra
+#23 DONE 6.8s
+
+#24 [api] exporting to image
+#24 exporting layers
+#24 exporting layers 1.9s done
+#24 exporting manifest sha256:119c0a1c729c71f3ad17465b6468701409bd5cd23db81efa1be2685e2732b244 0.0s done
+#24 exporting config sha256:4f81f2c6eebf8ff1e8de1782e61c168246954d9d77a77c8152012cdbe236fd42 0.0s done
+#24 exporting attestation manifest sha256:8b3d5dc340d0bb2202a6d255d0fb120afa941c16e4e095643766a0e0b095f640
+#24 exporting attestation manifest sha256:8b3d5dc340d0bb2202a6d255d0fb120afa941c16e4e095643766a0e0b095f640 0.1s done
+#24 exporting manifest list sha256:abc0de85b599dbc40b5d410e2195b9222ee3bf93931d39173f09b081c99a5a18 0.0s done
+#24 naming to docker.io/library/gis_app-api:latest done
+#24 unpacking to docker.io/library/gis_app-api:latest
+#24 unpacking to docker.io/library/gis_app-api:latest 0.9s done
+#24 DONE 3.0s
+
+#25 [migrate] exporting to image
+#25 exporting layers 1.9s done
+#25 exporting manifest sha256:a7b071416e69540d226703d657e36deb71ce0e7fa5c45179549caa424692a61d 0.0s done
+#25 exporting config sha256:26badadf53ccc0721cbbbf04d580354e6c6289d827d651e4ab3ddf68d981be31 0.0s done
+#25 exporting attestation manifest sha256:013f5f11fd20522589b29d3063acc3f4273e492bbab10a13fb373d9ebce329cf 0.1s done
+#25 exporting manifest list sha256:7abd23c814d136199caaa7137f5961da1c177ecd8b45aa59bb95a2442c673b94 0.0s done
+#25 naming to docker.io/library/gis_app-migrate:latest done
+#25 unpacking to docker.io/library/gis_app-migrate:latest 0.9s done
+#25 DONE 3.0s
+
+#26 [api] resolving provenance for metadata file
+#26 DONE 0.0s
+
+#27 [migrate] resolving provenance for metadata file
+#27 DONE 0.0s
+ Image gis_app-api Built 
+ Image gis_app-migrate Built 
+ Network gis_app_default Creating 
+ Network gis_app_default Created 
+ Volume gis_app_api_uploads Creating 
+ Volume gis_app_api_uploads Created 
+ Volume gis_app_api_exports Creating 
+ Volume gis_app_api_exports Created 
+ Volume gis_app_postgis_data Creating 
+ Volume gis_app_postgis_data Created 
+ Container gis_app-db-1 Creating 
+ Container gis_app-db-1 Created 
+ Container gis_app-migrate-1 Creating 
+ Container gis_app-migrate-1 Created 
+ Container gis_app-api-1 Creating 
+ Container gis_app-api-1 Created 
+ Container gis_app-nginx-1 Creating 
+ Container gis_app-nginx-1 Created 
+ Container gis_app-db-1 Starting 
+ Container gis_app-db-1 Started 
+ Container gis_app-db-1 Waiting 
+ Container gis_app-db-1 Healthy 
+ Container gis_app-migrate-1 Starting 
+ Container gis_app-migrate-1 Started 
+ Container gis_app-migrate-1 Waiting 
+ Container gis_app-db-1 Waiting 
+ Container gis_app-db-1 Healthy 
+ Container gis_app-migrate-1 Exited 
+ Container gis_app-api-1 Starting 
+ Container gis_app-api-1 Started 
+ Container gis_app-api-1 Waiting 
+ Container gis_app-api-1 Healthy 
+ Container gis_app-nginx-1 Starting 
+Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint gis_app-nginx-1 (83d88a617ee8d1f399cd6153083a165b6f1e67e61be9c4fa58da58d00d867f22): Bind for 0.0.0.0:8080 failed: port is already allocated

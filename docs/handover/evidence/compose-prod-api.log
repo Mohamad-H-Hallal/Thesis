@@ -1,0 +1,152 @@
+api-1  | node:internal/modules/cjs/loader:1386
+api-1  |   throw err;
+api-1  |   ^
+api-1  | 
+api-1  | Error: Cannot find module '/app/apps/api/dist/server.js
+'
+api-1  |     at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)
+api-1  |     at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)
+api-1  |     at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)
+api-1  |     at Function._load (node:internal/modules/cjs/loader:1192:37)
+api-1  |     at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+api-1  |     at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+api-1  |     at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)
+api-1  |     at node:internal/main/run_main_module:36:49 {
+api-1  |   code: 'MODULE_NOT_FOUND',
+api-1  |   requireStack: []
+api-1  | }
+api-1  | 
+api-1  | Node.js v22.22.0
+api-1  | node:internal/modules/cjs/loader:1386
+api-1  |   throw err;
+api-1  |   ^
+api-1  | 
+api-1  | Error: Cannot find module '/app/apps/api/dist/server.js
+'
+api-1  |     at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)
+api-1  |     at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)
+api-1  |     at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)
+api-1  |     at Function._load (node:internal/modules/cjs/loader:1192:37)
+api-1  |     at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+api-1  |     at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+api-1  |     at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)
+api-1  |     at node:internal/main/run_main_module:36:49 {
+api-1  |   code: 'MODULE_NOT_FOUND',
+api-1  |   requireStack: []
+api-1  | }
+api-1  | 
+api-1  | Node.js v22.22.0
+api-1  | node:internal/modules/cjs/loader:1386
+api-1  |   throw err;
+api-1  |   ^
+api-1  | 
+api-1  | Error: Cannot find module '/app/apps/api/dist/server.js
+'
+api-1  |     at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)
+api-1  |     at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)
+api-1  |     at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)
+api-1  |     at Function._load (node:internal/modules/cjs/loader:1192:37)
+api-1  |     at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+api-1  |     at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+api-1  |     at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)
+api-1  |     at node:internal/main/run_main_module:36:49 {
+api-1  |   code: 'MODULE_NOT_FOUND',
+api-1  |   requireStack: []
+api-1  | }
+api-1  | 
+api-1  | Node.js v22.22.0
+api-1  | node:internal/modules/cjs/loader:1386
+api-1  |   throw err;
+api-1  |   ^
+api-1  | 
+api-1  | Error: Cannot find module '/app/apps/api/dist/server.js
+'
+api-1  |     at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)
+api-1  |     at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)
+api-1  |     at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)
+api-1  |     at Function._load (node:internal/modules/cjs/loader:1192:37)
+api-1  |     at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+api-1  |     at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+api-1  |     at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)
+api-1  |     at node:internal/main/run_main_module:36:49 {
+api-1  |   code: 'MODULE_NOT_FOUND',
+api-1  |   requireStack: []
+api-1  | }
+api-1  | 
+api-1  | Node.js v22.22.0
+api-1  | node:internal/modules/cjs/loader:1386
+api-1  |   throw err;
+api-1  |   ^
+api-1  | 
+api-1  | Error: Cannot find module '/app/apps/api/dist/server.js
+'
+api-1  |     at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)
+api-1  |     at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)
+api-1  |     at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)
+api-1  |     at Function._load (node:internal/modules/cjs/loader:1192:37)
+api-1  |     at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+api-1  |     at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+api-1  |     at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)
+api-1  |     at node:internal/main/run_main_module:36:49 {
+api-1  |   code: 'MODULE_NOT_FOUND',
+api-1  |   requireStack: []
+api-1  | }
+api-1  | 
+api-1  | Node.js v22.22.0
+api-1  | node:internal/modules/cjs/loader:1386
+api-1  |   throw err;
+api-1  |   ^
+api-1  | 
+api-1  | Error: Cannot find module '/app/apps/api/dist/server.js
+'
+api-1  |     at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)
+api-1  |     at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)
+api-1  |     at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)
+api-1  |     at Function._load (node:internal/modules/cjs/loader:1192:37)
+api-1  |     at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+api-1  |     at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+api-1  |     at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)
+api-1  |     at node:internal/main/run_main_module:36:49 {
+api-1  |   code: 'MODULE_NOT_FOUND',
+api-1  |   requireStack: []
+api-1  | }
+api-1  | 
+api-1  | Node.js v22.22.0
+api-1  | node:internal/modules/cjs/loader:1386
+api-1  |   throw err;
+api-1  |   ^
+api-1  | 
+api-1  | Error: Cannot find module '/app/apps/api/dist/server.js
+'
+api-1  |     at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)
+api-1  |     at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)
+api-1  |     at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)
+api-1  |     at Function._load (node:internal/modules/cjs/loader:1192:37)
+api-1  |     at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+api-1  |     at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+api-1  |     at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)
+api-1  |     at node:internal/main/run_main_module:36:49 {
+api-1  |   code: 'MODULE_NOT_FOUND',
+api-1  |   requireStack: []
+api-1  | }
+api-1  | 
+api-1  | Node.js v22.22.0
+api-1  | node:internal/modules/cjs/loader:1386
+api-1  |   throw err;
+api-1  |   ^
+api-1  | 
+api-1  | Error: Cannot find module '/app/apps/api/dist/server.js
+'
+api-1  |     at Function._resolveFilename (node:internal/modules/cjs/loader:1383:15)
+api-1  |     at defaultResolveImpl (node:internal/modules/cjs/loader:1025:19)
+api-1  |     at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1030:22)
+api-1  |     at Function._load (node:internal/modules/cjs/loader:1192:37)
+api-1  |     at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+api-1  |     at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+api-1  |     at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)
+api-1  |     at node:internal/main/run_main_module:36:49 {
+api-1  |   code: 'MODULE_NOT_FOUND',
+api-1  |   requireStack: []
+api-1  | }
+api-1  | 
+api-1  | Node.js v22.22.0

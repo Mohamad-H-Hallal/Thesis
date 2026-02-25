@@ -1,0 +1,121 @@
+ Image gis_app-migrate Building 
+ Image gis_app-api Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 877B done
+#1 DONE 0.0s
+
+#2 [api internal] load build definition from Dockerfile
+#2 transferring dockerfile: 1.19kB done
+#2 DONE 0.0s
+
+#3 [api internal] load metadata for docker.io/library/node:22-alpine
+#3 DONE 0.7s
+
+#4 [api internal] load .dockerignore
+#4 transferring context: 249B done
+#4 DONE 0.0s
+
+#5 [migrate build 1/9] FROM docker.io/library/node:22-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34
+#5 resolve docker.io/library/node:22-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 0.0s done
+#5 DONE 0.0s
+
+#6 [api internal] load build context
+#6 transferring context: 3.10kB 0.0s done
+#6 DONE 0.0s
+
+#7 [api runtime  6/10] COPY --from=build /app/apps/api/docs ./docs
+#7 CACHED
+
+#8 [api build 2/9] WORKDIR /app/apps/api
+#8 CACHED
+
+#9 [api runtime  5/10] COPY --from=build /app/apps/api/dist ./dist
+#9 CACHED
+
+#10 [api build 7/9] COPY apps/api/docs ./docs
+#10 CACHED
+
+#11 [api build 3/9] COPY apps/api/package*.json ./
+#11 CACHED
+
+#12 [api runtime  3/10] COPY --from=build /app/apps/api/package*.json ./
+#12 CACHED
+
+#13 [api runtime  4/10] COPY --from=build /app/apps/api/node_modules ./node_modules
+#13 CACHED
+
+#14 [api build 8/9] COPY infra/migrations /app/infra/migrations
+#14 CACHED
+
+#15 [api build 5/9] COPY apps/api/tsconfig*.json ./
+#15 CACHED
+
+#16 [api build 9/9] RUN npm run build   && npm prune --omit=dev   && npm cache clean --force
+#16 CACHED
+
+#17 [api build 4/9] RUN npm ci
+#17 CACHED
+
+#18 [api build 6/9] COPY apps/api/src ./src
+#18 CACHED
+
+#19 [api runtime  7/10] COPY --from=build /app/infra/migrations /app/infra/migrations
+#19 CACHED
+
+#20 [api runtime  8/10] COPY apps/api/.env.example ./.env.example
+#20 CACHED
+
+#21 [api runtime  9/10] COPY apps/api/docker/entrypoint.sh /usr/local/bin/api-entrypoint.sh
+#21 CACHED
+
+#22 [api runtime 10/10] RUN mkdir -p uploads exports   && chmod +x /usr/local/bin/api-entrypoint.sh   && chown -R node:node /app/apps/api /app/infra
+#22 CACHED
+
+#23 [migrate] exporting to image
+#23 exporting layers done
+#23 exporting manifest sha256:a7b071416e69540d226703d657e36deb71ce0e7fa5c45179549caa424692a61d done
+#23 exporting config sha256:26badadf53ccc0721cbbbf04d580354e6c6289d827d651e4ab3ddf68d981be31 done
+#23 exporting attestation manifest sha256:388b30eb88487204f1a9c4990a2c2a4a38a0b026877c1e5e9d9abd457a9bc831 0.0s done
+#23 exporting manifest list sha256:eba2373804589a78a1cecc1872b8b4f805a675c15d945ba1047891fc0240c50b 0.0s done
+#23 naming to docker.io/library/gis_app-migrate:latest done
+#23 unpacking to docker.io/library/gis_app-migrate:latest 0.0s done
+#23 DONE 0.2s
+
+#24 [api] exporting to image
+#24 exporting layers done
+#24 exporting manifest sha256:119c0a1c729c71f3ad17465b6468701409bd5cd23db81efa1be2685e2732b244 done
+#24 exporting config sha256:4f81f2c6eebf8ff1e8de1782e61c168246954d9d77a77c8152012cdbe236fd42 done
+#24 exporting attestation manifest sha256:67c2f314b310c0349064c79e7dec16116a4fd6951fafab922f223cb144eab5f4 0.0s done
+#24 exporting manifest list sha256:64d0765c5c1c6443e67a32d4bc4018b77fc230f655c7843965cc096bfe54d2be 0.0s done
+#24 naming to docker.io/library/gis_app-api:latest done
+#24 unpacking to docker.io/library/gis_app-api:latest 0.0s done
+#24 DONE 0.2s
+
+#25 [migrate] resolving provenance for metadata file
+#25 DONE 0.0s
+
+#26 [api] resolving provenance for metadata file
+#26 DONE 0.0s
+ Image gis_app-migrate Built 
+ Image gis_app-api Built 
+ Container gis_app-db-1 Running 
+ Container gis_app-migrate-1 Recreate 
+ Container gis_app-migrate-1 Recreated 
+ Container gis_app-api-1 Recreate 
+ Container gis_app-api-1 Recreated 
+ Container gis_app-nginx-1 Recreate 
+ Container gis_app-nginx-1 Recreated 
+ Container gis_app-db-1 Waiting 
+ Container gis_app-db-1 Healthy 
+ Container gis_app-migrate-1 Starting 
+ Container gis_app-migrate-1 Started 
+ Container gis_app-db-1 Waiting 
+ Container gis_app-migrate-1 Waiting 
+ Container gis_app-migrate-1 Exited 
+ Container gis_app-db-1 Healthy 
+ Container gis_app-api-1 Starting 
+ Container gis_app-api-1 Started 
+ Container gis_app-api-1 Waiting 
+ Container gis_app-api-1 Healthy 
+ Container gis_app-nginx-1 Starting 
+ Container gis_app-nginx-1 Started 
