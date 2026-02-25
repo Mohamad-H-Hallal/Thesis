@@ -1,0 +1,99 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD_FILE: ${POSTGRES_PASSWORD_FILE:-}
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+      - ./infra/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DB_HOST: db
+      DB_PORT: 5432
+      MIGRATIONS_DIR: /app/infra/migrations
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["node", "dist/db/migrate.js"]
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      DB_HOST: db
+      DB_PORT: 5432
+      MIGRATIONS_DIR: /app/infra/migrations
+      # Docker secrets-style pattern: map /run/secrets/* + *_FILE vars.
+      DB_PASSWORD_FILE: ${DB_PASSWORD_FILE:-}
+      JWT_SECRET_FILE: ${JWT_SECRET_FILE:-}
+      JWT_SECRET_CURRENT_FILE: ${JWT_SECRET_CURRENT_FILE:-}
+      JWT_REFRESH_SECRET_FILE: ${JWT_REFRESH_SECRET_FILE:-}
+      JWT_REFRESH_SECRET_CURRENT_FILE: ${JWT_REFRESH_SECRET_CURRENT_FILE:-}
+      METRICS_TOKEN_FILE: ${METRICS_TOKEN_FILE:-}
+    volumes:
+      - api_uploads:/app/apps/api/uploads
+      - api_exports:/app/apps/api/exports
+      - ./secrets:/run/secrets:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  nginx:
+    image: nginxinc/nginx-unprivileged:1.27-alpine
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:8080"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./apps/mobile/build/web:/usr/share/nginx/html:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  postgis_data:
+  api_uploads:
+  api_exports:

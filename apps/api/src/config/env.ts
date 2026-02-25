@@ -75,7 +75,7 @@ const envSchema = Joi.object({
 
   LOG_LEVEL: Joi.string().valid('error', 'warn', 'info', 'http', 'verbose', 'debug', 'silly').default('info'),
   AUDIT_LOG_ENABLED: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(true),
-  METRICS_ENABLED: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(true),
+  METRICS_ENABLED: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(false),
   METRICS_TOKEN: Joi.string().allow('').default(''),
 
   UPLOAD_DIR: Joi.string().default('./uploads'),

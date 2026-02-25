@@ -7,6 +7,9 @@
 !.env.prod.example
 *.log
 !docs/handover/evidence/*.log
+secrets/*.txt
+!secrets/README.md
+backups/
 
 # Node
 **/node_modules/

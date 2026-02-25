@@ -23,8 +23,10 @@ COPY --from=build /app/apps/api/dist ./dist
 COPY --from=build /app/apps/api/docs ./docs
 COPY --from=build /app/infra/migrations /app/infra/migrations
 COPY apps/api/.env.example ./.env.example
+COPY apps/api/docker/entrypoint.sh /usr/local/bin/api-entrypoint.sh
 
 RUN mkdir -p uploads exports \
+  && chmod +x /usr/local/bin/api-entrypoint.sh \
   && chown -R node:node /app/apps/api /app/infra
 
 USER node
@@ -33,4 +35,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
   CMD node -e "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
+ENTRYPOINT ["api-entrypoint.sh"]
 CMD ["node", "dist/server.js"]
