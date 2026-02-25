@@ -1,77 +1,65 @@
-# Release Checklist (Phase 11 Complete)
+# Release Checklist (Phase 11)
 
-## Engineering Gates
-- [x] Backend `npm ci`
-- [x] Backend `npm run lint`
-- [x] Backend `npm run typecheck`
-- [x] Backend `npm run test:ci`
-- [x] Backend `npm run build`
-- [x] Backend `npm run audit:prod` (0 vulnerabilities)
-- [x] Mobile `flutter pub get`
-- [x] Mobile `flutter analyze`
-- [x] Mobile `flutter test --coverage`
-- [x] Mobile `flutter build web`
-- [x] Mobile `flutter build apk`
-- [x] DB migrations from scratch succeed
-- [x] DB drift check on existing state succeeds (no pending migrations)
-- [x] OpenAPI contract check passes and uses `/api/v1`
-- [x] Public role escalation blocked in signup
-- [x] Production metrics endpoint protected by token
+## A) Backend Quality Gates
+- [x] `npm ci`
+- [x] `npm run lint`
+- [x] `npm run typecheck`
+- [x] `npm run test:ci`
+- [x] `npm run build`
+- [x] `npm run audit:prod`
+- [x] `npm run openapi:check`
 
-## Docker Release Gates
-- [x] `docker compose -f docker-compose.yml up -d --build`
-- [x] `docker compose -f docker-compose.yml ps` shows `db` and `api` healthy
-- [x] `migrate` service completes successfully
-- [x] Nginx serves `/api/v1` and `/docs/openapi.yaml`
-- [x] Smoke test passes end-to-end
+## B) Mobile Quality Gates
+- [x] `flutter pub get`
+- [x] `flutter analyze`
+- [x] `flutter test --coverage`
+- [x] `flutter build web`
+- [x] `flutter build apk`
 
-## Verification Commands (Production Stack)
+## C) Docker/Deploy Gates
+- [x] `docker compose -f compose.prod.yml config`
+- [x] `docker compose -f compose.prod.yml up -d --build`
+- [x] Host port conflict handled (`NGINX_HTTP_PORT=8088` used in local verification)
+- [x] DB/API/nginx healthchecks pass
+- [x] migration service runs successfully from `infra/migrations`
+- [x] smoke test passes (`scripts/smoke-test.ps1`)
+- [x] `/metrics` protected when configured
+
+## D) Security Gates
+- [x] Public signup cannot create admin
+- [x] API versioning aligned to `/api/v1`
+- [x] OpenAPI core paths validated
+- [x] `.env` files ignored; examples only committed
+- [x] Secrets scan completed
+
+## E) Port Conflict Gate
+- [x] 5433 conflict root cause identified (`gis_app_db`)
+- [x] compose.prod keeps DB internal-only
+- [x] dev override changed DB host port to `55433`
+
+## F) Release Verification Script
+- [x] Windows one-command gate: `scripts/verify_all.ps1`
+
+Run:
 ```powershell
-cd D:\GIS_APP
-docker compose -f docker-compose.yml up -d --build
-docker compose -f docker-compose.yml ps
-powershell -ExecutionPolicy Bypass -File .\scripts\smoke-test.ps1 -SkipUp
+powershell -ExecutionPolicy Bypass -File .\scripts\verify_all.ps1
 ```
 
-## Rollback Steps
-1. Identify last known-good release tag/image.
-2. Pull previous release branch/tag.
-3. Recreate services with previous artifact:
+## G) Rollback Steps
+1. Stop current stack:
 ```powershell
-git checkout <known-good-tag>
-docker compose -f docker-compose.yml down
-docker compose -f docker-compose.yml up -d --build
+docker compose -f compose.prod.yml down
 ```
-4. If schema/data incompatibility occurred, restore DB and storage backups:
+2. Checkout previous tag and redeploy:
 ```powershell
-cd infra\db\scripts
-./restore.ps1 -DumpFile ..\backups\<known-good>.dump -EnvFile ..\.env
+git checkout <previous-stable-tag>
+docker compose -f compose.prod.yml up -d --build
 ```
-5. Re-run smoke test before reopening traffic.
+3. Restore DB if schema/data rollback required:
+```bash
+bash ./scripts/restore.sh ./backups/<known-good>.dump
+```
+4. Run smoke test before reopening traffic.
 
-## Emergency Stop / Safe Recovery
-```powershell
-docker compose -f docker-compose.yml stop
-docker compose -f docker-compose.yml logs --tail=200 api
-docker compose -f docker-compose.yml logs --tail=200 db
-docker compose -f docker-compose.yml up -d
-```
-
-## Evidence Files
-- `docs/handover/evidence/backend-npm-ci.log`
-- `docs/handover/evidence/backend-lint-phase11.log`
-- `docs/handover/evidence/backend-typecheck-phase11.log`
-- `docs/handover/evidence/backend-test-ci-phase11.log`
-- `docs/handover/evidence/backend-build-phase11.log`
-- `docs/handover/evidence/backend-audit-prod-phase11.log`
-- `docs/handover/evidence/mobile-pub-get-phase11.log`
-- `docs/handover/evidence/mobile-analyze-phase11.log`
-- `docs/handover/evidence/mobile-test-coverage-phase11.log`
-- `docs/handover/evidence/mobile-build-web-phase11.log`
-- `docs/handover/evidence/mobile-build-apk-phase11.log`
-- `docs/handover/evidence/db-migrate-from-scratch-phase11.log`
-- `docs/handover/evidence/db-migrate-drift-check-phase11.log`
-- `docs/handover/evidence/docker-up.log`
-- `docs/handover/evidence/docker-endpoints-phase11.log`
-- `docs/handover/evidence/smoke-test.log`
-- `docs/handover/evidence/docker-down-after-smoke-phase11.log`
+## Evidence
+- `docs/handover/evidence/*`

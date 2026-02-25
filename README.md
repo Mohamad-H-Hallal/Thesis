@@ -1,11 +1,6 @@
 # Monorepo Overview
 
-This repository is a phase-0 scaffold for the Lebanese GIS Fruit Trees Data Collector (no AI pipeline).
-
-![API Coverage Gate](https://img.shields.io/badge/API%20coverage%20gate-enforced-brightgreen)
-![API Coverage Threshold](https://img.shields.io/badge/API%20line%20coverage-%E2%89%A530%25-blue)
-![Mobile Coverage Gate](https://img.shields.io/badge/Mobile%20coverage%20gate-enforced-brightgreen)
-![Mobile Coverage Threshold](https://img.shields.io/badge/Mobile%20line%20coverage-%E2%89%A519%25-blue)
+This repository contains the Lebanese GIS Collector platform (Flutter mobile/web + Node API + PostGIS), production-targeted through Phase 11.
 
 ## Repository Structure
 
@@ -17,185 +12,126 @@ repo/
   infra/
     db/
     migrations/
+    nginx/
   docs/
-  README.md
+  scripts/
+  compose.prod.yml
+  docker-compose.yml
+  docker-compose.override.yml
 ```
 
 ## Prerequisites
 
-- Docker Desktop (with Linux containers)
+- Docker Desktop (Linux containers)
 - Node.js 22.x (LTS)
-- Flutter 3.41+
-- JDK 17 (required for Android Gradle builds)
+- Flutter stable
+- JDK 17 (Android Gradle)
 
-## 1) Run Database (PostGIS)
+## Production Deployment (Single Server Docker Compose)
 
-```bash
-cd infra/db
-cp .env.example .env
-docker compose up -d
+```powershell
+cd D:\GIS_APP
+Copy-Item .env.prod.example .env
+# Replace placeholders and/or use secrets files (see secrets/README.md)
+# If 80 or 8080 is occupied on your host, set:
+# NGINX_HTTP_PORT=8088
+
+docker compose -f compose.prod.yml config
+docker compose -f compose.prod.yml up -d --build
+docker compose -f compose.prod.yml ps
 ```
 
-Optional Adminer (DB UI):
+Smoke test:
 
-```bash
-docker compose --profile tools up -d adminer
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke-test.ps1 -BaseUrl http://localhost:8088 -ComposeFile compose.prod.yml
+```
+
+## Development Docker Stack
+
+```powershell
+cd D:\GIS_APP
+Copy-Item .env.dev.example .env
+docker compose up -d --build
+```
+
+Notes:
+- Dev DB mapping in root compose is `55433:5432` (to avoid conflict with `infra/db` stack on 5433).
+- Optional Adminer in dev root compose: `docker compose --profile devtools up -d adminer`.
+
+## Infra DB Local Stack (Alternative)
+
+```powershell
+cd infra\db
+Copy-Item .env.example .env
+docker compose up -d
 ```
 
 - PostGIS: `localhost:5433`
 - Adminer: `http://localhost:8080`
 
-## Production-Targeted Docker Compose (Single Server)
+## API Local (without Docker)
 
 ```powershell
-cd D:\GIS_APP
-Copy-Item .env.example .env
-# Replace placeholder secrets before deployment
-docker compose -f docker-compose.yml up -d --build
-docker compose -f docker-compose.yml ps
-```
-
-Environment template options:
-- `.env.dev.example`
-- `.env.staging.example`
-- `.env.prod.example`
-
-Smoke test:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\smoke-test.ps1 -SkipUp
-```
-
-Services:
-- `nginx` exposed on `http://localhost` (port 80)
-- `api` internal on `3000/tcp`
-- `db` internal on `5432/tcp`
-
-## 2) Run API (Express + Node.js)
-
-```bash
-cd apps/api
-cp .env.example .env
-npm install
-npm run dev
-```
-
-Health checks:
-
-- API: `http://localhost:3000/health`
-- API ready: `http://localhost:3000/ready`
-- API root: `http://localhost:3000/api/v1`
-- OpenAPI: `http://localhost:3000/docs/openapi.yaml`
-
-Quality commands:
-
-```bash
-npm run lint
-npm run typecheck
-npm run test
-npm run test:perf
-npm run release:gate
-npm run migrate
-npm run seed:staging
-npm run staging:verify
-```
-
-## 3) Run Mobile (Flutter)
-
-```bash
-cd apps/mobile
-flutter pub get
-flutter run --dart-define=APP_FLAVOR=dev --dart-define=API_BASE_URL=http://10.0.2.2:3000
-```
-
-Quality commands:
-
-```bash
-flutter analyze
-flutter test --coverage
-dart run tool/check_coverage.dart --min-line 19
-dart format .
-```
-
-## CI Baseline
-
-GitHub Actions workflow: `.github/workflows/monorepo-ci.yml`
-
-- API job: migrate + lint + typecheck + test + performance tests + audit
-- Mobile job: analyze + test + coverage threshold gate
-- Staging readiness workflow: `.github/workflows/staging-readiness.yml` (manual + weekly)
-
-## Security Defaults in Phase 0
-
-- No real secrets committed
-- API has helmet/cors/rate-limit wired
-- `.env.example` files are provided for API and DB
-
-## Phase 9 Ops Additions
-- Audit logging for sensitive backend operations.
-- Request ID, readiness, and metrics endpoints.
-- DB backup/restore PowerShell scripts in `infra/db/scripts`.
-
-## Phase 10 Quality Engineering Additions
-- API e2e workflow test and performance baselines for BBOX and exports.
-- Mobile sync performance baseline test.
-- Release gate script: `apps/api npm run release:gate`.
-
-## Phase 11 Deployment and Ops Additions
-- Realistic staging seed profile: `apps/api npm run seed:staging`.
-- Staging verification gate: `apps/api npm run staging:verify`.
-- Phase 11 runbooks/checklists under `docs/phase-11`.
-
-## Troubleshooting (Windows + Docker Desktop)
-
-1. Docker database does not start:
-- Ensure Docker Desktop is running and using Linux containers.
-- Run `docker compose logs db` in `infra/db`.
-- Confirm port `5433` is free.
-
-2. API cannot connect to DB:
-- Confirm `apps/api/.env` matches `infra/db/.env` credentials.
-- Check DB health: `docker compose ps` and `docker compose logs db`.
-
-3. Android emulator cannot call localhost API:
-- Use `http://10.0.2.2:3000` instead of `http://localhost:3000`.
-
-4. PowerShell copy command:
-- Use `Copy-Item .env.example .env` if `cp` alias is unavailable.
-
-5. Android/Gradle import fails due Java version:
-- Ensure JDK 17 is active for Android builds.
-- Verify with `cd apps/mobile/android && ./gradlew -v` (JVM must be 17.x).
-
-## Handover Build & Run (Windows)
-
-Requirements:
-- Node.js 22.x
-- Flutter stable
-- Docker Desktop
-- JDK 17 for Android
-
-Commands:
-```powershell
-# 1) Database
-cd infra\db
-Copy-Item .env.example .env
-docker compose up -d
-
-# 2) Backend API
-cd ..\..\apps\api
+cd apps\api
 Copy-Item .env.example .env
 npm ci
 npm run migrate
-npm run lint
-npm run test:ci
-npm run build
-npm start
+npm run dev
+```
 
-# 3) Mobile
-cd ..\mobile
+Health:
+- `http://localhost:3000/health`
+- `http://localhost:3000/ready`
+- `http://localhost:3000/api/v1`
+- `http://localhost:3000/docs/openapi.yaml`
+
+## Mobile Local
+
+```powershell
+cd apps\mobile
 flutter pub get
-flutter analyze
-flutter test
 flutter run -d chrome --dart-define=APP_FLAVOR=dev --dart-define=API_BASE_URL=http://localhost:3000
 ```
+
+Android emulator:
+
+```powershell
+flutter run -d emulator-5554 --dart-define=APP_FLAVOR=dev --dart-define=API_BASE_URL=http://10.0.2.2:3000
+```
+
+## Release Verification (Single Command)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify_all.ps1
+```
+
+This runs:
+- Docker compose config validation (`compose.prod.yml`)
+- Backend: `npm ci`, `lint`, `typecheck`, `test:ci`, `build`, `audit:prod`
+- Mobile: `pub get`, `analyze`, `test --coverage`, `build web`, `build apk`
+
+## Backup and Restore
+
+Shell scripts:
+- `scripts/backup.sh`
+- `scripts/restore.sh`
+
+Examples:
+
+```bash
+bash ./scripts/backup.sh
+bash ./scripts/restore.sh ./backups/gis_app_YYYYMMDD_HHMMSS.dump
+```
+
+## Handover Documentation
+
+- `docs/handover/03-ops-runbook.md`
+- `docs/handover/04-release-checklist.md`
+- `docs/handover/05-user-guide.md`
+- `docs/handover/06-admin-guide.md`
+- `docs/handover/07-field-collector-guide.md`
+- `docs/handover/08-reviewer-guide.md`
+- `docs/handover/09-android-emulator-guide.md`
+- `docs/handover/10-restore-drill-checklist.md`
+- `docs/handover/11-phase11-checklist.md`
