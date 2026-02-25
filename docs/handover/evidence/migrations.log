@@ -1,0 +1,21 @@
+# Migration Evidence (Phase 11)
+
+1. Reset DB state and bootstrap migration from zero
+- `docker compose down -v` (infra/db local stack reset)
+- `npm run migrate`
+- Result: PASS
+- Source: `docs/handover/evidence/db-migrate-from-scratch-phase11.log`
+
+2. Drift check on existing migrated snapshot
+- `npm run migrate`
+- Result: PASS (`No pending migrations`)
+- Source: `docs/handover/evidence/db-migrate-drift-check-phase11.log`
+
+3. Docker migrate service verification
+- `docker compose -f docker-compose.yml logs migrate`
+- Result: PASS (all four migrations applied in one-off migrate service)
+- Source: `docs/handover/evidence/docker-migrate-service-phase11.log`
+
+Governance status:
+- Single migration source: `infra/migrations`
+- Tracker table: `schema_migrations`

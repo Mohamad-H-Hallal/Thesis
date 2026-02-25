@@ -32,8 +32,8 @@
   - schema_migrations tracker
 
 [Infra + Ops]
-  - Docker Compose (db + optional adminer)
-  - migration runner -> infra/migrations
+  - Docker Compose production stack (db + migrate + api + nginx)
+  - migration runner -> infra/migrations (one-off migrate service)
   - CI gates for lint/typecheck/tests/openapi
 ```
 

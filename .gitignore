@@ -1,6 +1,12 @@
 # Global
 .env
+.env.*
+!.env.example
+!.env.dev.example
+!.env.staging.example
+!.env.prod.example
 *.log
+!docs/handover/evidence/*.log
 
 # Node
 **/node_modules/

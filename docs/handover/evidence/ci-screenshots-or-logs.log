@@ -1,0 +1,21 @@
+# CI / Runtime Evidence Index (Phase 11)
+
+Core quality logs:
+- `docs/handover/evidence/backend-commands.log`
+- `docs/handover/evidence/mobile-commands.log`
+- `docs/handover/evidence/migrations.log`
+
+Production Docker logs:
+- `docs/handover/evidence/docker-up.log`
+- `docs/handover/evidence/docker-ps-phase11.log`
+- `docs/handover/evidence/docker-endpoints-phase11.log`
+- `docs/handover/evidence/smoke-test.log`
+- `docs/handover/evidence/docker-down-after-smoke-phase11.log`
+- `docs/handover/evidence/metrics-protection-phase11.log`
+
+Security/secrets checks:
+- `docs/handover/evidence/secrets-scan-phase11.log`
+- `docs/handover/evidence/repo-secret-check-phase11.log`
+
+Note:
+- This workspace session provides command-log evidence rather than CI screenshot artifacts.

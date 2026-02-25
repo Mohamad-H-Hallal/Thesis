@@ -1,0 +1,238 @@
+ Image gis_app-migrate Building 
+ Image gis_app-api Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 877B done
+#1 DONE 0.0s
+
+#2 [migrate internal] load build definition from Dockerfile
+#2 transferring dockerfile: 1.04kB done
+#2 DONE 0.0s
+
+#3 [auth] library/node:pull token for registry-1.docker.io
+#3 DONE 0.0s
+
+#4 [api internal] load metadata for docker.io/library/node:22-alpine
+#4 DONE 2.6s
+
+#4 [migrate internal] load metadata for docker.io/library/node:22-alpine
+#4 DONE 2.6s
+
+#5 [migrate internal] load .dockerignore
+#5 transferring context: 249B done
+#5 DONE 0.0s
+
+#6 [migrate internal] load build context
+#6 transferring context: 4.29kB 0.0s done
+#6 DONE 0.1s
+
+#7 [api build 1/9] FROM docker.io/library/node:22-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34
+#7 resolve docker.io/library/node:22-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 0.0s done
+#7 ...
+
+#6 [api internal] load build context
+#6 DONE 0.1s
+
+#7 [migrate build 1/9] FROM docker.io/library/node:22-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34
+#7 sha256:fc1c5222d85fe45cd255019912158424888b168c8413fb42c8e166c37f1833eb 0B / 447B 0.2s
+#7 sha256:2b752f7c71fd1a08980fdf09b7379d8304c8ef2569526934a2089ed26d771778 0B / 1.26MB 0.2s
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 0B / 51.60MB 0.2s
+#7 sha256:fc1c5222d85fe45cd255019912158424888b168c8413fb42c8e166c37f1833eb 447B / 447B 0.5s done
+#7 sha256:2b752f7c71fd1a08980fdf09b7379d8304c8ef2569526934a2089ed26d771778 1.05MB / 1.26MB 2.1s
+#7 sha256:2b752f7c71fd1a08980fdf09b7379d8304c8ef2569526934a2089ed26d771778 1.26MB / 1.26MB 2.2s done
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 2.10MB / 51.60MB 5.3s
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 5.24MB / 51.60MB 7.5s
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 8.39MB / 51.60MB 10.4s
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 11.53MB / 51.60MB 13.1s
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 14.68MB / 51.60MB 16.2s
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 16.78MB / 51.60MB 21.3s
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 19.92MB / 51.60MB 24.3s
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 23.07MB / 51.60MB 27.2s
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 26.21MB / 51.60MB 31.0s
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 29.36MB / 51.60MB 35.1s
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 32.51MB / 51.60MB 39.0s
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 35.65MB / 51.60MB 42.1s
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 37.75MB / 51.60MB 47.3s
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 40.89MB / 51.60MB 51.0s
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 44.04MB / 51.60MB 53.7s
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 47.19MB / 51.60MB 57.0s
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 50.33MB / 51.60MB 59.8s
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 51.60MB / 51.60MB 60.9s done
+#7 sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 51.60MB / 51.60MB 60.9s done
+#7 extracting sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf
+#7 extracting sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 1.4s done
+#7 DONE 62.3s
+
+#7 [migrate build 1/9] FROM docker.io/library/node:22-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34
+#7 extracting sha256:8d513d1f314d3646adaf156be912f8de408c740e43d90cad5ce06b9de27e7bdf 1.4s done
+#7 extracting sha256:2b752f7c71fd1a08980fdf09b7379d8304c8ef2569526934a2089ed26d771778 0.1s done
+#7 extracting sha256:fc1c5222d85fe45cd255019912158424888b168c8413fb42c8e166c37f1833eb 0.0s done
+#7 DONE 62.4s
+
+#8 [migrate build 2/9] WORKDIR /app/apps/api
+#8 DONE 0.1s
+
+#8 [api build 2/9] WORKDIR /app/apps/api
+#8 DONE 0.1s
+
+#9 [migrate build 3/9] COPY apps/api/package*.json ./
+#9 DONE 0.0s
+
+#10 [api build 4/9] RUN npm ci
+#10 5.261 npm warn deprecated rimraf@3.0.2: Rimraf versions prior to v4 are no longer supported
+#10 9.958 npm warn deprecated inflight@1.0.6: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful.
+#10 10.97 npm warn deprecated glob@10.5.0: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+#10 19.83 npm warn deprecated eslint@8.57.1: This version is no longer supported. Please see https://eslint.org/version-support for other options.
+#10 25.32 npm warn deprecated @humanwhocodes/object-schema@2.0.3: Use @eslint/object-schema instead
+#10 25.63 npm warn deprecated @humanwhocodes/config-array@0.13.0: Use @eslint/config-array instead
+#10 32.71 npm warn deprecated glob@7.2.3: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+#10 33.20 npm warn deprecated glob@7.2.3: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+#10 100.4 
+#10 100.4 added 630 packages, and audited 631 packages in 2m
+#10 100.4 
+#10 100.4 107 packages are looking for funding
+#10 100.4   run `npm fund` for details
+#10 100.4 
+#10 100.4 2 vulnerabilities (1 moderate, 1 high)
+#10 100.4 
+#10 100.4 To address all issues, run:
+#10 100.4   npm audit fix
+#10 100.4 
+#10 100.4 Run `npm audit` for details.
+#10 100.4 npm notice
+#10 100.4 npm notice New major version of npm available! 10.9.4 -> 11.10.1
+#10 100.4 npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.10.1
+#10 100.4 npm notice To update run: npm install -g npm@11.10.1
+#10 100.4 npm notice
+#10 DONE 100.5s
+
+#10 [api build 4/9] RUN npm ci
+#10 DONE 100.5s
+
+#11 [api build 5/9] COPY apps/api/tsconfig*.json ./
+#11 DONE 0.2s
+
+#11 [migrate build 5/9] COPY apps/api/tsconfig*.json ./
+#11 DONE 0.2s
+
+#12 [api build 6/9] COPY apps/api/src ./src
+#12 DONE 0.0s
+
+#13 [api build 7/9] COPY apps/api/docs ./docs
+#13 DONE 0.0s
+
+#14 [api build 8/9] COPY infra/migrations /app/infra/migrations
+#14 DONE 0.0s
+
+#14 [migrate build 8/9] COPY infra/migrations /app/infra/migrations
+#14 DONE 0.0s
+
+#15 [api build 9/9] RUN npm run build   && npm prune --omit=dev   && npm cache clean --force
+#15 0.460 
+#15 0.460 > lebanese-gis-backend@1.0.0 build
+#15 0.460 > tsc -p tsconfig.json
+#15 0.460 
+#15 4.698 
+#15 4.698 up to date, audited 193 packages in 2s
+#15 4.698 
+#15 4.698 26 packages are looking for funding
+#15 4.698   run `npm fund` for details
+#15 4.699 
+#15 4.699 found 0 vulnerabilities
+#15 4.825 npm warn using --force Recommended protections disabled.
+#15 DONE 6.2s
+
+#15 [migrate build 9/9] RUN npm run build   && npm prune --omit=dev   && npm cache clean --force
+#15 DONE 6.2s
+
+#16 [api runtime 3/9] COPY --from=build /app/apps/api/package*.json ./
+#16 DONE 0.1s
+
+#17 [migrate runtime 4/9] COPY --from=build /app/apps/api/node_modules ./node_modules
+#17 DONE 0.5s
+
+#17 [api runtime 4/9] COPY --from=build /app/apps/api/node_modules ./node_modules
+#17 DONE 0.5s
+
+#18 [api runtime 5/9] COPY --from=build /app/apps/api/dist ./dist
+#18 DONE 0.1s
+
+#19 [migrate runtime 6/9] COPY --from=build /app/apps/api/docs ./docs
+#19 DONE 0.0s
+
+#19 [api runtime 6/9] COPY --from=build /app/apps/api/docs ./docs
+#19 DONE 0.0s
+
+#20 [api runtime 7/9] COPY --from=build /app/infra/migrations /app/infra/migrations
+#20 DONE 0.0s
+
+#21 [api runtime 8/9] COPY apps/api/.env.example ./.env.example
+#21 DONE 0.0s
+
+#22 [migrate runtime 9/9] RUN mkdir -p uploads exports   && chown -R node:node /app/apps/api /app/infra
+#22 DONE 6.8s
+
+#22 [api runtime 9/9] RUN mkdir -p uploads exports   && chown -R node:node /app/apps/api /app/infra
+#22 DONE 6.8s
+
+#23 [api] exporting to image
+#23 exporting layers
+#23 exporting layers 2.3s done
+#23 exporting manifest sha256:f20cefabecdee5140163c791a7293097351dec6d2ae0353111fce87cd6a2a46c 0.0s done
+#23 exporting config sha256:c5dc56f1244bea6f9bb061e6878df688a4ee2ed3778f670f2ab9b4f969ea5960 0.0s done
+#23 exporting attestation manifest sha256:6035635ce080bb2b721a02eaa36eb2c43fb51d0d52bf2bd340abddf08e6438d0 0.0s done
+#23 exporting manifest list sha256:b14ba6e8cfc4f33670bd363dbb65b29db7656a20607f9f4383395acde572f4ee
+#23 exporting manifest list sha256:b14ba6e8cfc4f33670bd363dbb65b29db7656a20607f9f4383395acde572f4ee 0.0s done
+#23 naming to docker.io/library/gis_app-api:latest done
+#23 unpacking to docker.io/library/gis_app-api:latest
+#23 unpacking to docker.io/library/gis_app-api:latest 1.8s done
+#23 DONE 4.3s
+
+#24 [migrate] exporting to image
+#24 exporting layers 2.3s done
+#24 exporting manifest sha256:2526830216018b7575025b7b2a36ea4af684046ccb5b3bc87cfc1352ce36411b 0.0s done
+#24 exporting config sha256:22fd2d5e2650e59b392caf82c89b10e7fe1bae3b6e84e0c6d4731f4597f0d87a 0.0s done
+#24 exporting attestation manifest sha256:f6ecdfcb6409881af65793ad2fcb43e76b791fb3608ba89cd2e6972c4407b349 0.0s done
+#24 exporting manifest list sha256:7da0aad7c2be04e63543d7d62ff015e56a5e116b4c8cba59a43dd2177b864ef8 0.0s done
+#24 naming to docker.io/library/gis_app-migrate:latest done
+#24 unpacking to docker.io/library/gis_app-migrate:latest 1.8s done
+#24 DONE 4.3s
+
+#25 [migrate] resolving provenance for metadata file
+#25 DONE 0.0s
+
+#26 [api] resolving provenance for metadata file
+#26 DONE 0.0s
+ Image gis_app-migrate Built 
+ Image gis_app-api Built 
+ Network gis_app_default Creating 
+ Network gis_app_default Created 
+ Volume gis_app_api_uploads Creating 
+ Volume gis_app_api_uploads Created 
+ Volume gis_app_api_exports Creating 
+ Volume gis_app_api_exports Created 
+ Volume gis_app_postgis_data Creating 
+ Volume gis_app_postgis_data Created 
+ Container gis_app-db-1 Creating 
+ Container gis_app-db-1 Created 
+ Container gis_app-migrate-1 Creating 
+ Container gis_app-migrate-1 Created 
+ Container gis_app-api-1 Creating 
+ Container gis_app-api-1 Created 
+ Container gis_app-nginx-1 Creating 
+ Container gis_app-nginx-1 Created 
+ Container gis_app-db-1 Starting 
+ Container gis_app-db-1 Started 
+ Container gis_app-db-1 Waiting 
+ Container gis_app-db-1 Healthy 
+ Container gis_app-migrate-1 Starting 
+ Container gis_app-migrate-1 Started 
+ Container gis_app-db-1 Waiting 
+ Container gis_app-migrate-1 Waiting 
+ Container gis_app-db-1 Healthy 
+ Container gis_app-migrate-1 Exited 
+ Container gis_app-api-1 Starting 
+ Container gis_app-api-1 Started 
+ Container gis_app-api-1 Waiting 
+ Container gis_app-api-1 Healthy 
+ Container gis_app-nginx-1 Starting 
+ Container gis_app-nginx-1 Started 

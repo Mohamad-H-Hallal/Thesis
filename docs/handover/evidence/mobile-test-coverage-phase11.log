@@ -1,0 +1,28 @@
+00:00 +0: loading D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_integration_test.dart
+00:00 +0: D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_integration_test.dart: Phase 5 sync queue transitions pending -> processing -> success
+00:00 +1: D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_performance_test.dart: sync engine processes small pending batch within baseline window
+00:00 +2: D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_performance_test.dart: sync engine processes small pending batch within baseline window
+00:00 +3: D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_performance_test.dart: sync engine processes small pending batch within baseline window
+00:00 +4: D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_performance_test.dart: sync engine processes small pending batch within baseline window
+00:00 +5: D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_performance_test.dart: sync engine processes small pending batch within baseline window
+00:01 +6: D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_performance_test.dart: sync engine processes small pending batch within baseline window
+00:01 +7: D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_performance_test.dart: sync engine processes small pending batch within baseline window
+00:01 +8: D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_performance_test.dart: sync engine processes small pending batch within baseline window
+00:01 +9: D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_performance_test.dart: sync engine processes small pending batch within baseline window
+00:01 +10: D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_performance_test.dart: sync engine processes small pending batch within baseline window
+00:02 +11: D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_performance_test.dart: sync engine processes small pending batch within baseline window
+00:02 +12: D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_performance_test.dart: sync engine processes small pending batch within baseline window
+00:02 +13: D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_performance_test.dart: sync engine processes small pending batch within baseline window
+00:02 +14: D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_performance_test.dart: sync engine processes small pending batch within baseline window
+00:02 +15: D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_performance_test.dart: sync engine processes small pending batch within baseline window
+00:02 +16: D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_performance_test.dart: sync engine processes small pending batch within baseline window
+00:02 +17: D:/GIS_APP/apps/mobile/test/features/exports/presentation/controllers/exports_controller_test.dart: request adds pending export job
+00:02 +18: D:/GIS_APP/apps/mobile/test/core/sync/sync_engine_integration_test.dart: Phase 5 sync queue transitions failed item moves to dead-letter when max attempts is reached
+00:02 +19: D:/GIS_APP/apps/mobile/test/features/exports/presentation/controllers/exports_controller_test.dart: queue transitions pending -> processing -> failed
+00:03 +20: D:/GIS_APP/apps/mobile/test/features/exports/presentation/controllers/exports_controller_test.dart: queue transitions pending -> processing -> failed
+00:03 +21: D:/GIS_APP/apps/mobile/test/features/exports/presentation/controllers/exports_controller_test.dart: queue transitions pending -> processing -> failed
+00:03 +22: D:/GIS_APP/apps/mobile/test/features/exports/presentation/controllers/exports_controller_test.dart: queue transitions pending -> processing -> failed
+00:03 +23: D:/GIS_APP/apps/mobile/test/features/exports/presentation/controllers/exports_controller_test.dart: queue transitions pending -> processing -> failed
+00:04 +24: D:/GIS_APP/apps/mobile/test/features/exports/presentation/controllers/exports_controller_test.dart: completed export can be marked downloaded
+00:06 +25: D:/GIS_APP/apps/mobile/test/widget_test.dart: login screen renders required fields
+00:08 +26: All tests passed!

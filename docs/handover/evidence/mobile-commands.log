@@ -1,0 +1,23 @@
+# Mobile Command Evidence (Phase 11)
+
+Executed in `apps/mobile`:
+
+1. `flutter pub get`
+- Result: PASS
+- Source: `docs/handover/evidence/mobile-pub-get-phase11.log`
+
+2. `flutter analyze`
+- Result: PASS (`No issues found`)
+- Source: `docs/handover/evidence/mobile-analyze-phase11.log`
+
+3. `flutter test --coverage`
+- Result: PASS
+- Source: `docs/handover/evidence/mobile-test-coverage-phase11.log`
+
+4. `flutter build web`
+- Result: PASS
+- Source: `docs/handover/evidence/mobile-build-web-phase11.log`
+
+5. `flutter build apk`
+- Result: PASS
+- Source: `docs/handover/evidence/mobile-build-apk-phase11.log`

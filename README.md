@@ -45,6 +45,32 @@ docker compose --profile tools up -d adminer
 - PostGIS: `localhost:5433`
 - Adminer: `http://localhost:8080`
 
+## Production-Targeted Docker Compose (Single Server)
+
+```powershell
+cd D:\GIS_APP
+Copy-Item .env.example .env
+# Replace placeholder secrets before deployment
+docker compose -f docker-compose.yml up -d --build
+docker compose -f docker-compose.yml ps
+```
+
+Environment template options:
+- `.env.dev.example`
+- `.env.staging.example`
+- `.env.prod.example`
+
+Smoke test:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke-test.ps1 -SkipUp
+```
+
+Services:
+- `nginx` exposed on `http://localhost` (port 80)
+- `api` internal on `3000/tcp`
+- `db` internal on `5432/tcp`
+
 ## 2) Run API (Express + Node.js)
 
 ```bash

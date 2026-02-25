@@ -1,53 +1,77 @@
-# Release Checklist
+# Release Checklist (Phase 11 Complete)
 
-## Pre-Release Gates
-- [x] Database container starts and is healthy.
-- [x] Migrations apply on clean DB.
-- [x] Migration drift check returns no pending migrations.
-- [x] OpenAPI contract check passes.
-- [x] Backend lint passes.
-- [x] Backend typecheck passes.
-- [x] Backend tests pass.
-- [x] Backend build passes.
-- [x] Backend production dependency audit reports zero vulnerabilities.
-- [x] Mobile dependency resolution passes.
-- [x] Mobile analyze passes.
-- [x] Mobile tests pass with coverage report.
-- [x] Mobile coverage gate passes (`>=19%`).
-- [x] Mobile web build passes.
-- [x] Mobile APK build passes.
-- [x] Android Gradle commands pass using JDK 17.
+## Engineering Gates
+- [x] Backend `npm ci`
+- [x] Backend `npm run lint`
+- [x] Backend `npm run typecheck`
+- [x] Backend `npm run test:ci`
+- [x] Backend `npm run build`
+- [x] Backend `npm run audit:prod` (0 vulnerabilities)
+- [x] Mobile `flutter pub get`
+- [x] Mobile `flutter analyze`
+- [x] Mobile `flutter test --coverage`
+- [x] Mobile `flutter build web`
+- [x] Mobile `flutter build apk`
+- [x] DB migrations from scratch succeed
+- [x] DB drift check on existing state succeeds (no pending migrations)
+- [x] OpenAPI contract check passes and uses `/api/v1`
+- [x] Public role escalation blocked in signup
+- [x] Production metrics endpoint protected by token
 
-## Verification Commands
-Backend:
-- `npm run migrate`
-- `npm run openapi:check`
-- `npm run lint`
-- `npm run typecheck`
-- `npm run test:ci`
-- `npm run build`
-- `npm run audit:prod`
+## Docker Release Gates
+- [x] `docker compose -f docker-compose.yml up -d --build`
+- [x] `docker compose -f docker-compose.yml ps` shows `db` and `api` healthy
+- [x] `migrate` service completes successfully
+- [x] Nginx serves `/api/v1` and `/docs/openapi.yaml`
+- [x] Smoke test passes end-to-end
 
-Mobile:
-- `flutter pub get`
-- `flutter analyze`
-- `flutter test --coverage`
-- `dart run tool/check_coverage.dart --min-line 19`
-- `flutter build web`
-- `flutter build apk`
-- `flutter doctor -v`
+## Verification Commands (Production Stack)
+```powershell
+cd D:\GIS_APP
+docker compose -f docker-compose.yml up -d --build
+docker compose -f docker-compose.yml ps
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke-test.ps1 -SkipUp
+```
 
-Android:
-- `.\gradlew -v`
-- `.\gradlew tasks`
-- `.\gradlew assembleDebug`
+## Rollback Steps
+1. Identify last known-good release tag/image.
+2. Pull previous release branch/tag.
+3. Recreate services with previous artifact:
+```powershell
+git checkout <known-good-tag>
+docker compose -f docker-compose.yml down
+docker compose -f docker-compose.yml up -d --build
+```
+4. If schema/data incompatibility occurred, restore DB and storage backups:
+```powershell
+cd infra\db\scripts
+./restore.ps1 -DumpFile ..\backups\<known-good>.dump -EnvFile ..\.env
+```
+5. Re-run smoke test before reopening traffic.
 
-## Handover Completion Conditions
-- [x] All sprint acceptance criteria satisfied.
-- [x] Phase 0-10 engineering scope complete.
-- [x] Phase 11 marked partial only for operational rollout/training execution.
-- [x] Handover evidence logs archived under `docs/handover/evidence`.
+## Emergency Stop / Safe Recovery
+```powershell
+docker compose -f docker-compose.yml stop
+docker compose -f docker-compose.yml logs --tail=200 api
+docker compose -f docker-compose.yml logs --tail=200 db
+docker compose -f docker-compose.yml up -d
+```
 
-## Release Decision
-- Engineering release decision: GO.
-- Operational rollout decision: proceed per ministry governance and training schedule.
+## Evidence Files
+- `docs/handover/evidence/backend-npm-ci.log`
+- `docs/handover/evidence/backend-lint-phase11.log`
+- `docs/handover/evidence/backend-typecheck-phase11.log`
+- `docs/handover/evidence/backend-test-ci-phase11.log`
+- `docs/handover/evidence/backend-build-phase11.log`
+- `docs/handover/evidence/backend-audit-prod-phase11.log`
+- `docs/handover/evidence/mobile-pub-get-phase11.log`
+- `docs/handover/evidence/mobile-analyze-phase11.log`
+- `docs/handover/evidence/mobile-test-coverage-phase11.log`
+- `docs/handover/evidence/mobile-build-web-phase11.log`
+- `docs/handover/evidence/mobile-build-apk-phase11.log`
+- `docs/handover/evidence/db-migrate-from-scratch-phase11.log`
+- `docs/handover/evidence/db-migrate-drift-check-phase11.log`
+- `docs/handover/evidence/docker-up.log`
+- `docs/handover/evidence/docker-endpoints-phase11.log`
+- `docs/handover/evidence/smoke-test.log`
+- `docs/handover/evidence/docker-down-after-smoke-phase11.log`

@@ -1,0 +1,7 @@
+
+> lebanese-gis-backend@1.0.0 migrate
+> tsx src/db/migrate.ts
+
+2026-02-25 22:05:20 [[32minfo[39m]: Database connected successfully
+2026-02-25 22:05:20 [[32minfo[39m]: No pending migrations
+2026-02-25 22:05:20 [[32minfo[39m]: Migration run complete {"appliedCount":0,"applied":[]}

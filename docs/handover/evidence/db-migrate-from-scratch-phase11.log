@@ -1,0 +1,10 @@
+
+> lebanese-gis-backend@1.0.0 migrate
+> tsx src/db/migrate.ts
+
+2026-02-25 22:05:06 [[32minfo[39m]: Database connected successfully
+2026-02-25 22:05:06 [[32minfo[39m]: Migration applied: {"file":"0001_extensions.sql"}
+2026-02-25 22:05:06 [[32minfo[39m]: Migration applied: {"file":"0002_core_schema.sql"}
+2026-02-25 22:05:06 [[32minfo[39m]: Migration applied: {"file":"0003_indexes.sql"}
+2026-02-25 22:05:06 [[32minfo[39m]: Migration applied: {"file":"0004_phase3_geospatial_constraints.sql"}
+2026-02-25 22:05:06 [[32minfo[39m]: Migration run complete {"appliedCount":4,"applied":["0001_extensions.sql","0002_core_schema.sql","0003_indexes.sql","0004_phase3_geospatial_constraints.sql"]}

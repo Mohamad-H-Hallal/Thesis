@@ -1,0 +1,13 @@
+# Exclude local build artifacts from Docker context
+**/node_modules
+**/.dart_tool
+**/build
+**/dist
+**/coverage
+**/.gradle
+**/.idea
+**/.vscode
+**/.DS_Store
+**/*.log
+
+# Keep migration SQL and docs in context

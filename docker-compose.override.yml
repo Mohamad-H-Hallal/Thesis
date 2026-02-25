@@ -1,0 +1,52 @@
+services:
+  db:
+    ports:
+      - "5433:5432"
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile.dev
+    working_dir: /workspace/apps/api
+    command: ["npm", "run", "migrate"]
+    volumes:
+      - .:/workspace
+      - api_node_modules:/workspace/apps/api/node_modules
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile.dev
+    working_dir: /workspace/apps/api
+    command: ["npm", "run", "dev"]
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/workspace
+      - api_node_modules:/workspace/apps/api/node_modules
+      - api_uploads:/workspace/apps/api/uploads
+      - api_exports:/workspace/apps/api/exports
+
+  nginx:
+    ports:
+      - "8088:8080"
+
+  adminer:
+    image: adminer:4
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    profiles:
+      - devtools
+
+volumes:
+  api_node_modules:

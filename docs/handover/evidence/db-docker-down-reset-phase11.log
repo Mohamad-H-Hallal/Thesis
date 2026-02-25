@@ -1,0 +1,8 @@
+ Container gis_app_db Stopping 
+ Container gis_app_db Stopped 
+ Container gis_app_db Removing 
+ Container gis_app_db Removed 
+ Network db_default Removing 
+ Volume db_postgis_data Removing 
+ Network db_default Resource is still in use 
+ Volume db_postgis_data Removed 

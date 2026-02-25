@@ -1,0 +1,6 @@
+ Volume db_postgis_data Creating 
+ Volume db_postgis_data Created 
+ Container gis_app_db Creating 
+ Container gis_app_db Created 
+ Container gis_app_db Starting 
+ Container gis_app_db Started 

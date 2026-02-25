@@ -1,0 +1,120 @@
+PASS test/security.auth.test.js
+  ● Console
+
+    console.log
+      [dotenv@17.3.1] injecting env (35) from .env -- tip: 🤖 agentic secret storage: https://dotenvx.com/as2
+
+      at _log (node_modules/dotenv/lib/main.js:139:11)
+
+    console.log
+      2026-02-25 21:59:47 [info]: HTTP request completed {"requestId":"a8dbc12c-3e02-4175-bc04-a57d73dd145f","method":"POST","path":"/api/v1/auth/register","statusCode":400,"durationMs":21,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:47 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:19:59:47 +0000] "POST /api/v1/auth/register HTTP/1.1" 400 177 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:48 [info]: Database connected successfully
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:48 [info]: User logged in: {"userId":"380d825c-f1a6-43da-9858-333b89f5b80b","email":"security-admin-1772049587701-36586@example.com"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:48 [info]: HTTP request completed {"requestId":"84128f38-f6ea-4fdc-b421-cbca0a2accdd","method":"POST","path":"/api/v1/auth/login","statusCode":200,"durationMs":314,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:48 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:19:59:48 +0000] "POST /api/v1/auth/login HTTP/1.1" 200 664 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:48 [info]: User registered: {"userId":"21343efb-3a92-4a4c-a7dd-e38255313d1f","email":"security-contributor-1772049588326-56499@example.com"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:48 [info]: HTTP request completed {"requestId":"16e738ea-57c0-4c6c-a13d-875d001e358b","method":"POST","path":"/api/v1/auth/register","statusCode":201,"durationMs":286,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:48 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:19:59:48 +0000] "POST /api/v1/auth/register HTTP/1.1" 201 742 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:48 [info]: User registered: {"userId":"352a9f83-41bd-46d6-91b9-ff642bb89fd8","email":"security-target-1772049588618-58592@example.com"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:48 [info]: HTTP request completed {"requestId":"668397c5-900d-4bc5-bf49-5376bedfb0b0","method":"POST","path":"/api/v1/auth/register","statusCode":201,"durationMs":280,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:48 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:19:59:48 +0000] "POST /api/v1/auth/register HTTP/1.1" 201 732 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:49 [info]: User logged in: {"userId":"21343efb-3a92-4a4c-a7dd-e38255313d1f","email":"security-contributor-1772049588326-56499@example.com"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:49 [info]: HTTP request completed {"requestId":"0a994892-6a5f-4ec2-8ce9-ae0ddee10d89","method":"POST","path":"/api/v1/auth/login","statusCode":200,"durationMs":268,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:49 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:19:59:49 +0000] "POST /api/v1/auth/login HTTP/1.1" 200 690 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:49 [info]: HTTP request completed {"requestId":"246c442e-3f9a-4bae-9cfb-0de59b65cf79","method":"PUT","path":"/api/v1/users/352a9f83-41bd-46d6-91b9-ff642bb89fd8","statusCode":403,"durationMs":4,"userId":"21343efb-3a92-4a4c-a7dd-e38255313d1f","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:49 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:19:59:49 +0000] "PUT /api/v1/users/352a9f83-41bd-46d6-91b9-ff642bb89fd8 HTTP/1.1" 403 68 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:49 [info]: User updated by admin: {"userId":"352a9f83-41bd-46d6-91b9-ff642bb89fd8","adminId":"380d825c-f1a6-43da-9858-333b89f5b80b"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:49 [info]: HTTP request completed {"requestId":"ca355333-6b47-4bf9-8184-71a86c39e2c3","method":"PUT","path":"/api/v1/users/352a9f83-41bd-46d6-91b9-ff642bb89fd8","statusCode":200,"durationMs":8,"userId":"380d825c-f1a6-43da-9858-333b89f5b80b","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:49 [info]: ::ffff:127.0.0.1 - - [25/Feb/2026:19:59:49 +0000] "PUT /api/v1/users/352a9f83-41bd-46d6-91b9-ff642bb89fd8 HTTP/1.1" 200 250 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-25 21:59:49 [info]: Database pool closed
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+PASS test/security.metrics.test.js
+
+Test Suites: 2 passed, 2 total
+Tests:       5 passed, 5 total
+Snapshots:   0 total
+Time:        3.137 s, estimated 4 s
+Ran all test suites matching test/security.auth.test.js|test/security.metrics.test.js.
