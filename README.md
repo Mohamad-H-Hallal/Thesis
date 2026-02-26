@@ -69,6 +69,12 @@ docker compose up -d
 
 - PostGIS: `localhost:5433`
 - Adminer: `http://localhost:8080`
+- If `5433` is already in use on Windows, identify/stop the owner first:
+```powershell
+docker ps --filter "publish=5433"
+netstat -ano | findstr :5433
+```
+- If you cannot free `5433`, change `infra/db/docker-compose.yml` port mapping before starting.
 
 ## API Local (without Docker)
 
@@ -91,8 +97,11 @@ Health:
 ```powershell
 cd apps\mobile
 flutter pub get
-flutter run -d chrome --dart-define=APP_FLAVOR=dev --dart-define=API_BASE_URL=http://localhost:3000
+flutter run -d chrome --web-port 5050 --dart-define=APP_FLAVOR=dev --dart-define=API_BASE_URL=http://localhost:3000
 ```
+
+Web API prerequisite:
+- Ensure API is reachable at `http://localhost:3000/health` before launching Chrome.
 
 Android emulator:
 
