@@ -80,7 +80,7 @@ Checks:
 Behavior:
 
 - pending contributor login is blocked with:
-  - `Your contributor request is still pending approval.`
+  - `Your request is still pending approval. You cannot log in yet.`
 - rejected contributor can log in as `viewer`
 - successful login updates `"user".last_login`
 

@@ -41,7 +41,8 @@ GoRouter createRouter(Ref ref) {
       }
 
       final allowedPaths = _allowedPathsForRole(role);
-      final isAllowed = path == AppRoutes.app ||
+      final isAllowed =
+          path == AppRoutes.app ||
           allowedPaths.any((allowedPath) => path.startsWith(allowedPath));
       if (!isAllowed) {
         return role == UserRole.admin ? AppRoutes.projects : AppRoutes.projects;
@@ -94,6 +95,11 @@ GoRouter createRouter(Ref ref) {
             _buildPage(state, AppShellScreen(location: state.uri.path)),
       ),
       GoRoute(
+        path: AppRoutes.assignedProjects,
+        pageBuilder: (_, state) =>
+            _buildPage(state, AppShellScreen(location: state.uri.path)),
+      ),
+      GoRoute(
         path: AppRoutes.map,
         pageBuilder: (_, state) =>
             _buildPage(state, AppShellScreen(location: state.uri.path)),
@@ -136,6 +142,7 @@ GoRouter createRouter(Ref ref) {
             state,
             AppScaffold(
               title: 'Project details',
+              showBackButton: true,
               body: ProjectDetailsScreen(projectId: projectId),
             ),
           );
@@ -149,6 +156,7 @@ GoRouter createRouter(Ref ref) {
             state,
             AppScaffold(
               title: 'Add Feature',
+              showBackButton: true,
               body: AddFeatureScreen(initialProjectId: projectId),
             ),
           );
@@ -163,6 +171,8 @@ Set<String> _allowedPathsForRole(UserRole? role) {
     case UserRole.admin:
       return <String>{
         AppRoutes.projects,
+        AppRoutes.assignedProjects,
+        AppRoutes.map,
         AppRoutes.reviewQueue,
         AppRoutes.exports,
         AppRoutes.notifications,
@@ -178,6 +188,7 @@ Set<String> _allowedPathsForRole(UserRole? role) {
     case null:
       return <String>{
         AppRoutes.projects,
+        AppRoutes.assignedProjects,
         AppRoutes.map,
         AppRoutes.drafts,
         AppRoutes.submissions,

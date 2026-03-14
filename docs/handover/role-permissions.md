@@ -24,7 +24,7 @@ The system user role enum is fixed to:
 | Request exports | Yes | Yes | Yes, if allowed by API route | No |
 | Collect field data | Yes, if assigned | Yes, if assigned | Yes, if assigned | No |
 | Read assigned projects | Yes | Yes | Yes | No |
-| Read viewer-published projects | Yes | Yes | No | Yes |
+| Read viewer-published projects | Yes | Yes | Yes | Yes |
 
 ## Protected Super Admin
 
@@ -42,7 +42,8 @@ Protection rules enforced in service logic:
 
 Admin:
 
-- `Home/Projects`
+- `Projects`
+- `Map`
 - `Review Queue`
 - `Exports`
 - `Notifications`
@@ -50,16 +51,20 @@ Admin:
 
 Contributor:
 
-- `Home/Projects`
+- `Projects`
+- `Assigned Projects`
 - `Map`
-- `My Drafts`
-- `My Submissions`
+- `Drafts`
+- `Submissions`
 - `Notifications`
 - `Profile`
 
 Viewer:
 
-- `Home/Projects`
+- `Projects`
 - `Notifications`
 - `Profile`
 - Viewer project access is restricted to projects with `visible_to_viewers = true` and status `active` or `completed`.
+- Contributor project access is split:
+  - `Projects`: viewer-visible public projects in read-only mode
+  - `Assigned Projects`: projects where the contributor has an approved assignment

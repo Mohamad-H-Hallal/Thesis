@@ -12,6 +12,7 @@ import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../auth/domain/auth_models.dart';
+import '../../domain/project.dart';
 
 class ProjectDetailsScreen extends ConsumerStatefulWidget {
   const ProjectDetailsScreen({required this.projectId, super.key});
@@ -39,6 +40,9 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
             visibleToViewers: value,
           );
       ref.invalidate(projectsProvider);
+      ref.invalidate(projectListProvider(ProjectViewScope.public));
+      ref.invalidate(projectListProvider(ProjectViewScope.assigned));
+      ref.invalidate(projectListProvider(ProjectViewScope.all));
       ref.invalidate(projectByIdProvider(widget.projectId));
       if (mounted) {
         AppSnackbar.showSuccess(
@@ -85,6 +89,10 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                 'The requested project is unavailable or no longer assigned.',
           );
         }
+
+        final hasContributorAssignment =
+            role == UserRole.contributor &&
+            project.hasApprovedCurrentUserAssignment;
 
         return ListView(
           children: [
@@ -168,7 +176,9 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                       value: '${project.pendingReviews}',
                       icon: Icons.pending_actions_outlined,
                     ),
-                    if (role == UserRole.viewer)
+                    if (role == UserRole.viewer ||
+                        (role == UserRole.contributor &&
+                            !hasContributorAssignment))
                       const _MetaTile(
                         label: 'Access',
                         value: 'Read only',
@@ -179,55 +189,72 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
               ),
             ),
             const SizedBox(height: AppSpacing.md),
-            if (role == UserRole.contributor)
-              AnimatedReveal(
-                delay: const Duration(milliseconds: 130),
-                child: Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
+            AnimatedReveal(
+              delay: const Duration(milliseconds: 130),
+              child: Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  if (role != UserRole.viewer)
                     FilledButton.icon(
-                      onPressed: () => context.go(AppRoutes.map),
+                      onPressed: () =>
+                          context.push(AppRoutes.mapForProject(project.id)),
                       icon: const Icon(Icons.map_outlined),
                       label: const Text('Open Map'),
                     ),
+                  if (role == UserRole.contributor && hasContributorAssignment)
                     FilledButton.icon(
-                      onPressed: () =>
-                          context.go(AppRoutes.addFeatureForProject(project.id)),
+                      onPressed: () => context.push(
+                        AppRoutes.addFeatureForProject(project.id),
+                      ),
                       icon: const Icon(Icons.add_location_alt_outlined),
                       label: const Text('New Feature'),
                     ),
+                  if (role == UserRole.contributor && hasContributorAssignment)
                     FilledButton.icon(
                       onPressed: () => context.go(AppRoutes.drafts),
                       icon: const Icon(Icons.description_outlined),
                       label: const Text('Drafts'),
                     ),
-                  ],
-                ),
+                ],
               ),
+            ),
             if (role == UserRole.admin)
               AnimatedReveal(
-                delay: const Duration(milliseconds: 130),
+                delay: const Duration(milliseconds: 160),
                 child: Wrap(
                   spacing: 10,
                   runSpacing: 10,
                   children: [
                     FilledButton.icon(
-                      onPressed: () => context.go(AppRoutes.reviewQueue),
+                      onPressed: () => context.push(AppRoutes.reviewQueue),
                       icon: const Icon(Icons.rate_review_outlined),
                       label: const Text('Review Queue'),
                     ),
                     FilledButton.icon(
-                      onPressed: () => context.go(AppRoutes.exports),
+                      onPressed: () => context.push(AppRoutes.exports),
                       icon: const Icon(Icons.file_download_outlined),
                       label: const Text('Exports'),
                     ),
                   ],
                 ),
               ),
+            if (role == UserRole.contributor && !hasContributorAssignment)
+              const AnimatedReveal(
+                delay: Duration(milliseconds: 190),
+                child: AppCard(
+                  child: ListTile(
+                    leading: Icon(Icons.lock_outline),
+                    title: Text('Assignment required'),
+                    subtitle: Text(
+                      'This public project is visible to you, but collection actions stay disabled until an admin approves your assignment.',
+                    ),
+                  ),
+                ),
+              ),
             if (role == UserRole.viewer)
               const AnimatedReveal(
-                delay: Duration(milliseconds: 130),
+                delay: Duration(milliseconds: 190),
                 child: AppCard(
                   child: ListTile(
                     leading: Icon(Icons.info_outline),

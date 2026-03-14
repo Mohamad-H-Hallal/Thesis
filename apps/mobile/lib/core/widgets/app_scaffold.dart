@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../constants/design_tokens.dart';
 import 'offline_banner.dart';
@@ -12,6 +13,7 @@ class AppScaffold extends StatelessWidget {
     this.drawer,
     this.bottomNavigationBar,
     this.showOfflineBanner = true,
+    this.showBackButton,
     super.key,
   });
 
@@ -22,12 +24,34 @@ class AppScaffold extends StatelessWidget {
   final Widget? drawer;
   final Widget? bottomNavigationBar;
   final bool showOfflineBanner;
+  final bool? showBackButton;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final router = GoRouter.maybeOf(context);
+    final canPop =
+        Navigator.of(context).canPop() || (router?.canPop() ?? false);
+    final shouldShowBackButton = showBackButton ?? canPop;
     return Scaffold(
-      appBar: AppBar(title: Text(title), actions: actions),
+      appBar: AppBar(
+        automaticallyImplyLeading: shouldShowBackButton,
+        leading: shouldShowBackButton
+            ? IconButton(
+                tooltip: 'Back',
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () {
+                  if (router?.canPop() ?? false) {
+                    router!.pop();
+                    return;
+                  }
+                  Navigator.of(context).maybePop();
+                },
+              )
+            : null,
+        title: Text(title),
+        actions: actions,
+      ),
       drawer: drawer,
       floatingActionButton: floatingActionButton,
       bottomNavigationBar: bottomNavigationBar,

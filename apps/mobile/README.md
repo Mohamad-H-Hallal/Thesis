@@ -15,7 +15,7 @@ Professional Flutter UI foundation for the Lebanese ministry GIS collector.
 ## Run
 ```bash
 flutter pub get
-flutter run -d chrome --dart-define=APP_FLAVOR=dev --dart-define=API_BASE_URL=http://localhost:3000
+flutter run -d chrome --web-port 5050 --dart-define=APP_FLAVOR=dev --dart-define=API_BASE_URL=http://localhost:3000
 ```
 
 Optional UI-only mock mode (dev only):
@@ -47,6 +47,7 @@ dart format lib test
 - `/reset-password`
 - `/app` (shell with tabs)
 - `/app/projects`
+- `/app/assigned-projects`
 - `/app/map`
 - `/app/drafts`
 - `/app/submissions`
@@ -59,11 +60,11 @@ dart format lib test
 
 ## Role-based shell navigation
 - Admin:
-  - Home/Projects, Review Queue, Exports, Notifications, Profile
+  - Projects, Map, Review Queue, Exports, Notifications, Profile
 - Contributor:
-  - Home/Projects, Map, My Drafts, My Submissions, Notifications, Profile
+  - Projects, Assigned Projects, Map, Drafts, Submissions, Notifications, Profile
 - Viewer:
-  - Home/Projects, Notifications, Profile
+  - Projects, Notifications, Profile
 
 ## Branding assets
 - App name in UI: `Lebanon GIS Collector`
@@ -74,8 +75,8 @@ dart format lib test
 
 ## Notes
 - Auth flow is wired to real backend endpoints by default (`/api/v1/auth/*`).
-- Mock data repositories are development-only and controlled by `USE_MOCK_DATA`.
-- No AI logic and no real map drawing yet.
+- Mock auth/data repositories are development-only and controlled by `USE_MOCK_AUTH` and `USE_MOCK_DATA`.
+- The map screen now renders a Lebanon basemap with project feature overlays when geometry exists.
 
 ## Phase 5 (offline-first core) added
 - Local offline store with SQLite on mobile/desktop and memory fallback on web.

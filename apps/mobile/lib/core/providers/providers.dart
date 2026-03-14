@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../config/app_env.dart';
 import '../../features/auth/data/fake_auth_repository.dart';
 import '../../features/auth/data/real_auth_repository.dart';
+import '../../features/auth/domain/auth_models.dart';
 import '../../features/auth/domain/auth_repository.dart';
 import '../../features/auth/presentation/controllers/auth_controller.dart';
 import '../../features/drafts/data/mock_drafts_repository.dart';
@@ -13,6 +14,8 @@ import '../../features/exports/data/api_exports_repository.dart';
 import '../../features/exports/data/mock_exports_repository.dart';
 import '../../features/exports/domain/exports_repository.dart';
 import '../../features/exports/presentation/controllers/exports_controller.dart';
+import '../../features/map/data/api_map_repository.dart';
+import '../../features/map/domain/map_feature.dart';
 import '../../features/notifications/data/api_notifications_repository.dart';
 import '../../features/notifications/data/mock_notifications_repository.dart';
 import '../../features/notifications/domain/app_notification.dart';
@@ -61,6 +64,10 @@ final projectsRepositoryProvider = Provider<ProjectsRepository>((ref) {
   return ApiProjectsRepository(ref.watch(apiClientProvider));
 });
 
+final mapRepositoryProvider = Provider<ApiMapRepository>((ref) {
+  return ApiMapRepository(ref.watch(apiClientProvider));
+});
+
 final draftsRepositoryProvider = Provider<MockDraftsRepository>((ref) {
   return MockDraftsRepository();
 });
@@ -72,7 +79,9 @@ final exportsRepositoryProvider = Provider<ExportsRepository>((ref) {
   return ApiExportsRepository(ref.watch(apiClientProvider));
 });
 
-final notificationsRepositoryProvider = Provider<NotificationsRepository>((ref) {
+final notificationsRepositoryProvider = Provider<NotificationsRepository>((
+  ref,
+) {
   if (AppEnv.useMockData) {
     return MockNotificationsRepository();
   }
@@ -109,7 +118,11 @@ final offlineBootstrapProvider = FutureProvider<void>((ref) async {
 
   final seedProjects = await ref
       .read(projectsRepositoryProvider)
-      .fetchAssignedProjects(userId: session.user.id, role: session.user.role);
+      .fetchProjects(
+        userId: session.user.id,
+        role: session.user.role,
+        scope: _defaultOperationalProjectScope(session.user.role),
+      );
   final seedDraftItems = await ref.read(draftsRepositoryProvider).fetchDrafts();
 
   final seedDrafts = seedDraftItems
@@ -143,9 +156,10 @@ final projectsProvider = FutureProvider<List<ProjectSummary>>((ref) async {
   try {
     final remoteProjects = await ref
         .read(projectsRepositoryProvider)
-        .fetchAssignedProjects(
+        .fetchProjects(
           userId: session.user.id,
           role: session.user.role,
+          scope: _defaultOperationalProjectScope(session.user.role),
         );
     await localStore.cacheProjects(remoteProjects);
     return remoteProjects;
@@ -154,17 +168,107 @@ final projectsProvider = FutureProvider<List<ProjectSummary>>((ref) async {
   }
 });
 
+final projectListProvider =
+    FutureProvider.family<List<ProjectSummary>, ProjectViewScope>((
+      ref,
+      scope,
+    ) async {
+      final authState = ref.watch(authControllerProvider);
+      final session = authState.session;
+      if (session == null) {
+        return const <ProjectSummary>[];
+      }
+
+      final effectiveScope = _effectiveProjectScopeForRole(
+        role: session.user.role,
+        requestedScope: scope,
+      );
+
+      return ref
+          .read(projectsRepositoryProvider)
+          .fetchProjects(
+            userId: session.user.id,
+            role: session.user.role,
+            scope: effectiveScope,
+          );
+    });
+
+final mapProjectsProvider = FutureProvider<List<ProjectSummary>>((ref) async {
+  final authState = ref.watch(authControllerProvider);
+  final session = authState.session;
+  if (session == null) {
+    return const <ProjectSummary>[];
+  }
+
+  if (session.user.role == UserRole.admin) {
+    return ref
+        .read(projectsRepositoryProvider)
+        .fetchProjects(
+          userId: session.user.id,
+          role: session.user.role,
+          scope: ProjectViewScope.all,
+        );
+  }
+
+  if (session.user.role == UserRole.viewer) {
+    return ref
+        .read(projectsRepositoryProvider)
+        .fetchProjects(
+          userId: session.user.id,
+          role: session.user.role,
+          scope: ProjectViewScope.public,
+        );
+  }
+
+  final lists = await Future.wait(<Future<List<ProjectSummary>>>[
+    ref
+        .read(projectsRepositoryProvider)
+        .fetchProjects(
+          userId: session.user.id,
+          role: session.user.role,
+          scope: ProjectViewScope.public,
+        ),
+    ref
+        .read(projectsRepositoryProvider)
+        .fetchProjects(
+          userId: session.user.id,
+          role: session.user.role,
+          scope: ProjectViewScope.assigned,
+        ),
+  ]);
+
+  final merged = <String, ProjectSummary>{};
+  for (final list in lists) {
+    for (final project in list) {
+      merged[project.id] = project;
+    }
+  }
+  return merged.values.toList(growable: false);
+});
+
+final projectMapFeaturesProvider =
+    FutureProvider.family<List<MapFeatureSummary>, String>((
+      ref,
+      projectId,
+    ) async {
+      if (projectId.isEmpty) {
+        return const <MapFeatureSummary>[];
+      }
+      return ref.read(mapRepositoryProvider).fetchProjectFeatures(projectId);
+    });
+
 final projectByIdProvider = FutureProvider.family<ProjectSummary?, String>((
   ref,
   id,
 ) async {
-  final projects = await ref.watch(projectsProvider.future);
-  for (final project in projects) {
-    if (project.id == id) {
-      return project;
-    }
+  final authState = ref.watch(authControllerProvider);
+  final session = authState.session;
+  if (session == null) {
+    return null;
   }
-  return null;
+  return ref
+      .read(projectsRepositoryProvider)
+      .byId(id: id, userId: session.user.id, role: session.user.role);
 });
 
 final draftsProvider = FutureProvider<List<DraftItem>>((ref) async {
@@ -265,3 +369,32 @@ final reviewWorkflowServiceProvider = Provider<ReviewWorkflowService>((ref) {
 final routerProvider = Provider<GoRouter>((ref) {
   return createRouter(ref);
 });
+
+ProjectViewScope _defaultOperationalProjectScope(UserRole role) {
+  switch (role) {
+    case UserRole.admin:
+      return ProjectViewScope.all;
+    case UserRole.viewer:
+      return ProjectViewScope.public;
+    case UserRole.contributor:
+      return ProjectViewScope.assigned;
+  }
+}
+
+ProjectViewScope _effectiveProjectScopeForRole({
+  required UserRole role,
+  required ProjectViewScope requestedScope,
+}) {
+  switch (role) {
+    case UserRole.admin:
+      return requestedScope == ProjectViewScope.assigned
+          ? ProjectViewScope.all
+          : requestedScope;
+    case UserRole.viewer:
+      return ProjectViewScope.public;
+    case UserRole.contributor:
+      return requestedScope == ProjectViewScope.all
+          ? ProjectViewScope.assigned
+          : requestedScope;
+  }
+}

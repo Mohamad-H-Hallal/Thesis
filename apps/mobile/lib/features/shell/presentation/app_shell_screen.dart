@@ -13,6 +13,7 @@ import '../../exports/presentation/screens/exports_dashboard_screen.dart';
 import '../../map/presentation/screens/map_screen.dart';
 import '../../notifications/presentation/screens/notifications_screen.dart';
 import '../../profile/presentation/screens/profile_screen.dart';
+import '../../projects/domain/project.dart';
 import '../../projects/presentation/screens/home_projects_screen.dart';
 import '../../review/presentation/screens/review_queue_screen.dart';
 import '../../submissions/presentation/screens/my_submissions_screen.dart';
@@ -229,8 +230,22 @@ class AppShellScreen extends ConsumerWidget {
   }
 
   Widget _bodyForPath(String path, UserRole role) {
-    if (path == AppRoutes.projects) return const HomeProjectsScreen();
-    if (path == AppRoutes.map && role == UserRole.contributor) {
+    if (path == AppRoutes.projects) {
+      return HomeProjectsScreen(
+        scope: role == UserRole.admin
+            ? ProjectViewScope.all
+            : ProjectViewScope.public,
+        title: 'Projects',
+      );
+    }
+    if (path == AppRoutes.assignedProjects && role == UserRole.contributor) {
+      return const HomeProjectsScreen(
+        scope: ProjectViewScope.assigned,
+        title: 'Assigned Projects',
+      );
+    }
+    if (path == AppRoutes.map &&
+        (role == UserRole.contributor || role == UserRole.admin)) {
       return const MapScreen();
     }
     if (path == AppRoutes.drafts) {
@@ -258,9 +273,17 @@ class AppShellScreen extends ConsumerWidget {
         },
       );
     }
-    if (role == UserRole.admin) return const ReviewQueueScreen();
+    if (role == UserRole.admin) {
+      return const HomeProjectsScreen(
+        scope: ProjectViewScope.all,
+        title: 'Projects',
+      );
+    }
     if (role == UserRole.contributor) return const MySubmissionsScreen();
-    return const HomeProjectsScreen();
+    return const HomeProjectsScreen(
+      scope: ProjectViewScope.public,
+      title: 'Projects',
+    );
   }
 
   List<_ShellItem> _itemsForRole(UserRole role) {
@@ -282,10 +305,16 @@ class AppShellScreen extends ConsumerWidget {
     if (role == UserRole.admin) {
       return <_ShellItem>[
         const _ShellItem(
-          label: 'Home/Projects',
+          label: 'Projects',
           path: AppRoutes.projects,
-          icon: Icons.home_outlined,
-          selectedIcon: Icons.home,
+          icon: Icons.folder_outlined,
+          selectedIcon: Icons.folder,
+        ),
+        const _ShellItem(
+          label: 'Map',
+          path: AppRoutes.map,
+          icon: Icons.map_outlined,
+          selectedIcon: Icons.map,
         ),
         const _ShellItem(
           label: 'Review Queue',
@@ -306,10 +335,10 @@ class AppShellScreen extends ConsumerWidget {
     if (role == UserRole.viewer) {
       return <_ShellItem>[
         const _ShellItem(
-          label: 'Home/Projects',
+          label: 'Projects',
           path: AppRoutes.projects,
-          icon: Icons.home_outlined,
-          selectedIcon: Icons.home,
+          icon: Icons.folder_outlined,
+          selectedIcon: Icons.folder,
         ),
         ...base,
       ];
@@ -317,10 +346,16 @@ class AppShellScreen extends ConsumerWidget {
 
     return <_ShellItem>[
       const _ShellItem(
-        label: 'Home/Projects',
+        label: 'Projects',
         path: AppRoutes.projects,
-        icon: Icons.home_outlined,
-        selectedIcon: Icons.home,
+        icon: Icons.folder_outlined,
+        selectedIcon: Icons.folder,
+      ),
+      const _ShellItem(
+        label: 'Assigned Projects',
+        path: AppRoutes.assignedProjects,
+        icon: Icons.assignment_outlined,
+        selectedIcon: Icons.assignment,
       ),
       const _ShellItem(
         label: 'Map',
@@ -329,13 +364,13 @@ class AppShellScreen extends ConsumerWidget {
         selectedIcon: Icons.map,
       ),
       const _ShellItem(
-        label: 'My Drafts',
+        label: 'Drafts',
         path: AppRoutes.drafts,
         icon: Icons.edit_note_outlined,
         selectedIcon: Icons.edit_note,
       ),
       const _ShellItem(
-        label: 'My Submissions',
+        label: 'Submissions',
         path: AppRoutes.submissions,
         icon: Icons.upload_file_outlined,
         selectedIcon: Icons.upload_file,

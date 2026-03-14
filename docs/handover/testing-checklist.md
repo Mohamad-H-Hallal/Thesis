@@ -14,7 +14,7 @@ Executed results:
 
 - `PASS` widget coverage now asserts login failure keeps the user on `LoginScreen`, preserves entered values, and surfaces the auth error:
   - `apps/mobile/test/widget_test.dart`
-- `PASS` widget coverage now asserts role-based project home behavior and admin viewer-visibility toggle:
+- `PASS` widget coverage now asserts role-based public/assigned project home behavior and admin viewer-visibility toggle:
   - `apps/mobile/test/features/projects/presentation/project_visibility_widget_test.dart`
 - `PASS` widget coverage now asserts logout returns the routed app to login and pending contributor login shows the exact blocked-state message:
   - `apps/mobile/test/features/auth/presentation/auth_navigation_widget_test.dart`
@@ -94,10 +94,12 @@ Verify:
 - login shows user-friendly messages for wrong password, user not found, pending approval, and inactive account
 - logout clears session and returns to login
 - viewer cannot access contributor/admin shell routes
-- viewer home says `Visible Projects` and shows only admin-published projects
-- contributor home says `Assigned Projects` and shows assigned projects only
+- viewer home says `Projects` and shows only admin-published projects
+- contributor `Projects` shows only admin-published public projects
+- contributor `Assigned Projects` shows assigned projects only
 - admin sees review/export sections only
 - sync banner shows real queue/sync state instead of a placeholder
+- map shows the Lebanon basemap and feature overlays or a real empty state if no features exist
 
 ## Android Emulator
 
@@ -114,6 +116,7 @@ Verify:
 - contributor pending/approved/rejected messages match backend responses
 - role-based shell navigation matches the signed-in user role
 - viewer sees only admin-published projects
+- contributor sees both public `Projects` and `Assigned Projects`
 
 ## Manual Flow Order
 
@@ -134,7 +137,9 @@ These still require a human pass in Chrome because automated CLI launch cannot v
 - email field remains populated after auth failure
 - password field behavior matches the chosen UX
 - snackbar/banner copy is readable and non-duplicated
-- viewer home title renders as `Visible Projects`
-- contributor home title renders as `Assigned Projects`
+- viewer home title renders as `Projects`
+- contributor public tab renders as `Projects`
+- contributor assigned tab renders as `Assigned Projects`
 - admin project details screen shows the viewer-visibility toggle and success snackbar
 - sync banner wording and chip values are visually correct in the shell
+- map page chips, project selector, and back navigation are visually correct in Chrome

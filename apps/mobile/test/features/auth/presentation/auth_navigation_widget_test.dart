@@ -81,7 +81,8 @@ class _AuthenticatedAuthController extends AuthController {
 }
 
 class _UnauthenticatedAuthController extends AuthController {
-  _UnauthenticatedAuthController(AuthRepository repository) : super(repository) {
+  _UnauthenticatedAuthController(AuthRepository repository)
+    : super(repository) {
     state = const AuthState.unauthenticated();
   }
 }
@@ -105,29 +106,37 @@ class _FakeLocalStore implements LocalStore {
       const <LocalDraftFeature>[];
 
   @override
-  Future<List<SyncQueueItem>> getDueSyncItems(DateTime now, {int limit = 20}) async =>
-      const <SyncQueueItem>[];
+  Future<List<SyncQueueItem>> getDueSyncItems(
+    DateTime now, {
+    int limit = 20,
+  }) async => const <SyncQueueItem>[];
 
   @override
   Future<int> getPendingSyncCount() async => 0;
 
   @override
   Future<SyncQueueStats> getSyncQueueStats() async => const SyncQueueStats(
-        pending: 0,
-        processing: 0,
-        failed: 0,
-        conflict: 0,
-        deadLetter: 0,
-      );
+    pending: 0,
+    processing: 0,
+    failed: 0,
+    conflict: 0,
+    deadLetter: 0,
+  );
 
   @override
   Future<void> initialize() async {}
 
   @override
-  Future<void> markSyncConflict(SyncQueueItem item, {required String error}) async {}
+  Future<void> markSyncConflict(
+    SyncQueueItem item, {
+    required String error,
+  }) async {}
 
   @override
-  Future<void> markSyncDeadLetter(SyncQueueItem item, {required String error}) async {}
+  Future<void> markSyncDeadLetter(
+    SyncQueueItem item, {
+    required String error,
+  }) async {}
 
   @override
   Future<void> markSyncFailure(
@@ -160,7 +169,10 @@ class _FakeLocalStore implements LocalStore {
   }) async {}
 
   @override
-  Future<void> upsertDraft(LocalDraftFeature draft, {bool enqueueSync = true}) async {}
+  Future<void> upsertDraft(
+    LocalDraftFeature draft, {
+    bool enqueueSync = true,
+  }) async {}
 }
 
 SyncController _buildSyncController() {
@@ -215,8 +227,9 @@ void main() {
           ),
         ),
         syncControllerProvider.overrideWith((ref) => _buildSyncController()),
-        projectsProvider.overrideWith(
-          (ref) async => const <ProjectSummary>[],
+        projectsProvider.overrideWith((ref) async => const <ProjectSummary>[]),
+        projectListProvider.overrideWith(
+          (ref, scope) async => const <ProjectSummary>[],
         ),
       ],
     );
@@ -241,15 +254,16 @@ void main() {
     );
   });
 
-  testWidgets('pending contributor login shows blocked-state message',
-      (tester) async {
+  testWidgets('pending contributor login shows blocked-state message', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: <Override>[
           authRepositoryProvider.overrideWithValue(
             const _TestAuthRepository(
               loginFailure: AuthFailure(
-                'Your contributor request is still pending approval.',
+                'Your request is still pending approval. You cannot log in yet.',
                 statusCode: 403,
               ),
             ),
@@ -273,17 +287,26 @@ void main() {
 
     expect(find.text('Sign in'), findsOneWidget);
     expect(
-      find.text('Your contributor request is still pending approval.'),
+      find.text(
+        'Your request is still pending approval. You cannot log in yet.',
+      ),
       findsWidgets,
     );
     expect(
       tester.widget<TextFormField>(emailField).controller?.text,
       'contributor@example.com',
     );
+    expect(
+      ProviderScope.containerOf(
+        tester.element(find.byType(LoginScreen)),
+      ).read(authControllerProvider).status,
+      AuthStatus.unauthenticated,
+    );
   });
 
-  testWidgets('viewer is redirected away from contributor-only routes',
-      (tester) async {
+  testWidgets('viewer is redirected away from contributor-only routes', (
+    tester,
+  ) async {
     await tester.binding.setSurfaceSize(const Size(1440, 1200));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -298,8 +321,9 @@ void main() {
           ),
         ),
         syncControllerProvider.overrideWith((ref) => _buildSyncController()),
-        projectsProvider.overrideWith(
-          (ref) async => const <ProjectSummary>[],
+        projectsProvider.overrideWith((ref) async => const <ProjectSummary>[]),
+        projectListProvider.overrideWith(
+          (ref, scope) async => const <ProjectSummary>[],
         ),
       ],
     );
@@ -312,101 +336,122 @@ void main() {
     router.go(AppRoutes.map);
     await tester.pumpAndSettle();
 
-    expect(find.text('Visible Projects'), findsOneWidget);
+    expect(find.text('Projects'), findsWidgets);
     expect(find.text('Map'), findsNothing);
   });
 
-  testWidgets('viewer signup shows immediate-access message and returns to login',
-      (tester) async {
-    await tester.binding.setSurfaceSize(const Size(1440, 1400));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+  testWidgets(
+    'viewer signup shows immediate-access message and returns to login',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1440, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    final repository = const _TestAuthRepository(
-      signupMessage: 'Viewer account created successfully. You can log in now.',
-    );
-    final container = ProviderContainer(
-      overrides: <Override>[
-        authRepositoryProvider.overrideWithValue(repository),
-        authControllerProvider.overrideWith(
-          (ref) => _UnauthenticatedAuthController(repository),
-        ),
-      ],
-    );
-    addTearDown(container.dispose);
+      final repository = const _TestAuthRepository(
+        signupMessage:
+            'Viewer account created successfully. You can log in now.',
+      );
+      final container = ProviderContainer(
+        overrides: <Override>[
+          authRepositoryProvider.overrideWithValue(repository),
+          authControllerProvider.overrideWith(
+            (ref) => _UnauthenticatedAuthController(repository),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
 
-    await tester.pumpWidget(_buildRoutedApp(container));
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(_buildRoutedApp(container));
+      await tester.pumpAndSettle();
 
-    final router = container.read(routerProvider);
-    router.go(AppRoutes.signup);
-    await tester.pumpAndSettle();
+      final router = container.read(routerProvider);
+      router.go(AppRoutes.signup);
+      await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextFormField).at(0), 'Viewer User');
-    await tester.enterText(find.byType(TextFormField).at(1), '03123456');
-    await tester.enterText(find.byType(TextFormField).at(2), 'viewer@example.com');
-    await tester.enterText(find.byType(TextFormField).at(3), 'Passw0rd!123');
-    await tester.enterText(find.byType(TextFormField).at(4), 'Passw0rd!123');
+      await tester.enterText(find.byType(TextFormField).at(0), 'Viewer User');
+      await tester.enterText(find.byType(TextFormField).at(1), '03123456');
+      await tester.enterText(
+        find.byType(TextFormField).at(2),
+        'viewer@example.com',
+      );
+      await tester.enterText(find.byType(TextFormField).at(3), 'Passw0rd!123');
+      await tester.enterText(find.byType(TextFormField).at(4), 'Passw0rd!123');
 
-    final segmented = find.byType(SegmentedButton<UserRole>);
-    final viewerSegment =
-        find.descendant(of: segmented, matching: find.text('Viewer'));
-    await tester.ensureVisible(viewerSegment);
-    await tester.tap(viewerSegment, warnIfMissed: false);
-    await tester.pumpAndSettle();
+      final segmented = find.byType(SegmentedButton<UserRole>);
+      final viewerSegment = find.descendant(
+        of: segmented,
+        matching: find.text('Viewer'),
+      );
+      await tester.ensureVisible(viewerSegment);
+      await tester.tap(viewerSegment, warnIfMissed: false);
+      await tester.pumpAndSettle();
 
-    final submitButton = find.widgetWithText(FilledButton, 'Create viewer account');
-    await tester.ensureVisible(submitButton);
-    tester.widget<FilledButton>(submitButton).onPressed!.call();
-    await tester.pumpAndSettle();
+      final submitButton = find.widgetWithText(
+        FilledButton,
+        'Create viewer account',
+      );
+      await tester.ensureVisible(submitButton);
+      tester.widget<FilledButton>(submitButton).onPressed!.call();
+      await tester.pumpAndSettle();
 
-    expect(find.text('Sign in'), findsOneWidget);
-    expect(
-      find.text('Viewer account created successfully. You can log in now.'),
-      findsWidgets,
-    );
-  });
+      expect(find.text('Sign in'), findsOneWidget);
+      expect(
+        find.text('Viewer account created successfully. You can log in now.'),
+        findsWidgets,
+      );
+    },
+  );
 
-  testWidgets('contributor signup shows pending-approval message and returns to login',
-      (tester) async {
-    await tester.binding.setSurfaceSize(const Size(1440, 1400));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+  testWidgets(
+    'contributor signup shows pending-approval message and returns to login',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1440, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    final repository = const _TestAuthRepository(
-      signupMessage: 'Your contributor request is pending admin approval.',
-    );
-    final container = ProviderContainer(
-      overrides: <Override>[
-        authRepositoryProvider.overrideWithValue(repository),
-        authControllerProvider.overrideWith(
-          (ref) => _UnauthenticatedAuthController(repository),
-        ),
-      ],
-    );
-    addTearDown(container.dispose);
+      final repository = const _TestAuthRepository(
+        signupMessage: 'Your contributor request is pending admin approval.',
+      );
+      final container = ProviderContainer(
+        overrides: <Override>[
+          authRepositoryProvider.overrideWithValue(repository),
+          authControllerProvider.overrideWith(
+            (ref) => _UnauthenticatedAuthController(repository),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
 
-    await tester.pumpWidget(_buildRoutedApp(container));
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(_buildRoutedApp(container));
+      await tester.pumpAndSettle();
 
-    final router = container.read(routerProvider);
-    router.go(AppRoutes.signup);
-    await tester.pumpAndSettle();
+      final router = container.read(routerProvider);
+      router.go(AppRoutes.signup);
+      await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextFormField).at(0), 'Contributor User');
-    await tester.enterText(find.byType(TextFormField).at(1), '03123456');
-    await tester.enterText(find.byType(TextFormField).at(2), 'contributor@example.com');
-    await tester.enterText(find.byType(TextFormField).at(3), 'Passw0rd!123');
-    await tester.enterText(find.byType(TextFormField).at(4), 'Passw0rd!123');
+      await tester.enterText(
+        find.byType(TextFormField).at(0),
+        'Contributor User',
+      );
+      await tester.enterText(find.byType(TextFormField).at(1), '03123456');
+      await tester.enterText(
+        find.byType(TextFormField).at(2),
+        'contributor@example.com',
+      );
+      await tester.enterText(find.byType(TextFormField).at(3), 'Passw0rd!123');
+      await tester.enterText(find.byType(TextFormField).at(4), 'Passw0rd!123');
 
-    final submitButton =
-        find.widgetWithText(FilledButton, 'Request contributor access');
-    await tester.ensureVisible(submitButton);
-    tester.widget<FilledButton>(submitButton).onPressed!.call();
-    await tester.pumpAndSettle();
+      final submitButton = find.widgetWithText(
+        FilledButton,
+        'Request contributor access',
+      );
+      await tester.ensureVisible(submitButton);
+      tester.widget<FilledButton>(submitButton).onPressed!.call();
+      await tester.pumpAndSettle();
 
-    expect(find.text('Sign in'), findsOneWidget);
-    expect(
-      find.text('Your contributor request is pending admin approval.'),
-      findsWidgets,
-    );
-  });
+      expect(find.text('Sign in'), findsOneWidget);
+      expect(
+        find.text('Your contributor request is pending admin approval.'),
+        findsWidgets,
+      );
+    },
+  );
 }

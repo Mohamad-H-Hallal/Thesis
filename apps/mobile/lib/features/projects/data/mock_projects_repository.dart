@@ -4,20 +4,30 @@ import '../domain/projects_repository.dart';
 
 class MockProjectsRepository implements ProjectsRepository {
   @override
-  Future<List<ProjectSummary>> fetchAssignedProjects({
+  Future<List<ProjectSummary>> fetchProjects({
     required String userId,
     required UserRole role,
+    required ProjectViewScope scope,
   }) async {
     await Future<void>.delayed(const Duration(milliseconds: 700));
     final all = _allProjects();
 
-    // Assignment-aware filtering for field operations.
-    if (role == UserRole.admin) {
-      return all;
+    Iterable<ProjectSummary> filtered = all;
+
+    if (role == UserRole.admin && scope == ProjectViewScope.all) {
+      filtered = all;
+    } else if (scope == ProjectViewScope.public || role == UserRole.viewer) {
+      filtered = all.where(
+        (project) =>
+            project.visibleToViewers &&
+            (project.status == 'active' || project.status == 'completed'),
+      );
+    } else {
+      filtered = all.where((project) => project.isAssignedTo(userId));
     }
 
-    return all
-        .where((project) => project.isAssignedTo(userId))
+    return filtered
+        .map((project) => _withCurrentUserAssignment(project, userId: userId))
         .toList(growable: false);
   }
 
@@ -27,13 +37,65 @@ class MockProjectsRepository implements ProjectsRepository {
     required String userId,
     required UserRole role,
   }) async {
-    final all = await fetchAssignedProjects(userId: userId, role: role);
-    for (final project in all) {
-      if (project.id == id) {
-        return project;
+    for (final scope in _allowedScopesForRole(role)) {
+      final all = await fetchProjects(userId: userId, role: role, scope: scope);
+      for (final project in all) {
+        if (project.id == id) {
+          return project;
+        }
       }
     }
     return null;
+  }
+
+  List<ProjectViewScope> _allowedScopesForRole(UserRole role) {
+    switch (role) {
+      case UserRole.admin:
+        return const <ProjectViewScope>[
+          ProjectViewScope.all,
+          ProjectViewScope.public,
+        ];
+      case UserRole.viewer:
+        return const <ProjectViewScope>[ProjectViewScope.public];
+      case UserRole.contributor:
+        return const <ProjectViewScope>[
+          ProjectViewScope.assigned,
+          ProjectViewScope.public,
+        ];
+    }
+  }
+
+  ProjectSummary _withCurrentUserAssignment(
+    ProjectSummary project, {
+    required String userId,
+  }) {
+    ProjectAssignment? currentAssignment;
+    for (final assignment in project.assignments) {
+      if (assignment.userId == userId) {
+        currentAssignment = assignment;
+        break;
+      }
+    }
+
+    return ProjectSummary(
+      id: project.id,
+      name: project.name,
+      category: project.category,
+      status: project.status,
+      assignedCollectors: project.assignedCollectors,
+      pendingReviews: project.pendingReviews,
+      description: project.description,
+      assignments: project.assignments,
+      collectionFormSchema: project.collectionFormSchema,
+      requiresPhotos: project.requiresPhotos,
+      minPhotos: project.minPhotos,
+      maxPhotos: project.maxPhotos,
+      allowedGeometryTypes: project.allowedGeometryTypes,
+      maxGpsAccuracyMeters: project.maxGpsAccuracyMeters,
+      visibleToViewers: project.visibleToViewers,
+      currentUserAssignmentRole: currentAssignment?.role,
+      currentUserAssignmentStatus: currentAssignment?.status,
+    );
   }
 
   @override
@@ -58,6 +120,8 @@ class MockProjectsRepository implements ProjectsRepository {
       allowedGeometryTypes: project.allowedGeometryTypes,
       maxGpsAccuracyMeters: project.maxGpsAccuracyMeters,
       visibleToViewers: visibleToViewers,
+      currentUserAssignmentRole: project.currentUserAssignmentRole,
+      currentUserAssignmentStatus: project.currentUserAssignmentStatus,
     );
   }
 

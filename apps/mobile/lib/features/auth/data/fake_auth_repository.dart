@@ -54,9 +54,30 @@ class FakeAuthRepository implements AuthRepository {
       );
     }
 
-    final role = email.contains('admin')
+    final normalizedEmail = email.toLowerCase();
+
+    final isApprovedContributor = normalizedEmail.contains(
+      'approved-contributor',
+    );
+    if ((normalizedEmail.contains('pending-contributor') ||
+            normalizedEmail.contains('contributor')) &&
+        !isApprovedContributor) {
+      throw DioException(
+        requestOptions: RequestOptions(path: '/api/auth/login'),
+        response: Response(
+          requestOptions: RequestOptions(path: '/api/auth/login'),
+          statusCode: 403,
+          data: const <String, dynamic>{
+            'message': 'Your contributor request is still pending approval.',
+          },
+        ),
+        message: 'Your contributor request is still pending approval.',
+      );
+    }
+
+    final role = normalizedEmail.contains('admin')
         ? UserRole.admin
-        : email.contains('viewer')
+        : normalizedEmail.contains('viewer')
         ? UserRole.viewer
         : UserRole.contributor;
 

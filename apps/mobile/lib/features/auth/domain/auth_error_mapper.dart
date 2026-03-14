@@ -30,6 +30,12 @@ AuthFailure mapAuthDioException(
         statusCode: statusCode,
       );
     case 403:
+      if ((responseMessage ?? '').toLowerCase().contains('pending approval')) {
+        return const AuthFailure(
+          'Your request is still pending approval. You cannot log in yet.',
+          statusCode: 403,
+        );
+      }
       return AuthFailure(
         responseMessage ?? 'Your account does not have access to continue.',
         statusCode: statusCode,

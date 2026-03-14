@@ -9,6 +9,7 @@ class AppRoutes {
 
   static const app = '/app';
   static const projects = '/app/projects';
+  static const assignedProjects = '/app/assigned-projects';
   static const map = '/app/map';
   static const drafts = '/app/drafts';
   static const submissions = '/app/submissions';
@@ -25,6 +26,11 @@ class AppRoutes {
       path: addFeature,
       queryParameters: {'projectId': projectId},
     );
+    return uri.toString();
+  }
+
+  static String mapForProject(String projectId) {
+    final uri = Uri(path: map, queryParameters: {'projectId': projectId});
     return uri.toString();
   }
 }

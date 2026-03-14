@@ -2,6 +2,21 @@ enum ProjectAssignmentRole { admin, contributor }
 
 enum ProjectAssignmentStatus { pending, approved, rejected }
 
+enum ProjectViewScope { public, assigned, all }
+
+extension ProjectViewScopeX on ProjectViewScope {
+  String get apiValue {
+    switch (this) {
+      case ProjectViewScope.public:
+        return 'public';
+      case ProjectViewScope.assigned:
+        return 'assigned';
+      case ProjectViewScope.all:
+        return 'all';
+    }
+  }
+}
+
 class ProjectAssignment {
   const ProjectAssignment({
     required this.userId,
@@ -142,6 +157,8 @@ class ProjectSummary {
     this.allowedGeometryTypes = const <String>['Point'],
     this.maxGpsAccuracyMeters = 25,
     this.visibleToViewers = false,
+    this.currentUserAssignmentRole,
+    this.currentUserAssignmentStatus,
   });
 
   final String id;
@@ -159,8 +176,19 @@ class ProjectSummary {
   final List<String> allowedGeometryTypes;
   final double maxGpsAccuracyMeters;
   final bool visibleToViewers;
+  final ProjectAssignmentRole? currentUserAssignmentRole;
+  final ProjectAssignmentStatus? currentUserAssignmentStatus;
+
+  bool get hasApprovedCurrentUserAssignment =>
+      currentUserAssignmentStatus == ProjectAssignmentStatus.approved;
 
   bool isAssignedTo(String userId, {bool approvedOnly = true}) {
+    if (hasApprovedCurrentUserAssignment && approvedOnly) {
+      return true;
+    }
+    if (currentUserAssignmentStatus != null && !approvedOnly) {
+      return true;
+    }
     for (final assignment in assignments) {
       if (assignment.userId != userId) {
         continue;

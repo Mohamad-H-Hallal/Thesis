@@ -2,9 +2,10 @@ import '../../auth/domain/auth_models.dart';
 import 'project.dart';
 
 abstract class ProjectsRepository {
-  Future<List<ProjectSummary>> fetchAssignedProjects({
+  Future<List<ProjectSummary>> fetchProjects({
     required String userId,
     required UserRole role,
+    required ProjectViewScope scope,
   });
 
   Future<ProjectSummary?> byId({

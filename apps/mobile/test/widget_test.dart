@@ -61,8 +61,9 @@ void main() {
     expect(find.widgetWithText(FilledButton, 'Login'), findsOneWidget);
   });
 
-  testWidgets('login screen does not enforce signup password strength rules',
-      (tester) async {
+  testWidgets('login screen does not enforce signup password strength rules', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       const ProviderScope(child: MaterialApp(home: LoginScreen())),
     );
@@ -79,46 +80,50 @@ void main() {
     await tester.pump();
 
     expect(find.text('Password must be at least 8 characters'), findsNothing);
-    expect(find.text('Password must include at least one uppercase letter'),
-        findsNothing);
+    expect(
+      find.text('Password must include at least one uppercase letter'),
+      findsNothing,
+    );
   });
 
-  testWidgets('login failure keeps user on page, preserves values, and shows auth error',
-      (tester) async {
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: <Override>[
-          authRepositoryProvider.overrideWithValue(
-            const _FailingAuthRepository(
-              AuthFailure('Wrong email or password.', statusCode: 401),
+  testWidgets(
+    'login failure keeps user on page, preserves values, and shows auth error',
+    (tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: <Override>[
+            authRepositoryProvider.overrideWithValue(
+              const _FailingAuthRepository(
+                AuthFailure('Wrong email or password.', statusCode: 401),
+              ),
             ),
-          ),
-        ],
-        child: const MaterialApp(home: LoginScreen()),
-      ),
-    );
-    await tester.pumpAndSettle();
+          ],
+          child: const MaterialApp(home: LoginScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    final emailField = find.byType(TextFormField).at(0);
-    final passwordField = find.byType(TextFormField).at(1);
+      final emailField = find.byType(TextFormField).at(0);
+      final passwordField = find.byType(TextFormField).at(1);
 
-    await tester.enterText(emailField, 'viewer@example.com');
-    await tester.enterText(passwordField, 'WrongPass1!');
+      await tester.enterText(emailField, 'viewer@example.com');
+      await tester.enterText(passwordField, 'WrongPass1!');
 
-    final loginButton = find.widgetWithText(FilledButton, 'Login');
-    await tester.ensureVisible(loginButton);
-    tester.widget<FilledButton>(loginButton).onPressed!.call();
-    await tester.pumpAndSettle();
+      final loginButton = find.widgetWithText(FilledButton, 'Login');
+      await tester.ensureVisible(loginButton);
+      tester.widget<FilledButton>(loginButton).onPressed!.call();
+      await tester.pumpAndSettle();
 
-    expect(find.text('Sign in'), findsOneWidget);
-    expect(find.text('Wrong email or password.'), findsWidgets);
-    expect(
-      tester.widget<TextFormField>(emailField).controller?.text,
-      'viewer@example.com',
-    );
-    expect(
-      tester.widget<TextFormField>(passwordField).controller?.text,
-      'WrongPass1!',
-    );
-  });
+      expect(find.text('Sign in'), findsOneWidget);
+      expect(find.text('Wrong email or password.'), findsWidgets);
+      expect(
+        tester.widget<TextFormField>(emailField).controller?.text,
+        'viewer@example.com',
+      );
+      expect(
+        tester.widget<TextFormField>(passwordField).controller?.text,
+        'WrongPass1!',
+      );
+    },
+  );
 }

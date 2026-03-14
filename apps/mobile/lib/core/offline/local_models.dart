@@ -285,6 +285,8 @@ extension ProjectSummaryLocalMapper on ProjectSummary {
       'allowedGeometryTypes': allowedGeometryTypes,
       'maxGpsAccuracyMeters': maxGpsAccuracyMeters,
       'visibleToViewers': visibleToViewers,
+      'currentUserAssignmentRole': currentUserAssignmentRole?.name,
+      'currentUserAssignmentStatus': currentUserAssignmentStatus?.name,
     };
   }
 }
@@ -323,5 +325,21 @@ ProjectSummary projectSummaryFromPayload(Map<String, dynamic> payload) {
     maxGpsAccuracyMeters: ((payload['maxGpsAccuracyMeters'] as num?) ?? 25)
         .toDouble(),
     visibleToViewers: (payload['visibleToViewers'] as bool?) ?? false,
+    currentUserAssignmentRole: (payload['currentUserAssignmentRole'] as String?)
+        ?.let(ProjectAssignmentRole.values.byName),
+    currentUserAssignmentStatus:
+        (payload['currentUserAssignmentStatus'] as String?)?.let(
+          ProjectAssignmentStatus.values.byName,
+        ),
   );
+}
+
+extension _NullableEnumMapper on String? {
+  T? let<T>(T Function(String value) mapper) {
+    final value = this;
+    if (value == null || value.isEmpty) {
+      return null;
+    }
+    return mapper(value);
+  }
 }

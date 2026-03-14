@@ -12,11 +12,15 @@ class ApiProjectsRepository implements ProjectsRepository {
   String get _projectsBasePath => '${AppEnv.apiVersionPrefix}/projects';
 
   @override
-  Future<List<ProjectSummary>> fetchAssignedProjects({
+  Future<List<ProjectSummary>> fetchProjects({
     required String userId,
     required UserRole role,
+    required ProjectViewScope scope,
   }) async {
-    final response = await _apiClient.dio.get<Map<String, dynamic>>(_projectsBasePath);
+    final response = await _apiClient.dio.get<Map<String, dynamic>>(
+      _projectsBasePath,
+      queryParameters: <String, dynamic>{'access_scope': scope.apiValue},
+    );
     final payload = response.data ?? const <String, dynamic>{};
     final rows = (payload['data'] as List? ?? const <dynamic>[]);
     return rows
@@ -70,7 +74,9 @@ class ApiProjectsRepository implements ProjectsRepository {
           (schemaMap['schemaVersion'] as String?) ??
           'v0.0',
       fields: fieldsRaw
-          .map((field) => _toFieldSchema(Map<String, dynamic>.from(field as Map)))
+          .map(
+            (field) => _toFieldSchema(Map<String, dynamic>.from(field as Map)),
+          )
           .toList(growable: false),
     );
 
@@ -97,10 +103,16 @@ class ApiProjectsRepository implements ProjectsRepository {
       minPhotos: _toInt(row['min_photos']) ?? 0,
       maxPhotos: _toInt(row['max_photos']) ?? 5,
       visibleToViewers: (row['visible_to_viewers'] as bool?) ?? false,
+      currentUserAssignmentRole: _toAssignmentRole(
+        row['current_user_assignment_role'] as String?,
+      ),
+      currentUserAssignmentStatus: _toAssignmentStatus(
+        row['current_user_assignment_status'] as String?,
+      ),
       allowedGeometryTypes:
-          (schemaMap['allowedGeometryTypes'] as List?)
-              ?.cast<String>()
-              .toList(growable: false) ??
+          (schemaMap['allowedGeometryTypes'] as List?)?.cast<String>().toList(
+            growable: false,
+          ) ??
           const <String>['Point'],
       maxGpsAccuracyMeters: _toDouble(schemaMap['maxGpsAccuracyMeters']) ?? 25,
     );
@@ -171,5 +183,29 @@ class ApiProjectsRepository implements ProjectsRepository {
       return double.tryParse(value);
     }
     return null;
+  }
+
+  ProjectAssignmentRole? _toAssignmentRole(String? value) {
+    switch (value) {
+      case 'admin':
+        return ProjectAssignmentRole.admin;
+      case 'contributor':
+        return ProjectAssignmentRole.contributor;
+      default:
+        return null;
+    }
+  }
+
+  ProjectAssignmentStatus? _toAssignmentStatus(String? value) {
+    switch (value) {
+      case 'pending':
+        return ProjectAssignmentStatus.pending;
+      case 'approved':
+        return ProjectAssignmentStatus.approved;
+      case 'rejected':
+        return ProjectAssignmentStatus.rejected;
+      default:
+        return null;
+    }
   }
 }

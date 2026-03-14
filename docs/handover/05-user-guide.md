@@ -27,7 +27,7 @@ All authenticated users (admin, project-admin, contributor, viewer).
   - Empty password -> required-field error.
   - Wrong credentials -> `Wrong email or password.`
   - Missing account -> `This account does not exist.`
-  - Pending contributor -> `Your contributor request is still pending approval.`
+  - Pending contributor -> `Your request is still pending approval. You cannot log in yet.`
   - Inactive account -> `This account is inactive.`
   - Too many attempts -> backend 429 message shown.
 - Screenshot placeholder:
@@ -56,7 +56,7 @@ All authenticated users (admin, project-admin, contributor, viewer).
 - Screenshot placeholder:
   - `[Screenshot: Forgot password flow]`
 
-### Home / Projects
+### Projects
 - Actions:
   - Search available projects for the signed-in role.
   - Open a project.
@@ -64,24 +64,27 @@ All authenticated users (admin, project-admin, contributor, viewer).
   - Empty list shows empty-state card.
   - API failure shows retry action.
 - Screenshot placeholder:
-  - `[Screenshot: Home projects list with status chips]`
+  - `[Screenshot: Projects list with status chips]`
 
 ### Project Details
 - Actions:
   - Open map.
-  - Start new feature.
-  - Open drafts.
+  - Start new feature when assigned as contributor.
+  - Open drafts when assigned as contributor.
 - Validation/Error behavior:
-  - Access denied if assignment missing.
+  - Viewer and public-project contributor access is read-only.
+  - Feature actions stay disabled unless assignment exists.
 - Screenshot placeholder:
   - `[Screenshot: Project details quick actions]`
 
 ### Map Screen
 - Actions:
-  - View map context.
-  - Tap Add Feature FAB.
+  - View the Lebanon basemap.
+  - Switch project layer.
+  - Review project feature overlays.
+  - Tap Add Feature FAB when collection is allowed.
 - Validation/Error behavior:
-  - GPS/sync placeholders indicate readiness.
+  - If a project has no features yet, a real empty-state card is shown over the basemap.
 - Screenshot placeholder:
   - `[Screenshot: Map screen with GPS/sync status]`
 
@@ -128,7 +131,9 @@ All authenticated users (admin, project-admin, contributor, viewer).
 
 ## Role-Based Access (User-Level Summary)
 - Admin: full platform management.
-- Contributor: capture/edit/submit assigned data.
+- Contributor:
+  - `Projects`: read-only public/viewer-visible projects
+  - `Assigned Projects`: capture/edit/submit assigned data
 - Viewer: read-only access to projects explicitly marked visible by admins and only while those projects are active or completed.
 
 Full matrix: `docs/user-manual/08-role-permissions-matrix.md`
