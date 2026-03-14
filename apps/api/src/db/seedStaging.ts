@@ -505,7 +505,7 @@ const seedNotifications = async (client: PoolClient): Promise<void> => {
        END,
        'Phase 11 Staging Notification',
        'Synthetic notification seeded for rollout readiness.',
-       jsonb_build_object('seed_phase', 11, 'source', 'seed:staging'),
+       jsonb_build_object('user_id', u.id, 'seed_phase', 11, 'source', 'seed:staging'),
        random() < 0.45,
        NOW() - (random() * interval '25 days'),
        CASE WHEN random() < 0.45 THEN NOW() - (random() * interval '20 days') ELSE NULL END

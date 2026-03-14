@@ -6,6 +6,7 @@ const { validateEnv } = require('./config/env');
 const { getPendingMigrations } = require('./db/migrationRunner');
 const { ensureExportDir, cleanupOldExports } = require('./controllers/export.controller');
 const { buildApp } = require('./app');
+import { ensureSuperAdminExists } from './lib/userWorkflow';
 
 const env = validateEnv();
 const app = buildApp(env);
@@ -31,6 +32,8 @@ const startServer = async () => {
       logger.error('Failed to connect to database');
       process.exit(1);
     }
+
+    await ensureSuperAdminExists(env);
 
     await ensureExportDir();
     await cleanupOldExports();

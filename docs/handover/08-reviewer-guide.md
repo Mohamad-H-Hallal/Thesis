@@ -1,7 +1,7 @@
-# 08 - Reviewer Guide
+# 08 - Review Guide
 
 ## Audience
-Reviewers, project-admin reviewers, and admins.
+System admins responsible for feature review and approval.
 
 ## Review Workflow
 
@@ -38,7 +38,7 @@ Reviewers, project-admin reviewers, and admins.
 - Missing/invalid feature ID -> 400/404.
 - Unauthorized role -> 403.
 
-## Reviewer Permissions
+## Review Permissions
 - Can:
   - review pending submissions for authorized scope
   - approve/reject with notes

@@ -1,4 +1,4 @@
-const { query } = require('../config/database');
+const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
 const fs = require('fs').promises;
@@ -298,29 +298,29 @@ const processExport = async (exportId, projectName) => {
     const stats = await fs.stat(zipPath);
     const fileSizeBytes = stats.size;
 
-    // Update database
-    await query(
-      `UPDATE shapefile_export 
-       SET status = 'completed',
-           completed_at = CURRENT_TIMESTAMP,
-           file_path = $1,
-           feature_count = $2,
-           file_size_bytes = $3
-       WHERE id = $4`,
-      [zipPath, features.rows.length, fileSizeBytes, exportId]
-    );
+    await transaction(async (client) => {
+      await client.query(
+        `UPDATE shapefile_export 
+         SET status = 'completed',
+             completed_at = CURRENT_TIMESTAMP,
+             file_path = $1,
+             feature_count = $2,
+             file_size_bytes = $3
+         WHERE id = $4`,
+        [zipPath, features.rows.length, fileSizeBytes, exportId]
+      );
 
-    // Create notification for user
-    await query(
-      `INSERT INTO notification (user_id, type, title, message, metadata)
-       VALUES ($1, 'export_ready', 'Export Ready', 
-               $2, $3)`,
-      [
-        exportData.requested_by_user_id,
-        `Your ${format} export is ready for download`,
-        JSON.stringify({ export_id: exportId, format: format }),
-      ]
-    );
+      await client.query(
+        `INSERT INTO notification (user_id, type, title, message, metadata)
+         VALUES ($1, 'export_ready', 'Export Ready', 
+                 $2, $3)`,
+        [
+          exportData.requested_by_user_id,
+          `Your ${format} export is ready for download`,
+          JSON.stringify({ export_id: exportId, project_id: projectId, format: format }),
+        ]
+      );
+    });
 
     // Clean up temporary directory
     await fs.rm(exportPath, { recursive: true, force: true });
@@ -338,33 +338,37 @@ const processExport = async (exportId, projectName) => {
       stack: error.stack 
     });
 
-    // Update status to failed
-    await query(
-      `UPDATE shapefile_export 
-       SET status = 'failed',
-           completed_at = CURRENT_TIMESTAMP,
-           error_message = $1
-       WHERE id = $2`,
-      [error.message, exportId]
-    );
-
-    // Notify user of failure
-    const exportDetails = await query(
-      'SELECT requested_by_user_id FROM shapefile_export WHERE id = $1',
-      [exportId]
-    );
-
-    if (exportDetails.rows.length > 0) {
-      await query(
-        `INSERT INTO notification (user_id, type, title, message, metadata)
-         VALUES ($1, 'export_ready', 'Export Failed', 
-                 'Your export failed. Please try again or contact support.', $2)`,
-        [
-          exportDetails.rows[0].requested_by_user_id,
-          JSON.stringify({ export_id: exportId, error: error.message }),
-        ]
+    await transaction(async (client) => {
+      await client.query(
+        `UPDATE shapefile_export 
+         SET status = 'failed',
+             completed_at = CURRENT_TIMESTAMP,
+             error_message = $1
+         WHERE id = $2`,
+        [error.message, exportId]
       );
-    }
+
+      const exportDetails = await client.query(
+        'SELECT requested_by_user_id, project_id FROM shapefile_export WHERE id = $1',
+        [exportId]
+      );
+
+      if (exportDetails.rows.length > 0) {
+        await client.query(
+          `INSERT INTO notification (user_id, type, title, message, metadata)
+           VALUES ($1, 'export_ready', 'Export Failed', 
+                   'Your export failed. Please try again or contact support.', $2)`,
+          [
+            exportDetails.rows[0].requested_by_user_id,
+            JSON.stringify({
+              export_id: exportId,
+              project_id: exportDetails.rows[0].project_id,
+              error: error.message,
+            }),
+          ]
+        );
+      }
+    });
   }
 };
 

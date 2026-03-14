@@ -13,7 +13,7 @@ AI-Enhanced Geospatial Mobile GIS Collector (current runtime scope: non-AI colle
 2. User sees projects assigned to their account.
 3. Contributor captures or edits features.
 4. Drafts are submitted for review.
-5. Reviewer/Admin approves or rejects.
+5. Admin approves or rejects.
 6. Approved data can be exported.
 
 ## Roles

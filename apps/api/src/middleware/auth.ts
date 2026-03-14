@@ -161,6 +161,26 @@ const checkProjectAccess = async (req: Request, res: Response, next: NextFunctio
       return next();
     }
 
+    if (req.user.role === 'viewer') {
+      const visibleProject = await query(
+        `SELECT id
+         FROM project
+         WHERE id = $1
+           AND visible_to_viewers = TRUE
+           AND status IN ('active', 'completed')`,
+        [projectId]
+      );
+
+      if (visibleProject.rows.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: 'You do not have access to this project',
+        });
+      }
+
+      return next();
+    }
+
     // Check if user is assigned to the project
     const result = await query(
       `SELECT id, role FROM project_assignment 

@@ -10,6 +10,7 @@ const {
   shutdown,
   createAdminUser,
   registerUser,
+  approveContributorRequest,
   createCategory,
   createProject,
   createAssignment,
@@ -39,6 +40,11 @@ describe('Phase 10 performance: exports', () => {
       role: 'contributor',
       fullName: 'Export Perf Contributor',
       emailPrefix: 'export-contributor',
+    });
+
+    await approveContributorRequest({
+      token: admin.token,
+      userId: contributor.user.id,
     });
 
     const category = await createCategory({

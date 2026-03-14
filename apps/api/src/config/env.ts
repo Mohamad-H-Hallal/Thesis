@@ -38,6 +38,9 @@ export interface EnvConfig {
   EXPORT_DIR: string;
   EXPORT_RETENTION_DAYS: number;
   EXPORT_CLEANUP_INTERVAL_HOURS: number;
+  SUPER_ADMIN_EMAIL: string;
+  SUPER_ADMIN_PASSWORD: string;
+  SUPER_ADMIN_FULL_NAME: string;
 }
 
 const envSchema = Joi.object({
@@ -84,6 +87,10 @@ const envSchema = Joi.object({
   EXPORT_DIR: Joi.string().default('./exports'),
   EXPORT_RETENTION_DAYS: Joi.number().integer().min(1).default(7),
   EXPORT_CLEANUP_INTERVAL_HOURS: Joi.number().integer().min(1).default(24),
+
+  SUPER_ADMIN_EMAIL: Joi.string().allow('').default(''),
+  SUPER_ADMIN_PASSWORD: Joi.string().allow('').default(''),
+  SUPER_ADMIN_FULL_NAME: Joi.string().allow('').default(''),
 })
   .unknown(true);
 
@@ -99,6 +106,29 @@ const validateEnv = (): EnvConfig => {
   }
   if (!value.JWT_REFRESH_SECRET_CURRENT) {
     value.JWT_REFRESH_SECRET_CURRENT = value.JWT_REFRESH_SECRET;
+  }
+
+  const hasSuperAdminConfig = [
+    value.SUPER_ADMIN_EMAIL,
+    value.SUPER_ADMIN_PASSWORD,
+    value.SUPER_ADMIN_FULL_NAME,
+  ].some((item: string) => item.trim().length > 0);
+  const hasCompleteSuperAdminConfig = [
+    value.SUPER_ADMIN_EMAIL,
+    value.SUPER_ADMIN_PASSWORD,
+    value.SUPER_ADMIN_FULL_NAME,
+  ].every((item: string) => item.trim().length > 0);
+
+  if (hasSuperAdminConfig && !hasCompleteSuperAdminConfig) {
+    throw new Error(
+      'Environment validation failed: SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD, and SUPER_ADMIN_FULL_NAME must be set together'
+    );
+  }
+
+  if (value.NODE_ENV === 'production' && !hasCompleteSuperAdminConfig) {
+    throw new Error(
+      'Environment validation failed: production requires SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD, and SUPER_ADMIN_FULL_NAME'
+    );
   }
 
   return value as EnvConfig;

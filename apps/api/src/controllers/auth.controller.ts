@@ -1,17 +1,25 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { query } = require('../config/database');
+const { query, transaction } = require('../config/database');
 const { generateToken, generateRefreshToken } = require('../middleware/auth');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
+import {
+  normalizeEmail,
+  notifyActiveAdminsAboutContributorRequest,
+} from '../lib/userWorkflow';
 
 // Register new user
 const register = async (req, res) => {
-  const { email, password, full_name, phone } = req.body;
-  const publicRole = 'contributor';
+  const { email, password, full_name, phone, role } = req.body;
+  const normalizedEmail = normalizeEmail(email);
+  const publicRole = role === 'viewer' ? 'viewer' : 'contributor';
+  const isActive = publicRole === 'viewer';
 
   // Check if user already exists
-  const existingUser = await query('SELECT id FROM "user" WHERE email = $1', [email]);
+  const existingUser = await query('SELECT id FROM "user" WHERE LOWER(email) = $1', [
+    normalizedEmail,
+  ]);
 
   if (existingUser.rows.length > 0) {
     throw new AppError('Email already registered', 409);
@@ -21,25 +29,35 @@ const register = async (req, res) => {
   const salt = await bcrypt.genSalt(12);
   const password_hash = await bcrypt.hash(password, salt);
 
-  // Insert user
-  const result = await query(
-    `INSERT INTO "user" (email, password_hash, full_name, phone, role)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, email, full_name, phone, role, created_at`,
-    [email, password_hash, full_name, phone || null, publicRole]
-  );
+  const user = await transaction(async (client) => {
+    const result = await client.query(
+      `INSERT INTO "user" (email, password_hash, full_name, phone, role, is_active)
+       VALUES ($1, $2, $3, $4, $5::user_role, $6)
+       RETURNING id, email, full_name, phone, role, is_active, created_at`,
+      [normalizedEmail, password_hash, full_name, phone, publicRole, isActive]
+    );
 
-  const user = result.rows[0];
+    const createdUser = result.rows[0];
 
-  // Generate tokens
-  const token = generateToken(user.id, user.role);
-  const refreshToken = generateRefreshToken(user.id);
+    if (publicRole === 'contributor') {
+      await notifyActiveAdminsAboutContributorRequest(client, {
+        userId: createdUser.id,
+        fullName: createdUser.full_name,
+        email: createdUser.email,
+      });
+    }
+
+    return createdUser;
+  });
 
   logger.info('User registered:', { userId: user.id, email: user.email });
 
   res.status(201).json({
     success: true,
-    message: 'User registered successfully',
+    message:
+      publicRole === 'contributor'
+        ? 'Your contributor request is pending admin approval.'
+        : 'Viewer account created successfully. You can log in now.',
     data: {
       user: {
         id: user.id,
@@ -47,10 +65,9 @@ const register = async (req, res) => {
         full_name: user.full_name,
         phone: user.phone,
         role: user.role,
+        is_active: user.is_active,
         created_at: user.created_at,
       },
-      token,
-      refreshToken,
     },
   });
 };
@@ -62,26 +79,29 @@ const login = async (req, res) => {
   // Get user
   const result = await query(
     `SELECT id, email, password_hash, full_name, phone, role, is_active 
-     FROM "user" WHERE email = $1`,
-    [email]
+     FROM "user" WHERE LOWER(email) = $1`,
+    [normalizeEmail(email)]
   );
 
   if (result.rows.length === 0) {
-    throw new AppError('Invalid credentials', 401);
+    throw new AppError('This account does not exist.', 404);
   }
 
   const user = result.rows[0];
-
-  // Check if user is active
-  if (!user.is_active) {
-    throw new AppError('Account is inactive', 401);
-  }
 
   // Verify password
   const isMatch = await bcrypt.compare(password, user.password_hash);
 
   if (!isMatch) {
-    throw new AppError('Invalid credentials', 401);
+    throw new AppError('Wrong email or password.', 401);
+  }
+
+  if (!user.is_active && user.role === 'contributor') {
+    throw new AppError('Your contributor request is still pending approval.', 403);
+  }
+
+  if (!user.is_active) {
+    throw new AppError('This account is inactive.', 403);
   }
 
   // Update last login
@@ -232,12 +252,15 @@ const refreshToken = async (req, res) => {
   );
 
   if (result.rows.length === 0) {
-    throw new AppError('User not found', 401);
+    throw new AppError('This account does not exist.', 404);
   }
 
   const user = result.rows[0];
+  if (!user.is_active && user.role === 'contributor') {
+    throw new AppError('Your contributor request is still pending approval.', 403);
+  }
   if (!user.is_active) {
-    throw new AppError('Account is inactive', 401);
+    throw new AppError('This account is inactive.', 403);
   }
 
   const token = generateToken(user.id, user.role);

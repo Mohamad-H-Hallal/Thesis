@@ -9,6 +9,7 @@ const {
   createAdminUser,
   registerUser,
   loginUser,
+  approveContributorRequest,
   createCategory,
   createProject,
   createAssignment,
@@ -39,6 +40,11 @@ describe('Phase 10 E2E workflow', () => {
       role: 'contributor',
       fullName: 'Phase10 Contributor',
       emailPrefix: 'phase10-contributor',
+    });
+
+    await approveContributorRequest({
+      token: admin.token,
+      userId: contributor.user.id,
     });
 
     const category = await createCategory({

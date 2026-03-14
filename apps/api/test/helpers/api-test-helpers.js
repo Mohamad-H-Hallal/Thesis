@@ -106,8 +106,7 @@ const registerUser = async ({
   return {
     email,
     password,
-    token: response.body.data.token,
-    refreshToken: response.body.data.refreshToken,
+    message: response.body.message,
     user: response.body.data.user,
   };
 };
@@ -117,26 +116,55 @@ const createAdminUser = async ({
   password = 'Passw0rd!123',
   phone = '+96170000000',
   emailPrefix = 'phase10-admin',
+  email,
 } = {}) => {
-  const email = uniqueEmail(emailPrefix);
+  const resolvedEmail = email ?? uniqueEmail(emailPrefix);
   const passwordHash = await bcrypt.hash(password, 12);
 
   const insertResult = await pool.query(
     `INSERT INTO "user" (email, password_hash, full_name, phone, role)
      VALUES ($1, $2, $3, $4, 'admin')
      RETURNING id, email, full_name, phone, role, created_at`,
-    [email, passwordHash, fullName, phone]
+    [resolvedEmail, passwordHash, fullName, phone]
   );
 
-  const loginData = await loginUser({ email, password });
+  const loginData = await loginUser({ email: resolvedEmail, password });
 
   return {
-    email,
+    email: resolvedEmail,
     password,
     token: loginData.token,
     refreshToken: loginData.refreshToken,
     user: insertResult.rows[0],
   };
+};
+
+const approveContributorRequest = async ({ token, userId }) => {
+  const response = await request(app)
+    .post(`${API_PREFIX}/users/${userId}/approve-contributor`)
+    .set(authHeader(token));
+
+  if (response.status !== 200) {
+    throw new Error(
+      `approveContributorRequest failed (${response.status}): ${JSON.stringify(response.body)}`
+    );
+  }
+
+  return response.body.data;
+};
+
+const rejectContributorRequest = async ({ token, userId }) => {
+  const response = await request(app)
+    .post(`${API_PREFIX}/users/${userId}/reject-contributor`)
+    .set(authHeader(token));
+
+  if (response.status !== 200) {
+    throw new Error(
+      `rejectContributorRequest failed (${response.status}): ${JSON.stringify(response.body)}`
+    );
+  }
+
+  return response.body.data;
 };
 
 const loginUser = async ({ email, password }) => {
@@ -163,7 +191,7 @@ const createCategory = async ({ token, name, description = 'Phase 10 category' }
   return response.body.data;
 };
 
-const createProject = async ({ token, categoryId, name }) => {
+const createProject = async ({ token, categoryId, name, visibleToViewers = false }) => {
   const response = await request(app)
     .post(`${API_PREFIX}/projects`)
     .set(authHeader(token))
@@ -178,10 +206,11 @@ const createProject = async ({ token, categoryId, name }) => {
           { key: 'condition', type: 'select', required: false },
         ],
       },
-      status: 'active',
+      status: 'draft',
       requires_photos: false,
       min_photos: 0,
       max_photos: 3,
+      visible_to_viewers: visibleToViewers,
     });
 
   if (response.status !== 201) {
@@ -273,6 +302,8 @@ module.exports = {
   registerUser,
   createAdminUser,
   loginUser,
+  approveContributorRequest,
+  rejectContributorRequest,
   createCategory,
   createProject,
   createAssignment,

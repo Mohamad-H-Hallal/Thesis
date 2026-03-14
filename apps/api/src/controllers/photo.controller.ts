@@ -114,10 +114,10 @@ const uploadPhotos = async (req, res) => {
           $2,
           $3,
           CASE
-            WHEN $4 IS NULL OR $5 IS NULL THEN NULL
-            ELSE ST_SetSRID(ST_MakePoint($5, $4), 4326)
+            WHEN $4::double precision IS NULL OR $5::double precision IS NULL THEN NULL
+            ELSE ST_SetSRID(ST_MakePoint($5::double precision, $4::double precision), 4326)
           END,
-          $6,
+          $6::double precision,
           $7,
           $8,
           $9
@@ -129,7 +129,7 @@ const uploadPhotos = async (req, res) => {
           thumbnailPath,
           latitude,
           longitude,
-          req.body.accuracy_meters || null,
+          req.body.accuracy_meters ? Number(req.body.accuracy_meters) : null,
           JSON.stringify(exifData),
           file.size,
           displayOrder,

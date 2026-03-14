@@ -1,6 +1,43 @@
-const { query } = require('../config/database');
+const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
+
+const viewerVisibleStatuses = ['active', 'completed'];
+
+const projectStatusTransitions: Record<string, string[]> = {
+  draft: ['active'],
+  active: ['completed'],
+  completed: ['archived'],
+  paused: [],
+  archived: [],
+};
+
+const assertProjectStatusTransition = (currentStatus: string, nextStatus: string): void => {
+  if (currentStatus === nextStatus) {
+    return;
+  }
+
+  const allowed = projectStatusTransitions[currentStatus as keyof typeof projectStatusTransitions] ?? [];
+  if (!allowed.includes(nextStatus)) {
+    throw new AppError(
+      `Invalid project status transition from ${currentStatus} to ${nextStatus}`,
+      400
+    );
+  }
+};
+
+const ensureCategoryExists = async (categoryId: string): Promise<void> => {
+  const categoryCheck = await query('SELECT id FROM project_category WHERE id = $1', [categoryId]);
+  if (categoryCheck.rows.length === 0) {
+    throw new AppError('Project category not found', 404);
+  }
+};
+
+const ensureSchemaObject = (schema: unknown): void => {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+    throw new AppError('collection_form_schema must be a JSON object', 422);
+  }
+};
 
 // Get all projects (filtered by user access)
 const getAllProjects = async (req, res) => {
@@ -8,6 +45,7 @@ const getAllProjects = async (req, res) => {
   const offset = (page - 1) * limit;
   const userId = req.user.id;
   const isAdmin = req.user.role === 'admin';
+  const isViewer = req.user.role === 'viewer';
 
   let queryText = `
     SELECT DISTINCT p.*, pc.name as category_name,
@@ -22,8 +60,13 @@ const getAllProjects = async (req, res) => {
   const params: unknown[] = [];
   let paramIndex = 1;
 
-  // Non-admin users can only see projects they're assigned to
-  if (!isAdmin) {
+  if (isAdmin) {
+    // No additional access filter.
+  } else if (isViewer) {
+    queryText += ` AND p.visible_to_viewers = TRUE AND p.status = ANY($${paramIndex}::project_status[])`;
+    params.push(viewerVisibleStatuses);
+    paramIndex++;
+  } else {
     queryText += ` AND (pa.user_id = $${paramIndex} AND pa.status = 'approved')`;
     params.push(userId);
     paramIndex++;
@@ -60,7 +103,13 @@ const getAllProjects = async (req, res) => {
   const countParams: unknown[] = [];
   let countParamIndex = 1;
 
-  if (!isAdmin) {
+  if (isAdmin) {
+    // No additional access filter.
+  } else if (isViewer) {
+    countQuery += ` AND p.visible_to_viewers = TRUE AND p.status = ANY($${countParamIndex}::project_status[])`;
+    countParams.push(viewerVisibleStatuses);
+    countParamIndex++;
+  } else {
     countQuery += ` AND (pa.user_id = $${countParamIndex} AND pa.status = 'approved')`;
     countParams.push(userId);
     countParamIndex++;
@@ -133,47 +182,59 @@ const createProject = async (req, res) => {
     requires_photos = false,
     min_photos = 0,
     max_photos = 10,
+    visible_to_viewers = false,
   } = req.body;
 
-  const result = await query(
-    `INSERT INTO project (
-      created_by_user_id, category_id, name, description, objectives,
-      status, start_date, end_date, collection_form_schema,
-      requires_photos, min_photos, max_photos
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-    RETURNING *`,
-    [
-      req.user.id,
-      category_id,
-      name,
-      description,
-      objectives,
-      status,
-      start_date,
-      end_date,
-      JSON.stringify(collection_form_schema),
-      requires_photos,
-      min_photos,
-      max_photos,
-    ]
-  );
+  if (status !== 'draft') {
+    throw new AppError('Project status must start as draft', 400);
+  }
+  ensureSchemaObject(collection_form_schema);
+  await ensureCategoryExists(category_id);
 
-  // Automatically assign creator as project admin
-  await query(
-    `INSERT INTO project_assignment (project_id, user_id, role, status)
-     VALUES ($1, $2, 'admin', 'approved')`,
-    [result.rows[0].id, req.user.id]
-  );
+  const createdProject = await transaction(async (client) => {
+    const insertResult = await client.query(
+      `INSERT INTO project (
+        created_by_user_id, category_id, name, description, objectives,
+        status, start_date, end_date, collection_form_schema,
+        requires_photos, min_photos, max_photos, visible_to_viewers
+      ) VALUES ($1, $2, $3, $4, $5, 'draft', $6, $7, $8, $9, $10, $11, $12)
+      RETURNING *`,
+      [
+        req.user.id,
+        category_id,
+        name,
+        description,
+        objectives,
+        start_date,
+        end_date,
+        JSON.stringify(collection_form_schema),
+        requires_photos,
+        min_photos,
+        max_photos,
+        visible_to_viewers,
+      ]
+    );
+
+    await client.query(
+      `INSERT INTO project_assignment (
+        project_id, user_id, role, status, approved_by_user_id, approved_date
+      )
+      VALUES ($1, $2, 'admin', 'approved', $2, CURRENT_DATE)`,
+      [insertResult.rows[0].id, req.user.id]
+    );
+
+    return insertResult.rows[0];
+  });
 
   logger.info('Project created:', {
-    projectId: result.rows[0].id,
+    projectId: createdProject.id,
     userId: req.user.id,
   });
 
   res.status(201).json({
     success: true,
     message: 'Project created successfully',
-    data: result.rows[0],
+    data: createdProject,
   });
 };
 
@@ -184,6 +245,7 @@ const updateProject = async (req, res) => {
     name,
     description,
     objectives,
+    category_id,
     status,
     start_date,
     end_date,
@@ -191,6 +253,7 @@ const updateProject = async (req, res) => {
     requires_photos,
     min_photos,
     max_photos,
+    visible_to_viewers,
   } = req.body;
 
   // Build dynamic update query
@@ -198,6 +261,22 @@ const updateProject = async (req, res) => {
   const params: unknown[] = [];
   let paramIndex = 1;
 
+  const currentProjectResult = await query(
+    'SELECT id, status, category_id FROM project WHERE id = $1',
+    [projectId]
+  );
+  if (currentProjectResult.rows.length === 0) {
+    throw new AppError('Project not found', 404);
+  }
+
+  const currentProject = currentProjectResult.rows[0];
+
+  if (category_id !== undefined) {
+    await ensureCategoryExists(category_id);
+    updates.push(`category_id = $${paramIndex}`);
+    params.push(category_id);
+    paramIndex++;
+  }
   if (name !== undefined) {
     updates.push(`name = $${paramIndex}`);
     params.push(name);
@@ -214,6 +293,7 @@ const updateProject = async (req, res) => {
     paramIndex++;
   }
   if (status !== undefined) {
+    assertProjectStatusTransition(currentProject.status, status);
     updates.push(`status = $${paramIndex}`);
     params.push(status);
     paramIndex++;
@@ -229,6 +309,7 @@ const updateProject = async (req, res) => {
     paramIndex++;
   }
   if (collection_form_schema !== undefined) {
+    ensureSchemaObject(collection_form_schema);
     updates.push(`collection_form_schema = $${paramIndex}`);
     params.push(JSON.stringify(collection_form_schema));
     paramIndex++;
@@ -248,6 +329,11 @@ const updateProject = async (req, res) => {
     params.push(max_photos);
     paramIndex++;
   }
+  if (visible_to_viewers !== undefined) {
+    updates.push(`visible_to_viewers = $${paramIndex}`);
+    params.push(visible_to_viewers);
+    paramIndex++;
+  }
 
   if (updates.length === 0) {
     throw new AppError('No fields to update', 400);
@@ -263,10 +349,6 @@ const updateProject = async (req, res) => {
 
   const result = await query(queryText, params);
 
-  if (result.rows.length === 0) {
-    throw new AppError('Project not found', 404);
-  }
-
   logger.info('Project updated:', { projectId, userId: req.user.id });
 
   res.json({
@@ -280,15 +362,42 @@ const updateProject = async (req, res) => {
 const deleteProject = async (req, res) => {
   const { projectId } = req.params;
 
-  // Soft delete by archiving
-  const result = await query(
-    `UPDATE project SET status = 'archived' WHERE id = $1 RETURNING id`,
-    [projectId]
-  );
+  await transaction(async (client) => {
+    const projectStatusResult = await client.query(
+      'SELECT id, status, name FROM project WHERE id = $1',
+      [projectId]
+    );
 
-  if (result.rows.length === 0) {
-    throw new AppError('Project not found', 404);
-  }
+    if (projectStatusResult.rows.length === 0) {
+      throw new AppError('Project not found', 404);
+    }
+
+    assertProjectStatusTransition(projectStatusResult.rows[0].status, 'archived');
+
+    const archived = await client.query(
+      `UPDATE project SET status = 'archived' WHERE id = $1 RETURNING id, name`,
+      [projectId]
+    );
+
+    await client.query(
+      `INSERT INTO notification (user_id, type, title, message, metadata)
+       SELECT pa.user_id,
+              'assignment',
+              'Project archived',
+              $2,
+              $3::jsonb
+       FROM project_assignment pa
+       WHERE pa.project_id = $1
+         AND pa.status = 'approved'`,
+      [
+        projectId,
+        'A project was archived and moved out of active operations.',
+        JSON.stringify({ project_id: projectId, status: 'archived' }),
+      ]
+    );
+
+    return archived.rows[0];
+  });
 
   logger.info('Project archived:', { projectId, userId: req.user.id });
 

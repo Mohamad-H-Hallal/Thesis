@@ -1,0 +1,9 @@
+
+┌─────────────────────────────────────────────────────────┐
+│ A new version of Flutter is available!                  │
+│                                                         │
+│ To update to the latest version, run "flutter upgrade". │
+└─────────────────────────────────────────────────────────┘
+Launching lib\main.dart on Chrome in debug mode...
+Waiting for connection from debug service on Chrome...             29.9s
+Application finished.

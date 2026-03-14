@@ -13,6 +13,8 @@ READY FOR GOVERNMENT ENGINEERING HANDOVER.
 - OpenAPI and CI quality gates are wired and validated.
 - Coverage now measures source (`src/**/*.ts`) rather than build output.
 - Mobile production path uses real API repositories by default; mock mode is opt-in.
+- Viewer project visibility is now enforced through the database with admin-controlled `project.visible_to_viewers`.
+- Phase 5 sync status is surfaced in the app shell with live queue/sync state instead of a placeholder banner.
 - Hygiene cleanup completed: backup folders removed and generated artifacts excluded.
 
 ## Acceptance Criteria Status

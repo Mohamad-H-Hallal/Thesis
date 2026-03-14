@@ -1,6 +1,9 @@
 import { body, param, query as queryParam, validationResult, type ValidationChain } from 'express-validator';
 import type { NextFunction, Request, Response } from 'express';
 
+const strongPasswordPattern =
+  /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
+
 // Validation error handler
 const validate = (req: Request, res: Response, next: NextFunction): Response | void => {
   const errors = validationResult(req);
@@ -27,20 +30,23 @@ const userValidation = {
       .withMessage('Password must be a string')
       .isLength({ min: 8 })
       .withMessage('Password must be at least 8 characters')
-      .matches(/\S/)
-      .withMessage('Password cannot be empty'),
+      .matches(strongPasswordPattern)
+      .withMessage(
+        'Password must include uppercase, lowercase, number, and special character'
+      ),
     body('full_name')
       .trim()
       .notEmpty()
       .withMessage('Full name is required'),
     body('phone')
-      .optional()
+      .trim()
+      .notEmpty()
+      .withMessage('Phone is required')
       .matches(/^\+?[0-9-]+$/)
       .withMessage('Invalid phone number format'),
     body('role')
-      .optional()
       .isIn(['contributor', 'viewer'])
-      .withMessage('Public registration cannot request admin role'),
+      .withMessage('Role must be contributor or viewer'),
   ] as ValidationChain[],
   login: [
     body('email')
@@ -70,8 +76,51 @@ const userValidation = {
       .withMessage('New password must be a string')
       .isLength({ min: 8 })
       .withMessage('New password must be at least 8 characters')
+      .matches(strongPasswordPattern)
+      .withMessage(
+        'New password must include uppercase, lowercase, number, and special character'
+      )
       .custom((value, { req }) => value !== req.body.current_password)
       .withMessage('New password must be different from current password'),
+  ] as ValidationChain[],
+  createAdmin: [
+    body('email')
+      .trim()
+      .isEmail()
+      .normalizeEmail()
+      .withMessage('Valid email is required'),
+    body('password')
+      .isString()
+      .withMessage('Password must be a string')
+      .isLength({ min: 8 })
+      .withMessage('Password must be at least 8 characters')
+      .matches(strongPasswordPattern)
+      .withMessage(
+        'Password must include uppercase, lowercase, number, and special character'
+      ),
+    body('full_name')
+      .trim()
+      .notEmpty()
+      .withMessage('Full name is required'),
+    body('phone')
+      .optional()
+      .matches(/^\+?[0-9-]+$/)
+      .withMessage('Invalid phone number format'),
+  ] as ValidationChain[],
+  adminUpdate: [
+    body('full_name').optional().trim().notEmpty().withMessage('Full name cannot be empty'),
+    body('phone')
+      .optional()
+      .matches(/^\+?[0-9-]+$/)
+      .withMessage('Invalid phone number format'),
+    body('role')
+      .optional()
+      .isIn(['admin', 'contributor', 'viewer'])
+      .withMessage('Role must be admin, contributor, or viewer'),
+    body('is_active')
+      .optional()
+      .isBoolean()
+      .withMessage('is_active must be a boolean'),
   ] as ValidationChain[],
   refreshToken: [
     body('refresh_token')
@@ -92,20 +141,26 @@ const projectValidation = {
     body('category_id').isUUID().withMessage('Valid category ID is required'),
     body('status')
       .optional()
-      .isIn(['draft', 'active', 'paused', 'completed', 'archived']),
+      .isIn(['draft', 'active', 'completed', 'archived']),
     body('collection_form_schema')
       .isObject()
       .withMessage('Form schema must be a valid JSON object'),
     body('requires_photos').optional().isBoolean(),
     body('min_photos').optional().isInt({ min: 0 }),
     body('max_photos').optional().isInt({ min: 0 }),
+    body('visible_to_viewers').optional().isBoolean(),
   ] as ValidationChain[],
   update: [
     param('projectId').isUUID().withMessage('Valid project ID is required'),
     body('name').optional().trim().notEmpty(),
     body('description').optional().trim(),
-    body('status').optional().isIn(['draft', 'active', 'paused', 'completed', 'archived']),
+    body('status').optional().isIn(['draft', 'active', 'completed', 'archived']),
     body('collection_form_schema').optional().isObject(),
+    body('category_id').optional().isUUID().withMessage('category_id must be a valid UUID'),
+    body('requires_photos').optional().isBoolean(),
+    body('min_photos').optional().isInt({ min: 0 }),
+    body('max_photos').optional().isInt({ min: 0 }),
+    body('visible_to_viewers').optional().isBoolean(),
   ] as ValidationChain[],
 };
 
@@ -156,15 +211,43 @@ const assignmentValidation = {
   update: [
     param('assignmentId').isUUID().withMessage('Valid assignment ID is required'),
     body('status')
-      .isIn(['pending', 'approved', 'rejected'])
-      .withMessage('Invalid status'),
+      .isIn(['approved', 'rejected'])
+      .withMessage('Status must be approved or rejected'),
+  ] as ValidationChain[],
+};
+
+const categoryValidation = {
+  create: [
+    body('name').trim().notEmpty().withMessage('Category name is required'),
+    body('description').optional().trim(),
+    body('icon_url').optional().isString(),
+  ] as ValidationChain[],
+  update: [
+    param('categoryId').isUUID().withMessage('Valid category ID is required'),
+    body('name').optional().trim().notEmpty(),
+    body('description').optional().trim(),
+    body('icon_url').optional().isString(),
   ] as ValidationChain[],
 };
 
 // Export validation rules
 const exportValidation = {
   create: [
-    body('export_parameters').optional().isObject(),
+    body('status_filter').optional().isArray().withMessage('status_filter must be an array'),
+    body('status_filter.*')
+      .optional()
+      .isIn(['draft', 'pending_review', 'approved', 'rejected'])
+      .withMessage('status_filter contains invalid status'),
+    body('date_from').optional().isISO8601().withMessage('date_from must be a valid date'),
+    body('date_to').optional().isISO8601().withMessage('date_to must be a valid date'),
+    body('geometry_types').optional().isArray().withMessage('geometry_types must be an array'),
+    body('geometry_types.*')
+      .optional()
+      .isIn(['Point', 'LineString', 'Polygon'])
+      .withMessage('geometry_types contains invalid geometry type'),
+    body('include_photos').optional().isBoolean(),
+    body('coordinate_system').optional().isString(),
+    body('format').optional().isIn(['geojson', 'shapefile']),
   ] as ValidationChain[],
 };
 
@@ -229,6 +312,7 @@ export {
   projectValidation,
   featureValidation,
   assignmentValidation,
+  categoryValidation,
   exportValidation,
   paginationValidation,
   bboxValidation,

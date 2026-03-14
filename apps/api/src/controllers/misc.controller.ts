@@ -1,6 +1,57 @@
-const { query } = require('../config/database');
+const bcrypt = require('bcryptjs');
+const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
+import {
+  createNotification,
+  isProtectedSuperAdminEmail,
+  normalizeEmail,
+} from '../lib/userWorkflow';
+
+const getUserForAdminMutation = async (userId: string) => {
+  const result = await query(
+    `SELECT id, email, full_name, phone, role, is_active
+     FROM "user"
+     WHERE id = $1`,
+    [userId]
+  );
+
+  if (result.rows.length === 0) {
+    throw new AppError('User not found', 404);
+  }
+
+  return result.rows[0];
+};
+
+const assertAdminManagementAllowed = ({
+  actorEmail,
+  targetEmail,
+  targetRole,
+  nextRole,
+  nextIsActive,
+}: {
+  actorEmail?: string | null;
+  targetEmail?: string | null;
+  targetRole: string;
+  nextRole?: string;
+  nextIsActive?: boolean;
+}): void => {
+  const actorIsProtectedSuperAdmin = isProtectedSuperAdminEmail(actorEmail);
+  const targetIsProtectedSuperAdmin = isProtectedSuperAdminEmail(targetEmail);
+
+  if (targetIsProtectedSuperAdmin) {
+    throw new AppError('The protected super administrator cannot be modified through this action.', 403);
+  }
+
+  const touchesAdminPrivileges = targetRole === 'admin' || nextRole === 'admin';
+  if (touchesAdminPrivileges && !actorIsProtectedSuperAdmin) {
+    throw new AppError('Only the protected super administrator can manage admin accounts.', 403);
+  }
+
+  if (targetRole === 'admin' && nextIsActive === false && !actorIsProtectedSuperAdmin) {
+    throw new AppError('Only the protected super administrator can deactivate admin accounts.', 403);
+  }
+};
 
 // ============================================================================
 // CATEGORY CONTROLLER
@@ -305,6 +356,15 @@ const userController = {
   updateUser: async (req, res) => {
     const { userId } = req.params;
     const { full_name, phone, role, is_active } = req.body;
+    const currentUser = await getUserForAdminMutation(userId);
+
+    assertAdminManagementAllowed({
+      actorEmail: req.user?.email,
+      targetEmail: currentUser.email,
+      targetRole: currentUser.role,
+      nextRole: role,
+      nextIsActive: is_active,
+    });
 
     const updates: string[] = [];
     const params: unknown[] = [];
@@ -357,6 +417,14 @@ const userController = {
   // Deactivate user (admin only)
   deactivate: async (req, res) => {
     const { userId } = req.params;
+    const targetUser = await getUserForAdminMutation(userId);
+
+    assertAdminManagementAllowed({
+      actorEmail: req.user?.email,
+      targetEmail: targetUser.email,
+      targetRole: targetUser.role,
+      nextIsActive: false,
+    });
 
     const result = await query(
       'UPDATE "user" SET is_active = false WHERE id = $1 RETURNING id',
@@ -391,6 +459,134 @@ const userController = {
     res.json({
       success: true,
       data: result.rows[0],
+    });
+  },
+
+  createAdmin: async (req, res) => {
+    if (!isProtectedSuperAdminEmail(req.user?.email)) {
+      throw new AppError('Only the protected super administrator can create admin users.', 403);
+    }
+
+    const { email, password, full_name, phone } = req.body;
+    const normalizedEmail = normalizeEmail(email);
+
+    const existing = await query('SELECT id FROM "user" WHERE LOWER(email) = $1', [
+      normalizedEmail,
+    ]);
+    if (existing.rows.length > 0) {
+      throw new AppError('Email already registered', 409);
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const result = await query(
+      `INSERT INTO "user" (email, password_hash, full_name, phone, role, is_active)
+       VALUES ($1, $2, $3, $4, 'admin', TRUE)
+       RETURNING id, email, full_name, phone, role, is_active, created_at`,
+      [normalizedEmail, passwordHash, full_name, phone ?? null]
+    );
+
+    logger.info('Admin user created by protected super administrator', {
+      createdUserId: result.rows[0].id,
+      createdBy: req.user?.id,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Admin user created successfully',
+      data: result.rows[0],
+    });
+  },
+
+  approveContributor: async (req, res) => {
+    const { userId } = req.params;
+    const targetUser = await getUserForAdminMutation(userId);
+
+    if (targetUser.role !== 'contributor') {
+      throw new AppError('Only contributor accounts can be approved through this action.', 409);
+    }
+    if (targetUser.is_active) {
+      throw new AppError('Contributor account is already active.', 409);
+    }
+
+    const approvedUser = await transaction(async (client) => {
+      const result = await client.query(
+        `UPDATE "user"
+         SET is_active = TRUE
+         WHERE id = $1
+         RETURNING id, email, full_name, phone, role, is_active, created_at`,
+        [userId]
+      );
+
+      await createNotification(client, {
+        userId,
+        type: 'contributor_approved',
+        title: 'Contributor access approved',
+        message: 'Your contributor access request has been approved. You can now log in.',
+        metadata: {
+          user_id: userId,
+          approved_by_user_id: req.user?.id,
+        },
+      });
+
+      return result.rows[0];
+    });
+
+    logger.info('Contributor access approved', {
+      userId,
+      approvedBy: req.user?.id,
+    });
+
+    res.json({
+      success: true,
+      message: 'Contributor request approved successfully',
+      data: approvedUser,
+    });
+  },
+
+  rejectContributor: async (req, res) => {
+    const { userId } = req.params;
+    const targetUser = await getUserForAdminMutation(userId);
+
+    if (targetUser.role !== 'contributor') {
+      throw new AppError('Only contributor accounts can be rejected through this action.', 409);
+    }
+    if (targetUser.is_active) {
+      throw new AppError('Approved contributor accounts cannot be rejected through this action.', 409);
+    }
+
+    const downgradedUser = await transaction(async (client) => {
+      const result = await client.query(
+        `UPDATE "user"
+         SET role = 'viewer',
+             is_active = TRUE
+         WHERE id = $1
+         RETURNING id, email, full_name, phone, role, is_active, created_at`,
+        [userId]
+      );
+
+      await createNotification(client, {
+        userId,
+        type: 'contributor_rejected',
+        title: 'Contributor request rejected',
+        message: 'Your contributor request was rejected. Your account was downgraded to viewer access.',
+        metadata: {
+          user_id: userId,
+          rejected_by_user_id: req.user?.id,
+        },
+      });
+
+      return result.rows[0];
+    });
+
+    logger.info('Contributor access rejected and downgraded to viewer', {
+      userId,
+      rejectedBy: req.user?.id,
+    });
+
+    res.json({
+      success: true,
+      message: 'Contributor request rejected. User downgraded to viewer.',
+      data: downgradedUser,
     });
   },
 };

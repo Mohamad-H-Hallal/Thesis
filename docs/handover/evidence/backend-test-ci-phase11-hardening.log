@@ -1,0 +1,887 @@
+
+> lebanese-gis-backend@1.0.0 test:ci
+> jest --config jest.config.cjs --coverage --runInBand --ci --testPathIgnorePatterns test/phase10.performance
+
+PASS test/phase3.integration.test.js
+  ● Console
+
+    console.log
+      [dotenv@17.3.1] injecting env (35) from .env -- tip: 🔐 prevent building .env in docker: https://dotenvx.com/prebuild
+
+      at _log (node_modules/dotenv/lib/main.js:139:11)
+
+    console.log
+      2026-02-27 00:24:16 [info]: Database connected successfully
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:16 [info]: User logged in: {"userId":"33930040-fa98-4212-a246-7828002f1a4d","email":"phase3-user@example.com"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:16 [info]: HTTP request completed {"requestId":"5dc038dd-beec-4902-8184-4d017d1dd1de","method":"POST","path":"/api/v1/auth/login","statusCode":200,"durationMs":340,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:16 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:16 +0000] "POST /api/v1/auth/login HTTP/1.1" 200 642 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:16 [error]: Error: Invalid geometry coordinates for the provided geometry type {"statusCode":400,"stack":"Error: Invalid geometry coordinates for the provided geometry type\n    at validateGeoJsonGeometry (D:\\GIS_APP\\apps\\api\\src\\controllers\\feature.controller.ts:97:11)\n    at validateGeoJsonGeometry (D:\\GIS_APP\\apps\\api\\src\\controllers\\feature.controller.ts:361:30)\n    at fn (D:\\GIS_APP\\apps\\api\\src\\middleware\\error.ts:112:19)\n    at Layer.handle [as handle_request] (D:\\GIS_APP\\apps\\api\\node_modules\\express\\lib\\router\\layer.js:95:5)\n    at next (D:\\GIS_APP\\apps\\api\\node_modules\\express\\lib\\router\\route.js:149:13)\n    at next (D:\\GIS_APP\\apps\\api\\src\\middleware\\validation.ts:14:3)\n    at Layer.handle [as handle_request] (D:\\GIS_APP\\apps\\api\\node_modules\\express\\lib\\router\\layer.js:95:5)\n    at next (D:\\GIS_APP\\apps\\api\\node_modules\\express\\lib\\router\\route.js:149:13)\n    at middleware (D:\\GIS_APP\\apps\\api\\node_modules\\express-validator\\lib\\middlewares\\check.js:16:13)\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)","requestId":"30a6042f-ca5f-4d54-a602-4913a74e6309","url":"/api/v1/features","method":"POST","ip":"::ffff:127.0.0.1","userId":"33930040-fa98-4212-a246-7828002f1a4d"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:16 [info]: HTTP request completed {"requestId":"30a6042f-ca5f-4d54-a602-4913a74e6309","method":"POST","path":"/api/v1/features","statusCode":400,"durationMs":27,"userId":"33930040-fa98-4212-a246-7828002f1a4d","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:16 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:16 +0000] "POST /api/v1/features HTTP/1.1" 400 140 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:17 [info]: User logged in: {"userId":"00eb7ef0-8112-465b-acc8-e07034a087f5","email":"phase3-user@example.com"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:17 [info]: HTTP request completed {"requestId":"0bc07be8-9934-433a-81ee-f4072289adb9","method":"POST","path":"/api/v1/auth/login","statusCode":200,"durationMs":274,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:17 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:17 +0000] "POST /api/v1/auth/login HTTP/1.1" 200 642 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:17 [info]: Database connected successfully
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:17 [info]: HTTP request completed {"requestId":"4d71464b-e631-48da-b969-866b5f50d99c","method":"GET","path":"/api/v1/features/bbox?minLon=35&minLat=33&maxLon=36&maxLat=34.5&page=1&limit=2&project_id=3045bfd2-e6bb-446d-a56b-e7ae20b0bbe6&status=approved","statusCode":200,"durationMs":29,"userId":"00eb7ef0-8112-465b-acc8-e07034a087f5","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:17 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:17 +0000] "GET /api/v1/features/bbox?minLon=35&minLat=33&maxLon=36&maxLat=34.5&page=1&limit=2&project_id=3045bfd2-e6bb-446d-a56b-e7ae20b0bbe6&status=approved HTTP/1.1" 200 727 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:17 [info]: User logged in: {"userId":"e3e84cf5-770c-475f-a108-2588249ddd73","email":"phase3-user@example.com"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:17 [info]: HTTP request completed {"requestId":"c833606f-583f-42f6-b45e-17b1dbe207f6","method":"POST","path":"/api/v1/auth/login","statusCode":200,"durationMs":323,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:17 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:17 +0000] "POST /api/v1/auth/login HTTP/1.1" 200 642 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:17 [info]: Database pool closed
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+PASS test/phase11.e2e.dataflow.test.js
+  ● Console
+
+    console.log
+      [dotenv@17.3.1] injecting env (35) from .env -- tip: ⚡️ secrets for agents: https://dotenvx.com/as2
+
+      at _log (node_modules/dotenv/lib/main.js:139:11)
+
+    console.log
+      2026-02-27 00:24:19 [info]: Database connected successfully
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: User logged in: {"userId":"7874761a-7d0e-4395-838d-5c407b1137f6","email":"phase11-admin-1772144658697-88465@example.com"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: HTTP request completed {"requestId":"626da73b-ab69-4848-996a-d1b2c1931a29","method":"POST","path":"/api/v1/auth/login","statusCode":200,"durationMs":364,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:19 +0000] "POST /api/v1/auth/login HTTP/1.1" 200 662 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: User registered: {"userId":"614b657c-1246-4d56-9730-6252defbbd9d","email":"phase11-contributor-1772144659442-93344@example.com"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: HTTP request completed {"requestId":"6cefc65d-51dd-402d-a1b6-177ba06ed48a","method":"POST","path":"/api/v1/auth/register","statusCode":201,"durationMs":310,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:19 +0000] "POST /api/v1/auth/register HTTP/1.1" 201 740 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: Category created: {"categoryId":"85016ed9-301e-4476-b8d7-762c5301873a"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: HTTP request completed {"requestId":"95ad1d14-515f-47f6-a49c-aec2dfe09256","method":"POST","path":"/api/v1/categories","statusCode":201,"durationMs":10,"userId":"7874761a-7d0e-4395-838d-5c407b1137f6","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:19 +0000] "POST /api/v1/categories HTTP/1.1" 201 244 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: Project created: {"projectId":"eb2d473f-cf9e-4f46-b9ec-e20157c56088","userId":"7874761a-7d0e-4395-838d-5c407b1137f6"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: HTTP request completed {"requestId":"8b66e2e3-2502-4d5c-ba88-5df8853dde65","method":"POST","path":"/api/v1/projects","statusCode":201,"durationMs":18,"userId":"7874761a-7d0e-4395-838d-5c407b1137f6","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:19 +0000] "POST /api/v1/projects HTTP/1.1" 201 662 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: Database connected successfully
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: Assignment created: {"assignmentId":"f51935c6-7556-436b-996b-42e57c7b370d","projectId":"eb2d473f-cf9e-4f46-b9ec-e20157c56088","userId":"614b657c-1246-4d56-9730-6252defbbd9d"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: HTTP request completed {"requestId":"42f0040e-c0c6-41a6-aee3-133c3c358141","method":"POST","path":"/api/v1/assignments","statusCode":201,"durationMs":29,"userId":"7874761a-7d0e-4395-838d-5c407b1137f6","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:19 +0000] "POST /api/v1/assignments HTTP/1.1" 201 385 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: Assignment status updated: {"assignmentId":"f51935c6-7556-436b-996b-42e57c7b370d","status":"approved","approvedBy":"7874761a-7d0e-4395-838d-5c407b1137f6"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: HTTP request completed {"requestId":"c1e7a62b-5765-4096-b4f7-5066b46a1c94","method":"PUT","path":"/api/v1/assignments/f51935c6-7556-436b-996b-42e57c7b370d","statusCode":200,"durationMs":11,"userId":"7874761a-7d0e-4395-838d-5c407b1137f6","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:19 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:19 +0000] "PUT /api/v1/assignments/f51935c6-7556-436b-996b-42e57c7b370d HTTP/1.1" 200 443 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: User logged in: {"userId":"614b657c-1246-4d56-9730-6252defbbd9d","email":"phase11-contributor-1772144659442-93344@example.com"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: HTTP request completed {"requestId":"0cd7d2aa-9d79-4e82-aa64-87335d002b79","method":"POST","path":"/api/v1/auth/login","statusCode":200,"durationMs":341,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:20 +0000] "POST /api/v1/auth/login HTTP/1.1" 200 688 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: Feature created: {"featureId":"275faf38-e9aa-46b8-babb-2e56be956a80","projectId":"eb2d473f-cf9e-4f46-b9ec-e20157c56088","userId":"614b657c-1246-4d56-9730-6252defbbd9d"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: HTTP request completed {"requestId":"7edb197e-3d17-41c2-a441-9b96b1a973a8","method":"POST","path":"/api/v1/features","statusCode":201,"durationMs":24,"userId":"614b657c-1246-4d56-9730-6252defbbd9d","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:20 +0000] "POST /api/v1/features HTTP/1.1" 201 225 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: Feature created: {"featureId":"c7bee154-8d92-43e0-845e-7aef99015f25","projectId":"eb2d473f-cf9e-4f46-b9ec-e20157c56088","userId":"614b657c-1246-4d56-9730-6252defbbd9d"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: HTTP request completed {"requestId":"25c56367-9fb4-4ffc-bd83-04c8cc062a90","method":"POST","path":"/api/v1/features","statusCode":201,"durationMs":9,"userId":"614b657c-1246-4d56-9730-6252defbbd9d","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:20 +0000] "POST /api/v1/features HTTP/1.1" 201 223 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: Photos uploaded: {"featureId":"275faf38-e9aa-46b8-babb-2e56be956a80","count":1,"userId":"614b657c-1246-4d56-9730-6252defbbd9d"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: HTTP request completed {"requestId":"4d83ec46-747f-4995-8fc6-07e4831ee269","method":"POST","path":"/api/v1/photos/feature/275faf38-e9aa-46b8-babb-2e56be956a80","statusCode":201,"durationMs":29,"userId":"614b657c-1246-4d56-9730-6252defbbd9d","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:20 +0000] "POST /api/v1/photos/feature/275faf38-e9aa-46b8-babb-2e56be956a80 HTTP/1.1" 201 334 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: Feature submitted for review: {"featureId":"275faf38-e9aa-46b8-babb-2e56be956a80","userId":"614b657c-1246-4d56-9730-6252defbbd9d"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: HTTP request completed {"requestId":"72888853-42a6-4d37-92e9-9e4bb4d9f763","method":"POST","path":"/api/v1/features/275faf38-e9aa-46b8-babb-2e56be956a80/submit","statusCode":200,"durationMs":12,"userId":"614b657c-1246-4d56-9730-6252defbbd9d","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:20 +0000] "POST /api/v1/features/275faf38-e9aa-46b8-babb-2e56be956a80/submit HTTP/1.1" 200 57 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: Feature reviewed: {"featureId":"275faf38-e9aa-46b8-babb-2e56be956a80","status":"approved","reviewerId":"7874761a-7d0e-4395-838d-5c407b1137f6"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: HTTP request completed {"requestId":"fd07da4a-7970-4dec-80a1-b17d1b2fe505","method":"POST","path":"/api/v1/features/275faf38-e9aa-46b8-babb-2e56be956a80/review","statusCode":200,"durationMs":10,"userId":"7874761a-7d0e-4395-838d-5c407b1137f6","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:20 +0000] "POST /api/v1/features/275faf38-e9aa-46b8-babb-2e56be956a80/review HTTP/1.1" 200 58 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: Export requested: {"exportId":"31765efd-2748-4634-b038-6bee11145cb4","projectId":"eb2d473f-cf9e-4f46-b9ec-e20157c56088","userId":"614b657c-1246-4d56-9730-6252defbbd9d","format":"geojson"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: HTTP request completed {"requestId":"fee75638-b2b3-4e72-9434-8ff72b407f0c","method":"POST","path":"/api/v1/exports/project/eb2d473f-cf9e-4f46-b9ec-e20157c56088","statusCode":202,"durationMs":14,"userId":"614b657c-1246-4d56-9730-6252defbbd9d","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:20 +0000] "POST /api/v1/exports/project/eb2d473f-cf9e-4f46-b9ec-e20157c56088 HTTP/1.1" 202 235 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: Starting export processing: {"exportId":"31765efd-2748-4634-b038-6bee11145cb4"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: Querying features: {"exportId":"31765efd-2748-4634-b038-6bee11145cb4","format":"geojson"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: Features found: {"exportId":"31765efd-2748-4634-b038-6bee11145cb4","count":1,"format":"geojson"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: HTTP request completed {"requestId":"1232cdb7-3527-45fa-9eae-d1a2133d66d0","method":"GET","path":"/api/v1/exports/31765efd-2748-4634-b038-6bee11145cb4","statusCode":200,"durationMs":6,"userId":"614b657c-1246-4d56-9730-6252defbbd9d","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:20 +0000] "GET /api/v1/exports/31765efd-2748-4634-b038-6bee11145cb4 HTTP/1.1" 200 518 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: Created export directory: {"exportId":"31765efd-2748-4634-b038-6bee11145cb4","path":"exports\\31765efd-2748-4634-b038-6bee11145cb4"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: Features grouped by type: {"exportId":"31765efd-2748-4634-b038-6bee11145cb4","types":["Point"],"format":"geojson"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: Created GeoJSON: {"exportId":"31765efd-2748-4634-b038-6bee11145cb4","file":"South_Census_1772144659774_2026-02-26T22-24-20-336Z_Point.geojson"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: Created metadata: {"exportId":"31765efd-2748-4634-b038-6bee11145cb4"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: Created README: {"exportId":"31765efd-2748-4634-b038-6bee11145cb4"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: ZIP created: {"size":2508}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: Created ZIP: {"exportId":"31765efd-2748-4634-b038-6bee11145cb4","zipPath":"exports\\South_Census_1772144659774_2026-02-26T22-24-20-336Z.zip"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: Export completed: {"exportId":"31765efd-2748-4634-b038-6bee11145cb4","featureCount":1,"fileSize":2508,"format":"geojson"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: HTTP request completed {"requestId":"17c63d05-65f8-4d33-a099-2be37bada060","method":"GET","path":"/api/v1/exports/31765efd-2748-4634-b038-6bee11145cb4","statusCode":200,"durationMs":3,"userId":"614b657c-1246-4d56-9730-6252defbbd9d","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:20 +0000] "GET /api/v1/exports/31765efd-2748-4634-b038-6bee11145cb4 HTTP/1.1" 200 600 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:20 [info]: Database pool closed
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+PASS test/phase10.e2e.workflow.test.js
+  ● Console
+
+    console.log
+      [dotenv@17.3.1] injecting env (35) from .env -- tip: ⚙️  write to custom object with { processEnv: myObject }
+
+      at _log (node_modules/dotenv/lib/main.js:139:11)
+
+    console.log
+      2026-02-27 00:24:21 [info]: Database connected successfully
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: User logged in: {"userId":"2ba890a4-01a6-4417-a5bf-d8a8cd8bd40f","email":"phase10-admin-1772144661538-27046@example.com"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: HTTP request completed {"requestId":"9d956f6f-27fb-4ac4-8d4b-408ae8acd63b","method":"POST","path":"/api/v1/auth/login","statusCode":200,"durationMs":328,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:22 +0000] "POST /api/v1/auth/login HTTP/1.1" 200 662 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: User registered: {"userId":"1f3761c0-3c70-41b4-a8ac-39bcc61b7e5f","email":"phase10-contributor-1772144662178-86044@example.com"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: HTTP request completed {"requestId":"6b2801a4-ee6f-4b44-8323-84da0e7b663c","method":"POST","path":"/api/v1/auth/register","statusCode":201,"durationMs":267,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:22 +0000] "POST /api/v1/auth/register HTTP/1.1" 201 740 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Category created: {"categoryId":"e511be7b-f063-4869-9c91-e3beadd27426"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: HTTP request completed {"requestId":"9c3fdee7-3993-4cba-bb79-1f9b2a85688d","method":"POST","path":"/api/v1/categories","statusCode":201,"durationMs":6,"userId":"2ba890a4-01a6-4417-a5bf-d8a8cd8bd40f","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:22 +0000] "POST /api/v1/categories HTTP/1.1" 201 236 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Project created: {"projectId":"75ee61d5-c77e-447f-bcbc-a851ed037b5e","userId":"2ba890a4-01a6-4417-a5bf-d8a8cd8bd40f"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: HTTP request completed {"requestId":"c673f317-612a-4c26-a909-2090b399f1f6","method":"POST","path":"/api/v1/projects","statusCode":201,"durationMs":11,"userId":"2ba890a4-01a6-4417-a5bf-d8a8cd8bd40f","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:22 +0000] "POST /api/v1/projects HTTP/1.1" 201 668 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Database connected successfully
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Assignment created: {"assignmentId":"ee321394-fbc7-4c1e-90ee-0fed45966f01","projectId":"75ee61d5-c77e-447f-bcbc-a851ed037b5e","userId":"1f3761c0-3c70-41b4-a8ac-39bcc61b7e5f"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: HTTP request completed {"requestId":"69945676-744a-40d0-8ea5-881409ec8eac","method":"POST","path":"/api/v1/assignments","statusCode":201,"durationMs":22,"userId":"2ba890a4-01a6-4417-a5bf-d8a8cd8bd40f","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:22 +0000] "POST /api/v1/assignments HTTP/1.1" 201 385 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Assignment status updated: {"assignmentId":"ee321394-fbc7-4c1e-90ee-0fed45966f01","status":"approved","approvedBy":"2ba890a4-01a6-4417-a5bf-d8a8cd8bd40f"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: HTTP request completed {"requestId":"99a2be16-64c4-4a5a-a70b-5bc6fab4052e","method":"PUT","path":"/api/v1/assignments/ee321394-fbc7-4c1e-90ee-0fed45966f01","statusCode":200,"durationMs":7,"userId":"2ba890a4-01a6-4417-a5bf-d8a8cd8bd40f","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:22 +0000] "PUT /api/v1/assignments/ee321394-fbc7-4c1e-90ee-0fed45966f01 HTTP/1.1" 200 443 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: User logged in: {"userId":"1f3761c0-3c70-41b4-a8ac-39bcc61b7e5f","email":"phase10-contributor-1772144662178-86044@example.com"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: HTTP request completed {"requestId":"a488e189-ea46-40ff-86e9-86c20d3c89d4","method":"POST","path":"/api/v1/auth/login","statusCode":200,"durationMs":269,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:22 +0000] "POST /api/v1/auth/login HTTP/1.1" 200 688 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Feature created: {"featureId":"b34960e5-7691-42fa-9575-090e42165195","projectId":"75ee61d5-c77e-447f-bcbc-a851ed037b5e","userId":"1f3761c0-3c70-41b4-a8ac-39bcc61b7e5f"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: HTTP request completed {"requestId":"01add347-c6d9-4679-98ec-34139a5ee146","method":"POST","path":"/api/v1/features","statusCode":201,"durationMs":16,"userId":"1f3761c0-3c70-41b4-a8ac-39bcc61b7e5f","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:22 +0000] "POST /api/v1/features HTTP/1.1" 201 229 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Feature submitted for review: {"featureId":"b34960e5-7691-42fa-9575-090e42165195","userId":"1f3761c0-3c70-41b4-a8ac-39bcc61b7e5f"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: HTTP request completed {"requestId":"7bb08eea-e2f3-4ab5-b57e-6fec3ad66920","method":"POST","path":"/api/v1/features/b34960e5-7691-42fa-9575-090e42165195/submit","statusCode":200,"durationMs":8,"userId":"1f3761c0-3c70-41b4-a8ac-39bcc61b7e5f","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:22 +0000] "POST /api/v1/features/b34960e5-7691-42fa-9575-090e42165195/submit HTTP/1.1" 200 57 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Feature reviewed: {"featureId":"b34960e5-7691-42fa-9575-090e42165195","status":"approved","reviewerId":"2ba890a4-01a6-4417-a5bf-d8a8cd8bd40f"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: HTTP request completed {"requestId":"ca6168ef-469a-441d-b1d1-8ae420131e59","method":"POST","path":"/api/v1/features/b34960e5-7691-42fa-9575-090e42165195/review","statusCode":200,"durationMs":7,"userId":"2ba890a4-01a6-4417-a5bf-d8a8cd8bd40f","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:22 +0000] "POST /api/v1/features/b34960e5-7691-42fa-9575-090e42165195/review HTTP/1.1" 200 58 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Export requested: {"exportId":"9281c168-df13-4abb-bdbb-cd90d03e7d67","projectId":"75ee61d5-c77e-447f-bcbc-a851ed037b5e","userId":"1f3761c0-3c70-41b4-a8ac-39bcc61b7e5f","format":"geojson"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: HTTP request completed {"requestId":"34ff86a6-c459-46df-951f-528bce5e2434","method":"POST","path":"/api/v1/exports/project/75ee61d5-c77e-447f-bcbc-a851ed037b5e","statusCode":202,"durationMs":6,"userId":"1f3761c0-3c70-41b4-a8ac-39bcc61b7e5f","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:22 +0000] "POST /api/v1/exports/project/75ee61d5-c77e-447f-bcbc-a851ed037b5e HTTP/1.1" 202 235 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Starting export processing: {"exportId":"9281c168-df13-4abb-bdbb-cd90d03e7d67"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Querying features: {"exportId":"9281c168-df13-4abb-bdbb-cd90d03e7d67","format":"geojson"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Features found: {"exportId":"9281c168-df13-4abb-bdbb-cd90d03e7d67","count":1,"format":"geojson"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: HTTP request completed {"requestId":"ae725f46-cddf-4eb0-a620-b7b0dcb333fa","method":"GET","path":"/api/v1/exports/9281c168-df13-4abb-bdbb-cd90d03e7d67","statusCode":200,"durationMs":4,"userId":"1f3761c0-3c70-41b4-a8ac-39bcc61b7e5f","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:22 +0000] "GET /api/v1/exports/9281c168-df13-4abb-bdbb-cd90d03e7d67 HTTP/1.1" 200 524 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Created export directory: {"exportId":"9281c168-df13-4abb-bdbb-cd90d03e7d67","path":"exports\\9281c168-df13-4abb-bdbb-cd90d03e7d67"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Features grouped by type: {"exportId":"9281c168-df13-4abb-bdbb-cd90d03e7d67","types":["Point"],"format":"geojson"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Created GeoJSON: {"exportId":"9281c168-df13-4abb-bdbb-cd90d03e7d67","file":"Bekaa_Field_Census_1772144662459_2026-02-26T22-24-22-849Z_Point.geojson"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Created metadata: {"exportId":"9281c168-df13-4abb-bdbb-cd90d03e7d67"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Created README: {"exportId":"9281c168-df13-4abb-bdbb-cd90d03e7d67"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: ZIP created: {"size":2546}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Created ZIP: {"exportId":"9281c168-df13-4abb-bdbb-cd90d03e7d67","zipPath":"exports\\Bekaa_Field_Census_1772144662459_2026-02-26T22-24-22-849Z.zip"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:22 [info]: Export completed: {"exportId":"9281c168-df13-4abb-bdbb-cd90d03e7d67","featureCount":1,"fileSize":2546,"format":"geojson"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:23 [info]: HTTP request completed {"requestId":"cb893f77-f0d4-40cb-8cc5-03db0cfe2335","method":"GET","path":"/api/v1/exports/9281c168-df13-4abb-bdbb-cd90d03e7d67","statusCode":200,"durationMs":3,"userId":"1f3761c0-3c70-41b4-a8ac-39bcc61b7e5f","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:23 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:23 +0000] "GET /api/v1/exports/9281c168-df13-4abb-bdbb-cd90d03e7d67 HTTP/1.1" 200 612 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:23 [info]: Downloading export: {"exportId":"9281c168-df13-4abb-bdbb-cd90d03e7d67","path":"exports\\Bekaa_Field_Census_1772144662459_2026-02-26T22-24-22-849Z.zip","format":"geojson"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:23 [info]: HTTP request completed {"requestId":"0e18f55d-ee95-4dc6-a0ef-137c71223969","method":"GET","path":"/api/v1/exports/9281c168-df13-4abb-bdbb-cd90d03e7d67/download","statusCode":200,"durationMs":5,"userId":"1f3761c0-3c70-41b4-a8ac-39bcc61b7e5f","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:23 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:23 +0000] "GET /api/v1/exports/9281c168-df13-4abb-bdbb-cd90d03e7d67/download HTTP/1.1" 200 2546 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:23 [info]: Database pool closed
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+PASS test/security.auth.test.js
+  ● Console
+
+    console.log
+      [dotenv@17.3.1] injecting env (35) from .env -- tip: ⚡️ secrets for agents: https://dotenvx.com/as2
+
+      at _log (node_modules/dotenv/lib/main.js:139:11)
+
+    console.log
+      2026-02-27 00:24:23 [info]: HTTP request completed {"requestId":"49448bfe-b65e-4bca-8c73-f4dbf7b8688c","method":"POST","path":"/api/v1/auth/register","statusCode":400,"durationMs":5,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:23 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:23 +0000] "POST /api/v1/auth/register HTTP/1.1" 400 177 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:24 [info]: Database connected successfully
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:24 [info]: User logged in: {"userId":"d7349000-f20c-490c-8e83-0f4707e8e305","email":"security-admin-1772144664069-2381@example.com"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:24 [info]: HTTP request completed {"requestId":"e4797233-d1e8-460d-b49c-134b23315131","method":"POST","path":"/api/v1/auth/login","statusCode":200,"durationMs":274,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:24 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:24 +0000] "POST /api/v1/auth/login HTTP/1.1" 200 663 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:24 [info]: User registered: {"userId":"b44a83cd-2baa-4439-997e-c67c48830180","email":"security-contributor-1772144664607-44062@example.com"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:24 [info]: HTTP request completed {"requestId":"b92291f8-da29-4b44-94ac-50853e0b7449","method":"POST","path":"/api/v1/auth/register","statusCode":201,"durationMs":259,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:24 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:24 +0000] "POST /api/v1/auth/register HTTP/1.1" 201 742 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: User registered: {"userId":"32f1cead-49d3-4e31-83fb-da950d4354ec","email":"security-target-1772144664869-23086@example.com"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: HTTP request completed {"requestId":"043c7aa5-cf0a-4a4d-80e6-b7532e994111","method":"POST","path":"/api/v1/auth/register","statusCode":201,"durationMs":260,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:25 +0000] "POST /api/v1/auth/register HTTP/1.1" 201 732 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: User logged in: {"userId":"b44a83cd-2baa-4439-997e-c67c48830180","email":"security-contributor-1772144664607-44062@example.com"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: HTTP request completed {"requestId":"041d1b91-5963-4a26-a035-435e2e806925","method":"POST","path":"/api/v1/auth/login","statusCode":200,"durationMs":262,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:25 +0000] "POST /api/v1/auth/login HTTP/1.1" 200 690 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: HTTP request completed {"requestId":"096bf7e6-a296-4dac-826a-7cb5ebd23b05","method":"PUT","path":"/api/v1/users/32f1cead-49d3-4e31-83fb-da950d4354ec","statusCode":403,"durationMs":2,"userId":"b44a83cd-2baa-4439-997e-c67c48830180","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:25 +0000] "PUT /api/v1/users/32f1cead-49d3-4e31-83fb-da950d4354ec HTTP/1.1" 403 68 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: User updated by admin: {"userId":"32f1cead-49d3-4e31-83fb-da950d4354ec","adminId":"d7349000-f20c-490c-8e83-0f4707e8e305"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: HTTP request completed {"requestId":"5de8a51f-cfdc-4a36-994b-8d9f1ef33ffa","method":"PUT","path":"/api/v1/users/32f1cead-49d3-4e31-83fb-da950d4354ec","statusCode":200,"durationMs":5,"userId":"d7349000-f20c-490c-8e83-0f4707e8e305","ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:25 +0000] "PUT /api/v1/users/32f1cead-49d3-4e31-83fb-da950d4354ec HTTP/1.1" 200 250 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: Database pool closed
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+PASS test/app.test.js
+  ● Console
+
+    console.log
+      [dotenv@17.3.1] injecting env (35) from .env -- tip: ⚙️  specify custom .env file path with { path: '/custom/path/.env' }
+
+      at _log (node_modules/dotenv/lib/main.js:139:11)
+
+    console.log
+      2026-02-27 00:24:25 [info]: HTTP request completed {"requestId":"23c23f40-7892-41f9-9906-9f8de1e36f18","method":"GET","path":"/health","statusCode":200,"durationMs":1,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:25 +0000] "GET /health HTTP/1.1" 200 173 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: HTTP request completed {"requestId":"b3ddcea4-a1b2-448b-ac32-89a97ef40708","method":"GET","path":"/api/v1","statusCode":200,"durationMs":1,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:25 +0000] "GET /api/v1 HTTP/1.1" 200 516 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: HTTP request completed {"requestId":"74e679dd-7379-4dec-a57f-410649d754da","method":"GET","path":"/docs/openapi.yaml","statusCode":200,"durationMs":4,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: HTTP request completed {"requestId":"d777c4dd-c265-463e-aa49-f3d2b79f0e45","method":"POST","path":"/api/v1/auth/login","statusCode":400,"durationMs":5,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:25 +0000] "POST /api/v1/auth/login HTTP/1.1" 400 315 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: HTTP request completed {"requestId":"74ca6b78-abce-4c33-8dc6-83bd5caa4c10","method":"POST","path":"/api/v1/auth/refresh-token","statusCode":400,"durationMs":1,"ip":"::ffff:127.0.0.1"}
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: ::ffff:127.0.0.1 - - [26/Feb/2026:22:24:25 +0000] "POST /api/v1/auth/refresh-token HTTP/1.1" 400 176 "-" "-"
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+    console.log
+      2026-02-27 00:24:25 [info]: Database pool closed
+
+      at Console.log (node_modules/winston/lib/winston/transports/console.js:87:23)
+
+PASS test/security.metrics.test.js
+---------------------------|---------|----------|---------|---------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+File                       | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s                                                                                                                                                                        
+---------------------------|---------|----------|---------|---------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+All files                  |    42.8 |    30.71 |   40.82 |   43.08 |                                                                                                                                                                                          
+ src                       |   47.23 |    28.07 |   31.81 |   48.73 |                                                                                                                                                                                          
+  app.ts                   |   81.91 |    41.02 |     100 |   81.91 | 47,51,60-70,82-90,121,178                                                                                                                                                                
+  server.ts                |       0 |        0 |       0 |       0 | 1-105                                                                                                                                                                                    
+ src/config                |   72.41 |    67.74 |      75 |   75.94 |                                                                                                                                                                                          
+  database.ts              |    65.9 |       80 |   66.66 |    67.5 | 21,36-38,51-52,60-66,75                                                                                                                                                                  
+  env.ts                   |   64.28 |       50 |      50 |   69.23 | 93-94,98,101                                                                                                                                                                             
+  upload.ts                |    86.2 |       60 |     100 |    92.3 | 14,44                                                                                                                                                                                    
+ src/controllers           |   39.73 |    28.78 |    41.9 |   39.87 |                                                                                                                                                                                          
+  assignment.controller.ts |   39.32 |    24.13 |      40 |   39.32 | 7-29,37-58,74,77,81,84,94,130-181,194,204,247-281                                                                                                                                        
+  auth.controller.ts       |   45.23 |    20.83 |      25 |   45.23 | 17,70,77,84,117-123,131-144,153-182,190-192,200-248                                                                                                                                      
+  export.controller.ts     |   54.91 |    39.21 |   56.52 |   55.15 | 17-20,40,50,79,122,157-159,163-165,170-173,183,215-236,335-357,377-435,685-686,692-722,745,766,772,779,786-787,796,803-837                                                               
+  feature.controller.ts    |   46.87 |    34.84 |      60 |   47.45 | 47,62,67,72,81,86,93,101-104,113,131-141,146,157,162,170,176-185,206-207,212-217,225,230,234,243,251-311,322-352,372,416-474,485-512,528,532,581,592,596,601,646-719,739,743,749,844-920 
+  misc.controller.ts       |   21.32 |    13.04 |   13.33 |   21.32 | 12-35,63-120,134-227,243-298,314-316,319-321,329-331,335,345,359-391                                                                                                                     
+  photo.controller.ts      |   45.09 |       25 |   16.66 |   44.55 | 10-17,26,39,46,59,103,141,161-193,201-227,232-267,275-303                                                                                                                                
+  project.controller.ts    |      16 |     8.69 |   30.76 |   16.09 | 14-20,30,36,42-118,132-151,174,227-332,341-382,390-400,408-445                                                                                                                           
+ src/db                    |       0 |        0 |       0 |       0 |                                                                                                                                                                                          
+  migrate.ts               |       0 |      100 |       0 |       0 | 4-19                                                                                                                                                                                     
+  migrationRunner.ts       |       0 |        0 |       0 |       0 | 6-97                                                                                                                                                                                     
+  seed.ts                  |       0 |        0 |       0 |       0 | 7-87                                                                                                                                                                                     
+  seedStaging.ts           |       0 |        0 |       0 |       0 | 5-655                                                                                                                                                                                    
+  stagingVerify.ts         |       0 |        0 |       0 |       0 | 4-174                                                                                                                                                                                    
+ src/middleware            |   69.67 |    49.03 |   79.48 |   68.53 |                                                                                                                                                                                          
+  audit.ts                 |   94.11 |    71.42 |     100 |      94 | 58,62,87                                                                                                                                                                                 
+  auth.ts                  |   63.95 |    39.62 |      90 |   61.72 | 26-29,58,66,86,96,106-119,130,153,161,172,182-183,192-224                                                                                                                                
+  error.ts                 |   45.09 |    30.43 |      80 |   41.66 | 19-20,49-69,75-76,80-81,86-92                                                                                                                                                            
+  observability.ts         |   55.31 |    45.83 |    37.5 |   55.31 | 38-53,77-95,103-122,138,140                                                                                                                                                              
+  requestContext.ts        |     100 |       50 |     100 |     100 | 7-16                                                                                                                                                                                     
+  validation.ts            |   96.55 |    57.14 |      80 |   96.42 | 73                                                                                                                                                                                       
+ src/routes                |   84.41 |    23.21 |   48.57 |   84.41 |                                                                                                                                                                                          
+  auth.routes.ts           |   79.16 |       20 |    37.5 |   79.16 | 52,64-65,77-78                                                                                                                                                                           
+  export.routes.ts         |    87.5 |       25 |   33.33 |    87.5 | 45-46                                                                                                                                                                                    
+  feature.routes.ts        |   83.87 |    28.57 |      75 |   83.87 | 63,77,108-111                                                                                                                                                                            
+  index.ts                 |   85.71 |    22.72 |      50 |   85.71 | 56,74-77,94,185,200,285-286                                                                                                                                                              
+  project.routes.ts        |      85 |    16.66 |      25 |      85 | 61,77-78                                                                                                                                                                                 
+ src/utils                 |      80 |    66.66 |     100 |      80 |                                                                                                                                                                                          
+  logger.ts                |      80 |    66.66 |     100 |      80 | 35-40                                                                                                                                                                                    
+---------------------------|---------|----------|---------|---------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Test Suites: 6 passed, 6 total
+Tests:       15 passed, 15 total
+Snapshots:   0 total
+Time:        11.923 s, estimated 12 s
+Ran all test suites.

@@ -8,6 +8,7 @@ const {
   shutdown,
   createAdminUser,
   registerUser,
+  approveContributorRequest,
   createCategory,
   createProject,
   createAssignment,
@@ -36,6 +37,11 @@ describe('Phase 10 performance: bbox query', () => {
       role: 'contributor',
       fullName: 'BBox Perf Contributor',
       emailPrefix: 'bbox-contributor',
+    });
+
+    await approveContributorRequest({
+      token: admin.token,
+      userId: contributor.user.id,
     });
 
     const category = await createCategory({

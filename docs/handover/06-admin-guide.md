@@ -28,6 +28,7 @@ System administrators and operations leads.
 ### 3) Project Governance
 - Create new projects.
 - Update/archive projects.
+- Toggle whether a project is visible to viewers.
 - Validate collection schema settings.
 - Expected errors:
   - 403 for unauthorized role.
@@ -65,6 +66,7 @@ System administrators and operations leads.
 ## Role Permissions (Admin Context)
 - Admin can:
   - manage users/categories/projects/assignments globally
+  - mark projects as viewer-visible or contributor-only
   - review/approve/reject all submissions
   - request and download exports
 - Admin cannot:

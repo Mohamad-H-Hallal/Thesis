@@ -25,19 +25,24 @@ All authenticated users (admin, project-admin, contributor, viewer).
 - Validation/Error behavior:
   - Invalid email format -> inline validation error.
   - Empty password -> required-field error.
-  - Wrong credentials -> backend 401 message shown.
+  - Wrong credentials -> `Wrong email or password.`
+  - Missing account -> `This account does not exist.`
+  - Pending contributor -> `Your contributor request is still pending approval.`
+  - Inactive account -> `This account is inactive.`
   - Too many attempts -> backend 429 message shown.
 - Screenshot placeholder:
   - `[Screenshot: Login form with validation]`
 
 ### Signup Screen
-- Fields: full name, email, password, confirm password, terms checkbox.
+- Fields: full name, phone, email, password, confirm password, role selector (`viewer` or `contributor`).
 - Actions:
   - Create account.
 - Validation/Error behavior:
-  - Password minimum length and confirm-match enforced.
+  - Password strength and confirm-match enforced.
   - Duplicate email returns conflict message.
   - Any admin role tampering is blocked by API.
+  - Viewer signup activates immediately.
+  - Contributor signup requires admin approval before login.
 - Screenshot placeholder:
   - `[Screenshot: Signup success and error states]`
 
@@ -53,7 +58,7 @@ All authenticated users (admin, project-admin, contributor, viewer).
 
 ### Home / Projects
 - Actions:
-  - Search assigned projects.
+  - Search available projects for the signed-in role.
   - Open a project.
 - Validation/Error behavior:
   - Empty list shows empty-state card.
@@ -99,7 +104,7 @@ All authenticated users (admin, project-admin, contributor, viewer).
   - Submit for review.
 - Statuses: draft, pending_review, rejected.
 - Validation/Error behavior:
-  - Rejected draft shows reviewer notes.
+  - Rejected draft shows admin review notes.
 - Screenshot placeholder:
   - `[Screenshot: Draft list and status timeline]`
 
@@ -123,8 +128,7 @@ All authenticated users (admin, project-admin, contributor, viewer).
 
 ## Role-Based Access (User-Level Summary)
 - Admin: full platform management.
-- Project-admin: project-level review/coordination.
 - Contributor: capture/edit/submit assigned data.
-- Viewer: read-only assignment views.
+- Viewer: read-only access to projects explicitly marked visible by admins and only while those projects are active or completed.
 
 Full matrix: `docs/user-manual/08-role-permissions-matrix.md`

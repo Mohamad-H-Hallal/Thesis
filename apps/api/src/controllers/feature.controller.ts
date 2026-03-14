@@ -22,6 +22,15 @@ interface Pagination {
   offset: number;
 }
 
+interface FormSchemaField {
+  key?: string;
+  name?: string;
+  type?: string;
+  required?: boolean;
+  options?: unknown[];
+  enum?: unknown[];
+}
+
 const MAX_PAGE_LIMIT = 500;
 
 const getPagination = (pageRaw: unknown, limitRaw: unknown): Pagination => {
@@ -130,6 +139,112 @@ const hasProjectAdminAccess = async (projectId: string, user: Express.UserContex
   );
 
   return accessCheck.rows.length > 0;
+};
+
+const ensureAttributesObject = (attributes: unknown): Record<string, unknown> => {
+  if (!attributes || typeof attributes !== 'object' || Array.isArray(attributes)) {
+    throw new AppError('attributes must be a JSON object', 422);
+  }
+  return attributes as Record<string, unknown>;
+};
+
+const getProjectFormSchema = async (projectId: string): Promise<Record<string, unknown>> => {
+  const projectResult = await query(
+    'SELECT id, collection_form_schema FROM project WHERE id = $1',
+    [projectId]
+  );
+  if (projectResult.rows.length === 0) {
+    throw new AppError('Project not found', 404);
+  }
+
+  const schema = projectResult.rows[0].collection_form_schema;
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+    throw new AppError('Project collection_form_schema is invalid', 422);
+  }
+
+  return schema as Record<string, unknown>;
+};
+
+const validateType = (value: unknown, expectedType: string): boolean => {
+  if (value === null || value === undefined) {
+    return true;
+  }
+
+  switch (expectedType) {
+    case 'string':
+    case 'text':
+      return typeof value === 'string';
+    case 'number':
+    case 'integer':
+      return typeof value === 'number' && Number.isFinite(value);
+    case 'boolean':
+      return typeof value === 'boolean';
+    case 'object':
+      return typeof value === 'object' && !Array.isArray(value);
+    case 'array':
+      return Array.isArray(value);
+    default:
+      return true;
+  }
+};
+
+const validateAttributesAgainstSchema = (
+  attributesInput: unknown,
+  schema: Record<string, unknown>
+): Record<string, unknown> => {
+  const attributes = ensureAttributesObject(attributesInput);
+
+  const jsonSchemaRequired = Array.isArray(schema.required)
+    ? (schema.required as string[])
+    : [];
+  const jsonSchemaProps =
+    schema.properties && typeof schema.properties === 'object' && !Array.isArray(schema.properties)
+      ? (schema.properties as Record<string, Record<string, unknown>>)
+      : {};
+
+  for (const requiredKey of jsonSchemaRequired) {
+    if (attributes[requiredKey] === undefined || attributes[requiredKey] === null || attributes[requiredKey] === '') {
+      throw new AppError(`Missing required attribute: ${requiredKey}`, 422);
+    }
+  }
+
+  for (const [key, propSchema] of Object.entries(jsonSchemaProps)) {
+    if (attributes[key] === undefined) {
+      continue;
+    }
+    const expectedType = typeof propSchema?.type === 'string' ? propSchema.type : null;
+    if (expectedType && !validateType(attributes[key], expectedType)) {
+      throw new AppError(`Invalid type for attribute "${key}"`, 422);
+    }
+  }
+
+  const fields = Array.isArray(schema.fields) ? (schema.fields as FormSchemaField[]) : [];
+  for (const field of fields) {
+    const fieldKey = field.key || field.name;
+    if (!fieldKey) {
+      continue;
+    }
+
+    const value = attributes[fieldKey];
+    if (field.required && (value === undefined || value === null || value === '')) {
+      throw new AppError(`Missing required attribute: ${fieldKey}`, 422);
+    }
+
+    if (field.type && !validateType(value, field.type)) {
+      throw new AppError(`Invalid type for attribute "${fieldKey}"`, 422);
+    }
+
+    const allowedValues = Array.isArray(field.options)
+      ? field.options
+      : Array.isArray(field.enum)
+        ? field.enum
+        : null;
+    if (allowedValues && value !== undefined && !allowedValues.includes(value)) {
+      throw new AppError(`Invalid value for attribute "${fieldKey}"`, 422);
+    }
+  }
+
+  return attributes;
 };
 
 const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
@@ -244,6 +359,8 @@ const createFeature = async (req: Request, res: Response): Promise<void> => {
   const { project_id, geom, attributes, accuracy_meters, collected_offline = false } = req.body;
 
   const normalizedGeometry = validateGeoJsonGeometry(geom);
+  const formSchema = await getProjectFormSchema(project_id);
+  const normalizedAttributes = validateAttributesAgainstSchema(attributes, formSchema);
 
   const accessCheck = await query(
     `SELECT id FROM project_assignment
@@ -273,7 +390,7 @@ const createFeature = async (req: Request, res: Response): Promise<void> => {
       project_id,
       req.user?.id,
       JSON.stringify(normalizedGeometry),
-      JSON.stringify(attributes),
+      JSON.stringify(normalizedAttributes),
       accuracy_meters,
       collected_offline,
     ]
@@ -300,7 +417,7 @@ const updateFeature = async (req: Request, res: Response): Promise<void> => {
   const { attributes, geom } = req.body;
 
   const featureCheck = await query(
-    `SELECT id, status, collected_by_user_id
+    `SELECT id, status, collected_by_user_id, project_id
      FROM spatial_feature
      WHERE id = $1`,
     [featureId]
@@ -325,6 +442,13 @@ const updateFeature = async (req: Request, res: Response): Promise<void> => {
   }
 
   const normalizedGeometry = geom === undefined ? null : validateGeoJsonGeometry(geom);
+  const normalizedAttributes =
+    attributes === undefined
+      ? null
+      : validateAttributesAgainstSchema(
+          attributes,
+          await getProjectFormSchema(feature.project_id)
+        );
 
   const result = await query(
     `
@@ -339,7 +463,7 @@ const updateFeature = async (req: Request, res: Response): Promise<void> => {
     RETURNING id, status, version, ST_AsGeoJSON(geom) as geometry, attributes
   `,
     [
-      attributes === undefined ? null : JSON.stringify(attributes),
+      normalizedAttributes === null ? null : JSON.stringify(normalizedAttributes),
       normalizedGeometry === null ? null : JSON.stringify(normalizedGeometry),
       featureId,
     ]
@@ -393,44 +517,53 @@ const deleteFeature = async (req: Request, res: Response): Promise<void> => {
 
 const submitFeature = async (req: Request, res: Response): Promise<void> => {
   const { featureId } = req.params;
-
-  const ownerCheck = await query(
-    `SELECT id, status FROM spatial_feature
-     WHERE id = $1 AND collected_by_user_id = $2`,
-    [featureId, req.user?.id]
-  );
-
-  if (ownerCheck.rows.length === 0) {
-    throw new AppError('Feature not found', 404);
-  }
-
-  if (ownerCheck.rows[0].status !== 'draft') {
-    throw new AppError('Only draft features can be submitted', 400);
-  }
-
-  await query(
-    `UPDATE spatial_feature
-     SET status = 'pending_review', submitted_at = NOW(), version = version + 1
-     WHERE id = $1`,
-    [featureId]
-  );
-
-  const projectAdmins = await query(
-    `SELECT pa.user_id
-     FROM spatial_feature sf
-     JOIN project_assignment pa ON sf.project_id = pa.project_id
-     WHERE sf.id = $1 AND pa.role = 'admin' AND pa.status = 'approved'`,
-    [featureId]
-  );
-
-  for (const admin of projectAdmins.rows) {
-    await query(
-      `INSERT INTO notification (user_id, type, title, message, metadata)
-       VALUES ($1, 'review_completed', 'New Feature Submission',
-               'A new feature has been submitted for review', $2)`,
-      [admin.user_id, JSON.stringify({ feature_id: featureId })]
+  await transaction(async (client: any) => {
+    const ownerCheck = await client.query(
+      `SELECT id, status, project_id FROM spatial_feature
+       WHERE id = $1 AND collected_by_user_id = $2`,
+      [featureId, req.user?.id]
     );
-  }
+
+    if (ownerCheck.rows.length === 0) {
+      throw new AppError('Feature not found', 404);
+    }
+
+    if (ownerCheck.rows[0].status !== 'draft') {
+      throw new AppError('Only draft features can be submitted', 400);
+    }
+
+    await client.query(
+      `UPDATE spatial_feature
+       SET status = 'pending_review', submitted_at = NOW(), version = version + 1
+       WHERE id = $1`,
+      [featureId]
+    );
+
+    const projectAdmins = await client.query(
+      `SELECT pa.user_id
+       FROM project_assignment pa
+       WHERE pa.project_id = $1
+         AND pa.role = 'admin'
+         AND pa.status = 'approved'`,
+      [ownerCheck.rows[0].project_id]
+    );
+
+    for (const admin of projectAdmins.rows) {
+      await client.query(
+        `INSERT INTO notification (user_id, type, title, message, metadata)
+         VALUES ($1, 'review_completed', 'New Feature Submission',
+                 'A new feature has been submitted for review', $2)`,
+        [
+          admin.user_id,
+          JSON.stringify({
+            feature_id: featureId,
+            project_id: ownerCheck.rows[0].project_id,
+            status: 'pending_review',
+          }),
+        ]
+      );
+    }
+  });
 
   logger.info('Feature submitted for review:', { featureId, userId: req.user?.id });
 
@@ -468,27 +601,34 @@ const reviewFeature = async (req: Request, res: Response): Promise<void> => {
     throw new AppError('You are not allowed to review this feature', 403);
   }
 
-  await query(
-    `UPDATE spatial_feature
-     SET status = $1,
-         reviewed_by_user_id = $2,
-         review_notes = $3,
-         reviewed_at = NOW(),
-         version = version + 1
-     WHERE id = $4`,
-    [status, req.user?.id, review_notes, featureId]
-  );
+  await transaction(async (client: any) => {
+    await client.query(
+      `UPDATE spatial_feature
+       SET status = $1,
+           reviewed_by_user_id = $2,
+           review_notes = $3,
+           reviewed_at = NOW(),
+           version = version + 1
+       WHERE id = $4`,
+      [status, req.user?.id, review_notes, featureId]
+    );
 
-  await query(
-    `INSERT INTO notification (user_id, type, title, message, metadata)
-     VALUES ($1, 'review_completed', $2, $3, $4)`,
-    [
-      featureCheck.rows[0].collected_by_user_id,
-      `Feature ${status}`,
-      `Your feature submission has been ${status}`,
-      JSON.stringify({ feature_id: featureId, status, review_notes }),
-    ]
-  );
+    await client.query(
+      `INSERT INTO notification (user_id, type, title, message, metadata)
+       VALUES ($1, 'review_completed', $2, $3, $4)`,
+      [
+        featureCheck.rows[0].collected_by_user_id,
+        `Feature ${status}`,
+        `Your feature submission has been ${status}`,
+        JSON.stringify({
+          feature_id: featureId,
+          project_id: featureCheck.rows[0].project_id,
+          status,
+          review_notes,
+        }),
+      ]
+    );
+  });
 
   logger.info('Feature reviewed:', {
     featureId,
@@ -739,6 +879,8 @@ const batchCreateFeatures = async (req: Request, res: Response): Promise<void> =
     for (const feature of features) {
       const { project_id, geom, attributes, accuracy_meters, collected_offline } = feature;
       const normalizedGeometry = validateGeoJsonGeometry(geom);
+      const formSchema = await getProjectFormSchema(project_id);
+      const normalizedAttributes = validateAttributesAgainstSchema(attributes, formSchema);
 
       const result = await client.query(
         `INSERT INTO spatial_feature (
@@ -758,7 +900,7 @@ const batchCreateFeatures = async (req: Request, res: Response): Promise<void> =
           project_id,
           req.user?.id,
           JSON.stringify(normalizedGeometry),
-          JSON.stringify(attributes),
+          JSON.stringify(normalizedAttributes),
           accuracy_meters,
           collected_offline || false,
         ]

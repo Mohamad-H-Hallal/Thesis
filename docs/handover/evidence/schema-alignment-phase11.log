@@ -1,0 +1,6 @@
+[dotenv@17.3.1] injecting env (36) from .env -- tip: 🛠️  run anywhere with `dotenvx run -- yourcommand`
+POSTGIS_VERSION=3.4 USE_GEOS=1 USE_PROJ=1 USE_STATS=1
+TABLES=audit_log,lebanon_offline_map,notification,photo,project,project_assignment,project_category,shapefile_export,spatial_feature,user
+GEOMETRY_COLUMNS=photo.location:geometry,spatial_feature.geom:geometry
+CONSTRAINTS=chk_export_completed_requires_file:true,chk_export_failed_requires_error:true,chk_project_assignment_approved_meta:true,chk_project_category_required:true,chk_spatial_feature_review_required:true
+INDEXES=idx_assignment_approved_by,idx_assignment_project,idx_assignment_user,idx_audit_log_user,idx_export_project,idx_export_requested_by,idx_notification_user,idx_photo_feature,idx_photo_location,idx_project_category,idx_project_created_by,idx_spatial_feature_collector,idx_spatial_feature_geom,idx_spatial_feature_geom_project_status,idx_spatial_feature_project,idx_spatial_feature_reviewer,uq_lebanon_offline_map_single_current

@@ -3,7 +3,14 @@ const assignmentController = require('../controllers/assignment.controller');
 const photoController = require('../controllers/photo.controller');
 const { categoryController, notificationController, userController } = require('../controllers/misc.controller');
 const { authenticate, authorize, checkProjectAdmin } = require('../middleware/auth');
-const { assignmentValidation, validate, paginationValidation, uuidValidation } = require('../middleware/validation');
+const {
+  assignmentValidation,
+  categoryValidation,
+  userValidation,
+  validate,
+  paginationValidation,
+  uuidValidation,
+} = require('../middleware/validation');
 const { asyncHandler } = require('../middleware/error');
 const { uploadMultiple } = require('../config/upload');
 import { auditAction, auditDynamicAction } from '../middleware/audit';
@@ -159,15 +166,27 @@ categoryRouter.get(
 categoryRouter.post(
   '/',
   authorize('admin'),
+  auditAction({
+    actionType: 'create',
+    entityType: 'project_category',
+    resolveEntityId: (_req, _res, body) => body?.data?.id ?? null,
+  }),
+  categoryValidation.create,
+  validate,
   asyncHandler(categoryController.create)
 );
 
 // Update category (admin only)
 categoryRouter.put(
   '/:categoryId',
-  uuidValidation('categoryId'),
-  validate,
   authorize('admin'),
+  auditAction({
+    actionType: 'update',
+    entityType: 'project_category',
+    resolveEntityId: (req) => req.params.categoryId ?? null,
+  }),
+  categoryValidation.update,
+  validate,
   asyncHandler(categoryController.update)
 );
 
@@ -175,8 +194,13 @@ categoryRouter.put(
 categoryRouter.delete(
   '/:categoryId',
   uuidValidation('categoryId'),
-  validate,
   authorize('admin'),
+  auditAction({
+    actionType: 'delete',
+    entityType: 'project_category',
+    resolveEntityId: (req) => req.params.categoryId ?? null,
+  }),
+  validate,
   asyncHandler(categoryController.delete)
 );
 
@@ -231,6 +255,19 @@ userRouter.get(
   asyncHandler(userController.getAll)
 );
 
+// Create admin user (protected super admin only)
+userRouter.post(
+  '/admin',
+  auditAction({
+    actionType: 'create',
+    entityType: 'user',
+    resolveEntityId: (_req, _res, body) => body?.data?.id ?? null,
+  }),
+  userValidation.createAdmin,
+  validate,
+  asyncHandler(userController.createAdmin)
+);
+
 // Get single user
 userRouter.get(
   '/:userId',
@@ -243,6 +280,7 @@ userRouter.get(
 userRouter.put(
   '/:userId',
   uuidValidation('userId'),
+  userValidation.adminUpdate,
   auditAction({
     actionType: 'update',
     entityType: 'user',
@@ -264,6 +302,34 @@ userRouter.post(
   }),
   validate,
   asyncHandler(userController.deactivate)
+);
+
+// Approve contributor request
+userRouter.post(
+  '/:userId/approve-contributor',
+  uuidValidation('userId'),
+  auditAction({
+    actionType: 'approve',
+    entityType: 'user',
+    resolveEntityId: (req) => req.params.userId ?? null,
+    resolveNewValues: () => ({ role: 'contributor', is_active: true }),
+  }),
+  validate,
+  asyncHandler(userController.approveContributor)
+);
+
+// Reject contributor request and downgrade to viewer
+userRouter.post(
+  '/:userId/reject-contributor',
+  uuidValidation('userId'),
+  auditAction({
+    actionType: 'reject',
+    entityType: 'user',
+    resolveEntityId: (req) => req.params.userId ?? null,
+    resolveNewValues: () => ({ role: 'viewer', is_active: true }),
+  }),
+  validate,
+  asyncHandler(userController.rejectContributor)
 );
 
 // Get user stats

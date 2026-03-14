@@ -8,7 +8,7 @@ Project Admin refers to users with project-level admin assignment role.
 3. Coordinate contributors and submission timelines.
 
 ## Review Queue
-1. Open `Review Queue` (if your role has reviewer privileges in app shell).
+1. Open `Review Queue` from the admin app shell.
 2. Filter pending items.
 3. Approve valid submissions.
 4. Reject invalid ones and add review notes.

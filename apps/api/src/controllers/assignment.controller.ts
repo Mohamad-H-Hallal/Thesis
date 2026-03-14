@@ -1,4 +1,4 @@
-const { query } = require('../config/database');
+const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
 
@@ -65,6 +65,25 @@ const getProjectAssignments = async (req, res) => {
 const createAssignment = async (req, res) => {
   const { project_id, user_id, role = 'contributor' } = req.body;
 
+  const [projectCheck, userCheck] = await Promise.all([
+    query('SELECT id, status FROM project WHERE id = $1', [project_id]),
+    query('SELECT id, is_active FROM "user" WHERE id = $1', [user_id]),
+  ]);
+
+  if (projectCheck.rows.length === 0) {
+    throw new AppError('Project not found', 404);
+  }
+  if (projectCheck.rows[0].status === 'archived') {
+    throw new AppError('Cannot assign users to archived project', 409);
+  }
+
+  if (userCheck.rows.length === 0) {
+    throw new AppError('User not found', 404);
+  }
+  if (!userCheck.rows[0].is_active) {
+    throw new AppError('User account is inactive', 409);
+  }
+
   // Check if assignment already exists
   const existingAssignment = await query(
     'SELECT id, status FROM project_assignment WHERE project_id = $1 AND user_id = $2',
@@ -75,24 +94,26 @@ const createAssignment = async (req, res) => {
     throw new AppError('User is already assigned to this project', 409);
   }
 
-  // Create assignment (pending by default)
-  const result = await query(
-    `INSERT INTO project_assignment (project_id, user_id, role, status)
-     VALUES ($1, $2, $3, 'pending')
-     RETURNING *`,
-    [project_id, user_id, role]
-  );
+  const assignment = await transaction(async (client) => {
+    const result = await client.query(
+      `INSERT INTO project_assignment (project_id, user_id, role, status)
+       VALUES ($1, $2, $3, 'pending')
+       RETURNING *`,
+      [project_id, user_id, role]
+    );
 
-  // Create notification for the assigned user
-  await query(
-    `INSERT INTO notification (user_id, type, title, message, metadata)
-     VALUES ($1, 'assignment', 'Project Assignment', 
-             'You have been assigned to a new project', $2)`,
-    [user_id, JSON.stringify({ project_id, assignment_id: result.rows[0].id })]
-  );
+    await client.query(
+      `INSERT INTO notification (user_id, type, title, message, metadata)
+       VALUES ($1, 'assignment', 'Project Assignment', 
+               'You have been assigned to a new project', $2)`,
+      [user_id, JSON.stringify({ project_id, assignment_id: result.rows[0].id })]
+    );
+
+    return result.rows[0];
+  });
 
   logger.info('Assignment created:', {
-    assignmentId: result.rows[0].id,
+    assignmentId: assignment.id,
     projectId: project_id,
     userId: user_id,
   });
@@ -100,7 +121,7 @@ const createAssignment = async (req, res) => {
   res.status(201).json({
     success: true,
     message: 'Assignment created successfully',
-    data: result.rows[0],
+    data: assignment,
   });
 };
 
@@ -118,29 +139,39 @@ const requestJoinProject = async (req, res) => {
     throw new AppError('You have already requested to join this project', 409);
   }
 
-  // Create pending assignment request
-  const result = await query(
-    `INSERT INTO project_assignment (project_id, user_id, role, status)
-     VALUES ($1, $2, 'contributor', 'pending')
-     RETURNING *`,
-    [projectId, req.user.id]
-  );
-
-  // Notify project admins
-  const projectAdmins = await query(
-    `SELECT user_id FROM project_assignment 
-     WHERE project_id = $1 AND role = 'admin' AND status = 'approved'`,
-    [projectId]
-  );
-
-  for (const admin of projectAdmins.rows) {
-    await query(
-      `INSERT INTO notification (user_id, type, title, message, metadata)
-       VALUES ($1, 'assignment', 'Join Request', 
-               'A user has requested to join your project', $2)`,
-      [admin.user_id, JSON.stringify({ project_id: projectId, user_id: req.user.id })]
-    );
+  const projectCheck = await query('SELECT id, status FROM project WHERE id = $1', [projectId]);
+  if (projectCheck.rows.length === 0) {
+    throw new AppError('Project not found', 404);
   }
+  if (projectCheck.rows[0].status === 'archived') {
+    throw new AppError('Cannot join archived project', 409);
+  }
+
+  const createdRequest = await transaction(async (client) => {
+    const result = await client.query(
+      `INSERT INTO project_assignment (project_id, user_id, role, status)
+       VALUES ($1, $2, 'contributor', 'pending')
+       RETURNING *`,
+      [projectId, req.user.id]
+    );
+
+    const projectAdmins = await client.query(
+      `SELECT user_id FROM project_assignment 
+       WHERE project_id = $1 AND role = 'admin' AND status = 'approved'`,
+      [projectId]
+    );
+
+    for (const admin of projectAdmins.rows) {
+      await client.query(
+        `INSERT INTO notification (user_id, type, title, message, metadata)
+         VALUES ($1, 'assignment', 'Join Request', 
+                 'A user has requested to join your project', $2)`,
+        [admin.user_id, JSON.stringify({ project_id: projectId, user_id: req.user.id })]
+      );
+    }
+
+    return result.rows[0];
+  });
 
   logger.info('Join request created:', {
     projectId,
@@ -150,7 +181,7 @@ const requestJoinProject = async (req, res) => {
   res.status(201).json({
     success: true,
     message: 'Join request submitted successfully',
-    data: result.rows[0],
+    data: createdRequest,
   });
 };
 
@@ -173,26 +204,30 @@ const updateAssignmentStatus = async (req, res) => {
     throw new AppError('Assignment not found', 404);
   }
 
-  // Update assignment status
-  const result = await query(
-    `UPDATE project_assignment 
-     SET status = $1, approved_by_user_id = $2
-     WHERE id = $3
-     RETURNING *`,
-    [status, req.user.id, assignmentId]
-  );
+  const assignment = await transaction(async (client) => {
+    const result = await client.query(
+       `UPDATE project_assignment 
+       SET status = $1::assignment_status,
+           approved_by_user_id = CASE WHEN $1::assignment_status = 'approved' THEN $2::uuid ELSE NULL END,
+           approved_date = CASE WHEN $1::assignment_status = 'approved' THEN CURRENT_DATE ELSE NULL END
+       WHERE id = $3
+       RETURNING *`,
+      [status, req.user.id, assignmentId]
+    );
 
-  // Notify the user
-  await query(
-    `INSERT INTO notification (user_id, type, title, message, metadata)
-     VALUES ($1, 'assignment', $2, $3, $4)`,
-    [
-      assignmentCheck.rows[0].user_id,
-      `Assignment ${status}`,
-      `Your project assignment has been ${status}`,
-      JSON.stringify({ assignment_id: assignmentId, status }),
-    ]
-  );
+    await client.query(
+      `INSERT INTO notification (user_id, type, title, message, metadata)
+       VALUES ($1, 'assignment', $2, $3, $4)`,
+      [
+        assignmentCheck.rows[0].user_id,
+        `Assignment ${status}`,
+        `Your project assignment has been ${status}`,
+        JSON.stringify({ assignment_id: assignmentId, status }),
+      ]
+    );
+
+    return result.rows[0];
+  });
 
   logger.info('Assignment status updated:', {
     assignmentId,
@@ -203,7 +238,7 @@ const updateAssignmentStatus = async (req, res) => {
   res.json({
     success: true,
     message: `Assignment ${status} successfully`,
-    data: result.rows[0],
+    data: assignment,
   });
 };
 
@@ -211,25 +246,32 @@ const updateAssignmentStatus = async (req, res) => {
 const removeAssignment = async (req, res) => {
   const { assignmentId } = req.params;
 
-  const result = await query(
-    'DELETE FROM project_assignment WHERE id = $1 RETURNING user_id, project_id',
-    [assignmentId]
-  );
+  const result = await transaction(async (client) => {
+    const removed = await client.query(
+      'DELETE FROM project_assignment WHERE id = $1 RETURNING user_id, project_id',
+      [assignmentId]
+    );
+
+    if (removed.rows.length === 0) {
+      return removed;
+    }
+
+    await client.query(
+      `INSERT INTO notification (user_id, type, title, message, metadata)
+       VALUES ($1, 'assignment', 'Assignment Removed', 
+               'You have been removed from a project', $2)`,
+      [
+        removed.rows[0].user_id,
+        JSON.stringify({ project_id: removed.rows[0].project_id, assignment_id: assignmentId }),
+      ]
+    );
+
+    return removed;
+  });
 
   if (result.rows.length === 0) {
     throw new AppError('Assignment not found', 404);
   }
-
-  // Notify the user
-  await query(
-    `INSERT INTO notification (user_id, type, title, message, metadata)
-     VALUES ($1, 'assignment', 'Assignment Removed', 
-             'You have been removed from a project', $2)`,
-    [
-      result.rows[0].user_id,
-      JSON.stringify({ project_id: result.rows[0].project_id }),
-    ]
-  );
 
   logger.info('Assignment removed:', {
     assignmentId,

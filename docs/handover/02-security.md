@@ -8,7 +8,7 @@
 - JWT access and refresh token validation with configured secret rotation fields.
 - Input validation middleware for key route payloads and params.
 - Parameterized SQL query usage through `pg` query placeholders.
-- Role-based access controls for admin/reviewer/contributor/viewer use cases.
+- Role-based access controls for admin/contributor/viewer use cases.
 - Audit trail instrumentation for sensitive actions.
 
 ## Threat Highlights and Mitigations

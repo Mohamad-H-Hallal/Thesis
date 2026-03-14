@@ -1,0 +1,135 @@
+[
+  {
+    "Step": "login missing account",
+    "Status": 404,
+    "Message": "This account does not exist."
+  },
+  {
+    "Step": "register viewer",
+    "Status": 201,
+    "Message": "Viewer account created successfully. You can log in now.",
+    "Role": "viewer",
+    "IsActive": true
+  },
+  {
+    "Step": "login wrong viewer password",
+    "Status": 401,
+    "Message": "Wrong email or password."
+  },
+  {
+    "Step": "login viewer success",
+    "Status": 200,
+    "Role": "viewer",
+    "Message": "Login successful"
+  },
+  {
+    "Step": "register contributor",
+    "Status": 201,
+    "Message": "Your contributor request is pending admin approval.",
+    "Role": "contributor",
+    "IsActive": false
+  },
+  {
+    "Step": "login contributor pending",
+    "Status": 403,
+    "Message": "Your contributor request is still pending approval."
+  },
+  {
+    "Step": "login super admin",
+    "Status": 200,
+    "Role": "admin",
+    "Message": "Login successful"
+  },
+  {
+    "Step": "create public project",
+    "Status": 201,
+    "ProjectId": "b1deaaaa-7cb8-4c6c-bc40-7483d064a11d"
+  },
+  {
+    "Step": "activate public project",
+    "Status": 200,
+    "VisibleToViewers": true,
+    "ProjectStatus": "active"
+  },
+  {
+    "Step": "create private project",
+    "Status": 201,
+    "ProjectId": "4e32459f-afd5-4439-9ce5-95ab88db2e62"
+  },
+  {
+    "Step": "activate private project",
+    "Status": 200,
+    "VisibleToViewers": false,
+    "ProjectStatus": "active"
+  },
+  {
+    "Step": "viewer project list",
+    "Status": 200,
+    "Count": 1,
+    "Names": [
+      "Viewer Public Project 1773513623825"
+    ]
+  },
+  {
+    "Step": "viewer private project details",
+    "Status": 403,
+    "Message": "You do not have access to this project"
+  },
+  {
+    "Step": "approve contributor",
+    "Status": 200,
+    "Role": "contributor",
+    "IsActive": true
+  },
+  {
+    "Step": "login contributor approved",
+    "Status": 200,
+    "Role": "contributor"
+  },
+  {
+    "Step": "create assignment",
+    "Status": 201,
+    "AssignmentId": "bb9cd20e-a0dc-4f35-a879-1154cfdcf966",
+    "AssignmentStatus": "pending"
+  },
+  {
+    "Step": "approve assignment",
+    "Status": 200,
+    "AssignmentStatus": "approved"
+  },
+  {
+    "Step": "contributor project list",
+    "Status": 200,
+    "Count": 1,
+    "Names": [
+      "Contributor Private Project 1773513623825"
+    ]
+  },
+  {
+    "Step": "admin toggles private project visible",
+    "Status": 200,
+    "VisibleToViewers": true
+  },
+  {
+    "Step": "viewer project list after toggle",
+    "Status": 200,
+    "Count": 2,
+    "Names": [
+      "Contributor Private Project 1773513623825",
+      "Viewer Public Project 1773513623825"
+    ]
+  },
+  {
+    "Step": "admin project list",
+    "Status": 200,
+    "Count": 2
+  },
+  {
+    "Step": "admin notifications",
+    "Status": 200,
+    "Types": [
+      "contributor_request",
+      "contributor_request"
+    ]
+  }
+]

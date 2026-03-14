@@ -75,15 +75,22 @@ const setupAuthenticatedContext = async () => {
       description,
       collection_form_schema,
       status
-    ) VALUES ($1, $2, 'Phase3 Project', 'Test project', '{}'::jsonb, 'active')
+    ) VALUES ($1, $2, 'Phase3 Project', 'Test project', '{}'::jsonb, 'draft')
     RETURNING id`,
     [categoryId, user.id]
   );
   const projectId = projectResult.rows[0].id;
 
   await pool.query(
-    `INSERT INTO project_assignment (project_id, user_id, role, status)
-     VALUES ($1, $2, 'contributor', 'approved')`,
+    `INSERT INTO project_assignment (
+       project_id,
+       user_id,
+       role,
+       status,
+       approved_by_user_id,
+       approved_date
+     )
+     VALUES ($1, $2, 'contributor', 'approved', $2, CURRENT_DATE)`,
     [projectId, user.id]
   );
 
@@ -103,6 +110,9 @@ const setupAuthenticatedContext = async () => {
 };
 
 const insertSpatialFeature = async ({ projectId, userId, lon, lat, status = 'approved', collectedAt }) => {
+  const reviewedByUserId = ['approved', 'rejected'].includes(status) ? userId : null;
+  const reviewedAt = ['approved', 'rejected'].includes(status) ? collectedAt : null;
+
   await pool.query(
     `INSERT INTO spatial_feature (
       project_id,
@@ -110,7 +120,9 @@ const insertSpatialFeature = async ({ projectId, userId, lon, lat, status = 'app
       geom,
       attributes,
       status,
-      collected_at
+      collected_at,
+      reviewed_by_user_id,
+      reviewed_at
     )
     VALUES (
       $1,
@@ -118,9 +130,21 @@ const insertSpatialFeature = async ({ projectId, userId, lon, lat, status = 'app
       ST_SetSRID(ST_MakePoint($3, $4), 4326),
       $5::jsonb,
       $6::feature_status,
-      $7::timestamptz
+      $7::timestamptz,
+      $8::uuid,
+      $9::timestamptz
     )`,
-    [projectId, userId, lon, lat, JSON.stringify({ tree: 'olive' }), status, collectedAt]
+    [
+      projectId,
+      userId,
+      lon,
+      lat,
+      JSON.stringify({ tree: 'olive' }),
+      status,
+      collectedAt,
+      reviewedByUserId,
+      reviewedAt,
+    ]
   );
 };
 

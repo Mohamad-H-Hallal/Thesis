@@ -52,12 +52,17 @@ powershell -ExecutionPolicy Bypass -File .\scripts\smoke-test.ps1 -BaseUrl http:
 ```powershell
 cd D:\GIS_APP
 Copy-Item .env.dev.example .env
+# Set super admin bootstrap before first stack start:
+# SUPER_ADMIN_EMAIL=superadmin@gov.lb
+# SUPER_ADMIN_PASSWORD=ChangeThis!Gov2026
+# SUPER_ADMIN_FULL_NAME=GIS Super Administrator
 docker compose up -d --build
 ```
 
 Notes:
 - Dev DB mapping in root compose is `55433:5432` (to avoid conflict with `infra/db` stack on 5433).
 - Optional Adminer in dev root compose: `docker compose --profile devtools up -d adminer`.
+- Dev compose now injects `MIGRATIONS_DIR=/workspace/infra/migrations` through `docker-compose.override.yml` so the bind-mounted repo and migration runner stay aligned.
 
 ## Infra DB Local Stack (Alternative)
 
@@ -81,6 +86,10 @@ netstat -ano | findstr :5433
 ```powershell
 cd apps\api
 Copy-Item .env.example .env
+# Set the super admin bootstrap values before first start:
+# SUPER_ADMIN_EMAIL=superadmin@gov.lb
+# SUPER_ADMIN_PASSWORD=ChangeThis!Gov2026
+# SUPER_ADMIN_FULL_NAME=GIS Super Administrator
 npm ci
 npm run migrate
 npm run dev
@@ -91,6 +100,12 @@ Health:
 - `http://localhost:3000/ready`
 - `http://localhost:3000/api/v1`
 - `http://localhost:3000/docs/openapi.yaml`
+
+Super admin bootstrap:
+- Set `SUPER_ADMIN_EMAIL=superadmin@gov.lb`
+- Set `SUPER_ADMIN_PASSWORD=ChangeThis!Gov2026`
+- Set `SUPER_ADMIN_FULL_NAME=GIS Super Administrator`
+- Configure them in the active `.env` file or Docker environment before first startup.
 
 ## Mobile Local
 
