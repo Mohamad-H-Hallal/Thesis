@@ -65,6 +65,7 @@ describe('Security: registration, contributor approval, and protected super admi
 
     expect(pendingLogin.status).toBe(403);
     expect(pendingLogin.body.message).toBe('Your contributor request is still pending approval.');
+    expect(pendingLogin.body.data).toBeUndefined();
 
     await approveContributorRequest({
       token: admin.token,

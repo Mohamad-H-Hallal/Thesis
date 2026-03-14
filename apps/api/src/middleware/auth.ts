@@ -181,22 +181,47 @@ const checkProjectAccess = async (req: Request, res: Response, next: NextFunctio
       return next();
     }
 
-    // Check if user is assigned to the project
-    const result = await query(
-      `SELECT id, role FROM project_assignment 
-       WHERE project_id = $1 AND user_id = $2 AND status = 'approved'`,
+    const contributorAccess = await query(
+      `SELECT
+          EXISTS (
+            SELECT 1
+            FROM project_assignment
+            WHERE project_id = $1
+              AND user_id = $2
+              AND status = 'approved'
+          ) AS has_assignment,
+          (
+            SELECT role
+            FROM project_assignment
+            WHERE project_id = $1
+              AND user_id = $2
+              AND status = 'approved'
+            LIMIT 1
+          ) AS assignment_role,
+          EXISTS (
+            SELECT 1
+            FROM project
+            WHERE id = $1
+              AND visible_to_viewers = TRUE
+              AND status IN ('active', 'completed')
+          ) AS is_public_project`,
       [projectId, userId]
     );
 
-    if (result.rows.length === 0) {
+    const accessRow = contributorAccess.rows[0];
+    const hasAssignment = accessRow?.has_assignment === true;
+    const isPublicProject = accessRow?.is_public_project === true;
+
+    if (!hasAssignment && !isPublicProject) {
       return res.status(403).json({
         success: false,
         message: 'You do not have access to this project',
       });
     }
 
-    // Add project role to request
-    req.projectRole = result.rows[0].role as 'admin' | 'contributor';
+    if (hasAssignment && accessRow.assignment_role) {
+      req.projectRole = accessRow.assignment_role as 'admin' | 'contributor';
+    }
     next();
   } catch (error: unknown) {
     logger.error('Project access check error:', error);

@@ -3,6 +3,8 @@ const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
 
 const viewerVisibleStatuses = ['active', 'completed'];
+const projectAccessScopes = ['public', 'assigned', 'all'] as const;
+type ProjectAccessScope = (typeof projectAccessScopes)[number];
 
 const projectStatusTransitions: Record<string, string[]> = {
   draft: ['active'],
@@ -42,34 +44,54 @@ const ensureSchemaObject = (schema: unknown): void => {
 // Get all projects (filtered by user access)
 const getAllProjects = async (req, res) => {
   const { page = 1, limit = 20, status, category_id } = req.query;
+  const requestedScope = typeof req.query.access_scope === 'string' ? req.query.access_scope : undefined;
   const offset = (page - 1) * limit;
   const userId = req.user.id;
   const isAdmin = req.user.role === 'admin';
   const isViewer = req.user.role === 'viewer';
+  const scope: ProjectAccessScope = (() => {
+    if (requestedScope && projectAccessScopes.includes(requestedScope as ProjectAccessScope)) {
+      return requestedScope as ProjectAccessScope;
+    }
+    if (isAdmin) {
+      return 'all';
+    }
+    if (isViewer) {
+      return 'public';
+    }
+    return 'assigned';
+  })();
 
   let queryText = `
     SELECT DISTINCT p.*, pc.name as category_name,
-           u.full_name as created_by_name
+           u.full_name as created_by_name,
+           pa_user.role as current_user_assignment_role,
+           pa_user.status as current_user_assignment_status
     FROM project p
     LEFT JOIN project_category pc ON p.category_id = pc.id
     LEFT JOIN "user" u ON p.created_by_user_id = u.id
     LEFT JOIN project_assignment pa ON p.id = pa.project_id
+    LEFT JOIN project_assignment pa_user
+      ON p.id = pa_user.project_id
+     AND pa_user.user_id = $1
     WHERE 1=1
   `;
   
-  const params: unknown[] = [];
-  let paramIndex = 1;
+  const params: unknown[] = [userId];
+  let paramIndex = 2;
 
-  if (isAdmin) {
+  if (isAdmin && scope === 'all') {
     // No additional access filter.
-  } else if (isViewer) {
+  } else if (scope === 'public') {
     queryText += ` AND p.visible_to_viewers = TRUE AND p.status = ANY($${paramIndex}::project_status[])`;
     params.push(viewerVisibleStatuses);
     paramIndex++;
-  } else {
+  } else if (scope === 'assigned') {
     queryText += ` AND (pa.user_id = $${paramIndex} AND pa.status = 'approved')`;
     params.push(userId);
     paramIndex++;
+  } else {
+    throw new AppError('Unsupported project access scope', 400);
   }
 
   // Filter by status
@@ -97,22 +119,27 @@ const getAllProjects = async (req, res) => {
     SELECT COUNT(DISTINCT p.id) as total
     FROM project p
     LEFT JOIN project_assignment pa ON p.id = pa.project_id
+    LEFT JOIN project_assignment pa_user
+      ON p.id = pa_user.project_id
+     AND pa_user.user_id = $1
     WHERE 1=1
   `;
   
-  const countParams: unknown[] = [];
-  let countParamIndex = 1;
+  const countParams: unknown[] = [userId];
+  let countParamIndex = 2;
 
-  if (isAdmin) {
+  if (isAdmin && scope === 'all') {
     // No additional access filter.
-  } else if (isViewer) {
+  } else if (scope === 'public') {
     countQuery += ` AND p.visible_to_viewers = TRUE AND p.status = ANY($${countParamIndex}::project_status[])`;
     countParams.push(viewerVisibleStatuses);
     countParamIndex++;
-  } else {
+  } else if (scope === 'assigned') {
     countQuery += ` AND (pa.user_id = $${countParamIndex} AND pa.status = 'approved')`;
     countParams.push(userId);
     countParamIndex++;
+  } else {
+    throw new AppError('Unsupported project access scope', 400);
   }
 
   if (status) {
@@ -138,24 +165,31 @@ const getAllProjects = async (req, res) => {
       total,
       pages: Math.ceil(total / limit),
     },
+    access_scope: scope,
   });
 };
 
 // Get single project
 const getProject = async (req, res) => {
   const { projectId } = req.params;
+  const userId = req.user.id;
 
   const result = await query(
     `SELECT p.*, pc.name as category_name,
             u.full_name as created_by_name,
             (SELECT COUNT(*) FROM spatial_feature WHERE project_id = p.id AND status = 'approved') as approved_features,
             (SELECT COUNT(*) FROM spatial_feature WHERE project_id = p.id AND status = 'pending_review') as pending_features,
-            (SELECT COUNT(*) FROM project_assignment WHERE project_id = p.id AND status = 'approved') as contributor_count
+            (SELECT COUNT(*) FROM project_assignment WHERE project_id = p.id AND status = 'approved') as contributor_count,
+            pa_user.role as current_user_assignment_role,
+            pa_user.status as current_user_assignment_status
      FROM project p
      LEFT JOIN project_category pc ON p.category_id = pc.id
      LEFT JOIN "user" u ON p.created_by_user_id = u.id
+     LEFT JOIN project_assignment pa_user
+       ON p.id = pa_user.project_id
+      AND pa_user.user_id = $2
      WHERE p.id = $1`,
-    [projectId]
+    [projectId, userId]
   );
 
   if (result.rows.length === 0) {
