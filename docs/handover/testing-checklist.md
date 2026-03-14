@@ -110,6 +110,12 @@ cd D:\GIS_APP\apps\mobile
 flutter run -d emulator-5554 --dart-define=APP_FLAVOR=dev --dart-define=API_BASE_URL=http://10.0.2.2:3000
 ```
 
+Executed evidence:
+
+- `docs/handover/evidence/backend-health-android-pass.log`
+- `docs/handover/evidence/mobile-run-emulator-android-pass.log`
+- `docs/handover/evidence/mobile-build-apk-android-pass.log`
+
 Verify:
 
 - login works against the local API through `10.0.2.2`
@@ -117,6 +123,7 @@ Verify:
 - role-based shell navigation matches the signed-in user role
 - viewer sees only admin-published projects
 - contributor sees both public `Projects` and `Assigned Projects`
+- Android debug runtime allows local cleartext traffic for `10.0.2.2`
 
 ## Manual Flow Order
 

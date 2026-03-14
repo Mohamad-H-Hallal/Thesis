@@ -121,8 +121,20 @@ Web API prerequisite:
 Android emulator:
 
 ```powershell
+adb devices
 flutter run -d emulator-5554 --dart-define=APP_FLAVOR=dev --dart-define=API_BASE_URL=http://10.0.2.2:3000
 ```
+
+Android notes:
+- Use `10.0.2.2`, not `localhost`, for the local backend from the Android emulator.
+- If `API_BASE_URL` is omitted in `dev`, Android now defaults to `http://10.0.2.2:3000`; web keeps `http://localhost:3000`.
+- If the emulator shows `offline`, restart ADB:
+```powershell
+adb kill-server
+adb start-server
+adb devices
+```
+- Debug Android builds allow local cleartext traffic for `10.0.2.2`.
 
 ## Release Verification (Single Command)
 

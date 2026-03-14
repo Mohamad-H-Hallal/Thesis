@@ -1,0 +1,54 @@
+Launching lib\main.dart on sdk gphone64 x86 64 in debug mode...
+Running Gradle task 'assembleDebug'...                          
+
+D:\GIS_APP\apps\mobile\android>if "Windows_NT" == "Windows_NT" setlocal
+
+D:\GIS_APP\apps\mobile\android>if exist "C:\Program Files\Android\Android Studio\jbr\bin\java.exe" (set "JAVA_HOME=C:\Program Files\Android\Android Studio\jbr" ) 
+
+D:\GIS_APP\apps\mobile\android>set DEFAULT_JVM_OPTS= 
+
+D:\GIS_APP\apps\mobile\android>set DIRNAME=D:\GIS_APP\apps\mobile\android\ 
+
+D:\GIS_APP\apps\mobile\android>if "D:\GIS_APP\apps\mobile\android\" == "" set DIRNAME=. 
+
+D:\GIS_APP\apps\mobile\android>set APP_BASE_NAME=gradlew 
+
+D:\GIS_APP\apps\mobile\android>set APP_HOME=D:\GIS_APP\apps\mobile\android\ 
+
+D:\GIS_APP\apps\mobile\android>if defined JAVA_HOME goto findJavaFromJavaHome 
+
+D:\GIS_APP\apps\mobile\android>set JAVA_HOME=C:\Program Files\Android\Android Studio\jbr 
+
+D:\GIS_APP\apps\mobile\android>set JAVA_EXE=C:\Program Files\Android\Android Studio\jbr/bin/java.exe 
+
+D:\GIS_APP\apps\mobile\android>if exist "C:\Program Files\Android\Android Studio\jbr/bin/java.exe" goto init 
+
+D:\GIS_APP\apps\mobile\android>if not "Windows_NT" == "Windows_NT" goto win9xME_args 
+
+D:\GIS_APP\apps\mobile\android>if "@eval[2+2]" == "4" goto 4NT_args 
+
+D:\GIS_APP\apps\mobile\android>set CMD_LINE_ARGS= 
+
+D:\GIS_APP\apps\mobile\android>set _SKIP=2 
+
+D:\GIS_APP\apps\mobile\android>if "x-q" == "x" goto execute 
+
+D:\GIS_APP\apps\mobile\android>set CMD_LINE_ARGS=-q -Ptarget-platform=android-x64 -Ptarget=D:\GIS_APP\apps\mobile\lib\main.dart -Pbase-application-name=android.app.Application -Pdart-defines=QVBQX0ZMQVZPUj1kZXY=,QVBJX0JBU0VfVVJMPWh0dHA6Ly8xMC4wLjIuMjozMDAw,RkxVVFRFUl9WRVJTSU9OPTMuNDEuMg==,RkxVVFRFUl9DSEFOTkVMPXN0YWJsZQ==,RkxVVFRFUl9HSVRfVVJMPWh0dHBzOi8vZ2l0aHViLmNvbS9mbHV0dGVyL2ZsdXR0ZXIuZ2l0,RkxVVFRFUl9GUkFNRVdPUktfUkVWSVNJT049OTA2NzNhNGVlZg==,RkxVVFRFUl9FTkdJTkVfUkVWSVNJT049NmMwYmFhZWJmNw==,RkxVVFRFUl9EQVJUX1ZFUlNJT049My4xMS4w -Pdart-obfuscation=false -Ptrack-widget-creation=true -Ptree-shake-icons=false -Pfilesystem-scheme=org-dartlang-root assembleDebug 
+
+D:\GIS_APP\apps\mobile\android>goto execute 
+
+D:\GIS_APP\apps\mobile\android>set CLASSPATH=D:\GIS_APP\apps\mobile\android\\gradle\wrapper\gradle-wrapper.jar 
+
+D:\GIS_APP\apps\mobile\android>"C:\Program Files\Android\Android Studio\jbr/bin/java.exe"    "-Dorg.gradle.appname=gradlew" -classpath "D:\GIS_APP\apps\mobile\android\\gradle\wrapper\gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain -q -Ptarget-platform=android-x64 -Ptarget=D:\GIS_APP\apps\mobile\lib\main.dart -Pbase-application-name=android.app.Application -Pdart-defines=QVBQX0ZMQVZPUj1kZXY=,QVBJX0JBU0VfVVJMPWh0dHA6Ly8xMC4wLjIuMjozMDAw,RkxVVFRFUl9WRVJTSU9OPTMuNDEuMg==,RkxVVFRFUl9DSEFOTkVMPXN0YWJsZQ==,RkxVVFRFUl9HSVRfVVJMPWh0dHBzOi8vZ2l0aHViLmNvbS9mbHV0dGVyL2ZsdXR0ZXIuZ2l0,RkxVVFRFUl9GUkFNRVdPUktfUkVWSVNJT049OTA2NzNhNGVlZg==,RkxVVFRFUl9FTkdJTkVfUkVWSVNJT049NmMwYmFhZWJmNw==,RkxVVFRFUl9EQVJUX1ZFUlNJT049My4xMS4w -Pdart-obfuscation=false -Ptrack-widget-creation=true -Ptree-shake-icons=false -Pfilesystem-scheme=org-dartlang-root assembleDebug 
+
+D:\GIS_APP\apps\mobile\android>if "0" == "0" goto mainEnd 
+
+D:\GIS_APP\apps\mobile\android>if "Windows_NT" == "Windows_NT" endlocal
+Running Gradle task 'assembleDebug'...                             13.2s
+√ Built build\app\outputs\flutter-apk\app-debug.apk
+Installing build\app\outputs\flutter-apk\app-debug.apk...        2,314ms
+D/FlutterJNI( 7296): Beginning load of flutter...
+D/FlutterJNI( 7296): flutter (null) was loaded normally!
+I/flutter ( 7296): [IMPORTANT:flutter/shell/platform/android/android_context_gl_impeller.cc(104)] Using the Impeller rendering backend (OpenGLES).
+D/FlutterRenderer( 7296): Width is zero. 0,0
+Syncing files to device sdk gphone64 x86 64...                     135ms

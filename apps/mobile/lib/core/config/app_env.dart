@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 enum AppFlavor { dev, staging, prod }
 
 class AppEnv {
@@ -37,6 +39,9 @@ class AppEnv {
 
     switch (flavor) {
       case AppFlavor.dev:
+        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+          return 'http://10.0.2.2:3000';
+        }
         return 'http://localhost:3000';
       case AppFlavor.staging:
         return 'https://staging-api.example.gov.lb';

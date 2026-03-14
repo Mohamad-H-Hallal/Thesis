@@ -1,6 +1,6 @@
 # Phase Recheck After UI Fixes
 
-Date: 2026-03-14
+Date: 2026-03-15
 
 ## Summary
 
@@ -10,6 +10,7 @@ This pass closed the remaining UI/runtime gaps around:
 - contributor pending-login enforcement in the mobile UX
 - back navigation from non-root routes
 - removal of the last production-path map placeholder
+- Android emulator runtime readiness, including `10.0.2.2` API access and cleartext debug config
 
 No new schema redesign was introduced. PostgreSQL/PostGIS remains the source of truth.
 
@@ -28,7 +29,7 @@ No new schema redesign was introduced. PostgreSQL/PostGIS remains the source of 
 | Phase 8 | COMPLETE | Export workflow remains implemented. |
 | Phase 9 | COMPLETE | Security hardening remains intact, including pending contributor enforcement and protected metrics behavior. |
 | Phase 10 | COMPLETE | Automated tests and quality gates remain green after this pass. |
-| Phase 11 | PARTIAL | Engineering deliverables remain complete; operational rollout, production secrets management, and ministry-side training are still deployment-owner tasks. |
+| Phase 11 | PARTIAL | Engineering deliverables are verified on Android emulator as well; operational rollout, production secrets management, and ministry-side training remain deployment-owner tasks. |
 
 ## Placeholder / Mock Recheck
 
@@ -36,6 +37,7 @@ No new schema redesign was introduced. PostgreSQL/PostGIS remains the source of 
 - No offline placeholder banner remains in the production runtime.
 - Mock auth/data paths remain gated behind `USE_MOCK_AUTH` and `USE_MOCK_DATA` only.
 - Production default runtime continues to use the real backend and PostgreSQL data.
+- Android `dev` runtime now defaults to `http://10.0.2.2:3000` when `API_BASE_URL` is not provided, removing the last localhost misuse for emulator testing.
 
 ## Role Behavior Recheck
 
@@ -58,6 +60,14 @@ No new schema redesign was introduced. PostgreSQL/PostGIS remains the source of 
 ## Critical Gaps Check
 
 No critical engineering blockers were found in this pass.
+
+Android emulator verification completed on 2026-03-15:
+
+- `flutter analyze` passed
+- `flutter test` passed
+- `flutter build apk` passed
+- `flutter run -d emulator-5554 --dart-define=APP_FLAVOR=dev --dart-define=API_BASE_URL=http://10.0.2.2:3000 --no-resident` passed
+- backend Docker API health responded at `http://localhost:3000/health`
 
 Remaining non-code deployment tasks:
 
