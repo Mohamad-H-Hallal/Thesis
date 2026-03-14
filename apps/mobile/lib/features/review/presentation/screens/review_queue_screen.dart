@@ -19,7 +19,7 @@ class ReviewQueueScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final queueAsync = ref.watch(reviewQueueDraftsProvider);
     final session = ref.watch(authControllerProvider).session;
-    final reviewerName = session?.user.fullName ?? 'Reviewer';
+    final reviewerName = session?.user.fullName ?? 'Admin Reviewer';
 
     return queueAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -31,7 +31,7 @@ class ReviewQueueScreen extends ConsumerWidget {
             children: const [
               SectionHeader(
                 title: 'Review Queue',
-                subtitle: 'Admin and reviewer moderation workspace',
+                subtitle: 'Admin moderation workspace',
               ),
               SizedBox(height: 24),
               AppEmptyState(
@@ -48,7 +48,7 @@ class ReviewQueueScreen extends ConsumerWidget {
           children: [
             SectionHeader(
               title: 'Review Queue',
-              subtitle: '${items.length} draft(s) awaiting reviewer action',
+              subtitle: '${items.length} draft(s) awaiting admin review',
             ),
             const SizedBox(height: AppSpacing.md),
             ...List<Widget>.generate(items.length, (index) {

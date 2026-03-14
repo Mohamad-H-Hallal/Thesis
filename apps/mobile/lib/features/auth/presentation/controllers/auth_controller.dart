@@ -59,21 +59,27 @@ class AuthController extends StateNotifier<AuthState> {
     }
   }
 
-  Future<void> signup({
+  Future<String?> signup({
     required String fullName,
     required String email,
     required String password,
+    required UserRole role,
+    String? phone,
   }) async {
     state = const AuthState.loading();
     try {
-      await _repository.signup(
+      final message = await _repository.signup(
         fullName: fullName,
         email: email,
         password: password,
+        role: role,
+        phone: phone,
       );
       state = const AuthState.unauthenticated();
+      return message;
     } catch (error) {
       state = AuthState.unauthenticated(_messageFromError(error));
+      return null;
     }
   }
 

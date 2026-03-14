@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/config/app_branding.dart';
+import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
+import '../../../../core/web/input_autofill_patch.dart';
 import '../../../../core/widgets/animated_reveal.dart';
 import '../../../../core/widgets/app_button.dart';
 import '../../../../core/widgets/app_card.dart';
@@ -14,6 +17,9 @@ import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/widgets/loading_overlay.dart';
 import '../controllers/auth_controller.dart';
+import '../utils/auth_form_validators.dart';
+import '../utils/auth_input_formatters.dart';
+import '../widgets/auth_error_banner.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -26,156 +32,239 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _emailFocus = FocusNode();
+  final _passwordFocus = FocusNode();
+  final _noLeadingSpaceFormatter = NoLeadingSpaceFormatter();
   bool _obscurePassword = true;
   bool _rememberMe = true;
+  bool _attemptedSubmit = false;
+  String? _formLevelError;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      patchAuthInputAttributes(
+        formId: 'login',
+        fieldKeys: const <String>['email', 'password'],
+      );
+    });
+  }
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _emailFocus.dispose();
+    _passwordFocus.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
+    setState(() {
+      _attemptedSubmit = true;
+      _formLevelError = null;
+    });
+
     if (!_formKey.currentState!.validate()) {
       return;
     }
 
+    FocusScope.of(context).unfocus();
+    TextInput.finishAutofillContext();
+
     await ref
         .read(authControllerProvider.notifier)
         .login(
-          email: _emailController.text.trim(),
+          email: AuthFormValidators.normalize(_emailController.text),
           password: _passwordController.text,
           rememberMe: _rememberMe,
         );
-
-    final authState = ref.read(authControllerProvider);
-    if (authState.error != null && mounted) {
-      AppSnackbar.showError(context, authState.error!);
-    }
   }
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<AuthState>(authControllerProvider, (previous, next) {
+      if (!mounted || !_attemptedSubmit) {
+        return;
+      }
+
+      final becameError =
+          previous?.status == AuthStatus.loading &&
+          next.status == AuthStatus.unauthenticated &&
+          next.error != null;
+
+      if (becameError) {
+        setState(() {
+          _formLevelError = next.error;
+        });
+        AppSnackbar.showError(context, next.error!);
+      }
+    });
+
     final authState = ref.watch(authControllerProvider);
+    final isLoading = authState.status == AuthStatus.loading;
 
     return LoadingOverlay(
-      isLoading: authState.status == AuthStatus.loading,
+      isLoading: isLoading,
       child: AppScaffold(
         title: 'Sign in',
         showOfflineBanner: false,
         body: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 460),
-            child: Form(
-              key: _formKey,
-              child: ListView(
-                shrinkWrap: true,
-                children: [
-                  AnimatedReveal(
-                    child: Column(
-                      children: [
-                        const Center(child: AppLogo(size: 84)),
-                        const SizedBox(height: 14),
-                        Text(
-                          AppBranding.shortName,
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.headlineSmall,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Secure ministry access for field collection operations',
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodyMedium,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  AnimatedReveal(
-                    delay: const Duration(milliseconds: 80),
-                    child: AppCard(
+            child: AutofillGroup(
+              child: Form(
+                key: _formKey,
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  children: <Widget>[
+                    AnimatedReveal(
                       child: Column(
-                        children: [
-                          AppTextField(
-                            label: 'Email',
-                            controller: _emailController,
-                            keyboardType: TextInputType.emailAddress,
-                            validator: (value) {
-                              if (value == null || value.trim().isEmpty) {
-                                return 'Email is required';
-                              }
-                              if (!value.contains('@')) {
-                                return 'Enter a valid email';
-                              }
-                              return null;
-                            },
+                        children: <Widget>[
+                          const Center(child: AppLogo(size: 84)),
+                          const SizedBox(height: AppSpacing.sm),
+                          Text(
+                            AppBranding.shortName,
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.headlineSmall,
                           ),
-                          const SizedBox(height: 12),
-                          AppTextField(
-                            label: 'Password',
-                            controller: _passwordController,
-                            obscureText: _obscurePassword,
-                            suffix: IconButton(
-                              onPressed: () => setState(
-                                () => _obscurePassword = !_obscurePassword,
-                              ),
-                              icon: Icon(
-                                _obscurePassword
-                                    ? Icons.visibility
-                                    : Icons.visibility_off,
-                              ),
-                            ),
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Password is required';
-                              }
-                              if (value.length < 6) {
-                                return 'Password must be at least 6 characters';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 8),
-                          CheckboxListTile(
-                            value: _rememberMe,
-                            onChanged: (value) =>
-                                setState(() => _rememberMe = value ?? true),
-                            title: const Text('Remember me'),
-                            controlAffinity: ListTileControlAffinity.leading,
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                          const SizedBox(height: 12),
-                          AppButton(
-                            label: 'Login',
-                            icon: Icons.login,
-                            onPressed: _submit,
-                          ),
-                          const SizedBox(height: 8),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: TextButton(
-                              onPressed: () =>
-                                  context.go(AppRoutes.forgotPassword),
-                              child: const Text('Forgot password?'),
-                            ),
+                          const SizedBox(height: AppSpacing.xs),
+                          Text(
+                            'Secure ministry access for field collection operations',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.bodyMedium,
                           ),
                         ],
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text('No account yet?'),
-                      TextButton(
-                        onPressed: () => context.go(AppRoutes.signup),
-                        child: const Text('Create account'),
+                    const SizedBox(height: AppSpacing.lg),
+                    AnimatedReveal(
+                      delay: const Duration(milliseconds: 80),
+                      child: AppCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: <Widget>[
+                            if (_formLevelError != null) ...<Widget>[
+                              AuthErrorBanner(message: _formLevelError!),
+                              const SizedBox(height: AppSpacing.sm),
+                            ],
+                            AppTextField(
+                              label: 'Email address',
+                              hint: 'name@gov.lb',
+                              controller: _emailController,
+                              keyboardType: TextInputType.emailAddress,
+                              textInputAction: TextInputAction.next,
+                              focusNode: _emailFocus,
+                              onFieldSubmitted: (_) => FocusScope.of(
+                                context,
+                              ).requestFocus(_passwordFocus),
+                              inputFormatters: <TextInputFormatter>[
+                                _noLeadingSpaceFormatter,
+                              ],
+                              autofillHints: const <String>[
+                                AutofillHints.username,
+                                AutofillHints.email,
+                              ],
+                              onChanged: (_) {
+                                if (_formLevelError == null) {
+                                  return;
+                                }
+                                setState(() {
+                                  _formLevelError = null;
+                                });
+                              },
+                              validator: AuthFormValidators.email,
+                            ),
+                            const SizedBox(height: AppSpacing.sm),
+                            AppTextField(
+                              label: 'Password',
+                              hint: 'Enter your password',
+                              controller: _passwordController,
+                              obscureText: _obscurePassword,
+                              textInputAction: TextInputAction.done,
+                              focusNode: _passwordFocus,
+                              onFieldSubmitted: (_) => _submit(),
+                              enableSuggestions: false,
+                              autocorrect: false,
+                              autofillHints: const <String>[
+                                AutofillHints.password,
+                              ],
+                              onChanged: (_) {
+                                if (_formLevelError == null) {
+                                  return;
+                                }
+                                setState(() {
+                                  _formLevelError = null;
+                                });
+                              },
+                              suffix: IconButton(
+                                tooltip: _obscurePassword
+                                    ? 'Show password'
+                                    : 'Hide password',
+                                onPressed: () => setState(
+                                  () => _obscurePassword = !_obscurePassword,
+                                ),
+                                icon: Icon(
+                                  _obscurePassword
+                                      ? Icons.visibility
+                                      : Icons.visibility_off,
+                                ),
+                              ),
+                              validator: AuthFormValidators.loginPassword,
+                            ),
+                            const SizedBox(height: AppSpacing.xs),
+                            CheckboxListTile(
+                              value: _rememberMe,
+                              onChanged: isLoading
+                                  ? null
+                                  : (value) => setState(
+                                      () => _rememberMe = value ?? true,
+                                    ),
+                              title: const Text('Remember me'),
+                              controlAffinity: ListTileControlAffinity.leading,
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                            const SizedBox(height: AppSpacing.sm),
+                            AppButton(
+                              label: 'Login',
+                              icon: Icons.login,
+                              isLoading: isLoading,
+                              onPressed: isLoading ? null : _submit,
+                            ),
+                            const SizedBox(height: AppSpacing.xs),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton(
+                                onPressed: isLoading
+                                    ? null
+                                    : () =>
+                                          context.go(AppRoutes.forgotPassword),
+                                child: const Text('Forgot password?'),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ],
-                  ),
-                ],
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: AppSpacing.xxs,
+                      children: <Widget>[
+                        const Text('No account yet?'),
+                        TextButton(
+                          onPressed: isLoading
+                              ? null
+                              : () => context.go(AppRoutes.signup),
+                          child: const Text('Create account'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

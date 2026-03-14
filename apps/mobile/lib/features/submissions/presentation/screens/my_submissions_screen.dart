@@ -12,7 +12,7 @@ class MySubmissionsScreen extends StatelessWidget {
       children: const [
         SectionHeader(
           title: 'My Submissions',
-          subtitle: 'Track reviewer feedback and approval outcomes',
+          subtitle: 'Track admin feedback and approval outcomes',
         ),
         SizedBox(height: 24),
         AppEmptyState(

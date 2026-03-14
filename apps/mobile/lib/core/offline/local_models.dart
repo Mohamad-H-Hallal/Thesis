@@ -284,6 +284,7 @@ extension ProjectSummaryLocalMapper on ProjectSummary {
       'maxPhotos': maxPhotos,
       'allowedGeometryTypes': allowedGeometryTypes,
       'maxGpsAccuracyMeters': maxGpsAccuracyMeters,
+      'visibleToViewers': visibleToViewers,
     };
   }
 }
@@ -321,5 +322,6 @@ ProjectSummary projectSummaryFromPayload(Map<String, dynamic> payload) {
     ),
     maxGpsAccuracyMeters: ((payload['maxGpsAccuracyMeters'] as num?) ?? 25)
         .toDouble(),
+    visibleToViewers: (payload['visibleToViewers'] as bool?) ?? false,
   );
 }

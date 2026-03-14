@@ -9,10 +9,12 @@ abstract class AuthRepository {
     required bool rememberMe,
   });
 
-  Future<void> signup({
+  Future<String> signup({
     required String fullName,
     required String email,
     required String password,
+    required UserRole role,
+    String? phone,
   });
 
   Future<void> requestPasswordReset(String email);

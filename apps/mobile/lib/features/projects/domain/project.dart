@@ -1,4 +1,4 @@
-enum ProjectAssignmentRole { admin, reviewer, contributor, viewer }
+enum ProjectAssignmentRole { admin, contributor }
 
 enum ProjectAssignmentStatus { pending, approved, rejected }
 
@@ -141,6 +141,7 @@ class ProjectSummary {
     this.maxPhotos = 5,
     this.allowedGeometryTypes = const <String>['Point'],
     this.maxGpsAccuracyMeters = 25,
+    this.visibleToViewers = false,
   });
 
   final String id;
@@ -157,6 +158,7 @@ class ProjectSummary {
   final int maxPhotos;
   final List<String> allowedGeometryTypes;
   final double maxGpsAccuracyMeters;
+  final bool visibleToViewers;
 
   bool isAssignedTo(String userId, {bool approvedOnly = true}) {
     for (final assignment in assignments) {

@@ -41,11 +41,11 @@ class _ExportsDashboardScreenState
     final authSession = ref.watch(authControllerProvider).session;
     final role = authSession?.user.role;
 
-    if (role != UserRole.admin && role != UserRole.reviewer) {
+    if (role != UserRole.admin) {
       return const AppEmptyState(
         icon: Icons.lock_outline,
         title: 'Export Access Restricted',
-        message: 'Only admin and reviewer roles can manage export requests.',
+        message: 'Only admin users can manage export requests.',
       );
     }
 

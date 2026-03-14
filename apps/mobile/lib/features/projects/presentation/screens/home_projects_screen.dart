@@ -10,6 +10,7 @@ import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
+import '../../../auth/domain/auth_models.dart';
 import '../../domain/project.dart';
 
 class HomeProjectsScreen extends ConsumerStatefulWidget {
@@ -27,18 +28,18 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
     final projectsAsync = ref.watch(projectsProvider);
     final session = ref.watch(authControllerProvider).session;
     final currentUserId = session?.user.id;
+    final role = session?.user.role ?? UserRole.viewer;
 
     return Column(
       children: [
-        const SectionHeader(
-          title: 'Assigned Projects',
-          subtitle:
-              'Operational overview for collection campaigns and review load.',
+        SectionHeader(
+          title: _titleForRole(role),
+          subtitle: _subtitleForRole(role),
         ),
         const SizedBox(height: AppSpacing.sm),
         SearchBar(
           leading: const Icon(Icons.search),
-          hintText: 'Search assigned projects',
+          hintText: _searchHintForRole(role),
           onChanged: (value) =>
               setState(() => _query = value.trim().toLowerCase()),
         ),
@@ -72,11 +73,10 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
                   .toList(growable: false);
 
               if (filtered.isEmpty) {
-                return const AppEmptyState(
+                return AppEmptyState(
                   icon: Icons.folder_off_outlined,
                   title: 'No projects found',
-                  message:
-                      'No assigned projects match your search. Try another keyword.',
+                  message: _emptyMessageForRole(role),
                 );
               }
 
@@ -88,7 +88,7 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
                       runSpacing: AppSpacing.sm,
                       children: [
                         _MetricPill(
-                          label: 'Total assigned',
+                          label: _metricLabelForRole(role),
                           value: '${filtered.length}',
                           icon: Icons.folder_shared_outlined,
                         ),
@@ -148,13 +148,22 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
                                 runSpacing: 8,
                                 children: [
                                   Chip(label: Text(project.category)),
-                                  if (currentUserId != null)
+                                  if (role == UserRole.contributor &&
+                                      currentUserId != null)
                                     Chip(
                                       label: Text(
                                         _assignmentLabel(
                                           project: project,
                                           userId: currentUserId,
                                         ),
+                                      ),
+                                    ),
+                                  if (role == UserRole.admin)
+                                    Chip(
+                                      label: Text(
+                                        project.visibleToViewers
+                                            ? 'Viewer visible'
+                                            : 'Contributor only',
                                       ),
                                     ),
                                   Chip(
@@ -194,6 +203,61 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
       }
     }
     return 'Assignment: not set';
+  }
+
+  String _titleForRole(UserRole role) {
+    switch (role) {
+      case UserRole.admin:
+        return 'All Projects';
+      case UserRole.viewer:
+        return 'Visible Projects';
+      case UserRole.contributor:
+        return 'Assigned Projects';
+    }
+  }
+
+  String _subtitleForRole(UserRole role) {
+    switch (role) {
+      case UserRole.admin:
+        return 'Management view across every project, assignment, and review workload.';
+      case UserRole.viewer:
+        return 'Projects published by admins for viewer access.';
+      case UserRole.contributor:
+        return 'Operational overview for your assigned collection campaigns.';
+    }
+  }
+
+  String _searchHintForRole(UserRole role) {
+    switch (role) {
+      case UserRole.admin:
+        return 'Search all projects';
+      case UserRole.viewer:
+        return 'Search visible projects';
+      case UserRole.contributor:
+        return 'Search assigned projects';
+    }
+  }
+
+  String _metricLabelForRole(UserRole role) {
+    switch (role) {
+      case UserRole.admin:
+        return 'Total projects';
+      case UserRole.viewer:
+        return 'Visible now';
+      case UserRole.contributor:
+        return 'Assigned';
+    }
+  }
+
+  String _emptyMessageForRole(UserRole role) {
+    switch (role) {
+      case UserRole.admin:
+        return 'No projects match your search filters.';
+      case UserRole.viewer:
+        return 'No viewer-visible projects match your search right now.';
+      case UserRole.contributor:
+        return 'No assigned projects match your search. Try another keyword.';
+    }
   }
 }
 

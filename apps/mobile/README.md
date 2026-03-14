@@ -58,10 +58,12 @@ dart format lib test
 - `/app/add-feature`
 
 ## Role-based shell navigation
-- Admin/Reviewer:
-  - Home/Projects, Map, My Drafts, Review Queue, Notifications, Profile
+- Admin:
+  - Home/Projects, Review Queue, Exports, Notifications, Profile
 - Contributor:
   - Home/Projects, Map, My Drafts, My Submissions, Notifications, Profile
+- Viewer:
+  - Home/Projects, Notifications, Profile
 
 ## Branding assets
 - App name in UI: `Lebanon GIS Collector`
@@ -109,7 +111,7 @@ dart format lib test
 - Contributor actions:
   - submit draft from **My Drafts**
   - view workflow timeline in bottom sheet
-- Reviewer/Admin actions in **Review Queue**:
+- Admin actions in **Review Queue**:
   - start review
   - approve with optional note
   - reject with required note

@@ -44,6 +44,22 @@ class ApiProjectsRepository implements ProjectsRepository {
     }
   }
 
+  @override
+  Future<ProjectSummary> updateViewerVisibility({
+    required String projectId,
+    required bool visibleToViewers,
+  }) async {
+    final response = await _apiClient.dio.put<Map<String, dynamic>>(
+      '$_projectsBasePath/$projectId',
+      data: <String, dynamic>{'visible_to_viewers': visibleToViewers},
+    );
+    final payload = response.data ?? const <String, dynamic>{};
+    final row = Map<String, dynamic>.from(
+      payload['data'] as Map? ?? const <String, dynamic>{},
+    );
+    return _toProjectSummary(row);
+  }
+
   ProjectSummary _toProjectSummary(Map<String, dynamic> row) {
     final schemaRaw = row['collection_form_schema'];
     final schemaMap = _toMap(schemaRaw);
@@ -80,6 +96,7 @@ class ApiProjectsRepository implements ProjectsRepository {
       requiresPhotos: (row['requires_photos'] as bool?) ?? false,
       minPhotos: _toInt(row['min_photos']) ?? 0,
       maxPhotos: _toInt(row['max_photos']) ?? 5,
+      visibleToViewers: (row['visible_to_viewers'] as bool?) ?? false,
       allowedGeometryTypes:
           (schemaMap['allowedGeometryTypes'] as List?)
               ?.cast<String>()

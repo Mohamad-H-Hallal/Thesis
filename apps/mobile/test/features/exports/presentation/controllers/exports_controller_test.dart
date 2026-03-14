@@ -14,9 +14,9 @@ void main() {
     refreshToken: 'refresh',
     user: const AppUser(
       id: 'user-1',
-      fullName: 'Reviewer One',
-      email: 'reviewer@gov.lb',
-      role: UserRole.reviewer,
+      fullName: 'Admin One',
+      email: 'admin@gov.lb',
+      role: UserRole.admin,
     ),
   );
 

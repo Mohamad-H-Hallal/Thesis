@@ -68,41 +68,11 @@ class ProfileScreen extends StatelessWidget {
           ),
         ),
         const SizedBox(height: AppSpacing.md),
-        AppCard(
-          child: Wrap(
-            spacing: AppSpacing.lg,
-            runSpacing: AppSpacing.sm,
-            children: [
-              _ProfileStat(label: 'Projects', value: '3'),
-              _ProfileStat(label: 'Drafts', value: '2'),
-              _ProfileStat(label: 'Pending', value: '1'),
-            ],
-          ),
-        ),
-        const SizedBox(height: AppSpacing.md),
         FilledButton.icon(
           onPressed: onLogout,
           icon: const Icon(Icons.logout),
           label: const Text('Logout'),
         ),
-      ],
-    );
-  }
-}
-
-class _ProfileStat extends StatelessWidget {
-  const _ProfileStat({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(value, style: Theme.of(context).textTheme.headlineSmall),
-        Text(label, style: Theme.of(context).textTheme.bodySmall),
       ],
     );
   }

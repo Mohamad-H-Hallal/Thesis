@@ -17,7 +17,7 @@ class MockNotificationsRepository implements NotificationsRepository {
       AppNotification(
         id: 'n2',
         title: 'Review completed',
-        message: 'Feature #D-208 was approved by reviewer.',
+        message: 'Feature #D-208 was approved by admin review.',
         timestamp: '2h ago',
         isRead: false,
       ),

@@ -52,14 +52,14 @@ class DraftsScreen extends ConsumerWidget {
             SectionHeader(
               title: showSubmittedOnly ? 'My Submissions' : 'My Drafts',
               subtitle: showSubmittedOnly
-                  ? 'Track submitted features through reviewer decisions.'
+                  ? 'Track submitted features through admin review decisions.'
                   : 'Continue editing drafts and submit them for review.',
             ),
             const SizedBox(height: AppSpacing.md),
             ...List<Widget>.generate(visible.length, (index) {
               final draft = visible[index];
               final workflow = DraftWorkflowCodec.fromDraft(draft);
-              final reviewerNote = workflow.lastReviewNote;
+              final reviewNote = workflow.lastReviewNote;
               final canSubmit =
                   !showSubmittedOnly &&
                   authSession?.user.role == UserRole.contributor &&
@@ -86,8 +86,8 @@ class DraftsScreen extends ConsumerWidget {
                           ),
                           trailing: StatusChip(status: draft.status),
                         ),
-                        if (reviewerNote != null &&
-                            reviewerNote.trim().isNotEmpty &&
+                        if (reviewNote != null &&
+                            reviewNote.trim().isNotEmpty &&
                             draft.status == DraftWorkflowStatus.rejected)
                           Padding(
                             padding: const EdgeInsets.only(
@@ -95,7 +95,7 @@ class DraftsScreen extends ConsumerWidget {
                               bottom: AppSpacing.xs,
                             ),
                             child: Text(
-                              'Reviewer note: $reviewerNote',
+                              'Admin review note: $reviewNote',
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                           ),

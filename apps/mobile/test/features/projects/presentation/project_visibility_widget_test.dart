@@ -1,0 +1,295 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:lebanese_gis_mobile/core/providers/providers.dart';
+import 'package:lebanese_gis_mobile/features/auth/domain/auth_models.dart';
+import 'package:lebanese_gis_mobile/features/auth/domain/auth_repository.dart';
+import 'package:lebanese_gis_mobile/features/auth/presentation/controllers/auth_controller.dart';
+import 'package:lebanese_gis_mobile/features/projects/domain/project.dart';
+import 'package:lebanese_gis_mobile/features/projects/domain/projects_repository.dart';
+import 'package:lebanese_gis_mobile/features/projects/presentation/screens/home_projects_screen.dart';
+import 'package:lebanese_gis_mobile/features/projects/presentation/screens/project_details_screen.dart';
+
+class _NoopAuthRepository implements AuthRepository {
+  const _NoopAuthRepository();
+
+  @override
+  Future<AuthSession> login({
+    required String email,
+    required String password,
+    required bool rememberMe,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> logout() async {}
+
+  @override
+  Future<void> requestPasswordReset(String email) async {}
+
+  @override
+  Future<void> resetPassword({
+    required String token,
+    required String newPassword,
+  }) async {}
+
+  @override
+  Future<AuthSession?> restoreSession() async => null;
+
+  @override
+  Future<String> signup({
+    required String fullName,
+    required String email,
+    required String password,
+    required UserRole role,
+    String? phone,
+  }) {
+    throw UnimplementedError();
+  }
+}
+
+class _AuthenticatedAuthController extends AuthController {
+  _AuthenticatedAuthController(AuthSession session)
+      : super(const _NoopAuthRepository()) {
+    state = AuthState.authenticated(session);
+  }
+}
+
+class _FakeProjectsRepository implements ProjectsRepository {
+  _FakeProjectsRepository(this._projects);
+
+  List<ProjectSummary> _projects;
+
+  @override
+  Future<ProjectSummary?> byId({
+    required String id,
+    required String userId,
+    required UserRole role,
+  }) async {
+    for (final project in _projects) {
+      if (project.id == id) {
+        return project;
+      }
+    }
+    return null;
+  }
+
+  @override
+  Future<List<ProjectSummary>> fetchAssignedProjects({
+    required String userId,
+    required UserRole role,
+  }) async {
+    return _projects;
+  }
+
+  @override
+  Future<ProjectSummary> updateViewerVisibility({
+    required String projectId,
+    required bool visibleToViewers,
+  }) async {
+    _projects = _projects.map((project) {
+      if (project.id != projectId) {
+        return project;
+      }
+      return ProjectSummary(
+        id: project.id,
+        name: project.name,
+        category: project.category,
+        status: project.status,
+        assignedCollectors: project.assignedCollectors,
+        pendingReviews: project.pendingReviews,
+        description: project.description,
+        assignments: project.assignments,
+        collectionFormSchema: project.collectionFormSchema,
+        requiresPhotos: project.requiresPhotos,
+        minPhotos: project.minPhotos,
+        maxPhotos: project.maxPhotos,
+        allowedGeometryTypes: project.allowedGeometryTypes,
+        maxGpsAccuracyMeters: project.maxGpsAccuracyMeters,
+        visibleToViewers: visibleToViewers,
+      );
+    }).toList(growable: false);
+
+    return _projects.firstWhere((project) => project.id == projectId);
+  }
+}
+
+AuthSession _sessionForRole(UserRole role, {String userId = 'user-1'}) {
+  return AuthSession(
+    accessToken: 'token-$userId',
+    refreshToken: 'refresh-$userId',
+    user: AppUser(
+      id: userId,
+      fullName: '${role.name} user',
+      email: '${role.name}@example.com',
+      role: role,
+    ),
+  );
+}
+
+ProjectSummary _project({
+  required String id,
+  required String name,
+  bool visibleToViewers = false,
+  List<ProjectAssignment> assignments = const <ProjectAssignment>[],
+}) {
+  return ProjectSummary(
+    id: id,
+    name: name,
+    category: 'Fruit Trees',
+    status: 'active',
+    assignedCollectors: 1,
+    pendingReviews: 0,
+    description: '$name description',
+    assignments: assignments,
+    visibleToViewers: visibleToViewers,
+  );
+}
+
+Widget _wrapWithScope({
+  required AuthSession session,
+  required List<ProjectSummary> projects,
+  required Widget child,
+  _FakeProjectsRepository? repository,
+}) {
+  final fakeRepository = repository ?? _FakeProjectsRepository(projects);
+  return ProviderScope(
+    overrides: <Override>[
+      authControllerProvider.overrideWith(
+        (ref) => _AuthenticatedAuthController(session),
+      ),
+      projectsRepositoryProvider.overrideWithValue(fakeRepository),
+      projectsProvider.overrideWith(
+        (ref) => fakeRepository.fetchAssignedProjects(
+          userId: session.user.id,
+          role: session.user.role,
+        ),
+      ),
+    ],
+    child: MaterialApp(home: Scaffold(body: child)),
+  );
+}
+
+void main() {
+  testWidgets('viewer home shows visible projects title and viewer-visible data',
+      (tester) async {
+    final session = _sessionForRole(UserRole.viewer);
+    final projects = <ProjectSummary>[
+      _project(
+        id: 'viewer-project',
+        name: 'Published Orchard Survey',
+        visibleToViewers: true,
+      ),
+    ];
+
+    await tester.pumpWidget(
+      _wrapWithScope(
+        session: session,
+        projects: projects,
+        child: const HomeProjectsScreen(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Visible Projects'), findsOneWidget);
+    expect(find.text('Published Orchard Survey'), findsOneWidget);
+    expect(find.textContaining('Visible now:'), findsOneWidget);
+    expect(find.byType(SearchBar), findsOneWidget);
+  });
+
+  testWidgets('contributor home shows assigned projects title and assignment data',
+      (tester) async {
+    final session = _sessionForRole(
+      UserRole.contributor,
+      userId: 'contributor-1',
+    );
+    final projects = <ProjectSummary>[
+      _project(
+        id: 'assigned-project',
+        name: 'Bekaa Collection Campaign',
+        assignments: <ProjectAssignment>[
+          ProjectAssignment(
+            userId: 'contributor-1',
+            role: ProjectAssignmentRole.contributor,
+            status: ProjectAssignmentStatus.approved,
+            assignedAt: DateTime.utc(2026, 3, 14),
+          ),
+        ],
+      ),
+    ];
+
+    await tester.pumpWidget(
+      _wrapWithScope(
+        session: session,
+        projects: projects,
+        child: const HomeProjectsScreen(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Assigned Projects'), findsOneWidget);
+    expect(find.text('Bekaa Collection Campaign'), findsOneWidget);
+    expect(find.textContaining('Assigned:'), findsOneWidget);
+    expect(find.text('Assignment: approved'), findsOneWidget);
+  });
+
+  testWidgets('admin visibility toggle updates project details state after refresh',
+      (tester) async {
+    final session = _sessionForRole(UserRole.admin, userId: 'admin-1');
+    final repository = _FakeProjectsRepository(<ProjectSummary>[
+      _project(
+        id: 'admin-project',
+        name: 'Mount Lebanon Field Survey',
+        visibleToViewers: false,
+      ),
+    ]);
+
+    await tester.pumpWidget(
+      _wrapWithScope(
+        session: session,
+        projects: const <ProjectSummary>[],
+        repository: repository,
+        child: const ProjectDetailsScreen(projectId: 'admin-project'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Contributor only'), findsOneWidget);
+
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Project is now visible to viewers.'), findsOneWidget);
+    expect(find.text('Viewer visible'), findsOneWidget);
+  });
+
+  testWidgets('viewer project details remain read-only without contributor actions',
+      (tester) async {
+    final session = _sessionForRole(UserRole.viewer, userId: 'viewer-1');
+    final repository = _FakeProjectsRepository(<ProjectSummary>[
+      _project(
+        id: 'viewer-project',
+        name: 'North Governorate Survey',
+        visibleToViewers: true,
+      ),
+    ]);
+
+    await tester.pumpWidget(
+      _wrapWithScope(
+        session: session,
+        projects: const <ProjectSummary>[],
+        repository: repository,
+        child: const ProjectDetailsScreen(projectId: 'viewer-project'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Viewer access'), findsOneWidget);
+    expect(find.text('Read only'), findsOneWidget);
+    expect(find.text('Open Map'), findsNothing);
+    expect(find.text('New Feature'), findsNothing);
+    expect(find.text('Drafts'), findsNothing);
+    expect(find.text('Visible to viewers'), findsNothing);
+  });
+}

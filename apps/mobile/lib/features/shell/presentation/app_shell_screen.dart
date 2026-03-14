@@ -230,7 +230,9 @@ class AppShellScreen extends ConsumerWidget {
 
   Widget _bodyForPath(String path, UserRole role) {
     if (path == AppRoutes.projects) return const HomeProjectsScreen();
-    if (path == AppRoutes.map) return const MapScreen();
+    if (path == AppRoutes.map && role == UserRole.contributor) {
+      return const MapScreen();
+    }
     if (path == AppRoutes.drafts) {
       return const DraftsScreen(showSubmittedOnly: false);
     }
@@ -256,14 +258,64 @@ class AppShellScreen extends ConsumerWidget {
         },
       );
     }
-    if (role == UserRole.contributor) {
-      return const MySubmissionsScreen();
-    }
-    return const ReviewQueueScreen();
+    if (role == UserRole.admin) return const ReviewQueueScreen();
+    if (role == UserRole.contributor) return const MySubmissionsScreen();
+    return const HomeProjectsScreen();
   }
 
   List<_ShellItem> _itemsForRole(UserRole role) {
     final base = <_ShellItem>[
+      const _ShellItem(
+        label: 'Notifications',
+        path: AppRoutes.notifications,
+        icon: Icons.notifications_none,
+        selectedIcon: Icons.notifications,
+      ),
+      const _ShellItem(
+        label: 'Profile',
+        path: AppRoutes.profile,
+        icon: Icons.person_outline,
+        selectedIcon: Icons.person,
+      ),
+    ];
+
+    if (role == UserRole.admin) {
+      return <_ShellItem>[
+        const _ShellItem(
+          label: 'Home/Projects',
+          path: AppRoutes.projects,
+          icon: Icons.home_outlined,
+          selectedIcon: Icons.home,
+        ),
+        const _ShellItem(
+          label: 'Review Queue',
+          path: AppRoutes.reviewQueue,
+          icon: Icons.rate_review_outlined,
+          selectedIcon: Icons.rate_review,
+        ),
+        const _ShellItem(
+          label: 'Exports',
+          path: AppRoutes.exports,
+          icon: Icons.file_download_outlined,
+          selectedIcon: Icons.file_download,
+        ),
+        ...base,
+      ];
+    }
+
+    if (role == UserRole.viewer) {
+      return <_ShellItem>[
+        const _ShellItem(
+          label: 'Home/Projects',
+          path: AppRoutes.projects,
+          icon: Icons.home_outlined,
+          selectedIcon: Icons.home,
+        ),
+        ...base,
+      ];
+    }
+
+    return <_ShellItem>[
       const _ShellItem(
         label: 'Home/Projects',
         path: AppRoutes.projects,
@@ -282,52 +334,14 @@ class AppShellScreen extends ConsumerWidget {
         icon: Icons.edit_note_outlined,
         selectedIcon: Icons.edit_note,
       ),
+      const _ShellItem(
+        label: 'My Submissions',
+        path: AppRoutes.submissions,
+        icon: Icons.upload_file_outlined,
+        selectedIcon: Icons.upload_file,
+      ),
+      ...base,
     ];
-
-    if (role == UserRole.admin || role == UserRole.reviewer) {
-      base.add(
-        const _ShellItem(
-          label: 'Review Queue',
-          path: AppRoutes.reviewQueue,
-          icon: Icons.rate_review_outlined,
-          selectedIcon: Icons.rate_review,
-        ),
-      );
-      base.add(
-        const _ShellItem(
-          label: 'Exports',
-          path: AppRoutes.exports,
-          icon: Icons.file_download_outlined,
-          selectedIcon: Icons.file_download,
-        ),
-      );
-    } else {
-      base.add(
-        const _ShellItem(
-          label: 'My Submissions',
-          path: AppRoutes.submissions,
-          icon: Icons.upload_file_outlined,
-          selectedIcon: Icons.upload_file,
-        ),
-      );
-    }
-
-    base.addAll([
-      const _ShellItem(
-        label: 'Notifications',
-        path: AppRoutes.notifications,
-        icon: Icons.notifications_none,
-        selectedIcon: Icons.notifications,
-      ),
-      const _ShellItem(
-        label: 'Profile',
-        path: AppRoutes.profile,
-        icon: Icons.person_outline,
-        selectedIcon: Icons.person,
-      ),
-    ]);
-
-    return base;
   }
 }
 

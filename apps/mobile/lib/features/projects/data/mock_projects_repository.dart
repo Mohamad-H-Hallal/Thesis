@@ -12,7 +12,7 @@ class MockProjectsRepository implements ProjectsRepository {
     final all = _allProjects();
 
     // Assignment-aware filtering for field operations.
-    if (role == UserRole.admin || role == UserRole.reviewer) {
+    if (role == UserRole.admin) {
       return all;
     }
 
@@ -36,6 +36,31 @@ class MockProjectsRepository implements ProjectsRepository {
     return null;
   }
 
+  @override
+  Future<ProjectSummary> updateViewerVisibility({
+    required String projectId,
+    required bool visibleToViewers,
+  }) async {
+    final project = _allProjects().firstWhere((item) => item.id == projectId);
+    return ProjectSummary(
+      id: project.id,
+      name: project.name,
+      category: project.category,
+      status: project.status,
+      assignedCollectors: project.assignedCollectors,
+      pendingReviews: project.pendingReviews,
+      description: project.description,
+      assignments: project.assignments,
+      collectionFormSchema: project.collectionFormSchema,
+      requiresPhotos: project.requiresPhotos,
+      minPhotos: project.minPhotos,
+      maxPhotos: project.maxPhotos,
+      allowedGeometryTypes: project.allowedGeometryTypes,
+      maxGpsAccuracyMeters: project.maxGpsAccuracyMeters,
+      visibleToViewers: visibleToViewers,
+    );
+  }
+
   List<ProjectSummary> _allProjects() {
     return <ProjectSummary>[
       ProjectSummary(
@@ -52,6 +77,7 @@ class MockProjectsRepository implements ProjectsRepository {
         maxPhotos: 6,
         allowedGeometryTypes: const <String>['Point', 'Polygon'],
         maxGpsAccuracyMeters: 12,
+        visibleToViewers: true,
         assignments: <ProjectAssignment>[
           ProjectAssignment(
             userId: 'user-1',
@@ -60,8 +86,8 @@ class MockProjectsRepository implements ProjectsRepository {
             assignedAt: DateTime(2026, 2, 1),
           ),
           ProjectAssignment(
-            userId: 'reviewer-1',
-            role: ProjectAssignmentRole.reviewer,
+            userId: 'admin-1',
+            role: ProjectAssignmentRole.admin,
             status: ProjectAssignmentStatus.approved,
             assignedAt: DateTime(2026, 2, 1),
           ),
@@ -100,7 +126,7 @@ class MockProjectsRepository implements ProjectsRepository {
               key: 'notes',
               label: 'Collector Notes',
               type: CollectionFieldType.multiline,
-              hint: 'Optional contextual notes for reviewers.',
+              hint: 'Optional contextual notes for project admins.',
             ),
           ],
         ),
@@ -119,6 +145,7 @@ class MockProjectsRepository implements ProjectsRepository {
         maxPhotos: 4,
         allowedGeometryTypes: const <String>['Point'],
         maxGpsAccuracyMeters: 15,
+        visibleToViewers: false,
         assignments: <ProjectAssignment>[
           ProjectAssignment(
             userId: 'user-1',
@@ -167,6 +194,7 @@ class MockProjectsRepository implements ProjectsRepository {
         maxPhotos: 3,
         allowedGeometryTypes: const <String>['Polygon'],
         maxGpsAccuracyMeters: 20,
+        visibleToViewers: false,
         assignments: <ProjectAssignment>[
           ProjectAssignment(
             userId: 'user-2',

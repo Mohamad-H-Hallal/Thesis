@@ -12,4 +12,9 @@ abstract class ProjectsRepository {
     required String userId,
     required UserRole role,
   });
+
+  Future<ProjectSummary> updateViewerVisibility({
+    required String projectId,
+    required bool visibleToViewers,
+  });
 }

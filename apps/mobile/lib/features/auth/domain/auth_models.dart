@@ -1,12 +1,10 @@
-enum UserRole { admin, reviewer, contributor, viewer }
+enum UserRole { admin, contributor, viewer }
 
 extension UserRoleX on UserRole {
   String get label {
     switch (this) {
       case UserRole.admin:
         return 'Admin';
-      case UserRole.reviewer:
-        return 'Reviewer';
       case UserRole.contributor:
         return 'Contributor';
       case UserRole.viewer:

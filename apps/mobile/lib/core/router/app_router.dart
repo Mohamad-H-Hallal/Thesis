@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../features/auth/presentation/controllers/auth_controller.dart';
+import '../../features/auth/domain/auth_models.dart';
 import '../../features/auth/presentation/screens/forgot_password_screen.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/auth/presentation/screens/reset_password_screen.dart';
@@ -22,6 +23,7 @@ GoRouter createRouter(Ref ref) {
     initialLocation: AppRoutes.splash,
     redirect: (context, state) {
       final path = state.uri.path;
+      final role = auth.session?.user.role;
       final isAuthRoute =
           path == AppRoutes.login ||
           path == AppRoutes.signup ||
@@ -36,6 +38,13 @@ GoRouter createRouter(Ref ref) {
       if (!auth.isAuthenticated) {
         if (isAuthRoute) return null;
         return AppRoutes.login;
+      }
+
+      final allowedPaths = _allowedPathsForRole(role);
+      final isAllowed = path == AppRoutes.app ||
+          allowedPaths.any((allowedPath) => path.startsWith(allowedPath));
+      if (!isAllowed) {
+        return role == UserRole.admin ? AppRoutes.projects : AppRoutes.projects;
       }
 
       if (isSplash || isAuthRoute || path == AppRoutes.app) {
@@ -66,7 +75,10 @@ GoRouter createRouter(Ref ref) {
         path: AppRoutes.resetPassword,
         pageBuilder: (_, state) => _buildPage(
           state,
-          ResetPasswordScreen(mode: state.uri.queryParameters['mode']),
+          ResetPasswordScreen(
+            mode: state.uri.queryParameters['mode'],
+            token: state.uri.queryParameters['token'],
+          ),
         ),
       ),
       GoRoute(
@@ -144,6 +156,36 @@ GoRouter createRouter(Ref ref) {
       ),
     ],
   );
+}
+
+Set<String> _allowedPathsForRole(UserRole? role) {
+  switch (role) {
+    case UserRole.admin:
+      return <String>{
+        AppRoutes.projects,
+        AppRoutes.reviewQueue,
+        AppRoutes.exports,
+        AppRoutes.notifications,
+        AppRoutes.profile,
+      };
+    case UserRole.viewer:
+      return <String>{
+        AppRoutes.projects,
+        AppRoutes.notifications,
+        AppRoutes.profile,
+      };
+    case UserRole.contributor:
+    case null:
+      return <String>{
+        AppRoutes.projects,
+        AppRoutes.map,
+        AppRoutes.drafts,
+        AppRoutes.submissions,
+        AppRoutes.notifications,
+        AppRoutes.profile,
+        AppRoutes.addFeature,
+      };
+  }
 }
 
 CustomTransitionPage<void> _buildPage(GoRouterState state, Widget child) {

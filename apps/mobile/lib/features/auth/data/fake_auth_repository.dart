@@ -56,8 +56,8 @@ class FakeAuthRepository implements AuthRepository {
 
     final role = email.contains('admin')
         ? UserRole.admin
-        : email.contains('review')
-        ? UserRole.reviewer
+        : email.contains('viewer')
+        ? UserRole.viewer
         : UserRole.contributor;
 
     final session = AuthSession(
@@ -86,10 +86,12 @@ class FakeAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<void> signup({
+  Future<String> signup({
     required String fullName,
     required String email,
     required String password,
+    required UserRole role,
+    String? phone,
   }) async {
     await Future<void>.delayed(const Duration(milliseconds: 600));
     if (fullName.trim().isEmpty ||
@@ -100,6 +102,10 @@ class FakeAuthRepository implements AuthRepository {
         message: 'Signup validation failed.',
       );
     }
+
+    return role == UserRole.contributor
+        ? 'Your contributor request is pending admin approval.'
+        : 'Viewer account created successfully. You can log in now.';
   }
 
   @override
@@ -141,8 +147,6 @@ class FakeAuthRepository implements AuthRepository {
     switch (value) {
       case 'admin':
         return UserRole.admin;
-      case 'reviewer':
-        return UserRole.reviewer;
       case 'viewer':
         return UserRole.viewer;
       default:

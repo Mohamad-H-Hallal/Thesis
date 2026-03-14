@@ -3,6 +3,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../../core/config/app_env.dart';
 import '../../../core/network/api_client.dart';
+import '../domain/auth_error_mapper.dart';
 import '../domain/auth_failure.dart';
 import '../domain/auth_models.dart';
 import '../domain/auth_repository.dart';
@@ -33,10 +34,18 @@ class RealAuthRepository implements AuthRepository {
     _apiClient.setAccessToken(access);
 
     try {
-      final meResponse = await _apiClient.dio.get<Map<String, dynamic>>('$_authBasePath/me');
-      final user = _parseUserFromMeResponse(meResponse.data ?? const <String, dynamic>{});
+      final meResponse = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_authBasePath/me',
+      );
+      final user = _parseUserFromMeResponse(
+        meResponse.data ?? const <String, dynamic>{},
+      );
       await _persistUserMetadata(user);
-      return AuthSession(accessToken: access, refreshToken: refresh, user: user);
+      return AuthSession(
+        accessToken: access,
+        refreshToken: refresh,
+        user: user,
+      );
     } on DioException catch (error) {
       if (error.response?.statusCode == 401) {
         await _clearStoredSession();
@@ -77,7 +86,9 @@ class RealAuthRepository implements AuthRepository {
       );
       final accessToken = (data['token'] as String?) ?? '';
       final refreshToken = (data['refreshToken'] as String?) ?? '';
-      final userMap = Map<String, dynamic>.from(data['user'] as Map? ?? const <String, dynamic>{});
+      final userMap = Map<String, dynamic>.from(
+        data['user'] as Map? ?? const <String, dynamic>{},
+      );
       final user = _parseUser(userMap);
 
       if (accessToken.isEmpty || refreshToken.isEmpty) {
@@ -102,27 +113,41 @@ class RealAuthRepository implements AuthRepository {
         user: user,
       );
     } on DioException catch (error) {
-      throw _mapAuthError(error, fallbackMessage: 'Login failed.');
+      throw mapAuthDioException(error, fallbackMessage: 'Login failed.');
     }
   }
 
   @override
-  Future<void> signup({
+  Future<String> signup({
     required String fullName,
     required String email,
     required String password,
+    required UserRole role,
+    String? phone,
   }) async {
     try {
-      await _apiClient.dio.post<Map<String, dynamic>>(
+      final payload = <String, dynamic>{
+        'full_name': fullName,
+        'email': email,
+        'password': password,
+        'role': role.name,
+      };
+      final normalizedPhone = phone?.trim() ?? '';
+      if (normalizedPhone.isNotEmpty) {
+        payload['phone'] = normalizedPhone;
+      }
+
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '$_authBasePath/register',
-        data: <String, dynamic>{
-          'full_name': fullName,
-          'email': email,
-          'password': password,
-        },
+        data: payload,
       );
+      final payloadMap = response.data ?? const <String, dynamic>{};
+      final message = payloadMap['message'] as String?;
+      return message?.trim().isNotEmpty == true
+          ? message!.trim()
+          : 'Account created successfully.';
     } on DioException catch (error) {
-      throw _mapAuthError(error, fallbackMessage: 'Signup failed.');
+      throw mapAuthDioException(error, fallbackMessage: 'Signup failed.');
     }
   }
 
@@ -134,7 +159,7 @@ class RealAuthRepository implements AuthRepository {
         data: <String, dynamic>{'email': email},
       );
     } on DioException catch (error) {
-      throw _mapAuthError(
+      throw mapAuthDioException(
         error,
         fallbackMessage: 'Password reset request failed.',
       );
@@ -152,7 +177,10 @@ class RealAuthRepository implements AuthRepository {
         data: <String, dynamic>{'token': token, 'new_password': newPassword},
       );
     } on DioException catch (error) {
-      throw _mapAuthError(error, fallbackMessage: 'Password reset failed.');
+      throw mapAuthDioException(
+        error,
+        fallbackMessage: 'Password reset failed.',
+      );
     }
   }
 
@@ -222,7 +250,9 @@ class RealAuthRepository implements AuthRepository {
   AppUser _parseUser(Map<String, dynamic> map) {
     final id = (map['id'] as String?) ?? 'unknown-user';
     final fullName =
-        (map['full_name'] as String?) ?? (map['fullName'] as String?) ?? 'Unknown User';
+        (map['full_name'] as String?) ??
+        (map['fullName'] as String?) ??
+        'Unknown User';
     final email = (map['email'] as String?) ?? 'unknown@example.com';
     final roleRaw = map['role'] as String?;
 
@@ -238,50 +268,10 @@ class RealAuthRepository implements AuthRepository {
     switch (value) {
       case 'admin':
         return UserRole.admin;
-      case 'reviewer':
-        return UserRole.reviewer;
       case 'viewer':
         return UserRole.viewer;
       default:
         return UserRole.contributor;
-    }
-  }
-
-  AuthFailure _mapAuthError(
-    DioException error, {
-    required String fallbackMessage,
-  }) {
-    final statusCode = error.response?.statusCode;
-    final data = error.response?.data;
-
-    String? responseMessage;
-    if (data is Map<String, dynamic>) {
-      responseMessage = data['message'] as String?;
-    }
-
-    switch (statusCode) {
-      case 401:
-        return AuthFailure(
-          responseMessage ?? 'Invalid credentials. Please check email and password.',
-          statusCode: statusCode,
-        );
-      case 404:
-        return AuthFailure(
-          responseMessage ?? 'Requested account resource was not found.',
-          statusCode: statusCode,
-        );
-      case 409:
-        return AuthFailure(
-          responseMessage ?? 'This account already exists.',
-          statusCode: statusCode,
-        );
-      case 429:
-        return AuthFailure(
-          responseMessage ?? 'Too many attempts. Please try again later.',
-          statusCode: statusCode,
-        );
-      default:
-        return AuthFailure(responseMessage ?? fallbackMessage, statusCode: statusCode);
     }
   }
 }

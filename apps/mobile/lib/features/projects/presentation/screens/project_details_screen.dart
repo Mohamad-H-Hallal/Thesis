@@ -8,17 +8,64 @@ import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/animated_reveal.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
+import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
+import '../../../auth/domain/auth_models.dart';
 
-class ProjectDetailsScreen extends ConsumerWidget {
+class ProjectDetailsScreen extends ConsumerStatefulWidget {
   const ProjectDetailsScreen({required this.projectId, super.key});
 
   final String projectId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final projectAsync = ref.watch(projectByIdProvider(projectId));
+  ConsumerState<ProjectDetailsScreen> createState() =>
+      _ProjectDetailsScreenState();
+}
+
+class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
+  bool _updatingVisibility = false;
+
+  Future<void> _toggleViewerVisibility(bool value) async {
+    setState(() {
+      _updatingVisibility = true;
+    });
+
+    try {
+      await ref
+          .read(projectsRepositoryProvider)
+          .updateViewerVisibility(
+            projectId: widget.projectId,
+            visibleToViewers: value,
+          );
+      ref.invalidate(projectsProvider);
+      ref.invalidate(projectByIdProvider(widget.projectId));
+      if (mounted) {
+        AppSnackbar.showSuccess(
+          context,
+          value
+              ? 'Project is now visible to viewers.'
+              : 'Project is now restricted to admins and contributors.',
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(context, error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _updatingVisibility = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final session = ref.watch(authControllerProvider).session;
+    final role = session?.user.role ?? UserRole.viewer;
+    final projectAsync = ref.watch(projectByIdProvider(widget.projectId));
 
     return projectAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -66,6 +113,13 @@ class ProjectDetailsScreen extends ConsumerWidget {
                         Chip(label: Text(project.category)),
                         Chip(
                           label: Text(
+                            project.visibleToViewers
+                                ? 'Viewer visible'
+                                : 'Contributor only',
+                          ),
+                        ),
+                        Chip(
+                          label: Text(
                             'Pending reviews: ${project.pendingReviews}',
                           ),
                         ),
@@ -75,6 +129,27 @@ class ProjectDetailsScreen extends ConsumerWidget {
                 ),
               ),
             ),
+            if (role == UserRole.admin) ...[
+              const SizedBox(height: AppSpacing.sm),
+              AnimatedReveal(
+                delay: const Duration(milliseconds: 100),
+                child: AppCard(
+                  child: SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: project.visibleToViewers,
+                    onChanged: _updatingVisibility
+                        ? null
+                        : (value) => _toggleViewerVisibility(value),
+                    title: const Text('Visible to viewers'),
+                    subtitle: Text(
+                      project.visibleToViewers
+                          ? 'Viewers can see this project while it stays active or completed.'
+                          : 'Only admins and assigned contributors can access this project.',
+                    ),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: AppSpacing.sm),
             AnimatedReveal(
               delay: const Duration(milliseconds: 80),
@@ -93,36 +168,76 @@ class ProjectDetailsScreen extends ConsumerWidget {
                       value: '${project.pendingReviews}',
                       icon: Icons.pending_actions_outlined,
                     ),
+                    if (role == UserRole.viewer)
+                      const _MetaTile(
+                        label: 'Access',
+                        value: 'Read only',
+                        icon: Icons.visibility_outlined,
+                      ),
                   ],
                 ),
               ),
             ),
             const SizedBox(height: AppSpacing.md),
-            AnimatedReveal(
-              delay: const Duration(milliseconds: 130),
-              child: Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: [
-                  FilledButton.icon(
-                    onPressed: () => context.go(AppRoutes.map),
-                    icon: const Icon(Icons.map_outlined),
-                    label: const Text('Open Map'),
-                  ),
-                  FilledButton.icon(
-                    onPressed: () =>
-                        context.go(AppRoutes.addFeatureForProject(project.id)),
-                    icon: const Icon(Icons.add_location_alt_outlined),
-                    label: const Text('New Feature'),
-                  ),
-                  FilledButton.icon(
-                    onPressed: () => context.go(AppRoutes.drafts),
-                    icon: const Icon(Icons.description_outlined),
-                    label: const Text('Drafts'),
-                  ),
-                ],
+            if (role == UserRole.contributor)
+              AnimatedReveal(
+                delay: const Duration(milliseconds: 130),
+                child: Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: () => context.go(AppRoutes.map),
+                      icon: const Icon(Icons.map_outlined),
+                      label: const Text('Open Map'),
+                    ),
+                    FilledButton.icon(
+                      onPressed: () =>
+                          context.go(AppRoutes.addFeatureForProject(project.id)),
+                      icon: const Icon(Icons.add_location_alt_outlined),
+                      label: const Text('New Feature'),
+                    ),
+                    FilledButton.icon(
+                      onPressed: () => context.go(AppRoutes.drafts),
+                      icon: const Icon(Icons.description_outlined),
+                      label: const Text('Drafts'),
+                    ),
+                  ],
+                ),
               ),
-            ),
+            if (role == UserRole.admin)
+              AnimatedReveal(
+                delay: const Duration(milliseconds: 130),
+                child: Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: () => context.go(AppRoutes.reviewQueue),
+                      icon: const Icon(Icons.rate_review_outlined),
+                      label: const Text('Review Queue'),
+                    ),
+                    FilledButton.icon(
+                      onPressed: () => context.go(AppRoutes.exports),
+                      icon: const Icon(Icons.file_download_outlined),
+                      label: const Text('Exports'),
+                    ),
+                  ],
+                ),
+              ),
+            if (role == UserRole.viewer)
+              const AnimatedReveal(
+                delay: Duration(milliseconds: 130),
+                child: AppCard(
+                  child: ListTile(
+                    leading: Icon(Icons.info_outline),
+                    title: Text('Viewer access'),
+                    subtitle: Text(
+                      'This project is visible in read-only mode. Editing and submission actions are disabled.',
+                    ),
+                  ),
+                ),
+              ),
           ],
         );
       },
