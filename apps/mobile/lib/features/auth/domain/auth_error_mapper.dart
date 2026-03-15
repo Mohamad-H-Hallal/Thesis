@@ -30,9 +30,16 @@ AuthFailure mapAuthDioException(
         statusCode: statusCode,
       );
     case 403:
-      if ((responseMessage ?? '').toLowerCase().contains('pending approval')) {
+      final normalized = (responseMessage ?? '').toLowerCase();
+      if (normalized.contains('pending approval')) {
         return const AuthFailure(
           'Your request is still pending approval. You cannot log in yet.',
+          statusCode: 403,
+        );
+      }
+      if (normalized.contains('request was rejected')) {
+        return const AuthFailure(
+          'Your contributor request was rejected. You cannot log in with contributor access.',
           statusCode: 403,
         );
       }

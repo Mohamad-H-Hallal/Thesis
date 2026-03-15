@@ -2,14 +2,15 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../features/auth/presentation/controllers/auth_controller.dart';
 import '../../features/auth/domain/auth_models.dart';
+import '../../features/auth/presentation/controllers/auth_controller.dart';
 import '../../features/auth/presentation/screens/forgot_password_screen.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/auth/presentation/screens/reset_password_screen.dart';
 import '../../features/auth/presentation/screens/signup_screen.dart';
 import '../../features/auth/presentation/screens/splash_screen.dart';
 import '../../features/map/presentation/screens/add_feature_screen.dart';
+import '../../features/map/presentation/screens/map_screen.dart';
 import '../../features/projects/presentation/screens/project_details_screen.dart';
 import '../../features/shell/presentation/app_shell_screen.dart';
 import '../providers/providers.dart';
@@ -23,7 +24,7 @@ GoRouter createRouter(Ref ref) {
     initialLocation: AppRoutes.splash,
     redirect: (context, state) {
       final path = state.uri.path;
-      final role = auth.session?.user.role;
+      final user = auth.session?.user;
       final isAuthRoute =
           path == AppRoutes.login ||
           path == AppRoutes.signup ||
@@ -35,21 +36,23 @@ GoRouter createRouter(Ref ref) {
         return isSplash ? null : AppRoutes.splash;
       }
 
-      if (!auth.isAuthenticated) {
-        if (isAuthRoute) return null;
+      if (!auth.isAuthenticated || user == null) {
+        if (isAuthRoute) {
+          return null;
+        }
         return AppRoutes.login;
       }
 
-      final allowedPaths = _allowedPathsForRole(role);
+      final allowedPaths = _allowedPathsForUser(user);
       final isAllowed =
           path == AppRoutes.app ||
           allowedPaths.any((allowedPath) => path.startsWith(allowedPath));
       if (!isAllowed) {
-        return role == UserRole.admin ? AppRoutes.projects : AppRoutes.projects;
+        return _defaultHomeForUser(user);
       }
 
       if (isSplash || isAuthRoute || path == AppRoutes.app) {
-        return AppRoutes.projects;
+        return _defaultHomeForUser(user);
       }
 
       return null;
@@ -89,50 +92,26 @@ GoRouter createRouter(Ref ref) {
           const AppShellScreen(location: AppRoutes.projects),
         ),
       ),
-      GoRoute(
-        path: AppRoutes.projects,
-        pageBuilder: (_, state) =>
-            _buildPage(state, AppShellScreen(location: state.uri.path)),
-      ),
-      GoRoute(
-        path: AppRoutes.assignedProjects,
-        pageBuilder: (_, state) =>
-            _buildPage(state, AppShellScreen(location: state.uri.path)),
-      ),
-      GoRoute(
-        path: AppRoutes.map,
-        pageBuilder: (_, state) =>
-            _buildPage(state, AppShellScreen(location: state.uri.path)),
-      ),
-      GoRoute(
-        path: AppRoutes.drafts,
-        pageBuilder: (_, state) =>
-            _buildPage(state, AppShellScreen(location: state.uri.path)),
-      ),
-      GoRoute(
-        path: AppRoutes.submissions,
-        pageBuilder: (_, state) =>
-            _buildPage(state, AppShellScreen(location: state.uri.path)),
-      ),
-      GoRoute(
-        path: AppRoutes.reviewQueue,
-        pageBuilder: (_, state) =>
-            _buildPage(state, AppShellScreen(location: state.uri.path)),
-      ),
-      GoRoute(
-        path: AppRoutes.exports,
-        pageBuilder: (_, state) =>
-            _buildPage(state, AppShellScreen(location: state.uri.path)),
-      ),
-      GoRoute(
-        path: AppRoutes.notifications,
-        pageBuilder: (_, state) =>
-            _buildPage(state, AppShellScreen(location: state.uri.path)),
-      ),
-      GoRoute(
-        path: AppRoutes.profile,
-        pageBuilder: (_, state) =>
-            _buildPage(state, AppShellScreen(location: state.uri.path)),
+      ...[
+        AppRoutes.dashboard,
+        AppRoutes.users,
+        AppRoutes.adminCreation,
+        AppRoutes.contributorRequests,
+        AppRoutes.projects,
+        AppRoutes.assignedProjects,
+        AppRoutes.drafts,
+        AppRoutes.submissions,
+        AppRoutes.assignments,
+        AppRoutes.reviewQueue,
+        AppRoutes.exports,
+        AppRoutes.notifications,
+        AppRoutes.profile,
+      ].map(
+        (path) => GoRoute(
+          path: path,
+          pageBuilder: (_, state) =>
+              _buildPage(state, AppShellScreen(location: state.uri.path)),
+        ),
       ),
       GoRoute(
         path: '/app/projects/:projectId',
@@ -144,6 +123,20 @@ GoRouter createRouter(Ref ref) {
               title: 'Project details',
               showBackButton: true,
               body: ProjectDetailsScreen(projectId: projectId),
+            ),
+          );
+        },
+      ),
+      GoRoute(
+        path: '/app/projects/:projectId/map',
+        pageBuilder: (_, state) {
+          final projectId = state.pathParameters['projectId'] ?? '';
+          return _buildPage(
+            state,
+            AppScaffold(
+              title: 'Project map',
+              showBackButton: true,
+              body: MapScreen(initialProjectId: projectId, lockProjectSelection: true),
             ),
           );
         },
@@ -166,34 +159,59 @@ GoRouter createRouter(Ref ref) {
   );
 }
 
-Set<String> _allowedPathsForRole(UserRole? role) {
-  switch (role) {
+String _defaultHomeForUser(AppUser user) {
+  if (user.isSuperAdmin) {
+    return AppRoutes.dashboard;
+  }
+  return AppRoutes.projects;
+}
+
+Set<String> _allowedPathsForUser(AppUser user) {
+  if (user.isSuperAdmin) {
+    return <String>{
+      AppRoutes.dashboard,
+      AppRoutes.users,
+      AppRoutes.adminCreation,
+      AppRoutes.contributorRequests,
+      AppRoutes.projects,
+      AppRoutes.assignments,
+      AppRoutes.reviewQueue,
+      AppRoutes.exports,
+      AppRoutes.notifications,
+      AppRoutes.profile,
+      '/app/projects/',
+      AppRoutes.addFeature,
+    };
+  }
+
+  switch (user.role) {
     case UserRole.admin:
       return <String>{
         AppRoutes.projects,
-        AppRoutes.assignedProjects,
-        AppRoutes.map,
+        AppRoutes.contributorRequests,
+        AppRoutes.assignments,
         AppRoutes.reviewQueue,
         AppRoutes.exports,
         AppRoutes.notifications,
         AppRoutes.profile,
+        '/app/projects/',
       };
     case UserRole.viewer:
       return <String>{
         AppRoutes.projects,
         AppRoutes.notifications,
         AppRoutes.profile,
+        '/app/projects/',
       };
     case UserRole.contributor:
-    case null:
       return <String>{
         AppRoutes.projects,
         AppRoutes.assignedProjects,
-        AppRoutes.map,
         AppRoutes.drafts,
         AppRoutes.submissions,
         AppRoutes.notifications,
         AppRoutes.profile,
+        '/app/projects/',
         AppRoutes.addFeature,
       };
   }

@@ -16,6 +16,7 @@ class FakeAuthRepository implements AuthRepository {
   static const _roleKey = 'user_role';
   static const _nameKey = 'user_name';
   static const _emailKey = 'user_email';
+  static const _superAdminKey = 'is_protected_super_admin';
 
   @override
   Future<AuthSession?> restoreSession() async {
@@ -28,11 +29,14 @@ class FakeAuthRepository implements AuthRepository {
     }
 
     final role = _toRole(await _storage.read(key: _roleKey));
+    final isProtectedSuperAdmin =
+        await _storage.read(key: _superAdminKey) == 'true';
     final user = AppUser(
       id: 'user-1',
       fullName: await _storage.read(key: _nameKey) ?? 'GIS Officer',
       email: await _storage.read(key: _emailKey) ?? 'officer@gov.lb',
       role: role,
+      isProtectedSuperAdmin: isProtectedSuperAdmin,
     );
 
     _apiClient.setAccessToken(access);
@@ -80,6 +84,7 @@ class FakeAuthRepository implements AuthRepository {
         : normalizedEmail.contains('viewer')
         ? UserRole.viewer
         : UserRole.contributor;
+    final isProtectedSuperAdmin = normalizedEmail == 'superadmin@gov.lb';
 
     final session = AuthSession(
       accessToken: 'token_${DateTime.now().millisecondsSinceEpoch}',
@@ -87,10 +92,13 @@ class FakeAuthRepository implements AuthRepository {
       user: AppUser(
         id: 'user-1',
         fullName: role == UserRole.admin
-            ? 'Ministry Admin'
+            ? isProtectedSuperAdmin
+                  ? 'GIS Super Administrator'
+                  : 'Ministry Admin'
             : 'Field Contributor',
         email: email,
         role: role,
+        isProtectedSuperAdmin: isProtectedSuperAdmin,
       ),
     );
 
@@ -100,6 +108,10 @@ class FakeAuthRepository implements AuthRepository {
       await _storage.write(key: _roleKey, value: role.name);
       await _storage.write(key: _nameKey, value: session.user.fullName);
       await _storage.write(key: _emailKey, value: session.user.email);
+      await _storage.write(
+        key: _superAdminKey,
+        value: isProtectedSuperAdmin.toString(),
+      );
     }
 
     _apiClient.setAccessToken(session.accessToken);
@@ -162,6 +174,7 @@ class FakeAuthRepository implements AuthRepository {
     await _storage.delete(key: _roleKey);
     await _storage.delete(key: _nameKey);
     await _storage.delete(key: _emailKey);
+    await _storage.delete(key: _superAdminKey);
   }
 
   UserRole _toRole(String? value) {

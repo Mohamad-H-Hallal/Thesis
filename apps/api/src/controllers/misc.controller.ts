@@ -322,7 +322,10 @@ const userController = {
 
     res.json({
       success: true,
-      data: result.rows,
+      data: result.rows.map((row) => ({
+        ...row,
+        is_protected_super_admin: isProtectedSuperAdminEmail(row.email),
+      })),
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -458,7 +461,63 @@ const userController = {
 
     res.json({
       success: true,
-      data: result.rows[0],
+      data: {
+        ...result.rows[0],
+        is_protected_super_admin: isProtectedSuperAdminEmail(result.rows[0].email),
+      },
+    });
+  },
+
+  getContributorRequests: async (req, res) => {
+    const { status = 'pending', page = 1, limit = 50 } = req.query;
+    const offset = (page - 1) * limit;
+
+    if (!['pending', 'rejected'].includes(String(status))) {
+      throw new AppError('status must be pending or rejected', 400);
+    }
+
+    const result = await query(
+      `SELECT u.id,
+              u.email,
+              u.full_name,
+              u.phone,
+              u.role,
+              u.created_at,
+              u.last_login,
+              u.is_active,
+              latest_request.type AS latest_request_type,
+              latest_request.created_at AS latest_request_at
+       FROM "user" u
+       LEFT JOIN LATERAL (
+         SELECT n.type, n.created_at
+         FROM notification n
+         WHERE n.user_id = u.id
+           AND n.type IN ('contributor_request', 'contributor_rejected', 'contributor_approved')
+         ORDER BY n.created_at DESC
+         LIMIT 1
+       ) latest_request ON TRUE
+       WHERE u.role = 'contributor'
+         AND u.is_active = FALSE
+         AND (
+           ($1 = 'pending' AND COALESCE(latest_request.type, 'contributor_request') = 'contributor_request')
+           OR ($1 = 'rejected' AND latest_request.type = 'contributor_rejected')
+         )
+       ORDER BY u.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [status, limit, offset]
+    );
+
+    res.json({
+      success: true,
+      data: result.rows.map((row) => ({
+        ...row,
+        request_status: row.latest_request_type === 'contributor_rejected' ? 'rejected' : 'pending',
+        is_protected_super_admin: isProtectedSuperAdminEmail(row.email),
+      })),
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+      },
     });
   },
 
@@ -493,7 +552,10 @@ const userController = {
     res.status(201).json({
       success: true,
       message: 'Admin user created successfully',
-      data: result.rows[0],
+      data: {
+        ...result.rows[0],
+        is_protected_super_admin: false,
+      },
     });
   },
 
@@ -554,11 +616,10 @@ const userController = {
       throw new AppError('Approved contributor accounts cannot be rejected through this action.', 409);
     }
 
-    const downgradedUser = await transaction(async (client) => {
+    const rejectedUser = await transaction(async (client) => {
       const result = await client.query(
         `UPDATE "user"
-         SET role = 'viewer',
-             is_active = TRUE
+         SET is_active = FALSE
          WHERE id = $1
          RETURNING id, email, full_name, phone, role, is_active, created_at`,
         [userId]
@@ -568,25 +629,26 @@ const userController = {
         userId,
         type: 'contributor_rejected',
         title: 'Contributor request rejected',
-        message: 'Your contributor request was rejected. Your account was downgraded to viewer access.',
+        message: 'Your contributor request was rejected. You cannot log in with contributor access.',
         metadata: {
           user_id: userId,
           rejected_by_user_id: req.user?.id,
+          request_status: 'rejected',
         },
       });
 
       return result.rows[0];
     });
 
-    logger.info('Contributor access rejected and downgraded to viewer', {
+    logger.info('Contributor access rejected', {
       userId,
       rejectedBy: req.user?.id,
     });
 
     res.json({
       success: true,
-      message: 'Contributor request rejected. User downgraded to viewer.',
-      data: downgradedUser,
+      message: 'Contributor request rejected successfully',
+      data: rejectedUser,
     });
   },
 };

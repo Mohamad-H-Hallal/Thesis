@@ -46,9 +46,13 @@ dart format lib test
 - `/forgot-password`
 - `/reset-password`
 - `/app` (shell with tabs)
+- `/app/dashboard`
+- `/app/users`
+- `/app/admin-create`
+- `/app/contributor-requests`
 - `/app/projects`
 - `/app/assigned-projects`
-- `/app/map`
+- `/app/assignments`
 - `/app/drafts`
 - `/app/submissions`
 - `/app/review-queue`
@@ -56,13 +60,16 @@ dart format lib test
 - `/app/notifications`
 - `/app/profile`
 - `/app/projects/:projectId`
+- `/app/projects/:projectId/map`
 - `/app/add-feature`
 
 ## Role-based shell navigation
+- Super Admin:
+  - Admin Panel, Users, Create Admin, Requests, Projects, Assignments, Reviews, Exports, Notifications, Profile
 - Admin:
-  - Projects, Map, Review Queue, Exports, Notifications, Profile
+  - Projects, Requests, Assignments, Reviews, Exports, Notifications, Profile
 - Contributor:
-  - Projects, Assigned Projects, Map, Drafts, Submissions, Notifications, Profile
+  - Projects, Assigned Projects, Notifications, Profile
 - Viewer:
   - Projects, Notifications, Profile
 

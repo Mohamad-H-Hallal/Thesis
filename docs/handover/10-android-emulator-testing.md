@@ -104,27 +104,46 @@ Important:
 4. Log out
 5. Log in as rejected user
 6. Verify:
-   - login succeeds
-   - user is treated as `viewer`
-   - only `Projects`, `Notifications`, `Profile` tabs are visible
+   - login stays on the login screen
+   - no session is created
+   - message shown:
+     - `Your contributor request was rejected. You cannot log in with contributor access.`
 
 ## Admin Flow
 
+1. Log in as admin
+2. Review contributor requests
+3. Create/manage category and project
+4. Toggle project viewer visibility
+5. Open project map from project details
+6. Verify Lebanon basemap loads
+7. Verify no placeholder text is present
+
+## Super Admin Flow
+
 1. Log in as super admin
-2. Create/manage category and project
-3. Toggle project viewer visibility
+2. Verify shell contains:
+   - `Admin Panel`
+   - `Users`
+   - `Create Admin`
+   - `Requests`
+   - `Projects`
+   - `Assignments`
+   - `Reviews`
+   - `Exports`
+   - `Notifications`
+   - `Profile`
+3. Create a new admin from `Create Admin`
+4. Verify the new admin can log in
 4. Verify viewer-visible project appears for viewer accounts only when:
    - `visible_to_viewers = true`
    - project status is `active` or `completed`
-5. Open map
-6. Verify Lebanon basemap loads
-7. Verify no placeholder text is present
 
 ## Map Verification
 
 Check:
 - Lebanon basemap renders
-- project selector works
+- project selector works on the standalone map page and root map data load
 - feature overlays appear if the selected project has geometry
 - if no features exist, a real empty-state card appears
 - contributor add-feature FAB appears only for assigned contributor projects

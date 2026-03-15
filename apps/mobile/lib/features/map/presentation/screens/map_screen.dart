@@ -15,7 +15,14 @@ import '../../../projects/domain/project.dart';
 import '../../domain/map_feature.dart';
 
 class MapScreen extends ConsumerStatefulWidget {
-  const MapScreen({super.key});
+  const MapScreen({
+    this.initialProjectId,
+    this.lockProjectSelection = false,
+    super.key,
+  });
+
+  final String? initialProjectId;
+  final bool lockProjectSelection;
 
   @override
   ConsumerState<MapScreen> createState() => _MapScreenState();
@@ -29,9 +36,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final syncState = ref.watch(syncControllerProvider);
     final session = ref.watch(authControllerProvider).session;
     final role = session?.user.role ?? UserRole.viewer;
-    final requestedProjectId = GoRouterState.of(
-      context,
-    ).uri.queryParameters['projectId'];
     final projectsAsync = ref.watch(mapProjectsProvider);
 
     return projectsAsync.when(
@@ -44,7 +48,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         onAction: () => ref.invalidate(mapProjectsProvider),
       ),
       data: (projects) {
-        if (projects.isEmpty) {
+        final availableProjects = widget.lockProjectSelection &&
+                widget.initialProjectId != null
+            ? projects
+                  .where((project) => project.id == widget.initialProjectId)
+                  .toList(growable: false)
+            : projects;
+
+        if (availableProjects.isEmpty) {
           return const AppEmptyState(
             icon: Icons.map_outlined,
             title: 'No projects available for map viewing',
@@ -54,8 +65,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         }
 
         final selectedProject = _resolveSelectedProject(
-          projects,
-          requestedProjectId: requestedProjectId,
+          availableProjects,
+          requestedProjectId: widget.initialProjectId,
         );
         final featuresAsync = ref.watch(
           projectMapFeaturesProvider(selectedProject.id),
@@ -74,37 +85,42 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SectionHeader(
-              title: 'Lebanon Map',
-              subtitle: 'Basemap, project feature overlays, and field status',
+            SectionHeader(
+              title: widget.lockProjectSelection ? selectedProject.name : 'Lebanon Map',
+              subtitle: widget.lockProjectSelection
+                  ? 'Project basemap and collected feature overlays'
+                  : 'Basemap, project feature overlays, and field status',
             ),
             const SizedBox(height: AppSpacing.sm),
             AppCard(
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  DropdownButtonFormField<String>(
-                    initialValue: selectedProject.id,
-                    decoration: const InputDecoration(
-                      labelText: 'Project layer',
+                  if (!widget.lockProjectSelection) ...[
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedProject.id,
+                      decoration: const InputDecoration(
+                        labelText: 'Project layer',
+                      ),
+                      items: availableProjects
+                          .map(
+                            (project) => DropdownMenuItem(
+                              value: project.id,
+                              child: Text(project.name),
+                            ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (value) {
+                        if (value == null || value.isEmpty) {
+                          return;
+                        }
+                        setState(() {
+                          _selectedProjectId = value;
+                        });
+                      },
                     ),
-                    items: projects
-                        .map(
-                          (project) => DropdownMenuItem(
-                            value: project.id,
-                            child: Text(project.name),
-                          ),
-                        )
-                        .toList(growable: false),
-                    onChanged: (value) {
-                      if (value == null || value.isEmpty) {
-                        return;
-                      }
-                      setState(() {
-                        _selectedProjectId = value;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
+                    const SizedBox(height: AppSpacing.sm),
+                  ],
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
@@ -120,6 +136,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       Chip(
                         avatar: const Icon(Icons.sync, size: 18),
                         label: Text(syncLabel),
+                      ),
+                      Chip(
+                        avatar: const Icon(Icons.layers_outlined, size: 18),
+                        label: Text('Features: ${featuresAsync.valueOrNull?.length ?? 0}'),
                       ),
                       Chip(
                         avatar: const Icon(Icons.gps_fixed, size: 18),
@@ -140,8 +160,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (error, _) => AppEmptyState(
                   icon: Icons.error_outline,
-                  title: 'Feature overlay unavailable',
-                  message: '$error',
+                  title: 'Map overlays unavailable',
+                  message:
+                      'The map loaded, but feature overlays could not be retrieved. ${_cleanError(error)}',
                   actionLabel: 'Retry',
                   onAction: () => ref.invalidate(
                     projectMapFeaturesProvider(selectedProject.id),
@@ -171,20 +192,21 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       ),
                     ),
                     Positioned(
-                      top: 12,
                       left: 12,
-                      right: 12,
+                      bottom: 12,
                       child: AppCard(
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            Chip(
-                              label: Text('Project: ${selectedProject.name}'),
+                            Text(
+                              selectedProject.name,
+                              style: Theme.of(context).textTheme.titleSmall,
                             ),
-                            Chip(label: Text('Features: ${features.length}')),
-                            Chip(
-                              label: Text('Status: ${selectedProject.status}'),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Status: ${selectedProject.status}',
+                              style: Theme.of(context).textTheme.bodySmall,
                             ),
                           ],
                         ),
@@ -210,9 +232,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         right: 18,
                         bottom: 18,
                         child: FloatingActionButton.extended(
-                          onPressed: () => context.push(
-                            AppRoutes.addFeatureForProject(selectedProject.id),
-                          ),
+                          onPressed: () =>
+                              context.push(AppRoutes.addFeatureForProject(selectedProject.id)),
                           icon: const Icon(Icons.add_location_alt),
                           label: const Text('Add Feature'),
                         ),
@@ -243,6 +264,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       }
     }
     return projects.first;
+  }
+
+  String _cleanError(Object error) {
+    final raw = error.toString();
+    if (raw.startsWith('Exception: ')) {
+      return raw.substring('Exception: '.length);
+    }
+    return raw;
   }
 
   List<Marker> _markerOverlays(List<MapFeatureSummary> features) {

@@ -34,6 +34,7 @@ Rules:
   - `"user".role = 'contributor'`
   - `"user".is_active = false`
   - admin notifications in `notification`
+  - contributor request notification for the requester in `notification`
 
 Responses:
 
@@ -59,8 +60,8 @@ Approval effects:
 
 Rejection effects:
 
-- sets `"user".role = 'viewer'`
-- sets `"user".is_active = true`
+- keeps `"user".role = 'contributor'`
+- keeps `"user".is_active = false`
 - writes a `notification` row with type `contributor_rejected`
 - writes an `audit_log` rejection entry
 
@@ -81,7 +82,8 @@ Behavior:
 
 - pending contributor login is blocked with:
   - `Your request is still pending approval. You cannot log in yet.`
-- rejected contributor can log in as `viewer`
+- rejected contributor login is blocked with:
+  - `Your contributor request was rejected. You cannot log in with contributor access.`
 - successful login updates `"user".last_login`
 
 ## Notifications and Audit

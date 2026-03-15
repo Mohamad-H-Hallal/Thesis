@@ -186,7 +186,7 @@ SyncController _buildSyncController() {
   );
 }
 
-AuthSession _sessionForRole(UserRole role) {
+AuthSession _sessionForRole(UserRole role, {bool isProtectedSuperAdmin = false}) {
   return AuthSession(
     accessToken: 'token',
     refreshToken: 'refresh',
@@ -195,6 +195,7 @@ AuthSession _sessionForRole(UserRole role) {
       fullName: '${role.name} user',
       email: '${role.name}@example.com',
       role: role,
+      isProtectedSuperAdmin: isProtectedSuperAdmin,
     ),
   );
 }
@@ -333,11 +334,94 @@ void main() {
     await tester.pumpAndSettle();
 
     final router = container.read(routerProvider);
-    router.go(AppRoutes.map);
+    router.go(AppRoutes.reviewQueue);
     await tester.pumpAndSettle();
 
     expect(find.text('Projects'), findsWidgets);
-    expect(find.text('Map'), findsNothing);
+    expect(find.text('Reviews'), findsNothing);
+  });
+
+  testWidgets('rejected contributor login stays blocked on login screen', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: <Override>[
+          authRepositoryProvider.overrideWithValue(
+            const _TestAuthRepository(
+              loginFailure: AuthFailure(
+                'Your contributor request was rejected. You cannot log in with contributor access.',
+                statusCode: 403,
+              ),
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: LoginScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byType(TextFormField).at(0),
+      'rejected@example.com',
+    );
+    await tester.enterText(
+      find.byType(TextFormField).at(1),
+      'Passw0rd!123',
+    );
+
+    final loginButton = find.widgetWithText(FilledButton, 'Login');
+    tester.widget<FilledButton>(loginButton).onPressed!.call();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sign in'), findsOneWidget);
+    expect(
+      find.text(
+        'Your contributor request was rejected. You cannot log in with contributor access.',
+      ),
+      findsWidgets,
+    );
+    expect(
+      ProviderScope.containerOf(
+        tester.element(find.byType(LoginScreen)),
+      ).read(authControllerProvider).isAuthenticated,
+      isFalse,
+    );
+  });
+
+  testWidgets('super admin sees full management shell', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final repository = const _TestAuthRepository();
+    final container = ProviderContainer(
+      overrides: <Override>[
+        authRepositoryProvider.overrideWithValue(repository),
+        authControllerProvider.overrideWith(
+          (ref) => _AuthenticatedAuthController(
+            repository: repository,
+            session: _sessionForRole(
+              UserRole.admin,
+              isProtectedSuperAdmin: true,
+            ),
+          ),
+        ),
+        syncControllerProvider.overrideWith((ref) => _buildSyncController()),
+        projectsProvider.overrideWith((ref) async => const <ProjectSummary>[]),
+        projectListProvider.overrideWith(
+          (ref, scope) async => const <ProjectSummary>[],
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(_buildRoutedApp(container));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Admin Panel'), findsWidgets);
+    expect(find.text('Users'), findsWidgets);
+    expect(find.text('Create Admin'), findsWidgets);
+    expect(find.text('Requests'), findsWidgets);
   });
 
   testWidgets(

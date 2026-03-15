@@ -125,6 +125,48 @@ const createAssignment = async (req, res) => {
   });
 };
 
+// Get assignment workload for admins
+const getManagedAssignments = async (req, res) => {
+  const { status, page = 1, limit = 50 } = req.query;
+  const offset = (page - 1) * limit;
+
+  let queryText = `
+    SELECT pa.*,
+           p.name as project_name,
+           p.status as project_status,
+           u.full_name,
+           u.email,
+           u.phone
+    FROM project_assignment pa
+    JOIN project p ON pa.project_id = p.id
+    JOIN "user" u ON pa.user_id = u.id
+    WHERE 1=1
+  `;
+
+  const params: unknown[] = [];
+  let paramIndex = 1;
+
+  if (status) {
+    queryText += ` AND pa.status = $${paramIndex}`;
+    params.push(status);
+    paramIndex++;
+  }
+
+  queryText += ` ORDER BY pa.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+  params.push(limit, offset);
+
+  const result = await query(queryText, params);
+
+  res.json({
+    success: true,
+    data: result.rows,
+    pagination: {
+      page: parseInt(page),
+      limit: parseInt(limit),
+    },
+  });
+};
+
 // Request to join project (contributor self-assignment)
 const requestJoinProject = async (req, res) => {
   const { projectId } = req.params;
@@ -286,6 +328,7 @@ const removeAssignment = async (req, res) => {
 
 module.exports = {
   getMyAssignments,
+  getManagedAssignments,
   getProjectAssignments,
   createAssignment,
   requestJoinProject,

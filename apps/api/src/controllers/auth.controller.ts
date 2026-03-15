@@ -5,8 +5,11 @@ const { generateToken, generateRefreshToken } = require('../middleware/auth');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
 import {
+  getContributorAccessState,
+  isProtectedSuperAdminEmail,
   normalizeEmail,
   notifyActiveAdminsAboutContributorRequest,
+  notifyContributorRequestSubmitted,
 } from '../lib/userWorkflow';
 
 // Register new user
@@ -41,6 +44,11 @@ const register = async (req, res) => {
 
     if (publicRole === 'contributor') {
       await notifyActiveAdminsAboutContributorRequest(client, {
+        userId: createdUser.id,
+        fullName: createdUser.full_name,
+        email: createdUser.email,
+      });
+      await notifyContributorRequestSubmitted(client, {
         userId: createdUser.id,
         fullName: createdUser.full_name,
         email: createdUser.email,
@@ -97,7 +105,17 @@ const login = async (req, res) => {
   }
 
   if (!user.is_active && user.role === 'contributor') {
-    throw new AppError('Your contributor request is still pending approval.', 403);
+    const accessState = await getContributorAccessState(query, user.id);
+    if (accessState === 'rejected') {
+      throw new AppError(
+        'Your contributor request was rejected. You cannot log in with contributor access.',
+        403
+      );
+    }
+    throw new AppError(
+      'Your contributor request is still pending approval. You cannot log in yet.',
+      403
+    );
   }
 
   if (!user.is_active) {
@@ -125,6 +143,7 @@ const login = async (req, res) => {
         full_name: user.full_name,
         phone: user.phone,
         role: user.role,
+        is_protected_super_admin: isProtectedSuperAdminEmail(user.email),
       },
       token,
       refreshToken,
@@ -142,7 +161,10 @@ const getMe = async (req, res) => {
 
   res.json({
     success: true,
-    data: result.rows[0],
+    data: {
+      ...result.rows[0],
+      is_protected_super_admin: isProtectedSuperAdminEmail(req.user?.email),
+    },
   });
 };
 
@@ -257,7 +279,17 @@ const refreshToken = async (req, res) => {
 
   const user = result.rows[0];
   if (!user.is_active && user.role === 'contributor') {
-    throw new AppError('Your contributor request is still pending approval.', 403);
+    const accessState = await getContributorAccessState(query, user.id);
+    if (accessState === 'rejected') {
+      throw new AppError(
+        'Your contributor request was rejected. You cannot log in with contributor access.',
+        403
+      );
+    }
+    throw new AppError(
+      'Your contributor request is still pending approval. You cannot log in yet.',
+      403
+    );
   }
   if (!user.is_active) {
     throw new AppError('This account is inactive.', 403);
@@ -274,6 +306,14 @@ const refreshToken = async (req, res) => {
     data: {
       token,
       refreshToken: newRefreshToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        full_name: user.full_name,
+        phone: user.phone,
+        role: user.role,
+        is_protected_super_admin: isProtectedSuperAdminEmail(user.email),
+      },
     },
   });
 };

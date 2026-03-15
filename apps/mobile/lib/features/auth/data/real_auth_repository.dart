@@ -20,6 +20,7 @@ class RealAuthRepository implements AuthRepository {
   static const _nameKey = 'user_name';
   static const _emailKey = 'user_email';
   static const _userIdKey = 'user_id';
+  static const _superAdminKey = 'is_protected_super_admin';
 
   String get _authBasePath => '${AppEnv.apiVersionPrefix}/auth';
 
@@ -211,6 +212,10 @@ class RealAuthRepository implements AuthRepository {
     await _storage.write(key: _nameKey, value: user.fullName);
     await _storage.write(key: _emailKey, value: user.email);
     await _storage.write(key: _roleKey, value: user.role.name);
+    await _storage.write(
+      key: _superAdminKey,
+      value: user.isProtectedSuperAdmin.toString(),
+    );
   }
 
   Future<AppUser?> _readStoredUser() async {
@@ -218,6 +223,7 @@ class RealAuthRepository implements AuthRepository {
     final name = await _storage.read(key: _nameKey);
     final email = await _storage.read(key: _emailKey);
     final role = await _storage.read(key: _roleKey);
+    final isProtectedSuperAdmin = await _storage.read(key: _superAdminKey);
 
     if (userId == null || name == null || email == null) {
       return null;
@@ -228,6 +234,7 @@ class RealAuthRepository implements AuthRepository {
       fullName: name,
       email: email,
       role: _toRole(role),
+      isProtectedSuperAdmin: isProtectedSuperAdmin == 'true',
     );
   }
 
@@ -238,6 +245,7 @@ class RealAuthRepository implements AuthRepository {
     await _storage.delete(key: _nameKey);
     await _storage.delete(key: _emailKey);
     await _storage.delete(key: _userIdKey);
+    await _storage.delete(key: _superAdminKey);
   }
 
   AppUser _parseUserFromMeResponse(Map<String, dynamic> payload) {
@@ -255,12 +263,15 @@ class RealAuthRepository implements AuthRepository {
         'Unknown User';
     final email = (map['email'] as String?) ?? 'unknown@example.com';
     final roleRaw = map['role'] as String?;
+    final isProtectedSuperAdmin =
+        (map['is_protected_super_admin'] as bool?) ?? false;
 
     return AppUser(
       id: id,
       fullName: fullName,
       email: email,
       role: _toRole(roleRaw),
+      isProtectedSuperAdmin: isProtectedSuperAdmin,
     );
   }
 

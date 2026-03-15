@@ -62,7 +62,7 @@ Verify:
 - public signup cannot create admin
 - viewer signup logs in immediately
 - contributor signup is blocked until admin approval
-- contributor rejection downgrades role to viewer
+- rejected contributor remains blocked from login
 - protected super admin can create admins
 - standard admin cannot create admins
 - viewer project visibility is enforced by `project.visible_to_viewers`
@@ -123,6 +123,7 @@ Verify:
 - role-based shell navigation matches the signed-in user role
 - viewer sees only admin-published projects
 - contributor sees both public `Projects` and `Assigned Projects`
+- super admin sees `Admin Panel`, `Users`, `Create Admin`, `Requests`, `Projects`, `Assignments`, `Reviews`, `Exports`, `Notifications`, `Profile`
 - Android debug runtime allows local cleartext traffic for `10.0.2.2`
 
 ## Manual Flow Order
@@ -134,7 +135,7 @@ Verify:
 5. Approve contributor from admin flow.
 6. Confirm contributor can log in and see assigned data only.
 7. Sign up another contributor and reject it.
-8. Confirm that account logs in as viewer.
+8. Confirm that account remains blocked from login with the rejection message.
 
 ## Remaining Manual Browser Checks
 

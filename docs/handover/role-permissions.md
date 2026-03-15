@@ -40,11 +40,25 @@ Protection rules enforced in service logic:
 
 ## Mobile Navigation
 
+Super admin:
+
+- `Admin Panel`
+- `Users`
+- `Create Admin`
+- `Requests`
+- `Projects`
+- `Assignments`
+- `Reviews`
+- `Exports`
+- `Notifications`
+- `Profile`
+
 Admin:
 
 - `Projects`
-- `Map`
-- `Review Queue`
+- `Requests`
+- `Assignments`
+- `Reviews`
 - `Exports`
 - `Notifications`
 - `Profile`
@@ -53,9 +67,6 @@ Contributor:
 
 - `Projects`
 - `Assigned Projects`
-- `Map`
-- `Drafts`
-- `Submissions`
 - `Notifications`
 - `Profile`
 
@@ -68,3 +79,4 @@ Viewer:
 - Contributor project access is split:
   - `Projects`: viewer-visible public projects in read-only mode
   - `Assigned Projects`: projects where the contributor has an approved assignment
+- Project map and feature-creation flows open from project details with back navigation instead of living as root shell tabs.

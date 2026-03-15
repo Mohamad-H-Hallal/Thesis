@@ -8,7 +8,6 @@ const {
   shutdown,
   registerUser,
   createAdminUser,
-  loginUser,
   approveContributorRequest,
 } = require('./helpers/api-test-helpers');
 
@@ -56,6 +55,12 @@ describe('Security: registration, contributor approval, and protected super admi
 
     expect(contributor.message).toBe('Your contributor request is pending admin approval.');
 
+    const requestNotifications = await pool.query(
+      `SELECT type FROM notification WHERE user_id = $1 ORDER BY created_at DESC`,
+      [contributor.user.id]
+    );
+    expect(requestNotifications.rows[0]?.type).toBe('contributor_request');
+
     const pendingLogin = await request(app)
       .post(`${API_PREFIX}/auth/login`)
       .send({
@@ -64,7 +69,9 @@ describe('Security: registration, contributor approval, and protected super admi
       });
 
     expect(pendingLogin.status).toBe(403);
-    expect(pendingLogin.body.message).toBe('Your contributor request is still pending approval.');
+    expect(pendingLogin.body.message).toBe(
+      'Your contributor request is still pending approval. You cannot log in yet.'
+    );
     expect(pendingLogin.body.data).toBeUndefined();
 
     await approveContributorRequest({
@@ -83,7 +90,7 @@ describe('Security: registration, contributor approval, and protected super admi
     expect(approvedLogin.body.data.user.role).toBe('contributor');
   });
 
-  test('rejected contributor is downgraded to viewer and can login', async () => {
+  test('rejected contributor remains blocked from login', async () => {
     const admin = await createAdminUser({
       fullName: 'Security Admin',
       emailPrefix: 'security-admin',
@@ -99,15 +106,27 @@ describe('Security: registration, contributor approval, and protected super admi
       .set(authHeader(admin.token));
 
     expect(rejectResponse.status).toBe(200);
-    expect(rejectResponse.body.data.role).toBe('viewer');
-    expect(rejectResponse.body.data.is_active).toBe(true);
+    expect(rejectResponse.body.data.role).toBe('contributor');
+    expect(rejectResponse.body.data.is_active).toBe(false);
 
-    const viewerLogin = await loginUser({
-      email: contributor.email,
-      password: contributor.password,
-    });
+    const rejectionNotifications = await pool.query(
+      `SELECT type FROM notification WHERE user_id = $1 ORDER BY created_at DESC`,
+      [contributor.user.id]
+    );
+    expect(rejectionNotifications.rows[0]?.type).toBe('contributor_rejected');
 
-    expect(viewerLogin.user.role).toBe('viewer');
+    const rejectedLogin = await request(app)
+      .post(`${API_PREFIX}/auth/login`)
+      .send({
+        email: contributor.email,
+        password: contributor.password,
+      });
+
+    expect(rejectedLogin.status).toBe(403);
+    expect(rejectedLogin.body.message).toBe(
+      'Your contributor request was rejected. You cannot log in with contributor access.'
+    );
+    expect(rejectedLogin.body.data).toBeUndefined();
   });
 
   test('only protected super admin can create admin users or manage protected super admin account', async () => {
@@ -144,6 +163,7 @@ describe('Security: registration, contributor approval, and protected super admi
 
     expect(allowedCreate.status).toBe(201);
     expect(allowedCreate.body.data.role).toBe('admin');
+    expect(allowedCreate.body.data.is_protected_super_admin).toBe(false);
 
     const protectedDeactivate = await request(app)
       .post(`${API_PREFIX}/users/${superAdmin.user.id}/deactivate`)

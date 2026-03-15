@@ -7,16 +7,19 @@ import '../../../core/providers/providers.dart';
 import '../../../core/router/route_paths.dart';
 import '../../../core/widgets/app_logo.dart';
 import '../../../core/widgets/app_scaffold.dart';
+import '../../admin/presentation/screens/admin_creation_screen.dart';
+import '../../admin/presentation/screens/admin_dashboard_screen.dart';
+import '../../admin/presentation/screens/assignments_screen.dart';
+import '../../admin/presentation/screens/contributor_requests_screen.dart';
+import '../../admin/presentation/screens/users_management_screen.dart';
 import '../../auth/domain/auth_models.dart';
 import '../../drafts/presentation/screens/drafts_screen.dart';
 import '../../exports/presentation/screens/exports_dashboard_screen.dart';
-import '../../map/presentation/screens/map_screen.dart';
 import '../../notifications/presentation/screens/notifications_screen.dart';
 import '../../profile/presentation/screens/profile_screen.dart';
 import '../../projects/domain/project.dart';
 import '../../projects/presentation/screens/home_projects_screen.dart';
 import '../../review/presentation/screens/review_queue_screen.dart';
-import '../../submissions/presentation/screens/my_submissions_screen.dart';
 
 class AppShellScreen extends ConsumerWidget {
   const AppShellScreen({required this.location, super.key});
@@ -37,28 +40,24 @@ class AppShellScreen extends ConsumerWidget {
       return const SizedBox.shrink();
     }
 
-    final role = session.user.role;
-    final items = _itemsForRole(role);
+    final items = _itemsForSession(session.user);
     final selectedIndex = _selectedIndex(items, location);
     final selectedItem = items[selectedIndex];
-
-    final body = _bodyForPath(selectedItem.path, session.user.role);
+    final body = _bodyForPath(selectedItem.path, session.user);
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final useSideNav = constraints.maxWidth >= 980;
 
-        final navChildren = <Widget>[];
-        for (var i = 0; i < items.length; i++) {
-          final item = items[i];
-          navChildren.add(
-            NavigationDrawerDestination(
-              icon: Icon(item.icon),
-              selectedIcon: Icon(item.selectedIcon ?? item.icon),
-              label: Text(item.label),
-            ),
-          );
-        }
+        final navChildren = items
+            .map(
+              (item) => NavigationDrawerDestination(
+                icon: Icon(item.icon),
+                selectedIcon: Icon(item.selectedIcon ?? item.icon),
+                label: Text(item.label),
+              ),
+            )
+            .toList(growable: false);
 
         final logoutAction = IconButton(
           tooltip: 'Logout',
@@ -73,7 +72,7 @@ class AppShellScreen extends ConsumerWidget {
               tooltip: 'Sync now',
               onPressed: () =>
                   ref.read(syncControllerProvider.notifier).syncNow(),
-              icon: Icon(syncState.isSyncing ? Icons.sync : Icons.sync),
+              icon: const Icon(Icons.sync),
             ),
             if (attentionCount > 0)
               Positioned(
@@ -107,7 +106,7 @@ class AppShellScreen extends ConsumerWidget {
               child: Row(
                 children: [
                   SizedBox(
-                    width: 280,
+                    width: 340,
                     child: Column(
                       children: [
                         const SizedBox(height: 16),
@@ -118,7 +117,7 @@ class AppShellScreen extends ConsumerWidget {
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         Text(
-                          '${session.user.fullName} • ${session.user.role.label}',
+                          '${session.user.fullName} • ${session.user.roleLabel}',
                           style: Theme.of(context).textTheme.bodySmall,
                           textAlign: TextAlign.center,
                         ),
@@ -176,7 +175,7 @@ class AppShellScreen extends ConsumerWidget {
                     child: Icon(Icons.person, size: 18),
                   ),
                   title: Text(session.user.fullName),
-                  subtitle: Text(session.user.role.label),
+                  subtitle: Text(session.user.roleLabel),
                 ),
                 ...items.map(
                   (item) => ListTile(
@@ -229,34 +228,51 @@ class AppShellScreen extends ConsumerWidget {
     return index == -1 ? 0 : index;
   }
 
-  Widget _bodyForPath(String path, UserRole role) {
+  Widget _bodyForPath(String path, AppUser user) {
+    if (path == AppRoutes.dashboard && user.isSuperAdmin) {
+      return const AdminDashboardScreen();
+    }
+    if (path == AppRoutes.users && user.isSuperAdmin) {
+      return const UsersManagementScreen();
+    }
+    if (path == AppRoutes.adminCreation && user.isSuperAdmin) {
+      return const AdminCreationScreen();
+    }
+    if (path == AppRoutes.contributorRequests && user.role == UserRole.admin) {
+      return const ContributorRequestsScreen();
+    }
+    if (path == AppRoutes.assignments && user.role == UserRole.admin) {
+      return const AssignmentsScreen();
+    }
     if (path == AppRoutes.projects) {
       return HomeProjectsScreen(
-        scope: role == UserRole.admin
+        scope: user.role == UserRole.admin
             ? ProjectViewScope.all
             : ProjectViewScope.public,
         title: 'Projects',
       );
     }
-    if (path == AppRoutes.assignedProjects && role == UserRole.contributor) {
+    if (path == AppRoutes.assignedProjects && user.role == UserRole.contributor) {
       return const HomeProjectsScreen(
         scope: ProjectViewScope.assigned,
         title: 'Assigned Projects',
       );
     }
-    if (path == AppRoutes.map &&
-        (role == UserRole.contributor || role == UserRole.admin)) {
-      return const MapScreen();
-    }
-    if (path == AppRoutes.drafts) {
+    if (path == AppRoutes.drafts && user.role == UserRole.contributor) {
       return const DraftsScreen(showSubmittedOnly: false);
     }
-    if (path == AppRoutes.submissions) {
+    if (path == AppRoutes.submissions && user.role == UserRole.contributor) {
       return const DraftsScreen(showSubmittedOnly: true);
     }
-    if (path == AppRoutes.reviewQueue) return const ReviewQueueScreen();
-    if (path == AppRoutes.exports) return const ExportsDashboardScreen();
-    if (path == AppRoutes.notifications) return const NotificationsScreen();
+    if (path == AppRoutes.reviewQueue && user.role == UserRole.admin) {
+      return const ReviewQueueScreen();
+    }
+    if (path == AppRoutes.exports && user.role == UserRole.admin) {
+      return const ExportsDashboardScreen();
+    }
+    if (path == AppRoutes.notifications) {
+      return const NotificationsScreen();
+    }
     if (path == AppRoutes.profile) {
       return Consumer(
         builder: (context, ref, _) {
@@ -267,26 +283,35 @@ class AppShellScreen extends ConsumerWidget {
           return ProfileScreen(
             userName: session.user.fullName,
             email: session.user.email,
-            role: session.user.role.label,
+            role: session.user.roleLabel,
             onLogout: () => ref.read(authControllerProvider.notifier).logout(),
           );
         },
       );
     }
-    if (role == UserRole.admin) {
+
+    if (user.isSuperAdmin) {
+      return const AdminDashboardScreen();
+    }
+    if (user.role == UserRole.admin) {
       return const HomeProjectsScreen(
         scope: ProjectViewScope.all,
         title: 'Projects',
       );
     }
-    if (role == UserRole.contributor) return const MySubmissionsScreen();
+    if (user.role == UserRole.contributor) {
+      return const HomeProjectsScreen(
+        scope: ProjectViewScope.assigned,
+        title: 'Assigned Projects',
+      );
+    }
     return const HomeProjectsScreen(
       scope: ProjectViewScope.public,
       title: 'Projects',
     );
   }
 
-  List<_ShellItem> _itemsForRole(UserRole role) {
+  List<_ShellItem> _itemsForSession(AppUser user) {
     final base = <_ShellItem>[
       const _ShellItem(
         label: 'Notifications',
@@ -302,8 +327,32 @@ class AppShellScreen extends ConsumerWidget {
       ),
     ];
 
-    if (role == UserRole.admin) {
+    if (user.isSuperAdmin) {
       return <_ShellItem>[
+        const _ShellItem(
+          label: 'Admin Panel',
+          path: AppRoutes.dashboard,
+          icon: Icons.dashboard_outlined,
+          selectedIcon: Icons.dashboard,
+        ),
+        const _ShellItem(
+          label: 'Users',
+          path: AppRoutes.users,
+          icon: Icons.groups_outlined,
+          selectedIcon: Icons.groups,
+        ),
+        const _ShellItem(
+          label: 'Create Admin',
+          path: AppRoutes.adminCreation,
+          icon: Icons.admin_panel_settings_outlined,
+          selectedIcon: Icons.admin_panel_settings,
+        ),
+        const _ShellItem(
+          label: 'Requests',
+          path: AppRoutes.contributorRequests,
+          icon: Icons.person_add_alt_1_outlined,
+          selectedIcon: Icons.person_add_alt_1,
+        ),
         const _ShellItem(
           label: 'Projects',
           path: AppRoutes.projects,
@@ -311,13 +360,13 @@ class AppShellScreen extends ConsumerWidget {
           selectedIcon: Icons.folder,
         ),
         const _ShellItem(
-          label: 'Map',
-          path: AppRoutes.map,
-          icon: Icons.map_outlined,
-          selectedIcon: Icons.map,
+          label: 'Assignments',
+          path: AppRoutes.assignments,
+          icon: Icons.assignment_outlined,
+          selectedIcon: Icons.assignment,
         ),
         const _ShellItem(
-          label: 'Review Queue',
+          label: 'Reviews',
           path: AppRoutes.reviewQueue,
           icon: Icons.rate_review_outlined,
           selectedIcon: Icons.rate_review,
@@ -332,7 +381,43 @@ class AppShellScreen extends ConsumerWidget {
       ];
     }
 
-    if (role == UserRole.viewer) {
+    if (user.role == UserRole.admin) {
+      return <_ShellItem>[
+        const _ShellItem(
+          label: 'Projects',
+          path: AppRoutes.projects,
+          icon: Icons.folder_outlined,
+          selectedIcon: Icons.folder,
+        ),
+        const _ShellItem(
+          label: 'Requests',
+          path: AppRoutes.contributorRequests,
+          icon: Icons.person_add_alt_1_outlined,
+          selectedIcon: Icons.person_add_alt_1,
+        ),
+        const _ShellItem(
+          label: 'Assignments',
+          path: AppRoutes.assignments,
+          icon: Icons.assignment_outlined,
+          selectedIcon: Icons.assignment,
+        ),
+        const _ShellItem(
+          label: 'Reviews',
+          path: AppRoutes.reviewQueue,
+          icon: Icons.rate_review_outlined,
+          selectedIcon: Icons.rate_review,
+        ),
+        const _ShellItem(
+          label: 'Exports',
+          path: AppRoutes.exports,
+          icon: Icons.file_download_outlined,
+          selectedIcon: Icons.file_download,
+        ),
+        ...base,
+      ];
+    }
+
+    if (user.role == UserRole.viewer) {
       return <_ShellItem>[
         const _ShellItem(
           label: 'Projects',
@@ -356,24 +441,6 @@ class AppShellScreen extends ConsumerWidget {
         path: AppRoutes.assignedProjects,
         icon: Icons.assignment_outlined,
         selectedIcon: Icons.assignment,
-      ),
-      const _ShellItem(
-        label: 'Map',
-        path: AppRoutes.map,
-        icon: Icons.map_outlined,
-        selectedIcon: Icons.map,
-      ),
-      const _ShellItem(
-        label: 'Drafts',
-        path: AppRoutes.drafts,
-        icon: Icons.edit_note_outlined,
-        selectedIcon: Icons.edit_note,
-      ),
-      const _ShellItem(
-        label: 'Submissions',
-        path: AppRoutes.submissions,
-        icon: Icons.upload_file_outlined,
-        selectedIcon: Icons.upload_file,
       ),
       ...base,
     ];

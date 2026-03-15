@@ -3,6 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../config/app_env.dart';
+import '../../features/admin/data/api_admin_repository.dart';
+import '../../features/admin/domain/admin_models.dart';
+import '../../features/admin/domain/admin_repository.dart';
 import '../../features/auth/data/fake_auth_repository.dart';
 import '../../features/auth/data/real_auth_repository.dart';
 import '../../features/auth/domain/auth_models.dart';
@@ -93,6 +96,10 @@ final authControllerProvider = StateNotifierProvider<AuthController, AuthState>(
     return AuthController(ref.watch(authRepositoryProvider));
   },
 );
+
+final adminRepositoryProvider = Provider<AdminRepository>((ref) {
+  return ApiAdminRepository(ref.watch(apiClientProvider));
+});
 
 final localStoreProvider = Provider<LocalStore>((ref) {
   final store = createLocalStore();
@@ -369,6 +376,29 @@ final reviewWorkflowServiceProvider = Provider<ReviewWorkflowService>((ref) {
 final routerProvider = Provider<GoRouter>((ref) {
   return createRouter(ref);
 });
+
+final adminDashboardProvider = FutureProvider<AdminDashboardSummary>((ref) async {
+  return ref.read(adminRepositoryProvider).fetchDashboardSummary();
+});
+
+final contributorRequestsProvider =
+    FutureProvider.family<List<ManagedUserSummary>, ContributorRequestStatus>((
+      ref,
+      status,
+    ) async {
+      return ref
+          .read(adminRepositoryProvider)
+          .fetchContributorRequests(status: status);
+    });
+
+final managedUsersProvider = FutureProvider<List<ManagedUserSummary>>((ref) async {
+  return ref.read(adminRepositoryProvider).fetchUsers();
+});
+
+final managedAssignmentsProvider =
+    FutureProvider<List<ManagedAssignmentSummary>>((ref) async {
+      return ref.read(adminRepositoryProvider).fetchManagedAssignments();
+    });
 
 ProjectViewScope _defaultOperationalProjectScope(UserRole role) {
   switch (role) {

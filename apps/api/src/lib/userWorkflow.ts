@@ -108,6 +108,54 @@ const notifyActiveAdminsAboutContributorRequest = async (
   }
 };
 
+const notifyContributorRequestSubmitted = async (
+  executor: QueryExecutor,
+  {
+    userId,
+    fullName,
+    email,
+  }: {
+    userId: string;
+    fullName: string;
+    email: string;
+  }
+): Promise<void> => {
+  await createNotification(executor, {
+    userId,
+    type: 'contributor_request',
+    title: 'Contributor request submitted',
+    message: 'Your contributor request was submitted and is awaiting admin approval.',
+    metadata: {
+      user_id: userId,
+      requester_name: fullName,
+      requester_email: email,
+      request_status: 'pending',
+    },
+  });
+};
+
+const getContributorAccessState = async (
+  executor: QueryExecutor,
+  userId: string
+): Promise<'pending' | 'rejected'> => {
+  const result = await runQuery<{ type: string }>(
+    executor,
+    `SELECT type
+     FROM notification
+     WHERE user_id = $1
+       AND type IN ('contributor_request', 'contributor_rejected', 'contributor_approved')
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [userId]
+  );
+
+  const latest = result.rows[0]?.type;
+  if (latest === 'contributor_rejected') {
+    return 'rejected';
+  }
+  return 'pending';
+};
+
 const ensureSuperAdminExists = async (env: EnvConfig): Promise<void> => {
   const email = normalizeEmail(env.SUPER_ADMIN_EMAIL);
   const password = String(env.SUPER_ADMIN_PASSWORD ?? '').trim();
@@ -172,4 +220,6 @@ export {
   isProtectedSuperAdminEmail,
   normalizeEmail,
   notifyActiveAdminsAboutContributorRequest,
+  notifyContributorRequestSubmitted,
+  getContributorAccessState,
 };

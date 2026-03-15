@@ -130,6 +130,7 @@ flutter run -d chrome --web-port 5050 --dart-define=APP_FLAVOR=dev --dart-define
 ### Admin / Super Admin
 1. Log in with `SUPER_ADMIN_EMAIL`
 2. Approve or reject contributor requests
+3. Create admins from the in-app `Create Admin` screen
 3. Create categories/projects
 4. Toggle project viewer visibility
 
@@ -184,7 +185,7 @@ docker compose logs api
 Re-test with a fresh account:
 - viewer accounts log in immediately
 - contributor accounts remain blocked until approved
-- rejected contributors log in as viewers
+- rejected contributors remain blocked from login
 
 ## Teammate Verification Checklist
 

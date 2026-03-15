@@ -8,9 +8,13 @@ class AppRoutes {
   static const resetPassword = '/reset-password';
 
   static const app = '/app';
+  static const dashboard = '/app/dashboard';
+  static const users = '/app/users';
+  static const adminCreation = '/app/admin-create';
+  static const contributorRequests = '/app/contributor-requests';
   static const projects = '/app/projects';
   static const assignedProjects = '/app/assigned-projects';
-  static const map = '/app/map';
+  static const assignments = '/app/assignments';
   static const drafts = '/app/drafts';
   static const submissions = '/app/submissions';
   static const reviewQueue = '/app/review-queue';
@@ -29,8 +33,5 @@ class AppRoutes {
     return uri.toString();
   }
 
-  static String mapForProject(String projectId) {
-    final uri = Uri(path: map, queryParameters: {'projectId': projectId});
-    return uri.toString();
-  }
+  static String mapForProject(String projectId) => '/app/projects/$projectId/map';
 }

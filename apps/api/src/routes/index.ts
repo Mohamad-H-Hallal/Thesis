@@ -24,6 +24,15 @@ assignmentRouter.use(authenticate);
 // Get my assignments
 assignmentRouter.get('/', asyncHandler(assignmentController.getMyAssignments));
 
+// Get assignment workload for admins
+assignmentRouter.get(
+  '/managed',
+  authorize('admin'),
+  paginationValidation,
+  validate,
+  asyncHandler(assignmentController.getManagedAssignments)
+);
+
 // Get project assignments (project admin only)
 assignmentRouter.get(
   '/project/:projectId',
@@ -253,6 +262,14 @@ userRouter.get(
   paginationValidation,
   validate,
   asyncHandler(userController.getAll)
+);
+
+// Get contributor requests by workflow state
+userRouter.get(
+  '/contributor-requests',
+  paginationValidation,
+  validate,
+  asyncHandler(userController.getContributorRequests)
 );
 
 // Create admin user (protected super admin only)
