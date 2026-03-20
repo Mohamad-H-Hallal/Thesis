@@ -259,12 +259,13 @@ const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
   }
 
   let queryText = `
-    SELECT sf.id, sf.project_id, sf.status, sf.attributes,
+    SELECT sf.id, sf.project_id, p.name as project_name, sf.status, sf.attributes,
            sf.accuracy_meters, sf.collected_at, sf.submitted_at,
            ST_AsGeoJSON(sf.geom) as geometry,
            u.full_name as collected_by,
            (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) as photo_count
     FROM spatial_feature sf
+    JOIN project p ON sf.project_id = p.id
     LEFT JOIN "user" u ON sf.collected_by_user_id = u.id
     WHERE 1=1
   `;
