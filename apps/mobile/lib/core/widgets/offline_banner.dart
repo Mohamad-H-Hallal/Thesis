@@ -90,8 +90,8 @@ class OfflineBanner extends ConsumerWidget {
 
     return const _BannerAppearance(
       icon: Icons.cloud_done_outlined,
-      title: 'Sync ready',
-      message: 'Auto sync is active and no queued items need attention.',
+      title: 'Sync healthy',
+      message: 'Queued collection changes are clear and background sync is idle.',
       backgroundSeed: _BannerSeed.success,
     );
   }

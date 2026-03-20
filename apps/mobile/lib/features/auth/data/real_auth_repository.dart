@@ -114,6 +114,8 @@ class RealAuthRepository implements AuthRepository {
         user: user,
       );
     } on DioException catch (error) {
+      _apiClient.setAccessToken(null);
+      await _clearStoredSession();
       throw mapAuthDioException(error, fallbackMessage: 'Login failed.');
     }
   }

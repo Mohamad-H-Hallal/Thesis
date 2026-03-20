@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/providers/providers.dart';
+import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_button.dart';
 import '../../../../core/widgets/app_card.dart';
-import '../../../../core/widgets/app_scaffold.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/widgets/loading_overlay.dart';
@@ -62,7 +63,7 @@ class _AdminCreationScreenState extends ConsumerState<AdminCreationScreen> {
         return;
       }
       AppSnackbar.showSuccess(context, 'Admin account created successfully.');
-      Navigator.of(context).maybePop();
+      context.go(AppRoutes.users);
     } catch (error) {
       if (!mounted) {
         return;
@@ -81,90 +82,88 @@ class _AdminCreationScreenState extends ConsumerState<AdminCreationScreen> {
   Widget build(BuildContext context) {
     return LoadingOverlay(
       isLoading: _isSubmitting,
-      child: AppScaffold(
-        title: 'Create Admin',
-        showBackButton: true,
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
-            child: Form(
-              key: _formKey,
-              child: ListView(
-                children: [
-                  AppCard(
-                    child: Column(
-                      children: [
-                        AppTextField(
-                          label: 'Full name',
-                          hint: 'Ministry administrator',
-                          controller: _fullNameController,
-                          validator: (value) => AuthFormValidators.requiredField(
-                            value,
-                            fieldLabel: 'Full name',
-                            minLength: 3,
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: Form(
+            key: _formKey,
+            child: ListView(
+              children: [
+                AppCard(
+                  child: Column(
+                    children: [
+                      AppTextField(
+                        label: 'Full name',
+                        hint: 'Ministry administrator',
+                        controller: _fullNameController,
+                        validator: (value) => AuthFormValidators.requiredField(
+                          value,
+                          fieldLabel: 'Full name',
+                          minLength: 3,
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      AppTextField(
+                        label: 'Phone number',
+                        hint: '03xxxxxxx',
+                        controller: _phoneController,
+                        validator: AuthFormValidators.phoneOptional,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      AppTextField(
+                        label: 'Email address',
+                        hint: 'admin@gov.lb',
+                        controller: _emailController,
+                        validator: AuthFormValidators.email,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      AppTextField(
+                        label: 'Password',
+                        hint: 'Strong administrator password',
+                        controller: _passwordController,
+                        obscureText: _obscurePassword,
+                        validator: AuthFormValidators.password,
+                        suffix: IconButton(
+                          onPressed: () =>
+                              setState(() => _obscurePassword = !_obscurePassword),
+                          icon: Icon(
+                            _obscurePassword
+                                ? Icons.visibility
+                                : Icons.visibility_off,
                           ),
                         ),
-                        const SizedBox(height: AppSpacing.sm),
-                        AppTextField(
-                          label: 'Phone number',
-                          hint: '03xxxxxxx',
-                          controller: _phoneController,
-                          validator: AuthFormValidators.phoneOptional,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      AppTextField(
+                        label: 'Confirm password',
+                        hint: 'Re-enter password',
+                        controller: _confirmController,
+                        obscureText: _obscureConfirm,
+                        validator: (value) => AuthFormValidators.confirmPassword(
+                          value: value,
+                          password: _passwordController.text,
                         ),
-                        const SizedBox(height: AppSpacing.sm),
-                        AppTextField(
-                          label: 'Email address',
-                          hint: 'admin@gov.lb',
-                          controller: _emailController,
-                          validator: AuthFormValidators.email,
-                        ),
-                        const SizedBox(height: AppSpacing.sm),
-                        AppTextField(
-                          label: 'Password',
-                          hint: 'Strong administrator password',
-                          controller: _passwordController,
-                          obscureText: _obscurePassword,
-                          validator: AuthFormValidators.password,
-                          suffix: IconButton(
-                            onPressed: () => setState(
-                              () => _obscurePassword = !_obscurePassword,
-                            ),
-                            icon: Icon(
-                              _obscurePassword ? Icons.visibility : Icons.visibility_off,
-                            ),
+                        suffix: IconButton(
+                          onPressed: () =>
+                              setState(() => _obscureConfirm = !_obscureConfirm),
+                          icon: Icon(
+                            _obscureConfirm
+                                ? Icons.visibility
+                                : Icons.visibility_off,
                           ),
                         ),
-                        const SizedBox(height: AppSpacing.sm),
-                        AppTextField(
-                          label: 'Confirm password',
-                          hint: 'Re-enter password',
-                          controller: _confirmController,
-                          obscureText: _obscureConfirm,
-                          validator: (value) => AuthFormValidators.confirmPassword(
-                            value: value,
-                            password: _passwordController.text,
-                          ),
-                          suffix: IconButton(
-                            onPressed: () => setState(
-                              () => _obscureConfirm = !_obscureConfirm,
-                            ),
-                            icon: Icon(
-                              _obscureConfirm ? Icons.visibility : Icons.visibility_off,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: AppSpacing.md),
-                        AppButton(
-                          label: 'Create Admin',
-                          icon: Icons.admin_panel_settings_outlined,
-                          isLoading: _isSubmitting,
-                          onPressed: _isSubmitting ? null : _submit,
-                        ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                      AppButton(
+                        label: 'Create Admin',
+                        icon: Icons.admin_panel_settings_outlined,
+                        isLoading: _isSubmitting,
+                        onPressed: _isSubmitting ? null : _submit,
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),

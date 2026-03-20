@@ -1,12 +1,11 @@
-import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
-import '../../../../core/offline/local_models.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_button.dart';
@@ -28,11 +27,13 @@ class AddFeatureScreen extends ConsumerStatefulWidget {
 class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
   final Uuid _uuid = const Uuid();
   final Random _random = Random();
+  final ImagePicker _imagePicker = ImagePicker();
 
   int _currentStep = 0;
+  bool _isSubmitting = false;
 
   String? _selectedProjectId;
-  String _selectedGeometryType = 'Point';
+  String? _selectedGeometryType;
 
   final TextEditingController _latitudeController = TextEditingController();
   final TextEditingController _longitudeController = TextEditingController();
@@ -42,10 +43,9 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
   final Map<String, dynamic> _attributeValues = <String, dynamic>{};
   final Map<String, String> _fieldErrors = <String, String>{};
 
-  final List<_PhotoCaptureDraft> _photos = <_PhotoCaptureDraft>[];
+  final List<_SelectedPhoto> _photos = <_SelectedPhoto>[];
 
   double? _gpsAccuracyMeters;
-  DateTime? _lastGpsSampleAt;
 
   @override
   void dispose() {
@@ -67,12 +67,12 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       return;
     }
 
-    ProjectSummary fallback = projects.first;
+    var fallback = projects.first;
     final preferredId = widget.initialProjectId;
-    if (preferredId != null) {
-      final fromParam = projects.where((p) => p.id == preferredId);
-      if (fromParam.isNotEmpty) {
-        fallback = fromParam.first;
+    if (preferredId != null && preferredId.isNotEmpty) {
+      final matching = projects.where((project) => project.id == preferredId);
+      if (matching.isNotEmpty) {
+        fallback = matching.first;
       }
     }
 
@@ -85,12 +85,10 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
   }
 
   void _applyProjectSelection(ProjectSummary project) {
-    final allowedGeometry = project.allowedGeometryTypes.isNotEmpty
-        ? project.allowedGeometryTypes
-        : const <String>['Point'];
-    final geometryType = allowedGeometry.contains(_selectedGeometryType)
+    final supportedGeometryTypes = _supportedGeometryTypes(project);
+    final geometryType = supportedGeometryTypes.contains(_selectedGeometryType)
         ? _selectedGeometryType
-        : allowedGeometry.first;
+        : (supportedGeometryTypes.isEmpty ? null : supportedGeometryTypes.first);
 
     for (final controller in _attributeControllers.values) {
       controller.dispose();
@@ -116,8 +114,16 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       _selectedGeometryType = geometryType;
       _photos.clear();
       _gpsAccuracyMeters = null;
-      _lastGpsSampleAt = null;
+      _latitudeController.clear();
+      _longitudeController.clear();
+      _currentStep = 0;
     });
+  }
+
+  List<String> _supportedGeometryTypes(ProjectSummary project) {
+    return project.allowedGeometryTypes
+        .where((type) => type == 'Point')
+        .toList(growable: false);
   }
 
   void _captureGpsSample(ProjectSummary project) {
@@ -129,18 +135,18 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       _latitudeController.text = latitude.toStringAsFixed(6);
       _longitudeController.text = longitude.toStringAsFixed(6);
       _gpsAccuracyMeters = accuracy;
-      _lastGpsSampleAt = DateTime.now();
     });
 
     final quality = Phase6Validation.gpsQualityLabel(_gpsAccuracyMeters);
     AppSnackbar.showSuccess(
       context,
-      'GPS sample captured: ${accuracy.toStringAsFixed(1)}m ($quality). Max allowed: ${project.maxGpsAccuracyMeters.toStringAsFixed(1)}m.',
+      'GPS sample captured: ${accuracy.toStringAsFixed(1)}m ($quality).',
     );
   }
 
-  void _addPhoto(ProjectSummary project) {
-    if (_photos.length >= project.maxPhotos) {
+  Future<void> _pickPhotos(ProjectSummary project) async {
+    final remaining = project.maxPhotos - _photos.length;
+    if (remaining <= 0) {
       AppSnackbar.showError(
         context,
         'Maximum photo limit reached (${project.maxPhotos}).',
@@ -148,24 +154,42 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       return;
     }
 
-    final originalBytes = 900000 + _random.nextInt(2200000);
-    final compressedBytes = max(220000, (originalBytes * 0.42).round());
-    final ratio = 1 - (compressedBytes / originalBytes);
+    try {
+      final picked = await _imagePicker.pickMultiImage(imageQuality: 82);
+      if (picked.isEmpty) {
+        return;
+      }
 
-    setState(() {
-      _photos.add(
-        _PhotoCaptureDraft(
-          id: _uuid.v4(),
-          filePath: 'captured_${_photos.length + 1}.jpg',
-          createdAt: DateTime.now(),
-          originalBytes: originalBytes,
-          compressedBytes: compressedBytes,
-          compressionRatio: ratio,
-          gpsAccuracyMeters:
-              _gpsAccuracyMeters ?? (5 + _random.nextDouble() * 15),
-        ),
+      final filesToAdd = picked.take(remaining).toList(growable: false);
+      final selected = await Future.wait(
+        filesToAdd.map((file) async {
+          final size = await file.length();
+          return _SelectedPhoto(
+            id: _uuid.v4(),
+            filePath: file.path,
+            fileName: file.name,
+            sizeBytes: size,
+            createdAt: DateTime.now(),
+          );
+        }),
       );
-    });
+
+      setState(() {
+        _photos.addAll(selected);
+      });
+
+      if (picked.length > remaining && mounted) {
+        AppSnackbar.showError(
+          context,
+          'Only $remaining photo(s) were added because of the project limit.',
+        );
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, 'Photo selection failed: $error');
+    }
   }
 
   Map<String, dynamic> _collectAttributeValues(ProjectSummary project) {
@@ -191,6 +215,10 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
   }
 
   String? _validateStep(ProjectSummary project, int stepIndex) {
+    if (_supportedGeometryTypes(project).isEmpty) {
+      return 'This project does not allow point capture yet. Update the project geometry policy before collecting from mobile.';
+    }
+
     if (stepIndex == 0) {
       if (_selectedProjectId == null || _selectedProjectId!.isEmpty) {
         return 'Select an assigned project.';
@@ -199,8 +227,8 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       final lat = double.tryParse(_latitudeController.text.trim());
       final lon = double.tryParse(_longitudeController.text.trim());
       return Phase6Validation.validateGeometry(
-        geometryType: _selectedGeometryType,
-        allowedGeometryTypes: project.allowedGeometryTypes,
+        geometryType: _selectedGeometryType ?? 'Point',
+        allowedGeometryTypes: _supportedGeometryTypes(project),
         latitude: lat,
         longitude: lon,
         gpsAccuracyMeters: _gpsAccuracyMeters,
@@ -255,67 +283,69 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       setState(() {
         _currentStep += 1;
       });
-      return;
     }
-
-    await _saveDraft(project);
   }
 
-  Future<void> _saveDraft(ProjectSummary project) async {
-    final now = DateTime.now();
-    final draftId = _uuid.v4();
-    final lat = double.tryParse(_latitudeController.text.trim());
-    final lon = double.tryParse(_longitudeController.text.trim());
-
-    final attributes = <String, dynamic>{
-      'schema_version': project.collectionFormSchema.version,
-      'attributes': _collectAttributeValues(project),
-      'geometry': <String, dynamic>{
-        'type': _selectedGeometryType,
-        'latitude': lat,
-        'longitude': lon,
-      },
-      'gps': <String, dynamic>{
-        'accuracy_meters': _gpsAccuracyMeters,
-        'captured_at': _lastGpsSampleAt?.toIso8601String(),
-        'quality': Phase6Validation.gpsQualityLabel(_gpsAccuracyMeters),
-      },
-      'photos_metadata': _photos.map((photo) => photo.toMap()).toList(),
+  Future<void> _saveToServer(ProjectSummary project, {required bool submit}) async {
+    final geometry = <String, dynamic>{
+      'type': _selectedGeometryType ?? 'Point',
+      'coordinates': <double>[
+        double.parse(_longitudeController.text.trim()),
+        double.parse(_latitudeController.text.trim()),
+      ],
     };
 
-    final draft = LocalDraftFeature(
-      id: draftId,
-      projectId: project.id,
-      projectName: project.name,
-      geometryType: _selectedGeometryType,
-      attributesJson: jsonEncode(attributes),
-      photos: _photos
-          .map(
-            (photo) => DraftPhoto(
-              id: photo.id,
-              filePath: photo.filePath,
-              createdAt: photo.createdAt,
-            ),
-          )
-          .toList(growable: false),
-      status: 'draft',
-      localVersion: now.millisecondsSinceEpoch,
-      updatedAt: now,
-    );
+    final attributes = _collectAttributeValues(project);
+    setState(() {
+      _isSubmitting = true;
+    });
 
-    await ref.read(localStoreProvider).upsertDraft(draft, enqueueSync: true);
-    ref.invalidate(draftsProvider);
-    await ref.read(syncControllerProvider.notifier).syncNow();
+    try {
+      final repository = ref.read(featureWorkflowRepositoryProvider);
+      final feature = await repository.createDraft(
+        projectId: project.id,
+        geometry: geometry,
+        attributes: attributes,
+        accuracyMeters: _gpsAccuracyMeters,
+        collectedOffline: false,
+      );
 
-    if (!mounted) {
-      return;
+      await repository.uploadPhotos(
+        featureId: feature.id,
+        filePaths: _photos.map((photo) => photo.filePath).toList(growable: false),
+      );
+
+      if (submit) {
+        await repository.submitForReview(feature.id);
+      }
+
+      ref.invalidate(projectMapFeaturesProvider(project.id));
+      ref.invalidate(projectByIdProvider(project.id));
+      ref.invalidate(reviewQueueProvider);
+
+      if (!mounted) {
+        return;
+      }
+
+      AppSnackbar.showSuccess(
+        context,
+        submit
+            ? 'Feature submitted for review successfully.'
+            : 'Feature draft saved to the project successfully.',
+      );
+      context.go(AppRoutes.mapForProject(project.id));
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, error.toString());
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
     }
-
-    AppSnackbar.showSuccess(
-      context,
-      'Draft saved with schema ${project.collectionFormSchema.version} and queued for sync.',
-    );
-    context.go(AppRoutes.drafts);
   }
 
   Widget _buildSchemaField(CollectionFormFieldSchema field) {
@@ -413,334 +443,363 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     }
   }
 
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) {
+      return '$bytes B';
+    }
+    final kb = bytes / 1024;
+    if (kb < 1024) {
+      return '${kb.toStringAsFixed(1)} KB';
+    }
+    final mb = kb / 1024;
+    return '${mb.toStringAsFixed(2)} MB';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final projectsAsync = ref.watch(projectsProvider);
+    final projectsAsync = ref.watch(projectListProvider(ProjectViewScope.assigned));
 
-    return projectsAsync.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, _) => AppEmptyState(
-        icon: Icons.error_outline,
-        title: 'Could not load assigned projects',
-        message: '$error',
-        actionLabel: 'Retry',
-        onAction: () => ref.invalidate(projectsProvider),
-      ),
-      data: (projects) {
-        if (projects.isEmpty) {
-          return const AppEmptyState(
-            icon: Icons.assignment_late_outlined,
-            title: 'No assignments available',
-            message:
-                'You are not assigned to any active field collection project yet.',
-          );
-        }
-
-        _ensureProjectSelection(projects);
-        final selectedProject =
-            projects.where((p) => p.id == _selectedProjectId).isEmpty
-            ? projects.first
-            : projects.firstWhere((p) => p.id == _selectedProjectId);
-
-        return Stepper(
-          currentStep: _currentStep,
-          onStepContinue: () => _handleContinue(projects),
-          onStepCancel: () {
-            if (_currentStep > 0) {
-              setState(() => _currentStep -= 1);
+    return Stack(
+      children: [
+        projectsAsync.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (error, _) => AppEmptyState(
+            icon: Icons.error_outline,
+            title: 'Could not load assigned projects',
+            message: '$error',
+            actionLabel: 'Retry',
+            onAction: () => ref.invalidate(projectListProvider(ProjectViewScope.assigned)),
+          ),
+          data: (projects) {
+            if (projects.isEmpty) {
+              return const AppEmptyState(
+                icon: Icons.assignment_late_outlined,
+                title: 'No approved assignments available',
+                message:
+                    'You need an approved contributor assignment before you can collect features.',
+              );
             }
-          },
-          controlsBuilder: (context, details) {
-            return Row(
-              children: [
-                AppButton(
-                  label: _currentStep == 3 ? 'Save Draft Offline' : 'Next',
-                  icon: _currentStep == 3
-                      ? Icons.save_alt
-                      : Icons.arrow_forward,
-                  onPressed: details.onStepContinue,
-                ),
-                const SizedBox(width: 8),
-                TextButton(
-                  onPressed: details.onStepCancel,
-                  child: const Text('Back'),
-                ),
-              ],
-            );
-          },
-          steps: [
-            Step(
-              title: const Text('Geometry'),
-              isActive: _currentStep >= 0,
-              state: _currentStep > 0 ? StepState.complete : StepState.indexed,
-              content: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const AppCard(
-                    child: Text(
-                      'Geometry capture includes assignment-bound project selection, GPS quality checks, and geometry validation.',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: _selectedProjectId,
-                    decoration: const InputDecoration(
-                      labelText: 'Assigned Project',
-                    ),
-                    items: projects
-                        .map(
-                          (project) => DropdownMenuItem(
-                            value: project.id,
-                            child: Text(project.name),
-                          ),
-                        )
-                        .toList(growable: false),
-                    onChanged: (value) {
-                      if (value == null) {
-                        return;
-                      }
-                      final project = projects.firstWhere((p) => p.id == value);
-                      _applyProjectSelection(project);
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: _selectedGeometryType,
-                    decoration: const InputDecoration(
-                      labelText: 'Geometry Type',
-                    ),
-                    items: selectedProject.allowedGeometryTypes
-                        .map(
-                          (type) =>
-                              DropdownMenuItem(value: type, child: Text(type)),
-                        )
-                        .toList(growable: false),
-                    onChanged: (value) {
-                      if (value == null) {
-                        return;
-                      }
-                      setState(() {
-                        _selectedGeometryType = value;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
+
+            _ensureProjectSelection(projects);
+            final selectedProject =
+                projects.where((p) => p.id == _selectedProjectId).isEmpty
+                ? projects.first
+                : projects.firstWhere((p) => p.id == _selectedProjectId);
+            final supportedGeometryTypes = _supportedGeometryTypes(selectedProject);
+
+            return Stepper(
+              currentStep: _currentStep,
+              onStepContinue: () => _handleContinue(projects),
+              onStepCancel: () {
+                if (_currentStep > 0) {
+                  setState(() => _currentStep -= 1);
+                }
+              },
+              controlsBuilder: (context, details) {
+                if (_currentStep == 3) {
+                  return Row(
                     children: [
-                      Expanded(
-                        child: TextFormField(
-                          controller: _latitudeController,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(
-                            labelText: 'Latitude',
-                          ),
-                        ),
+                      TextButton(
+                        onPressed: details.onStepCancel,
+                        child: const Text('Back'),
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _longitudeController,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(
-                            labelText: 'Longitude',
-                          ),
+                    ],
+                  );
+                }
+
+                return Row(
+                  children: [
+                    AppButton(
+                      label: 'Next',
+                      icon: Icons.arrow_forward,
+                      onPressed: details.onStepContinue,
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton(
+                      onPressed: details.onStepCancel,
+                      child: const Text('Back'),
+                    ),
+                  ],
+                );
+              },
+              steps: [
+                Step(
+                  title: const Text('Geometry'),
+                  isActive: _currentStep >= 0,
+                  state: _currentStep > 0 ? StepState.complete : StepState.indexed,
+                  content: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      DropdownButtonFormField<String>(
+                        initialValue: _selectedProjectId,
+                        decoration: const InputDecoration(
+                          labelText: 'Assigned Project',
                         ),
+                        items: projects
+                            .map(
+                              (project) => DropdownMenuItem(
+                                value: project.id,
+                                child: Text(project.name),
+                              ),
+                            )
+                            .toList(growable: false),
+                        onChanged: (value) {
+                          if (value == null) {
+                            return;
+                          }
+                          final project = projects.firstWhere((p) => p.id == value);
+                          _applyProjectSelection(project);
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      if (supportedGeometryTypes.isEmpty)
+                        const AppCard(
+                          child: ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(Icons.info_outline),
+                            title: Text('Point capture required'),
+                            subtitle: Text(
+                              'This mobile build supports point capture for field collection. Update the project geometry policy to include Point before collecting from this screen.',
+                            ),
+                          ),
+                        )
+                      else
+                        DropdownButtonFormField<String>(
+                          initialValue: _selectedGeometryType,
+                          decoration: const InputDecoration(
+                            labelText: 'Geometry Type',
+                          ),
+                          items: supportedGeometryTypes
+                              .map(
+                                (type) => DropdownMenuItem(
+                                  value: type,
+                                  child: Text(type),
+                                ),
+                              )
+                              .toList(growable: false),
+                          onChanged: (value) {
+                            setState(() {
+                              _selectedGeometryType = value;
+                            });
+                          },
+                        ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: _latitudeController,
+                              keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true,
+                              ),
+                              decoration: const InputDecoration(labelText: 'Latitude'),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: TextFormField(
+                              controller: _longitudeController,
+                              keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true,
+                              ),
+                              decoration: const InputDecoration(labelText: 'Longitude'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          Chip(
+                            avatar: const Icon(Icons.gps_fixed, size: 18),
+                            label: Text(
+                              _gpsAccuracyMeters == null
+                                  ? 'GPS not captured yet'
+                                  : 'Accuracy ${_gpsAccuracyMeters!.toStringAsFixed(1)}m (${Phase6Validation.gpsQualityLabel(_gpsAccuracyMeters)})',
+                            ),
+                          ),
+                          Chip(
+                            avatar: const Icon(Icons.rule, size: 18),
+                            label: Text(
+                              'Target <= ${selectedProject.maxGpsAccuracyMeters.toStringAsFixed(1)}m',
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        onPressed: supportedGeometryTypes.isEmpty
+                            ? null
+                            : () => _captureGpsSample(selectedProject),
+                        icon: const Icon(Icons.my_location),
+                        label: const Text('Capture GPS Sample'),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                ),
+                Step(
+                  title: const Text('Attributes'),
+                  isActive: _currentStep >= 1,
+                  state: _currentStep > 1 ? StepState.complete : StepState.indexed,
+                  content: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Chip(
-                        avatar: const Icon(Icons.gps_fixed, size: 18),
-                        label: Text(
-                          _gpsAccuracyMeters == null
-                              ? 'GPS: Not captured'
-                              : 'GPS: ${_gpsAccuracyMeters!.toStringAsFixed(1)}m (${Phase6Validation.gpsQualityLabel(_gpsAccuracyMeters)})',
+                      AppCard(
+                        child: Text(
+                          'Form schema ${selectedProject.collectionFormSchema.version} with ${selectedProject.collectionFormSchema.fields.length} field(s).',
                         ),
                       ),
-                      Chip(
-                        avatar: const Icon(Icons.rule, size: 18),
-                        label: Text(
-                          'Max allowed: ${selectedProject.maxGpsAccuracyMeters.toStringAsFixed(1)}m',
+                      const SizedBox(height: 12),
+                      if (selectedProject.collectionFormSchema.fields.isEmpty)
+                        const Text(
+                          'No dynamic fields are configured for this project.',
+                        )
+                      else
+                        ...selectedProject.collectionFormSchema.fields.map(
+                          (field) => Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: _buildSchemaField(field),
+                          ),
                         ),
-                      ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    onPressed: () => _captureGpsSample(selectedProject),
-                    icon: const Icon(Icons.my_location),
-                    label: const Text('Capture GPS Sample'),
+                ),
+                Step(
+                  title: const Text('Photos'),
+                  isActive: _currentStep >= 2,
+                  state: _currentStep > 2 ? StepState.complete : StepState.indexed,
+                  content: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AppCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Photo policy: ${selectedProject.requiresPhotos ? 'Required' : 'Optional'}',
+                            ),
+                            Text(
+                              'Minimum ${selectedProject.minPhotos} • Maximum ${selectedProject.maxPhotos}',
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      OutlinedButton.icon(
+                        onPressed: () => _pickPhotos(selectedProject),
+                        icon: const Icon(Icons.photo_library_outlined),
+                        label: const Text('Select Photos'),
+                      ),
+                      const SizedBox(height: 8),
+                      if (_photos.isEmpty)
+                        const Text('No photos selected yet.')
+                      else
+                        ..._photos.map(
+                          (photo) => AppCard(
+                            child: ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: const CircleAvatar(
+                                child: Icon(Icons.photo_camera_back),
+                              ),
+                              title: Text(photo.fileName),
+                              subtitle: Text(
+                                '${_formatBytes(photo.sizeBytes)} • ${photo.createdAt.toLocal()}',
+                              ),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: () {
+                                  setState(() {
+                                    _photos.remove(photo);
+                                  });
+                                },
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
-                  if (_lastGpsSampleAt != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(
-                        'Last sample: ${_lastGpsSampleAt!.toIso8601String()}',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ),
-                  if (_selectedGeometryType != 'Point')
-                    const Padding(
-                      padding: EdgeInsets.only(top: 8),
-                      child: Text(
-                        'LineString/Polygon drawing is planned for the next mapping increment; centroid validation is active now.',
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            Step(
-              title: const Text('Attributes'),
-              isActive: _currentStep >= 1,
-              state: _currentStep > 1 ? StepState.complete : StepState.indexed,
-              content: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  AppCard(
-                    child: Text(
-                      'Form schema: ${selectedProject.collectionFormSchema.version} (${selectedProject.collectionFormSchema.fields.length} field(s))',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  if (selectedProject.collectionFormSchema.fields.isEmpty)
-                    const Text(
-                      'No dynamic form fields are configured for this project.',
-                    )
-                  else
-                    ...selectedProject.collectionFormSchema.fields.map(
-                      (field) => Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: _buildSchemaField(field),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            Step(
-              title: const Text('Photos'),
-              isActive: _currentStep >= 2,
-              state: _currentStep > 2 ? StepState.complete : StepState.indexed,
-              content: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  AppCard(
+                ),
+                Step(
+                  title: const Text('Review & Submit'),
+                  isActive: _currentStep >= 3,
+                  content: AppCard(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Project photo policy: ${selectedProject.requiresPhotos ? 'Required' : 'Optional'}',
+                          selectedProject.name,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 8),
+                        Text('Geometry: ${_selectedGeometryType ?? 'Point'}'),
+                        Text(
+                          'GPS quality: ${Phase6Validation.gpsQualityLabel(_gpsAccuracyMeters)}',
                         ),
                         Text(
-                          'Min photos: ${selectedProject.minPhotos} • Max photos: ${selectedProject.maxPhotos}',
+                          'Attributes captured: ${_collectAttributeValues(selectedProject).length}',
+                        ),
+                        Text('Photos attached: ${_photos.length}'),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 10,
+                          runSpacing: 10,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: _isSubmitting
+                                  ? null
+                                  : () => _saveToServer(
+                                        selectedProject,
+                                        submit: false,
+                                      ),
+                              icon: const Icon(Icons.save_outlined),
+                              label: const Text('Save Draft'),
+                            ),
+                            FilledButton.icon(
+                              onPressed: _isSubmitting
+                                  ? null
+                                  : () => _saveToServer(
+                                        selectedProject,
+                                        submit: true,
+                                      ),
+                              icon: const Icon(Icons.send_outlined),
+                              label: const Text('Submit for Review'),
+                            ),
+                          ],
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  OutlinedButton.icon(
-                    onPressed: _photos.length >= selectedProject.maxPhotos
-                        ? null
-                        : () => _addPhoto(selectedProject),
-                    icon: const Icon(Icons.photo_camera),
-                    label: const Text('Capture Photo (Metadata Stub)'),
-                  ),
-                  const SizedBox(height: 8),
-                  if (_photos.isEmpty)
-                    const Text('No photos captured yet.')
-                  else
-                    ..._photos.map(
-                      (photo) => AppCard(
-                        child: ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: const CircleAvatar(
-                            child: Icon(Icons.photo_camera_back),
-                          ),
-                          title: Text(photo.filePath),
-                          subtitle: Text(
-                            'Compressed: ${(photo.compressionRatio * 100).toStringAsFixed(0)}% • GPS ${photo.gpsAccuracyMeters.toStringAsFixed(1)}m',
-                          ),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete_outline),
-                            onPressed: () {
-                              setState(() {
-                                _photos.remove(photo);
-                              });
-                            },
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            Step(
-              title: const Text('Review & Save Draft'),
-              isActive: _currentStep >= 3,
-              content: AppCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Ready to save this feature draft offline.'),
-                    const SizedBox(height: 6),
-                    Text('Project: ${selectedProject.name}'),
-                    Text(
-                      'Schema version: ${selectedProject.collectionFormSchema.version}',
-                    ),
-                    Text('Geometry: $_selectedGeometryType'),
-                    Text(
-                      'GPS quality: ${Phase6Validation.gpsQualityLabel(_gpsAccuracyMeters)}',
-                    ),
-                    Text(
-                      'Attributes captured: ${_collectAttributeValues(selectedProject).length}',
-                    ),
-                    Text('Photos attached: ${_photos.length}'),
-                  ],
                 ),
-              ),
+              ],
+            );
+          },
+        ),
+        if (_isSubmitting)
+          Positioned.fill(
+            child: ColoredBox(
+              color: Colors.black.withValues(alpha: 0.18),
+              child: const Center(child: CircularProgressIndicator()),
             ),
-          ],
-        );
-      },
+          ),
+      ],
     );
   }
 }
 
-class _PhotoCaptureDraft {
-  const _PhotoCaptureDraft({
+class _SelectedPhoto {
+  const _SelectedPhoto({
     required this.id,
     required this.filePath,
+    required this.fileName,
+    required this.sizeBytes,
     required this.createdAt,
-    required this.originalBytes,
-    required this.compressedBytes,
-    required this.compressionRatio,
-    required this.gpsAccuracyMeters,
   });
 
   final String id;
   final String filePath;
+  final String fileName;
+  final int sizeBytes;
   final DateTime createdAt;
-  final int originalBytes;
-  final int compressedBytes;
-  final double compressionRatio;
-  final double gpsAccuracyMeters;
-
-  Map<String, dynamic> toMap() {
-    return {
-      'id': id,
-      'file_path': filePath,
-      'captured_at': createdAt.toIso8601String(),
-      'original_bytes': originalBytes,
-      'compressed_bytes': compressedBytes,
-      'compression_ratio': compressionRatio,
-      'gps_accuracy_meters': gpsAccuracyMeters,
-    };
-  }
 }

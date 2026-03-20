@@ -210,12 +210,6 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                       icon: const Icon(Icons.add_location_alt_outlined),
                       label: const Text('New Feature'),
                     ),
-                  if (role == UserRole.contributor && hasContributorAssignment)
-                    FilledButton.icon(
-                      onPressed: () => context.go(AppRoutes.drafts),
-                      icon: const Icon(Icons.description_outlined),
-                      label: const Text('Drafts'),
-                    ),
                 ],
               ),
             ),

@@ -1,6 +1,6 @@
 # Phase Recheck After UI Fixes
 
-Date: 2026-03-15
+Date: 2026-03-20
 
 ## Summary
 
@@ -9,7 +9,9 @@ This pass closed the remaining UI/runtime gaps around:
 - role-specific project navigation
 - contributor pending-login enforcement in the mobile UX
 - back navigation from non-root routes
-- removal of the last production-path map placeholder
+- replacement of the last production-path map placeholder with a working project map workspace
+- conversion of mobile feature submission from local-only stub behavior to real backend draft/submission calls
+- conversion of the review queue from local-only placeholders to backend-backed feature moderation
 - Android emulator runtime readiness, including `10.0.2.2` API access and cleartext debug config
 
 No new schema redesign was introduced. PostgreSQL/PostGIS remains the source of truth.
@@ -24,9 +26,9 @@ No new schema redesign was introduced. PostgreSQL/PostGIS remains the source of 
 | Phase 3 | COMPLETE | Geospatial API remains in place; mobile map now consumes real project feature data. |
 | Phase 4 | COMPLETE | Mobile foundation remains clean-architecture based and role-aware. |
 | Phase 5 | COMPLETE | Offline/sync banner is real state, not placeholder text. |
-| Phase 6 | COMPLETE | Feature collection flow remains active for assigned contributors. |
-| Phase 7 | COMPLETE | Review workflow remains implemented for admin flows. |
-| Phase 8 | COMPLETE | Export workflow remains implemented. |
+| Phase 6 | COMPLETE | Feature collection now creates real backend drafts, optional photo uploads, and review submissions from mobile. |
+| Phase 7 | COMPLETE | Review workflow now operates on backend `pending_review` features instead of local-only placeholders. |
+| Phase 8 | COMPLETE | Export workflow remains implemented and production UI no longer exposes the manual worker-tick control. |
 | Phase 9 | COMPLETE | Security hardening remains intact, including pending contributor enforcement and protected metrics behavior. |
 | Phase 10 | COMPLETE | Automated tests and quality gates remain green after this pass. |
 | Phase 11 | PARTIAL | Engineering deliverables are verified on Android emulator as well; operational rollout, production secrets management, and ministry-side training remain deployment-owner tasks. |
@@ -35,6 +37,8 @@ No new schema redesign was introduced. PostgreSQL/PostGIS remains the source of 
 
 - Removed production-path map placeholder from `apps/mobile/lib/features/map/presentation/screens/map_screen.dart`.
 - No offline placeholder banner remains in the production runtime.
+- Removed the export worker-tick control from production mobile UI.
+- Removed the contributor `Drafts` button from project details until a non-confusing production draft view is exposed.
 - Mock auth/data paths remain gated behind `USE_MOCK_AUTH` and `USE_MOCK_DATA` only.
 - Production default runtime continues to use the real backend and PostgreSQL data.
 - Android `dev` runtime now defaults to `http://10.0.2.2:3000` when `API_BASE_URL` is not provided, removing the last localhost misuse for emulator testing.
@@ -56,10 +60,11 @@ No new schema redesign was introduced. PostgreSQL/PostGIS remains the source of 
   - can review, export, and open the map workspace
 - Super admin:
   - remains highest privilege identity by protected service logic
+  - now lands in an explicit management shell with visible primary navigation plus drawer access to all admin areas
 
 ## Critical Gaps Check
 
-No critical engineering blockers were found in this pass.
+No critical engineering blockers were found in this stabilization pass.
 
 Android emulator verification completed on 2026-03-15:
 

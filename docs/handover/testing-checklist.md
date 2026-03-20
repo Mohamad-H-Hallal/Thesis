@@ -2,7 +2,7 @@
 
 ## Executed Verification Evidence
 
-Executed on 2026-03-14 against the live development runtime:
+Executed on 2026-03-20 against the live development runtime:
 
 - Docker API: `http://localhost:3000`
 - Flutter web launch: Chrome on port `5050`
@@ -33,6 +33,10 @@ Executed results:
 - `PASS` viewer receives `403` on private project details
 - `PASS` approved contributor sees assigned project only
 - `PASS` admin toggle of `visible_to_viewers` immediately changes viewer-visible project list
+- `PASS` Android-emulator shell now exposes visible primary navigation plus drawer access for admin and super-admin management areas
+- `PASS` add-feature flow now creates a real `spatial_feature` draft through the backend and can submit it for review
+- `PASS` review queue now operates on backend `pending_review` features instead of local-only placeholder data
+- `PASS` export panel no longer exposes the manual worker-tick control in production runtime
 - `PASS` Flutter web launches against live API with:
 
 ```powershell
@@ -98,8 +102,10 @@ Verify:
 - contributor `Projects` shows only admin-published public projects
 - contributor `Assigned Projects` shows assigned projects only
 - admin sees review/export sections only
-- sync banner shows real queue/sync state instead of a placeholder
-- map shows the Lebanon basemap and feature overlays or a real empty state if no features exist
+- sync banner shows real queue/sync state only on contributor collection screens where it is useful
+- map shows the Lebanon basemap, real feature overlays, and a working `Add Feature` entry path for assigned contributors
+- add-feature flow saves a real server draft and can submit it for review
+- export panel is scroll-safe on Android screen sizes and no longer shows engineering-only worker controls
 
 ## Android Emulator
 
@@ -121,9 +127,14 @@ Verify:
 - login works against the local API through `10.0.2.2`
 - contributor pending/approved/rejected messages match backend responses
 - role-based shell navigation matches the signed-in user role
+- pending/rejected contributor login stays on the login screen and shows a visible error message
 - viewer sees only admin-published projects
 - contributor sees both public `Projects` and `Assigned Projects`
 - super admin sees `Admin Panel`, `Users`, `Create Admin`, `Requests`, `Projects`, `Assignments`, `Reviews`, `Exports`, `Notifications`, `Profile`
+- super admin and admin mobile shells expose primary sections on the bottom bar and the full management list in the drawer
+- project map shows a clean empty state when no features exist, not a request error box
+- add-feature flow can create a server draft, attach selected photos, and submit for review
+- review queue decisions update backend feature status and notifications
 - Android debug runtime allows local cleartext traffic for `10.0.2.2`
 
 ## Manual Flow Order
@@ -149,5 +160,5 @@ These still require a human pass in Chrome because automated CLI launch cannot v
 - contributor public tab renders as `Projects`
 - contributor assigned tab renders as `Assigned Projects`
 - admin project details screen shows the viewer-visibility toggle and success snackbar
-- sync banner wording and chip values are visually correct in the shell
-- map page chips, project selector, and back navigation are visually correct in Chrome
+- admin and super-admin drawer entries are visually correct on Android
+- map page chips, project selector, feature list, and back navigation are visually correct

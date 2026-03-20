@@ -42,26 +42,13 @@ Protection rules enforced in service logic:
 
 Super admin:
 
-- `Admin Panel`
-- `Users`
-- `Create Admin`
-- `Requests`
-- `Projects`
-- `Assignments`
-- `Reviews`
-- `Exports`
-- `Notifications`
-- `Profile`
+- Primary navigation: `Admin Panel`, `Projects`, `Requests`, `Notifications`, `Profile`
+- Drawer sections: `Admin Panel`, `Users`, `Create Admin`, `Requests`, `Projects`, `Assignments`, `Reviews`, `Exports`, `Notifications`, `Profile`
 
 Admin:
 
-- `Projects`
-- `Requests`
-- `Assignments`
-- `Reviews`
-- `Exports`
-- `Notifications`
-- `Profile`
+- Primary navigation: `Projects`, `Requests`, `Reviews`, `Notifications`, `Profile`
+- Drawer sections: `Projects`, `Requests`, `Assignments`, `Reviews`, `Exports`, `Notifications`, `Profile`
 
 Contributor:
 
@@ -76,7 +63,5 @@ Viewer:
 - `Notifications`
 - `Profile`
 - Viewer project access is restricted to projects with `visible_to_viewers = true` and status `active` or `completed`.
-- Contributor project access is split:
-  - `Projects`: viewer-visible public projects in read-only mode
-  - `Assigned Projects`: projects where the contributor has an approved assignment
+- Contributor project access is split between `Projects` for viewer-visible public projects in read-only mode and `Assigned Projects` for approved assignment work.
 - Project map and feature-creation flows open from project details with back navigation instead of living as root shell tabs.

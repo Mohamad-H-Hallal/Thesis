@@ -41,6 +41,7 @@ class AppShellScreen extends ConsumerWidget {
     }
 
     final items = _itemsForSession(session.user);
+    final mobilePrimaryItems = _mobilePrimaryItems(session.user, items);
     final selectedIndex = _selectedIndex(items, location);
     final selectedItem = items[selectedIndex];
     final body = _bodyForPath(selectedItem.path, session.user);
@@ -65,40 +66,12 @@ class AppShellScreen extends ConsumerWidget {
           icon: const Icon(Icons.logout),
         );
 
-        final syncAction = Stack(
-          alignment: Alignment.center,
-          children: [
-            IconButton(
-              tooltip: 'Sync now',
-              onPressed: () =>
-                  ref.read(syncControllerProvider.notifier).syncNow(),
-              icon: const Icon(Icons.sync),
-            ),
-            if (attentionCount > 0)
-              Positioned(
-                right: 8,
-                top: 7,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 4,
-                    vertical: 1,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.error,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    '$attentionCount',
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onError,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        );
+        final syncAction = _buildSyncAction(context, ref, attentionCount);
+        final shellActions = <Widget>[
+          if (_shouldShowSyncAction(session.user, selectedItem.path))
+            syncAction,
+          logoutAction,
+        ];
 
         if (useSideNav) {
           return Scaffold(
@@ -136,7 +109,11 @@ class AppShellScreen extends ConsumerWidget {
                   Expanded(
                     child: AppScaffold(
                       title: selectedItem.label,
-                      actions: [syncAction, logoutAction],
+                      actions: shellActions,
+                      showOfflineBanner: _shouldShowStatusBanner(
+                        session.user,
+                        selectedItem.path,
+                      ),
                       body: AnimatedSwitcher(
                         duration: const Duration(milliseconds: 280),
                         switchInCurve: Curves.easeOutCubic,
@@ -154,9 +131,16 @@ class AppShellScreen extends ConsumerWidget {
           );
         }
 
+        final primaryItems = mobilePrimaryItems;
+        final selectedPrimaryIndex = _selectedIndex(primaryItems, location);
+
         return AppScaffold(
           title: selectedItem.label,
-          actions: [syncAction, logoutAction],
+          actions: shellActions,
+          showOfflineBanner: _shouldShowStatusBanner(
+            session.user,
+            selectedItem.path,
+          ),
           drawer: Drawer(
             child: ListView(
               children: [
@@ -200,13 +184,11 @@ class AppShellScreen extends ConsumerWidget {
               child: body,
             ),
           ),
-          bottomNavigationBar: items.length > 5
-              ? null
-              : NavigationBar(
-                  selectedIndex: selectedIndex,
+          bottomNavigationBar: NavigationBar(
+                  selectedIndex: selectedPrimaryIndex,
                   onDestinationSelected: (index) =>
-                      context.go(items[index].path),
-                  destinations: items
+                      context.go(primaryItems[index].path),
+                  destinations: primaryItems
                       .map(
                         (item) => NavigationDestination(
                           icon: Icon(item.icon),
@@ -219,6 +201,92 @@ class AppShellScreen extends ConsumerWidget {
         );
       },
     );
+  }
+
+  Widget _buildSyncAction(BuildContext context, WidgetRef ref, int attentionCount) {
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        IconButton(
+          tooltip: 'Sync now',
+          onPressed: () => ref.read(syncControllerProvider.notifier).syncNow(),
+          icon: const Icon(Icons.sync),
+        ),
+        if (attentionCount > 0)
+          Positioned(
+            right: 8,
+            top: 7,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.error,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '$attentionCount',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onError,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  bool _shouldShowSyncAction(AppUser user, String path) {
+    if (user.role == UserRole.viewer || user.role == UserRole.admin) {
+      return false;
+    }
+    return path == AppRoutes.projects ||
+        path == AppRoutes.assignedProjects ||
+        path == AppRoutes.notifications;
+  }
+
+  bool _shouldShowStatusBanner(AppUser user, String path) {
+    if (user.role == UserRole.viewer || user.role == UserRole.admin) {
+      return false;
+    }
+    return path == AppRoutes.projects ||
+        path == AppRoutes.assignedProjects ||
+        path == AppRoutes.drafts ||
+        path == AppRoutes.submissions;
+  }
+
+  List<_ShellItem> _mobilePrimaryItems(AppUser user, List<_ShellItem> items) {
+    if (user.isSuperAdmin) {
+      return items
+          .where(
+            (item) =>
+                item.path == AppRoutes.dashboard ||
+                item.path == AppRoutes.projects ||
+                item.path == AppRoutes.contributorRequests ||
+                item.path == AppRoutes.notifications ||
+                item.path == AppRoutes.profile,
+          )
+          .toList(growable: false);
+    }
+
+    if (user.role == UserRole.admin) {
+      return items
+          .where(
+            (item) =>
+                item.path == AppRoutes.projects ||
+                item.path == AppRoutes.contributorRequests ||
+                item.path == AppRoutes.reviewQueue ||
+                item.path == AppRoutes.notifications ||
+                item.path == AppRoutes.profile,
+          )
+          .toList(growable: false);
+    }
+
+    if (user.role == UserRole.contributor) {
+      return items;
+    }
+
+    return items;
   }
 
   int _selectedIndex(List<_ShellItem> items, String currentLocation) {

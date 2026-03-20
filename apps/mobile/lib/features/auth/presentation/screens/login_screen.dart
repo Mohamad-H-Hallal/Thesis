@@ -37,7 +37,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _noLeadingSpaceFormatter = NoLeadingSpaceFormatter();
   bool _obscurePassword = true;
   bool _rememberMe = true;
-  bool _attemptedSubmit = false;
   String? _formLevelError;
 
   @override
@@ -62,7 +61,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   Future<void> _submit() async {
     setState(() {
-      _attemptedSubmit = true;
       _formLevelError = null;
     });
 
@@ -80,28 +78,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           password: _passwordController.text,
           rememberMe: _rememberMe,
         );
+
+    if (!mounted) {
+      return;
+    }
+
+    final authState = ref.read(authControllerProvider);
+    if (authState.status == AuthStatus.unauthenticated &&
+        authState.error != null &&
+        authState.error!.trim().isNotEmpty) {
+      setState(() {
+        _formLevelError = authState.error;
+      });
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      AppSnackbar.showError(context, authState.error!);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<AuthState>(authControllerProvider, (previous, next) {
-      if (!mounted || !_attemptedSubmit) {
-        return;
-      }
-
-      final becameError =
-          previous?.status == AuthStatus.loading &&
-          next.status == AuthStatus.unauthenticated &&
-          next.error != null;
-
-      if (becameError) {
-        setState(() {
-          _formLevelError = next.error;
-        });
-        AppSnackbar.showError(context, next.error!);
-      }
-    });
-
     final authState = ref.watch(authControllerProvider);
     final isLoading = authState.status == AuthStatus.loading;
 

@@ -9,6 +9,7 @@ import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../auth/domain/auth_models.dart';
+import '../../../projects/domain/project.dart';
 import '../../domain/export_job.dart';
 
 class ExportsDashboardScreen extends ConsumerStatefulWidget {
@@ -44,12 +45,12 @@ class _ExportsDashboardScreenState
     if (role != UserRole.admin) {
       return const AppEmptyState(
         icon: Icons.lock_outline,
-        title: 'Export Access Restricted',
+        title: 'Export access restricted',
         message: 'Only admin users can manage export requests.',
       );
     }
 
-    final projectsAsync = ref.watch(projectsProvider);
+    final projectsAsync = ref.watch(projectListProvider(ProjectViewScope.all));
     final exportState = ref.watch(exportsControllerProvider);
     final controller = ref.read(exportsControllerProvider.notifier);
     final metrics = exportState.metrics;
@@ -61,7 +62,7 @@ class _ExportsDashboardScreenState
         title: 'Project data unavailable',
         message: '$error',
         actionLabel: 'Retry',
-        onAction: () => ref.invalidate(projectsProvider),
+        onAction: () => ref.invalidate(projectListProvider(ProjectViewScope.all)),
       ),
       data: (projects) {
         if (projects.isEmpty) {
@@ -69,14 +70,12 @@ class _ExportsDashboardScreenState
             icon: Icons.folder_off_outlined,
             title: 'No projects available',
             message:
-                'At least one assigned project is needed to request exports.',
+                'Create a project first, then return here to request exports.',
           );
         }
 
         if (_selectedProjectId == null ||
-            projects
-                .where((project) => project.id == _selectedProjectId)
-                .isEmpty) {
+            projects.where((project) => project.id == _selectedProjectId).isEmpty) {
           _selectedProjectId = projects.first.id;
           _selectedProjectName = projects.first.name;
         }
@@ -84,11 +83,28 @@ class _ExportsDashboardScreenState
         return ListView(
           children: [
             const SectionHeader(
-              title: 'Exports & Reporting',
+              title: 'Exports',
               subtitle:
-                  'Async export queue, download management, and operational dashboard.',
+                  'Request GeoJSON or shapefile exports and track background processing.',
             ),
             const SizedBox(height: AppSpacing.md),
+            if (exportState.error != null && exportState.error!.trim().isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: AppSpacing.md),
+                child: AppCard(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.error_outline,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(child: Text(exportState.error!)),
+                    ],
+                  ),
+                ),
+              ),
             Wrap(
               spacing: 10,
               runSpacing: 10,
@@ -120,9 +136,20 @@ class _ExportsDashboardScreenState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'Request New Export',
-                    style: Theme.of(context).textTheme.titleMedium,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Request New Export',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Refresh export jobs',
+                        onPressed: exportState.isLoading ? null : controller.refresh,
+                        icon: const Icon(Icons.refresh),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
@@ -167,26 +194,51 @@ class _ExportsDashboardScreenState
                     },
                   ),
                   const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextFormField(
-                          controller: _fromDateController,
-                          decoration: const InputDecoration(
-                            labelText: 'From date (YYYY-MM-DD)',
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final useTwoColumns = constraints.maxWidth >= 560;
+                      if (!useTwoColumns) {
+                        return Column(
+                          children: [
+                            TextFormField(
+                              controller: _fromDateController,
+                              decoration: const InputDecoration(
+                                labelText: 'From date (YYYY-MM-DD)',
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            TextFormField(
+                              controller: _toDateController,
+                              decoration: const InputDecoration(
+                                labelText: 'To date (YYYY-MM-DD)',
+                              ),
+                            ),
+                          ],
+                        );
+                      }
+
+                      return Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: _fromDateController,
+                              decoration: const InputDecoration(
+                                labelText: 'From date (YYYY-MM-DD)',
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _toDateController,
-                          decoration: const InputDecoration(
-                            labelText: 'To date (YYYY-MM-DD)',
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextFormField(
+                              controller: _toDateController,
+                              decoration: const InputDecoration(
+                                labelText: 'To date (YYYY-MM-DD)',
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                    ],
+                        ],
+                      );
+                    },
                   ),
                   const SizedBox(height: 10),
                   TextFormField(
@@ -197,70 +249,42 @@ class _ExportsDashboardScreenState
                     ),
                   ),
                   const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      FilledButton.icon(
-                        onPressed: exportState.isSubmitting
-                            ? null
-                            : () async {
-                                final projectId = _selectedProjectId;
-                                if (projectId == null || projectId.isEmpty) {
-                                  AppSnackbar.showError(
-                                    context,
-                                    'Select a project first.',
-                                  );
-                                  return;
-                                }
-                                await controller.requestExport(
-                                  projectId: projectId,
-                                  projectName: _selectedProjectName,
-                                  format: _selectedFormat,
-                                  exportParameters: <String, dynamic>{
-                                    'date_from': _fromDateController.text
-                                        .trim(),
-                                    'date_to': _toDateController.text.trim(),
-                                    'bbox': _bboxController.text.trim(),
-                                  },
-                                );
-                                if (context.mounted) {
-                                  AppSnackbar.showSuccess(
-                                    context,
-                                    'Export request added to queue.',
-                                  );
-                                }
+                  FilledButton.icon(
+                    onPressed: exportState.isSubmitting
+                        ? null
+                        : () async {
+                            final projectId = _selectedProjectId;
+                            if (projectId == null || projectId.isEmpty) {
+                              AppSnackbar.showError(
+                                context,
+                                'Select a project first.',
+                              );
+                              return;
+                            }
+                            await controller.requestExport(
+                              projectId: projectId,
+                              projectName: _selectedProjectName,
+                              format: _selectedFormat,
+                              exportParameters: <String, dynamic>{
+                                'date_from': _fromDateController.text.trim(),
+                                'date_to': _toDateController.text.trim(),
+                                'bbox': _bboxController.text.trim(),
                               },
-                        icon: const Icon(Icons.playlist_add),
-                        label: Text(
-                          exportState.isSubmitting
-                              ? 'Submitting...'
-                              : 'Request Export',
-                        ),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: () async {
-                          await controller.runQueueTick();
-                          if (context.mounted) {
-                            AppSnackbar.showSuccess(
-                              context,
-                              'Export worker tick executed.',
                             );
-                          }
-                        },
-                        icon: const Icon(Icons.sync),
-                        label: const Text('Run Worker Tick'),
-                      ),
-                    ],
-                  ),
-                  if (exportState.lastTickAt != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(
-                        'Last worker tick: ${_formatDateTime(exportState.lastTickAt!)}',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
+                            if (context.mounted && exportState.error == null) {
+                              AppSnackbar.showSuccess(
+                                context,
+                                'Export request added to queue.',
+                              );
+                            }
+                          },
+                    icon: const Icon(Icons.playlist_add),
+                    label: Text(
+                      exportState.isSubmitting
+                          ? 'Submitting...'
+                          : 'Request Export',
                     ),
+                  ),
                 ],
               ),
             ),
@@ -282,103 +306,27 @@ class _ExportsDashboardScreenState
               ...exportState.jobs.map(
                 (job) => Padding(
                   padding: const EdgeInsets.only(bottom: 10),
-                  child: AppCard(
-                    child: Column(
-                      children: [
-                        ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: const CircleAvatar(
-                            child: Icon(Icons.inventory_2_outlined),
-                          ),
-                          title: Text(job.projectName),
-                          subtitle: Text(
-                            '${job.format.name.toUpperCase()} • requested ${_formatDateTime(job.requestedAt)}',
-                          ),
-                          trailing: StatusChip(status: job.status.name),
-                        ),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              if (job.recordCount != null)
-                                Chip(
-                                  label: Text('Records: ${job.recordCount}'),
-                                ),
-                              if (job.fileSizeBytes != null)
-                                Chip(
-                                  label: Text(
-                                    'Size: ${_formatBytes(job.fileSizeBytes!)}',
-                                  ),
-                                ),
-                              if (job.downloadedAt != null)
-                                Chip(
-                                  avatar: const Icon(
-                                    Icons.download_done,
-                                    size: 16,
-                                  ),
-                                  label: Text(
-                                    'Downloaded ${_formatDateTime(job.downloadedAt!)}',
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                        if (job.errorMessage != null &&
-                            job.errorMessage!.trim().isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: Text(
-                                job.errorMessage!,
-                                style: TextStyle(
-                                  color: Theme.of(context).colorScheme.error,
-                                ),
-                              ),
-                            ),
-                          ),
-                        Row(
-                          children: [
-                            TextButton.icon(
-                              onPressed: () => controller.refresh(),
-                              icon: const Icon(Icons.refresh, size: 18),
-                              label: const Text('Refresh'),
-                            ),
-                            const Spacer(),
-                            if (job.status == ExportJobStatus.failed)
-                              FilledButton.tonalIcon(
-                                onPressed: () async {
-                                  await controller.retryFailedExport(job.id);
-                                  if (context.mounted) {
-                                    AppSnackbar.showSuccess(
-                                      context,
-                                      'Failed export re-queued.',
-                                    );
-                                  }
-                                },
-                                icon: const Icon(Icons.restart_alt, size: 18),
-                                label: const Text('Retry'),
-                              ),
-                            if (job.canDownload)
-                              FilledButton.icon(
-                                onPressed: () async {
-                                  await controller.downloadExport(job.id);
-                                  if (context.mounted) {
-                                    AppSnackbar.showSuccess(
-                                      context,
-                                      'Download started from ${job.filePath}.',
-                                    );
-                                  }
-                                },
-                                icon: const Icon(Icons.download, size: 18),
-                                label: const Text('Download'),
-                              ),
-                          ],
-                        ),
-                      ],
-                    ),
+                  child: _ExportJobCard(
+                    job: job,
+                    onRefresh: controller.refresh,
+                    onRetry: () async {
+                      await controller.retryFailedExport(job.id);
+                      if (context.mounted) {
+                        AppSnackbar.showSuccess(
+                          context,
+                          'Failed export re-queued.',
+                        );
+                      }
+                    },
+                    onDownload: () async {
+                      await controller.downloadExport(job.id);
+                      if (context.mounted) {
+                        AppSnackbar.showSuccess(
+                          context,
+                          'Download started from ${job.filePath}.',
+                        );
+                      }
+                    },
                   ),
                 ),
               ),
@@ -387,22 +335,109 @@ class _ExportsDashboardScreenState
       },
     );
   }
+}
 
-  String _formatDateTime(DateTime value) {
-    final local = value.toLocal();
-    final month = local.month.toString().padLeft(2, '0');
-    final day = local.day.toString().padLeft(2, '0');
-    final hour = local.hour.toString().padLeft(2, '0');
-    final minute = local.minute.toString().padLeft(2, '0');
-    return '${local.year}-$month-$day $hour:$minute';
-  }
+class _ExportJobCard extends StatelessWidget {
+  const _ExportJobCard({
+    required this.job,
+    required this.onRefresh,
+    required this.onRetry,
+    required this.onDownload,
+  });
 
-  String _formatBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    final kb = bytes / 1024;
-    if (kb < 1024) return '${kb.toStringAsFixed(1)} KB';
-    final mb = kb / 1024;
-    return '${mb.toStringAsFixed(2)} MB';
+  final ExportJob job;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function() onRetry;
+  final Future<void> Function() onDownload;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const CircleAvatar(
+                child: Icon(Icons.inventory_2_outlined),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      job.projectName,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${job.format.name.toUpperCase()} • requested ${_formatDateTime(job.requestedAt)}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              StatusChip(status: job.status.name),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (job.recordCount != null)
+                Chip(label: Text('Records ${job.recordCount}')),
+              if (job.fileSizeBytes != null)
+                Chip(label: Text('Size ${_formatBytes(job.fileSizeBytes!)}')),
+              if (job.downloadedAt != null)
+                Chip(
+                  avatar: const Icon(Icons.download_done, size: 16),
+                  label: Text(
+                    'Downloaded ${_formatDateTime(job.downloadedAt!)}',
+                  ),
+                ),
+            ],
+          ),
+          if (job.errorMessage != null && job.errorMessage!.trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                job.errorMessage!,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
+                ),
+              ),
+            ),
+          const SizedBox(height: AppSpacing.sm),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              TextButton.icon(
+                onPressed: onRefresh,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Refresh'),
+              ),
+              if (job.status == ExportJobStatus.failed)
+                FilledButton.tonalIcon(
+                  onPressed: onRetry,
+                  icon: const Icon(Icons.restart_alt, size: 18),
+                  label: const Text('Retry'),
+                ),
+              if (job.canDownload)
+                FilledButton.icon(
+                  onPressed: onDownload,
+                  icon: const Icon(Icons.download, size: 18),
+                  label: const Text('Download'),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -419,23 +454,42 @@ class _MetricCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      constraints: const BoxConstraints(minWidth: 180),
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 160, maxWidth: 220),
       child: AppCard(
         child: Row(
           children: [
             CircleAvatar(radius: 18, child: Icon(icon, size: 18)),
             const SizedBox(width: 10),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: Theme.of(context).textTheme.bodySmall),
-                Text(value, style: Theme.of(context).textTheme.titleLarge),
-              ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: Theme.of(context).textTheme.bodySmall),
+                  Text(value, style: Theme.of(context).textTheme.titleLarge),
+                ],
+              ),
             ),
           ],
         ),
       ),
     );
   }
+}
+
+String _formatDateTime(DateTime value) {
+  final local = value.toLocal();
+  final month = local.month.toString().padLeft(2, '0');
+  final day = local.day.toString().padLeft(2, '0');
+  final hour = local.hour.toString().padLeft(2, '0');
+  final minute = local.minute.toString().padLeft(2, '0');
+  return '${local.year}-$month-$day $hour:$minute';
+}
+
+String _formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  final kb = bytes / 1024;
+  if (kb < 1024) return '${kb.toStringAsFixed(1)} KB';
+  final mb = kb / 1024;
+  return '${mb.toStringAsFixed(2)} MB';
 }

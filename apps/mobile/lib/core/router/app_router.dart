@@ -122,6 +122,7 @@ GoRouter createRouter(Ref ref) {
             AppScaffold(
               title: 'Project details',
               showBackButton: true,
+              showOfflineBanner: false,
               body: ProjectDetailsScreen(projectId: projectId),
             ),
           );
@@ -136,6 +137,7 @@ GoRouter createRouter(Ref ref) {
             AppScaffold(
               title: 'Project map',
               showBackButton: true,
+              showOfflineBanner: false,
               body: MapScreen(initialProjectId: projectId, lockProjectSelection: true),
             ),
           );
@@ -150,6 +152,7 @@ GoRouter createRouter(Ref ref) {
             AppScaffold(
               title: 'Add Feature',
               showBackButton: true,
+              showOfflineBanner: false,
               body: AddFeatureScreen(initialProjectId: projectId),
             ),
           );

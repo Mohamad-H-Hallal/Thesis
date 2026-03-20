@@ -17,7 +17,9 @@ import '../../features/exports/data/api_exports_repository.dart';
 import '../../features/exports/data/mock_exports_repository.dart';
 import '../../features/exports/domain/exports_repository.dart';
 import '../../features/exports/presentation/controllers/exports_controller.dart';
+import '../../features/map/data/api_feature_workflow_repository.dart';
 import '../../features/map/data/api_map_repository.dart';
+import '../../features/map/domain/feature_workflow_repository.dart';
 import '../../features/map/domain/map_feature.dart';
 import '../../features/notifications/data/api_notifications_repository.dart';
 import '../../features/notifications/data/mock_notifications_repository.dart';
@@ -28,7 +30,10 @@ import '../../features/projects/data/api_projects_repository.dart';
 import '../../features/projects/data/mock_projects_repository.dart';
 import '../../features/projects/domain/project.dart';
 import '../../features/projects/domain/projects_repository.dart';
+import '../../features/review/data/api_review_repository.dart';
 import '../../features/review/application/review_workflow_service.dart';
+import '../../features/review/domain/review_item.dart';
+import '../../features/review/domain/review_repository.dart';
 import '../../features/review/domain/review_workflow.dart';
 import '../network/api_client.dart';
 import '../offline/local_models.dart';
@@ -69,6 +74,12 @@ final projectsRepositoryProvider = Provider<ProjectsRepository>((ref) {
 
 final mapRepositoryProvider = Provider<ApiMapRepository>((ref) {
   return ApiMapRepository(ref.watch(apiClientProvider));
+});
+
+final featureWorkflowRepositoryProvider = Provider<FeatureWorkflowRepository>((
+  ref,
+) {
+  return ApiFeatureWorkflowRepository(ref.watch(apiClientProvider));
 });
 
 final draftsRepositoryProvider = Provider<MockDraftsRepository>((ref) {
@@ -373,6 +384,10 @@ final reviewWorkflowServiceProvider = Provider<ReviewWorkflowService>((ref) {
   );
 });
 
+final reviewRepositoryProvider = Provider<ReviewRepository>((ref) {
+  return ApiReviewRepository(ref.watch(apiClientProvider));
+});
+
 final routerProvider = Provider<GoRouter>((ref) {
   return createRouter(ref);
 });
@@ -399,6 +414,10 @@ final managedAssignmentsProvider =
     FutureProvider<List<ManagedAssignmentSummary>>((ref) async {
       return ref.read(adminRepositoryProvider).fetchManagedAssignments();
     });
+
+final reviewQueueProvider = FutureProvider<List<ReviewQueueItem>>((ref) async {
+  return ref.read(reviewRepositoryProvider).fetchPendingReviewItems();
+});
 
 ProjectViewScope _defaultOperationalProjectScope(UserRole role) {
   switch (role) {

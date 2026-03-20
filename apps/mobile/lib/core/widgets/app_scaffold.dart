@@ -33,9 +33,10 @@ class AppScaffold extends StatelessWidget {
     final canPop =
         Navigator.of(context).canPop() || (router?.canPop() ?? false);
     final shouldShowBackButton = showBackButton ?? canPop;
+    final shouldImplyLeading = shouldShowBackButton || drawer != null;
     return Scaffold(
       appBar: AppBar(
-        automaticallyImplyLeading: shouldShowBackButton,
+        automaticallyImplyLeading: shouldImplyLeading,
         leading: shouldShowBackButton
             ? IconButton(
                 tooltip: 'Back',
