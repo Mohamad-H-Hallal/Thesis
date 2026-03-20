@@ -9,6 +9,9 @@ import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/auth/presentation/screens/reset_password_screen.dart';
 import '../../features/auth/presentation/screens/signup_screen.dart';
 import '../../features/auth/presentation/screens/splash_screen.dart';
+import '../../features/admin/presentation/screens/category_form_screen.dart';
+import '../../features/admin/presentation/screens/project_assignments_screen.dart';
+import '../../features/admin/presentation/screens/project_form_screen.dart';
 import '../../features/map/presentation/screens/add_feature_screen.dart';
 import '../../features/map/presentation/screens/map_screen.dart';
 import '../../features/projects/presentation/screens/project_details_screen.dart';
@@ -95,6 +98,7 @@ GoRouter createRouter(Ref ref) {
       ...[
         AppRoutes.dashboard,
         AppRoutes.users,
+        AppRoutes.categories,
         AppRoutes.adminCreation,
         AppRoutes.contributorRequests,
         AppRoutes.projects,
@@ -112,6 +116,75 @@ GoRouter createRouter(Ref ref) {
           pageBuilder: (_, state) =>
               _buildPage(state, AppShellScreen(location: state.uri.path)),
         ),
+      ),
+      GoRoute(
+        path: AppRoutes.categoryCreate,
+        pageBuilder: (_, state) => _buildPage(
+          state,
+          const AppScaffold(
+            title: 'Create Category',
+            showBackButton: true,
+            showOfflineBanner: false,
+            body: CategoryFormScreen(),
+          ),
+        ),
+      ),
+      GoRoute(
+        path: '/app/categories/:categoryId/edit',
+        pageBuilder: (_, state) {
+          final categoryId = state.pathParameters['categoryId'] ?? '';
+          return _buildPage(
+            state,
+            AppScaffold(
+              title: 'Edit Category',
+              showBackButton: true,
+              showOfflineBanner: false,
+              body: CategoryFormScreen(categoryId: categoryId),
+            ),
+          );
+        },
+      ),
+      GoRoute(
+        path: AppRoutes.projectCreate,
+        pageBuilder: (_, state) => _buildPage(
+          state,
+          const AppScaffold(
+            title: 'Create Project',
+            showBackButton: true,
+            showOfflineBanner: false,
+            body: ProjectFormScreen(),
+          ),
+        ),
+      ),
+      GoRoute(
+        path: '/app/projects/:projectId/edit',
+        pageBuilder: (_, state) {
+          final projectId = state.pathParameters['projectId'] ?? '';
+          return _buildPage(
+            state,
+            AppScaffold(
+              title: 'Edit Project',
+              showBackButton: true,
+              showOfflineBanner: false,
+              body: ProjectFormScreen(projectId: projectId),
+            ),
+          );
+        },
+      ),
+      GoRoute(
+        path: '/app/projects/:projectId/assignments',
+        pageBuilder: (_, state) {
+          final projectId = state.pathParameters['projectId'] ?? '';
+          return _buildPage(
+            state,
+            AppScaffold(
+              title: 'Project Assignments',
+              showBackButton: true,
+              showOfflineBanner: false,
+              body: ProjectAssignmentsScreen(projectId: projectId),
+            ),
+          );
+        },
       ),
       GoRoute(
         path: '/app/projects/:projectId',
@@ -174,6 +247,7 @@ Set<String> _allowedPathsForUser(AppUser user) {
     return <String>{
       AppRoutes.dashboard,
       AppRoutes.users,
+      AppRoutes.categories,
       AppRoutes.adminCreation,
       AppRoutes.contributorRequests,
       AppRoutes.projects,
@@ -182,6 +256,7 @@ Set<String> _allowedPathsForUser(AppUser user) {
       AppRoutes.exports,
       AppRoutes.notifications,
       AppRoutes.profile,
+      '/app/categories/',
       '/app/projects/',
       AppRoutes.addFeature,
     };
@@ -191,12 +266,14 @@ Set<String> _allowedPathsForUser(AppUser user) {
     case UserRole.admin:
       return <String>{
         AppRoutes.projects,
+        AppRoutes.categories,
         AppRoutes.contributorRequests,
         AppRoutes.assignments,
         AppRoutes.reviewQueue,
         AppRoutes.exports,
         AppRoutes.notifications,
         AppRoutes.profile,
+        '/app/categories/',
         '/app/projects/',
       };
     case UserRole.viewer:

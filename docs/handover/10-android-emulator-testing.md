@@ -112,12 +112,25 @@ Important:
 ## Admin Flow
 
 1. Log in as admin
-2. Review contributor requests
-3. Create/manage category and project
-4. Toggle project viewer visibility
-5. Open project map from project details
-6. Verify Lebanon basemap loads
-7. Verify no placeholder text is present
+2. Open `Categories` from the drawer
+3. Create a category
+4. Open `Projects`
+5. Create a project with:
+   - category
+   - description/objectives
+   - status
+   - viewer visibility
+   - photo policy
+   - collection form schema
+6. Open `Assignments` on that project
+7. Assign a contributor
+8. Approve the assignment if it is pending
+9. Return to project details and verify:
+   - map opens
+   - reviews/exports remain reachable
+10. Toggle project viewer visibility
+11. Verify Lebanon basemap loads
+12. Verify no placeholder text is present
 
 ## Super Admin Flow
 
@@ -134,8 +147,9 @@ Important:
    - `Notifications`
    - `Profile`
 3. Create a new admin from `Create Admin`
-4. Verify the new admin can log in
-4. Verify viewer-visible project appears for viewer accounts only when:
+4. Create categories and projects directly from the mobile shell
+5. Verify the new admin can log in
+6. Verify viewer-visible project appears for viewer accounts only when:
    - `visible_to_viewers = true`
    - project status is `active` or `completed`
 
@@ -207,6 +221,9 @@ Debug Android build is configured for local cleartext testing through:
 - app launches on emulator
 - login/signup work
 - contributor pending is enforced
+- categories can be created from mobile
+- projects can be created and edited from mobile
+- assignments can be managed from mobile
 - viewer/contributor/admin roles render correct tabs
 - map works
 - back navigation works

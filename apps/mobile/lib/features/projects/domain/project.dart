@@ -145,10 +145,14 @@ class ProjectSummary {
     required this.id,
     required this.name,
     required this.category,
+    this.categoryId,
     required this.status,
     required this.assignedCollectors,
     required this.pendingReviews,
     required this.description,
+    this.objectives,
+    this.startDate,
+    this.endDate,
     this.assignments = const <ProjectAssignment>[],
     this.collectionFormSchema = CollectionFormSchema.empty,
     this.requiresPhotos = false,
@@ -164,10 +168,14 @@ class ProjectSummary {
   final String id;
   final String name;
   final String category;
+  final String? categoryId;
   final String status;
   final int assignedCollectors;
   final int pendingReviews;
   final String description;
+  final String? objectives;
+  final DateTime? startDate;
+  final DateTime? endDate;
   final List<ProjectAssignment> assignments;
   final CollectionFormSchema collectionFormSchema;
   final bool requiresPhotos;

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/providers/providers.dart';
+import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/section_header.dart';
@@ -41,19 +43,22 @@ class AssignmentsScreen extends ConsumerWidget {
               ...assignments.map(
                 (assignment) => Padding(
                   padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                  child: AppCard(
-                    child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(assignment.projectName),
-                      subtitle: Text(
-                        '${assignment.fullName} • ${assignment.email}\n${assignment.role} • ${assignment.status}',
+                    child: AppCard(
+                      onTap: () => context.push(
+                        AppRoutes.projectAssignments(assignment.projectId),
                       ),
-                      isThreeLine: true,
-                      trailing: Chip(label: Text(assignment.projectStatus)),
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(assignment.projectName),
+                        subtitle: Text(
+                          '${assignment.fullName} • ${assignment.email}\n${assignment.role} • ${assignment.status}',
+                        ),
+                        isThreeLine: true,
+                        trailing: Chip(label: Text(assignment.projectStatus)),
+                      ),
                     ),
                   ),
                 ),
-              ),
           ],
         );
       },

@@ -221,6 +221,19 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                   runSpacing: 10,
                   children: [
                     FilledButton.icon(
+                      onPressed: () =>
+                          context.push(AppRoutes.projectEdit(project.id)),
+                      icon: const Icon(Icons.edit_outlined),
+                      label: const Text('Edit Project'),
+                    ),
+                    FilledButton.icon(
+                      onPressed: () => context.push(
+                        AppRoutes.projectAssignments(project.id),
+                      ),
+                      icon: const Icon(Icons.assignment_outlined),
+                      label: const Text('Assignments'),
+                    ),
+                    FilledButton.icon(
                       onPressed: () => context.push(AppRoutes.reviewQueue),
                       icon: const Icon(Icons.rate_review_outlined),
                       label: const Text('Review Queue'),

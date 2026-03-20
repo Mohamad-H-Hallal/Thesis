@@ -10,6 +10,7 @@ class AppRoutes {
   static const app = '/app';
   static const dashboard = '/app/dashboard';
   static const users = '/app/users';
+  static const categories = '/app/categories';
   static const adminCreation = '/app/admin-create';
   static const contributorRequests = '/app/contributor-requests';
   static const projects = '/app/projects';
@@ -23,6 +24,11 @@ class AppRoutes {
   static const profile = '/app/profile';
   static const addFeature = '/app/add-feature';
 
+  static const categoryCreate = '/app/categories/new';
+  static String categoryEdit(String id) => '/app/categories/$id/edit';
+  static const projectCreate = '/app/projects/new';
+  static String projectEdit(String id) => '/app/projects/$id/edit';
+  static String projectAssignments(String id) => '/app/projects/$id/assignments';
   static String projectDetails(String id) => '/app/projects/$id';
 
   static String addFeatureForProject(String projectId) {

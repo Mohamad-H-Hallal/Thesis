@@ -10,7 +10,9 @@ import '../../../core/widgets/app_scaffold.dart';
 import '../../admin/presentation/screens/admin_creation_screen.dart';
 import '../../admin/presentation/screens/admin_dashboard_screen.dart';
 import '../../admin/presentation/screens/assignments_screen.dart';
+import '../../admin/presentation/screens/categories_screen.dart';
 import '../../admin/presentation/screens/contributor_requests_screen.dart';
+import '../../admin/presentation/screens/projects_management_screen.dart';
 import '../../admin/presentation/screens/users_management_screen.dart';
 import '../../auth/domain/auth_models.dart';
 import '../../drafts/presentation/screens/drafts_screen.dart';
@@ -303,6 +305,9 @@ class AppShellScreen extends ConsumerWidget {
     if (path == AppRoutes.users && user.isSuperAdmin) {
       return const UsersManagementScreen();
     }
+    if (path == AppRoutes.categories && user.role == UserRole.admin) {
+      return const CategoriesScreen();
+    }
     if (path == AppRoutes.adminCreation && user.isSuperAdmin) {
       return const AdminCreationScreen();
     }
@@ -313,10 +318,11 @@ class AppShellScreen extends ConsumerWidget {
       return const AssignmentsScreen();
     }
     if (path == AppRoutes.projects) {
+      if (user.role == UserRole.admin) {
+        return const ProjectsManagementScreen();
+      }
       return HomeProjectsScreen(
-        scope: user.role == UserRole.admin
-            ? ProjectViewScope.all
-            : ProjectViewScope.public,
+        scope: ProjectViewScope.public,
         title: 'Projects',
       );
     }
@@ -362,10 +368,7 @@ class AppShellScreen extends ConsumerWidget {
       return const AdminDashboardScreen();
     }
     if (user.role == UserRole.admin) {
-      return const HomeProjectsScreen(
-        scope: ProjectViewScope.all,
-        title: 'Projects',
-      );
+      return const ProjectsManagementScreen();
     }
     if (user.role == UserRole.contributor) {
       return const HomeProjectsScreen(
@@ -408,6 +411,12 @@ class AppShellScreen extends ConsumerWidget {
           path: AppRoutes.users,
           icon: Icons.groups_outlined,
           selectedIcon: Icons.groups,
+        ),
+        const _ShellItem(
+          label: 'Categories',
+          path: AppRoutes.categories,
+          icon: Icons.category_outlined,
+          selectedIcon: Icons.category,
         ),
         const _ShellItem(
           label: 'Create Admin',
@@ -456,6 +465,12 @@ class AppShellScreen extends ConsumerWidget {
           path: AppRoutes.projects,
           icon: Icons.folder_outlined,
           selectedIcon: Icons.folder,
+        ),
+        const _ShellItem(
+          label: 'Categories',
+          path: AppRoutes.categories,
+          icon: Icons.category_outlined,
+          selectedIcon: Icons.category,
         ),
         const _ShellItem(
           label: 'Requests',

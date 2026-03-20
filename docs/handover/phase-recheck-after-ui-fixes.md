@@ -13,6 +13,7 @@ This pass closed the remaining UI/runtime gaps around:
 - conversion of mobile feature submission from local-only stub behavior to real backend draft/submission calls
 - conversion of the review queue from local-only placeholders to backend-backed feature moderation
 - Android emulator runtime readiness, including `10.0.2.2` API access and cleartext debug config
+- closure of the last major mobile runtime gap: in-app category, project, and assignment provisioning for admin and super-admin users
 
 No new schema redesign was introduced. PostgreSQL/PostGIS remains the source of truth.
 
@@ -24,7 +25,7 @@ No new schema redesign was introduced. PostgreSQL/PostGIS remains the source of 
 | Phase 1 | COMPLETE | Scope, RBAC, and governance docs still align with runtime roles. |
 | Phase 2 | COMPLETE | Core schema, auth, projects, assignments, notifications, and API contract remain implemented. |
 | Phase 3 | COMPLETE | Geospatial API remains in place; mobile map now consumes real project feature data. |
-| Phase 4 | COMPLETE | Mobile foundation remains clean-architecture based and role-aware. |
+| Phase 4 | COMPLETE | Mobile foundation remains clean-architecture based, role-aware, and now includes in-app admin provisioning flows. |
 | Phase 5 | COMPLETE | Offline/sync banner is real state, not placeholder text. |
 | Phase 6 | COMPLETE | Feature collection now creates real backend drafts, optional photo uploads, and review submissions from mobile. |
 | Phase 7 | COMPLETE | Review workflow now operates on backend `pending_review` features instead of local-only placeholders. |

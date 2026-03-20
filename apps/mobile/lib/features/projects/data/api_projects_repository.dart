@@ -84,6 +84,7 @@ class ApiProjectsRepository implements ProjectsRepository {
       id: (row['id'] as String?) ?? '',
       name: (row['name'] as String?) ?? 'Unnamed project',
       category: (row['category_name'] as String?) ?? 'Uncategorized',
+      categoryId: row['category_id'] as String?,
       status: (row['status'] as String?) ?? 'draft',
       assignedCollectors:
           _toInt(row['contributor_count']) ??
@@ -97,6 +98,9 @@ class ApiProjectsRepository implements ProjectsRepository {
           (row['description'] as String?) ??
           (row['objectives'] as String?) ??
           'No description provided.',
+      objectives: row['objectives'] as String?,
+      startDate: _toDateTime(row['start_date']),
+      endDate: _toDateTime(row['end_date']),
       assignments: const <ProjectAssignment>[],
       collectionFormSchema: normalizedSchema,
       requiresPhotos: (row['requires_photos'] as bool?) ?? false,
@@ -181,6 +185,16 @@ class ApiProjectsRepository implements ProjectsRepository {
     }
     if (value is String) {
       return double.tryParse(value);
+    }
+    return null;
+  }
+
+  DateTime? _toDateTime(dynamic value) {
+    if (value is DateTime) {
+      return value;
+    }
+    if (value is String && value.isNotEmpty) {
+      return DateTime.tryParse(value);
     }
     return null;
   }

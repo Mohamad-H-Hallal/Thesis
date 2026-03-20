@@ -135,6 +135,10 @@ adb start-server
 adb devices
 ```
 - Debug Android builds allow local cleartext traffic for `10.0.2.2`.
+- Admin and super-admin mobile provisioning is now available directly in-app:
+  - `Projects` opens the project management flow
+  - `Categories` is available from the admin drawer
+  - project assignment management is available from each project card and details screen
 
 ## Release Verification (Single Command)
 

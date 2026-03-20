@@ -415,6 +415,20 @@ final managedAssignmentsProvider =
       return ref.read(adminRepositoryProvider).fetchManagedAssignments();
     });
 
+final projectCategoriesProvider = FutureProvider<List<ProjectCategorySummary>>((
+  ref,
+) async {
+  return ref.read(adminRepositoryProvider).fetchCategories();
+});
+
+final projectAssignmentsProvider =
+    FutureProvider.family<List<ManagedAssignmentSummary>, String>((
+      ref,
+      projectId,
+    ) async {
+      return ref.read(adminRepositoryProvider).fetchProjectAssignments(projectId);
+    });
+
 final reviewQueueProvider = FutureProvider<List<ReviewQueueItem>>((ref) async {
   return ref.read(reviewRepositoryProvider).fetchPendingReviewItems();
 });

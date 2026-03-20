@@ -34,6 +34,7 @@ Executed results:
 - `PASS` approved contributor sees assigned project only
 - `PASS` admin toggle of `visible_to_viewers` immediately changes viewer-visible project list
 - `PASS` Android-emulator shell now exposes visible primary navigation plus drawer access for admin and super-admin management areas
+- `PASS` admin and super-admin mobile shells now expose categories, project creation/editing, and project assignment management directly in-app
 - `PASS` add-feature flow now creates a real `spatial_feature` draft through the backend and can submit it for review
 - `PASS` review queue now operates on backend `pending_review` features instead of local-only placeholder data
 - `PASS` export panel no longer exposes the manual worker-tick control in production runtime
@@ -132,6 +133,9 @@ Verify:
 - contributor sees both public `Projects` and `Assigned Projects`
 - super admin sees `Admin Panel`, `Users`, `Create Admin`, `Requests`, `Projects`, `Assignments`, `Reviews`, `Exports`, `Notifications`, `Profile`
 - super admin and admin mobile shells expose primary sections on the bottom bar and the full management list in the drawer
+- admin and super-admin can create project categories directly from mobile
+- admin and super-admin can create/edit projects directly from mobile using real schema fields
+- admin and super-admin can open a project-scoped assignment management screen and assign contributors/admins
 - project map shows a clean empty state when no features exist, not a request error box
 - add-feature flow can create a server draft, attach selected photos, and submit for review
 - review queue decisions update backend feature status and notifications
@@ -141,12 +145,15 @@ Verify:
 
 1. Create or bootstrap super admin.
 2. Create a standard admin from the protected super admin account.
-3. Sign up a contributor from the public UI.
-4. Confirm contributor login is rejected while pending.
-5. Approve contributor from admin flow.
-6. Confirm contributor can log in and see assigned data only.
-7. Sign up another contributor and reject it.
-8. Confirm that account remains blocked from login with the rejection message.
+3. Create a project category from the mobile admin shell.
+4. Create a project from the mobile admin shell.
+5. Sign up a contributor from the public UI.
+6. Confirm contributor login is rejected while pending.
+7. Assign that contributor to the project from mobile.
+8. Approve contributor and assignment from admin flow.
+9. Confirm contributor can log in and see assigned data only.
+10. Sign up another contributor and reject it.
+11. Confirm that account remains blocked from login with the rejection message.
 
 ## Remaining Manual Browser Checks
 

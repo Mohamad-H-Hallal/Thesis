@@ -51,6 +51,52 @@ class ManagedAssignmentSummary {
   final String status;
 }
 
+class ProjectCategorySummary {
+  const ProjectCategorySummary({
+    required this.id,
+    required this.name,
+    this.description,
+    this.iconUrl,
+    this.createdAt,
+  });
+
+  final String id;
+  final String name;
+  final String? description;
+  final String? iconUrl;
+  final DateTime? createdAt;
+}
+
+class ProjectProvisioningInput {
+  const ProjectProvisioningInput({
+    required this.name,
+    required this.description,
+    required this.objectives,
+    required this.categoryId,
+    required this.status,
+    this.startDate,
+    this.endDate,
+    required this.requiresPhotos,
+    required this.minPhotos,
+    required this.maxPhotos,
+    required this.visibleToViewers,
+    required this.collectionFormSchema,
+  });
+
+  final String name;
+  final String description;
+  final String objectives;
+  final String categoryId;
+  final String status;
+  final DateTime? startDate;
+  final DateTime? endDate;
+  final bool requiresPhotos;
+  final int minPhotos;
+  final int maxPhotos;
+  final bool visibleToViewers;
+  final Map<String, dynamic> collectionFormSchema;
+}
+
 class AdminDashboardSummary {
   const AdminDashboardSummary({
     required this.totalUsers,

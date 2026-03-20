@@ -131,8 +131,11 @@ flutter run -d chrome --web-port 5050 --dart-define=APP_FLAVOR=dev --dart-define
 1. Log in with `SUPER_ADMIN_EMAIL`
 2. Approve or reject contributor requests
 3. Create admins from the in-app `Create Admin` screen
-3. Create categories/projects
-4. Toggle project viewer visibility
+4. Create categories from `Categories`
+5. Create projects from `Projects`
+6. Open project assignments and assign contributors/admins
+7. Toggle project viewer visibility
+8. Continue from the project into map/review/export
 
 ## Common Troubleshooting
 
@@ -196,4 +199,6 @@ Re-test with a fresh account:
 - contributor pending flow works
 - admin approval flow works
 - map opens
+- categories and projects can be provisioned directly from mobile
+- project assignments can be managed directly from mobile
 - back navigation works from details/map/forms
