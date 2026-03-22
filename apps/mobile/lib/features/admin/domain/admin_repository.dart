@@ -19,6 +19,8 @@ abstract class AdminRepository {
 
   Future<ManagedUserSummary> rejectContributor(String userId);
 
+  Future<ManagedUserSummary> toggleAdminRole(String userId);
+
   Future<List<ManagedAssignmentSummary>> fetchManagedAssignments();
 
   Future<List<ProjectCategorySummary>> fetchCategories();
@@ -45,7 +47,9 @@ abstract class AdminRepository {
 
   Future<void> archiveProject(String projectId);
 
-  Future<List<ManagedAssignmentSummary>> fetchProjectAssignments(String projectId);
+  Future<List<ManagedAssignmentSummary>> fetchProjectAssignments(
+    String projectId,
+  );
 
   Future<ManagedAssignmentSummary> createAssignment({
     required String projectId,

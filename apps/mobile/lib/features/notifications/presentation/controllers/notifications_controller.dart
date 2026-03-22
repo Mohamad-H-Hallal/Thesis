@@ -10,6 +10,9 @@ class NotificationsController
     load();
   }
 
+  NotificationsController.empty(this._repository)
+    : super(const AsyncData(<AppNotification>[]));
+
   final NotificationsRepository _repository;
   final Uuid _uuid = const Uuid();
 

@@ -30,12 +30,12 @@ void main() {
     expect(failure.message, 'Wrong email or password.');
   });
 
-  test('maps 409 to account already exists message', () {
+  test('maps 409 to duplicate email message', () {
     final failure = mapAuthDioException(
       dioError(type: DioExceptionType.badResponse, statusCode: 409),
       fallbackMessage: 'fallback',
     );
-    expect(failure.message, 'An account with this email already exists.');
+    expect(failure.message, 'This email is already registered.');
   });
 
   test('maps 422 using response message when present', () {

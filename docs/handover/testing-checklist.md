@@ -2,7 +2,7 @@
 
 ## Executed Verification Evidence
 
-Executed on 2026-03-20 against the live development runtime:
+Executed on 2026-03-22 against the current `handover-ready` stabilization pass:
 
 - Docker API: `http://localhost:3000`
 - Flutter web launch: Chrome on port `5050`
@@ -35,9 +35,22 @@ Executed results:
 - `PASS` admin toggle of `visible_to_viewers` immediately changes viewer-visible project list
 - `PASS` Android-emulator shell now exposes visible primary navigation plus drawer access for admin and super-admin management areas
 - `PASS` admin and super-admin mobile shells now expose categories, project creation/editing, and project assignment management directly in-app
+- `PASS` users management cards are now responsive on Android and expose protected-super-admin markers plus super-admin-only promote/revert actions for eligible users
+- `PASS` admin dashboard now includes viewer count and active contributor count from real backend user data
+- `PASS` requests screen now renders pending contributor approvals, pending assignment approvals, and rejected contributor history with explicit empty/loading/error states
+- `PASS` notifications are session-scoped in mobile state and backend-scoped by `user_id`, preventing cross-user notification bleed
 - `PASS` add-feature flow now creates a real `spatial_feature` draft through the backend and can submit it for review
 - `PASS` review queue now operates on backend `pending_review` features instead of local-only placeholder data
-- `PASS` export panel no longer exposes the manual worker-tick control in production runtime
+- `PASS` project map now exposes richer feature interaction with status-based rendering, map centering, and a feature details sheet for attributes, notes, and attached photos
+- `PASS` export panel no longer exposes the manual worker-tick control in production runtime and now uses Android-safe responsive cards/forms
+- `PARTIAL` Android live pass on commit `14b85fc` confirmed runtime launch, backend connectivity, login/signup screen rendering, admin shell rendering, and super-admin shell rendering after env bootstrap correction:
+  - `docs/handover/evidence/android-live-pass.md`
+  - `docs/handover/evidence/android-live-pass/login-screen.png`
+  - `docs/handover/evidence/android-live-pass/signup-screen.png`
+  - `docs/handover/evidence/android-live-pass/admin-shell.png`
+  - `docs/handover/evidence/android-live-pass/admin-projects-shell.png`
+  - `docs/handover/evidence/android-live-pass/superadmin-shell.png`
+  - blocker recorded: deterministic emulator text-field automation was not reliable on this machine, so the full category -> project -> assignment -> feature -> review -> export lifecycle still needs one human-driven Android pass
 - `PASS` Flutter web launches against live API with:
 
 ```powershell
@@ -136,10 +149,13 @@ Verify:
 - admin and super-admin can create project categories directly from mobile
 - admin and super-admin can create/edit projects directly from mobile using real schema fields
 - admin and super-admin can open a project-scoped assignment management screen and assign contributors/admins
+- super admin can promote eligible viewers/contributors to admin and revert only toggle-promoted admins to their previous role
 - project map shows a clean empty state when no features exist, not a request error box
 - add-feature flow can create a server draft, attach selected photos, and submit for review
+- project map feature cards and markers open a details sheet showing attributes, status, review notes, and photos
 - review queue decisions update backend feature status and notifications
 - Android debug runtime allows local cleartext traffic for `10.0.2.2`
+- if no emulator is attached in CI/local automation, use `flutter build apk` as the build gate and perform the manual checklist below on a human-started emulator
 
 ## Manual Flow Order
 
@@ -154,6 +170,8 @@ Verify:
 9. Confirm contributor can log in and see assigned data only.
 10. Sign up another contributor and reject it.
 11. Confirm that account remains blocked from login with the rejection message.
+12. Log in as super admin and verify the Users screen promote/revert action.
+13. Log in as admin and confirm only user-scoped notifications are visible.
 
 ## Remaining Manual Browser Checks
 

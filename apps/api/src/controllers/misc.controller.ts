@@ -13,7 +13,7 @@ const getUserForAdminMutation = async (userId: string) => {
     `SELECT id, email, full_name, phone, role, is_active
      FROM "user"
      WHERE id = $1`,
-    [userId]
+    [userId],
   );
 
   if (result.rows.length === 0) {
@@ -40,7 +40,10 @@ const assertAdminManagementAllowed = ({
   const targetIsProtectedSuperAdmin = isProtectedSuperAdminEmail(targetEmail);
 
   if (targetIsProtectedSuperAdmin) {
-    throw new AppError('The protected super administrator cannot be modified through this action.', 403);
+    throw new AppError(
+      'The protected super administrator cannot be modified through this action.',
+      403,
+    );
   }
 
   const touchesAdminPrivileges = targetRole === 'admin' || nextRole === 'admin';
@@ -49,7 +52,10 @@ const assertAdminManagementAllowed = ({
   }
 
   if (targetRole === 'admin' && nextIsActive === false && !actorIsProtectedSuperAdmin) {
-    throw new AppError('Only the protected super administrator can deactivate admin accounts.', 403);
+    throw new AppError(
+      'Only the protected super administrator can deactivate admin accounts.',
+      403,
+    );
   }
 };
 
@@ -60,9 +66,7 @@ const assertAdminManagementAllowed = ({
 const categoryController = {
   // Get all categories
   getAll: async (req, res) => {
-    const result = await query(
-      'SELECT * FROM project_category ORDER BY name ASC'
-    );
+    const result = await query('SELECT * FROM project_category ORDER BY name ASC');
 
     res.json({
       success: true,
@@ -74,10 +78,7 @@ const categoryController = {
   getOne: async (req, res) => {
     const { categoryId } = req.params;
 
-    const result = await query(
-      'SELECT * FROM project_category WHERE id = $1',
-      [categoryId]
-    );
+    const result = await query('SELECT * FROM project_category WHERE id = $1', [categoryId]);
 
     if (result.rows.length === 0) {
       throw new AppError('Category not found', 404);
@@ -97,7 +98,7 @@ const categoryController = {
       `INSERT INTO project_category (name, description, icon_url)
        VALUES ($1, $2, $3)
        RETURNING *`,
-      [name, description, icon_url]
+      [name, description, icon_url],
     );
 
     logger.info('Category created:', { categoryId: result.rows[0].id });
@@ -141,7 +142,7 @@ const categoryController = {
     params.push(categoryId);
     const result = await query(
       `UPDATE project_category SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
-      params
+      params,
     );
 
     if (result.rows.length === 0) {
@@ -159,10 +160,9 @@ const categoryController = {
   delete: async (req, res) => {
     const { categoryId } = req.params;
 
-    const result = await query(
-      'DELETE FROM project_category WHERE id = $1 RETURNING id',
-      [categoryId]
-    );
+    const result = await query('DELETE FROM project_category WHERE id = $1 RETURNING id', [
+      categoryId,
+    ]);
 
     if (result.rows.length === 0) {
       throw new AppError('Category not found', 404);
@@ -222,7 +222,7 @@ const notificationController = {
       `UPDATE notification SET is_read = true 
        WHERE id = $1 AND user_id = $2 
        RETURNING *`,
-      [notificationId, req.user.id]
+      [notificationId, req.user.id],
     );
 
     if (result.rows.length === 0) {
@@ -238,10 +238,9 @@ const notificationController = {
 
   // Mark all notifications as read
   markAllAsRead: async (req, res) => {
-    await query(
-      'UPDATE notification SET is_read = true WHERE user_id = $1 AND is_read = false',
-      [req.user.id]
-    );
+    await query('UPDATE notification SET is_read = true WHERE user_id = $1 AND is_read = false', [
+      req.user.id,
+    ]);
 
     res.json({
       success: true,
@@ -255,7 +254,7 @@ const notificationController = {
 
     const result = await query(
       'DELETE FROM notification WHERE id = $1 AND user_id = $2 RETURNING id',
-      [notificationId, req.user.id]
+      [notificationId, req.user.id],
     );
 
     if (result.rows.length === 0) {
@@ -272,7 +271,7 @@ const notificationController = {
   getUnreadCount: async (req, res) => {
     const result = await query(
       'SELECT COUNT(*) as count FROM notification WHERE user_id = $1 AND is_read = false',
-      [req.user.id]
+      [req.user.id],
     );
 
     res.json({
@@ -295,8 +294,27 @@ const userController = {
     const offset = (page - 1) * limit;
 
     let queryText = `
-      SELECT id, email, full_name, phone, role, created_at, last_login, is_active
-      FROM "user"
+      SELECT u.id,
+             u.email,
+             u.full_name,
+             u.phone,
+             u.role,
+             u.created_at,
+             u.last_login,
+             u.is_active,
+             latest_promotion.previous_admin_role
+      FROM "user" u
+      LEFT JOIN LATERAL (
+        SELECT al.old_values->>'role' AS previous_admin_role
+        FROM audit_log al
+        WHERE al.entity_type = 'user'
+          AND al.entity_id = u.id
+          AND al.action_type = 'update'
+          AND al.new_values->>'role' = 'admin'
+          AND al.old_values->>'role' IN ('viewer', 'contributor')
+        ORDER BY al.created_at DESC
+        LIMIT 1
+      ) latest_promotion ON TRUE
       WHERE 1=1
     `;
 
@@ -325,6 +343,11 @@ const userController = {
       data: result.rows.map((row) => ({
         ...row,
         is_protected_super_admin: isProtectedSuperAdminEmail(row.email),
+        can_toggle_admin_role:
+          !isProtectedSuperAdminEmail(row.email) &&
+          (row.role === 'viewer' ||
+            row.role === 'contributor' ||
+            (row.role === 'admin' && Boolean(row.previous_admin_role))),
       })),
       pagination: {
         page: parseInt(page),
@@ -342,7 +365,7 @@ const userController = {
               profile_picture_url
        FROM "user"
        WHERE id = $1`,
-      [userId]
+      [userId],
     );
 
     if (result.rows.length === 0) {
@@ -401,7 +424,7 @@ const userController = {
     params.push(userId);
     const result = await query(
       `UPDATE "user" SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING id, email, full_name, phone, role, is_active`,
-      params
+      params,
     );
 
     if (result.rows.length === 0) {
@@ -417,6 +440,101 @@ const userController = {
     });
   },
 
+  toggleAdminRole: async (req, res) => {
+    if (!isProtectedSuperAdminEmail(req.user?.email)) {
+      throw new AppError(
+        'Only the protected super administrator can change admin privileges.',
+        403,
+      );
+    }
+
+    const { userId } = req.params;
+    const currentUser = await getUserForAdminMutation(userId);
+
+    if (isProtectedSuperAdminEmail(currentUser.email)) {
+      throw new AppError(
+        'The protected super administrator cannot be modified through this action.',
+        403,
+      );
+    }
+
+    const previousRoleResult =
+      currentUser.role === 'admin'
+        ? await query(
+            `SELECT al.old_values->>'role' AS previous_role
+             FROM audit_log al
+             WHERE al.entity_type = 'user'
+               AND al.entity_id = $1
+               AND al.action_type = 'update'
+               AND al.new_values->>'role' = 'admin'
+               AND al.old_values->>'role' IN ('viewer', 'contributor')
+             ORDER BY al.created_at DESC
+             LIMIT 1`,
+            [userId],
+          )
+        : { rows: [] };
+
+    const previousRole = previousRoleResult.rows[0]?.previous_role as string | undefined;
+    const nextRole =
+      currentUser.role === 'admin'
+        ? previousRole
+        : currentUser.role === 'viewer' || currentUser.role === 'contributor'
+          ? 'admin'
+          : null;
+
+    if (!nextRole) {
+      throw new AppError('This user role cannot be changed through the admin toggle.', 400);
+    }
+
+    if (currentUser.role === 'admin' && !previousRole) {
+      throw new AppError(
+        'This admin account is fixed and cannot be reverted through the runtime toggle.',
+        400,
+      );
+    }
+
+    const result = await transaction(async (client) => {
+      const updated = await client.query(
+        `UPDATE "user"
+         SET role = $1
+         WHERE id = $2
+         RETURNING id, email, full_name, phone, role, is_active`,
+        [nextRole, userId],
+      );
+
+      await client.query(
+        `INSERT INTO audit_log (user_id, action_type, entity_type, entity_id, old_values, new_values, ip_address)
+         VALUES ($1, 'update', 'user', $2, $3::jsonb, $4::jsonb, $5::inet)`,
+        [
+          req.user?.id ?? null,
+          userId,
+          JSON.stringify({ role: currentUser.role }),
+          JSON.stringify({
+            role: nextRole,
+            previous_admin_role: currentUser.role === 'admin' ? previousRole : currentUser.role,
+          }),
+          req.ip ?? null,
+        ],
+      );
+
+      return updated.rows[0];
+    });
+
+    res.json({
+      success: true,
+      message:
+        nextRole === 'admin'
+          ? 'User promoted to admin successfully'
+          : `Admin reverted to ${nextRole} successfully`,
+      data: {
+        ...result,
+        is_protected_super_admin: false,
+        previous_admin_role: nextRole === 'admin' ? currentUser.role : (previousRole ?? null),
+        can_toggle_admin_role: true,
+      },
+    });
+  },
+
   // Deactivate user (admin only)
   deactivate: async (req, res) => {
     const { userId } = req.params;
@@ -429,10 +547,9 @@ const userController = {
       nextIsActive: false,
     });
 
-    const result = await query(
-      'UPDATE "user" SET is_active = false WHERE id = $1 RETURNING id',
-      [userId]
-    );
+    const result = await query('UPDATE "user" SET is_active = false WHERE id = $1 RETURNING id', [
+      userId,
+    ]);
 
     if (result.rows.length === 0) {
       throw new AppError('User not found', 404);
@@ -450,10 +567,7 @@ const userController = {
   getUserStats: async (req, res) => {
     const { userId } = req.params;
 
-    const result = await query(
-      'SELECT * FROM user_productivity WHERE user_id = $1',
-      [userId]
-    );
+    const result = await query('SELECT * FROM user_productivity WHERE user_id = $1', [userId]);
 
     if (result.rows.length === 0) {
       throw new AppError('User not found or no activity', 404);
@@ -504,7 +618,7 @@ const userController = {
          )
        ORDER BY u.created_at DESC
        LIMIT $2 OFFSET $3`,
-      [status, limit, offset]
+      [status, limit, offset],
     );
 
     res.json({
@@ -541,7 +655,7 @@ const userController = {
       `INSERT INTO "user" (email, password_hash, full_name, phone, role, is_active)
        VALUES ($1, $2, $3, $4, 'admin', TRUE)
        RETURNING id, email, full_name, phone, role, is_active, created_at`,
-      [normalizedEmail, passwordHash, full_name, phone ?? null]
+      [normalizedEmail, passwordHash, full_name, phone ?? null],
     );
 
     logger.info('Admin user created by protected super administrator', {
@@ -576,7 +690,7 @@ const userController = {
          SET is_active = TRUE
          WHERE id = $1
          RETURNING id, email, full_name, phone, role, is_active, created_at`,
-        [userId]
+        [userId],
       );
 
       await createNotification(client, {
@@ -613,7 +727,10 @@ const userController = {
       throw new AppError('Only contributor accounts can be rejected through this action.', 409);
     }
     if (targetUser.is_active) {
-      throw new AppError('Approved contributor accounts cannot be rejected through this action.', 409);
+      throw new AppError(
+        'Approved contributor accounts cannot be rejected through this action.',
+        409,
+      );
     }
 
     const rejectedUser = await transaction(async (client) => {
@@ -622,14 +739,15 @@ const userController = {
          SET is_active = FALSE
          WHERE id = $1
          RETURNING id, email, full_name, phone, role, is_active, created_at`,
-        [userId]
+        [userId],
       );
 
       await createNotification(client, {
         userId,
         type: 'contributor_rejected',
         title: 'Contributor request rejected',
-        message: 'Your contributor request was rejected. You cannot log in with contributor access.',
+        message:
+          'Your contributor request was rejected. You cannot log in with contributor access.',
         metadata: {
           user_id: userId,
           rejected_by_user_id: req.user?.id,

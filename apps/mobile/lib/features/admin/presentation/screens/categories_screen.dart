@@ -60,23 +60,38 @@ class CategoriesScreen extends ConsumerWidget {
                 (category) => Padding(
                   padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                   child: AppCard(
-                    child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const CircleAvatar(
-                        child: Icon(Icons.category_outlined),
-                      ),
-                      title: Text(category.name),
-                      subtitle: Text(
-                        category.description?.trim().isNotEmpty == true
-                            ? category.description!
-                            : 'No description provided.',
-                      ),
-                      trailing: IconButton(
-                        tooltip: 'Edit category',
-                        onPressed: () =>
-                            context.push(AppRoutes.categoryEdit(category.id)),
-                        icon: const Icon(Icons.edit_outlined),
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const CircleAvatar(
+                              child: Icon(Icons.category_outlined),
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                            Expanded(
+                              child: Text(
+                                category.name,
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Edit category',
+                              onPressed: () => context.push(
+                                AppRoutes.categoryEdit(category.id),
+                              ),
+                              icon: const Icon(Icons.edit_outlined),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: AppSpacing.xs),
+                        Text(
+                          category.description?.trim().isNotEmpty == true
+                              ? category.description!
+                              : 'No description provided.',
+                        ),
+                      ],
                     ),
                   ),
                 ),

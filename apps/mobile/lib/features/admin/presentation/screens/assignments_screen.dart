@@ -30,35 +30,60 @@ class AssignmentsScreen extends ConsumerWidget {
           children: [
             const SectionHeader(
               title: 'Assignments',
-              subtitle: 'Project assignment workload across pending, approved, and rejected states.',
+              subtitle:
+                  'Project assignment workload across pending, approved, and rejected states.',
             ),
             const SizedBox(height: AppSpacing.sm),
             if (assignments.isEmpty)
               const AppEmptyState(
                 icon: Icons.assignment_outlined,
                 title: 'No assignments found',
-                message: 'Assignments will appear here when admins assign users to projects.',
+                message:
+                    'Assignments will appear here when admins assign users to projects.',
               )
             else
               ...assignments.map(
                 (assignment) => Padding(
                   padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                    child: AppCard(
-                      onTap: () => context.push(
-                        AppRoutes.projectAssignments(assignment.projectId),
-                      ),
-                      child: ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(assignment.projectName),
-                        subtitle: Text(
-                          '${assignment.fullName} • ${assignment.email}\n${assignment.role} • ${assignment.status}',
+                  child: AppCard(
+                    onTap: () => context.push(
+                      AppRoutes.projectAssignments(assignment.projectId),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          assignment.projectName,
+                          style: Theme.of(context).textTheme.titleMedium,
                         ),
-                        isThreeLine: true,
-                        trailing: Chip(label: Text(assignment.projectStatus)),
-                      ),
+                        const SizedBox(height: AppSpacing.xs),
+                        Text(
+                          assignment.fullName,
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                        Text(
+                          assignment.email,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            Chip(
+                              label: Text(
+                                'Project ${assignment.projectStatus}',
+                              ),
+                            ),
+                            Chip(label: Text('Role: ${assignment.role}')),
+                            Chip(label: Text('Status: ${assignment.status}')),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
                 ),
+              ),
           ],
         );
       },

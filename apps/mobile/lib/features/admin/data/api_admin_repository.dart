@@ -33,10 +33,7 @@ class ApiAdminRepository implements AdminRepository {
   }) async {
     final response = await _apiClient.dio.get<Map<String, dynamic>>(
       '$_usersBasePath/contributor-requests',
-      queryParameters: <String, dynamic>{
-        'status': status.name,
-        'limit': 100,
-      },
+      queryParameters: <String, dynamic>{'status': status.name, 'limit': 100},
     );
     final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
     return rows
@@ -89,6 +86,17 @@ class ApiAdminRepository implements AdminRepository {
   }
 
   @override
+  Future<ManagedUserSummary> toggleAdminRole(String userId) async {
+    final response = await _apiClient.dio.post<Map<String, dynamic>>(
+      '$_usersBasePath/$userId/toggle-admin-role',
+    );
+    final row = Map<String, dynamic>.from(
+      response.data?['data'] as Map? ?? const <String, dynamic>{},
+    );
+    return _toManagedUser(row);
+  }
+
+  @override
   Future<List<ManagedAssignmentSummary>> fetchManagedAssignments() async {
     final response = await _apiClient.dio.get<Map<String, dynamic>>(
       '$_assignmentsBasePath/managed',
@@ -109,9 +117,7 @@ class ApiAdminRepository implements AdminRepository {
     );
     final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
     return rows
-        .map(
-          (row) => _toProjectCategory(Map<String, dynamic>.from(row as Map)),
-        )
+        .map((row) => _toProjectCategory(Map<String, dynamic>.from(row as Map)))
         .toList(growable: false);
   }
 
@@ -296,16 +302,22 @@ class ApiAdminRepository implements AdminRepository {
     final assignments = results[3] as List<ManagedAssignmentSummary>;
     final projectRows =
         (((results[4] as dynamic).data ?? const <String, dynamic>{})['data']
-                as List? ??
-            const <dynamic>[]);
+            as List? ??
+        const <dynamic>[]);
 
     return AdminDashboardSummary(
       totalUsers: users.length,
       adminCount: users.where((user) => user.role == UserRole.admin).length,
+      viewerCount: users.where((user) => user.role == UserRole.viewer).length,
+      activeContributorCount: users
+          .where((user) => user.role == UserRole.contributor && user.isActive)
+          .length,
       pendingContributorRequests: pendingRequests.length,
       rejectedContributorRequests: rejectedRequests.length,
       totalProjects: projectRows.length,
-      pendingAssignments: assignments.where((item) => item.status == 'pending').length,
+      pendingAssignments: assignments
+          .where((item) => item.status == 'pending')
+          .length,
     );
   }
 
@@ -320,6 +332,8 @@ class ApiAdminRepository implements AdminRepository {
       isActive: (row['is_active'] as bool?) ?? false,
       isProtectedSuperAdmin:
           (row['is_protected_super_admin'] as bool?) ?? false,
+      previousAdminRole: _toOptionalRole(row['previous_admin_role'] as String?),
+      canToggleAdminRole: (row['can_toggle_admin_role'] as bool?) ?? false,
       requestStatus: requestStatusRaw == null
           ? null
           : ContributorRequestStatus.values.byName(requestStatusRaw),
@@ -330,8 +344,7 @@ class ApiAdminRepository implements AdminRepository {
     return ManagedAssignmentSummary(
       id: (row['id'] as String?) ?? '',
       projectId: (row['project_id'] as String?) ?? '',
-      projectName:
-          (row['project_name'] as String?)?.isNotEmpty == true
+      projectName: (row['project_name'] as String?)?.isNotEmpty == true
           ? row['project_name'] as String
           : 'Project assignment',
       projectStatus: (row['project_status'] as String?) ?? 'draft',
@@ -382,7 +395,8 @@ class ApiAdminRepository implements AdminRepository {
             'v0.0',
         fields: fieldsRaw
             .map(
-              (field) => _toFieldSchema(Map<String, dynamic>.from(field as Map)),
+              (field) =>
+                  _toFieldSchema(Map<String, dynamic>.from(field as Map)),
             )
             .toList(growable: false),
       ),
@@ -437,7 +451,9 @@ class ApiAdminRepository implements AdminRepository {
       'objectives': input.objectives,
       'category_id': input.categoryId,
       'status': input.status,
-      'start_date': input.startDate == null ? null : _toIsoDate(input.startDate!),
+      'start_date': input.startDate == null
+          ? null
+          : _toIsoDate(input.startDate!),
       'end_date': input.endDate == null ? null : _toIsoDate(input.endDate!),
       'requires_photos': input.requiresPhotos,
       'min_photos': input.minPhotos,
@@ -509,5 +525,12 @@ class ApiAdminRepository implements AdminRepository {
       default:
         return UserRole.contributor;
     }
+  }
+
+  UserRole? _toOptionalRole(String? raw) {
+    if (raw == null || raw.isEmpty) {
+      return null;
+    }
+    return _toRole(raw);
   }
 }

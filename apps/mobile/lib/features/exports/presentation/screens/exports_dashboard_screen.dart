@@ -11,6 +11,7 @@ import '../../../../core/widgets/status_chip.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/export_job.dart';
+import '../controllers/exports_controller.dart';
 
 class ExportsDashboardScreen extends ConsumerStatefulWidget {
   const ExportsDashboardScreen({super.key});
@@ -39,10 +40,8 @@ class _ExportsDashboardScreenState
 
   @override
   Widget build(BuildContext context) {
-    final authSession = ref.watch(authControllerProvider).session;
-    final role = authSession?.user.role;
-
-    if (role != UserRole.admin) {
+    final session = ref.watch(authControllerProvider).session;
+    if (session?.user.role != UserRole.admin) {
       return const AppEmptyState(
         icon: Icons.lock_outline,
         title: 'Export access restricted',
@@ -62,7 +61,8 @@ class _ExportsDashboardScreenState
         title: 'Project data unavailable',
         message: '$error',
         actionLabel: 'Retry',
-        onAction: () => ref.invalidate(projectListProvider(ProjectViewScope.all)),
+        onAction: () =>
+            ref.invalidate(projectListProvider(ProjectViewScope.all)),
       ),
       data: (projects) {
         if (projects.isEmpty) {
@@ -75,7 +75,7 @@ class _ExportsDashboardScreenState
         }
 
         if (_selectedProjectId == null ||
-            projects.where((project) => project.id == _selectedProjectId).isEmpty) {
+            projects.every((project) => project.id != _selectedProjectId)) {
           _selectedProjectId = projects.first.id;
           _selectedProjectName = projects.first.name;
         }
@@ -85,10 +85,10 @@ class _ExportsDashboardScreenState
             const SectionHeader(
               title: 'Exports',
               subtitle:
-                  'Request GeoJSON or shapefile exports and track background processing.',
+                  'Request GeoJSON or shapefile exports and track asynchronous processing.',
             ),
             const SizedBox(height: AppSpacing.md),
-            if (exportState.error != null && exportState.error!.trim().isNotEmpty)
+            if (exportState.error?.trim().isNotEmpty == true)
               Padding(
                 padding: const EdgeInsets.only(bottom: AppSpacing.md),
                 child: AppCard(
@@ -105,31 +105,42 @@ class _ExportsDashboardScreenState
                   ),
                 ),
               ),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                _MetricCard(
-                  label: 'Total jobs',
-                  value: '${metrics.total}',
-                  icon: Icons.work_outline,
-                ),
-                _MetricCard(
-                  label: 'Pending',
-                  value: '${metrics.pending + metrics.processing}',
-                  icon: Icons.hourglass_bottom,
-                ),
-                _MetricCard(
-                  label: 'Completed',
-                  value: '${metrics.completed}',
-                  icon: Icons.check_circle_outline,
-                ),
-                _MetricCard(
-                  label: 'Failed',
-                  value: '${metrics.failed}',
-                  icon: Icons.error_outline,
-                ),
-              ],
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final cardWidth = constraints.maxWidth < 640
+                    ? constraints.maxWidth
+                    : (constraints.maxWidth - AppSpacing.sm * 3) / 2;
+                return Wrap(
+                  spacing: AppSpacing.sm,
+                  runSpacing: AppSpacing.sm,
+                  children: [
+                    _MetricCard(
+                      width: cardWidth,
+                      label: 'Total jobs',
+                      value: '${metrics.total}',
+                      icon: Icons.work_outline,
+                    ),
+                    _MetricCard(
+                      width: cardWidth,
+                      label: 'Pending/processing',
+                      value: '${metrics.pending + metrics.processing}',
+                      icon: Icons.hourglass_bottom,
+                    ),
+                    _MetricCard(
+                      width: cardWidth,
+                      label: 'Completed',
+                      value: '${metrics.completed}',
+                      icon: Icons.check_circle_outline,
+                    ),
+                    _MetricCard(
+                      width: cardWidth,
+                      label: 'Failed',
+                      value: '${metrics.failed}',
+                      icon: Icons.error_outline,
+                    ),
+                  ],
+                );
+              },
             ),
             const SizedBox(height: AppSpacing.md),
             AppCard(
@@ -140,18 +151,20 @@ class _ExportsDashboardScreenState
                     children: [
                       Expanded(
                         child: Text(
-                          'Request New Export',
+                          'Request export',
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                       ),
                       IconButton(
                         tooltip: 'Refresh export jobs',
-                        onPressed: exportState.isLoading ? null : controller.refresh,
+                        onPressed: exportState.isLoading
+                            ? null
+                            : controller.refresh,
                         icon: const Icon(Icons.refresh),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: AppSpacing.sm),
                   DropdownButtonFormField<String>(
                     initialValue: _selectedProjectId,
                     decoration: const InputDecoration(labelText: 'Project'),
@@ -159,7 +172,10 @@ class _ExportsDashboardScreenState
                         .map(
                           (project) => DropdownMenuItem(
                             value: project.id,
-                            child: Text(project.name),
+                            child: Text(
+                              project.name,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         )
                         .toList(growable: false),
@@ -174,7 +190,7 @@ class _ExportsDashboardScreenState
                       });
                     },
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: AppSpacing.sm),
                   DropdownButtonFormField<ExportFormat>(
                     initialValue: _selectedFormat,
                     decoration: const InputDecoration(labelText: 'Format'),
@@ -187,113 +203,59 @@ class _ExportsDashboardScreenState
                         )
                         .toList(growable: false),
                     onChanged: (value) {
-                      if (value == null) {
-                        return;
+                      if (value != null) {
+                        setState(() => _selectedFormat = value);
                       }
-                      setState(() => _selectedFormat = value);
                     },
                   ),
-                  const SizedBox(height: 10),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final useTwoColumns = constraints.maxWidth >= 560;
-                      if (!useTwoColumns) {
-                        return Column(
-                          children: [
-                            TextFormField(
-                              controller: _fromDateController,
-                              decoration: const InputDecoration(
-                                labelText: 'From date (YYYY-MM-DD)',
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            TextFormField(
-                              controller: _toDateController,
-                              decoration: const InputDecoration(
-                                labelText: 'To date (YYYY-MM-DD)',
-                              ),
-                            ),
-                          ],
-                        );
-                      }
-
-                      return Row(
-                        children: [
-                          Expanded(
-                            child: TextFormField(
-                              controller: _fromDateController,
-                              decoration: const InputDecoration(
-                                labelText: 'From date (YYYY-MM-DD)',
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: TextFormField(
-                              controller: _toDateController,
-                              decoration: const InputDecoration(
-                                labelText: 'To date (YYYY-MM-DD)',
-                              ),
-                            ),
-                          ),
-                        ],
-                      );
-                    },
+                  const SizedBox(height: AppSpacing.sm),
+                  TextFormField(
+                    controller: _fromDateController,
+                    decoration: const InputDecoration(
+                      labelText: 'From date (YYYY-MM-DD)',
+                    ),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: AppSpacing.sm),
+                  TextFormField(
+                    controller: _toDateController,
+                    decoration: const InputDecoration(
+                      labelText: 'To date (YYYY-MM-DD)',
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
                   TextFormField(
                     controller: _bboxController,
+                    minLines: 1,
+                    maxLines: 2,
                     decoration: const InputDecoration(
                       labelText: 'BBOX (minLon,minLat,maxLon,maxLat)',
                       hintText: '35.1,33.1,36.0,34.6',
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  FilledButton.icon(
-                    onPressed: exportState.isSubmitting
-                        ? null
-                        : () async {
-                            final projectId = _selectedProjectId;
-                            if (projectId == null || projectId.isEmpty) {
-                              AppSnackbar.showError(
-                                context,
-                                'Select a project first.',
-                              );
-                              return;
-                            }
-                            await controller.requestExport(
-                              projectId: projectId,
-                              projectName: _selectedProjectName,
-                              format: _selectedFormat,
-                              exportParameters: <String, dynamic>{
-                                'date_from': _fromDateController.text.trim(),
-                                'date_to': _toDateController.text.trim(),
-                                'bbox': _bboxController.text.trim(),
-                              },
-                            );
-                            if (context.mounted && exportState.error == null) {
-                              AppSnackbar.showSuccess(
-                                context,
-                                'Export request added to queue.',
-                              );
-                            }
-                          },
-                    icon: const Icon(Icons.playlist_add),
-                    label: Text(
-                      exportState.isSubmitting
-                          ? 'Submitting...'
-                          : 'Request Export',
+                  const SizedBox(height: AppSpacing.md),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: exportState.isSubmitting
+                          ? null
+                          : () => _submit(controller, exportState),
+                      icon: const Icon(Icons.playlist_add),
+                      label: Text(
+                        exportState.isSubmitting
+                            ? 'Submitting...'
+                            : 'Request Export',
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
             const SizedBox(height: AppSpacing.md),
-            Text('Export Jobs', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
+            Text('Export jobs', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: AppSpacing.sm),
             if (exportState.isLoading)
               const Padding(
-                padding: EdgeInsets.symmetric(vertical: 20),
+                padding: EdgeInsets.symmetric(vertical: 24),
                 child: Center(child: CircularProgressIndicator()),
               )
             else if (exportState.jobs.isEmpty)
@@ -305,7 +267,7 @@ class _ExportsDashboardScreenState
             else
               ...exportState.jobs.map(
                 (job) => Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                   child: _ExportJobCard(
                     job: job,
                     onRefresh: controller.refresh,
@@ -335,6 +297,30 @@ class _ExportsDashboardScreenState
       },
     );
   }
+
+  Future<void> _submit(
+    ExportsController controller,
+    ExportsState exportState,
+  ) async {
+    final projectId = _selectedProjectId;
+    if (projectId == null || projectId.isEmpty) {
+      AppSnackbar.showError(context, 'Select a project first.');
+      return;
+    }
+    await controller.requestExport(
+      projectId: projectId,
+      projectName: _selectedProjectName,
+      format: _selectedFormat,
+      exportParameters: <String, dynamic>{
+        'date_from': _fromDateController.text.trim(),
+        'date_to': _toDateController.text.trim(),
+        'bbox': _bboxController.text.trim(),
+      },
+    );
+    if (mounted && exportState.error == null) {
+      AppSnackbar.showSuccess(context, 'Export request added to queue.');
+    }
+  }
 }
 
 class _ExportJobCard extends StatelessWidget {
@@ -359,9 +345,7 @@ class _ExportJobCard extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const CircleAvatar(
-                child: Icon(Icons.inventory_2_outlined),
-              ),
+              const CircleAvatar(child: Icon(Icons.inventory_2_outlined)),
               const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Column(
@@ -379,8 +363,6 @@ class _ExportJobCard extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: AppSpacing.sm),
-              StatusChip(status: job.status.name),
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
@@ -388,6 +370,7 @@ class _ExportJobCard extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
+              StatusChip(status: job.status.name),
               if (job.recordCount != null)
                 Chip(label: Text('Records ${job.recordCount}')),
               if (job.fileSizeBytes != null)
@@ -401,22 +384,19 @@ class _ExportJobCard extends StatelessWidget {
                 ),
             ],
           ),
-          if (job.errorMessage != null && job.errorMessage!.trim().isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                job.errorMessage!,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.error,
-                ),
-              ),
+          if (job.errorMessage?.trim().isNotEmpty == true) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              job.errorMessage!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
+          ],
           const SizedBox(height: AppSpacing.sm),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
-              TextButton.icon(
+              OutlinedButton.icon(
                 onPressed: onRefresh,
                 icon: const Icon(Icons.refresh, size: 18),
                 label: const Text('Refresh'),
@@ -443,24 +423,26 @@ class _ExportJobCard extends StatelessWidget {
 
 class _MetricCard extends StatelessWidget {
   const _MetricCard({
+    required this.width,
     required this.label,
     required this.value,
     required this.icon,
   });
 
+  final double width;
   final String label;
   final String value;
   final IconData icon;
 
   @override
   Widget build(BuildContext context) {
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minWidth: 160, maxWidth: 220),
+    return SizedBox(
+      width: width,
       child: AppCard(
         child: Row(
           children: [
             CircleAvatar(radius: 18, child: Icon(icon, size: 18)),
-            const SizedBox(width: 10),
+            const SizedBox(width: AppSpacing.sm),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -487,9 +469,11 @@ String _formatDateTime(DateTime value) {
 }
 
 String _formatBytes(int bytes) {
-  if (bytes < 1024) return '$bytes B';
-  final kb = bytes / 1024;
-  if (kb < 1024) return '${kb.toStringAsFixed(1)} KB';
-  final mb = kb / 1024;
-  return '${mb.toStringAsFixed(2)} MB';
+  if (bytes < 1024) {
+    return '$bytes B';
+  }
+  if (bytes < 1024 * 1024) {
+    return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  }
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 }

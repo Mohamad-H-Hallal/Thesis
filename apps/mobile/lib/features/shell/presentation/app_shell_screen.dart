@@ -187,25 +187,29 @@ class AppShellScreen extends ConsumerWidget {
             ),
           ),
           bottomNavigationBar: NavigationBar(
-                  selectedIndex: selectedPrimaryIndex,
-                  onDestinationSelected: (index) =>
-                      context.go(primaryItems[index].path),
-                  destinations: primaryItems
-                      .map(
-                        (item) => NavigationDestination(
-                          icon: Icon(item.icon),
-                          selectedIcon: Icon(item.selectedIcon ?? item.icon),
-                          label: item.label,
-                        ),
-                      )
-                      .toList(growable: false),
-                ),
+            selectedIndex: selectedPrimaryIndex,
+            onDestinationSelected: (index) =>
+                context.go(primaryItems[index].path),
+            destinations: primaryItems
+                .map(
+                  (item) => NavigationDestination(
+                    icon: Icon(item.icon),
+                    selectedIcon: Icon(item.selectedIcon ?? item.icon),
+                    label: item.mobileLabel ?? item.label,
+                  ),
+                )
+                .toList(growable: false),
+          ),
         );
       },
     );
   }
 
-  Widget _buildSyncAction(BuildContext context, WidgetRef ref, int attentionCount) {
+  Widget _buildSyncAction(
+    BuildContext context,
+    WidgetRef ref,
+    int attentionCount,
+  ) {
     return Stack(
       alignment: Alignment.center,
       children: [
@@ -326,7 +330,8 @@ class AppShellScreen extends ConsumerWidget {
         title: 'Projects',
       );
     }
-    if (path == AppRoutes.assignedProjects && user.role == UserRole.contributor) {
+    if (path == AppRoutes.assignedProjects &&
+        user.role == UserRole.contributor) {
       return const HomeProjectsScreen(
         scope: ProjectViewScope.assigned,
         title: 'Assigned Projects',
@@ -386,6 +391,7 @@ class AppShellScreen extends ConsumerWidget {
     final base = <_ShellItem>[
       const _ShellItem(
         label: 'Notifications',
+        mobileLabel: 'Alerts',
         path: AppRoutes.notifications,
         icon: Icons.notifications_none,
         selectedIcon: Icons.notifications,
@@ -402,6 +408,7 @@ class AppShellScreen extends ConsumerWidget {
       return <_ShellItem>[
         const _ShellItem(
           label: 'Admin Panel',
+          mobileLabel: 'Admin',
           path: AppRoutes.dashboard,
           icon: Icons.dashboard_outlined,
           selectedIcon: Icons.dashboard,
@@ -521,6 +528,7 @@ class AppShellScreen extends ConsumerWidget {
       ),
       const _ShellItem(
         label: 'Assigned Projects',
+        mobileLabel: 'Assigned',
         path: AppRoutes.assignedProjects,
         icon: Icons.assignment_outlined,
         selectedIcon: Icons.assignment,
@@ -536,10 +544,12 @@ class _ShellItem {
     required this.path,
     required this.icon,
     this.selectedIcon,
+    this.mobileLabel,
   });
 
   final String label;
   final String path;
   final IconData icon;
   final IconData? selectedIcon;
+  final String? mobileLabel;
 }

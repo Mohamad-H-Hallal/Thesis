@@ -347,9 +347,14 @@ final notificationsControllerProvider =
       NotificationsController,
       AsyncValue<List<AppNotification>>
     >((ref) {
-      return NotificationsController(
-        ref.watch(notificationsRepositoryProvider),
+      final sessionUserId = ref.watch(
+        authControllerProvider.select((state) => state.session?.user.id),
       );
+      final repository = ref.watch(notificationsRepositoryProvider);
+      if (sessionUserId == null || sessionUserId.isEmpty) {
+        return NotificationsController.empty(repository);
+      }
+      return NotificationsController(repository);
     });
 
 final exportsControllerProvider =
@@ -392,7 +397,9 @@ final routerProvider = Provider<GoRouter>((ref) {
   return createRouter(ref);
 });
 
-final adminDashboardProvider = FutureProvider<AdminDashboardSummary>((ref) async {
+final adminDashboardProvider = FutureProvider<AdminDashboardSummary>((
+  ref,
+) async {
   return ref.read(adminRepositoryProvider).fetchDashboardSummary();
 });
 
@@ -406,7 +413,9 @@ final contributorRequestsProvider =
           .fetchContributorRequests(status: status);
     });
 
-final managedUsersProvider = FutureProvider<List<ManagedUserSummary>>((ref) async {
+final managedUsersProvider = FutureProvider<List<ManagedUserSummary>>((
+  ref,
+) async {
   return ref.read(adminRepositoryProvider).fetchUsers();
 });
 
@@ -426,7 +435,9 @@ final projectAssignmentsProvider =
       ref,
       projectId,
     ) async {
-      return ref.read(adminRepositoryProvider).fetchProjectAssignments(projectId);
+      return ref
+          .read(adminRepositoryProvider)
+          .fetchProjectAssignments(projectId);
     });
 
 final reviewQueueProvider = FutureProvider<List<ReviewQueueItem>>((ref) async {

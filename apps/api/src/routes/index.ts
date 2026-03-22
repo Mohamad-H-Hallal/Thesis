@@ -1,7 +1,11 @@
 const express = require('express');
 const assignmentController = require('../controllers/assignment.controller');
 const photoController = require('../controllers/photo.controller');
-const { categoryController, notificationController, userController } = require('../controllers/misc.controller');
+const {
+  categoryController,
+  notificationController,
+  userController,
+} = require('../controllers/misc.controller');
 const { authenticate, authorize, checkProjectAdmin } = require('../middleware/auth');
 const {
   assignmentValidation,
@@ -30,7 +34,7 @@ assignmentRouter.get(
   authorize('admin'),
   paginationValidation,
   validate,
-  asyncHandler(assignmentController.getManagedAssignments)
+  asyncHandler(assignmentController.getManagedAssignments),
 );
 
 // Get project assignments (project admin only)
@@ -39,7 +43,7 @@ assignmentRouter.get(
   uuidValidation('projectId'),
   validate,
   checkProjectAdmin,
-  asyncHandler(assignmentController.getProjectAssignments)
+  asyncHandler(assignmentController.getProjectAssignments),
 );
 
 // Create assignment (project admin only)
@@ -53,7 +57,7 @@ assignmentRouter.post(
   }),
   assignmentValidation.create,
   validate,
-  asyncHandler(assignmentController.createAssignment)
+  asyncHandler(assignmentController.createAssignment),
 );
 
 // Request to join project
@@ -66,7 +70,7 @@ assignmentRouter.post(
     resolveEntityId: (_req, _res, body) => body?.data?.id ?? null,
   }),
   validate,
-  asyncHandler(assignmentController.requestJoinProject)
+  asyncHandler(assignmentController.requestJoinProject),
 );
 
 // Approve/reject assignment (project admin only)
@@ -90,7 +94,7 @@ assignmentRouter.put(
   }),
   assignmentValidation.update,
   validate,
-  asyncHandler(assignmentController.updateAssignmentStatus)
+  asyncHandler(assignmentController.updateAssignmentStatus),
 );
 
 // Remove assignment (project admin only)
@@ -104,7 +108,7 @@ assignmentRouter.delete(
     resolveEntityId: (req) => req.params.assignmentId ?? null,
   }),
   validate,
-  asyncHandler(assignmentController.removeAssignment)
+  asyncHandler(assignmentController.removeAssignment),
 );
 
 // ============================================================================
@@ -119,7 +123,7 @@ photoRouter.post(
   uuidValidation('featureId'),
   validate,
   uploadMultiple,
-  asyncHandler(photoController.uploadPhotos)
+  asyncHandler(photoController.uploadPhotos),
 );
 
 // Get photos for a feature
@@ -127,7 +131,7 @@ photoRouter.get(
   '/feature/:featureId',
   uuidValidation('featureId'),
   validate,
-  asyncHandler(photoController.getFeaturePhotos)
+  asyncHandler(photoController.getFeaturePhotos),
 );
 
 // Get single photo (file)
@@ -135,7 +139,7 @@ photoRouter.get(
   '/:photoId',
   uuidValidation('photoId'),
   validate,
-  asyncHandler(photoController.getPhoto)
+  asyncHandler(photoController.getPhoto),
 );
 
 // Delete photo
@@ -143,7 +147,7 @@ photoRouter.delete(
   '/:photoId',
   uuidValidation('photoId'),
   validate,
-  asyncHandler(photoController.deletePhoto)
+  asyncHandler(photoController.deletePhoto),
 );
 
 // Update photo order
@@ -151,7 +155,7 @@ photoRouter.put(
   '/:photoId/order',
   uuidValidation('photoId'),
   validate,
-  asyncHandler(photoController.updatePhotoOrder)
+  asyncHandler(photoController.updatePhotoOrder),
 );
 
 // ============================================================================
@@ -168,7 +172,7 @@ categoryRouter.get(
   '/:categoryId',
   uuidValidation('categoryId'),
   validate,
-  asyncHandler(categoryController.getOne)
+  asyncHandler(categoryController.getOne),
 );
 
 // Create category (admin only)
@@ -182,7 +186,7 @@ categoryRouter.post(
   }),
   categoryValidation.create,
   validate,
-  asyncHandler(categoryController.create)
+  asyncHandler(categoryController.create),
 );
 
 // Update category (admin only)
@@ -196,7 +200,7 @@ categoryRouter.put(
   }),
   categoryValidation.update,
   validate,
-  asyncHandler(categoryController.update)
+  asyncHandler(categoryController.update),
 );
 
 // Delete category (admin only)
@@ -210,7 +214,7 @@ categoryRouter.delete(
     resolveEntityId: (req) => req.params.categoryId ?? null,
   }),
   validate,
-  asyncHandler(categoryController.delete)
+  asyncHandler(categoryController.delete),
 );
 
 // ============================================================================
@@ -224,7 +228,7 @@ notificationRouter.get(
   '/',
   paginationValidation,
   validate,
-  asyncHandler(notificationController.getAll)
+  asyncHandler(notificationController.getAll),
 );
 
 // Get unread count
@@ -235,7 +239,7 @@ notificationRouter.put(
   '/:notificationId/read',
   uuidValidation('notificationId'),
   validate,
-  asyncHandler(notificationController.markAsRead)
+  asyncHandler(notificationController.markAsRead),
 );
 
 // Mark all as read
@@ -246,7 +250,7 @@ notificationRouter.delete(
   '/:notificationId',
   uuidValidation('notificationId'),
   validate,
-  asyncHandler(notificationController.delete)
+  asyncHandler(notificationController.delete),
 );
 
 // ============================================================================
@@ -257,19 +261,14 @@ userRouter.use(authenticate);
 userRouter.use(authorize('admin'));
 
 // Get all users
-userRouter.get(
-  '/',
-  paginationValidation,
-  validate,
-  asyncHandler(userController.getAll)
-);
+userRouter.get('/', paginationValidation, validate, asyncHandler(userController.getAll));
 
 // Get contributor requests by workflow state
 userRouter.get(
   '/contributor-requests',
   paginationValidation,
   validate,
-  asyncHandler(userController.getContributorRequests)
+  asyncHandler(userController.getContributorRequests),
 );
 
 // Create admin user (protected super admin only)
@@ -282,16 +281,11 @@ userRouter.post(
   }),
   userValidation.createAdmin,
   validate,
-  asyncHandler(userController.createAdmin)
+  asyncHandler(userController.createAdmin),
 );
 
 // Get single user
-userRouter.get(
-  '/:userId',
-  uuidValidation('userId'),
-  validate,
-  asyncHandler(userController.getOne)
-);
+userRouter.get('/:userId', uuidValidation('userId'), validate, asyncHandler(userController.getOne));
 
 // Update user
 userRouter.put(
@@ -304,7 +298,15 @@ userRouter.put(
     resolveEntityId: (req) => req.params.userId ?? null,
   }),
   validate,
-  asyncHandler(userController.updateUser)
+  asyncHandler(userController.updateUser),
+);
+
+// Promote/revert admin role (protected super admin only)
+userRouter.post(
+  '/:userId/toggle-admin-role',
+  uuidValidation('userId'),
+  validate,
+  asyncHandler(userController.toggleAdminRole),
 );
 
 // Deactivate user
@@ -318,7 +320,7 @@ userRouter.post(
     resolveNewValues: () => ({ is_active: false }),
   }),
   validate,
-  asyncHandler(userController.deactivate)
+  asyncHandler(userController.deactivate),
 );
 
 // Approve contributor request
@@ -332,7 +334,7 @@ userRouter.post(
     resolveNewValues: () => ({ role: 'contributor', is_active: true }),
   }),
   validate,
-  asyncHandler(userController.approveContributor)
+  asyncHandler(userController.approveContributor),
 );
 
 // Reject contributor request and downgrade to viewer
@@ -346,7 +348,7 @@ userRouter.post(
     resolveNewValues: () => ({ role: 'viewer', is_active: true }),
   }),
   validate,
-  asyncHandler(userController.rejectContributor)
+  asyncHandler(userController.rejectContributor),
 );
 
 // Get user stats
@@ -354,7 +356,7 @@ userRouter.get(
   '/:userId/stats',
   uuidValidation('userId'),
   validate,
-  asyncHandler(userController.getUserStats)
+  asyncHandler(userController.getUserStats),
 );
 
 module.exports = {

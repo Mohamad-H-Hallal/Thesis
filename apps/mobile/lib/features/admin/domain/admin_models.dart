@@ -12,6 +12,8 @@ class ManagedUserSummary {
     required this.isActive,
     required this.isProtectedSuperAdmin,
     this.requestStatus,
+    this.previousAdminRole,
+    this.canToggleAdminRole = false,
   });
 
   final String id;
@@ -22,9 +24,12 @@ class ManagedUserSummary {
   final bool isActive;
   final bool isProtectedSuperAdmin;
   final ContributorRequestStatus? requestStatus;
+  final UserRole? previousAdminRole;
+  final bool canToggleAdminRole;
 
-  String get roleLabel =>
-      role == UserRole.admin && isProtectedSuperAdmin ? 'Super Admin' : role.label;
+  String get roleLabel => role == UserRole.admin && isProtectedSuperAdmin
+      ? 'Super Admin'
+      : role.label;
 }
 
 class ManagedAssignmentSummary {
@@ -101,6 +106,8 @@ class AdminDashboardSummary {
   const AdminDashboardSummary({
     required this.totalUsers,
     required this.adminCount,
+    required this.viewerCount,
+    required this.activeContributorCount,
     required this.pendingContributorRequests,
     required this.rejectedContributorRequests,
     required this.totalProjects,
@@ -109,6 +116,8 @@ class AdminDashboardSummary {
 
   final int totalUsers;
   final int adminCount;
+  final int viewerCount;
+  final int activeContributorCount;
   final int pendingContributorRequests;
   final int rejectedContributorRequests;
   final int totalProjects;

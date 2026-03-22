@@ -1,17 +1,49 @@
+class MapFeaturePhoto {
+  const MapFeaturePhoto({
+    required this.id,
+    required this.filePath,
+    this.thumbnailPath,
+    this.status,
+    this.takenAt,
+    this.displayOrder,
+  });
+
+  final String id;
+  final String filePath;
+  final String? thumbnailPath;
+  final String? status;
+  final DateTime? takenAt;
+  final int? displayOrder;
+}
+
 class MapFeatureSummary {
   const MapFeatureSummary({
     required this.id,
     required this.status,
     required this.geometry,
+    required this.attributes,
     this.collectedBy,
     this.reviewedBy,
+    this.reviewNotes,
+    this.accuracyMeters,
+    this.collectedAt,
+    this.submittedAt,
+    this.reviewedAt,
     this.photoCount = 0,
+    this.photos = const <MapFeaturePhoto>[],
   });
 
   final String id;
   final String status;
   final Map<String, dynamic> geometry;
+  final Map<String, dynamic> attributes;
   final String? collectedBy;
   final String? reviewedBy;
+  final String? reviewNotes;
+  final double? accuracyMeters;
+  final DateTime? collectedAt;
+  final DateTime? submittedAt;
+  final DateTime? reviewedAt;
   final int photoCount;
+  final List<MapFeaturePhoto> photos;
 }

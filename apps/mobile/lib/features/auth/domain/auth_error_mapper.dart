@@ -54,7 +54,9 @@ AuthFailure mapAuthDioException(
       );
     case 409:
       return AuthFailure(
-        responseMessage ?? 'An account with this email already exists.',
+        responseMessage == 'Email already registered'
+            ? 'This email is already registered.'
+            : (responseMessage ?? 'This email is already registered.'),
         statusCode: statusCode,
       );
     case 422:

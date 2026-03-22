@@ -37,6 +37,8 @@ class AdminDashboardScreen extends ConsumerWidget {
               children: [
                 _MetricCard(label: 'Users', value: '${summary.totalUsers}', icon: Icons.groups_outlined),
                 _MetricCard(label: 'Admins', value: '${summary.adminCount}', icon: Icons.admin_panel_settings_outlined),
+                _MetricCard(label: 'Viewers', value: '${summary.viewerCount}', icon: Icons.visibility_outlined),
+                _MetricCard(label: 'Active contributors', value: '${summary.activeContributorCount}', icon: Icons.edit_location_alt_outlined),
                 _MetricCard(label: 'Pending contributor requests', value: '${summary.pendingContributorRequests}', icon: Icons.person_add_alt_1_outlined),
                 _MetricCard(label: 'Rejected requests', value: '${summary.rejectedContributorRequests}', icon: Icons.person_off_outlined),
                 _MetricCard(label: 'Projects', value: '${summary.totalProjects}', icon: Icons.folder_outlined),

@@ -19,11 +19,12 @@ const assertProjectStatusTransition = (currentStatus: string, nextStatus: string
     return;
   }
 
-  const allowed = projectStatusTransitions[currentStatus as keyof typeof projectStatusTransitions] ?? [];
+  const allowed =
+    projectStatusTransitions[currentStatus as keyof typeof projectStatusTransitions] ?? [];
   if (!allowed.includes(nextStatus)) {
     throw new AppError(
       `Invalid project status transition from ${currentStatus} to ${nextStatus}`,
-      400
+      400,
     );
   }
 };
@@ -44,7 +45,8 @@ const ensureSchemaObject = (schema: unknown): void => {
 // Get all projects (filtered by user access)
 const getAllProjects = async (req, res) => {
   const { page = 1, limit = 20, status, category_id } = req.query;
-  const requestedScope = typeof req.query.access_scope === 'string' ? req.query.access_scope : undefined;
+  const requestedScope =
+    typeof req.query.access_scope === 'string' ? req.query.access_scope : undefined;
   const offset = (page - 1) * limit;
   const userId = req.user.id;
   const isAdmin = req.user.role === 'admin';
@@ -76,7 +78,7 @@ const getAllProjects = async (req, res) => {
      AND pa_user.user_id = $1
     WHERE 1=1
   `;
-  
+
   const params: unknown[] = [userId];
   let paramIndex = 2;
 
@@ -124,7 +126,7 @@ const getAllProjects = async (req, res) => {
      AND pa_user.user_id = $1
     WHERE 1=1
   `;
-  
+
   const countParams: unknown[] = [userId];
   let countParamIndex = 2;
 
@@ -189,7 +191,7 @@ const getProject = async (req, res) => {
        ON p.id = pa_user.project_id
       AND pa_user.user_id = $2
      WHERE p.id = $1`,
-    [projectId, userId]
+    [projectId, userId],
   );
 
   if (result.rows.length === 0) {
@@ -246,7 +248,7 @@ const createProject = async (req, res) => {
         min_photos,
         max_photos,
         visible_to_viewers,
-      ]
+      ],
     );
 
     await client.query(
@@ -254,7 +256,7 @@ const createProject = async (req, res) => {
         project_id, user_id, role, status, approved_by_user_id, approved_date
       )
       VALUES ($1, $2, 'admin', 'approved', $2, CURRENT_DATE)`,
-      [insertResult.rows[0].id, req.user.id]
+      [insertResult.rows[0].id, req.user.id],
     );
 
     return insertResult.rows[0];
@@ -297,7 +299,7 @@ const updateProject = async (req, res) => {
 
   const currentProjectResult = await query(
     'SELECT id, status, category_id FROM project WHERE id = $1',
-    [projectId]
+    [projectId],
   );
   if (currentProjectResult.rows.length === 0) {
     throw new AppError('Project not found', 404);
@@ -399,7 +401,7 @@ const deleteProject = async (req, res) => {
   await transaction(async (client) => {
     const projectStatusResult = await client.query(
       'SELECT id, status, name FROM project WHERE id = $1',
-      [projectId]
+      [projectId],
     );
 
     if (projectStatusResult.rows.length === 0) {
@@ -410,7 +412,7 @@ const deleteProject = async (req, res) => {
 
     const archived = await client.query(
       `UPDATE project SET status = 'archived' WHERE id = $1 RETURNING id, name`,
-      [projectId]
+      [projectId],
     );
 
     await client.query(
@@ -427,7 +429,7 @@ const deleteProject = async (req, res) => {
         projectId,
         'A project was archived and moved out of active operations.',
         JSON.stringify({ project_id: projectId, status: 'archived' }),
-      ]
+      ],
     );
 
     return archived.rows[0];
@@ -445,9 +447,7 @@ const deleteProject = async (req, res) => {
 const getProjectStats = async (req, res) => {
   const { projectId } = req.params;
 
-  const result = await query('SELECT * FROM project_statistics WHERE project_id = $1', [
-    projectId,
-  ]);
+  const result = await query('SELECT * FROM project_statistics WHERE project_id = $1', [projectId]);
 
   if (result.rows.length === 0) {
     throw new AppError('Project not found', 404);
@@ -468,10 +468,29 @@ const getProjectFeatures = async (req, res) => {
   let queryText = `
     SELECT sf.id, sf.status, sf.attributes, sf.accuracy_meters,
            sf.collected_at, sf.submitted_at, sf.reviewed_at,
+           sf.review_notes,
            ST_AsGeoJSON(sf.geom) as geometry,
            u.full_name as collected_by,
            r.full_name as reviewed_by,
-           (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) as photo_count
+           (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) as photo_count,
+           COALESCE(
+             (
+               SELECT json_agg(
+                 json_build_object(
+                   'id', ph.id,
+                   'file_path', ph.file_path,
+                   'thumbnail_path', ph.thumbnail_path,
+                   'status', ph.status,
+                   'taken_at', ph.taken_at,
+                   'display_order', ph.display_order
+                 )
+                 ORDER BY ph.display_order ASC, ph.uploaded_at ASC
+               )
+               FROM photo ph
+               WHERE ph.feature_id = sf.id
+             ),
+             '[]'::json
+           ) as photos
     FROM spatial_feature sf
     LEFT JOIN "user" u ON sf.collected_by_user_id = u.id
     LEFT JOIN "user" r ON sf.reviewed_by_user_id = r.id
@@ -496,6 +515,7 @@ const getProjectFeatures = async (req, res) => {
   const features = result.rows.map((row) => ({
     ...row,
     geometry: JSON.parse(row.geometry),
+    photos: Array.isArray(row.photos) ? row.photos : [],
   }));
 
   res.json({

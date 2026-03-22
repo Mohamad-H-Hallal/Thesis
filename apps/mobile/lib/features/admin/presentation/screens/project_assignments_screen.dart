@@ -31,7 +31,8 @@ class _ProjectAssignmentsScreenState
         .where(
           (user) =>
               user.isActive &&
-              (user.role == UserRole.admin || user.role == UserRole.contributor),
+              (user.role == UserRole.admin ||
+                  user.role == UserRole.contributor),
         )
         .toList(growable: false);
     if (eligibleUsers.isEmpty) {
@@ -60,6 +61,9 @@ class _ProjectAssignmentsScreenState
           ),
           child: StatefulBuilder(
             builder: (context, setSheetState) {
+              final selectedUser = eligibleUsers.firstWhere(
+                (user) => user.id == selectedUserId,
+              );
               return Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -78,6 +82,7 @@ class _ProjectAssignmentsScreenState
                             value: user.id,
                             child: Text(
                               '${user.fullName} • ${user.roleLabel}',
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                         )
@@ -86,17 +91,14 @@ class _ProjectAssignmentsScreenState
                       if (value == null) {
                         return;
                       }
-                      final selected = eligibleUsers.firstWhere(
-                        (user) => user.id == value,
+                      final user = eligibleUsers.firstWhere(
+                        (item) => item.id == value,
                       );
                       setSheetState(() {
                         selectedUserId = value;
-                        if (selected.role != UserRole.admin) {
-                          selectedRole = 'contributor';
-                        } else if (selectedRole != 'admin' &&
-                            selectedRole != 'contributor') {
-                          selectedRole = 'admin';
-                        }
+                        selectedRole = user.role == UserRole.admin
+                            ? 'admin'
+                            : 'contributor';
                       });
                     },
                   ),
@@ -107,10 +109,7 @@ class _ProjectAssignmentsScreenState
                         value: 'contributor',
                         label: Text('Contributor'),
                       ),
-                      if (eligibleUsers
-                              .firstWhere((user) => user.id == selectedUserId)
-                              .role ==
-                          UserRole.admin)
+                      if (selectedUser.role == UserRole.admin)
                         const ButtonSegment(
                           value: 'admin',
                           label: Text('Admin'),
@@ -118,9 +117,7 @@ class _ProjectAssignmentsScreenState
                     ],
                     selected: <String>{selectedRole},
                     onSelectionChanged: (selection) {
-                      setSheetState(() {
-                        selectedRole = selection.first;
-                      });
+                      setSheetState(() => selectedRole = selection.first);
                     },
                   ),
                   const SizedBox(height: AppSpacing.md),
@@ -150,15 +147,15 @@ class _ProjectAssignmentsScreenState
       return;
     }
 
-    setState(() {
-      _isSaving = true;
-    });
+    setState(() => _isSaving = true);
     try {
-      await ref.read(adminRepositoryProvider).createAssignment(
-        projectId: widget.projectId,
-        userId: selectedUserId,
-        role: selectedRole,
-      );
+      await ref
+          .read(adminRepositoryProvider)
+          .createAssignment(
+            projectId: widget.projectId,
+            userId: selectedUserId,
+            role: selectedRole,
+          );
       _invalidate();
       if (mounted) {
         AppSnackbar.showSuccess(context, 'Assignment created successfully.');
@@ -169,9 +166,7 @@ class _ProjectAssignmentsScreenState
       }
     } finally {
       if (mounted) {
-        setState(() {
-          _isSaving = false;
-        });
+        setState(() => _isSaving = false);
       }
     }
   }
@@ -180,14 +175,11 @@ class _ProjectAssignmentsScreenState
     ManagedAssignmentSummary assignment,
     String status,
   ) async {
-    setState(() {
-      _isSaving = true;
-    });
+    setState(() => _isSaving = true);
     try {
-      await ref.read(adminRepositoryProvider).updateAssignmentStatus(
-        assignmentId: assignment.id,
-        status: status,
-      );
+      await ref
+          .read(adminRepositoryProvider)
+          .updateAssignmentStatus(assignmentId: assignment.id, status: status);
       _invalidate();
       if (mounted) {
         AppSnackbar.showSuccess(context, 'Assignment $status successfully.');
@@ -198,17 +190,13 @@ class _ProjectAssignmentsScreenState
       }
     } finally {
       if (mounted) {
-        setState(() {
-          _isSaving = false;
-        });
+        setState(() => _isSaving = false);
       }
     }
   }
 
   Future<void> _removeAssignment(ManagedAssignmentSummary assignment) async {
-    setState(() {
-      _isSaving = true;
-    });
+    setState(() => _isSaving = true);
     try {
       await ref.read(adminRepositoryProvider).removeAssignment(assignment.id);
       _invalidate();
@@ -221,9 +209,7 @@ class _ProjectAssignmentsScreenState
       }
     } finally {
       if (mounted) {
-        setState(() {
-          _isSaving = false;
-        });
+        setState(() => _isSaving = false);
       }
     }
   }
@@ -238,7 +224,9 @@ class _ProjectAssignmentsScreenState
   @override
   Widget build(BuildContext context) {
     final projectAsync = ref.watch(projectByIdProvider(widget.projectId));
-    final assignmentsAsync = ref.watch(projectAssignmentsProvider(widget.projectId));
+    final assignmentsAsync = ref.watch(
+      projectAssignmentsProvider(widget.projectId),
+    );
     final usersAsync = ref.watch(managedUsersProvider);
 
     return projectAsync.when(
@@ -266,14 +254,14 @@ class _ProjectAssignmentsScreenState
               children: [
                 Expanded(
                   child: SectionHeader(
-                    title: 'Assignments',
+                    title: 'Project Assignments',
                     subtitle:
                         'Manage admin and contributor access for ${project.name}.',
                   ),
                 ),
                 usersAsync.maybeWhen(
                   data: (users) => AppButton(
-                    label: 'Assign user',
+                    label: 'Assign User',
                     icon: Icons.person_add_alt_1_outlined,
                     expand: false,
                     isLoading: _isSaving,
@@ -291,8 +279,9 @@ class _ProjectAssignmentsScreenState
                 title: 'Assignment list unavailable',
                 message: '$error',
                 actionLabel: 'Retry',
-                onAction: () =>
-                    ref.invalidate(projectAssignmentsProvider(widget.projectId)),
+                onAction: () => ref.invalidate(
+                  projectAssignmentsProvider(widget.projectId),
+                ),
               ),
               data: (assignments) {
                 if (assignments.isEmpty) {
@@ -315,49 +304,58 @@ class _ProjectAssignmentsScreenState
                               children: [
                                 Text(
                                   assignment.fullName,
-                                  style: Theme.of(context).textTheme.titleMedium,
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.titleMedium,
                                 ),
-                                const SizedBox(height: AppSpacing.xs),
+                                const SizedBox(height: 4),
                                 Text(assignment.email),
                                 const SizedBox(height: AppSpacing.sm),
                                 Wrap(
                                   spacing: 8,
                                   runSpacing: 8,
                                   children: [
-                                    Chip(label: Text(assignment.role)),
-                                    Chip(label: Text(assignment.status)),
+                                    Chip(
+                                      label: Text('Role: ${assignment.role}'),
+                                    ),
+                                    Chip(
+                                      label: Text(
+                                        'Status: ${assignment.status}',
+                                      ),
+                                    ),
                                   ],
                                 ),
                                 const SizedBox(height: AppSpacing.sm),
                                 Wrap(
-                                  spacing: AppSpacing.sm,
-                                  runSpacing: AppSpacing.sm,
+                                  spacing: 8,
+                                  runSpacing: 8,
                                   children: [
                                     if (assignment.status == 'pending')
                                       FilledButton.tonal(
                                         onPressed: _isSaving
                                             ? null
                                             : () => _updateAssignmentStatus(
-                                                  assignment,
-                                                  'approved',
-                                                ),
-                                        child: const Text('Approve'),
+                                                assignment,
+                                                'rejected',
+                                              ),
+                                        child: const Text('Reject'),
                                       ),
                                     if (assignment.status == 'pending')
-                                      FilledButton.tonal(
+                                      FilledButton(
                                         onPressed: _isSaving
                                             ? null
                                             : () => _updateAssignmentStatus(
-                                                  assignment,
-                                                  'rejected',
-                                                ),
-                                        child: const Text('Reject'),
+                                                assignment,
+                                                'approved',
+                                              ),
+                                        child: const Text('Approve'),
                                       ),
-                                    OutlinedButton(
+                                    OutlinedButton.icon(
                                       onPressed: _isSaving
                                           ? null
                                           : () => _removeAssignment(assignment),
-                                      child: const Text('Remove'),
+                                      icon: const Icon(Icons.delete_outline),
+                                      label: const Text('Remove'),
                                     ),
                                   ],
                                 ),
