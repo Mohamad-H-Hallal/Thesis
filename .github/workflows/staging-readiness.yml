@@ -1,5 +1,12 @@
 name: Staging Readiness
 
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-readiness-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
   schedule:

@@ -172,6 +172,39 @@ bash ./scripts/restore.sh ./backups/gis_app_YYYYMMDD_HHMMSS.dump
 - `docs/handover/06-admin-guide.md`
 - `docs/handover/07-field-collector-guide.md`
 - `docs/handover/08-reviewer-guide.md`
-- `docs/handover/09-android-emulator-guide.md`
+- `docs/handover/09-teammate-setup.md`
+- `docs/handover/10-android-emulator-testing.md`
 - `docs/handover/10-restore-drill-checklist.md`
 - `docs/handover/11-phase11-checklist.md`
+
+## Friend Handover Quick Start
+
+```powershell
+git clone https://github.com/Mohamad-H-Hallal/Thesis.git
+cd Thesis
+git checkout handover-ready
+Copy-Item .env.dev.example .env
+```
+
+Set in `.env`:
+
+```env
+SUPER_ADMIN_EMAIL=superadmin@gov.lb
+SUPER_ADMIN_PASSWORD=ChangeThis!Gov2026
+SUPER_ADMIN_FULL_NAME=GIS Super Administrator
+```
+
+Then run:
+
+```powershell
+docker compose up -d db migrate api
+Invoke-WebRequest http://localhost:3000/health
+
+cd apps\mobile
+flutter pub get
+flutter emulators --launch Pixel_7_Pro_API_34
+adb kill-server
+adb start-server
+adb devices
+flutter run -d emulator-5554 --dart-define=APP_FLAVOR=dev --dart-define=API_BASE_URL=http://10.0.2.2:3000
+```

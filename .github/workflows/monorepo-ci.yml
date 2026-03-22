@@ -1,9 +1,41 @@
-name: Monorepo CI
+name: Monorepo Validation
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monorepo-validation-${{ github.ref }}
+  cancel-in-progress: true
 
 on:
   push:
-    branches: ["**"]
+    paths:
+      - 'apps/mobile/**'
+      - '.github/workflows/monorepo-ci.yml'
+      - '.github/workflows/reusable-api-release-gate.yml'
+      - 'README.md'
+      - '.env.example'
+      - '.env.dev.example'
+      - '.env.staging.example'
+      - '.env.prod.example'
+      - 'compose.prod.yml'
+      - 'docker-compose.yml'
+      - 'docker-compose.override.yml'
+      - 'scripts/verify_all.ps1'
   pull_request:
+    paths:
+      - 'apps/mobile/**'
+      - '.github/workflows/monorepo-ci.yml'
+      - '.github/workflows/reusable-api-release-gate.yml'
+      - 'README.md'
+      - '.env.example'
+      - '.env.dev.example'
+      - '.env.staging.example'
+      - '.env.prod.example'
+      - 'compose.prod.yml'
+      - 'docker-compose.yml'
+      - 'docker-compose.override.yml'
+      - 'scripts/verify_all.ps1'
 
 jobs:
   api:

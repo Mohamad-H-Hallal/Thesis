@@ -1,5 +1,12 @@
 name: API CI
 
+permissions:
+  contents: read
+
+concurrency:
+  group: api-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     paths:

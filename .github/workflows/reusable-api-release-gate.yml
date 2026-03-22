@@ -1,5 +1,8 @@
 name: Reusable API Release Gate
 
+permissions:
+  contents: read
+
 on:
   workflow_call:
 
