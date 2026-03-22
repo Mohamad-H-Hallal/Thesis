@@ -7,75 +7,7 @@ on:
 
 jobs:
   api:
-    name: API Release Gate
-    runs-on: ubuntu-latest
-    services:
-      postgis:
-        image: postgis/postgis:16-3.4
-        env:
-          POSTGRES_DB: gis_app
-          POSTGRES_USER: gis_user
-          POSTGRES_PASSWORD: change_me
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U gis_user -d gis_app"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    defaults:
-      run:
-        working-directory: apps/api
-    env:
-      NODE_ENV: test
-      DB_HOST: localhost
-      DB_PORT: 5432
-      DB_NAME: gis_app
-      DB_USER: gis_user
-      DB_PASSWORD: change_me
-      JWT_SECRET: phase10-ci-jwt-secret-12345678901234567890
-      JWT_SECRET_CURRENT: phase10-ci-jwt-secret-12345678901234567890
-      JWT_REFRESH_SECRET: phase10-ci-refresh-secret-1234567890123456
-      JWT_REFRESH_SECRET_CURRENT: phase10-ci-refresh-secret-1234567890123456
-      CORS_ORIGIN: http://localhost:3000
-      CORS_STRICT: false
-      RATE_LIMIT_WINDOW_MS: 900000
-      RATE_LIMIT_MAX_REQUESTS: 1000
-      RATE_LIMIT_AUTH_MAX_REQUESTS: 1000
-      RATE_LIMIT_EXPORT_MAX_REQUESTS: 1000
-      PERF_BBOX_MAX_MS: 3000
-      PERF_EXPORT_MAX_MS: 45000
-      PERF_EXPORT_TIMEOUT_MS: 60000
-    steps:
-      - uses: actions/checkout@v5
-      - name: Setup Node
-        uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: apps/api/package-lock.json
-      - name: Validate CI environment
-        run: |
-          node -e "const required = ['DB_HOST','DB_PORT','DB_NAME','DB_USER','DB_PASSWORD','JWT_SECRET_CURRENT','JWT_REFRESH_SECRET_CURRENT']; const missing = required.filter((key) => !process.env[key]); if (missing.length) { console.error(`Missing required CI env vars: ${missing.join(', ')}`); process.exit(1); } console.log('CI environment validated');"
-      - name: Install
-        run: npm ci
-      - name: Wait for PostGIS
-        run: |
-          node -e "const { Client } = require('pg'); let retries = 30; const run = async () => { while (retries-- > 0) { const client = new Client({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT), database: process.env.DB_NAME, user: process.env.DB_USER, password: process.env.DB_PASSWORD }); try { await client.connect(); await client.query('select 1'); await client.end(); console.log('PostGIS is ready'); process.exit(0); } catch (err) { try { await client.end(); } catch {} if (retries <= 0) { console.error(err); process.exit(1); } await new Promise((r) => setTimeout(r, 2000)); } } }; run();"
-      - name: Migrate
-        run: npm run migrate
-      - name: OpenAPI Contract Check
-        run: npm run openapi:check
-      - name: Lint
-        run: npm run lint
-      - name: Typecheck
-        run: npm run typecheck
-      - name: Test (Unit/Integration/E2E)
-        run: npm run test:ci
-      - name: Test (Performance)
-        run: npm run test:perf
-      - name: Audit (Production deps)
-        run: npm run audit:prod
+    uses: ./.github/workflows/reusable-api-release-gate.yml
 
   mobile:
     name: Flutter Analyze + Test + Coverage Gate
