@@ -25,6 +25,7 @@ jest.setTimeout(90000);
 describe('Phase 10 performance: bbox query', () => {
   let contributorToken;
   let projectId;
+  let reviewerId;
 
   beforeAll(async () => {
     await resetDb();
@@ -33,6 +34,7 @@ describe('Phase 10 performance: bbox query', () => {
       fullName: 'BBox Perf Admin',
       emailPrefix: 'bbox-admin',
     });
+    reviewerId = admin.user.id;
     const contributor = await registerUser({
       role: 'contributor',
       fullName: 'BBox Perf Contributor',
@@ -81,7 +83,9 @@ describe('Phase 10 performance: bbox query', () => {
          geom,
          attributes,
          status,
-         collected_at
+         collected_at,
+         reviewed_at,
+         reviewed_by_user_id
        )
        SELECT
          $1,
@@ -95,9 +99,11 @@ describe('Phase 10 performance: bbox query', () => {
          ),
          jsonb_build_object('idx', g, 'species', 'olive'),
          'approved'::feature_status,
-         NOW() - (g || ' seconds')::interval
+         NOW() - (g || ' seconds')::interval,
+         NOW() - (g || ' seconds')::interval,
+         $4
        FROM generate_series(1, $3) AS g`,
-      [projectId, contributor.user.id, BBOX_FEATURE_COUNT]
+      [projectId, contributor.user.id, BBOX_FEATURE_COUNT, reviewerId],
     );
   });
 
@@ -146,7 +152,7 @@ describe('Phase 10 performance: bbox query', () => {
          AND sf.status = 'approved'
        ORDER BY sf.collected_at DESC
        LIMIT 100`,
-      [35.0, 33.0, 36.0, 34.0, projectId]
+      [35.0, 33.0, 36.0, 34.0, projectId],
     );
 
     const planRoot = explainResult.rows[0]['QUERY PLAN'][0].Plan;

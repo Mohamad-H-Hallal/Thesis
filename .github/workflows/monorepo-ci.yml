@@ -47,13 +47,16 @@ jobs:
       PERF_EXPORT_MAX_MS: 45000
       PERF_EXPORT_TIMEOUT_MS: 60000
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: apps/api/package-lock.json
+      - name: Validate CI environment
+        run: |
+          node -e "const required = ['DB_HOST','DB_PORT','DB_NAME','DB_USER','DB_PASSWORD','JWT_SECRET_CURRENT','JWT_REFRESH_SECRET_CURRENT']; const missing = required.filter((key) => !process.env[key]); if (missing.length) { console.error(`Missing required CI env vars: ${missing.join(', ')}`); process.exit(1); } console.log('CI environment validated');"
       - name: Install
         run: npm ci
       - name: Wait for PostGIS
@@ -83,7 +86,7 @@ jobs:
     env:
       MOBILE_MIN_LINE_COVERAGE: 19
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:

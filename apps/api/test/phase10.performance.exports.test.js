@@ -28,6 +28,7 @@ describe('Phase 10 performance: exports', () => {
   let contributor;
   let contributorToken;
   let projectId;
+  let reviewerId;
 
   beforeAll(async () => {
     await resetDb();
@@ -36,6 +37,7 @@ describe('Phase 10 performance: exports', () => {
       fullName: 'Export Perf Admin',
       emailPrefix: 'export-admin',
     });
+    reviewerId = admin.user.id;
     contributor = await registerUser({
       role: 'contributor',
       fullName: 'Export Perf Contributor',
@@ -84,7 +86,9 @@ describe('Phase 10 performance: exports', () => {
          geom,
          attributes,
          status,
-         collected_at
+         collected_at,
+         reviewed_at,
+         reviewed_by_user_id
        )
        SELECT
          $1,
@@ -98,9 +102,11 @@ describe('Phase 10 performance: exports', () => {
          ),
          jsonb_build_object('idx', g, 'species', 'apple', 'source', 'phase10-perf'),
          'approved'::feature_status,
-         NOW() - (g || ' seconds')::interval
+         NOW() - (g || ' seconds')::interval,
+         NOW() - (g || ' seconds')::interval,
+         $4
        FROM generate_series(1, $3) AS g`,
-      [projectId, contributor.user.id, EXPORT_FEATURE_COUNT]
+      [projectId, contributor.user.id, EXPORT_FEATURE_COUNT, reviewerId]
     );
   });
 
