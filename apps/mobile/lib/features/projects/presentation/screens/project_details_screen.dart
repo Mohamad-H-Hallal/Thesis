@@ -26,6 +26,7 @@ class ProjectDetailsScreen extends ConsumerStatefulWidget {
 
 class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
   bool _updatingVisibility = false;
+  bool _requestingAccess = false;
 
   Future<void> _toggleViewerVisibility(bool value) async {
     setState(() {
@@ -65,6 +66,33 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
     }
   }
 
+  Future<void> _requestProjectAccess() async {
+    setState(() => _requestingAccess = true);
+    try {
+      await ref
+          .read(projectsRepositoryProvider)
+          .requestProjectAccess(projectId: widget.projectId);
+      ref.invalidate(projectByIdProvider(widget.projectId));
+      ref.invalidate(projectListProvider(ProjectViewScope.public));
+      ref.invalidate(projectListProvider(ProjectViewScope.assigned));
+      ref.invalidate(managedAssignmentsProvider);
+      if (mounted) {
+        AppSnackbar.showSuccess(
+          context,
+          'Project access request submitted successfully.',
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(context, error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _requestingAccess = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = ref.watch(authControllerProvider).session;
@@ -93,6 +121,11 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
         final hasContributorAssignment =
             role == UserRole.contributor &&
             project.hasApprovedCurrentUserAssignment;
+        final contributorRequestStatus = project.currentUserAssignmentStatus;
+        final canRequestAccess =
+            role == UserRole.contributor &&
+            contributorRequestStatus == null &&
+            !project.hasApprovedCurrentUserAssignment;
 
         return ListView(
           children: [
@@ -210,6 +243,14 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                       icon: const Icon(Icons.add_location_alt_outlined),
                       label: const Text('New Feature'),
                     ),
+                  if (canRequestAccess)
+                    FilledButton.tonalIcon(
+                      onPressed: _requestingAccess ? null : _requestProjectAccess,
+                      icon: const Icon(Icons.how_to_reg_outlined),
+                      label: Text(
+                        _requestingAccess ? 'Submitting...' : 'Request Access',
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -247,14 +288,30 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                 ),
               ),
             if (role == UserRole.contributor && !hasContributorAssignment)
-              const AnimatedReveal(
+              AnimatedReveal(
                 delay: Duration(milliseconds: 190),
                 child: AppCard(
                   child: ListTile(
-                    leading: Icon(Icons.lock_outline),
-                    title: Text('Assignment required'),
+                    leading: Icon(
+                      contributorRequestStatus == ProjectAssignmentStatus.rejected
+                          ? Icons.cancel_outlined
+                          : contributorRequestStatus == ProjectAssignmentStatus.pending
+                              ? Icons.hourglass_bottom
+                              : Icons.lock_outline,
+                    ),
+                    title: Text(
+                      contributorRequestStatus == ProjectAssignmentStatus.rejected
+                          ? 'Project access was rejected'
+                          : contributorRequestStatus == ProjectAssignmentStatus.pending
+                              ? 'Project access pending'
+                              : 'Assignment required',
+                    ),
                     subtitle: Text(
-                      'This public project is visible to you, but collection actions stay disabled until an admin approves your assignment.',
+                      contributorRequestStatus == ProjectAssignmentStatus.rejected
+                          ? 'An admin rejected your previous request. The request stays visible in Requests until it is re-approved.'
+                          : contributorRequestStatus == ProjectAssignmentStatus.pending
+                              ? 'Your access request is waiting for admin approval.'
+                              : 'This public project is visible to you, but collection actions stay disabled until an admin approves your assignment.',
                     ),
                   ),
                 ),

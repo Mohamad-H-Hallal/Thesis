@@ -177,9 +177,15 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
                                       !isAssignedView)
                                     Chip(
                                       label: Text(
-                                        contributorReadOnly
-                                            ? 'Read-only public view'
-                                            : 'Also assigned',
+                                        project.currentUserAssignmentStatus ==
+                                                ProjectAssignmentStatus.pending
+                                            ? 'Access request pending'
+                                            : project.currentUserAssignmentStatus ==
+                                                    ProjectAssignmentStatus.rejected
+                                                ? 'Access request rejected'
+                                                : contributorReadOnly
+                                                    ? 'Read-only public view'
+                                                    : 'Also assigned',
                                       ),
                                     ),
                                   if (role == UserRole.admin)

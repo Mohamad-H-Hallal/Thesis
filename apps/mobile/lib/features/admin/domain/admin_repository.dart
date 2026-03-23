@@ -1,8 +1,14 @@
 import 'admin_models.dart';
+import '../../auth/domain/auth_models.dart';
 import '../../projects/domain/project.dart';
 
 abstract class AdminRepository {
-  Future<List<ManagedUserSummary>> fetchUsers();
+  Future<List<ManagedUserSummary>> fetchUsers({
+    String? query,
+    UserRole? role,
+    UserAccountState? state,
+    bool? isActive,
+  });
 
   Future<List<ManagedUserSummary>> fetchContributorRequests({
     required ContributorRequestStatus status,
@@ -21,7 +27,13 @@ abstract class AdminRepository {
 
   Future<ManagedUserSummary> toggleAdminRole(String userId);
 
-  Future<List<ManagedAssignmentSummary>> fetchManagedAssignments();
+  Future<ManagedUserSummary> blockUser(String userId);
+
+  Future<ManagedUserSummary> unblockUser(String userId);
+
+  Future<List<ManagedAssignmentSummary>> fetchManagedAssignments({
+    String? status,
+  });
 
   Future<List<ProjectCategorySummary>> fetchCategories();
 

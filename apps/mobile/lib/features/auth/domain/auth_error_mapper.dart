@@ -31,6 +31,12 @@ AuthFailure mapAuthDioException(
       );
     case 403:
       final normalized = (responseMessage ?? '').toLowerCase();
+      if (normalized.contains('blocked')) {
+        return const AuthFailure(
+          'Your account has been blocked.',
+          statusCode: 403,
+        );
+      }
       if (normalized.contains('pending approval')) {
         return const AuthFailure(
           'Your request is still pending approval. You cannot log in yet.',

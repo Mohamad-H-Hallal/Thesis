@@ -184,6 +184,9 @@ class _FakeProjectsRepository implements ProjectsRepository {
 
     return _projects.firstWhere((project) => project.id == projectId);
   }
+
+  @override
+  Future<void> requestProjectAccess({required String projectId}) async {}
 }
 
 AuthSession _sessionForRole(UserRole role, {String userId = 'user-1'}) {

@@ -293,84 +293,167 @@ class _ProjectAssignmentsScreenState
                   );
                 }
 
+                final approved = assignments
+                    .where((item) => item.status == 'approved')
+                    .toList(growable: false);
+                final pending = assignments
+                    .where((item) => item.status == 'pending')
+                    .toList(growable: false);
+                final rejected = assignments
+                    .where((item) => item.status == 'rejected')
+                    .toList(growable: false);
+
                 return Column(
-                  children: assignments
-                      .map(
-                        (assignment) => Padding(
-                          padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                          child: AppCard(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  assignment.fullName,
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.titleMedium,
-                                ),
-                                const SizedBox(height: 4),
-                                Text(assignment.email),
-                                const SizedBox(height: AppSpacing.sm),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 8,
-                                  children: [
-                                    Chip(
-                                      label: Text('Role: ${assignment.role}'),
-                                    ),
-                                    Chip(
-                                      label: Text(
-                                        'Status: ${assignment.status}',
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: AppSpacing.sm),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 8,
-                                  children: [
-                                    if (assignment.status == 'pending')
-                                      FilledButton.tonal(
-                                        onPressed: _isSaving
-                                            ? null
-                                            : () => _updateAssignmentStatus(
-                                                assignment,
-                                                'rejected',
-                                              ),
-                                        child: const Text('Reject'),
-                                      ),
-                                    if (assignment.status == 'pending')
-                                      FilledButton(
-                                        onPressed: _isSaving
-                                            ? null
-                                            : () => _updateAssignmentStatus(
-                                                assignment,
-                                                'approved',
-                                              ),
-                                        child: const Text('Approve'),
-                                      ),
-                                    OutlinedButton.icon(
-                                      onPressed: _isSaving
-                                          ? null
-                                          : () => _removeAssignment(assignment),
-                                      icon: const Icon(Icons.delete_outline),
-                                      label: const Text('Remove'),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      )
-                      .toList(growable: false),
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (pending.isNotEmpty)
+                      _AssignmentSection(
+                        title: 'Pending requests',
+                        children: pending
+                            .map((assignment) => _AssignmentCard(
+                                  assignment: assignment,
+                                  isSaving: _isSaving,
+                                  onApprove: () => _updateAssignmentStatus(
+                                    assignment,
+                                    'approved',
+                                  ),
+                                  onReject: () => _updateAssignmentStatus(
+                                    assignment,
+                                    'rejected',
+                                  ),
+                                  onRemove: () => _removeAssignment(assignment),
+                                ))
+                            .toList(growable: false),
+                      ),
+                    if (approved.isNotEmpty)
+                      _AssignmentSection(
+                        title: 'Approved assignments',
+                        children: approved
+                            .map((assignment) => _AssignmentCard(
+                                  assignment: assignment,
+                                  isSaving: _isSaving,
+                                  onRemove: () => _removeAssignment(assignment),
+                                ))
+                            .toList(growable: false),
+                      ),
+                    if (rejected.isNotEmpty)
+                      _AssignmentSection(
+                        title: 'Rejected requests',
+                        children: rejected
+                            .map((assignment) => _AssignmentCard(
+                                  assignment: assignment,
+                                  isSaving: _isSaving,
+                                  onApprove: () => _updateAssignmentStatus(
+                                    assignment,
+                                    'approved',
+                                  ),
+                                  onRemove: () => _removeAssignment(assignment),
+                                ))
+                            .toList(growable: false),
+                      ),
+                  ],
                 );
               },
             ),
           ],
         );
       },
+    );
+  }
+}
+
+class _AssignmentSection extends StatelessWidget {
+  const _AssignmentSection({required this.title, required this.children});
+
+  final String title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: AppSpacing.sm),
+          ...children.map(
+            (child) => Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+              child: child,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AssignmentCard extends StatelessWidget {
+  const _AssignmentCard({
+    required this.assignment,
+    required this.isSaving,
+    this.onApprove,
+    this.onReject,
+    this.onRemove,
+  });
+
+  final ManagedAssignmentSummary assignment;
+  final bool isSaving;
+  final VoidCallback? onApprove;
+  final VoidCallback? onReject;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            assignment.fullName,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 4),
+          Text(assignment.email),
+          const SizedBox(height: AppSpacing.sm),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              Chip(label: Text('Role: ${assignment.role}')),
+              Chip(label: Text('Status: ${assignment.status}')),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (onReject != null)
+                FilledButton.tonal(
+                  onPressed: isSaving ? null : onReject,
+                  child: const Text('Reject'),
+                ),
+              if (onApprove != null)
+                FilledButton(
+                  onPressed: isSaving ? null : onApprove,
+                  child: Text(
+                    assignment.status == 'rejected' ? 'Re-approve' : 'Approve',
+                  ),
+                ),
+              if (onRemove != null)
+                OutlinedButton.icon(
+                  onPressed: isSaving ? null : onRemove,
+                  icon: const Icon(Icons.delete_outline),
+                  label: Text(
+                    assignment.status == 'approved' ? 'Unassign' : 'Remove',
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

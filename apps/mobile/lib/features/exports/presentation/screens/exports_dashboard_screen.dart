@@ -238,7 +238,7 @@ class _ExportsDashboardScreenState
                     child: FilledButton.icon(
                       onPressed: exportState.isSubmitting
                           ? null
-                          : () => _submit(controller, exportState),
+                          : () => _submit(controller),
                       icon: const Icon(Icons.playlist_add),
                       label: Text(
                         exportState.isSubmitting
@@ -300,24 +300,43 @@ class _ExportsDashboardScreenState
 
   Future<void> _submit(
     ExportsController controller,
-    ExportsState exportState,
   ) async {
     final projectId = _selectedProjectId;
     if (projectId == null || projectId.isEmpty) {
       AppSnackbar.showError(context, 'Select a project first.');
       return;
     }
-    await controller.requestExport(
+    final fromDate = _fromDateController.text.trim();
+    final toDate = _toDateController.text.trim();
+    final bbox = _bboxController.text.trim();
+
+    if (fromDate.isNotEmpty && !_isIsoDate(fromDate)) {
+      AppSnackbar.showError(context, 'From date must use YYYY-MM-DD.');
+      return;
+    }
+    if (toDate.isNotEmpty && !_isIsoDate(toDate)) {
+      AppSnackbar.showError(context, 'To date must use YYYY-MM-DD.');
+      return;
+    }
+    if (bbox.isNotEmpty && !_isBbox(bbox)) {
+      AppSnackbar.showError(
+        context,
+        'BBOX must use minLon,minLat,maxLon,maxLat.',
+      );
+      return;
+    }
+
+    final success = await controller.requestExport(
       projectId: projectId,
       projectName: _selectedProjectName,
       format: _selectedFormat,
       exportParameters: <String, dynamic>{
-        'date_from': _fromDateController.text.trim(),
-        'date_to': _toDateController.text.trim(),
-        'bbox': _bboxController.text.trim(),
+        'date_from': fromDate,
+        'date_to': toDate,
+        'bbox': bbox,
       },
     );
-    if (mounted && exportState.error == null) {
+    if (mounted && success) {
       AppSnackbar.showSuccess(context, 'Export request added to queue.');
     }
   }
@@ -476,4 +495,16 @@ String _formatBytes(int bytes) {
     return '${(bytes / 1024).toStringAsFixed(1)} KB';
   }
   return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+}
+
+bool _isIsoDate(String value) {
+  return RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value);
+}
+
+bool _isBbox(String value) {
+  final parts = value.split(',');
+  if (parts.length != 4) {
+    return false;
+  }
+  return parts.every((part) => double.tryParse(part.trim()) != null);
 }

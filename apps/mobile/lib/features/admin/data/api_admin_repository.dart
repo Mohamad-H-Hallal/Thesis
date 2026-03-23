@@ -1,3 +1,5 @@
+import 'package:dio/dio.dart';
+
 import '../../../core/config/app_env.dart';
 import '../../../core/network/api_client.dart';
 import '../../auth/domain/auth_models.dart';
@@ -16,29 +18,51 @@ class ApiAdminRepository implements AdminRepository {
   String get _categoriesBasePath => '${AppEnv.apiVersionPrefix}/categories';
 
   @override
-  Future<List<ManagedUserSummary>> fetchUsers() async {
-    final response = await _apiClient.dio.get<Map<String, dynamic>>(
-      _usersBasePath,
-      queryParameters: const <String, dynamic>{'limit': 100},
-    );
-    final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
-    return rows
-        .map((row) => _toManagedUser(Map<String, dynamic>.from(row as Map)))
-        .toList(growable: false);
+  Future<List<ManagedUserSummary>> fetchUsers({
+    String? query,
+    UserRole? role,
+    UserAccountState? state,
+    bool? isActive,
+  }) async {
+    return _run(() async {
+      final queryParameters = <String, dynamic>{'limit': 100};
+      if (query?.trim().isNotEmpty ?? false) {
+        queryParameters['q'] = query!.trim();
+      }
+      if (role != null) {
+        queryParameters['role'] = _roleValue(role);
+      }
+      if (state != null) {
+        queryParameters['state'] = state.name;
+      }
+      if (isActive != null) {
+        queryParameters['is_active'] = isActive;
+      }
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        _usersBasePath,
+        queryParameters: queryParameters,
+      );
+      final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
+      return rows
+          .map((row) => _toManagedUser(Map<String, dynamic>.from(row as Map)))
+          .toList(growable: false);
+    }, fallback: 'Unable to load users.');
   }
 
   @override
   Future<List<ManagedUserSummary>> fetchContributorRequests({
     required ContributorRequestStatus status,
   }) async {
-    final response = await _apiClient.dio.get<Map<String, dynamic>>(
-      '$_usersBasePath/contributor-requests',
-      queryParameters: <String, dynamic>{'status': status.name, 'limit': 100},
-    );
-    final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
-    return rows
-        .map((row) => _toManagedUser(Map<String, dynamic>.from(row as Map)))
-        .toList(growable: false);
+    return _run(() async {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_usersBasePath/contributor-requests',
+        queryParameters: <String, dynamic>{'status': status.name, 'limit': 100},
+      );
+      final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
+      return rows
+          .map((row) => _toManagedUser(Map<String, dynamic>.from(row as Map)))
+          .toList(growable: false);
+    }, fallback: 'Unable to load contributor requests.');
   }
 
   @override
@@ -48,77 +72,122 @@ class ApiAdminRepository implements AdminRepository {
     required String password,
     String? phone,
   }) async {
-    final response = await _apiClient.dio.post<Map<String, dynamic>>(
-      '$_usersBasePath/admin',
-      data: <String, dynamic>{
-        'full_name': fullName,
-        'email': email,
-        'password': password,
-        'phone': phone,
-      },
-    );
-    final row = Map<String, dynamic>.from(
-      response.data?['data'] as Map? ?? const <String, dynamic>{},
-    );
-    return _toManagedUser(row);
+    return _run(() async {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_usersBasePath/admin',
+        data: <String, dynamic>{
+          'full_name': fullName,
+          'email': email,
+          'password': password,
+          'phone': phone,
+        },
+      );
+      final row = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return _toManagedUser(row);
+    }, fallback: 'Unable to create admin account.');
   }
 
   @override
   Future<ManagedUserSummary> approveContributor(String userId) async {
-    final response = await _apiClient.dio.post<Map<String, dynamic>>(
-      '$_usersBasePath/$userId/approve-contributor',
-    );
-    final row = Map<String, dynamic>.from(
-      response.data?['data'] as Map? ?? const <String, dynamic>{},
-    );
-    return _toManagedUser(row);
+    return _run(() async {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_usersBasePath/$userId/approve-contributor',
+      );
+      final row = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return _toManagedUser(row);
+    }, fallback: 'Unable to approve contributor request.');
   }
 
   @override
   Future<ManagedUserSummary> rejectContributor(String userId) async {
-    final response = await _apiClient.dio.post<Map<String, dynamic>>(
-      '$_usersBasePath/$userId/reject-contributor',
-    );
-    final row = Map<String, dynamic>.from(
-      response.data?['data'] as Map? ?? const <String, dynamic>{},
-    );
-    return _toManagedUser(row);
+    return _run(() async {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_usersBasePath/$userId/reject-contributor',
+      );
+      final row = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return _toManagedUser(row);
+    }, fallback: 'Unable to reject contributor request.');
   }
 
   @override
   Future<ManagedUserSummary> toggleAdminRole(String userId) async {
-    final response = await _apiClient.dio.post<Map<String, dynamic>>(
-      '$_usersBasePath/$userId/toggle-admin-role',
-    );
-    final row = Map<String, dynamic>.from(
-      response.data?['data'] as Map? ?? const <String, dynamic>{},
-    );
-    return _toManagedUser(row);
+    return _run(() async {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_usersBasePath/$userId/toggle-admin-role',
+      );
+      final row = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return _toManagedUser(row);
+    }, fallback: 'Unable to update admin role.');
   }
 
   @override
-  Future<List<ManagedAssignmentSummary>> fetchManagedAssignments() async {
-    final response = await _apiClient.dio.get<Map<String, dynamic>>(
-      '$_assignmentsBasePath/managed',
-      queryParameters: const <String, dynamic>{'limit': 100},
-    );
-    final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
-    return rows
-        .map(
-          (row) => _toManagedAssignment(Map<String, dynamic>.from(row as Map)),
-        )
-        .toList(growable: false);
+  Future<ManagedUserSummary> blockUser(String userId) async {
+    return _run(() async {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_usersBasePath/$userId/block',
+      );
+      final row = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return _toManagedUser(row);
+    }, fallback: 'Unable to block user.');
+  }
+
+  @override
+  Future<ManagedUserSummary> unblockUser(String userId) async {
+    return _run(() async {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_usersBasePath/$userId/unblock',
+      );
+      final row = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return _toManagedUser(row);
+    }, fallback: 'Unable to unblock user.');
+  }
+
+  @override
+  Future<List<ManagedAssignmentSummary>> fetchManagedAssignments({
+    String? status,
+  }) async {
+    return _run(() async {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_assignmentsBasePath/managed',
+        queryParameters: <String, dynamic>{
+          'limit': 100,
+          if (status != null && status.trim().isNotEmpty) 'status': status,
+        },
+      );
+      final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
+      return rows
+          .map(
+            (row) => _toManagedAssignment(Map<String, dynamic>.from(row as Map)),
+          )
+          .toList(growable: false);
+    }, fallback: 'Unable to load project requests.');
   }
 
   @override
   Future<List<ProjectCategorySummary>> fetchCategories() async {
-    final response = await _apiClient.dio.get<Map<String, dynamic>>(
-      _categoriesBasePath,
-    );
-    final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
-    return rows
-        .map((row) => _toProjectCategory(Map<String, dynamic>.from(row as Map)))
-        .toList(growable: false);
+    return _run(() async {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        _categoriesBasePath,
+      );
+      final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
+      return rows
+          .map(
+            (row) => _toProjectCategory(Map<String, dynamic>.from(row as Map)),
+          )
+          .toList(growable: false);
+    }, fallback: 'Unable to load categories.');
   }
 
   @override
@@ -127,18 +196,20 @@ class ApiAdminRepository implements AdminRepository {
     String? description,
     String? iconUrl,
   }) async {
-    final response = await _apiClient.dio.post<Map<String, dynamic>>(
-      _categoriesBasePath,
-      data: <String, dynamic>{
-        'name': name,
-        'description': description,
-        'icon_url': iconUrl,
-      },
-    );
-    final row = Map<String, dynamic>.from(
-      response.data?['data'] as Map? ?? const <String, dynamic>{},
-    );
-    return _toProjectCategory(row);
+    return _run(() async {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        _categoriesBasePath,
+        data: <String, dynamic>{
+          'name': name,
+          'description': description,
+          'icon_url': iconUrl,
+        },
+      );
+      final row = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return _toProjectCategory(row);
+    }, fallback: 'Unable to create category.');
   }
 
   @override
@@ -148,18 +219,20 @@ class ApiAdminRepository implements AdminRepository {
     String? description,
     String? iconUrl,
   }) async {
-    final response = await _apiClient.dio.put<Map<String, dynamic>>(
-      '$_categoriesBasePath/$categoryId',
-      data: <String, dynamic>{
-        'name': name,
-        'description': description,
-        'icon_url': iconUrl,
-      },
-    );
-    final row = Map<String, dynamic>.from(
-      response.data?['data'] as Map? ?? const <String, dynamic>{},
-    );
-    return _toProjectCategory(row);
+    return _run(() async {
+      final response = await _apiClient.dio.put<Map<String, dynamic>>(
+        '$_categoriesBasePath/$categoryId',
+        data: <String, dynamic>{
+          'name': name,
+          'description': description,
+          'icon_url': iconUrl,
+        },
+      );
+      final row = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return _toProjectCategory(row);
+    }, fallback: 'Unable to update category.');
   }
 
   @override
@@ -181,20 +254,22 @@ class ApiAdminRepository implements AdminRepository {
             collectionFormSchema: input.collectionFormSchema,
           );
 
-    final response = await _apiClient.dio.post<Map<String, dynamic>>(
-      _projectsBasePath,
-      data: _projectPayload(initialInput),
-    );
-    final row = Map<String, dynamic>.from(
-      response.data?['data'] as Map? ?? const <String, dynamic>{},
-    );
-    final createdProject = _toProjectSummary(row);
+    return _run(() async {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        _projectsBasePath,
+        data: _projectPayload(initialInput),
+      );
+      final row = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      final createdProject = _toProjectSummary(row);
 
-    if (input.status == 'draft') {
-      return createdProject;
-    }
+      if (input.status == 'draft') {
+        return createdProject;
+      }
 
-    return updateProject(projectId: createdProject.id, input: input);
+      return updateProject(projectId: createdProject.id, input: input);
+    }, fallback: 'Unable to create project.');
   }
 
   @override
@@ -202,40 +277,45 @@ class ApiAdminRepository implements AdminRepository {
     required String projectId,
     required ProjectProvisioningInput input,
   }) async {
-    final response = await _apiClient.dio.put<Map<String, dynamic>>(
-      '$_projectsBasePath/$projectId',
-      data: _projectPayload(input),
-    );
-    final row = Map<String, dynamic>.from(
-      response.data?['data'] as Map? ?? const <String, dynamic>{},
-    );
-    return _toProjectSummary(row);
+    return _run(() async {
+      final response = await _apiClient.dio.put<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId',
+        data: _projectPayload(input),
+      );
+      final row = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return _toProjectSummary(row);
+    }, fallback: 'Unable to update project.');
   }
 
   @override
   Future<void> archiveProject(String projectId) async {
-    await _apiClient.dio.delete<void>('$_projectsBasePath/$projectId');
+    return _run(() async {
+      await _apiClient.dio.delete<void>('$_projectsBasePath/$projectId');
+    }, fallback: 'Unable to archive project.');
   }
 
   @override
   Future<List<ManagedAssignmentSummary>> fetchProjectAssignments(
     String projectId,
   ) async {
-    final response = await _apiClient.dio.get<Map<String, dynamic>>(
-      '$_assignmentsBasePath/project/$projectId',
-      queryParameters: const <String, dynamic>{'limit': 100},
-    );
-    final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
-    return rows
-        .map(
-          (row) => _toManagedAssignment(
-            Map<String, dynamic>.from(row as Map)
-              ..putIfAbsent('project_id', () => projectId)
-              ..putIfAbsent('project_name', () => '')
-              ..putIfAbsent('project_status', () => ''),
-          ),
-        )
-        .toList(growable: false);
+    return _run(() async {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_assignmentsBasePath/project/$projectId',
+      );
+      final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
+      return rows
+          .map(
+            (row) => _toManagedAssignment(
+              Map<String, dynamic>.from(row as Map)
+                ..putIfAbsent('project_id', () => projectId)
+                ..putIfAbsent('project_name', () => '')
+                ..putIfAbsent('project_status', () => ''),
+            ),
+          )
+          .toList(growable: false);
+    }, fallback: 'Unable to load project assignments.');
   }
 
   @override
@@ -244,23 +324,25 @@ class ApiAdminRepository implements AdminRepository {
     required String userId,
     required String role,
   }) async {
-    final response = await _apiClient.dio.post<Map<String, dynamic>>(
-      _assignmentsBasePath,
-      data: <String, dynamic>{
-        'project_id': projectId,
-        'user_id': userId,
-        'role': role,
-      },
-    );
-    final row = Map<String, dynamic>.from(
-      response.data?['data'] as Map? ?? const <String, dynamic>{},
-    );
-    return _toManagedAssignment(
-      row
-        ..putIfAbsent('project_id', () => projectId)
-        ..putIfAbsent('project_name', () => '')
-        ..putIfAbsent('project_status', () => ''),
-    );
+    return _run(() async {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        _assignmentsBasePath,
+        data: <String, dynamic>{
+          'project_id': projectId,
+          'user_id': userId,
+          'role': role,
+        },
+      );
+      final row = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return _toManagedAssignment(
+        row
+          ..putIfAbsent('project_id', () => projectId)
+          ..putIfAbsent('project_name', () => '')
+          ..putIfAbsent('project_status', () => ''),
+      );
+    }, fallback: 'Unable to create project assignment.');
   }
 
   @override
@@ -268,19 +350,23 @@ class ApiAdminRepository implements AdminRepository {
     required String assignmentId,
     required String status,
   }) async {
-    final response = await _apiClient.dio.put<Map<String, dynamic>>(
-      '$_assignmentsBasePath/$assignmentId',
-      data: <String, dynamic>{'status': status},
-    );
-    final row = Map<String, dynamic>.from(
-      response.data?['data'] as Map? ?? const <String, dynamic>{},
-    );
-    return _toManagedAssignment(row);
+    return _run(() async {
+      final response = await _apiClient.dio.put<Map<String, dynamic>>(
+        '$_assignmentsBasePath/$assignmentId',
+        data: <String, dynamic>{'status': status},
+      );
+      final row = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return _toManagedAssignment(row);
+    }, fallback: 'Unable to update assignment status.');
   }
 
   @override
   Future<void> removeAssignment(String assignmentId) async {
-    await _apiClient.dio.delete<void>('$_assignmentsBasePath/$assignmentId');
+    return _run(() async {
+      await _apiClient.dio.delete<void>('$_assignmentsBasePath/$assignmentId');
+    }, fallback: 'Unable to remove assignment.');
   }
 
   @override
@@ -332,8 +418,13 @@ class ApiAdminRepository implements AdminRepository {
       isActive: (row['is_active'] as bool?) ?? false,
       isProtectedSuperAdmin:
           (row['is_protected_super_admin'] as bool?) ?? false,
+      accountState: _toAccountState(row['account_state'] as String?),
+      isBlocked: (row['is_blocked'] as bool?) ?? false,
       previousAdminRole: _toOptionalRole(row['previous_admin_role'] as String?),
       canToggleAdminRole: (row['can_toggle_admin_role'] as bool?) ?? false,
+      canBlock: !((row['is_blocked'] as bool?) ?? false) &&
+          !((row['is_protected_super_admin'] as bool?) ?? false),
+      canUnblock: (row['is_blocked'] as bool?) ?? false,
       requestStatus: requestStatusRaw == null
           ? null
           : ContributorRequestStatus.values.byName(requestStatusRaw),
@@ -532,5 +623,62 @@ class ApiAdminRepository implements AdminRepository {
       return null;
     }
     return _toRole(raw);
+  }
+
+  UserAccountState _toAccountState(String? raw) {
+    switch (raw) {
+      case 'pending':
+        return UserAccountState.pending;
+      case 'rejected':
+        return UserAccountState.rejected;
+      case 'blocked':
+        return UserAccountState.blocked;
+      case 'inactive':
+        return UserAccountState.inactive;
+      default:
+        return UserAccountState.active;
+    }
+  }
+
+  String _roleValue(UserRole role) {
+    switch (role) {
+      case UserRole.admin:
+        return 'admin';
+      case UserRole.viewer:
+        return 'viewer';
+      case UserRole.contributor:
+        return 'contributor';
+    }
+  }
+
+  Future<T> _run<T>(
+    Future<T> Function() action, {
+    required String fallback,
+  }) async {
+    try {
+      return await action();
+    } on DioException catch (error) {
+      throw _messageFrom(error, fallback);
+    }
+  }
+
+  String _messageFrom(DioException error, String fallback) {
+    final data = error.response?.data;
+    if (data is Map<String, dynamic>) {
+      final message = data['message'] ?? data['error'];
+      if (message is String && message.trim().isNotEmpty) {
+        if (message.trim() == 'Email already registered') {
+          return 'This email is already registered.';
+        }
+        return message.trim();
+      }
+    }
+    if (data is String && data.trim().isNotEmpty) {
+      if (data.trim() == 'Email already registered') {
+        return 'This email is already registered.';
+      }
+      return data.trim();
+    }
+    return fallback;
   }
 }

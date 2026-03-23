@@ -44,7 +44,7 @@ class ApiReviewRepository implements ReviewRepository {
         );
       }).toList(growable: false);
     } on DioException catch (error) {
-      throw Exception(_messageFrom(error, 'Review queue request failed.'));
+      throw _messageFrom(error, 'Review queue request failed.');
     }
   }
 
@@ -63,7 +63,7 @@ class ApiReviewRepository implements ReviewRepository {
         },
       );
     } on DioException catch (error) {
-      throw Exception(_messageFrom(error, 'Feature review update failed.'));
+      throw _messageFrom(error, 'Feature review update failed.');
     }
   }
 

@@ -17,8 +17,14 @@ class NotificationsScreen extends ConsumerWidget {
 
     return notificationsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, _) =>
-          Center(child: Text('Failed to load notifications: $error')),
+      error: (error, _) => AppEmptyState(
+        icon: Icons.error_outline,
+        title: 'Notifications unavailable',
+        message: '$error',
+        actionLabel: 'Retry',
+        onAction: () =>
+            ref.read(notificationsControllerProvider.notifier).load(),
+      ),
       data: (notifications) {
         if (notifications.isEmpty) {
           return const AppEmptyState(

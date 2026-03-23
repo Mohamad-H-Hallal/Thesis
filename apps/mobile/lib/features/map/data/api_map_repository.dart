@@ -51,7 +51,7 @@ class ApiMapRepository {
                     as String? ??
                 'Map features request failed.'
           : 'Map features request failed.';
-      throw Exception(message);
+      throw message;
     }
   }
 

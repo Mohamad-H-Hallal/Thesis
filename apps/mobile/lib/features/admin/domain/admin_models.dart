@@ -1,6 +1,7 @@
 import '../../auth/domain/auth_models.dart';
 
 enum ContributorRequestStatus { pending, rejected }
+enum UserAccountState { active, pending, rejected, blocked, inactive }
 
 class ManagedUserSummary {
   const ManagedUserSummary({
@@ -11,9 +12,13 @@ class ManagedUserSummary {
     required this.role,
     required this.isActive,
     required this.isProtectedSuperAdmin,
+    required this.accountState,
+    required this.isBlocked,
     this.requestStatus,
     this.previousAdminRole,
     this.canToggleAdminRole = false,
+    this.canBlock = false,
+    this.canUnblock = false,
   });
 
   final String id;
@@ -23,13 +28,32 @@ class ManagedUserSummary {
   final UserRole role;
   final bool isActive;
   final bool isProtectedSuperAdmin;
+  final UserAccountState accountState;
+  final bool isBlocked;
   final ContributorRequestStatus? requestStatus;
   final UserRole? previousAdminRole;
   final bool canToggleAdminRole;
+  final bool canBlock;
+  final bool canUnblock;
 
   String get roleLabel => role == UserRole.admin && isProtectedSuperAdmin
       ? 'Super Admin'
       : role.label;
+
+  String get accountStateLabel {
+    switch (accountState) {
+      case UserAccountState.active:
+        return 'Active';
+      case UserAccountState.pending:
+        return 'Pending';
+      case UserAccountState.rejected:
+        return 'Rejected';
+      case UserAccountState.blocked:
+        return 'Blocked';
+      case UserAccountState.inactive:
+        return 'Inactive';
+    }
+  }
 }
 
 class ManagedAssignmentSummary {

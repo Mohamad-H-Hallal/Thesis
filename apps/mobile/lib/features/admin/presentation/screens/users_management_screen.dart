@@ -19,16 +19,23 @@ class UsersManagementScreen extends ConsumerStatefulWidget {
 }
 
 class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
+  final TextEditingController _searchController = TextEditingController();
   bool _isUpdating = false;
+  UserRole? _roleFilter;
+  UserAccountState? _stateFilter;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   Future<void> _toggleAdminRole(ManagedUserSummary user) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(
-          user.role == UserRole.admin
-              ? 'Revert admin role'
-              : 'Promote to admin',
+          user.role == UserRole.admin ? 'Revert admin role' : 'Promote to admin',
         ),
         content: Text(
           user.role == UserRole.admin
@@ -52,13 +59,9 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
       return;
     }
 
-    setState(() => _isUpdating = true);
-    try {
-      final updated = await ref
-          .read(adminRepositoryProvider)
-          .toggleAdminRole(user.id);
-      ref.invalidate(managedUsersProvider);
-      ref.invalidate(adminDashboardProvider);
+    await _mutate(() async {
+      final updated = await ref.read(adminRepositoryProvider).toggleAdminRole(user.id);
+      _invalidate();
       if (!mounted) {
         return;
       }
@@ -68,6 +71,58 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
             ? '${updated.fullName} is now an admin.'
             : '${updated.fullName} reverted to ${updated.roleLabel}.',
       );
+    });
+  }
+
+  Future<void> _toggleBlockState(ManagedUserSummary user) async {
+    final shouldBlock = !user.isBlocked;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(shouldBlock ? 'Block account' : 'Unblock account'),
+        content: Text(
+          shouldBlock
+              ? 'Block ${user.fullName}? They will not be able to log in until unblocked.'
+              : 'Unblock ${user.fullName}? Their previous access state will be restored.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(shouldBlock ? 'Block' : 'Unblock'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) {
+      return;
+    }
+
+    await _mutate(() async {
+      if (shouldBlock) {
+        await ref.read(adminRepositoryProvider).blockUser(user.id);
+      } else {
+        await ref.read(adminRepositoryProvider).unblockUser(user.id);
+      }
+      _invalidate();
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showSuccess(
+        context,
+        shouldBlock ? 'User blocked successfully.' : 'User unblocked successfully.',
+      );
+    });
+  }
+
+  Future<void> _mutate(Future<void> Function() action) async {
+    setState(() => _isUpdating = true);
+    try {
+      await action();
     } catch (error) {
       if (mounted) {
         AppSnackbar.showError(context, error.toString());
@@ -77,6 +132,31 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
         setState(() => _isUpdating = false);
       }
     }
+  }
+
+  void _invalidate() {
+    ref.invalidate(managedUsersProvider);
+    ref.invalidate(adminDashboardProvider);
+    ref.invalidate(contributorRequestsProvider(ContributorRequestStatus.pending));
+    ref.invalidate(contributorRequestsProvider(ContributorRequestStatus.rejected));
+  }
+
+  List<ManagedUserSummary> _applyFilters(List<ManagedUserSummary> users) {
+    final query = _searchController.text.trim().toLowerCase();
+    return users.where((user) {
+      if (_roleFilter != null && user.role != _roleFilter) {
+        return false;
+      }
+      if (_stateFilter != null && user.accountState != _stateFilter) {
+        return false;
+      }
+      if (query.isEmpty) {
+        return true;
+      }
+      return user.fullName.toLowerCase().contains(query) ||
+          user.email.toLowerCase().contains(query) ||
+          (user.phone?.toLowerCase().contains(query) ?? false);
+    }).toList(growable: false);
   }
 
   @override
@@ -95,53 +175,114 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
         onAction: () => ref.invalidate(managedUsersProvider),
       ),
       data: (users) {
-        final viewerCount = users
-            .where((user) => user.role == UserRole.viewer)
-            .length;
+        final filtered = _applyFilters(users);
+        final viewerCount = users.where((user) => user.role == UserRole.viewer).length;
         final activeContributors = users
-            .where((user) => user.role == UserRole.contributor && user.isActive)
+            .where((user) => user.role == UserRole.contributor && user.accountState == UserAccountState.active)
             .length;
+        final blockedCount = users.where((user) => user.isBlocked).length;
+        final adminCount = users.where((user) => user.role == UserRole.admin).length;
 
         return ListView(
           children: [
             const SectionHeader(
               title: 'Users',
               subtitle:
-                  'Directory of viewers, contributors, admins, and the protected super administrator.',
+                  'Search, filter, block, and manage viewer, contributor, and admin accounts.',
             ),
             const SizedBox(height: AppSpacing.sm),
             AppCard(
-              child: Wrap(
-                spacing: AppSpacing.sm,
-                runSpacing: AppSpacing.sm,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _MetricChip(
-                    icon: Icons.groups_outlined,
-                    label: 'Total users',
-                    value: '${users.length}',
+                  SearchBar(
+                    controller: _searchController,
+                    hintText: 'Search name, email, or phone',
+                    leading: const Icon(Icons.search),
+                    onChanged: (_) => setState(() {}),
                   ),
-                  _MetricChip(
-                    icon: Icons.visibility_outlined,
-                    label: 'Viewers',
-                    value: '$viewerCount',
+                  const SizedBox(height: AppSpacing.sm),
+                  Wrap(
+                    spacing: AppSpacing.sm,
+                    runSpacing: AppSpacing.sm,
+                    children: [
+                      _MetricChip(
+                        icon: Icons.groups_outlined,
+                        label: 'Total users',
+                        value: '${users.length}',
+                      ),
+                      _MetricChip(
+                        icon: Icons.admin_panel_settings_outlined,
+                        label: 'Admins',
+                        value: '$adminCount',
+                      ),
+                      _MetricChip(
+                        icon: Icons.visibility_outlined,
+                        label: 'Viewers',
+                        value: '$viewerCount',
+                      ),
+                      _MetricChip(
+                        icon: Icons.edit_location_alt_outlined,
+                        label: 'Active contributors',
+                        value: '$activeContributors',
+                      ),
+                      _MetricChip(
+                        icon: Icons.block_outlined,
+                        label: 'Blocked',
+                        value: '$blockedCount',
+                      ),
+                    ],
                   ),
-                  _MetricChip(
-                    icon: Icons.edit_location_alt_outlined,
-                    label: 'Active contributors',
-                    value: '$activeContributors',
+                  const SizedBox(height: AppSpacing.sm),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilterChip(
+                        label: const Text('All roles'),
+                        selected: _roleFilter == null,
+                        onSelected: (_) => setState(() => _roleFilter = null),
+                      ),
+                      ...UserRole.values.map(
+                        (role) => FilterChip(
+                          label: Text(role.label),
+                          selected: _roleFilter == role,
+                          onSelected: (_) => setState(() => _roleFilter = role),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilterChip(
+                        label: const Text('All states'),
+                        selected: _stateFilter == null,
+                        onSelected: (_) => setState(() => _stateFilter = null),
+                      ),
+                      ...UserAccountState.values.map(
+                        (state) => FilterChip(
+                          label: Text(_stateLabel(state)),
+                          selected: _stateFilter == state,
+                          onSelected: (_) => setState(() => _stateFilter = state),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
             const SizedBox(height: AppSpacing.md),
-            if (users.isEmpty)
+            if (filtered.isEmpty)
               const AppEmptyState(
-                icon: Icons.groups_outlined,
-                title: 'No users found',
-                message: 'Users will appear here after account creation.',
+                icon: Icons.manage_search_outlined,
+                title: 'No users match the current filters',
+                message: 'Try a different search term or clear one of the active filters.',
               )
             else
-              ...users.map(
+              ...filtered.map(
                 (user) => Padding(
                   padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                   child: _UserCard(
@@ -151,6 +292,8 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
                     onToggleAdmin: user.canToggleAdminRole && isSuperAdmin
                         ? () => _toggleAdminRole(user)
                         : null,
+                    onToggleBlock:
+                        (user.canBlock || user.canUnblock) ? () => _toggleBlockState(user) : null,
                   ),
                 ),
               ),
@@ -158,6 +301,21 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
         );
       },
     );
+  }
+
+  String _stateLabel(UserAccountState state) {
+    switch (state) {
+      case UserAccountState.active:
+        return 'Active';
+      case UserAccountState.pending:
+        return 'Pending';
+      case UserAccountState.rejected:
+        return 'Rejected';
+      case UserAccountState.blocked:
+        return 'Blocked';
+      case UserAccountState.inactive:
+        return 'Inactive';
+    }
   }
 }
 
@@ -167,12 +325,14 @@ class _UserCard extends StatelessWidget {
     required this.isSuperAdmin,
     required this.isUpdating,
     required this.onToggleAdmin,
+    required this.onToggleBlock,
   });
 
   final ManagedUserSummary user;
   final bool isSuperAdmin;
   final bool isUpdating;
   final VoidCallback? onToggleAdmin;
+  final VoidCallback? onToggleBlock;
 
   @override
   Widget build(BuildContext context) {
@@ -189,8 +349,8 @@ class _UserCard extends StatelessWidget {
                   user.role == UserRole.admin
                       ? Icons.admin_panel_settings_outlined
                       : user.role == UserRole.contributor
-                      ? Icons.edit_location_alt_outlined
-                      : Icons.visibility_outlined,
+                          ? Icons.edit_location_alt_outlined
+                          : Icons.visibility_outlined,
                 ),
               ),
               const SizedBox(width: AppSpacing.sm),
@@ -204,14 +364,11 @@ class _UserCard extends StatelessWidget {
                       softWrap: true,
                     ),
                     const SizedBox(height: AppSpacing.xs),
-                    Text(user.email, style: theme.textTheme.bodyMedium),
+                    SelectableText(user.email, style: theme.textTheme.bodyMedium),
                     if (user.phone?.trim().isNotEmpty == true)
                       Padding(
                         padding: const EdgeInsets.only(top: 2),
-                        child: Text(
-                          user.phone!,
-                          style: theme.textTheme.bodySmall,
-                        ),
+                        child: Text(user.phone!, style: theme.textTheme.bodySmall),
                       ),
                   ],
                 ),
@@ -224,7 +381,7 @@ class _UserCard extends StatelessWidget {
             runSpacing: 8,
             children: [
               Chip(label: Text(user.roleLabel)),
-              Chip(label: Text(user.isActive ? 'Active' : 'Inactive')),
+              Chip(label: Text(user.accountStateLabel)),
               if (user.isProtectedSuperAdmin)
                 const Chip(
                   avatar: Icon(Icons.verified_user_outlined, size: 18),
@@ -233,30 +390,36 @@ class _UserCard extends StatelessWidget {
               if (user.requestStatus != null)
                 Chip(label: Text('Request: ${user.requestStatus!.name}')),
               if (user.previousAdminRole != null && user.role == UserRole.admin)
-                Chip(
-                  label: Text(
-                    'Previous role: ${user.previousAdminRole!.label}',
-                  ),
-                ),
+                Chip(label: Text('Previous role: ${user.previousAdminRole!.label}')),
             ],
           ),
-          if (isSuperAdmin && onToggleAdmin != null) ...[
+          if (isSuperAdmin && onToggleAdmin != null || onToggleBlock != null) ...[
             const SizedBox(height: AppSpacing.sm),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton.tonalIcon(
-                onPressed: isUpdating ? null : onToggleAdmin,
-                icon: Icon(
-                  user.role == UserRole.admin
-                      ? Icons.undo_outlined
-                      : Icons.arrow_circle_up_outlined,
-                ),
-                label: Text(
-                  user.role == UserRole.admin
-                      ? 'Revert Admin'
-                      : 'Promote to Admin',
-                ),
-              ),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (isSuperAdmin && onToggleAdmin != null)
+                  FilledButton.tonalIcon(
+                    onPressed: isUpdating ? null : onToggleAdmin,
+                    icon: Icon(
+                      user.role == UserRole.admin
+                          ? Icons.undo_outlined
+                          : Icons.arrow_circle_up_outlined,
+                    ),
+                    label: Text(
+                      user.role == UserRole.admin ? 'Revert Admin' : 'Promote to Admin',
+                    ),
+                  ),
+                if (onToggleBlock != null)
+                  OutlinedButton.icon(
+                    onPressed: isUpdating ? null : onToggleBlock,
+                    icon: Icon(
+                      user.isBlocked ? Icons.lock_open_outlined : Icons.block_outlined,
+                    ),
+                    label: Text(user.isBlocked ? 'Unblock User' : 'Block User'),
+                  ),
+              ],
             ),
           ],
         ],

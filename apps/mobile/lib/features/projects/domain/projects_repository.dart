@@ -18,4 +18,6 @@ abstract class ProjectsRepository {
     required String projectId,
     required bool visibleToViewers,
   });
+
+  Future<void> requestProjectAccess({required String projectId});
 }

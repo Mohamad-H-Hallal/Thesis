@@ -1,5 +1,6 @@
 import '../../../core/config/app_env.dart';
 import '../../../core/network/api_client.dart';
+import 'package:dio/dio.dart';
 import '../../auth/domain/auth_models.dart';
 import '../domain/project.dart';
 import '../domain/projects_repository.dart';
@@ -62,6 +63,24 @@ class ApiProjectsRepository implements ProjectsRepository {
       payload['data'] as Map? ?? const <String, dynamic>{},
     );
     return _toProjectSummary(row);
+  }
+
+  @override
+  Future<void> requestProjectAccess({required String projectId}) async {
+    try {
+      await _apiClient.dio.post<Map<String, dynamic>>(
+        '${AppEnv.apiVersionPrefix}/assignments/join/$projectId',
+      );
+    } on DioException catch (error) {
+      final data = error.response?.data;
+      if (data is Map<String, dynamic>) {
+        final message = data['message'] ?? data['error'];
+        if (message is String && message.trim().isNotEmpty) {
+          throw message.trim();
+        }
+      }
+      throw 'Unable to request contributor access for this project.';
+    }
   }
 
   ProjectSummary _toProjectSummary(Map<String, dynamic> row) {

@@ -91,7 +91,7 @@ class ExportsController extends StateNotifier<ExportsState> {
     }
   }
 
-  Future<void> requestExport({
+  Future<bool> requestExport({
     required String projectId,
     required String projectName,
     required ExportFormat format,
@@ -115,8 +115,10 @@ class ExportsController extends StateNotifier<ExportsState> {
         message:
             'Export request for $projectName (${format.name}) has been queued.',
       );
+      return true;
     } catch (error) {
       state = state.copyWith(isSubmitting: false, error: error.toString());
+      return false;
     }
   }
 
