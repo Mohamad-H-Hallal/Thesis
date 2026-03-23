@@ -323,6 +323,34 @@ userRouter.post(
   asyncHandler(userController.deactivate),
 );
 
+// Block user account
+userRouter.post(
+  '/:userId/block',
+  uuidValidation('userId'),
+  auditAction({
+    actionType: 'update',
+    entityType: 'user',
+    resolveEntityId: (req) => req.params.userId ?? null,
+    resolveNewValues: () => ({ is_active: false, account_state: 'blocked' }),
+  }),
+  validate,
+  asyncHandler(userController.blockUser),
+);
+
+// Unblock user account
+userRouter.post(
+  '/:userId/unblock',
+  uuidValidation('userId'),
+  auditAction({
+    actionType: 'update',
+    entityType: 'user',
+    resolveEntityId: (req) => req.params.userId ?? null,
+    resolveNewValues: () => ({ is_active: true, account_state: 'active' }),
+  }),
+  validate,
+  asyncHandler(userController.unblockUser),
+);
+
 // Approve contributor request
 userRouter.post(
   '/:userId/approve-contributor',
@@ -331,13 +359,17 @@ userRouter.post(
     actionType: 'approve',
     entityType: 'user',
     resolveEntityId: (req) => req.params.userId ?? null,
-    resolveNewValues: () => ({ role: 'contributor', is_active: true }),
+    resolveNewValues: () => ({
+      role: 'contributor',
+      is_active: true,
+      account_state: 'active',
+    }),
   }),
   validate,
   asyncHandler(userController.approveContributor),
 );
 
-// Reject contributor request and downgrade to viewer
+// Reject contributor request
 userRouter.post(
   '/:userId/reject-contributor',
   uuidValidation('userId'),
@@ -345,7 +377,11 @@ userRouter.post(
     actionType: 'reject',
     entityType: 'user',
     resolveEntityId: (req) => req.params.userId ?? null,
-    resolveNewValues: () => ({ role: 'viewer', is_active: true }),
+    resolveNewValues: () => ({
+      role: 'contributor',
+      is_active: false,
+      account_state: 'rejected',
+    }),
   }),
   validate,
   asyncHandler(userController.rejectContributor),

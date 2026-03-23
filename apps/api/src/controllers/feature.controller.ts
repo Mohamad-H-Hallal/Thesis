@@ -593,8 +593,11 @@ const reviewFeature = async (req: Request, res: Response): Promise<void> => {
     throw new AppError('Feature not found', 404);
   }
 
-  if (featureCheck.rows[0].status !== 'pending_review') {
-    throw new AppError('Feature is not pending review', 400);
+  if (!['pending_review', 'approved', 'rejected'].includes(featureCheck.rows[0].status)) {
+    throw new AppError(
+      'Only submitted or previously reviewed features can be reviewed through this action',
+      400
+    );
   }
 
   const canReview = await hasProjectAdminAccess(featureCheck.rows[0].project_id, req.user as Express.UserContext);

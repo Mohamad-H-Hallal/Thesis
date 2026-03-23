@@ -156,6 +156,58 @@ const getContributorAccessState = async (
   return 'pending';
 };
 
+const getLatestAccountState = async (
+  executor: QueryExecutor,
+  userId: string
+): Promise<'blocked' | 'active' | null> => {
+  const result = await runQuery<{ account_state: string | null }>(
+    executor,
+    `SELECT new_values->>'account_state' AS account_state
+     FROM audit_log
+     WHERE entity_type = 'user'
+       AND entity_id = $1
+       AND action_type = 'update'
+       AND new_values ? 'account_state'
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [userId]
+  );
+
+  const state = result.rows[0]?.account_state;
+  if (state === 'blocked' || state === 'active') {
+    return state;
+  }
+  return null;
+};
+
+const getUserAccessState = async (
+  executor: QueryExecutor,
+  {
+    userId,
+    role,
+    isActive,
+  }: {
+    userId: string;
+    role: string;
+    isActive: boolean;
+  }
+): Promise<'active' | 'pending' | 'rejected' | 'blocked' | 'inactive'> => {
+  if (isActive) {
+    return 'active';
+  }
+
+  const latestAccountState = await getLatestAccountState(executor, userId);
+  if (latestAccountState === 'blocked') {
+    return 'blocked';
+  }
+
+  if (role === 'contributor') {
+    return getContributorAccessState(executor, userId);
+  }
+
+  return 'inactive';
+};
+
 const ensureSuperAdminExists = async (env: EnvConfig): Promise<void> => {
   const email = normalizeEmail(env.SUPER_ADMIN_EMAIL);
   const password = String(env.SUPER_ADMIN_PASSWORD ?? '').trim();
@@ -222,4 +274,6 @@ export {
   notifyActiveAdminsAboutContributorRequest,
   notifyContributorRequestSubmitted,
   getContributorAccessState,
+  getLatestAccountState,
+  getUserAccessState,
 };

@@ -4,8 +4,10 @@ const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
 import {
   createNotification,
+  getLatestAccountState,
   isProtectedSuperAdminEmail,
   normalizeEmail,
+  getUserAccessState,
 } from '../lib/userWorkflow';
 
 const getUserForAdminMutation = async (userId: string) => {
@@ -290,8 +292,9 @@ const notificationController = {
 const userController = {
   // Get all users (admin only)
   getAll: async (req, res) => {
-    const { role, is_active, page = 1, limit = 50 } = req.query;
+    const { role, is_active, page = 1, limit = 50, q, state } = req.query;
     const offset = (page - 1) * limit;
+    const actorIsProtectedSuperAdmin = isProtectedSuperAdminEmail(req.user?.email);
 
     let queryText = `
       SELECT u.id,
@@ -302,7 +305,9 @@ const userController = {
              u.created_at,
              u.last_login,
              u.is_active,
-             latest_promotion.previous_admin_role
+             latest_promotion.previous_admin_role,
+             latest_request.type AS latest_request_type,
+             latest_account_state.account_state
       FROM "user" u
       LEFT JOIN LATERAL (
         SELECT al.old_values->>'role' AS previous_admin_role
@@ -313,13 +318,35 @@ const userController = {
           AND al.new_values->>'role' = 'admin'
           AND al.old_values->>'role' IN ('viewer', 'contributor')
         ORDER BY al.created_at DESC
-        LIMIT 1
+         LIMIT 1
       ) latest_promotion ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT n.type
+        FROM notification n
+        WHERE n.user_id = u.id
+          AND n.type IN ('contributor_request', 'contributor_rejected', 'contributor_approved')
+        ORDER BY n.created_at DESC
+        LIMIT 1
+      ) latest_request ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT al.new_values->>'account_state' AS account_state
+        FROM audit_log al
+        WHERE al.entity_type = 'user'
+          AND al.entity_id = u.id
+          AND al.action_type = 'update'
+          AND al.new_values ? 'account_state'
+        ORDER BY al.created_at DESC
+        LIMIT 1
+      ) latest_account_state ON TRUE
       WHERE 1=1
     `;
 
     const params: unknown[] = [];
     let paramIndex = 1;
+
+    if (!actorIsProtectedSuperAdmin) {
+      queryText += ` AND u.role IN ('viewer', 'contributor')`;
+    }
 
     if (role) {
       queryText += ` AND role = $${paramIndex}`;
@@ -333,6 +360,25 @@ const userController = {
       paramIndex++;
     }
 
+    if (q) {
+      queryText += ` AND (u.full_name ILIKE $${paramIndex} OR u.email ILIKE $${paramIndex} OR COALESCE(u.phone, '') ILIKE $${paramIndex})`;
+      params.push(`%${String(q).trim()}%`);
+      paramIndex++;
+    }
+
+    if (state) {
+      const normalizedState = String(state);
+      if (normalizedState === 'blocked') {
+        queryText += ` AND u.is_active = FALSE AND latest_account_state.account_state = 'blocked'`;
+      } else if (normalizedState === 'pending') {
+        queryText += ` AND u.role = 'contributor' AND u.is_active = FALSE AND COALESCE(latest_request.type, 'contributor_request') = 'contributor_request' AND COALESCE(latest_account_state.account_state, 'active') <> 'blocked'`;
+      } else if (normalizedState === 'rejected') {
+        queryText += ` AND u.role = 'contributor' AND u.is_active = FALSE AND latest_request.type = 'contributor_rejected' AND COALESCE(latest_account_state.account_state, 'active') <> 'blocked'`;
+      } else if (normalizedState === 'active') {
+        queryText += ` AND u.is_active = TRUE`;
+      }
+    }
+
     queryText += ` ORDER BY created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
     params.push(limit, offset);
 
@@ -343,6 +389,18 @@ const userController = {
       data: result.rows.map((row) => ({
         ...row,
         is_protected_super_admin: isProtectedSuperAdminEmail(row.email),
+        account_state:
+          row.is_active === true
+            ? 'active'
+            : row.account_state === 'blocked'
+              ? 'blocked'
+              : row.role === 'contributor' &&
+                  row.latest_request_type === 'contributor_rejected'
+                ? 'rejected'
+                : row.role === 'contributor'
+                  ? 'pending'
+                  : 'inactive',
+        is_blocked: row.account_state === 'blocked',
         can_toggle_admin_role:
           !isProtectedSuperAdminEmail(row.email) &&
           (row.role === 'viewer' ||
@@ -437,6 +495,86 @@ const userController = {
       success: true,
       message: 'User updated successfully',
       data: result.rows[0],
+    });
+  },
+
+  blockUser: async (req, res) => {
+    const { userId } = req.params;
+    const targetUser = await getUserForAdminMutation(userId);
+    const accessState = await getUserAccessState(query, {
+      userId,
+      role: targetUser.role,
+      isActive: targetUser.is_active,
+    });
+
+    if (accessState === 'blocked') {
+      throw new AppError('User account is already blocked.', 409);
+    }
+    if (!targetUser.is_active) {
+      throw new AppError(
+        'Only active accounts can be blocked. Use approval flows for pending or rejected contributors.',
+        409,
+      );
+    }
+
+    assertAdminManagementAllowed({
+      actorEmail: req.user?.email,
+      targetEmail: targetUser.email,
+      targetRole: targetUser.role,
+      nextIsActive: false,
+    });
+
+    const result = await query(
+      `UPDATE "user"
+       SET is_active = FALSE
+       WHERE id = $1
+       RETURNING id, email, full_name, phone, role, is_active`,
+      [userId],
+    );
+
+    res.json({
+      success: true,
+      message: 'User blocked successfully',
+      data: {
+        ...result.rows[0],
+        account_state: 'blocked',
+        is_blocked: true,
+      },
+    });
+  },
+
+  unblockUser: async (req, res) => {
+    const { userId } = req.params;
+    const targetUser = await getUserForAdminMutation(userId);
+    const latestAccountState = await getLatestAccountState(query, userId);
+
+    if (latestAccountState !== 'blocked') {
+      throw new AppError('Only blocked users can be unblocked through this action.', 409);
+    }
+
+    assertAdminManagementAllowed({
+      actorEmail: req.user?.email,
+      targetEmail: targetUser.email,
+      targetRole: targetUser.role,
+      nextIsActive: true,
+    });
+
+    const result = await query(
+      `UPDATE "user"
+       SET is_active = TRUE
+       WHERE id = $1
+       RETURNING id, email, full_name, phone, role, is_active`,
+      [userId],
+    );
+
+    res.json({
+      success: true,
+      message: 'User unblocked successfully',
+      data: {
+        ...result.rows[0],
+        account_state: 'active',
+        is_blocked: false,
+      },
     });
   },
 

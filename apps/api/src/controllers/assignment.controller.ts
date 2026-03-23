@@ -171,6 +171,10 @@ const getManagedAssignments = async (req, res) => {
 const requestJoinProject = async (req, res) => {
   const { projectId } = req.params;
 
+  if (req.user?.role !== 'contributor') {
+    throw new AppError('Only approved contributors can request project access', 403);
+  }
+
   // Check if user is already assigned
   const existingAssignment = await query(
     'SELECT id FROM project_assignment WHERE project_id = $1 AND user_id = $2',

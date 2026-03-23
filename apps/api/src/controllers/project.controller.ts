@@ -506,6 +506,21 @@ const getProjectFeatures = async (req, res) => {
     paramIndex++;
   }
 
+  if (req.user?.role === 'viewer') {
+    queryText += ` AND sf.status = 'approved'`;
+  } else if (req.user?.role !== 'admin') {
+    if (req.projectRole === 'admin') {
+      // Project admins can see every feature lifecycle state for this project.
+    } else {
+      queryText += ` AND (
+        sf.status IN ('approved', 'pending_review')
+        OR sf.collected_by_user_id = $${paramIndex}
+      )`;
+      params.push(req.user?.id);
+      paramIndex++;
+    }
+  }
+
   queryText += ` ORDER BY sf.collected_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
   params.push(limit, offset);
 

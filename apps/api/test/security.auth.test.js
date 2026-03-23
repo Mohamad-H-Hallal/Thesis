@@ -208,4 +208,48 @@ describe('Security: registration, contributor approval, and protected super admi
 
     expect(denyFixedRevert.status).toBe(400);
   });
+
+  test('blocked account cannot log in until unblocked', async () => {
+    const superAdmin = await createAdminUser({
+      email: 'superadmin@gov.lb',
+      fullName: 'Protected Super Admin',
+    });
+    const viewer = await registerUser({
+      role: 'viewer',
+      fullName: 'Blocked Viewer',
+      emailPrefix: 'blocked-viewer',
+    });
+
+    const blockResponse = await request(app)
+      .post(`${API_PREFIX}/users/${viewer.user.id}/block`)
+      .set(authHeader(superAdmin.token));
+
+    expect(blockResponse.status).toBe(200);
+    expect(blockResponse.body.data.is_blocked).toBe(true);
+    expect(blockResponse.body.data.account_state).toBe('blocked');
+
+    const blockedLogin = await request(app).post(`${API_PREFIX}/auth/login`).send({
+      email: viewer.email,
+      password: viewer.password,
+    });
+
+    expect(blockedLogin.status).toBe(403);
+    expect(blockedLogin.body.message).toBe('Your account has been blocked.');
+    expect(blockedLogin.body.data).toBeUndefined();
+
+    const unblockResponse = await request(app)
+      .post(`${API_PREFIX}/users/${viewer.user.id}/unblock`)
+      .set(authHeader(superAdmin.token));
+
+    expect(unblockResponse.status).toBe(200);
+    expect(unblockResponse.body.data.is_blocked).toBe(false);
+
+    const unblockedLogin = await request(app).post(`${API_PREFIX}/auth/login`).send({
+      email: viewer.email,
+      password: viewer.password,
+    });
+
+    expect(unblockedLogin.status).toBe(200);
+    expect(unblockedLogin.body.data.user.role).toBe('viewer');
+  });
 });

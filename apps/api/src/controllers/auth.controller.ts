@@ -5,7 +5,7 @@ const { generateToken, generateRefreshToken } = require('../middleware/auth');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
 import {
-  getContributorAccessState,
+  getUserAccessState,
   isProtectedSuperAdminEmail,
   normalizeEmail,
   notifyActiveAdminsAboutContributorRequest,
@@ -104,21 +104,27 @@ const login = async (req, res) => {
     throw new AppError('Wrong email or password.', 401);
   }
 
-  if (!user.is_active && user.role === 'contributor') {
-    const accessState = await getContributorAccessState(query, user.id);
+  if (!user.is_active) {
+    const accessState = await getUserAccessState(query, {
+      userId: user.id,
+      role: user.role,
+      isActive: user.is_active,
+    });
+    if (accessState === 'blocked') {
+      throw new AppError('Your account has been blocked.', 403);
+    }
     if (accessState === 'rejected') {
       throw new AppError(
         'Your contributor request was rejected. You cannot log in with contributor access.',
         403
       );
     }
-    throw new AppError(
-      'Your contributor request is still pending approval. You cannot log in yet.',
-      403
-    );
-  }
-
-  if (!user.is_active) {
+    if (accessState === 'pending') {
+      throw new AppError(
+        'Your contributor request is still pending approval. You cannot log in yet.',
+        403
+      );
+    }
     throw new AppError('This account is inactive.', 403);
   }
 
@@ -278,20 +284,27 @@ const refreshToken = async (req, res) => {
   }
 
   const user = result.rows[0];
-  if (!user.is_active && user.role === 'contributor') {
-    const accessState = await getContributorAccessState(query, user.id);
+  if (!user.is_active) {
+    const accessState = await getUserAccessState(query, {
+      userId: user.id,
+      role: user.role,
+      isActive: user.is_active,
+    });
+    if (accessState === 'blocked') {
+      throw new AppError('Your account has been blocked.', 403);
+    }
     if (accessState === 'rejected') {
       throw new AppError(
         'Your contributor request was rejected. You cannot log in with contributor access.',
         403
       );
     }
-    throw new AppError(
-      'Your contributor request is still pending approval. You cannot log in yet.',
-      403
-    );
-  }
-  if (!user.is_active) {
+    if (accessState === 'pending') {
+      throw new AppError(
+        'Your contributor request is still pending approval. You cannot log in yet.',
+        403
+      );
+    }
     throw new AppError('This account is inactive.', 403);
   }
 
