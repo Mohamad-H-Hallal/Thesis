@@ -1,6 +1,6 @@
 # Phase Recheck After UI Fixes
 
-Date: 2026-03-20
+Date: 2026-03-23
 
 ## Summary
 
@@ -12,6 +12,9 @@ This pass closed the remaining UI/runtime gaps around:
 - replacement of the last production-path map placeholder with a working project map workspace
 - conversion of mobile feature submission from local-only stub behavior to real backend draft/submission calls
 - conversion of the review queue from local-only placeholders to backend-backed feature moderation
+- redesign of Requests into contributor/project request workflows with pending/rejected handling
+- stronger user management with block/unblock, admin promotion/revert boundaries, and search/filter tooling
+- richer project map interactions, including feature status filters, detail sheets, and review actions from the map workspace
 - Android emulator runtime readiness, including `10.0.2.2` API access and cleartext debug config
 - closure of the last major mobile runtime gap: in-app category, project, and assignment provisioning for admin and super-admin users
 
@@ -53,15 +56,19 @@ No new schema redesign was introduced. PostgreSQL/PostGIS remains the source of 
 - Contributor:
   - signs up as pending contributor
   - cannot log in until admin approval
+  - can request assignment to a public project and see pending/rejected request state
   - sees `Projects` for public/viewer-visible projects
   - sees `Assigned Projects` for approved assignment-based work
 - Admin:
   - sees all projects
   - can manage viewer visibility
+  - can block/unblock viewer and contributor accounts
+  - can approve/reject contributor requests and project assignment requests
   - can review, export, and open the map workspace
 - Super admin:
   - remains highest privilege identity by protected service logic
   - now lands in an explicit management shell with visible primary navigation plus drawer access to all admin areas
+  - can promote/revert eligible runtime-managed admins and block/unblock any non-protected account
 
 ## Critical Gaps Check
 

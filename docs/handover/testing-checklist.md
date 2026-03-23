@@ -2,7 +2,7 @@
 
 ## Executed Verification Evidence
 
-Executed on 2026-03-22 against the current `handover-ready` stabilization pass:
+Executed on 2026-03-23 against the current `handover-ready` stabilization pass:
 
 - Docker API: `http://localhost:3000`
 - Flutter web launch: Chrome on port `5050`
@@ -42,7 +42,13 @@ Executed results:
 - `PASS` add-feature flow now creates a real `spatial_feature` draft through the backend and can submit it for review
 - `PASS` review queue now operates on backend `pending_review` features instead of local-only placeholder data
 - `PASS` project map now exposes richer feature interaction with status-based rendering, map centering, and a feature details sheet for attributes, notes, and attached photos
+- `PASS` project map now includes a status legend, status filters, full feature details from the map, and admin review actions directly from the feature details sheet
+- `PASS` backend project-feature responses are now filtered by role and assignment state, so viewers only receive approved features and contributors only receive approved/pending-review or their own records
 - `PASS` export panel no longer exposes the manual worker-tick control in production runtime and now uses Android-safe responsive cards/forms
+- `PASS` export submit flow now validates date/BBOX inputs and only shows success after the backend queue request succeeds
+- `PASS` mobile requests area is now split into Contributor Requests and Project Requests, each with pending/rejected sections and re-accept actions
+- `PASS` users management now supports search, role/state filters, block/unblock, and protected-super-admin-aware admin promotion/revert actions
+- `PASS` blocked users now receive `Your account has been blocked.` and cannot log in until unblocked
 - `PARTIAL` Android live pass on commit `14b85fc` confirmed runtime launch, backend connectivity, login/signup screen rendering, admin shell rendering, and super-admin shell rendering after env bootstrap correction:
   - `docs/handover/evidence/android-live-pass.md`
   - `docs/handover/evidence/android-live-pass/login-screen.png`
@@ -61,6 +67,35 @@ flutter run -d chrome --web-port 5050 --dart-define=APP_FLAVOR=dev --dart-define
 Runtime note:
 
 - The dev Docker stack required `MIGRATIONS_DIR=/workspace/infra/migrations` in `docker-compose.override.yml` for the bind-mounted repo. Without that override, the dev `migrate` service read the wrong path and skipped newer migrations. This is now fixed in the repo.
+
+## Workflow Status Matrix
+
+| Workflow item | Status | Evidence |
+| --- | --- | --- |
+| Viewer signup/login | WORKING | `apps/api/test/security.auth.test.js`, `apps/mobile/test/features/auth/presentation/auth_navigation_widget_test.dart` |
+| Contributor signup pending gate | WORKING | `apps/api/test/security.auth.test.js`, `apps/mobile/test/features/auth/presentation/auth_navigation_widget_test.dart` |
+| Contributor rejected login block | WORKING | `apps/api/test/security.auth.test.js` |
+| Category creation/editing | WORKING | `apps/mobile/lib/features/admin/presentation/screens/categories_screen.dart`, `apps/mobile/lib/features/admin/presentation/screens/category_form_screen.dart` |
+| Project creation/editing | WORKING | `apps/mobile/lib/features/admin/presentation/screens/projects_management_screen.dart`, `apps/mobile/lib/features/admin/presentation/screens/project_form_screen.dart` |
+| Project visibility control | WORKING | `apps/api/test/project.visibility.test.js`, `apps/mobile/test/features/projects/presentation/project_visibility_widget_test.dart` |
+| Direct assignment creation | WORKING | `apps/mobile/lib/features/admin/presentation/screens/project_assignments_screen.dart`, `apps/api/test/project.workflow-access.test.js` |
+| Contributor project access request | WORKING | `apps/mobile/lib/features/projects/presentation/screens/project_details_screen.dart`, `apps/api/test/project.workflow-access.test.js` |
+| Assignment approve/reject/re-approve | WORKING | `apps/mobile/lib/features/admin/presentation/screens/contributor_requests_screen.dart`, `apps/mobile/lib/features/admin/presentation/screens/project_assignments_screen.dart` |
+| Unassign/reassign contributor | WORKING | `apps/mobile/lib/features/admin/presentation/screens/project_assignments_screen.dart` |
+| User block/unblock | WORKING | `apps/api/test/security.auth.test.js`, `apps/mobile/lib/features/admin/presentation/screens/users_management_screen.dart` |
+| Admin promote/revert | WORKING | `apps/api/test/security.auth.test.js`, `apps/mobile/lib/features/admin/presentation/screens/users_management_screen.dart` |
+| Add feature from project map | WORKING | `apps/mobile/lib/features/map/presentation/screens/map_screen.dart`, `apps/mobile/lib/features/map/presentation/screens/add_feature_screen.dart` |
+| Geometry creation | WORKING | `apps/mobile/lib/features/map/presentation/screens/add_feature_screen.dart` |
+| Attributes save against schema | WORKING | `apps/api/src/controllers/feature.controller.ts` |
+| Photo rule enforcement | WORKING | `apps/api/src/controllers/photo.controller.ts`, existing Phase 11 schema constraints |
+| Submit for review | WORKING | `apps/mobile/lib/features/map/presentation/screens/add_feature_screen.dart`, `apps/api/src/controllers/feature.controller.ts` |
+| Review approve/reject/re-approve/re-reject | WORKING | `apps/mobile/lib/features/review/presentation/screens/review_queue_screen.dart`, `apps/mobile/lib/features/map/presentation/screens/map_screen.dart` |
+| Approved feature persistence and map visibility | WORKING | `apps/api/test/project.workflow-access.test.js`, `apps/mobile/lib/features/map/presentation/screens/map_screen.dart` |
+| Export request | WORKING | `apps/mobile/lib/features/exports/presentation/screens/exports_dashboard_screen.dart` |
+| Export jobs list | WORKING | `apps/mobile/lib/features/exports/presentation/screens/exports_dashboard_screen.dart` |
+| Notifications scoping | WORKING | `apps/api/test/notifications.scope.test.js`, `apps/mobile/lib/core/providers/providers.dart` |
+| Map filtering/detail/status styles | WORKING | `apps/mobile/lib/features/map/presentation/screens/map_screen.dart` |
+| Browser-only visual UX checks | PARTIAL | Manual Chrome pass still needed for final visual confirmation |
 
 ## Backend
 
@@ -115,10 +150,13 @@ Verify:
 - viewer home says `Projects` and shows only admin-published projects
 - contributor `Projects` shows only admin-published public projects
 - contributor `Assigned Projects` shows assigned projects only
+- contributor public project details expose `Request Access` when the contributor is not yet assigned
+- contributor project-request state is visible as pending or rejected in the public project flow
 - admin sees review/export sections only
 - sync banner shows real queue/sync state only on contributor collection screens where it is useful
 - map shows the Lebanon basemap, real feature overlays, and a working `Add Feature` entry path for assigned contributors
 - add-feature flow saves a real server draft and can submit it for review
+- review queue plus map feature details now support approve/reject and later re-approve/re-reject lifecycle changes
 - export panel is scroll-safe on Android screen sizes and no longer shows engineering-only worker controls
 
 ## Android Emulator
@@ -153,7 +191,10 @@ Verify:
 - project map shows a clean empty state when no features exist, not a request error box
 - add-feature flow can create a server draft, attach selected photos, and submit for review
 - project map feature cards and markers open a details sheet showing attributes, status, review notes, and photos
+- project map includes status filter chips and a visible map legend so pending/approved/rejected features are clearly distinguished
 - review queue decisions update backend feature status and notifications
+- blocked users cannot log in until an admin or super admin unblocks them
+- users screen supports search, role filters, account-state filters, admin promotion/revert, and block/unblock actions
 - Android debug runtime allows local cleartext traffic for `10.0.2.2`
 - if no emulator is attached in CI/local automation, use `flutter build apk` as the build gate and perform the manual checklist below on a human-started emulator
 
@@ -171,7 +212,9 @@ Verify:
 10. Sign up another contributor and reject it.
 11. Confirm that account remains blocked from login with the rejection message.
 12. Log in as super admin and verify the Users screen promote/revert action.
-13. Log in as admin and confirm only user-scoped notifications are visible.
+13. Block a viewer or contributor account from Users, confirm login is denied, then unblock it and confirm login works again.
+14. Request access to a public project from a contributor account, then approve/reject that project request from Requests.
+15. Log in as admin and confirm only user-scoped notifications are visible.
 
 ## Remaining Manual Browser Checks
 
@@ -187,3 +230,4 @@ These still require a human pass in Chrome because automated CLI launch cannot v
 - admin project details screen shows the viewer-visibility toggle and success snackbar
 - admin and super-admin drawer entries are visually correct on Android
 - map page chips, project selector, feature list, and back navigation are visually correct
+- users screen search/filter chips and action buttons are visually correct on Android
