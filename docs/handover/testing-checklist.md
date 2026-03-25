@@ -2,13 +2,14 @@
 
 ## Executed Verification Evidence
 
-Executed on 2026-03-23 against the current `handover-ready` stabilization pass:
+Executed against the current `handover-ready` stabilization pass:
 
 - Docker API: `http://localhost:3000`
-- Flutter web launch: Chrome on port `5050`
+- Android emulator API base URL: `http://10.0.2.2:3000`
 - Evidence logs:
   - `docs/handover/evidence/live-runtime-verification.log`
   - `docs/handover/evidence/chrome-live-run.log`
+  - `docs/handover/evidence/android-live-pass.md`
 
 Executed results:
 
@@ -49,6 +50,15 @@ Executed results:
 - `PASS` mobile requests area is now split into Contributor Requests and Project Requests, each with pending/rejected sections and re-accept actions
 - `PASS` users management now supports search, role/state filters, block/unblock, and protected-super-admin-aware admin promotion/revert actions
 - `PASS` blocked users now receive `Your account has been blocked.` and cannot log in until unblocked
+- `PASS` protected super admin is excluded from app-facing user listings, search/filter results, and assignment eligibility lists
+- `PASS` category management now supports search plus optional icon upload from camera/gallery with backend storage
+- `PASS` profile now shows backend-managed Help & Support content and allows protected super admin to update it in-app
+- `PASS` users, categories, requests, assignments, and projects now use a consistent toggleable filter panel instead of permanently expanded chips
+- `PASS` project lifecycle now supports pause, resume, archive, and unarchive back to `completed`
+- `PASS` paused projects remain viewable but collection mutations and review submissions are blocked in backend and mobile flow
+- `PASS` contributor-only assignment model is enforced; admins are not mixed into project assignment lists
+- `PASS` self-deactivate is available to viewer/contributor accounts with assignment-state validation and results in blocked future login until reactivation
+- `PASS` notifications now support persisted read/unread handling through the API and remain available on later app open
 - `PARTIAL` Android live pass on commit `14b85fc` confirmed runtime launch, backend connectivity, login/signup screen rendering, admin shell rendering, and super-admin shell rendering after env bootstrap correction:
   - `docs/handover/evidence/android-live-pass.md`
   - `docs/handover/evidence/android-live-pass/login-screen.png`
@@ -75,8 +85,11 @@ Runtime note:
 | Viewer signup/login | WORKING | `apps/api/test/security.auth.test.js`, `apps/mobile/test/features/auth/presentation/auth_navigation_widget_test.dart` |
 | Contributor signup pending gate | WORKING | `apps/api/test/security.auth.test.js`, `apps/mobile/test/features/auth/presentation/auth_navigation_widget_test.dart` |
 | Contributor rejected login block | WORKING | `apps/api/test/security.auth.test.js` |
+| Duplicate email signup handling | WORKING | `apps/mobile/lib/features/auth/presentation/screens/signup_screen.dart`, `apps/mobile/test/features/auth/domain/auth_error_mapper_test.dart` |
 | Category creation/editing | WORKING | `apps/mobile/lib/features/admin/presentation/screens/categories_screen.dart`, `apps/mobile/lib/features/admin/presentation/screens/category_form_screen.dart` |
+| Category icon upload | WORKING | `apps/api/src/config/upload.ts`, `apps/mobile/lib/features/admin/presentation/screens/category_form_screen.dart` |
 | Project creation/editing | WORKING | `apps/mobile/lib/features/admin/presentation/screens/projects_management_screen.dart`, `apps/mobile/lib/features/admin/presentation/screens/project_form_screen.dart` |
+| Project pause/resume/archive/unarchive | WORKING | `apps/api/src/controllers/project.controller.ts`, `apps/mobile/lib/features/admin/presentation/screens/projects_management_screen.dart` |
 | Project visibility control | WORKING | `apps/api/test/project.visibility.test.js`, `apps/mobile/test/features/projects/presentation/project_visibility_widget_test.dart` |
 | Direct assignment creation | WORKING | `apps/mobile/lib/features/admin/presentation/screens/project_assignments_screen.dart`, `apps/api/test/project.workflow-access.test.js` |
 | Contributor project access request | WORKING | `apps/mobile/lib/features/projects/presentation/screens/project_details_screen.dart`, `apps/api/test/project.workflow-access.test.js` |
@@ -84,6 +97,8 @@ Runtime note:
 | Unassign/reassign contributor | WORKING | `apps/mobile/lib/features/admin/presentation/screens/project_assignments_screen.dart` |
 | User block/unblock | WORKING | `apps/api/test/security.auth.test.js`, `apps/mobile/lib/features/admin/presentation/screens/users_management_screen.dart` |
 | Admin promote/revert | WORKING | `apps/api/test/security.auth.test.js`, `apps/mobile/lib/features/admin/presentation/screens/users_management_screen.dart` |
+| Self-deactivate | WORKING | `apps/api/src/controllers/auth.controller.ts`, `apps/mobile/lib/features/profile/presentation/screens/profile_screen.dart` |
+| Support settings | WORKING | `apps/api/src/controllers/misc.controller.ts`, `apps/mobile/lib/features/profile/presentation/screens/profile_screen.dart` |
 | Add feature from project map | WORKING | `apps/mobile/lib/features/map/presentation/screens/map_screen.dart`, `apps/mobile/lib/features/map/presentation/screens/add_feature_screen.dart` |
 | Geometry creation | WORKING | `apps/mobile/lib/features/map/presentation/screens/add_feature_screen.dart` |
 | Attributes save against schema | WORKING | `apps/api/src/controllers/feature.controller.ts` |
@@ -94,6 +109,7 @@ Runtime note:
 | Export request | WORKING | `apps/mobile/lib/features/exports/presentation/screens/exports_dashboard_screen.dart` |
 | Export jobs list | WORKING | `apps/mobile/lib/features/exports/presentation/screens/exports_dashboard_screen.dart` |
 | Notifications scoping | WORKING | `apps/api/test/notifications.scope.test.js`, `apps/mobile/lib/core/providers/providers.dart` |
+| Notification read/unread persistence | WORKING | `apps/mobile/lib/features/notifications/presentation/controllers/notifications_controller.dart`, `apps/mobile/lib/features/notifications/presentation/screens/notifications_screen.dart` |
 | Map filtering/detail/status styles | WORKING | `apps/mobile/lib/features/map/presentation/screens/map_screen.dart` |
 | Browser-only visual UX checks | PARTIAL | Manual Chrome pass still needed for final visual confirmation |
 
@@ -116,11 +132,16 @@ Verify:
 - viewer signup logs in immediately
 - contributor signup is blocked until admin approval
 - rejected contributor remains blocked from login
+- duplicate email signup returns a user-facing validation message and no false success
+- blocked users cannot be promoted or reverted while blocked
 - protected super admin can create admins
 - standard admin cannot create admins
+- protected super admin is excluded from app-facing user directory responses
 - viewer project visibility is enforced by `project.visible_to_viewers`
+- paused projects remain viewable but cannot accept feature mutations
 - notifications are written for contributor request, approval, and rejection
-- audit logs exist for registration, approval, rejection, project, assignment, review, and export flows
+- support settings can be fetched and updated through `/api/v1/settings/support`
+- audit logs exist for registration, approval, rejection, project, assignment, review, export, and user lifecycle flows
 
 ## Chrome
 
@@ -182,12 +203,17 @@ Verify:
 - pending/rejected contributor login stays on the login screen and shows a visible error message
 - viewer sees only admin-published projects
 - contributor sees both public `Projects` and `Assigned Projects`
+- protected super admin does not appear in user search results or assignment candidate lists
 - super admin sees `Admin Panel`, `Users`, `Create Admin`, `Requests`, `Projects`, `Assignments`, `Reviews`, `Exports`, `Notifications`, `Profile`
 - super admin and admin mobile shells expose primary sections on the bottom bar and the full management list in the drawer
 - admin and super-admin can create project categories directly from mobile
 - admin and super-admin can create/edit projects directly from mobile using real schema fields
-- admin and super-admin can open a project-scoped assignment management screen and assign contributors/admins
+- admin and super-admin can open a project-scoped assignment management screen and assign contributors only
+- category create/edit supports search plus optional icon upload
+- profile shows Help & Support content, and protected super admin can edit it
 - super admin can promote eligible viewers/contributors to admin and revert only toggle-promoted admins to their previous role
+- blocked users cannot be promoted/reverted until unblocked
+- viewer and contributor profile screens expose self-deactivate, with confirmation and assignment-state restrictions
 - project map shows a clean empty state when no features exist, not a request error box
 - add-feature flow can create a server draft, attach selected photos, and submit for review
 - project map feature cards and markers open a details sheet showing attributes, status, review notes, and photos
@@ -195,6 +221,7 @@ Verify:
 - review queue decisions update backend feature status and notifications
 - blocked users cannot log in until an admin or super admin unblocks them
 - users screen supports search, role filters, account-state filters, admin promotion/revert, and block/unblock actions
+- requests screen uses simplified top-level labels `Contributor` and `Projects`
 - Android debug runtime allows local cleartext traffic for `10.0.2.2`
 - if no emulator is attached in CI/local automation, use `flutter build apk` as the build gate and perform the manual checklist below on a human-started emulator
 
@@ -214,7 +241,11 @@ Verify:
 12. Log in as super admin and verify the Users screen promote/revert action.
 13. Block a viewer or contributor account from Users, confirm login is denied, then unblock it and confirm login works again.
 14. Request access to a public project from a contributor account, then approve/reject that project request from Requests.
-15. Log in as admin and confirm only user-scoped notifications are visible.
+15. Pause a project, confirm it remains viewable but contributor add/edit/submit actions are blocked, then resume it.
+16. Archive a completed project, then unarchive it and confirm it returns to `completed`.
+17. Update Help & Support content from protected super admin profile and confirm it appears for a different user.
+18. Self-deactivate a viewer or contributor account without blocking assignments and confirm later login is denied until reactivation.
+19. Log in as admin and confirm only user-scoped notifications are visible.
 
 ## Remaining Manual Browser Checks
 

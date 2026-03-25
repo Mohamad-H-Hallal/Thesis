@@ -14,6 +14,11 @@ This pass closed the remaining UI/runtime gaps around:
 - conversion of the review queue from local-only placeholders to backend-backed feature moderation
 - redesign of Requests into contributor/project request workflows with pending/rejected handling
 - stronger user management with block/unblock, admin promotion/revert boundaries, and search/filter tooling
+- hiding the protected super admin from app-facing list responses and assignment eligibility data
+- backend-managed Help & Support settings surfaced in profile and editable by protected super admin
+- self-deactivate workflow for viewer/contributor accounts with assignment-state restrictions
+- category search and icon upload support
+- paused project enforcement plus archive/unarchive restore behavior
 - richer project map interactions, including feature status filters, detail sheets, and review actions from the map workspace
 - Android emulator runtime readiness, including `10.0.2.2` API access and cleartext debug config
 - closure of the last major mobile runtime gap: in-app category, project, and assignment provisioning for admin and super-admin users
@@ -52,23 +57,34 @@ No new schema redesign was introduced. PostgreSQL/PostGIS remains the source of 
 - Viewer:
   - can sign up and log in immediately
   - sees `Projects`
-  - only receives projects where `project.visible_to_viewers = true` and status is `active` or `completed`
+  - only receives projects where `project.visible_to_viewers = true` and status is `active`, `paused`, or `completed`
 - Contributor:
   - signs up as pending contributor
   - cannot log in until admin approval
   - can request assignment to a public project and see pending/rejected request state
   - sees `Projects` for public/viewer-visible projects
-  - sees `Assigned Projects` for approved assignment-based work
+  - sees `Assigned Projects` for approved contributor assignment-based work
 - Admin:
   - sees all projects
   - can manage viewer visibility
   - can block/unblock viewer and contributor accounts
   - can approve/reject contributor requests and project assignment requests
+  - can assign, unassign, and reassign contributors
   - can review, export, and open the map workspace
 - Super admin:
   - remains highest privilege identity by protected service logic
   - now lands in an explicit management shell with visible primary navigation plus drawer access to all admin areas
   - can promote/revert eligible runtime-managed admins and block/unblock any non-protected account
+  - is hidden from app-facing directory and assignment lists even while retaining full internal privilege
+
+## Additional Runtime Rules
+
+- `project_assignment` is contributor-only; admins are not assigned through that table in the mobile runtime.
+- Paused projects remain readable but feature create/update/delete/submit actions are blocked in backend and mobile flow.
+- Completed projects can be archived, and unarchive restores them to `completed`.
+- Support contact details are backend-managed and persist across sessions.
+- Notifications are persisted, user-scoped, and now support read/unread state from the mobile client.
+- Viewer and contributor accounts may self-deactivate when no blocking assignment rule applies.
 
 ## Critical Gaps Check
 
