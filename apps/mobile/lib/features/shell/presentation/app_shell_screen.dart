@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/config/app_branding.dart';
 import '../../../core/providers/providers.dart';
 import '../../../core/router/route_paths.dart';
+import '../../../core/sync/sync_controller.dart';
 import '../../../core/widgets/app_logo.dart';
 import '../../../core/widgets/app_scaffold.dart';
 import '../../admin/presentation/screens/admin_creation_screen.dart';
@@ -68,7 +69,12 @@ class AppShellScreen extends ConsumerWidget {
           icon: const Icon(Icons.logout),
         );
 
-        final syncAction = _buildSyncAction(context, ref, attentionCount);
+        final syncAction = _buildSyncAction(
+          context,
+          ref,
+          syncState,
+          attentionCount,
+        );
         final shellActions = <Widget>[
           if (_shouldShowSyncAction(session.user, selectedItem.path))
             syncAction,
@@ -208,14 +214,26 @@ class AppShellScreen extends ConsumerWidget {
   Widget _buildSyncAction(
     BuildContext context,
     WidgetRef ref,
+    SyncState syncState,
     int attentionCount,
   ) {
+    final isDisabled =
+        syncState.isInitializing || !syncState.isReady || syncState.isSyncing;
+    final tooltip = syncState.isInitializing
+        ? 'Preparing local sync storage'
+        : !syncState.isReady
+            ? 'Sync unavailable until local storage is ready'
+            : syncState.isSyncing
+                ? 'Sync in progress'
+                : 'Sync now';
     return Stack(
       alignment: Alignment.center,
       children: [
         IconButton(
-          tooltip: 'Sync now',
-          onPressed: () => ref.read(syncControllerProvider.notifier).syncNow(),
+          tooltip: tooltip,
+          onPressed: isDisabled
+              ? null
+              : () => ref.read(syncControllerProvider.notifier).syncNow(),
           icon: const Icon(Icons.sync),
         ),
         if (attentionCount > 0)
@@ -362,7 +380,8 @@ class AppShellScreen extends ConsumerWidget {
           return ProfileScreen(
             userName: session.user.fullName,
             email: session.user.email,
-            role: session.user.roleLabel,
+            userRole: session.user.role,
+            isSuperAdmin: session.user.isSuperAdmin,
             onLogout: () => ref.read(authControllerProvider.notifier).logout(),
           );
         },

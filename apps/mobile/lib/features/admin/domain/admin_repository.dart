@@ -43,6 +43,11 @@ abstract class AdminRepository {
     String? iconUrl,
   });
 
+  Future<String> uploadCategoryIcon({
+    required String filePath,
+    String? fileName,
+  });
+
   Future<ProjectCategorySummary> updateCategory({
     required String categoryId,
     required String name,
@@ -55,6 +60,11 @@ abstract class AdminRepository {
   Future<ProjectSummary> updateProject({
     required String projectId,
     required ProjectProvisioningInput input,
+  });
+
+  Future<ProjectSummary> updateProjectStatus({
+    required String projectId,
+    required String status,
   });
 
   Future<void> archiveProject(String projectId);
@@ -77,4 +87,13 @@ abstract class AdminRepository {
   Future<void> removeAssignment(String assignmentId);
 
   Future<AdminDashboardSummary> fetchDashboardSummary();
+
+  Future<SupportContactSettings> fetchSupportSettings();
+
+  Future<SupportContactSettings> updateSupportSettings({
+    String? supportEmail,
+    String? supportPhone,
+    String? officeHours,
+    String? helpText,
+  });
 }

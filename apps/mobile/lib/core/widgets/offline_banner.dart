@@ -35,22 +35,22 @@ class OfflineBanner extends ConsumerWidget {
             appearance.message,
             style: TextStyle(color: appearance.foreground),
           ),
-          if (syncState.lastSyncAt != null)
+          if (syncState.isReady && syncState.lastSyncAt != null)
             Chip(
               label: Text('Last sync ${_formatTime(syncState.lastSyncAt!)}'),
               backgroundColor: scheme.surface.withValues(alpha: 0.7),
             ),
-          if (syncState.pendingCount > 0)
+          if (syncState.isReady && syncState.pendingCount > 0)
             Chip(
               label: Text('${syncState.pendingCount} queued'),
               backgroundColor: scheme.surface.withValues(alpha: 0.7),
             ),
-          if (syncState.conflictCount > 0)
+          if (syncState.isReady && syncState.conflictCount > 0)
             Chip(
               label: Text('${syncState.conflictCount} conflicts'),
               backgroundColor: scheme.errorContainer,
             ),
-          if (syncState.deadLetterCount > 0)
+          if (syncState.isReady && syncState.deadLetterCount > 0)
             Chip(
               label: Text('${syncState.deadLetterCount} blocked'),
               backgroundColor: scheme.errorContainer,
@@ -61,6 +61,24 @@ class OfflineBanner extends ConsumerWidget {
   }
 
   _BannerAppearance _appearanceFor(SyncState state) {
+    if (state.isInitializing) {
+      return const _BannerAppearance(
+        icon: Icons.sync,
+        title: 'Preparing sync',
+        message: 'Local storage is starting. Sync actions will be available shortly.',
+        backgroundSeed: _BannerSeed.info,
+      );
+    }
+
+    if (!state.isReady) {
+      return const _BannerAppearance(
+        icon: Icons.cloud_off_outlined,
+        title: 'Sync unavailable',
+        message: 'Offline storage is not ready yet, so sync actions are temporarily disabled.',
+        backgroundSeed: _BannerSeed.warning,
+      );
+    }
+
     if (state.isSyncing) {
       return const _BannerAppearance(
         icon: Icons.sync,

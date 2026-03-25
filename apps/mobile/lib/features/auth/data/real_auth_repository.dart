@@ -199,6 +199,23 @@ class RealAuthRepository implements AuthRepository {
     }
   }
 
+  @override
+  Future<void> selfDeactivate() async {
+    try {
+      await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_authBasePath/self-deactivate',
+      );
+    } on DioException catch (error) {
+      throw mapAuthDioException(
+        error,
+        fallbackMessage: 'Account deactivation failed.',
+      );
+    } finally {
+      _apiClient.setAccessToken(null);
+      await _clearStoredSession();
+    }
+  }
+
   Future<void> _persistSession({
     required String accessToken,
     required String refreshToken,

@@ -46,10 +46,35 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   String? _formLevelError;
+  String? _emailFieldError;
+  late final ProviderSubscription<AuthState> _authSubscription;
 
   @override
   void initState() {
     super.initState();
+    _authSubscription = ref.listenManual<AuthState>(
+      authControllerProvider,
+      (previous, next) {
+        final nextError = next.error?.trim();
+        if (!mounted ||
+            next.status != AuthStatus.unauthenticated ||
+            nextError == null ||
+            nextError.isEmpty ||
+            nextError == previous?.error) {
+          return;
+        }
+
+        setState(() {
+          _formLevelError = nextError;
+          _emailFieldError =
+              nextError == 'This email is already registered.'
+              ? nextError
+              : null;
+        });
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        AppSnackbar.showError(context, nextError);
+      },
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       patchAuthInputAttributes(
         formId: 'signup',
@@ -66,6 +91,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
 
   @override
   void dispose() {
+    _authSubscription.close();
     _fullNameController.dispose();
     _phoneController.dispose();
     _emailController.dispose();
@@ -82,6 +108,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
   Future<void> _submit() async {
     setState(() {
       _formLevelError = null;
+      _emailFieldError = null;
     });
 
     if (!_formKey.currentState!.validate()) {
@@ -106,22 +133,28 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
     }
 
     final authState = ref.read(authControllerProvider);
-    if (authState.error == null) {
+    if (successMessage != null &&
+        (authState.error == null || authState.error!.trim().isEmpty)) {
       AppSnackbar.showSuccess(
         context,
-        successMessage ??
-            (_selectedRole == UserRole.contributor
-                ? 'Your contributor request is pending admin approval.'
-                : 'Viewer account created successfully. You can log in now.'),
+        successMessage,
       );
       context.go(AppRoutes.login);
       return;
     }
 
+    final failureMessage =
+        authState.error?.trim().isNotEmpty == true
+            ? authState.error!
+            : 'Signup failed. Please review the form and try again.';
     setState(() {
-      _formLevelError = authState.error;
+      _formLevelError = failureMessage;
+      _emailFieldError =
+          failureMessage == 'This email is already registered.'
+          ? failureMessage
+          : null;
     });
-    AppSnackbar.showError(context, authState.error!);
+    AppSnackbar.showError(context, failureMessage);
   }
 
   @override
@@ -270,7 +303,19 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                                 AutofillHints.username,
                                 AutofillHints.email,
                               ],
-                              validator: AuthFormValidators.email,
+                              onChanged: (_) {
+                                if (_formLevelError == null &&
+                                    _emailFieldError == null) {
+                                  return;
+                                }
+                                setState(() {
+                                  _formLevelError = null;
+                                  _emailFieldError = null;
+                                });
+                              },
+                              validator: (value) =>
+                                  _emailFieldError ??
+                                  AuthFormValidators.email(value),
                             ),
                             const SizedBox(height: AppSpacing.sm),
                             AppTextField(

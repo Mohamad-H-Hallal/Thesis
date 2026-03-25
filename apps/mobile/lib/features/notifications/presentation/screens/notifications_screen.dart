@@ -40,6 +40,15 @@ class NotificationsScreen extends ConsumerWidget {
               title: 'Notifications',
               subtitle:
                   '${notifications.where((n) => !n.isRead).length} unread updates',
+              trailing: notifications.any((item) => !item.isRead)
+                  ? OutlinedButton.icon(
+                      onPressed: () => ref
+                          .read(notificationsControllerProvider.notifier)
+                          .markAllAsRead(),
+                      icon: const Icon(Icons.done_all_outlined),
+                      label: const Text('Mark all read'),
+                    )
+                  : null,
             ),
             const SizedBox(height: AppSpacing.md),
             ...List<Widget>.generate(notifications.length, (index) {
@@ -51,7 +60,7 @@ class NotificationsScreen extends ConsumerWidget {
                   child: AppCard(
                     onTap: () => ref
                         .read(notificationsControllerProvider.notifier)
-                        .toggleRead(item.id),
+                        .markAsRead(item.id),
                     child: ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: CircleAvatar(

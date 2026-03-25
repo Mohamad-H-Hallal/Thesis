@@ -8,8 +8,9 @@ import type { Request } from 'express';
 const uploadDir = process.env.UPLOAD_DIR ?? './uploads';
 const photosDir = path.join(uploadDir, 'photos');
 const thumbnailsDir = path.join(uploadDir, 'thumbnails');
+const categoryIconsDir = path.join(uploadDir, 'category-icons');
 
-[uploadDir, photosDir, thumbnailsDir].forEach((dir) => {
+[uploadDir, photosDir, thumbnailsDir, categoryIconsDir].forEach((dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -59,4 +60,29 @@ const uploadSingle = upload.single('photo');
 // Multiple photos upload (max 10)
 const uploadMultiple = upload.array('photos', 10);
 
-export { uploadSingle, uploadMultiple, photosDir, thumbnailsDir };
+const categoryIconStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, categoryIconsDir);
+  },
+  filename: (_req, file, cb) => {
+    const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
+    cb(null, uniqueName);
+  },
+});
+
+const uploadCategoryIcon = multer({
+  storage: categoryIconStorage,
+  limits: {
+    fileSize: Number.parseInt(process.env.CATEGORY_ICON_MAX_SIZE ?? '3145728', 10),
+  },
+  fileFilter: fileFilter,
+}).single('icon');
+
+export {
+  uploadSingle,
+  uploadMultiple,
+  uploadCategoryIcon,
+  photosDir,
+  thumbnailsDir,
+  categoryIconsDir,
+};

@@ -65,6 +65,9 @@ class _TestAuthRepository implements AuthRepository {
   Future<void> logout() async {
     logoutCalled = true;
   }
+
+  @override
+  Future<void> selfDeactivate() async {}
 }
 
 void main() {

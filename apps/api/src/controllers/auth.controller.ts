@@ -64,8 +64,8 @@ const register = async (req, res) => {
     success: true,
     message:
       publicRole === 'contributor'
-        ? 'Your contributor request is pending admin approval.'
-        : 'Viewer account created successfully. You can log in now.',
+        ? 'Account created successfully. Your contributor request is pending admin approval.'
+        : 'Account created successfully. You can log in now.',
     data: {
       user: {
         id: user.id,
@@ -331,6 +331,51 @@ const refreshToken = async (req, res) => {
   });
 };
 
+const selfDeactivate = async (req, res) => {
+  if (!req.user) {
+    throw new AppError('Not authenticated', 401);
+  }
+
+  if (req.user.role === 'admin') {
+    throw new AppError('Admin accounts cannot self-deactivate through the mobile profile flow.', 403);
+  }
+
+  if (req.user.role === 'contributor') {
+    const blockingAssignments = await query(
+      `SELECT pa.id
+       FROM project_assignment pa
+       JOIN project p ON p.id = pa.project_id
+       WHERE pa.user_id = $1
+         AND pa.role = 'contributor'
+         AND pa.status = 'approved'
+         AND p.status IN ('draft', 'active', 'paused')
+       LIMIT 1`,
+      [req.user.id],
+    );
+
+    if (blockingAssignments.rows.length > 0) {
+      throw new AppError(
+        'You cannot deactivate your account while you still have active project assignments.',
+        409,
+      );
+    }
+  }
+
+  await query(
+    `UPDATE "user"
+     SET is_active = FALSE
+     WHERE id = $1`,
+    [req.user.id],
+  );
+
+  logger.info('User self-deactivated account', { userId: req.user.id });
+
+  res.json({
+    success: true,
+    message: 'Your account was deactivated successfully.',
+  });
+};
+
 module.exports = {
   register,
   login,
@@ -338,6 +383,7 @@ module.exports = {
   updateMe,
   changePassword,
   logout,
+  selfDeactivate,
   refreshToken,
 };
 

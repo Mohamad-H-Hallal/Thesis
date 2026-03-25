@@ -147,3 +147,25 @@ class AdminDashboardSummary {
   final int totalProjects;
   final int pendingAssignments;
 }
+
+class SupportContactSettings {
+  const SupportContactSettings({
+    required this.supportEmail,
+    required this.supportPhone,
+    required this.officeHours,
+    required this.helpText,
+    this.updatedAt,
+  });
+
+  final String? supportEmail;
+  final String? supportPhone;
+  final String? officeHours;
+  final String? helpText;
+  final DateTime? updatedAt;
+
+  bool get isConfigured =>
+      (supportEmail?.trim().isNotEmpty ?? false) ||
+      (supportPhone?.trim().isNotEmpty ?? false) ||
+      (officeHours?.trim().isNotEmpty ?? false) ||
+      (helpText?.trim().isNotEmpty ?? false);
+}

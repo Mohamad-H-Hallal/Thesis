@@ -24,5 +24,7 @@ abstract class AuthRepository {
     required String newPassword,
   });
 
+  Future<void> selfDeactivate();
+
   Future<void> logout();
 }

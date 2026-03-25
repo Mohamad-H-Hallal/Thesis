@@ -88,6 +88,17 @@ class AuthController extends StateNotifier<AuthState> {
     state = const AuthState.unauthenticated();
   }
 
+  Future<void> selfDeactivate() async {
+    state = const AuthState.loading();
+    try {
+      await _repository.selfDeactivate();
+      state = const AuthState.unauthenticated();
+    } catch (error) {
+      state = AuthState.unauthenticated(_messageFromError(error));
+      rethrow;
+    }
+  }
+
   Future<void> requestPasswordReset(String email) {
     return _repository.requestPasswordReset(email);
   }

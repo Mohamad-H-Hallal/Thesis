@@ -39,13 +39,19 @@ AuthFailure mapAuthDioException(
       }
       if (normalized.contains('pending approval')) {
         return const AuthFailure(
-          'Your request is still pending approval. You cannot log in yet.',
+          'Your contributor request is still pending approval. You cannot log in yet.',
           statusCode: 403,
         );
       }
       if (normalized.contains('request was rejected')) {
         return const AuthFailure(
           'Your contributor request was rejected. You cannot log in with contributor access.',
+          statusCode: 403,
+        );
+      }
+      if (normalized.contains('inactive')) {
+        return const AuthFailure(
+          'This account is inactive.',
           statusCode: 403,
         );
       }

@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/providers/providers.dart';
-import '../../../../core/widgets/app_button.dart';
+import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
@@ -25,164 +26,29 @@ class ProjectAssignmentsScreen extends ConsumerStatefulWidget {
 class _ProjectAssignmentsScreenState
     extends ConsumerState<ProjectAssignmentsScreen> {
   bool _isSaving = false;
+  bool _showFilters = false;
+  final TextEditingController _searchController = TextEditingController();
 
-  Future<void> _assignUser(List<ManagedUserSummary> users) async {
-    final eligibleUsers = users
-        .where(
-          (user) =>
-              user.isActive &&
-              (user.role == UserRole.admin ||
-                  user.role == UserRole.contributor),
-        )
-        .toList(growable: false);
-    if (eligibleUsers.isEmpty) {
-      AppSnackbar.showError(
-        context,
-        'No active admin or contributor users are available for assignment.',
-      );
-      return;
-    }
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
-    String selectedUserId = eligibleUsers.first.id;
-    String selectedRole = eligibleUsers.first.role == UserRole.admin
-        ? 'admin'
-        : 'contributor';
-
-    final confirmed = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) {
-        return Padding(
-          padding: EdgeInsets.only(
-            left: AppSpacing.md,
-            right: AppSpacing.md,
-            top: AppSpacing.md,
-            bottom: MediaQuery.of(context).viewInsets.bottom + AppSpacing.md,
-          ),
-          child: StatefulBuilder(
-            builder: (context, setSheetState) {
-              final selectedUser = eligibleUsers.firstWhere(
-                (user) => user.id == selectedUserId,
-              );
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Assign user',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  DropdownButtonFormField<String>(
-                    initialValue: selectedUserId,
-                    decoration: const InputDecoration(labelText: 'User'),
-                    items: eligibleUsers
-                        .map(
-                          (user) => DropdownMenuItem(
-                            value: user.id,
-                            child: Text(
-                              '${user.fullName} • ${user.roleLabel}',
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        )
-                        .toList(growable: false),
-                    onChanged: (value) {
-                      if (value == null) {
-                        return;
-                      }
-                      final user = eligibleUsers.firstWhere(
-                        (item) => item.id == value,
-                      );
-                      setSheetState(() {
-                        selectedUserId = value;
-                        selectedRole = user.role == UserRole.admin
-                            ? 'admin'
-                            : 'contributor';
-                      });
-                    },
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  SegmentedButton<String>(
-                    segments: [
-                      const ButtonSegment(
-                        value: 'contributor',
-                        label: Text('Contributor'),
-                      ),
-                      if (selectedUser.role == UserRole.admin)
-                        const ButtonSegment(
-                          value: 'admin',
-                          label: Text('Admin'),
-                        ),
-                    ],
-                    selected: <String>{selectedRole},
-                    onSelectionChanged: (selection) {
-                      setSheetState(() => selectedRole = selection.first);
-                    },
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(false),
-                        child: const Text('Cancel'),
-                      ),
-                      const SizedBox(width: AppSpacing.sm),
-                      FilledButton(
-                        onPressed: () => Navigator.of(context).pop(true),
-                        child: const Text('Assign'),
-                      ),
-                    ],
-                  ),
-                ],
-              );
-            },
-          ),
-        );
-      },
-    );
-
-    if (confirmed != true) {
-      return;
-    }
-
+  Future<void> _assignContributor(ManagedUserSummary user) async {
     setState(() => _isSaving = true);
     try {
-      await ref
-          .read(adminRepositoryProvider)
-          .createAssignment(
+      await ref.read(adminRepositoryProvider).createAssignment(
             projectId: widget.projectId,
-            userId: selectedUserId,
-            role: selectedRole,
+            userId: user.id,
+            role: 'contributor',
           );
       _invalidate();
       if (mounted) {
-        AppSnackbar.showSuccess(context, 'Assignment created successfully.');
-      }
-    } catch (error) {
-      if (mounted) {
-        AppSnackbar.showError(context, error.toString());
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isSaving = false);
-      }
-    }
-  }
-
-  Future<void> _updateAssignmentStatus(
-    ManagedAssignmentSummary assignment,
-    String status,
-  ) async {
-    setState(() => _isSaving = true);
-    try {
-      await ref
-          .read(adminRepositoryProvider)
-          .updateAssignmentStatus(assignmentId: assignment.id, status: status);
-      _invalidate();
-      if (mounted) {
-        AppSnackbar.showSuccess(context, 'Assignment $status successfully.');
+        AppSnackbar.showSuccess(
+          context,
+          '${user.fullName} was assigned successfully.',
+        );
       }
     } catch (error) {
       if (mounted) {
@@ -201,7 +67,7 @@ class _ProjectAssignmentsScreenState
       await ref.read(adminRepositoryProvider).removeAssignment(assignment.id);
       _invalidate();
       if (mounted) {
-        AppSnackbar.showSuccess(context, 'Assignment removed successfully.');
+        AppSnackbar.showSuccess(context, 'Contributor unassigned successfully.');
       }
     } catch (error) {
       if (mounted) {
@@ -217,17 +83,29 @@ class _ProjectAssignmentsScreenState
   void _invalidate() {
     ref.invalidate(projectAssignmentsProvider(widget.projectId));
     ref.invalidate(managedAssignmentsProvider);
+    ref.invalidate(managedUsersProvider);
     ref.invalidate(projectByIdProvider(widget.projectId));
     ref.invalidate(projectListProvider(ProjectViewScope.all));
+  }
+
+  List<ManagedUserSummary> _filterUsers(List<ManagedUserSummary> users) {
+    final query = _searchController.text.trim().toLowerCase();
+    if (query.isEmpty) {
+      return users;
+    }
+    return users.where((user) {
+      return user.fullName.toLowerCase().contains(query) ||
+          user.email.toLowerCase().contains(query) ||
+          (user.phone?.toLowerCase().contains(query) ?? false);
+    }).toList(growable: false);
   }
 
   @override
   Widget build(BuildContext context) {
     final projectAsync = ref.watch(projectByIdProvider(widget.projectId));
-    final assignmentsAsync = ref.watch(
-      projectAssignmentsProvider(widget.projectId),
-    );
+    final assignmentsAsync = ref.watch(projectAssignmentsProvider(widget.projectId));
     final usersAsync = ref.watch(managedUsersProvider);
+    final requestsAsync = ref.watch(managedAssignmentsProvider);
 
     return projectAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -248,112 +126,159 @@ class _ProjectAssignmentsScreenState
         }
 
         return ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: SectionHeader(
-                    title: 'Project Assignments',
-                    subtitle:
-                        'Manage admin and contributor access for ${project.name}.',
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final filterAction = OutlinedButton.icon(
+                  onPressed: () => setState(() => _showFilters = !_showFilters),
+                  icon: Icon(
+                    _showFilters
+                        ? Icons.filter_alt_off_outlined
+                        : Icons.filter_alt_outlined,
                   ),
-                ),
-                usersAsync.maybeWhen(
-                  data: (users) => AppButton(
-                    label: 'Assign User',
-                    icon: Icons.person_add_alt_1_outlined,
-                    expand: false,
-                    isLoading: _isSaving,
-                    onPressed: _isSaving ? null : () => _assignUser(users),
-                  ),
-                  orElse: () => const SizedBox.shrink(),
-                ),
-              ],
+                  label: Text(_showFilters ? 'Hide filters' : 'Filter'),
+                );
+                if (constraints.maxWidth < 720) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SectionHeader(
+                        title: 'Project Assignments',
+                        subtitle:
+                            'Assign and unassign contributors for ${project.name}. Project requests stay in Requests.',
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      filterAction,
+                    ],
+                  );
+                }
+                return SectionHeader(
+                  title: 'Project Assignments',
+                  subtitle:
+                      'Assign and unassign contributors for ${project.name}. Project requests stay in Requests.',
+                  trailing: filterAction,
+                );
+              },
             ),
+            const SizedBox(height: AppSpacing.sm),
+            requestsAsync.when(
+              loading: () => const SizedBox.shrink(),
+              error: (_, _) => const SizedBox.shrink(),
+              data: (requests) {
+                final projectRequests = requests
+                    .where((item) => item.projectId == widget.projectId)
+                    .toList(growable: false);
+                final pendingCount =
+                    projectRequests.where((item) => item.status == 'pending').length;
+                final rejectedCount =
+                    projectRequests.where((item) => item.status == 'rejected').length;
+
+                return AppCard(
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.assignment_late_outlined),
+                    title: const Text('Project request queue'),
+                    subtitle: Text(
+                      'Pending: $pendingCount • Rejected: $rejectedCount. Review project access requests from the Requests screen.',
+                    ),
+                    trailing: OutlinedButton(
+                      onPressed: () => context.push(AppRoutes.contributorRequests),
+                      child: const Text('Open Requests'),
+                    ),
+                  ),
+                );
+              },
+            ),
+            if (_showFilters) ...[
+              const SizedBox(height: AppSpacing.sm),
+              AppCard(
+                child: SearchBar(
+                  controller: _searchController,
+                  hintText: 'Search contributors by name, email, or phone',
+                  leading: const Icon(Icons.search),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+            ],
             const SizedBox(height: AppSpacing.md),
             assignmentsAsync.when(
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (error, _) => AppEmptyState(
                 icon: Icons.error_outline,
-                title: 'Assignment list unavailable',
+                title: 'Assigned contributors unavailable',
                 message: '$error',
                 actionLabel: 'Retry',
                 onAction: () => ref.invalidate(
                   projectAssignmentsProvider(widget.projectId),
                 ),
               ),
-              data: (assignments) {
-                if (assignments.isEmpty) {
-                  return const AppEmptyState(
-                    icon: Icons.assignment_late_outlined,
-                    title: 'No assignments yet',
-                    message:
-                        'Assign admins or contributors to this project to enable delivery.',
+              data: (assignments) => usersAsync.when(
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (error, _) => AppEmptyState(
+                  icon: Icons.error_outline,
+                  title: 'Contributors unavailable',
+                  message: '$error',
+                  actionLabel: 'Retry',
+                  onAction: () => ref.invalidate(managedUsersProvider),
+                ),
+                data: (users) {
+                  final assignedContributorIds = assignments
+                      .map((assignment) => assignment.userId)
+                      .toSet();
+                  final approvedAssignments = assignments
+                      .where((assignment) => assignment.status == 'approved')
+                      .toList(growable: false);
+                  final availableContributors = _filterUsers(
+                    users
+                        .where(
+                          (user) =>
+                              user.role == UserRole.contributor &&
+                              user.isActive &&
+                              !user.isBlocked &&
+                              !assignedContributorIds.contains(user.id),
+                        )
+                        .toList(growable: false),
                   );
-                }
 
-                final approved = assignments
-                    .where((item) => item.status == 'approved')
-                    .toList(growable: false);
-                final pending = assignments
-                    .where((item) => item.status == 'pending')
-                    .toList(growable: false);
-                final rejected = assignments
-                    .where((item) => item.status == 'rejected')
-                    .toList(growable: false);
-
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (pending.isNotEmpty)
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       _AssignmentSection(
-                        title: 'Pending requests',
-                        children: pending
-                            .map((assignment) => _AssignmentCard(
-                                  assignment: assignment,
-                                  isSaving: _isSaving,
-                                  onApprove: () => _updateAssignmentStatus(
-                                    assignment,
-                                    'approved',
-                                  ),
-                                  onReject: () => _updateAssignmentStatus(
-                                    assignment,
-                                    'rejected',
-                                  ),
-                                  onRemove: () => _removeAssignment(assignment),
-                                ))
+                        title: 'Assigned contributors',
+                        emptyTitle: 'No contributors assigned',
+                        emptyMessage:
+                            'Assigned contributors will appear here and can be unassigned at any time.',
+                        children: approvedAssignments
+                            .map(
+                              (assignment) => _AssignedContributorCard(
+                                assignment: assignment,
+                                isSaving: _isSaving,
+                                onUnassign: () => _removeAssignment(assignment),
+                              ),
+                            )
                             .toList(growable: false),
                       ),
-                    if (approved.isNotEmpty)
+                      const SizedBox(height: AppSpacing.md),
                       _AssignmentSection(
-                        title: 'Approved assignments',
-                        children: approved
-                            .map((assignment) => _AssignmentCard(
-                                  assignment: assignment,
-                                  isSaving: _isSaving,
-                                  onRemove: () => _removeAssignment(assignment),
-                                ))
+                        title: 'Available contributors',
+                        emptyTitle: 'No eligible contributors available',
+                        emptyMessage:
+                            'Active contributors who are not currently assigned to this project will appear here, including previously unassigned contributors.',
+                        children: availableContributors
+                            .map(
+                              (user) => _AvailableContributorCard(
+                                user: user,
+                                isSaving: _isSaving,
+                                onAssign: () => _assignContributor(user),
+                              ),
+                            )
                             .toList(growable: false),
                       ),
-                    if (rejected.isNotEmpty)
-                      _AssignmentSection(
-                        title: 'Rejected requests',
-                        children: rejected
-                            .map((assignment) => _AssignmentCard(
-                                  assignment: assignment,
-                                  isSaving: _isSaving,
-                                  onApprove: () => _updateAssignmentStatus(
-                                    assignment,
-                                    'approved',
-                                  ),
-                                  onRemove: () => _removeAssignment(assignment),
-                                ))
-                            .toList(growable: false),
-                      ),
-                  ],
-                );
-              },
+                    ],
+                  );
+                },
+              ),
             ),
           ],
         );
@@ -363,46 +288,53 @@ class _ProjectAssignmentsScreenState
 }
 
 class _AssignmentSection extends StatelessWidget {
-  const _AssignmentSection({required this.title, required this.children});
+  const _AssignmentSection({
+    required this.title,
+    required this.emptyTitle,
+    required this.emptyMessage,
+    required this.children,
+  });
 
   final String title;
+  final String emptyTitle;
+  final String emptyMessage;
   final List<Widget> children;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.md),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: AppSpacing.sm),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: AppSpacing.sm),
+        if (children.isEmpty)
+          AppEmptyState(
+            icon: Icons.group_off_outlined,
+            title: emptyTitle,
+            message: emptyMessage,
+          )
+        else
           ...children.map(
             (child) => Padding(
               padding: const EdgeInsets.only(bottom: AppSpacing.sm),
               child: child,
             ),
           ),
-        ],
-      ),
+      ],
     );
   }
 }
 
-class _AssignmentCard extends StatelessWidget {
-  const _AssignmentCard({
+class _AssignedContributorCard extends StatelessWidget {
+  const _AssignedContributorCard({
     required this.assignment,
     required this.isSaving,
-    this.onApprove,
-    this.onReject,
-    this.onRemove,
+    required this.onUnassign,
   });
 
   final ManagedAssignmentSummary assignment;
   final bool isSaving;
-  final VoidCallback? onApprove;
-  final VoidCallback? onReject;
-  final VoidCallback? onRemove;
+  final VoidCallback onUnassign;
 
   @override
   Widget build(BuildContext context) {
@@ -415,42 +347,68 @@ class _AssignmentCard extends StatelessWidget {
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 4),
-          Text(assignment.email),
+          Text(assignment.email, softWrap: true),
           const SizedBox(height: AppSpacing.sm),
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: [
-              Chip(label: Text('Role: ${assignment.role}')),
-              Chip(label: Text('Status: ${assignment.status}')),
+            children: const [
+              Chip(label: Text('Contributor')),
+              Chip(label: Text('Assigned')),
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
+          OutlinedButton.icon(
+            onPressed: isSaving ? null : onUnassign,
+            icon: const Icon(Icons.person_remove_outlined),
+            label: const Text('Unassign'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AvailableContributorCard extends StatelessWidget {
+  const _AvailableContributorCard({
+    required this.user,
+    required this.isSaving,
+    required this.onAssign,
+  });
+
+  final ManagedUserSummary user;
+  final bool isSaving;
+  final VoidCallback onAssign;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            user.fullName,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 4),
+          Text(user.email, softWrap: true),
+          if ((user.phone ?? '').trim().isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(user.phone!, softWrap: true),
+          ],
+          const SizedBox(height: AppSpacing.sm),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
-              if (onReject != null)
-                FilledButton.tonal(
-                  onPressed: isSaving ? null : onReject,
-                  child: const Text('Reject'),
-                ),
-              if (onApprove != null)
-                FilledButton(
-                  onPressed: isSaving ? null : onApprove,
-                  child: Text(
-                    assignment.status == 'rejected' ? 'Re-approve' : 'Approve',
-                  ),
-                ),
-              if (onRemove != null)
-                OutlinedButton.icon(
-                  onPressed: isSaving ? null : onRemove,
-                  icon: const Icon(Icons.delete_outline),
-                  label: Text(
-                    assignment.status == 'approved' ? 'Unassign' : 'Remove',
-                  ),
-                ),
+              Chip(label: Text(user.accountStateLabel)),
             ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          FilledButton.icon(
+            onPressed: isSaving ? null : onAssign,
+            icon: const Icon(Icons.person_add_alt_1_outlined),
+            label: const Text('Assign contributor'),
           ),
         ],
       ),

@@ -26,6 +26,7 @@ const {
   photoRouter,
   categoryRouter,
   notificationRouter,
+  settingsRouter,
   userRouter,
 } = require('./routes/index');
 
@@ -116,6 +117,7 @@ const buildApp = (env) => {
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   app.use(compression());
   app.use('/docs', express.static(path.join(__dirname, '..', 'docs')));
+  app.use('/uploads', express.static(path.resolve(env.UPLOAD_DIR ?? './uploads')));
 
   if (env.NODE_ENV === 'development') {
     app.use(morgan('dev'));
@@ -193,6 +195,7 @@ const buildApp = (env) => {
         photos: `${normalizedApiPrefix}/photos`,
         categories: `${normalizedApiPrefix}/categories`,
         notifications: `${normalizedApiPrefix}/notifications`,
+        settings: `${normalizedApiPrefix}/settings`,
         users: `${normalizedApiPrefix}/users (admin only)`,
       },
       documentation: '/docs/openapi.yaml',
@@ -213,6 +216,7 @@ const buildApp = (env) => {
     app.use(`${prefix}/photos`, photoRouter);
     app.use(`${prefix}/categories`, categoryRouter);
     app.use(`${prefix}/notifications`, notificationRouter);
+    app.use(`${prefix}/settings`, settingsRouter);
     app.use(`${prefix}/users`, userRouter);
     app.get(prefix, metadataHandler);
   }

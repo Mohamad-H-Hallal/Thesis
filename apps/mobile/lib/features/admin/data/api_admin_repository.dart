@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:path/path.dart' as p;
 
 import '../../../core/config/app_env.dart';
 import '../../../core/network/api_client.dart';
@@ -16,6 +17,7 @@ class ApiAdminRepository implements AdminRepository {
   String get _assignmentsBasePath => '${AppEnv.apiVersionPrefix}/assignments';
   String get _projectsBasePath => '${AppEnv.apiVersionPrefix}/projects';
   String get _categoriesBasePath => '${AppEnv.apiVersionPrefix}/categories';
+  String get _settingsBasePath => '${AppEnv.apiVersionPrefix}/settings';
 
   @override
   Future<List<ManagedUserSummary>> fetchUsers({
@@ -213,6 +215,32 @@ class ApiAdminRepository implements AdminRepository {
   }
 
   @override
+  Future<String> uploadCategoryIcon({
+    required String filePath,
+    String? fileName,
+  }) async {
+    return _run(() async {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_categoriesBasePath/icon',
+        data: FormData.fromMap(<String, dynamic>{
+          'icon': await MultipartFile.fromFile(
+            filePath,
+            filename: fileName ?? p.basename(filePath),
+          ),
+        }),
+      );
+      final row = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      final iconUrl = row['icon_url'] as String?;
+      if (iconUrl == null || iconUrl.trim().isEmpty) {
+        throw const FormatException('Category icon upload did not return an icon URL.');
+      }
+      return iconUrl.trim();
+    }, fallback: 'Unable to upload category icon.');
+  }
+
+  @override
   Future<ProjectCategorySummary> updateCategory({
     required String categoryId,
     required String name,
@@ -287,6 +315,23 @@ class ApiAdminRepository implements AdminRepository {
       );
       return _toProjectSummary(row);
     }, fallback: 'Unable to update project.');
+  }
+
+  @override
+  Future<ProjectSummary> updateProjectStatus({
+    required String projectId,
+    required String status,
+  }) async {
+    return _run(() async {
+      final response = await _apiClient.dio.put<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId',
+        data: <String, dynamic>{'status': status},
+      );
+      final row = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return _toProjectSummary(row);
+    }, fallback: 'Unable to update project status.');
   }
 
   @override
@@ -407,6 +452,43 @@ class ApiAdminRepository implements AdminRepository {
     );
   }
 
+  @override
+  Future<SupportContactSettings> fetchSupportSettings() async {
+    return _run(() async {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_settingsBasePath/support',
+      );
+      final row = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return _toSupportSettings(row);
+    }, fallback: 'Unable to load support settings.');
+  }
+
+  @override
+  Future<SupportContactSettings> updateSupportSettings({
+    String? supportEmail,
+    String? supportPhone,
+    String? officeHours,
+    String? helpText,
+  }) async {
+    return _run(() async {
+      final response = await _apiClient.dio.put<Map<String, dynamic>>(
+        '$_settingsBasePath/support',
+        data: <String, dynamic>{
+          'support_email': supportEmail,
+          'support_phone': supportPhone,
+          'office_hours': officeHours,
+          'help_text': helpText,
+        },
+      );
+      final row = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return _toSupportSettings(row);
+    }, fallback: 'Unable to update support settings.');
+  }
+
   ManagedUserSummary _toManagedUser(Map<String, dynamic> row) {
     final requestStatusRaw = row['request_status'] as String?;
     return ManagedUserSummary(
@@ -454,6 +536,16 @@ class ApiAdminRepository implements AdminRepository {
       description: row['description'] as String?,
       iconUrl: row['icon_url'] as String?,
       createdAt: _toDateTime(row['created_at']),
+    );
+  }
+
+  SupportContactSettings _toSupportSettings(Map<String, dynamic> row) {
+    return SupportContactSettings(
+      supportEmail: row['support_email'] as String?,
+      supportPhone: row['support_phone'] as String?,
+      officeHours: row['office_hours'] as String?,
+      helpText: row['help_text'] as String?,
+      updatedAt: _toDateTime(row['updated_at']),
     );
   }
 

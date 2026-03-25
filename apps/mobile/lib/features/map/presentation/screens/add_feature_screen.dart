@@ -376,6 +376,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       case CollectionFieldType.select:
         return DropdownButtonFormField<String>(
           initialValue: _attributeValues[field.key] as String?,
+          isExpanded: true,
           items: field.options
               .map(
                 (option) =>
@@ -408,16 +409,14 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       case CollectionFieldType.date:
         final rawDate = _attributeValues[field.key] as String?;
         return AppCard(
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  rawDate == null || rawDate.isEmpty
-                      ? '${field.label}${field.required ? ' *' : ''}: Not selected'
-                      : '${field.label}: $rawDate',
-                ),
-              ),
-              OutlinedButton.icon(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final dateSummary = Text(
+                rawDate == null || rawDate.isEmpty
+                    ? '${field.label}${field.required ? ' *' : ''}: Not selected'
+                    : '${field.label}: $rawDate',
+              );
+              final pickButton = OutlinedButton.icon(
                 onPressed: () async {
                   final now = DateTime.now();
                   final picked = await showDatePicker(
@@ -436,8 +435,27 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 },
                 icon: const Icon(Icons.event),
                 label: const Text('Pick'),
-              ),
-            ],
+              );
+
+              if (constraints.maxWidth < 420) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    dateSummary,
+                    const SizedBox(height: 12),
+                    pickButton,
+                  ],
+                );
+              }
+
+              return Row(
+                children: [
+                  Expanded(child: dateSummary),
+                  const SizedBox(width: 12),
+                  pickButton,
+                ],
+              );
+            },
           ),
         );
     }
@@ -497,7 +515,9 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
               },
               controlsBuilder: (context, details) {
                 if (_currentStep == 3) {
-                  return Row(
+                  return Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
                       TextButton(
                         onPressed: details.onStepCancel,
@@ -507,14 +527,16 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                   );
                 }
 
-                return Row(
+                return Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
                     AppButton(
                       label: 'Next',
                       icon: Icons.arrow_forward,
+                      expand: false,
                       onPressed: details.onStepContinue,
                     ),
-                    const SizedBox(width: 8),
                     TextButton(
                       onPressed: details.onStepCancel,
                       child: const Text('Back'),
@@ -532,6 +554,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                     children: [
                       DropdownButtonFormField<String>(
                         initialValue: _selectedProjectId,
+                        isExpanded: true,
                         decoration: const InputDecoration(
                           labelText: 'Assigned Project',
                         ),
@@ -566,6 +589,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                       else
                         DropdownButtonFormField<String>(
                           initialValue: _selectedGeometryType,
+                          isExpanded: true,
                           decoration: const InputDecoration(
                             labelText: 'Geometry Type',
                           ),
@@ -584,28 +608,66 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                           },
                         ),
                       const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextFormField(
-                              controller: _latitudeController,
-                              keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true,
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          if (constraints.maxWidth < 520) {
+                            return Column(
+                              children: [
+                                TextFormField(
+                                  controller: _latitudeController,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                  decoration: const InputDecoration(
+                                    labelText: 'Latitude',
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                TextFormField(
+                                  controller: _longitudeController,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                  decoration: const InputDecoration(
+                                    labelText: 'Longitude',
+                                  ),
+                                ),
+                              ],
+                            );
+                          }
+
+                          return Row(
+                            children: [
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _latitudeController,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                  decoration: const InputDecoration(
+                                    labelText: 'Latitude',
+                                  ),
+                                ),
                               ),
-                              decoration: const InputDecoration(labelText: 'Latitude'),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: TextFormField(
-                              controller: _longitudeController,
-                              keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true,
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _longitudeController,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                  decoration: const InputDecoration(
+                                    labelText: 'Longitude',
+                                  ),
+                                ),
                               ),
-                              decoration: const InputDecoration(labelText: 'Longitude'),
-                            ),
-                          ),
-                        ],
+                            ],
+                          );
+                        },
                       ),
                       const SizedBox(height: 12),
                       Wrap(

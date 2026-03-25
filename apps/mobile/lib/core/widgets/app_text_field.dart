@@ -20,6 +20,8 @@ class AppTextField extends StatelessWidget {
     this.enableSuggestions = true,
     this.textCapitalization = TextCapitalization.none,
     this.onChanged,
+    this.minLines,
+    this.maxLines,
     super.key,
   });
 
@@ -40,6 +42,8 @@ class AppTextField extends StatelessWidget {
   final bool enableSuggestions;
   final TextCapitalization textCapitalization;
   final ValueChanged<String>? onChanged;
+  final int? minLines;
+  final int? maxLines;
 
   @override
   Widget build(BuildContext context) {
@@ -58,10 +62,16 @@ class AppTextField extends StatelessWidget {
       enableSuggestions: enableSuggestions,
       textCapitalization: textCapitalization,
       onChanged: onChanged,
+      minLines: obscureText ? 1 : minLines,
+      maxLines: obscureText ? 1 : maxLines,
+      textAlignVertical: (minLines != null || maxLines != null)
+          ? TextAlignVertical.top
+          : null,
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
         suffixIcon: suffix,
+        alignLabelWithHint: (minLines ?? maxLines ?? 1) > 1,
       ),
     );
   }

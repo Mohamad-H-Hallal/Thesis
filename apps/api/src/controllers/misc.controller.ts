@@ -5,10 +5,32 @@ const logger = require('../utils/logger');
 import {
   createNotification,
   getLatestAccountState,
+  getProtectedSuperAdminEmail,
   isProtectedSuperAdminEmail,
   normalizeEmail,
   getUserAccessState,
 } from '../lib/userWorkflow';
+
+const getSupportSettingsRow = async () => {
+  const result = await query(
+    `SELECT id, support_email, support_phone, office_hours, help_text, updated_at, updated_by_user_id
+     FROM app_support_settings
+     WHERE id = 1`,
+  );
+
+  if (result.rows.length > 0) {
+    return result.rows[0];
+  }
+
+  const inserted = await query(
+    `INSERT INTO app_support_settings (id)
+     VALUES (1)
+     ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+     RETURNING id, support_email, support_phone, office_hours, help_text, updated_at, updated_by_user_id`,
+  );
+
+  return inserted.rows[0];
+};
 
 const getUserForAdminMutation = async (userId: string) => {
   const result = await query(
@@ -158,6 +180,26 @@ const categoryController = {
     });
   },
 
+  uploadIcon: async (req, res) => {
+    const file = req.file;
+
+    if (!file) {
+      throw new AppError('Category icon image is required', 400);
+    }
+
+    const iconUrl = `/uploads/category-icons/${file.filename}`;
+
+    res.status(201).json({
+      success: true,
+      message: 'Category icon uploaded successfully',
+      data: {
+        icon_url: iconUrl,
+        original_name: file.originalname,
+        file_size_bytes: file.size,
+      },
+    });
+  },
+
   // Delete category (admin only)
   delete: async (req, res) => {
     const { categoryId } = req.params;
@@ -173,6 +215,60 @@ const categoryController = {
     res.json({
       success: true,
       message: 'Category deleted successfully',
+    });
+  },
+};
+
+const settingsController = {
+  getSupport: async (_req, res) => {
+    const settings = await getSupportSettingsRow();
+
+    res.json({
+      success: true,
+      data: settings,
+      meta: {
+        push_notifications: false,
+        persisted_in_app_notifications: true,
+      },
+    });
+  },
+
+  updateSupport: async (req, res) => {
+    if (!isProtectedSuperAdminEmail(req.user?.email)) {
+      throw new AppError(
+        'Only the protected super administrator can update support settings.',
+        403,
+      );
+    }
+
+    const { support_email, support_phone, office_hours, help_text } = req.body;
+
+    const result = await query(
+      `INSERT INTO app_support_settings (
+         id, support_email, support_phone, office_hours, help_text, updated_at, updated_by_user_id
+       )
+       VALUES (1, $1, $2, $3, $4, CURRENT_TIMESTAMP, $5)
+       ON CONFLICT (id) DO UPDATE
+         SET support_email = EXCLUDED.support_email,
+             support_phone = EXCLUDED.support_phone,
+             office_hours = EXCLUDED.office_hours,
+             help_text = EXCLUDED.help_text,
+             updated_at = CURRENT_TIMESTAMP,
+             updated_by_user_id = EXCLUDED.updated_by_user_id
+       RETURNING id, support_email, support_phone, office_hours, help_text, updated_at, updated_by_user_id`,
+      [
+        support_email ?? null,
+        support_phone ?? null,
+        office_hours ?? null,
+        help_text ?? null,
+        req.user?.id ?? null,
+      ],
+    );
+
+    res.json({
+      success: true,
+      message: 'Support settings updated successfully',
+      data: result.rows[0],
     });
   },
 };
@@ -295,6 +391,7 @@ const userController = {
     const { role, is_active, page = 1, limit = 50, q, state } = req.query;
     const offset = (page - 1) * limit;
     const actorIsProtectedSuperAdmin = isProtectedSuperAdminEmail(req.user?.email);
+    const protectedEmail = getProtectedSuperAdminEmail();
 
     let queryText = `
       SELECT u.id,
@@ -343,6 +440,12 @@ const userController = {
 
     const params: unknown[] = [];
     let paramIndex = 1;
+
+    if (protectedEmail) {
+      queryText += ` AND LOWER(u.email) <> $${paramIndex}`;
+      params.push(protectedEmail);
+      paramIndex++;
+    }
 
     if (!actorIsProtectedSuperAdmin) {
       queryText += ` AND u.role IN ('viewer', 'contributor')`;
@@ -403,6 +506,7 @@ const userController = {
         is_blocked: row.account_state === 'blocked',
         can_toggle_admin_role:
           !isProtectedSuperAdminEmail(row.email) &&
+          row.account_state !== 'blocked' &&
           (row.role === 'viewer' ||
             row.role === 'contributor' ||
             (row.role === 'admin' && Boolean(row.previous_admin_role))),
@@ -427,6 +531,10 @@ const userController = {
     );
 
     if (result.rows.length === 0) {
+      throw new AppError('User not found', 404);
+    }
+
+    if (isProtectedSuperAdminEmail(result.rows[0].email)) {
       throw new AppError('User not found', 404);
     }
 
@@ -596,6 +704,15 @@ const userController = {
       );
     }
 
+    const accessState = await getUserAccessState(query, {
+      userId,
+      role: currentUser.role,
+      isActive: currentUser.is_active,
+    });
+    if (accessState === 'blocked') {
+      throw new AppError('Blocked users must be unblocked before changing roles.', 409);
+    }
+
     const previousRoleResult =
       currentUser.role === 'admin'
         ? await query(
@@ -749,6 +866,7 @@ const userController = {
          LIMIT 1
        ) latest_request ON TRUE
        WHERE u.role = 'contributor'
+         AND LOWER(u.email) <> $4
          AND u.is_active = FALSE
          AND (
            ($1 = 'pending' AND COALESCE(latest_request.type, 'contributor_request') = 'contributor_request')
@@ -756,7 +874,7 @@ const userController = {
          )
        ORDER BY u.created_at DESC
        LIMIT $2 OFFSET $3`,
-      [status, limit, offset],
+      [status, limit, offset, getProtectedSuperAdminEmail()],
     );
 
     res.json({
@@ -835,7 +953,7 @@ const userController = {
         userId,
         type: 'contributor_approved',
         title: 'Contributor access approved',
-        message: 'Your contributor access request has been approved. You can now log in.',
+        message: 'Your contributor access request was approved. You can now log in and use contributor tools.',
         metadata: {
           user_id: userId,
           approved_by_user_id: req.user?.id,
@@ -885,7 +1003,7 @@ const userController = {
         type: 'contributor_rejected',
         title: 'Contributor request rejected',
         message:
-          'Your contributor request was rejected. You cannot log in with contributor access.',
+          'Your contributor request was rejected. Your account stays blocked from contributor login until an administrator changes this decision.',
         metadata: {
           user_id: userId,
           rejected_by_user_id: req.user?.id,
@@ -912,6 +1030,7 @@ const userController = {
 module.exports = {
   categoryController,
   notificationController,
+  settingsController,
   userController,
 };
 

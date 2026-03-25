@@ -440,6 +440,10 @@ final projectAssignmentsProvider =
           .fetchProjectAssignments(projectId);
     });
 
+final supportSettingsProvider = FutureProvider<SupportContactSettings>((ref) async {
+  return ref.read(adminRepositoryProvider).fetchSupportSettings();
+});
+
 final reviewQueueProvider = FutureProvider<List<ReviewQueueItem>>((ref) async {
   return ref.read(reviewRepositoryProvider).fetchPendingReviewItems();
 });

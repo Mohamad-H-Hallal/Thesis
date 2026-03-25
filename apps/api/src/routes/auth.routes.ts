@@ -80,6 +80,17 @@ router.post(
   asyncHandler(authController.logout)
 );
 
+router.post(
+  '/self-deactivate',
+  auditAction({
+    actionType: 'update',
+    entityType: 'user',
+    resolveEntityId: (req) => req.user?.id ?? null,
+    resolveNewValues: () => ({ is_active: false, event: 'self_deactivate' }),
+  }),
+  asyncHandler(authController.selfDeactivate)
+);
+
 module.exports = router;
 
 export {};

@@ -21,17 +21,52 @@ class NotificationsController
     state = await AsyncValue.guard(_repository.fetchNotifications);
   }
 
-  void toggleRead(String id) {
-    state.whenData((items) {
-      state = AsyncData(
-        items
-            .map(
-              (item) =>
-                  item.id == id ? item.copyWith(isRead: !item.isRead) : item,
-            )
-            .toList(growable: false),
-      );
-    });
+  Future<void> markAsRead(String id) async {
+    final currentItems = state.valueOrNull;
+    if (currentItems == null) {
+      await load();
+      return;
+    }
+
+    final alreadyRead = currentItems.any(
+      (item) => item.id == id && item.isRead,
+    );
+    if (alreadyRead) {
+      return;
+    }
+
+    state = AsyncData(
+      currentItems
+          .map(
+            (item) => item.id == id ? item.copyWith(isRead: true) : item,
+          )
+          .toList(growable: false),
+    );
+
+    try {
+      await _repository.markAsRead(id);
+    } catch (_) {
+      await load();
+    }
+  }
+
+  Future<void> markAllAsRead() async {
+    final currentItems = state.valueOrNull;
+    if (currentItems == null || currentItems.every((item) => item.isRead)) {
+      return;
+    }
+
+    state = AsyncData(
+      currentItems
+          .map((item) => item.copyWith(isRead: true))
+          .toList(growable: false),
+    );
+
+    try {
+      await _repository.markAllAsRead();
+    } catch (_) {
+      await load();
+    }
   }
 
   void pushNotification({required String title, required String message}) {

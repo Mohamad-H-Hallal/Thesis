@@ -167,7 +167,7 @@ const checkProjectAccess = async (req: Request, res: Response, next: NextFunctio
          FROM project
          WHERE id = $1
            AND visible_to_viewers = TRUE
-           AND status IN ('active', 'completed')`,
+           AND status IN ('active', 'paused', 'completed')`,
         [projectId]
       );
 
@@ -203,7 +203,7 @@ const checkProjectAccess = async (req: Request, res: Response, next: NextFunctio
             FROM project
             WHERE id = $1
               AND visible_to_viewers = TRUE
-              AND status IN ('active', 'completed')
+              AND status IN ('active', 'paused', 'completed')
           ) AS is_public_project`,
       [projectId, userId]
     );

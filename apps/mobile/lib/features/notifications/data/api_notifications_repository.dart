@@ -33,6 +33,16 @@ class ApiNotificationsRepository implements NotificationsRepository {
     }).toList(growable: false);
   }
 
+  @override
+  Future<void> markAsRead(String notificationId) async {
+    await _apiClient.dio.put<void>('$_notificationsBasePath/$notificationId/read');
+  }
+
+  @override
+  Future<void> markAllAsRead() async {
+    await _apiClient.dio.put<void>('$_notificationsBasePath/read-all');
+  }
+
   String _relativeTimestamp(DateTime? value) {
     if (value == null) {
       return 'just now';

@@ -24,15 +24,20 @@ class _ProjectsManagementScreenState
     extends ConsumerState<ProjectsManagementScreen> {
   String _query = '';
   String _statusFilter = 'all';
+  bool _showFilters = false;
 
-  Future<void> _archiveProject(ProjectSummary project) async {
+  Future<void> _changeProjectStatus(
+    ProjectSummary project, {
+    required String nextStatus,
+    required String dialogTitle,
+    required String dialogMessage,
+    required String successMessage,
+  }) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Archive project'),
-        content: Text(
-          'Archive "${project.name}"? This removes it from active operations and contributor lists.',
-        ),
+        title: Text(dialogTitle),
+        content: Text(dialogMessage),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -40,7 +45,7 @@ class _ProjectsManagementScreenState
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Archive'),
+            child: Text(dialogTitle),
           ),
         ],
       ),
@@ -51,13 +56,20 @@ class _ProjectsManagementScreenState
     }
 
     try {
-      await ref.read(adminRepositoryProvider).archiveProject(project.id);
+      if (nextStatus == 'archived') {
+        await ref.read(adminRepositoryProvider).archiveProject(project.id);
+      } else {
+        await ref.read(adminRepositoryProvider).updateProjectStatus(
+              projectId: project.id,
+              status: nextStatus,
+            );
+      }
       ref.invalidate(projectListProvider(ProjectViewScope.all));
       ref.invalidate(projectByIdProvider(project.id));
       if (!mounted) {
         return;
       }
-      AppSnackbar.showSuccess(context, 'Project archived successfully.');
+      AppSnackbar.showSuccess(context, successMessage);
     } catch (error) {
       if (mounted) {
         AppSnackbar.showError(context, error.toString());
@@ -88,175 +100,290 @@ class _ProjectsManagementScreenState
           return matchesQuery && matchesStatus;
         }).toList(growable: false);
 
-        return ListView(
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Expanded(
-                  child: SectionHeader(
-                    title: 'Projects',
-                    subtitle:
-                        'Provision, update, and route projects into assignments, map collection, reviews, and exports.',
-                  ),
-                ),
-                FilledButton.icon(
-                  onPressed: () => context.push(AppRoutes.projectCreate),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Create'),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            SearchBar(
-              hintText: 'Search projects',
-              leading: const Icon(Icons.search),
-              onChanged: (value) {
-                setState(() {
-                  _query = value.trim();
-                });
-              },
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Wrap(
-              spacing: AppSpacing.xs,
-              runSpacing: AppSpacing.xs,
-              children: [
-                for (final status in const [
-                  'all',
-                  'draft',
-                  'active',
-                  'completed',
-                  'archived',
-                ])
-                  ChoiceChip(
-                    label: Text(status == 'all' ? 'All statuses' : status),
-                    selected: _statusFilter == status,
-                    onSelected: (_) {
-                      setState(() {
-                        _statusFilter = status;
-                      });
-                    },
-                  ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.md),
-            if (filtered.isEmpty)
-              AppEmptyState(
-                icon: Icons.folder_off_outlined,
-                title: 'No projects found',
-                message: projects.isEmpty
-                    ? 'Create your first project to start the mobile-first workflow.'
-                    : 'No projects match the current search and status filter.',
-                actionLabel: projects.isEmpty ? 'Create project' : null,
-                onAction: projects.isEmpty
-                    ? () => context.push(AppRoutes.projectCreate)
-                    : null,
-              )
-            else
-              ...filtered.map(
-                (project) => Padding(
-                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                  child: AppCard(
-                    child: Column(
+        return RefreshIndicator(
+          onRefresh: () async =>
+              ref.invalidate(projectListProvider(ProjectViewScope.all)),
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            children: [
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final action = FilledButton.icon(
+                    onPressed: () => context.push(AppRoutes.projectCreate),
+                    icon: const Icon(Icons.add),
+                    label: const Text('Create'),
+                  );
+                  final filterAction = OutlinedButton.icon(
+                    onPressed: () => setState(() => _showFilters = !_showFilters),
+                    icon: Icon(
+                      _showFilters
+                          ? Icons.filter_alt_off_outlined
+                          : Icons.filter_alt_outlined,
+                    ),
+                    label: Text(_showFilters ? 'Hide filters' : 'Filter'),
+                  );
+                  if (constraints.maxWidth < 680) {
+                    return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    project.name,
-                                    style: Theme.of(context).textTheme.titleLarge,
-                                  ),
-                                  const SizedBox(height: AppSpacing.xs),
-                                  Text(
-                                    project.description.isEmpty
-                                        ? 'No description provided.'
-                                        : project.description,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            PopupMenuButton<String>(
-                              onSelected: (value) {
-                                if (value == 'archive') {
-                                  _archiveProject(project);
-                                }
-                              },
-                              itemBuilder: (context) => const [
-                                PopupMenuItem(
-                                  value: 'archive',
-                                  child: Text('Archive project'),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: AppSpacing.sm),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            StatusChip(status: project.status),
-                            Chip(label: Text(project.category)),
-                            Chip(
-                              label: Text(
-                                project.visibleToViewers
-                                    ? 'Viewer visible'
-                                    : 'Contributor only',
-                              ),
-                            ),
-                            Chip(
-                              label: Text(
-                                project.requiresPhotos
-                                    ? 'Photos ${project.minPhotos}-${project.maxPhotos}'
-                                    : 'Photos optional',
-                              ),
-                            ),
-                          ],
+                        const SectionHeader(
+                          title: 'Projects',
+                          subtitle:
+                              'Provision, update, and route projects into assignments, map collection, reviews, and exports.',
                         ),
                         const SizedBox(height: AppSpacing.sm),
                         Wrap(
                           spacing: AppSpacing.sm,
                           runSpacing: AppSpacing.sm,
-                          children: [
-                            OutlinedButton.icon(
-                              onPressed: () =>
-                                  context.push(AppRoutes.projectEdit(project.id)),
-                              icon: const Icon(Icons.edit_outlined),
-                              label: const Text('Edit'),
-                            ),
-                            OutlinedButton.icon(
-                              onPressed: () => context.push(
-                                AppRoutes.projectAssignments(project.id),
-                              ),
-                              icon: const Icon(Icons.assignment_outlined),
-                              label: const Text('Assignments'),
-                            ),
-                            OutlinedButton.icon(
-                              onPressed: () =>
-                                  context.push(AppRoutes.projectDetails(project.id)),
-                              icon: const Icon(Icons.visibility_outlined),
-                              label: const Text('Open'),
-                            ),
-                            OutlinedButton.icon(
-                              onPressed: () =>
-                                  context.push(AppRoutes.mapForProject(project.id)),
-                              icon: const Icon(Icons.map_outlined),
-                              label: const Text('Map'),
-                            ),
-                          ],
+                          children: [action, filterAction],
                         ),
                       ],
+                    );
+                  }
+                  return SectionHeader(
+                    title: 'Projects',
+                    subtitle:
+                        'Provision, update, and route projects into assignments, map collection, reviews, and exports.',
+                    trailing: Wrap(
+                      spacing: AppSpacing.sm,
+                      children: [action, filterAction],
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              if (_showFilters) ...[
+                AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SearchBar(
+                        hintText: 'Search projects',
+                        leading: const Icon(Icons.search),
+                        onChanged: (value) {
+                          setState(() {
+                            _query = value.trim();
+                          });
+                        },
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      Wrap(
+                        spacing: AppSpacing.xs,
+                        runSpacing: AppSpacing.xs,
+                        children: [
+                          for (final status in const [
+                            'all',
+                            'draft',
+                            'active',
+                            'paused',
+                            'completed',
+                            'archived',
+                          ])
+                            ChoiceChip(
+                              label: Text(
+                                status == 'all' ? 'All statuses' : status,
+                              ),
+                              selected: _statusFilter == status,
+                              onSelected: (_) {
+                                setState(() {
+                                  _statusFilter = status;
+                                });
+                              },
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+              ],
+              if (filtered.isEmpty)
+                AppEmptyState(
+                  icon: Icons.folder_off_outlined,
+                  title: 'No projects found',
+                  message: projects.isEmpty
+                      ? 'Create your first project to start the mobile-first workflow.'
+                      : 'No projects match the current search and status filter.',
+                  actionLabel: projects.isEmpty ? 'Create project' : null,
+                  onAction: projects.isEmpty
+                      ? () => context.push(AppRoutes.projectCreate)
+                      : null,
+                )
+              else
+                ...filtered.map(
+                  (project) => Padding(
+                    padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                    child: AppCard(
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final menu = PopupMenuButton<String>(
+                            onSelected: (value) {
+                              if (value == 'pause') {
+                                _changeProjectStatus(
+                                  project,
+                                  nextStatus: 'paused',
+                                  dialogTitle: 'Pause project',
+                                  dialogMessage:
+                                      'Pause "${project.name}"? Viewing stays available, but feature collection and submission are disabled until the project returns to active status.',
+                                  successMessage: 'Project paused successfully.',
+                                );
+                              }
+                              if (value == 'resume') {
+                                _changeProjectStatus(
+                                  project,
+                                  nextStatus: 'active',
+                                  dialogTitle: 'Resume project',
+                                  dialogMessage:
+                                      'Return "${project.name}" to active field operations?',
+                                  successMessage: 'Project resumed successfully.',
+                                );
+                              }
+                              if (value == 'archive') {
+                                _changeProjectStatus(
+                                  project,
+                                  nextStatus: 'archived',
+                                  dialogTitle: 'Archive project',
+                                  dialogMessage:
+                                      'Archive "${project.name}"? This removes it from active operations and contributor lists.',
+                                  successMessage: 'Project archived successfully.',
+                                );
+                              }
+                              if (value == 'unarchive') {
+                                _changeProjectStatus(
+                                  project,
+                                  nextStatus: 'completed',
+                                  dialogTitle: 'Unarchive project',
+                                  dialogMessage:
+                                      'Restore "${project.name}" to completed so it becomes viewable again and can be managed normally.',
+                                  successMessage:
+                                      'Project restored to completed status.',
+                                );
+                              }
+                            },
+                            itemBuilder: (context) => [
+                              if (project.status == 'active')
+                                const PopupMenuItem(
+                                  value: 'pause',
+                                  child: Text('Pause project'),
+                                ),
+                              if (project.status == 'paused')
+                                const PopupMenuItem(
+                                  value: 'resume',
+                                  child: Text('Resume project'),
+                                ),
+                              if (project.status == 'completed')
+                                const PopupMenuItem(
+                                  value: 'archive',
+                                  child: Text('Archive project'),
+                                ),
+                              if (project.status == 'archived')
+                                const PopupMenuItem(
+                                  value: 'unarchive',
+                                  child: Text('Unarchive project'),
+                                ),
+                            ],
+                          );
+
+                          final summary = Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                project.name,
+                                style: Theme.of(context).textTheme.titleLarge,
+                              ),
+                              const SizedBox(height: AppSpacing.xs),
+                              Text(
+                                project.description.isEmpty
+                                    ? 'No description provided.'
+                                    : project.description,
+                              ),
+                            ],
+                          );
+
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (constraints.maxWidth < 460) ...[
+                                summary,
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: menu,
+                                ),
+                              ] else
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(child: summary),
+                                    menu,
+                                  ],
+                                ),
+                              const SizedBox(height: AppSpacing.sm),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  StatusChip(status: project.status),
+                                  Chip(label: Text(project.category)),
+                                  Chip(
+                                    label: Text(
+                                      project.visibleToViewers
+                                          ? 'Viewer visible'
+                                          : 'Contributor only',
+                                    ),
+                                  ),
+                                  Chip(
+                                    label: Text(
+                                      project.requiresPhotos
+                                          ? 'Photos ${project.minPhotos}-${project.maxPhotos}'
+                                          : 'Photos optional',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: AppSpacing.sm),
+                              Wrap(
+                                spacing: AppSpacing.sm,
+                                runSpacing: AppSpacing.sm,
+                                children: [
+                                  OutlinedButton.icon(
+                                    onPressed: () => context.push(
+                                      AppRoutes.projectEdit(project.id),
+                                    ),
+                                    icon: const Icon(Icons.edit_outlined),
+                                    label: const Text('Edit'),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: () => context.push(
+                                      AppRoutes.projectAssignments(project.id),
+                                    ),
+                                    icon: const Icon(Icons.assignment_outlined),
+                                    label: const Text('Assignments'),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: () => context.push(
+                                      AppRoutes.projectDetails(project.id),
+                                    ),
+                                    icon: const Icon(Icons.visibility_outlined),
+                                    label: const Text('Open'),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: () => context.push(
+                                      AppRoutes.mapForProject(project.id),
+                                    ),
+                                    icon: const Icon(Icons.map_outlined),
+                                    label: const Text('Map'),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ),
-              ),
-          ],
+            ],
+          ),
         );
       },
     );

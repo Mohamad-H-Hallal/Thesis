@@ -1,8 +1,66 @@
 const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
+import { createNotification, getActiveAdminUsers } from '../lib/userWorkflow';
 
-// Get all assignments for current user
+const viewableProjectStatuses = ['active', 'paused', 'completed'];
+
+const getProjectOrFail = async (projectId: string) => {
+  const projectResult = await query(
+    `SELECT id, name, status, visible_to_viewers
+     FROM project
+     WHERE id = $1`,
+    [projectId],
+  );
+
+  if (projectResult.rows.length === 0) {
+    throw new AppError('Project not found', 404);
+  }
+
+  return projectResult.rows[0];
+};
+
+const getContributorOrFail = async (userId: string) => {
+  const userResult = await query(
+    `SELECT id, email, full_name, phone, role, is_active
+     FROM "user"
+     WHERE id = $1`,
+    [userId],
+  );
+
+  if (userResult.rows.length === 0) {
+    throw new AppError('Contributor not found', 404);
+  }
+
+  const contributor = userResult.rows[0];
+  if (contributor.role !== 'contributor') {
+    throw new AppError('Only accepted contributors can be assigned to projects', 409);
+  }
+  if (!contributor.is_active) {
+    throw new AppError('Contributor account must be active before assignment', 409);
+  }
+
+  return contributor;
+};
+
+const loadAssignmentOrFail = async (assignmentId: string) => {
+  const assignmentResult = await query(
+    `SELECT pa.*, p.name AS project_name, p.status AS project_status, u.full_name, u.email, u.phone
+     FROM project_assignment pa
+     JOIN project p ON p.id = pa.project_id
+     JOIN "user" u ON u.id = pa.user_id
+     WHERE pa.id = $1
+       AND pa.role = 'contributor'`,
+    [assignmentId],
+  );
+
+  if (assignmentResult.rows.length === 0) {
+    throw new AppError('Assignment not found', 404);
+  }
+
+  return assignmentResult.rows[0];
+};
+
 const getMyAssignments = async (req, res) => {
   const { status } = req.query;
 
@@ -13,9 +71,10 @@ const getMyAssignments = async (req, res) => {
     JOIN project p ON pa.project_id = p.id
     LEFT JOIN project_category pc ON p.category_id = pc.id
     WHERE pa.user_id = $1
+      AND pa.role = 'contributor'
   `;
 
-  const params = [req.user.id];
+  const params: unknown[] = [req.user.id];
 
   if (status) {
     queryText += ` AND pa.status = $2`;
@@ -32,28 +91,19 @@ const getMyAssignments = async (req, res) => {
   });
 };
 
-// Get all assignments for a project (project admin only)
 const getProjectAssignments = async (req, res) => {
   const { projectId } = req.params;
-  const { status } = req.query;
 
-  let queryText = `
-    SELECT pa.*, u.full_name, u.email, u.phone
-    FROM project_assignment pa
-    JOIN "user" u ON pa.user_id = u.id
-    WHERE pa.project_id = $1
-  `;
-
-  const params = [projectId];
-
-  if (status) {
-    queryText += ` AND pa.status = $2`;
-    params.push(status);
-  }
-
-  queryText += ` ORDER BY pa.created_at DESC`;
-
-  const result = await query(queryText, params);
+  const result = await query(
+    `SELECT pa.*, u.full_name, u.email, u.phone
+     FROM project_assignment pa
+     JOIN "user" u ON pa.user_id = u.id
+     WHERE pa.project_id = $1
+       AND pa.role = 'contributor'
+       AND pa.status = 'approved'
+     ORDER BY u.full_name ASC, pa.created_at DESC`,
+    [projectId],
+  );
 
   res.json({
     success: true,
@@ -61,71 +111,90 @@ const getProjectAssignments = async (req, res) => {
   });
 };
 
-// Create assignment (assign user to project)
 const createAssignment = async (req, res) => {
-  const { project_id, user_id, role = 'contributor' } = req.body;
+  const { project_id, user_id } = req.body;
 
-  const [projectCheck, userCheck] = await Promise.all([
-    query('SELECT id, status FROM project WHERE id = $1', [project_id]),
-    query('SELECT id, is_active FROM "user" WHERE id = $1', [user_id]),
+  const [project, contributor] = await Promise.all([
+    getProjectOrFail(project_id),
+    getContributorOrFail(user_id),
   ]);
 
-  if (projectCheck.rows.length === 0) {
-    throw new AppError('Project not found', 404);
-  }
-  if (projectCheck.rows[0].status === 'archived') {
-    throw new AppError('Cannot assign users to archived project', 409);
+  if (project.status === 'archived') {
+    throw new AppError('Cannot assign contributors to archived projects', 409);
   }
 
-  if (userCheck.rows.length === 0) {
-    throw new AppError('User not found', 404);
-  }
-  if (!userCheck.rows[0].is_active) {
-    throw new AppError('User account is inactive', 409);
-  }
-
-  // Check if assignment already exists
   const existingAssignment = await query(
-    'SELECT id, status FROM project_assignment WHERE project_id = $1 AND user_id = $2',
-    [project_id, user_id]
+    `SELECT id, status
+     FROM project_assignment
+     WHERE project_id = $1
+       AND user_id = $2
+       AND role = 'contributor'
+     LIMIT 1`,
+    [project_id, user_id],
   );
 
-  if (existingAssignment.rows.length > 0) {
-    throw new AppError('User is already assigned to this project', 409);
-  }
-
   const assignment = await transaction(async (client) => {
-    const result = await client.query(
-      `INSERT INTO project_assignment (project_id, user_id, role, status)
-       VALUES ($1, $2, $3, 'pending')
-       RETURNING *`,
-      [project_id, user_id, role]
-    );
+    let row;
 
-    await client.query(
-      `INSERT INTO notification (user_id, type, title, message, metadata)
-       VALUES ($1, 'assignment', 'Project Assignment', 
-               'You have been assigned to a new project', $2)`,
-      [user_id, JSON.stringify({ project_id, assignment_id: result.rows[0].id })]
-    );
+    if (existingAssignment.rows.length > 0) {
+      const existing = existingAssignment.rows[0];
+      if (existing.status === 'approved') {
+        throw new AppError('Contributor is already assigned to this project', 409);
+      }
 
-    return result.rows[0];
+      const updated = await client.query(
+        `UPDATE project_assignment
+         SET status = 'approved',
+             role = 'contributor',
+             approved_by_user_id = $1,
+             approved_date = CURRENT_DATE
+         WHERE id = $2
+         RETURNING *`,
+        [req.user.id, existing.id],
+      );
+      row = updated.rows[0];
+    } else {
+      const inserted = await client.query(
+        `INSERT INTO project_assignment (
+           project_id, user_id, role, status, approved_by_user_id, approved_date
+         )
+         VALUES ($1, $2, 'contributor', 'approved', $3, CURRENT_DATE)
+         RETURNING *`,
+        [project_id, user_id, req.user.id],
+      );
+      row = inserted.rows[0];
+    }
+
+    await createNotification(client, {
+      userId: user_id,
+      type: 'assignment',
+      title: 'Project assignment approved',
+      message: `You were assigned to ${project.name} as a contributor. Collection access is now available.`,
+      metadata: {
+        assignment_id: row.id,
+        project_id,
+        project_name: project.name,
+        assignment_status: 'approved',
+      },
+    });
+
+    return row;
   });
 
-  logger.info('Assignment created:', {
+  logger.info('Contributor assigned to project', {
     assignmentId: assignment.id,
     projectId: project_id,
-    userId: user_id,
+    contributorId: contributor.id,
+    assignedBy: req.user.id,
   });
 
   res.status(201).json({
     success: true,
-    message: 'Assignment created successfully',
+    message: 'Contributor assigned successfully',
     data: assignment,
   });
 };
 
-// Get assignment workload for admins
 const getManagedAssignments = async (req, res) => {
   const { status, page = 1, limit = 50 } = req.query;
   const offset = (page - 1) * limit;
@@ -138,9 +207,9 @@ const getManagedAssignments = async (req, res) => {
            u.email,
            u.phone
     FROM project_assignment pa
-    JOIN project p ON pa.project_id = p.id
-    JOIN "user" u ON pa.user_id = u.id
-    WHERE 1=1
+    JOIN project p ON p.id = pa.project_id
+    JOIN "user" u ON u.id = pa.user_id
+    WHERE pa.role = 'contributor'
   `;
 
   const params: unknown[] = [];
@@ -167,7 +236,6 @@ const getManagedAssignments = async (req, res) => {
   });
 };
 
-// Request to join project (contributor self-assignment)
 const requestJoinProject = async (req, res) => {
   const { projectId } = req.params;
 
@@ -175,22 +243,39 @@ const requestJoinProject = async (req, res) => {
     throw new AppError('Only approved contributors can request project access', 403);
   }
 
-  // Check if user is already assigned
+  const project = await getProjectOrFail(projectId);
+  if (project.status === 'archived' || project.status === 'draft') {
+    throw new AppError('This project is not accepting assignment requests', 409);
+  }
+  if (!viewableProjectStatuses.includes(project.status)) {
+    throw new AppError('This project is not available for assignment requests', 409);
+  }
+  if (!project.visible_to_viewers) {
+    throw new AppError('Only viewer-visible projects accept self-service assignment requests', 409);
+  }
+
   const existingAssignment = await query(
-    'SELECT id FROM project_assignment WHERE project_id = $1 AND user_id = $2',
-    [projectId, req.user.id]
+    `SELECT id, status
+     FROM project_assignment
+     WHERE project_id = $1
+       AND user_id = $2
+       AND role = 'contributor'
+     LIMIT 1`,
+    [projectId, req.user.id],
   );
 
   if (existingAssignment.rows.length > 0) {
-    throw new AppError('You have already requested to join this project', 409);
-  }
-
-  const projectCheck = await query('SELECT id, status FROM project WHERE id = $1', [projectId]);
-  if (projectCheck.rows.length === 0) {
-    throw new AppError('Project not found', 404);
-  }
-  if (projectCheck.rows[0].status === 'archived') {
-    throw new AppError('Cannot join archived project', 409);
+    const existing = existingAssignment.rows[0];
+    if (existing.status === 'approved') {
+      throw new AppError('You are already assigned to this project', 409);
+    }
+    if (existing.status === 'pending') {
+      throw new AppError('You already have a pending request for this project', 409);
+    }
+    throw new AppError(
+      'A rejected request already exists for this project. Ask an administrator to re-approve it from Requests.',
+      409,
+    );
   }
 
   const createdRequest = await transaction(async (client) => {
@@ -198,40 +283,55 @@ const requestJoinProject = async (req, res) => {
       `INSERT INTO project_assignment (project_id, user_id, role, status)
        VALUES ($1, $2, 'contributor', 'pending')
        RETURNING *`,
-      [projectId, req.user.id]
+      [projectId, req.user.id],
     );
 
-    const projectAdmins = await client.query(
-      `SELECT user_id FROM project_assignment 
-       WHERE project_id = $1 AND role = 'admin' AND status = 'approved'`,
-      [projectId]
-    );
-
-    for (const admin of projectAdmins.rows) {
-      await client.query(
-        `INSERT INTO notification (user_id, type, title, message, metadata)
-         VALUES ($1, 'assignment', 'Join Request', 
-                 'A user has requested to join your project', $2)`,
-        [admin.user_id, JSON.stringify({ project_id: projectId, user_id: req.user.id })]
-      );
+    const admins = await getActiveAdminUsers(client);
+    for (const admin of admins) {
+      await createNotification(client, {
+        userId: admin.id,
+        type: 'assignment',
+        title: 'Project access request pending',
+        message: `${req.user.full_name} requested contributor access to ${project.name}.`,
+        metadata: {
+          assignment_id: result.rows[0].id,
+          project_id: projectId,
+          project_name: project.name,
+          requester_user_id: req.user.id,
+          assignment_status: 'pending',
+        },
+      });
     }
+
+    await createNotification(client, {
+      userId: req.user.id,
+      type: 'assignment',
+      title: 'Project access request submitted',
+      message: `Your request to join ${project.name} as a contributor is pending admin review.`,
+      metadata: {
+        assignment_id: result.rows[0].id,
+        project_id: projectId,
+        project_name: project.name,
+        assignment_status: 'pending',
+      },
+    });
 
     return result.rows[0];
   });
 
-  logger.info('Join request created:', {
+  logger.info('Project access request submitted', {
+    assignmentId: createdRequest.id,
     projectId,
-    userId: req.user.id,
+    contributorId: req.user.id,
   });
 
   res.status(201).json({
     success: true,
-    message: 'Join request submitted successfully',
+    message: 'Project access request submitted successfully',
     data: createdRequest,
   });
 };
 
-// Approve or reject assignment
 const updateAssignmentStatus = async (req, res) => {
   const { assignmentId } = req.params;
   const { status } = req.body;
@@ -240,93 +340,104 @@ const updateAssignmentStatus = async (req, res) => {
     throw new AppError('Status must be approved or rejected', 400);
   }
 
-  // Get assignment details
-  const assignmentCheck = await query(
-    'SELECT user_id FROM project_assignment WHERE id = $1',
-    [assignmentId]
-  );
+  const existingAssignment = await loadAssignmentOrFail(assignmentId);
 
-  if (assignmentCheck.rows.length === 0) {
-    throw new AppError('Assignment not found', 404);
+  if (existingAssignment.status === status) {
+    return res.json({
+      success: true,
+      message:
+        status === 'approved'
+          ? 'Project request is already approved'
+          : 'Project request is already rejected',
+      data: existingAssignment,
+    });
   }
 
-  const assignment = await transaction(async (client) => {
+  const updatedAssignment = await transaction(async (client) => {
     const result = await client.query(
-       `UPDATE project_assignment 
+      `UPDATE project_assignment
        SET status = $1::assignment_status,
-           approved_by_user_id = CASE WHEN $1::assignment_status = 'approved' THEN $2::uuid ELSE NULL END,
-           approved_date = CASE WHEN $1::assignment_status = 'approved' THEN CURRENT_DATE ELSE NULL END
+           approved_by_user_id = CASE
+             WHEN $1::assignment_status = 'approved' THEN $2::uuid
+             ELSE NULL
+           END,
+           approved_date = CASE
+             WHEN $1::assignment_status = 'approved' THEN CURRENT_DATE
+             ELSE NULL
+           END
        WHERE id = $3
        RETURNING *`,
-      [status, req.user.id, assignmentId]
+      [status, req.user.id, assignmentId],
     );
 
-    await client.query(
-      `INSERT INTO notification (user_id, type, title, message, metadata)
-       VALUES ($1, 'assignment', $2, $3, $4)`,
-      [
-        assignmentCheck.rows[0].user_id,
-        `Assignment ${status}`,
-        `Your project assignment has been ${status}`,
-        JSON.stringify({ assignment_id: assignmentId, status }),
-      ]
-    );
+    await createNotification(client, {
+      userId: existingAssignment.user_id,
+      type: 'assignment',
+      title:
+        status === 'approved'
+          ? 'Project access approved'
+          : 'Project access rejected',
+      message:
+        status === 'approved'
+          ? `Your contributor access request for ${existingAssignment.project_name} was approved.`
+          : `Your contributor access request for ${existingAssignment.project_name} was rejected.`,
+      metadata: {
+        assignment_id: assignmentId,
+        project_id: existingAssignment.project_id,
+        project_name: existingAssignment.project_name,
+        assignment_status: status,
+      },
+    });
 
     return result.rows[0];
   });
 
-  logger.info('Assignment status updated:', {
+  logger.info('Project assignment request updated', {
     assignmentId,
     status,
-    approvedBy: req.user.id,
+    reviewedBy: req.user.id,
   });
 
   res.json({
     success: true,
-    message: `Assignment ${status} successfully`,
-    data: assignment,
+    message:
+      status === 'approved'
+        ? 'Project request approved successfully'
+        : 'Project request rejected successfully',
+    data: updatedAssignment,
   });
 };
 
-// Remove assignment
 const removeAssignment = async (req, res) => {
   const { assignmentId } = req.params;
 
-  const result = await transaction(async (client) => {
-    const removed = await client.query(
-      'DELETE FROM project_assignment WHERE id = $1 RETURNING user_id, project_id',
-      [assignmentId]
-    );
+  const assignment = await loadAssignmentOrFail(assignmentId);
 
-    if (removed.rows.length === 0) {
-      return removed;
-    }
+  await transaction(async (client) => {
+    await client.query('DELETE FROM project_assignment WHERE id = $1', [assignmentId]);
 
-    await client.query(
-      `INSERT INTO notification (user_id, type, title, message, metadata)
-       VALUES ($1, 'assignment', 'Assignment Removed', 
-               'You have been removed from a project', $2)`,
-      [
-        removed.rows[0].user_id,
-        JSON.stringify({ project_id: removed.rows[0].project_id, assignment_id: assignmentId }),
-      ]
-    );
-
-    return removed;
+    await createNotification(client, {
+      userId: assignment.user_id,
+      type: 'assignment',
+      title: 'Project assignment removed',
+      message: `You were removed from ${assignment.project_name}. Contact an administrator if you still need access.`,
+      metadata: {
+        assignment_id: assignmentId,
+        project_id: assignment.project_id,
+        project_name: assignment.project_name,
+        assignment_status: 'removed',
+      },
+    });
   });
 
-  if (result.rows.length === 0) {
-    throw new AppError('Assignment not found', 404);
-  }
-
-  logger.info('Assignment removed:', {
+  logger.info('Contributor unassigned from project', {
     assignmentId,
     removedBy: req.user.id,
   });
 
   res.json({
     success: true,
-    message: 'Assignment removed successfully',
+    message: 'Contributor unassigned successfully',
   });
 };
 

@@ -191,7 +191,13 @@ const createCategory = async ({ token, name, description = 'Phase 10 category' }
   return response.body.data;
 };
 
-const createProject = async ({ token, categoryId, name, visibleToViewers = false }) => {
+const createProject = async ({
+  token,
+  categoryId,
+  name,
+  visibleToViewers = false,
+  status = 'draft',
+}) => {
   const response = await request(app)
     .post(`${API_PREFIX}/projects`)
     .set(authHeader(token))
@@ -206,7 +212,7 @@ const createProject = async ({ token, categoryId, name, visibleToViewers = false
           { key: 'condition', type: 'select', required: false },
         ],
       },
-      status: 'draft',
+      status,
       requires_photos: false,
       min_photos: 0,
       max_photos: 3,

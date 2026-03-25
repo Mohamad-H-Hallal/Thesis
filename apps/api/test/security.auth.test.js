@@ -51,7 +51,9 @@ describe('Security: registration, contributor approval, and protected super admi
       emailPrefix: 'pending-contributor',
     });
 
-    expect(contributor.message).toBe('Your contributor request is pending admin approval.');
+    expect(contributor.message).toBe(
+      'Account created successfully. Your contributor request is pending admin approval.',
+    );
 
     const requestNotifications = await pool.query(
       `SELECT type FROM notification WHERE user_id = $1 ORDER BY created_at DESC`,
@@ -251,5 +253,40 @@ describe('Security: registration, contributor approval, and protected super admi
 
     expect(unblockedLogin.status).toBe(200);
     expect(unblockedLogin.body.data.user.role).toBe('viewer');
+  });
+
+  test('blocked users cannot be promoted until unblocked', async () => {
+    const superAdmin = await createAdminUser({
+      email: 'superadmin@gov.lb',
+      fullName: 'Protected Super Admin',
+    });
+    const viewer = await registerUser({
+      role: 'viewer',
+      fullName: 'Blocked Promotion Candidate',
+      emailPrefix: 'blocked-promotion',
+    });
+
+    const blockResponse = await request(app)
+      .post(`${API_PREFIX}/users/${viewer.user.id}/block`)
+      .set(authHeader(superAdmin.token));
+
+    expect(blockResponse.status).toBe(200);
+    expect(blockResponse.body.data.is_blocked).toBe(true);
+
+    const toggleWhileBlocked = await request(app)
+      .post(`${API_PREFIX}/users/${viewer.user.id}/toggle-admin-role`)
+      .set(authHeader(superAdmin.token));
+
+    expect(toggleWhileBlocked.status).toBe(409);
+    expect(toggleWhileBlocked.body.message).toBe(
+      'Blocked users must be unblocked before changing roles.',
+    );
+
+    const userListing = await request(app)
+      .get(`${API_PREFIX}/users`)
+      .set(authHeader(superAdmin.token));
+
+    const listedUser = userListing.body.data.find((item) => item.id === viewer.user.id);
+    expect(listedUser.can_toggle_admin_role).toBe(false);
   });
 });

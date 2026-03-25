@@ -83,6 +83,11 @@ describe('Phase 11 data-flow E2E', () => {
       categoryId: category.id,
       name: `South Census ${Date.now()}`,
     });
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}`)
+      .set(authHeader(admin.token))
+      .send({ status: 'active' })
+      .expect(200);
 
     const assignment = await createAssignment({
       token: admin.token,

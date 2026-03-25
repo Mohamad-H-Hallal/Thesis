@@ -141,7 +141,7 @@ const projectValidation = {
     body('category_id').isUUID().withMessage('Valid category ID is required'),
     body('status')
       .optional()
-      .isIn(['draft', 'active', 'completed', 'archived']),
+      .isIn(['draft', 'active', 'paused', 'completed', 'archived']),
     body('collection_form_schema')
       .isObject()
       .withMessage('Form schema must be a valid JSON object'),
@@ -154,7 +154,7 @@ const projectValidation = {
     param('projectId').isUUID().withMessage('Valid project ID is required'),
     body('name').optional().trim().notEmpty(),
     body('description').optional().trim(),
-    body('status').optional().isIn(['draft', 'active', 'completed', 'archived']),
+    body('status').optional().isIn(['draft', 'active', 'paused', 'completed', 'archived']),
     body('collection_form_schema').optional().isObject(),
     body('category_id').optional().isUUID().withMessage('category_id must be a valid UUID'),
     body('requires_photos').optional().isBoolean(),
@@ -205,8 +205,9 @@ const assignmentValidation = {
     body('project_id').isUUID().withMessage('Valid project ID is required'),
     body('user_id').isUUID().withMessage('Valid user ID is required'),
     body('role')
-      .isIn(['admin', 'contributor'])
-      .withMessage('Role must be admin or contributor'),
+      .optional()
+      .isIn(['contributor'])
+      .withMessage('Assignments are for contributors only'),
   ] as ValidationChain[],
   update: [
     param('assignmentId').isUUID().withMessage('Valid assignment ID is required'),

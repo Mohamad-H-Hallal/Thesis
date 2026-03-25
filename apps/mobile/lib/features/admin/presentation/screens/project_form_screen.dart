@@ -111,11 +111,13 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
       case 'draft':
         return const <String>['draft', 'active'];
       case 'active':
-        return const <String>['active', 'completed'];
+        return const <String>['active', 'paused', 'completed'];
+      case 'paused':
+        return const <String>['paused', 'active', 'completed'];
       case 'completed':
         return const <String>['completed', 'archived'];
       case 'archived':
-        return const <String>['archived'];
+        return const <String>['archived', 'completed'];
       default:
         return const <String>['draft'];
     }
@@ -249,7 +251,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
             ? 'Project updated successfully.'
             : 'Project created successfully.',
       );
-      context.go(AppRoutes.projectDetails(project.id));
+      context.go(widget.isEditing ? AppRoutes.projects : AppRoutes.projectDetails(project.id));
     } catch (error) {
       if (mounted) {
         AppSnackbar.showError(context, error.toString());
@@ -348,6 +350,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                               const SizedBox(height: AppSpacing.sm),
                               DropdownButtonFormField<String>(
                                 initialValue: _categoryId,
+                                isExpanded: true,
                                 decoration: const InputDecoration(
                                   labelText: 'Category',
                                 ),
@@ -370,16 +373,21 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                 label: 'Description',
                                 hint: 'Short operational summary',
                                 controller: _descriptionController,
+                                minLines: 3,
+                                maxLines: 6,
                               ),
                               const SizedBox(height: AppSpacing.sm),
                               AppTextField(
                                 label: 'Objectives',
                                 hint: 'Survey goals and collection scope',
                                 controller: _objectivesController,
+                                minLines: 3,
+                                maxLines: 6,
                               ),
                               const SizedBox(height: AppSpacing.sm),
                               DropdownButtonFormField<String>(
                                 initialValue: _status,
+                                isExpanded: true,
                                 decoration: const InputDecoration(
                                   labelText: 'Status',
                                 ),
@@ -407,6 +415,17 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                   ),
                                   child: Text(
                                     'New projects are created as draft first. Choosing active here promotes the project immediately after creation.',
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ),
+                              if (_status == 'paused')
+                                Padding(
+                                  padding: const EdgeInsets.only(
+                                    top: AppSpacing.xs,
+                                  ),
+                                  child: Text(
+                                    'Paused projects remain viewable, but feature collection and submission stay disabled until the project returns to active status.',
                                     style:
                                         Theme.of(context).textTheme.bodySmall,
                                   ),
@@ -576,22 +595,43 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                 ],
                               ),
                               const SizedBox(height: AppSpacing.md),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      'Dynamic collection fields',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .titleMedium,
-                                    ),
-                                  ),
-                                  OutlinedButton.icon(
+                              LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final action = OutlinedButton.icon(
                                     onPressed: _addField,
                                     icon: const Icon(Icons.add),
                                     label: const Text('Add field'),
-                                  ),
-                                ],
+                                  );
+                                  if (constraints.maxWidth < 480) {
+                                    return Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Dynamic collection fields',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .titleMedium,
+                                        ),
+                                        const SizedBox(height: AppSpacing.sm),
+                                        action,
+                                      ],
+                                    );
+                                  }
+                                  return Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          'Dynamic collection fields',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .titleMedium,
+                                        ),
+                                      ),
+                                      action,
+                                    ],
+                                  );
+                                },
                               ),
                               const SizedBox(height: AppSpacing.sm),
                               if (_fields.isEmpty)
@@ -677,24 +717,40 @@ class _DateCard extends StatelessWidget {
           horizontal: AppSpacing.sm,
           vertical: AppSpacing.xs,
         ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label, style: Theme.of(context).textTheme.bodySmall),
-                  Text(value, style: Theme.of(context).textTheme.titleMedium),
-                ],
-              ),
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            OutlinedButton.icon(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final summary = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: Theme.of(context).textTheme.bodySmall),
+                Text(value, style: Theme.of(context).textTheme.titleMedium),
+              ],
+            );
+            final action = OutlinedButton.icon(
               onPressed: onPressed,
               icon: const Icon(Icons.event_outlined),
               label: const Text('Pick'),
-            ),
-          ],
+            );
+
+            if (constraints.maxWidth < 240) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  summary,
+                  const SizedBox(height: AppSpacing.sm),
+                  action,
+                ],
+              );
+            }
+
+            return Row(
+              children: [
+                Expanded(child: summary),
+                const SizedBox(width: AppSpacing.sm),
+                action,
+              ],
+            );
+          },
         ),
       ),
     );
@@ -751,6 +807,7 @@ class _FieldEditorCard extends StatelessWidget {
           const SizedBox(height: AppSpacing.sm),
           DropdownButtonFormField<CollectionFieldType>(
             initialValue: field.type,
+            isExpanded: true,
             decoration: const InputDecoration(labelText: 'Field type'),
             items: CollectionFieldType.values
                 .map(
@@ -773,6 +830,8 @@ class _FieldEditorCard extends StatelessWidget {
             label: 'Hint',
             hint: 'Optional helper text',
             controller: field.hintController,
+            minLines: 2,
+            maxLines: 4,
             onChanged: (_) => onChanged(),
           ),
           const SizedBox(height: AppSpacing.sm),

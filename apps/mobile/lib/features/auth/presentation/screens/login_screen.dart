@@ -38,10 +38,30 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _obscurePassword = true;
   bool _rememberMe = true;
   String? _formLevelError;
+  late final ProviderSubscription<AuthState> _authSubscription;
 
   @override
   void initState() {
     super.initState();
+    _authSubscription = ref.listenManual<AuthState>(
+      authControllerProvider,
+      (previous, next) {
+        final nextError = next.error?.trim();
+        if (!mounted ||
+            next.status != AuthStatus.unauthenticated ||
+            nextError == null ||
+            nextError.isEmpty ||
+            nextError == previous?.error) {
+          return;
+        }
+
+        setState(() {
+          _formLevelError = nextError;
+        });
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        AppSnackbar.showError(context, nextError);
+      },
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       patchAuthInputAttributes(
         formId: 'login',
@@ -52,6 +72,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   @override
   void dispose() {
+    _authSubscription.close();
     _emailController.dispose();
     _passwordController.dispose();
     _emailFocus.dispose();
@@ -85,13 +106,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     final authState = ref.read(authControllerProvider);
     if (authState.status == AuthStatus.unauthenticated &&
-        authState.error != null &&
-        authState.error!.trim().isNotEmpty) {
+        (authState.error == null || authState.error!.trim().isEmpty)) {
       setState(() {
-        _formLevelError = authState.error;
+        _formLevelError = 'Login failed. Please try again.';
       });
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      AppSnackbar.showError(context, authState.error!);
+      AppSnackbar.showError(context, _formLevelError!);
     }
   }
 
@@ -235,7 +255,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 onPressed: isLoading
                                     ? null
                                     : () =>
-                                          context.go(AppRoutes.forgotPassword),
+                                          context.push(AppRoutes.forgotPassword),
                                 child: const Text('Forgot password?'),
                               ),
                             ),

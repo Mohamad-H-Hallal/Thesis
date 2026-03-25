@@ -316,8 +316,14 @@ const processExport = async (exportId, projectName) => {
                  $2, $3)`,
         [
           exportData.requested_by_user_id,
-          `Your ${format} export is ready for download`,
-          JSON.stringify({ export_id: exportId, project_id: projectId, format: format }),
+          `${projectName} ${format.toUpperCase()} export is ready for download.`,
+          JSON.stringify({
+            export_id: exportId,
+            project_id: projectId,
+            project_name: projectName,
+            format: format,
+            status: 'completed',
+          }),
         ]
       );
     });
@@ -357,12 +363,14 @@ const processExport = async (exportId, projectName) => {
         await client.query(
           `INSERT INTO notification (user_id, type, title, message, metadata)
            VALUES ($1, 'export_ready', 'Export Failed', 
-                   'Your export failed. Please try again or contact support.', $2)`,
+                   $2, $3)`,
           [
             exportDetails.rows[0].requested_by_user_id,
+            `The export for this project failed: ${error.message}`,
             JSON.stringify({
               export_id: exportId,
               project_id: exportDetails.rows[0].project_id,
+              status: 'failed',
               error: error.message,
             }),
           ]

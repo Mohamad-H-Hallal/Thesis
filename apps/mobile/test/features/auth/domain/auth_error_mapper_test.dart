@@ -38,6 +38,66 @@ void main() {
     expect(failure.message, 'This email is already registered.');
   });
 
+  test('maps blocked account message from backend', () {
+    final failure = mapAuthDioException(
+      dioError(
+        type: DioExceptionType.badResponse,
+        statusCode: 403,
+        data: <String, dynamic>{'message': 'Your account has been blocked.'},
+      ),
+      fallbackMessage: 'fallback',
+    );
+    expect(failure.message, 'Your account has been blocked.');
+  });
+
+  test('maps pending contributor message from backend', () {
+    final failure = mapAuthDioException(
+      dioError(
+        type: DioExceptionType.badResponse,
+        statusCode: 403,
+        data: <String, dynamic>{
+          'message':
+              'Your contributor request is still pending approval. You cannot log in yet.',
+        },
+      ),
+      fallbackMessage: 'fallback',
+    );
+    expect(
+      failure.message,
+      'Your contributor request is still pending approval. You cannot log in yet.',
+    );
+  });
+
+  test('maps rejected contributor message from backend', () {
+    final failure = mapAuthDioException(
+      dioError(
+        type: DioExceptionType.badResponse,
+        statusCode: 403,
+        data: <String, dynamic>{
+          'message':
+              'Your contributor request was rejected. You cannot log in with contributor access.',
+        },
+      ),
+      fallbackMessage: 'fallback',
+    );
+    expect(
+      failure.message,
+      'Your contributor request was rejected. You cannot log in with contributor access.',
+    );
+  });
+
+  test('maps inactive message from backend', () {
+    final failure = mapAuthDioException(
+      dioError(
+        type: DioExceptionType.badResponse,
+        statusCode: 403,
+        data: <String, dynamic>{'message': 'This account is inactive.'},
+      ),
+      fallbackMessage: 'fallback',
+    );
+    expect(failure.message, 'This account is inactive.');
+  });
+
   test('maps 422 using response message when present', () {
     final failure = mapAuthDioException(
       dioError(

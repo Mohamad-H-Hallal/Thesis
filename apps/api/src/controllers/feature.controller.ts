@@ -165,6 +165,34 @@ const getProjectFormSchema = async (projectId: string): Promise<Record<string, u
   return schema as Record<string, unknown>;
 };
 
+const assertProjectAllowsCollectionMutations = async (projectId: string): Promise<void> => {
+  const projectResult = await query(
+    'SELECT id, name, status FROM project WHERE id = $1',
+    [projectId]
+  );
+
+  if (projectResult.rows.length === 0) {
+    throw new AppError('Project not found', 404);
+  }
+
+  const project = projectResult.rows[0];
+  if (project.status === 'active') {
+    return;
+  }
+
+  if (project.status === 'paused') {
+    throw new AppError(
+      'This project is paused. Feature collection is view-only until the project is reactivated.',
+      409
+    );
+  }
+
+  throw new AppError(
+    `Feature collection is unavailable while the project status is ${project.status}.`,
+    409
+  );
+};
+
 const validateType = (value: unknown, expectedType: string): boolean => {
   if (value === null || value === undefined) {
     return true;
@@ -359,6 +387,7 @@ const getFeature = async (req: Request, res: Response): Promise<void> => {
 const createFeature = async (req: Request, res: Response): Promise<void> => {
   const { project_id, geom, attributes, accuracy_meters, collected_offline = false } = req.body;
 
+  await assertProjectAllowsCollectionMutations(project_id);
   const normalizedGeometry = validateGeoJsonGeometry(geom);
   const formSchema = await getProjectFormSchema(project_id);
   const normalizedAttributes = validateAttributesAgainstSchema(attributes, formSchema);
@@ -434,6 +463,8 @@ const updateFeature = async (req: Request, res: Response): Promise<void> => {
     throw new AppError('You can only update your own features', 403);
   }
 
+  await assertProjectAllowsCollectionMutations(feature.project_id);
+
   if (feature.status !== 'draft') {
     throw new AppError('Only draft features can be updated', 400);
   }
@@ -502,6 +533,8 @@ const deleteFeature = async (req: Request, res: Response): Promise<void> => {
     throw new AppError('Only draft features can be deleted', 400);
   }
 
+  await assertProjectAllowsCollectionMutations(feature.project_id);
+
   if (req.user?.role !== 'admin' && feature.collected_by_user_id !== req.user?.id) {
     throw new AppError('You can only delete your own draft features', 403);
   }
@@ -520,8 +553,10 @@ const submitFeature = async (req: Request, res: Response): Promise<void> => {
   const { featureId } = req.params;
   await transaction(async (client: any) => {
     const ownerCheck = await client.query(
-      `SELECT id, status, project_id FROM spatial_feature
-       WHERE id = $1 AND collected_by_user_id = $2`,
+      `SELECT sf.id, sf.status, sf.project_id, p.name as project_name
+       FROM spatial_feature sf
+       JOIN project p ON p.id = sf.project_id
+       WHERE sf.id = $1 AND sf.collected_by_user_id = $2`,
       [featureId, req.user?.id]
     );
 
@@ -533,6 +568,8 @@ const submitFeature = async (req: Request, res: Response): Promise<void> => {
       throw new AppError('Only draft features can be submitted', 400);
     }
 
+    await assertProjectAllowsCollectionMutations(ownerCheck.rows[0].project_id);
+
     await client.query(
       `UPDATE spatial_feature
        SET status = 'pending_review', submitted_at = NOW(), version = version + 1
@@ -540,25 +577,22 @@ const submitFeature = async (req: Request, res: Response): Promise<void> => {
       [featureId]
     );
 
-    const projectAdmins = await client.query(
-      `SELECT pa.user_id
-       FROM project_assignment pa
-       WHERE pa.project_id = $1
-         AND pa.role = 'admin'
-         AND pa.status = 'approved'`,
-      [ownerCheck.rows[0].project_id]
+    const adminUsers = await client.query(
+      `SELECT id FROM "user" WHERE role = 'admin' AND is_active = TRUE`
     );
 
-    for (const admin of projectAdmins.rows) {
+    for (const admin of adminUsers.rows) {
       await client.query(
         `INSERT INTO notification (user_id, type, title, message, metadata)
-         VALUES ($1, 'review_completed', 'New Feature Submission',
-                 'A new feature has been submitted for review', $2)`,
+         VALUES ($1, 'review_completed', 'Feature review pending',
+                 $2, $3)`,
         [
-          admin.user_id,
+          admin.id,
+          `A submitted feature in ${ownerCheck.rows[0].project_name} is waiting for review.`,
           JSON.stringify({
             feature_id: featureId,
             project_id: ownerCheck.rows[0].project_id,
+            project_name: ownerCheck.rows[0].project_name,
             status: 'pending_review',
           }),
         ]
@@ -583,9 +617,10 @@ const reviewFeature = async (req: Request, res: Response): Promise<void> => {
   }
 
   const featureCheck = await query(
-    `SELECT id, status, collected_by_user_id, project_id
-     FROM spatial_feature
-     WHERE id = $1`,
+    `SELECT sf.id, sf.status, sf.collected_by_user_id, sf.project_id, p.name AS project_name
+     FROM spatial_feature sf
+     JOIN project p ON p.id = sf.project_id
+     WHERE sf.id = $1`,
     [featureId]
   );
 
@@ -623,10 +658,13 @@ const reviewFeature = async (req: Request, res: Response): Promise<void> => {
       [
         featureCheck.rows[0].collected_by_user_id,
         `Feature ${status}`,
-        `Your feature submission has been ${status}`,
+        status === 'approved'
+          ? `Your feature in ${featureCheck.rows[0].project_name} was approved${review_notes ? ` with note: ${review_notes}` : '.'}`
+          : `Your feature in ${featureCheck.rows[0].project_name} was rejected${review_notes ? ` with note: ${review_notes}` : '.'}`,
         JSON.stringify({
           feature_id: featureId,
           project_id: featureCheck.rows[0].project_id,
+          project_name: featureCheck.rows[0].project_name,
           status,
           review_notes,
         }),
@@ -855,8 +893,9 @@ const batchCreateFeatures = async (req: Request, res: Response): Promise<void> =
     throw new AppError('Batch size cannot exceed 500 features', 400);
   }
 
+  const projectIds = [...new Set(features.map((f: any) => f.project_id).filter(Boolean))];
+
   if (req.user?.role !== 'admin') {
-    const projectIds = [...new Set(features.map((f: any) => f.project_id).filter(Boolean))];
     if (projectIds.length === 0) {
       throw new AppError('Each feature must include project_id', 400);
     }
@@ -872,10 +911,14 @@ const batchCreateFeatures = async (req: Request, res: Response): Promise<void> =
 
     const accessibleProjects = new Set(accessResult.rows.map((row: any) => row.project_id));
     const unauthorizedProject = projectIds.find((projectId) => !accessibleProjects.has(projectId));
-    if (unauthorizedProject) {
-      throw new AppError(`You do not have access to project ${unauthorizedProject}`, 403);
+      if (unauthorizedProject) {
+        throw new AppError(`You do not have access to project ${unauthorizedProject}`, 403);
+      }
     }
-  }
+
+    for (const projectId of projectIds) {
+      await assertProjectAllowsCollectionMutations(projectId);
+    }
 
   const createdFeatures = await transaction(async (client: any) => {
     const results: any[] = [];

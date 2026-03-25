@@ -23,6 +23,7 @@ class _ContributorRequestsScreenState
     extends ConsumerState<ContributorRequestsScreen> {
   _RequestGroup _selectedGroup = _RequestGroup.contributor;
   bool _isMutating = false;
+  bool _showFilters = true;
 
   void _invalidate() {
     ref.invalidate(contributorRequestsProvider(ContributorRequestStatus.pending));
@@ -90,6 +91,10 @@ class _ContributorRequestsScreenState
       contributorRequestsProvider(ContributorRequestStatus.rejected),
     );
     final assignmentsAsync = ref.watch(managedAssignmentsProvider);
+    final tabViewHeight = (MediaQuery.of(context).size.height * 0.58).clamp(
+      320.0,
+      640.0,
+    );
 
     return DefaultTabController(
       length: 2,
@@ -105,24 +110,49 @@ class _ContributorRequestsScreenState
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SegmentedButton<_RequestGroup>(
-                  segments: const [
-                    ButtonSegment(
-                      value: _RequestGroup.contributor,
-                      label: Text('Contributor Requests'),
-                      icon: Icon(Icons.person_add_alt_1_outlined),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _selectedGroup == _RequestGroup.contributor
+                            ? 'Contributor request queue'
+                            : 'Project request queue',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
                     ),
-                    ButtonSegment(
-                      value: _RequestGroup.project,
-                      label: Text('Project Requests'),
-                      icon: Icon(Icons.assignment_outlined),
+                    OutlinedButton.icon(
+                      onPressed: () =>
+                          setState(() => _showFilters = !_showFilters),
+                      icon: Icon(
+                        _showFilters
+                            ? Icons.filter_alt_off_outlined
+                            : Icons.filter_alt_outlined,
+                      ),
+                      label: Text(_showFilters ? 'Hide' : 'Filter'),
                     ),
                   ],
-                  selected: <_RequestGroup>{_selectedGroup},
-                  onSelectionChanged: (selection) {
-                    setState(() => _selectedGroup = selection.first);
-                  },
                 ),
+                if (_showFilters) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  SegmentedButton<_RequestGroup>(
+                    segments: const [
+                      ButtonSegment(
+                        value: _RequestGroup.contributor,
+                        label: Text('Contributor'),
+                        icon: Icon(Icons.person_add_alt_1_outlined),
+                      ),
+                      ButtonSegment(
+                        value: _RequestGroup.project,
+                        label: Text('Projects'),
+                        icon: Icon(Icons.assignment_outlined),
+                      ),
+                    ],
+                    selected: <_RequestGroup>{_selectedGroup},
+                    onSelectionChanged: (selection) {
+                      setState(() => _selectedGroup = selection.first);
+                    },
+                  ),
+                ],
                 const SizedBox(height: AppSpacing.sm),
                 if (_selectedGroup == _RequestGroup.contributor) ...[
                   const TabBar(
@@ -132,7 +162,7 @@ class _ContributorRequestsScreenState
                     ],
                   ),
                   SizedBox(
-                    height: 560,
+                    height: tabViewHeight,
                     child: TabBarView(
                       children: [
                         pendingContributorAsync.when(
@@ -247,7 +277,7 @@ class _ContributorRequestsScreenState
                     ],
                   ),
                   SizedBox(
-                    height: 560,
+                    height: tabViewHeight,
                     child: assignmentsAsync.when(
                       loading: () => const Center(
                         child: CircularProgressIndicator(),

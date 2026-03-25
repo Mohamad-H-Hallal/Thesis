@@ -82,6 +82,13 @@ const setupAuthenticatedContext = async () => {
   const projectId = projectResult.rows[0].id;
 
   await pool.query(
+    `UPDATE project
+     SET status = 'active'
+     WHERE id = $1`,
+    [projectId]
+  );
+
+  await pool.query(
     `INSERT INTO project_assignment (
        project_id,
        user_id,

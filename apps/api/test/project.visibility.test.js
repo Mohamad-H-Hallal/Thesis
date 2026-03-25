@@ -80,6 +80,7 @@ describe('Project visibility by role', () => {
       categoryId: category.id,
       name: `Draft Viewer Project ${Date.now()}`,
       visibleToViewers: true,
+      status: 'draft',
     });
     expect(hiddenDraftProject.status).toBe('draft');
 

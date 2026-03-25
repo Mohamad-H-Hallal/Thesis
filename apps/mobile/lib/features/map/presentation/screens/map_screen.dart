@@ -99,6 +99,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   if (!widget.lockProjectSelection) ...[
                     DropdownButtonFormField<String>(
                       initialValue: project.id,
+                      isExpanded: true,
                       decoration: const InputDecoration(labelText: 'Project'),
                       items: availableProjects
                           .map(
@@ -245,203 +246,208 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required bool canCollectOnMap,
     required bool canReview,
   }) {
-    return Column(
-      children: [
-        AppCard(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final mapCard = AppCard(
+          padding: EdgeInsets.zero,
+          child: Stack(
+            children: [
+              ClipRRect(
+                borderRadius: AppRadii.lg,
+                child: FlutterMap(
+                  mapController: _mapController,
+                  options: const MapOptions(
+                    initialCenter: LatLng(33.8547, 35.8623),
+                    initialZoom: 8,
+                    minZoom: 6,
+                    maxZoom: 18,
+                  ),
+                  children: [
+                    TileLayer(
+                      urlTemplate:
+                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                      userAgentPackageName: 'lb.gov.gis_collector',
+                    ),
+                    PolygonLayer(polygons: _polygonOverlays(features)),
+                    PolylineLayer(polylines: _polylineOverlays(features)),
+                    MarkerLayer(
+                      markers: _markerOverlays(features, project, canReview),
+                    ),
+                  ],
+                ),
+              ),
+              Positioned(
+                right: 12,
+                top: 12,
+                child: Column(
+                  children: [
+                    FloatingActionButton.small(
+                      heroTag: 'map_zoom_in',
+                      onPressed: () => _mapController.move(
+                        _mapController.camera.center,
+                        _mapController.camera.zoom + 1,
+                      ),
+                      child: const Icon(Icons.add),
+                    ),
+                    const SizedBox(height: 8),
+                    FloatingActionButton.small(
+                      heroTag: 'map_zoom_out',
+                      onPressed: () => _mapController.move(
+                        _mapController.camera.center,
+                        _mapController.camera.zoom - 1,
+                      ),
+                      child: const Icon(Icons.remove),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+
+        final featureList = features.isEmpty
+            ? AppEmptyState(
+                icon: Icons.layers_clear_outlined,
+                title: 'No map features match the current filters',
+                message: canCollectOnMap
+                    ? 'Use Add Feature to collect orchard, field, or tree records for this project.'
+                    : 'Approved or submitted features will appear here when they exist.',
+                actionLabel: canCollectOnMap ? 'Add Feature' : null,
+                onAction: canCollectOnMap
+                    ? () => context.push(AppRoutes.addFeatureForProject(project.id))
+                    : null,
+              )
+            : ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  Text(
+                    'Project Features',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  ...features.map(
+                    (feature) => Padding(
+                      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                      child: AppCard(
+                        onTap: () => _openFeatureDetails(
+                          project: project,
+                          feature: feature,
+                          canReview: canReview,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Feature ${feature.id.substring(0, 8)}',
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.titleMedium,
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        '${feature.geometry['type'] ?? 'Geometry'} • ${feature.photoCount} photo(s)',
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.bodySmall,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: AppSpacing.sm),
+                                StatusChip(status: feature.status),
+                              ],
+                            ),
+                            const SizedBox(height: AppSpacing.xs),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                if (feature.collectedBy != null)
+                                  Chip(
+                                    label: Text(
+                                      'Collector: ${feature.collectedBy}',
+                                    ),
+                                  ),
+                                if (feature.accuracyMeters != null)
+                                  Chip(
+                                    label: Text(
+                                      'GPS ${feature.accuracyMeters!.toStringAsFixed(1)}m',
+                                    ),
+                                  ),
+                                TextButton.icon(
+                                  onPressed: () {
+                                    _focusFeature(feature);
+                                    _openFeatureDetails(
+                                      project: project,
+                                      feature: feature,
+                                      canReview: canReview,
+                                    );
+                                  },
+                                  icon: const Icon(
+                                    Icons.center_focus_strong,
+                                    size: 18,
+                                  ),
+                                  label: const Text('View details'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+
+        final legendCard = AppCard(
           child: Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
-              _LegendChip(
-                label: 'Approved',
-                color: _statusColor('approved'),
-              ),
+              _LegendChip(label: 'Approved', color: _statusColor('approved')),
               _LegendChip(
                 label: 'Pending review',
                 color: _statusColor('pending_review'),
               ),
-              _LegendChip(
-                label: 'Rejected',
-                color: _statusColor('rejected'),
-              ),
-              _LegendChip(
-                label: 'Draft',
-                color: _statusColor('draft'),
-              ),
+              _LegendChip(label: 'Rejected', color: _statusColor('rejected')),
+              _LegendChip(label: 'Draft', color: _statusColor('draft')),
             ],
           ),
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        Expanded(
-          flex: 4,
-          child: AppCard(
-            padding: EdgeInsets.zero,
-            child: Stack(
-              children: [
-                ClipRRect(
-                  borderRadius: AppRadii.lg,
-                  child: FlutterMap(
-                    mapController: _mapController,
-                    options: const MapOptions(
-                      initialCenter: LatLng(33.8547, 35.8623),
-                      initialZoom: 8,
-                      minZoom: 6,
-                      maxZoom: 18,
-                    ),
-                    children: [
-                      TileLayer(
-                        urlTemplate:
-                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        userAgentPackageName: 'lb.gov.gis_collector',
-                      ),
-                      PolygonLayer(polygons: _polygonOverlays(features)),
-                      PolylineLayer(polylines: _polylineOverlays(features)),
-                      MarkerLayer(
-                        markers: _markerOverlays(
-                          features,
-                          project,
-                          canReview,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Positioned(
-                  right: 12,
-                  top: 12,
-                  child: Column(
-                    children: [
-                      FloatingActionButton.small(
-                        heroTag: 'map_zoom_in',
-                        onPressed: () => _mapController.move(
-                          _mapController.camera.center,
-                          _mapController.camera.zoom + 1,
-                        ),
-                        child: const Icon(Icons.add),
-                      ),
-                      const SizedBox(height: 8),
-                      FloatingActionButton.small(
-                        heroTag: 'map_zoom_out',
-                        onPressed: () => _mapController.move(
-                          _mapController.camera.center,
-                          _mapController.camera.zoom - 1,
-                        ),
-                        child: const Icon(Icons.remove),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        Expanded(
-          flex: 3,
-          child: features.isEmpty
-              ? AppEmptyState(
-                  icon: Icons.layers_clear_outlined,
-                  title: 'No map features match the current filters',
-                  message: canCollectOnMap
-                      ? 'Use Add Feature to collect orchard, field, or tree records for this project.'
-                      : 'Approved or submitted features will appear here when they exist.',
-                  actionLabel: canCollectOnMap ? 'Add Feature' : null,
-                  onAction: canCollectOnMap
-                      ? () => context.push(
-                          AppRoutes.addFeatureForProject(project.id),
-                        )
-                      : null,
-                )
-              : ListView(
-                  children: [
-                    Text(
-                      'Project Features',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    ...features.map(
-                      (feature) => Padding(
-                        padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                        child: AppCard(
-                          onTap: () => _openFeatureDetails(
-                            project: project,
-                            feature: feature,
-                            canReview: canReview,
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          'Feature ${feature.id.substring(0, 8)}',
-                                          style: Theme.of(
-                                            context,
-                                          ).textTheme.titleMedium,
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          '${feature.geometry['type'] ?? 'Geometry'} • ${feature.photoCount} photo(s)',
-                                          style: Theme.of(
-                                            context,
-                                          ).textTheme.bodySmall,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(width: AppSpacing.sm),
-                                  StatusChip(status: feature.status),
-                                ],
-                              ),
-                              const SizedBox(height: AppSpacing.xs),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  if (feature.collectedBy != null)
-                                    Chip(
-                                      label: Text(
-                                        'Collector: ${feature.collectedBy}',
-                                      ),
-                                    ),
-                                  if (feature.accuracyMeters != null)
-                                    Chip(
-                                      label: Text(
-                                        'GPS ${feature.accuracyMeters!.toStringAsFixed(1)}m',
-                                      ),
-                                    ),
-                                  TextButton.icon(
-                                    onPressed: () {
-                                      _focusFeature(feature);
-                                      _openFeatureDetails(
-                                        project: project,
-                                        feature: feature,
-                                        canReview: canReview,
-                                      );
-                                    },
-                                    icon: const Icon(
-                                      Icons.center_focus_strong,
-                                      size: 18,
-                                    ),
-                                    label: const Text('View details'),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-        ),
-      ],
+        );
+
+        if (constraints.maxHeight < 720) {
+          final mapHeight = constraints.maxHeight * 0.48;
+          final listHeight = constraints.maxHeight * 0.42;
+          return ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            children: [
+              legendCard,
+              const SizedBox(height: AppSpacing.sm),
+              SizedBox(height: mapHeight, child: mapCard),
+              const SizedBox(height: AppSpacing.sm),
+              SizedBox(height: listHeight, child: featureList),
+            ],
+          );
+        }
+
+        return Column(
+          children: [
+            legendCard,
+            const SizedBox(height: AppSpacing.sm),
+            Expanded(flex: 4, child: mapCard),
+            const SizedBox(height: AppSpacing.sm),
+            Expanded(flex: 3, child: featureList),
+          ],
+        );
+      },
     );
   }
 

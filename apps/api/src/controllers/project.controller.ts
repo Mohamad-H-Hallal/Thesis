@@ -2,16 +2,16 @@ const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
 
-const viewerVisibleStatuses = ['active', 'completed'];
+const viewerVisibleStatuses = ['active', 'paused', 'completed'];
 const projectAccessScopes = ['public', 'assigned', 'all'] as const;
 type ProjectAccessScope = (typeof projectAccessScopes)[number];
 
 const projectStatusTransitions: Record<string, string[]> = {
   draft: ['active'],
-  active: ['completed'],
+  active: ['paused', 'completed'],
+  paused: ['active', 'completed'],
   completed: ['archived'],
-  paused: [],
-  archived: [],
+  archived: ['completed'],
 };
 
 const assertProjectStatusTransition = (currentStatus: string, nextStatus: string): void => {
@@ -89,7 +89,11 @@ const getAllProjects = async (req, res) => {
     params.push(viewerVisibleStatuses);
     paramIndex++;
   } else if (scope === 'assigned') {
-    queryText += ` AND (pa.user_id = $${paramIndex} AND pa.status = 'approved')`;
+    queryText += ` AND (
+      pa.user_id = $${paramIndex}
+      AND pa.role = 'contributor'
+      AND pa.status = 'approved'
+    )`;
     params.push(userId);
     paramIndex++;
   } else {
@@ -137,7 +141,11 @@ const getAllProjects = async (req, res) => {
     countParams.push(viewerVisibleStatuses);
     countParamIndex++;
   } else if (scope === 'assigned') {
-    countQuery += ` AND (pa.user_id = $${countParamIndex} AND pa.status = 'approved')`;
+    countQuery += ` AND (
+      pa.user_id = $${countParamIndex}
+      AND pa.role = 'contributor'
+      AND pa.status = 'approved'
+    )`;
     countParams.push(userId);
     countParamIndex++;
   } else {
@@ -181,7 +189,7 @@ const getProject = async (req, res) => {
             u.full_name as created_by_name,
             (SELECT COUNT(*) FROM spatial_feature WHERE project_id = p.id AND status = 'approved') as approved_features,
             (SELECT COUNT(*) FROM spatial_feature WHERE project_id = p.id AND status = 'pending_review') as pending_features,
-            (SELECT COUNT(*) FROM project_assignment WHERE project_id = p.id AND status = 'approved') as contributor_count,
+            (SELECT COUNT(*) FROM project_assignment WHERE project_id = p.id AND role = 'contributor' AND status = 'approved') as contributor_count,
             pa_user.role as current_user_assignment_role,
             pa_user.status as current_user_assignment_status
      FROM project p
@@ -227,8 +235,7 @@ const createProject = async (req, res) => {
   ensureSchemaObject(collection_form_schema);
   await ensureCategoryExists(category_id);
 
-  const createdProject = await transaction(async (client) => {
-    const insertResult = await client.query(
+  const createdProjectResult = await query(
       `INSERT INTO project (
         created_by_user_id, category_id, name, description, objectives,
         status, start_date, end_date, collection_form_schema,
@@ -250,17 +257,7 @@ const createProject = async (req, res) => {
         visible_to_viewers,
       ],
     );
-
-    await client.query(
-      `INSERT INTO project_assignment (
-        project_id, user_id, role, status, approved_by_user_id, approved_date
-      )
-      VALUES ($1, $2, 'admin', 'approved', $2, CURRENT_DATE)`,
-      [insertResult.rows[0].id, req.user.id],
-    );
-
-    return insertResult.rows[0];
-  });
+  const createdProject = createdProjectResult.rows[0];
 
   logger.info('Project created:', {
     projectId: createdProject.id,
@@ -427,8 +424,12 @@ const deleteProject = async (req, res) => {
          AND pa.status = 'approved'`,
       [
         projectId,
-        'A project was archived and moved out of active operations.',
-        JSON.stringify({ project_id: projectId, status: 'archived' }),
+        `${projectStatusResult.rows[0].name} was archived and moved out of active operations.`,
+        JSON.stringify({
+          project_id: projectId,
+          project_name: projectStatusResult.rows[0].name,
+          status: 'archived',
+        }),
       ],
     );
 

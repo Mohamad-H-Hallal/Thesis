@@ -59,6 +59,9 @@ class _TestAuthRepository implements AuthRepository {
   }) async {}
 
   @override
+  Future<void> selfDeactivate() async {}
+
+  @override
   Future<AuthSession?> restoreSession() async => null;
 
   @override

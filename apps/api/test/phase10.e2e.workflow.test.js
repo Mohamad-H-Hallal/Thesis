@@ -57,6 +57,11 @@ describe('Phase 10 E2E workflow', () => {
       categoryId: category.id,
       name: `Bekaa Field Census ${Date.now()}`,
     });
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}`)
+      .set(authHeader(admin.token))
+      .send({ status: 'active' })
+      .expect(200);
 
     const assignment = await createAssignment({
       token: admin.token,

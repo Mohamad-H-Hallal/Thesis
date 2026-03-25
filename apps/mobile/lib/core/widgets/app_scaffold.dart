@@ -14,6 +14,7 @@ class AppScaffold extends StatelessWidget {
     this.bottomNavigationBar,
     this.showOfflineBanner = true,
     this.showBackButton,
+    this.onBack,
     super.key,
   });
 
@@ -25,6 +26,7 @@ class AppScaffold extends StatelessWidget {
   final Widget? bottomNavigationBar;
   final bool showOfflineBanner;
   final bool? showBackButton;
+  final VoidCallback? onBack;
 
   @override
   Widget build(BuildContext context) {
@@ -42,6 +44,10 @@ class AppScaffold extends StatelessWidget {
                 tooltip: 'Back',
                 icon: const Icon(Icons.arrow_back),
                 onPressed: () {
+                  if (onBack != null) {
+                    onBack!();
+                    return;
+                  }
                   if (router?.canPop() ?? false) {
                     router!.pop();
                     return;

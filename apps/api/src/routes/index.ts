@@ -4,6 +4,7 @@ const photoController = require('../controllers/photo.controller');
 const {
   categoryController,
   notificationController,
+  settingsController,
   userController,
 } = require('../controllers/misc.controller');
 const { authenticate, authorize, checkProjectAdmin } = require('../middleware/auth');
@@ -16,7 +17,7 @@ const {
   uuidValidation,
 } = require('../middleware/validation');
 const { asyncHandler } = require('../middleware/error');
-const { uploadMultiple } = require('../config/upload');
+const { uploadCategoryIcon, uploadMultiple } = require('../config/upload');
 import { auditAction, auditDynamicAction } from '../middleware/audit';
 
 // ============================================================================
@@ -189,6 +190,13 @@ categoryRouter.post(
   asyncHandler(categoryController.create),
 );
 
+categoryRouter.post(
+  '/icon',
+  authorize('admin'),
+  uploadCategoryIcon,
+  asyncHandler(categoryController.uploadIcon),
+);
+
 // Update category (admin only)
 categoryRouter.put(
   '/:categoryId',
@@ -251,6 +259,19 @@ notificationRouter.delete(
   uuidValidation('notificationId'),
   validate,
   asyncHandler(notificationController.delete),
+);
+
+// ============================================================================
+// SETTINGS ROUTES
+// ============================================================================
+const settingsRouter = express.Router();
+settingsRouter.use(authenticate);
+
+settingsRouter.get('/support', asyncHandler(settingsController.getSupport));
+settingsRouter.put(
+  '/support',
+  authorize('admin'),
+  asyncHandler(settingsController.updateSupport),
 );
 
 // ============================================================================
@@ -400,6 +421,7 @@ module.exports = {
   photoRouter,
   categoryRouter,
   notificationRouter,
+  settingsRouter,
   userRouter,
 };
 

@@ -147,26 +147,47 @@ class _ExportsDashboardScreenState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Request export',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                      ),
-                      IconButton(
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final refreshButton = IconButton(
                         tooltip: 'Refresh export jobs',
                         onPressed: exportState.isLoading
                             ? null
                             : controller.refresh,
                         icon: const Icon(Icons.refresh),
-                      ),
-                    ],
+                      );
+                      if (constraints.maxWidth < 420) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Request export',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: refreshButton,
+                            ),
+                          ],
+                        );
+                      }
+                      return Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Request export',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                          ),
+                          refreshButton,
+                        ],
+                      );
+                    },
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   DropdownButtonFormField<String>(
                     initialValue: _selectedProjectId,
+                    isExpanded: true,
                     decoration: const InputDecoration(labelText: 'Project'),
                     items: projects
                         .map(
@@ -193,6 +214,7 @@ class _ExportsDashboardScreenState
                   const SizedBox(height: AppSpacing.sm),
                   DropdownButtonFormField<ExportFormat>(
                     initialValue: _selectedFormat,
+                    isExpanded: true,
                     decoration: const InputDecoration(labelText: 'Format'),
                     items: ExportFormat.values
                         .map(

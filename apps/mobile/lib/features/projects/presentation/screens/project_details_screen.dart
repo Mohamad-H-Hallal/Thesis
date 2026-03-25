@@ -121,6 +121,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
         final hasContributorAssignment =
             role == UserRole.contributor &&
             project.hasApprovedCurrentUserAssignment;
+        final isPaused = project.status == 'paused';
         final contributorRequestStatus = project.currentUserAssignmentStatus;
         final canRequestAccess =
             role == UserRole.contributor &&
@@ -145,6 +146,15 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(project.description),
+                    if ((project.objectives ?? '').trim().isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      Text(
+                        'Objectives',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(project.objectives!, softWrap: true),
+                    ],
                     const SizedBox(height: 12),
                     Wrap(
                       spacing: 8,
@@ -196,7 +206,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
               delay: const Duration(milliseconds: 80),
               child: AppCard(
                 child: Wrap(
-                  spacing: AppSpacing.sm,
+                  spacing: AppSpacing.md,
                   runSpacing: AppSpacing.sm,
                   children: [
                     _MetaTile(
@@ -225,8 +235,8 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
             AnimatedReveal(
               delay: const Duration(milliseconds: 130),
               child: Wrap(
-                spacing: 10,
-                runSpacing: 10,
+                spacing: 14,
+                runSpacing: 12,
                 children: [
                   if (role != UserRole.viewer)
                     FilledButton.icon(
@@ -235,7 +245,9 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                       icon: const Icon(Icons.map_outlined),
                       label: const Text('Open Map'),
                     ),
-                  if (role == UserRole.contributor && hasContributorAssignment)
+                  if (role == UserRole.contributor &&
+                      hasContributorAssignment &&
+                      !isPaused)
                     FilledButton.icon(
                       onPressed: () => context.push(
                         AppRoutes.addFeatureForProject(project.id),
@@ -258,8 +270,8 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
               AnimatedReveal(
                 delay: const Duration(milliseconds: 160),
                 child: Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
+                  spacing: 14,
+                  runSpacing: 12,
                   children: [
                     FilledButton.icon(
                       onPressed: () =>
@@ -312,6 +324,19 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                           : contributorRequestStatus == ProjectAssignmentStatus.pending
                               ? 'Your access request is waiting for admin approval.'
                               : 'This public project is visible to you, but collection actions stay disabled until an admin approves your assignment.',
+                    ),
+                  ),
+                ),
+              ),
+            if (isPaused)
+              const AnimatedReveal(
+                delay: Duration(milliseconds: 180),
+                child: AppCard(
+                  child: ListTile(
+                    leading: Icon(Icons.pause_circle_outline),
+                    title: Text('Project paused'),
+                    subtitle: Text(
+                      'The map and project details remain viewable, but feature collection and submission are disabled until the project returns to active status.',
                     ),
                   ),
                 ),

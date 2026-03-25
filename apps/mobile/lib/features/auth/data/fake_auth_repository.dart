@@ -177,6 +177,17 @@ class FakeAuthRepository implements AuthRepository {
     await _storage.delete(key: _superAdminKey);
   }
 
+  @override
+  Future<void> selfDeactivate() async {
+    _apiClient.setAccessToken(null);
+    await _storage.delete(key: _accessKey);
+    await _storage.delete(key: _refreshKey);
+    await _storage.delete(key: _roleKey);
+    await _storage.delete(key: _nameKey);
+    await _storage.delete(key: _emailKey);
+    await _storage.delete(key: _superAdminKey);
+  }
+
   UserRole _toRole(String? value) {
     switch (value) {
       case 'admin':

@@ -21,6 +21,7 @@ class UsersManagementScreen extends ConsumerStatefulWidget {
 class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
   final TextEditingController _searchController = TextEditingController();
   bool _isUpdating = false;
+  bool _showFilters = false;
   UserRole? _roleFilter;
   UserAccountState? _stateFilter;
 
@@ -195,13 +196,6 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SearchBar(
-                    controller: _searchController,
-                    hintText: 'Search name, email, or phone',
-                    leading: const Icon(Icons.search),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
                   Wrap(
                     spacing: AppSpacing.sm,
                     runSpacing: AppSpacing.sm,
@@ -234,43 +228,70 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
                     ],
                   ),
                   const SizedBox(height: AppSpacing.sm),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                  Row(
                     children: [
-                      FilterChip(
-                        label: const Text('All roles'),
-                        selected: _roleFilter == null,
-                        onSelected: (_) => setState(() => _roleFilter = null),
-                      ),
-                      ...UserRole.values.map(
-                        (role) => FilterChip(
-                          label: Text(role.label),
-                          selected: _roleFilter == role,
-                          onSelected: (_) => setState(() => _roleFilter = role),
+                      Expanded(
+                        child: SearchBar(
+                          controller: _searchController,
+                          hintText: 'Search name, email, or phone',
+                          leading: const Icon(Icons.search),
+                          onChanged: (_) => setState(() {}),
                         ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      OutlinedButton.icon(
+                        onPressed: () => setState(
+                          () => _showFilters = !_showFilters,
+                        ),
+                        icon: Icon(
+                          _showFilters
+                              ? Icons.filter_alt_off_outlined
+                              : Icons.filter_alt_outlined,
+                        ),
+                        label: Text(_showFilters ? 'Hide' : 'Filter'),
                       ),
                     ],
                   ),
-                  const SizedBox(height: AppSpacing.xs),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      FilterChip(
-                        label: const Text('All states'),
-                        selected: _stateFilter == null,
-                        onSelected: (_) => setState(() => _stateFilter = null),
-                      ),
-                      ...UserAccountState.values.map(
-                        (state) => FilterChip(
-                          label: Text(_stateLabel(state)),
-                          selected: _stateFilter == state,
-                          onSelected: (_) => setState(() => _stateFilter = state),
+                  if (_showFilters) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        FilterChip(
+                          label: const Text('All roles'),
+                          selected: _roleFilter == null,
+                          onSelected: (_) => setState(() => _roleFilter = null),
                         ),
-                      ),
-                    ],
-                  ),
+                        ...UserRole.values.map(
+                          (role) => FilterChip(
+                            label: Text(role.label),
+                            selected: _roleFilter == role,
+                            onSelected: (_) => setState(() => _roleFilter = role),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        FilterChip(
+                          label: const Text('All states'),
+                          selected: _stateFilter == null,
+                          onSelected: (_) => setState(() => _stateFilter = null),
+                        ),
+                        ...UserAccountState.values.map(
+                          (state) => FilterChip(
+                            label: Text(_stateLabel(state)),
+                            selected: _stateFilter == state,
+                            onSelected: (_) => setState(() => _stateFilter = state),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),

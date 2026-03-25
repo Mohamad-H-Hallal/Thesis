@@ -57,6 +57,11 @@ describe('Phase 10 performance: bbox query', () => {
       name: `BBox Project ${Date.now()}`,
     });
     projectId = project.id;
+    await request(app)
+      .put(`${API_PREFIX}/projects/${projectId}`)
+      .set(authHeader(admin.token))
+      .send({ status: 'active' })
+      .expect(200);
 
     const assignment = await createAssignment({
       token: admin.token,

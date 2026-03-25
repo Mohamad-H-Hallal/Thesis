@@ -11,6 +11,8 @@ class SyncState {
     required this.conflictCount,
     required this.deadLetterCount,
     required this.isSyncing,
+    required this.isReady,
+    required this.isInitializing,
     required this.autoSyncRunning,
     this.lastSyncAt,
     this.lastError,
@@ -22,6 +24,8 @@ class SyncState {
         conflictCount: 0,
         deadLetterCount: 0,
         isSyncing: false,
+        isReady: false,
+        isInitializing: false,
         autoSyncRunning: false,
       );
 
@@ -29,6 +33,8 @@ class SyncState {
   final int conflictCount;
   final int deadLetterCount;
   final bool isSyncing;
+  final bool isReady;
+  final bool isInitializing;
   final bool autoSyncRunning;
   final DateTime? lastSyncAt;
   final String? lastError;
@@ -38,6 +44,8 @@ class SyncState {
     int? conflictCount,
     int? deadLetterCount,
     bool? isSyncing,
+    bool? isReady,
+    bool? isInitializing,
     bool? autoSyncRunning,
     DateTime? lastSyncAt,
     String? lastError,
@@ -47,6 +55,8 @@ class SyncState {
       conflictCount: conflictCount ?? this.conflictCount,
       deadLetterCount: deadLetterCount ?? this.deadLetterCount,
       isSyncing: isSyncing ?? this.isSyncing,
+      isReady: isReady ?? this.isReady,
+      isInitializing: isInitializing ?? this.isInitializing,
       autoSyncRunning: autoSyncRunning ?? this.autoSyncRunning,
       lastSyncAt: lastSyncAt ?? this.lastSyncAt,
       lastError: lastError,
@@ -66,18 +76,33 @@ class SyncController extends StateNotifier<SyncState> {
   final LocalStore _localStore;
 
   Timer? _timer;
+  Future<void>? _initializeFuture;
 
   Future<void> initialize() async {
-    await _refreshPendingCount();
+    if (state.isReady) {
+      return;
+    }
+    if (_initializeFuture != null) {
+      return _initializeFuture;
+    }
 
-    _timer ??= Timer.periodic(const Duration(seconds: 25), (_) {
-      unawaited(syncNow(background: true));
-    });
-
-    state = state.copyWith(autoSyncRunning: true);
+    final future = _initializeInternal();
+    _initializeFuture = future;
+    try {
+      await future;
+    } finally {
+      _initializeFuture = null;
+    }
   }
 
   Future<void> syncNow({bool background = false}) async {
+    if (!state.isReady) {
+      await initialize();
+      if (!state.isReady) {
+        return;
+      }
+    }
+
     if (state.isSyncing) {
       return;
     }
@@ -109,6 +134,38 @@ class SyncController extends StateNotifier<SyncState> {
     } catch (error) {
       await _refreshPendingCount();
       state = state.copyWith(isSyncing: false, lastError: error.toString());
+    }
+  }
+
+  Future<void> _initializeInternal() async {
+    state = state.copyWith(
+      isInitializing: true,
+      autoSyncRunning: false,
+      lastError: null,
+    );
+
+    try {
+      await _localStore.initialize();
+      await _refreshPendingCount();
+
+      _timer ??= Timer.periodic(const Duration(seconds: 25), (_) {
+        unawaited(syncNow(background: true));
+      });
+
+      state = state.copyWith(
+        isReady: true,
+        isInitializing: false,
+        autoSyncRunning: true,
+        lastError: null,
+      );
+    } catch (error) {
+      state = state.copyWith(
+        isReady: false,
+        isInitializing: false,
+        autoSyncRunning: false,
+        lastError:
+            'Offline sync storage is not ready yet. ${error.toString()}',
+      );
     }
   }
 
