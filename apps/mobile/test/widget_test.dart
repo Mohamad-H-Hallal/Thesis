@@ -25,7 +25,12 @@ class _FailingAuthRepository implements AuthRepository {
   Future<void> logout() async {}
 
   @override
-  Future<void> requestPasswordReset(String email) async {}
+  Future<PasswordResetRequestResult> requestPasswordReset(String email) async {
+    return const PasswordResetRequestResult(
+      message: 'Password reset code generated.',
+      devResetToken: '123456',
+    );
+  }
 
   @override
   Future<void> resetPassword({
@@ -62,6 +67,25 @@ void main() {
     expect(find.text('Email address'), findsOneWidget);
     expect(find.text('Password'), findsOneWidget);
     expect(find.widgetWithText(FilledButton, 'Login'), findsOneWidget);
+  });
+
+  testWidgets('login screen shows success notice passed from signup flow', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          home: LoginScreen(
+            noticeMessage: 'Account has been created successfully.',
+            noticeIsSuccess: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.text('Account has been created successfully.'), findsWidgets);
   });
 
   testWidgets('login screen does not enforce signup password strength rules', (

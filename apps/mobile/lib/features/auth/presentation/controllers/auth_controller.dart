@@ -99,7 +99,7 @@ class AuthController extends StateNotifier<AuthState> {
     }
   }
 
-  Future<void> requestPasswordReset(String email) {
+  Future<PasswordResetRequestResult> requestPasswordReset(String email) {
     return _repository.requestPasswordReset(email);
   }
 

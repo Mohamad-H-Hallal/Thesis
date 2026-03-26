@@ -1,6 +1,7 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:flutter/foundation.dart';
 
 import '../config/app_env.dart';
 import '../../features/admin/data/api_admin_repository.dart';
@@ -393,8 +394,24 @@ final reviewRepositoryProvider = Provider<ReviewRepository>((ref) {
   return ApiReviewRepository(ref.watch(apiClientProvider));
 });
 
+class _RouterRefreshNotifier extends ChangeNotifier {
+  void refresh() => notifyListeners();
+}
+
+final routerRefreshNotifierProvider = Provider<_RouterRefreshNotifier>((ref) {
+  final notifier = _RouterRefreshNotifier();
+  ref.listen<AuthState>(authControllerProvider, (previous, next) {
+    notifier.refresh();
+  });
+  ref.onDispose(notifier.dispose);
+  return notifier;
+});
+
 final routerProvider = Provider<GoRouter>((ref) {
-  return createRouter(ref);
+  return createRouter(
+    ref,
+    refreshListenable: ref.watch(routerRefreshNotifierProvider),
+  );
 });
 
 final adminDashboardProvider = FutureProvider<AdminDashboardSummary>((
@@ -440,7 +457,9 @@ final projectAssignmentsProvider =
           .fetchProjectAssignments(projectId);
     });
 
-final supportSettingsProvider = FutureProvider<SupportContactSettings>((ref) async {
+final supportSettingsProvider = FutureProvider<SupportContactSettings>((
+  ref,
+) async {
   return ref.read(adminRepositoryProvider).fetchSupportSettings();
 });
 

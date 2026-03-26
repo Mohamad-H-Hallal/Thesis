@@ -12,6 +12,18 @@ import {
 } from '../lib/userWorkflow';
 
 const getSupportSettingsRow = async () => {
+  await query(`
+    CREATE TABLE IF NOT EXISTS app_support_settings (
+      id SMALLINT PRIMARY KEY CHECK (id = 1),
+      support_email TEXT,
+      support_phone TEXT,
+      office_hours TEXT,
+      help_text TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by_user_id UUID REFERENCES "user"(id) ON DELETE SET NULL
+    )
+  `);
+
   const result = await query(
     `SELECT id, support_email, support_phone, office_hours, help_text, updated_at, updated_by_user_id
      FROM app_support_settings
@@ -242,6 +254,7 @@ const settingsController = {
     }
 
     const { support_email, support_phone, office_hours, help_text } = req.body;
+    await getSupportSettingsRow();
 
     const result = await query(
       `INSERT INTO app_support_settings (

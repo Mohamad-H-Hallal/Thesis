@@ -44,3 +44,15 @@ class AuthSession {
   final String refreshToken;
   final AppUser user;
 }
+
+class PasswordResetRequestResult {
+  const PasswordResetRequestResult({
+    required this.message,
+    this.devResetToken,
+    this.expiresAt,
+  });
+
+  final String message;
+  final String? devResetToken;
+  final DateTime? expiresAt;
+}

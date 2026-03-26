@@ -88,7 +88,9 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     final supportedGeometryTypes = _supportedGeometryTypes(project);
     final geometryType = supportedGeometryTypes.contains(_selectedGeometryType)
         ? _selectedGeometryType
-        : (supportedGeometryTypes.isEmpty ? null : supportedGeometryTypes.first);
+        : (supportedGeometryTypes.isEmpty
+              ? null
+              : supportedGeometryTypes.first);
 
     for (final controller in _attributeControllers.values) {
       controller.dispose();
@@ -286,7 +288,10 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     }
   }
 
-  Future<void> _saveToServer(ProjectSummary project, {required bool submit}) async {
+  Future<void> _saveToServer(
+    ProjectSummary project, {
+    required bool submit,
+  }) async {
     final geometry = <String, dynamic>{
       'type': _selectedGeometryType ?? 'Point',
       'coordinates': <double>[
@@ -312,7 +317,9 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
 
       await repository.uploadPhotos(
         featureId: feature.id,
-        filePaths: _photos.map((photo) => photo.filePath).toList(growable: false),
+        filePaths: _photos
+            .map((photo) => photo.filePath)
+            .toList(growable: false),
       );
 
       if (submit) {
@@ -475,7 +482,9 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final projectsAsync = ref.watch(projectListProvider(ProjectViewScope.assigned));
+    final projectsAsync = ref.watch(
+      projectListProvider(ProjectViewScope.assigned),
+    );
 
     return Stack(
       children: [
@@ -486,7 +495,8 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
             title: 'Could not load assigned projects',
             message: '$error',
             actionLabel: 'Retry',
-            onAction: () => ref.invalidate(projectListProvider(ProjectViewScope.assigned)),
+            onAction: () =>
+                ref.invalidate(projectListProvider(ProjectViewScope.assigned)),
           ),
           data: (projects) {
             if (projects.isEmpty) {
@@ -503,335 +513,109 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 projects.where((p) => p.id == _selectedProjectId).isEmpty
                 ? projects.first
                 : projects.firstWhere((p) => p.id == _selectedProjectId);
-            final supportedGeometryTypes = _supportedGeometryTypes(selectedProject);
+            final supportedGeometryTypes = _supportedGeometryTypes(
+              selectedProject,
+            );
 
-            return Stepper(
-              currentStep: _currentStep,
-              onStepContinue: () => _handleContinue(projects),
-              onStepCancel: () {
-                if (_currentStep > 0) {
-                  setState(() => _currentStep -= 1);
-                }
-              },
-              controlsBuilder: (context, details) {
-                if (_currentStep == 3) {
-                  return Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      TextButton(
-                        onPressed: details.onStepCancel,
-                        child: const Text('Back'),
-                      ),
-                    ],
-                  );
-                }
-
-                return Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    AppButton(
-                      label: 'Next',
-                      icon: Icons.arrow_forward,
-                      expand: false,
-                      onPressed: details.onStepContinue,
-                    ),
-                    TextButton(
-                      onPressed: details.onStepCancel,
-                      child: const Text('Back'),
-                    ),
-                  ],
-                );
-              },
-              steps: [
-                Step(
-                  title: const Text('Geometry'),
-                  isActive: _currentStep >= 0,
-                  state: _currentStep > 0 ? StepState.complete : StepState.indexed,
-                  content: Column(
+            return ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                AppCard(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      DropdownButtonFormField<String>(
-                        initialValue: _selectedProjectId,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Assigned Project',
-                        ),
-                        items: projects
-                            .map(
-                              (project) => DropdownMenuItem(
-                                value: project.id,
-                                child: Text(project.name),
-                              ),
-                            )
-                            .toList(growable: false),
-                        onChanged: (value) {
-                          if (value == null) {
-                            return;
-                          }
-                          final project = projects.firstWhere((p) => p.id == value);
-                          _applyProjectSelection(project);
-                        },
+                      Text(
+                        'New Feature',
+                        style: Theme.of(context).textTheme.titleLarge,
                       ),
-                      const SizedBox(height: 12),
-                      if (supportedGeometryTypes.isEmpty)
-                        const AppCard(
-                          child: ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: Icon(Icons.info_outline),
-                            title: Text('Point capture required'),
-                            subtitle: Text(
-                              'This mobile build supports point capture for field collection. Update the project geometry policy to include Point before collecting from this screen.',
-                            ),
-                          ),
-                        )
-                      else
-                        DropdownButtonFormField<String>(
-                          initialValue: _selectedGeometryType,
-                          isExpanded: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Geometry Type',
-                          ),
-                          items: supportedGeometryTypes
-                              .map(
-                                (type) => DropdownMenuItem(
-                                  value: type,
-                                  child: Text(type),
-                                ),
-                              )
-                              .toList(growable: false),
-                          onChanged: (value) {
-                            setState(() {
-                              _selectedGeometryType = value;
-                            });
-                          },
-                        ),
-                      const SizedBox(height: 12),
-                      LayoutBuilder(
-                        builder: (context, constraints) {
-                          if (constraints.maxWidth < 520) {
-                            return Column(
-                              children: [
-                                TextFormField(
-                                  controller: _latitudeController,
-                                  keyboardType:
-                                      const TextInputType.numberWithOptions(
-                                        decimal: true,
-                                      ),
-                                  decoration: const InputDecoration(
-                                    labelText: 'Latitude',
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                TextFormField(
-                                  controller: _longitudeController,
-                                  keyboardType:
-                                      const TextInputType.numberWithOptions(
-                                        decimal: true,
-                                      ),
-                                  decoration: const InputDecoration(
-                                    labelText: 'Longitude',
-                                  ),
-                                ),
-                              ],
-                            );
-                          }
-
-                          return Row(
-                            children: [
-                              Expanded(
-                                child: TextFormField(
-                                  controller: _latitudeController,
-                                  keyboardType:
-                                      const TextInputType.numberWithOptions(
-                                        decimal: true,
-                                      ),
-                                  decoration: const InputDecoration(
-                                    labelText: 'Latitude',
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: TextFormField(
-                                  controller: _longitudeController,
-                                  keyboardType:
-                                      const TextInputType.numberWithOptions(
-                                        decimal: true,
-                                      ),
-                                  decoration: const InputDecoration(
-                                    labelText: 'Longitude',
-                                  ),
-                                ),
-                              ),
-                            ],
-                          );
-                        },
+                      const SizedBox(height: 8),
+                      Text(
+                        'Project-specific collection flow for geometry, attributes, photos, and review submission.',
+                        style: Theme.of(context).textTheme.bodyMedium,
                       ),
                       const SizedBox(height: 12),
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
-                        children: [
-                          Chip(
-                            avatar: const Icon(Icons.gps_fixed, size: 18),
-                            label: Text(
-                              _gpsAccuracyMeters == null
-                                  ? 'GPS not captured yet'
-                                  : 'Accuracy ${_gpsAccuracyMeters!.toStringAsFixed(1)}m (${Phase6Validation.gpsQualityLabel(_gpsAccuracyMeters)})',
+                        children: List<Widget>.generate(4, (index) {
+                          final labels = const [
+                            'Geometry',
+                            'Attributes',
+                            'Photos',
+                            'Review',
+                          ];
+                          final stateLabel = index < _currentStep
+                              ? '${index + 1}. ${labels[index]}'
+                              : '${index + 1}. ${labels[index]}';
+                          return Chip(
+                            label: Text(stateLabel),
+                            avatar: Icon(
+                              index < _currentStep
+                                  ? Icons.check_circle_outline
+                                  : Icons.radio_button_unchecked,
+                              size: 18,
                             ),
-                          ),
-                          Chip(
-                            avatar: const Icon(Icons.rule, size: 18),
-                            label: Text(
-                              'Target <= ${selectedProject.maxGpsAccuracyMeters.toStringAsFixed(1)}m',
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      OutlinedButton.icon(
-                        onPressed: supportedGeometryTypes.isEmpty
-                            ? null
-                            : () => _captureGpsSample(selectedProject),
-                        icon: const Icon(Icons.my_location),
-                        label: const Text('Capture GPS Sample'),
+                            backgroundColor: index == _currentStep
+                                ? Theme.of(context).colorScheme.primaryContainer
+                                : null,
+                          );
+                        }),
                       ),
                     ],
                   ),
                 ),
-                Step(
-                  title: const Text('Attributes'),
-                  isActive: _currentStep >= 1,
-                  state: _currentStep > 1 ? StepState.complete : StepState.indexed,
-                  content: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                const SizedBox(height: 12),
+                _buildCurrentStepCard(
+                  context,
+                  projects: projects,
+                  selectedProject: selectedProject,
+                  supportedGeometryTypes: supportedGeometryTypes,
+                ),
+                const SizedBox(height: 12),
+                AppCard(
+                  child: Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
                     children: [
-                      AppCard(
-                        child: Text(
-                          'Form schema ${selectedProject.collectionFormSchema.version} with ${selectedProject.collectionFormSchema.fields.length} field(s).',
+                      if (_currentStep > 0)
+                        OutlinedButton(
+                          onPressed: _isSubmitting
+                              ? null
+                              : () => setState(() => _currentStep -= 1),
+                          child: const Text('Back'),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      if (selectedProject.collectionFormSchema.fields.isEmpty)
-                        const Text(
-                          'No dynamic fields are configured for this project.',
-                        )
-                      else
-                        ...selectedProject.collectionFormSchema.fields.map(
-                          (field) => Padding(
-                            padding: const EdgeInsets.only(bottom: 10),
-                            child: _buildSchemaField(field),
-                          ),
+                      if (_currentStep < 3)
+                        AppButton(
+                          label: 'Next',
+                          icon: Icons.arrow_forward,
+                          expand: false,
+                          onPressed: _isSubmitting
+                              ? null
+                              : () => _handleContinue(projects),
                         ),
-                    ],
-                  ),
-                ),
-                Step(
-                  title: const Text('Photos'),
-                  isActive: _currentStep >= 2,
-                  state: _currentStep > 2 ? StepState.complete : StepState.indexed,
-                  content: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      AppCard(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Photo policy: ${selectedProject.requiresPhotos ? 'Required' : 'Optional'}',
-                            ),
-                            Text(
-                              'Minimum ${selectedProject.minPhotos} • Maximum ${selectedProject.maxPhotos}',
-                            ),
-                          ],
+                      if (_currentStep == 3)
+                        OutlinedButton.icon(
+                          onPressed: _isSubmitting
+                              ? null
+                              : () => _saveToServer(
+                                  selectedProject,
+                                  submit: false,
+                                ),
+                          icon: const Icon(Icons.save_outlined),
+                          label: const Text('Save Draft'),
                         ),
-                      ),
-                      const SizedBox(height: 10),
-                      OutlinedButton.icon(
-                        onPressed: () => _pickPhotos(selectedProject),
-                        icon: const Icon(Icons.photo_library_outlined),
-                        label: const Text('Select Photos'),
-                      ),
-                      const SizedBox(height: 8),
-                      if (_photos.isEmpty)
-                        const Text('No photos selected yet.')
-                      else
-                        ..._photos.map(
-                          (photo) => AppCard(
-                            child: ListTile(
-                              contentPadding: EdgeInsets.zero,
-                              leading: const CircleAvatar(
-                                child: Icon(Icons.photo_camera_back),
-                              ),
-                              title: Text(photo.fileName),
-                              subtitle: Text(
-                                '${_formatBytes(photo.sizeBytes)} • ${photo.createdAt.toLocal()}',
-                              ),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.delete_outline),
-                                onPressed: () {
-                                  setState(() {
-                                    _photos.remove(photo);
-                                  });
-                                },
-                              ),
-                            ),
-                          ),
+                      if (_currentStep == 3)
+                        FilledButton.icon(
+                          onPressed: _isSubmitting
+                              ? null
+                              : () => _saveToServer(
+                                  selectedProject,
+                                  submit: true,
+                                ),
+                          icon: const Icon(Icons.send_outlined),
+                          label: const Text('Submit for Review'),
                         ),
                     ],
-                  ),
-                ),
-                Step(
-                  title: const Text('Review & Submit'),
-                  isActive: _currentStep >= 3,
-                  content: AppCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          selectedProject.name,
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 8),
-                        Text('Geometry: ${_selectedGeometryType ?? 'Point'}'),
-                        Text(
-                          'GPS quality: ${Phase6Validation.gpsQualityLabel(_gpsAccuracyMeters)}',
-                        ),
-                        Text(
-                          'Attributes captured: ${_collectAttributeValues(selectedProject).length}',
-                        ),
-                        Text('Photos attached: ${_photos.length}'),
-                        const SizedBox(height: 12),
-                        Wrap(
-                          spacing: 10,
-                          runSpacing: 10,
-                          children: [
-                            OutlinedButton.icon(
-                              onPressed: _isSubmitting
-                                  ? null
-                                  : () => _saveToServer(
-                                        selectedProject,
-                                        submit: false,
-                                      ),
-                              icon: const Icon(Icons.save_outlined),
-                              label: const Text('Save Draft'),
-                            ),
-                            FilledButton.icon(
-                              onPressed: _isSubmitting
-                                  ? null
-                                  : () => _saveToServer(
-                                        selectedProject,
-                                        submit: true,
-                                      ),
-                              icon: const Icon(Icons.send_outlined),
-                              label: const Text('Submit for Review'),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
                   ),
                 ),
               ],
@@ -847,6 +631,272 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
           ),
       ],
     );
+  }
+
+  Widget _buildCurrentStepCard(
+    BuildContext context, {
+    required List<ProjectSummary> projects,
+    required ProjectSummary selectedProject,
+    required List<String> supportedGeometryTypes,
+  }) {
+    switch (_currentStep) {
+      case 0:
+        return AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              DropdownButtonFormField<String>(
+                initialValue: _selectedProjectId,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Assigned Project',
+                ),
+                items: projects
+                    .map(
+                      (project) => DropdownMenuItem(
+                        value: project.id,
+                        child: Text(project.name),
+                      ),
+                    )
+                    .toList(growable: false),
+                onChanged: (value) {
+                  if (value == null) {
+                    return;
+                  }
+                  final project = projects.firstWhere((p) => p.id == value);
+                  _applyProjectSelection(project);
+                },
+              ),
+              const SizedBox(height: 12),
+              if (supportedGeometryTypes.isEmpty)
+                AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      Text('Point capture required'),
+                      SizedBox(height: 8),
+                      Text(
+                        'This mobile build supports point capture. Update the project geometry policy to include Point before collecting from this screen.',
+                      ),
+                    ],
+                  ),
+                )
+              else
+                DropdownButtonFormField<String>(
+                  initialValue: _selectedGeometryType,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Geometry Type'),
+                  items: supportedGeometryTypes
+                      .map(
+                        (type) =>
+                            DropdownMenuItem(value: type, child: Text(type)),
+                      )
+                      .toList(growable: false),
+                  onChanged: (value) {
+                    setState(() {
+                      _selectedGeometryType = value;
+                    });
+                  },
+                ),
+              const SizedBox(height: 12),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  if (constraints.maxWidth < 520) {
+                    return Column(
+                      children: [
+                        TextFormField(
+                          controller: _latitudeController,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          decoration: const InputDecoration(
+                            labelText: 'Latitude',
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        TextFormField(
+                          controller: _longitudeController,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          decoration: const InputDecoration(
+                            labelText: 'Longitude',
+                          ),
+                        ),
+                      ],
+                    );
+                  }
+
+                  return Row(
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          controller: _latitudeController,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          decoration: const InputDecoration(
+                            labelText: 'Latitude',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextFormField(
+                          controller: _longitudeController,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          decoration: const InputDecoration(
+                            labelText: 'Longitude',
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  Chip(
+                    avatar: const Icon(Icons.gps_fixed, size: 18),
+                    label: Text(
+                      _gpsAccuracyMeters == null
+                          ? 'GPS not captured yet'
+                          : 'Accuracy ${_gpsAccuracyMeters!.toStringAsFixed(1)}m (${Phase6Validation.gpsQualityLabel(_gpsAccuracyMeters)})',
+                    ),
+                  ),
+                  Chip(
+                    avatar: const Icon(Icons.rule, size: 18),
+                    label: Text(
+                      'Target <= ${selectedProject.maxGpsAccuracyMeters.toStringAsFixed(1)}m',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: supportedGeometryTypes.isEmpty
+                    ? null
+                    : () => _captureGpsSample(selectedProject),
+                icon: const Icon(Icons.my_location),
+                label: const Text('Capture GPS Sample'),
+              ),
+            ],
+          ),
+        );
+      case 1:
+        return AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Form schema ${selectedProject.collectionFormSchema.version} with ${selectedProject.collectionFormSchema.fields.length} field(s).',
+              ),
+              const SizedBox(height: 12),
+              if (selectedProject.collectionFormSchema.fields.isEmpty)
+                const Text('No dynamic fields are configured for this project.')
+              else
+                ...selectedProject.collectionFormSchema.fields.map(
+                  (field) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _buildSchemaField(field),
+                  ),
+                ),
+            ],
+          ),
+        );
+      case 2:
+        return AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Photo policy: ${selectedProject.requiresPhotos ? 'Required' : 'Optional'}',
+              ),
+              Text(
+                'Minimum ${selectedProject.minPhotos} • Maximum ${selectedProject.maxPhotos}',
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: () => _pickPhotos(selectedProject),
+                icon: const Icon(Icons.photo_library_outlined),
+                label: const Text('Select Photos'),
+              ),
+              const SizedBox(height: 8),
+              if (_photos.isEmpty)
+                const Text('No photos selected yet.')
+              else
+                ..._photos.map(
+                  (photo) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: AppCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const CircleAvatar(
+                                child: Icon(Icons.photo_camera_back),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(photo.fileName, softWrap: true),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      '${_formatBytes(photo.sizeBytes)} • ${photo.createdAt.toLocal()}',
+                                      softWrap: true,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: () {
+                                  setState(() {
+                                    _photos.remove(photo);
+                                  });
+                                },
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      default:
+        return AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                selectedProject.name,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Text('Geometry: ${_selectedGeometryType ?? 'Point'}'),
+              Text(
+                'GPS quality: ${Phase6Validation.gpsQualityLabel(_gpsAccuracyMeters)}',
+              ),
+              Text(
+                'Attributes captured: ${_collectAttributeValues(selectedProject).length}',
+              ),
+              Text('Photos attached: ${_photos.length}'),
+            ],
+          ),
+        );
+    }
   }
 }
 

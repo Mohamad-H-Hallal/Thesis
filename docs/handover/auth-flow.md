@@ -106,6 +106,26 @@ Runtime behavior:
 - successful login updates `"user".last_login`
 - failed login does not create a session or token
 
+## Forgot Password / Reset Password
+
+Endpoints:
+
+- `POST /api/v1/auth/forgot-password`
+- `POST /api/v1/auth/reset-password`
+
+Rules:
+
+- forgot-password always returns a generic success response so account existence is not leaked
+- reset tokens are stored in `password_reset_request`
+- tokens expire after `PASSWORD_RESET_TOKEN_EXPIRY_MINUTES` minutes
+- used and expired tokens cannot be reused
+- passwords are re-hashed into `"user".password_hash` on reset
+
+Development behavior:
+
+- when email delivery is not configured, the API can expose a development reset code in non-production flows
+- the mobile app forwards that code into the reset screen so the workflow is still testable end to end
+
 ## Self-Deactivate
 
 Endpoint:
@@ -114,8 +134,8 @@ Endpoint:
 
 Rules:
 
-- available to `viewer` and `contributor`
-- not available to admin or protected super admin
+- available only to `contributor`
+- not available to viewer, admin, or protected super admin
 - contributor self-deactivation is blocked when the user still has approved assignments on active, paused, or draft projects
 - successful self-deactivation sets `"user".is_active = false`
 - inactive users cannot log in again until reactivated by an administrator flow

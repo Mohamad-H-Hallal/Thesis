@@ -65,7 +65,7 @@ class AppShellScreen extends ConsumerWidget {
 
         final logoutAction = IconButton(
           tooltip: 'Logout',
-          onPressed: () => ref.read(authControllerProvider.notifier).logout(),
+          onPressed: () => _confirmLogout(context, ref),
           icon: const Icon(Icons.logout),
         );
 
@@ -382,7 +382,7 @@ class AppShellScreen extends ConsumerWidget {
             email: session.user.email,
             userRole: session.user.role,
             isSuperAdmin: session.user.isSuperAdmin,
-            onLogout: () => ref.read(authControllerProvider.notifier).logout(),
+            onLogout: () => _confirmLogout(context, ref),
           );
         },
       );
@@ -404,6 +404,30 @@ class AppShellScreen extends ConsumerWidget {
       scope: ProjectViewScope.public,
       title: 'Projects',
     );
+  }
+
+  Future<void> _confirmLogout(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Do you want to logout?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Logout'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await ref.read(authControllerProvider.notifier).logout();
+    }
   }
 
   List<_ShellItem> _itemsForSession(AppUser user) {

@@ -65,16 +65,19 @@ class OfflineBanner extends ConsumerWidget {
       return const _BannerAppearance(
         icon: Icons.sync,
         title: 'Preparing sync',
-        message: 'Local storage is starting. Sync actions will be available shortly.',
+        message:
+            'Local storage is starting. Sync actions will be available shortly.',
         backgroundSeed: _BannerSeed.info,
       );
     }
 
     if (!state.isReady) {
-      return const _BannerAppearance(
+      return _BannerAppearance(
         icon: Icons.cloud_off_outlined,
         title: 'Sync unavailable',
-        message: 'Offline storage is not ready yet, so sync actions are temporarily disabled.',
+        message: state.lastError?.trim().isNotEmpty == true
+            ? state.lastError!
+            : 'Offline storage is not ready yet, so sync actions are temporarily disabled.',
         backgroundSeed: _BannerSeed.warning,
       );
     }
@@ -101,7 +104,8 @@ class OfflineBanner extends ConsumerWidget {
       return const _BannerAppearance(
         icon: Icons.cloud_upload_outlined,
         title: 'Queue active',
-        message: 'Offline work is stored locally and waiting for the next sync run.',
+        message:
+            'Offline work is stored locally and waiting for the next sync run.',
         backgroundSeed: _BannerSeed.warning,
       );
     }
@@ -109,7 +113,8 @@ class OfflineBanner extends ConsumerWidget {
     return const _BannerAppearance(
       icon: Icons.cloud_done_outlined,
       title: 'Sync healthy',
-      message: 'Queued collection changes are clear and background sync is idle.',
+      message:
+          'Queued collection changes are clear and background sync is idle.',
       backgroundSeed: _BannerSeed.success,
     );
   }

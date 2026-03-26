@@ -59,10 +59,9 @@ class _ProjectsManagementScreenState
       if (nextStatus == 'archived') {
         await ref.read(adminRepositoryProvider).archiveProject(project.id);
       } else {
-        await ref.read(adminRepositoryProvider).updateProjectStatus(
-              projectId: project.id,
-              status: nextStatus,
-            );
+        await ref
+            .read(adminRepositoryProvider)
+            .updateProjectStatus(projectId: project.id, status: nextStatus);
       }
       ref.invalidate(projectListProvider(ProjectViewScope.all));
       ref.invalidate(projectByIdProvider(project.id));
@@ -88,17 +87,20 @@ class _ProjectsManagementScreenState
         title: 'Projects unavailable',
         message: '$error',
         actionLabel: 'Retry',
-        onAction: () => ref.invalidate(projectListProvider(ProjectViewScope.all)),
+        onAction: () =>
+            ref.invalidate(projectListProvider(ProjectViewScope.all)),
       ),
       data: (projects) {
-        final filtered = projects.where((project) {
-          final matchesQuery = project.name.toLowerCase().contains(
+        final filtered = projects
+            .where((project) {
+              final matchesQuery = project.name.toLowerCase().contains(
                 _query.toLowerCase(),
               );
-          final matchesStatus =
-              _statusFilter == 'all' || project.status == _statusFilter;
-          return matchesQuery && matchesStatus;
-        }).toList(growable: false);
+              final matchesStatus =
+                  _statusFilter == 'all' || project.status == _statusFilter;
+              return matchesQuery && matchesStatus;
+            })
+            .toList(growable: false);
 
         return RefreshIndicator(
           onRefresh: () async =>
@@ -114,7 +116,8 @@ class _ProjectsManagementScreenState
                     label: const Text('Create'),
                   );
                   final filterAction = OutlinedButton.icon(
-                    onPressed: () => setState(() => _showFilters = !_showFilters),
+                    onPressed: () =>
+                        setState(() => _showFilters = !_showFilters),
                     icon: Icon(
                       _showFilters
                           ? Icons.filter_alt_off_outlined
@@ -152,20 +155,54 @@ class _ProjectsManagementScreenState
                 },
               ),
               const SizedBox(height: AppSpacing.sm),
-              if (_showFilters) ...[
-                AppCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SearchBar(
-                        hintText: 'Search projects',
-                        leading: const Icon(Icons.search),
-                        onChanged: (value) {
-                          setState(() {
-                            _query = value.trim();
-                          });
-                        },
-                      ),
+              AppCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final filterButton = OutlinedButton.icon(
+                          onPressed: () =>
+                              setState(() => _showFilters = !_showFilters),
+                          icon: Icon(
+                            _showFilters
+                                ? Icons.filter_alt_off_outlined
+                                : Icons.filter_alt_outlined,
+                          ),
+                          label: Text(_showFilters ? 'Hide' : 'Filter'),
+                        );
+
+                        final searchBar = SearchBar(
+                          hintText: 'Search projects',
+                          leading: const Icon(Icons.search),
+                          onChanged: (value) {
+                            setState(() {
+                              _query = value.trim();
+                            });
+                          },
+                        );
+
+                        if (constraints.maxWidth < 560) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              searchBar,
+                              const SizedBox(height: AppSpacing.sm),
+                              filterButton,
+                            ],
+                          );
+                        }
+
+                        return Row(
+                          children: [
+                            Expanded(child: searchBar),
+                            const SizedBox(width: AppSpacing.sm),
+                            filterButton,
+                          ],
+                        );
+                      },
+                    ),
+                    if (_showFilters) ...[
                       const SizedBox(height: AppSpacing.sm),
                       Wrap(
                         spacing: AppSpacing.xs,
@@ -193,10 +230,10 @@ class _ProjectsManagementScreenState
                         ],
                       ),
                     ],
-                  ),
+                  ],
                 ),
-                const SizedBox(height: AppSpacing.md),
-              ],
+              ),
+              const SizedBox(height: AppSpacing.md),
               if (filtered.isEmpty)
                 AppEmptyState(
                   icon: Icons.folder_off_outlined,
@@ -225,7 +262,8 @@ class _ProjectsManagementScreenState
                                   dialogTitle: 'Pause project',
                                   dialogMessage:
                                       'Pause "${project.name}"? Viewing stays available, but feature collection and submission are disabled until the project returns to active status.',
-                                  successMessage: 'Project paused successfully.',
+                                  successMessage:
+                                      'Project paused successfully.',
                                 );
                               }
                               if (value == 'resume') {
@@ -235,7 +273,8 @@ class _ProjectsManagementScreenState
                                   dialogTitle: 'Resume project',
                                   dialogMessage:
                                       'Return "${project.name}" to active field operations?',
-                                  successMessage: 'Project resumed successfully.',
+                                  successMessage:
+                                      'Project resumed successfully.',
                                 );
                               }
                               if (value == 'archive') {
@@ -245,7 +284,8 @@ class _ProjectsManagementScreenState
                                   dialogTitle: 'Archive project',
                                   dialogMessage:
                                       'Archive "${project.name}"? This removes it from active operations and contributor lists.',
-                                  successMessage: 'Project archived successfully.',
+                                  successMessage:
+                                      'Project archived successfully.',
                                 );
                               }
                               if (value == 'unarchive') {

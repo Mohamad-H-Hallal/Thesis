@@ -20,7 +20,6 @@ class CategoriesScreen extends ConsumerStatefulWidget {
 
 class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
   final TextEditingController _searchController = TextEditingController();
-  bool _showFilters = false;
 
   @override
   void dispose() {
@@ -28,16 +27,20 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
     super.dispose();
   }
 
-  List<ProjectCategorySummary> _applyQuery(List<ProjectCategorySummary> categories) {
+  List<ProjectCategorySummary> _applyQuery(
+    List<ProjectCategorySummary> categories,
+  ) {
     final query = _searchController.text.trim().toLowerCase();
     if (query.isEmpty) {
       return categories;
     }
 
-    return categories.where((category) {
-      return category.name.toLowerCase().contains(query) ||
-          (category.description?.toLowerCase().contains(query) ?? false);
-    }).toList(growable: false);
+    return categories
+        .where((category) {
+          return category.name.toLowerCase().contains(query) ||
+              (category.description?.toLowerCase().contains(query) ?? false);
+        })
+        .toList(growable: false);
   }
 
   String? _previewUrl(String? iconUrl) {
@@ -78,11 +81,6 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                     icon: const Icon(Icons.add),
                     label: const Text('Create'),
                   );
-                  final filterAction = OutlinedButton.icon(
-                    onPressed: () => setState(() => _showFilters = !_showFilters),
-                    icon: Icon(_showFilters ? Icons.filter_alt_off : Icons.filter_alt_outlined),
-                    label: Text(_showFilters ? 'Hide filters' : 'Filter'),
-                  );
 
                   if (constraints.maxWidth < 720) {
                     return Column(
@@ -94,11 +92,7 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                               'Define the ministry project categories used for project provisioning.',
                         ),
                         const SizedBox(height: AppSpacing.sm),
-                        Wrap(
-                          spacing: AppSpacing.sm,
-                          runSpacing: AppSpacing.sm,
-                          children: [createAction, filterAction],
-                        ),
+                        createAction,
                       ],
                     );
                   }
@@ -106,30 +100,28 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                     title: 'Categories',
                     subtitle:
                         'Define the ministry project categories used for project provisioning.',
-                    trailing: Wrap(
-                      spacing: AppSpacing.sm,
-                      children: [createAction, filterAction],
-                    ),
+                    trailing: createAction,
                   );
                 },
               ),
               const SizedBox(height: AppSpacing.md),
-              if (_showFilters)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: AppSpacing.md),
-                  child: AppCard(
-                    child: SearchBar(
-                      controller: _searchController,
-                      hintText: 'Search category name or description',
-                      leading: const Icon(Icons.search),
-                      onChanged: (_) => setState(() {}),
-                    ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: AppSpacing.md),
+                child: AppCard(
+                  child: SearchBar(
+                    controller: _searchController,
+                    hintText: 'Search category name or description',
+                    leading: const Icon(Icons.search),
+                    onChanged: (_) => setState(() {}),
                   ),
                 ),
+              ),
               if (filtered.isEmpty)
                 AppEmptyState(
                   icon: Icons.category_outlined,
-                  title: categories.isEmpty ? 'No categories yet' : 'No categories match',
+                  title: categories.isEmpty
+                      ? 'No categories yet'
+                      : 'No categories match',
                   message: categories.isEmpty
                       ? 'Create your first category before provisioning projects from mobile.'
                       : 'Try a different search term or clear the active category filter.',
@@ -166,75 +158,40 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
 
                           final editAction = IconButton(
                             tooltip: 'Edit category',
-                            onPressed: () =>
-                                context.push(AppRoutes.categoryEdit(category.id)),
+                            onPressed: () => context.push(
+                              AppRoutes.categoryEdit(category.id),
+                            ),
                             icon: const Icon(Icons.edit_outlined),
+                          );
+                          final avatar = CircleAvatar(
+                            radius: 28,
+                            backgroundColor: Theme.of(
+                              context,
+                            ).colorScheme.surfaceContainerHighest,
+                            backgroundImage: iconPreview != null
+                                ? NetworkImage(iconPreview)
+                                : null,
+                            child: iconPreview == null
+                                ? const Icon(Icons.category_outlined)
+                                : null,
                           );
 
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              if (constraints.maxWidth < 520)
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    if (iconPreview != null)
-                                      Padding(
-                                        padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                                        child: ClipRRect(
-                                          borderRadius: AppRadii.md,
-                                          child: Image.network(
-                                            iconPreview,
-                                            height: 120,
-                                            width: double.infinity,
-                                            fit: BoxFit.cover,
-                                            errorBuilder: (context, error, stackTrace) =>
-                                                const SizedBox.shrink(),
-                                          ),
-                                        ),
-                                      ),
-                                    Row(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        const CircleAvatar(
-                                          child: Icon(Icons.category_outlined),
-                                        ),
-                                        const SizedBox(width: AppSpacing.sm),
-                                        Expanded(child: summary),
-                                        editAction,
-                                      ],
-                                    ),
-                                  ],
-                                )
-                              else
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    if (iconPreview != null)
-                                      Padding(
-                                        padding: const EdgeInsets.only(right: AppSpacing.sm),
-                                        child: ClipRRect(
-                                          borderRadius: AppRadii.md,
-                                          child: Image.network(
-                                            iconPreview,
-                                            height: 96,
-                                            width: 96,
-                                            fit: BoxFit.cover,
-                                            errorBuilder: (context, error, stackTrace) =>
-                                                const SizedBox.shrink(),
-                                          ),
-                                        ),
-                                      )
-                                    else
-                                      const Padding(
-                                        padding: EdgeInsets.only(right: AppSpacing.sm),
-                                        child: CircleAvatar(
-                                          child: Icon(Icons.category_outlined),
-                                        ),
-                                      ),
-                                    Expanded(child: summary),
-                                    editAction,
-                                  ],
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  avatar,
+                                  const SizedBox(width: AppSpacing.sm),
+                                  Expanded(child: summary),
+                                  if (constraints.maxWidth >= 360) editAction,
+                                ],
+                              ),
+                              if (constraints.maxWidth < 360)
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: editAction,
                                 ),
                             ],
                           );

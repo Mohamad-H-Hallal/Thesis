@@ -79,8 +79,8 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
       _minPhotosController.text = '${project.minPhotos}';
       _maxPhotosController.text = '${project.maxPhotos}';
       _schemaVersionController.text = project.collectionFormSchema.version;
-      _maxGpsAccuracyController.text =
-          project.maxGpsAccuracyMeters.toStringAsFixed(0);
+      _maxGpsAccuracyController.text = project.maxGpsAccuracyMeters
+          .toStringAsFixed(0);
       _requiresPhotos = project.requiresPhotos;
       _visibleToViewers = project.visibleToViewers;
       _categoryId = project.categoryId;
@@ -115,7 +115,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
       case 'paused':
         return const <String>['paused', 'active', 'completed'];
       case 'completed':
-        return const <String>['completed', 'archived'];
+        return const <String>['completed', 'active', 'paused', 'archived'];
       case 'archived':
         return const <String>['archived', 'completed'];
       default:
@@ -222,9 +222,9 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
         'allowedGeometryTypes': _allowedGeometryTypes.toList(growable: false),
         'maxGpsAccuracyMeters':
             double.tryParse(_maxGpsAccuracyController.text.trim()) ?? 25,
-        'fields': _fields.map((field) => field.toSchemaMap()).toList(
-              growable: false,
-            ),
+        'fields': _fields
+            .map((field) => field.toSchemaMap())
+            .toList(growable: false),
       },
     );
 
@@ -251,7 +251,11 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
             ? 'Project updated successfully.'
             : 'Project created successfully.',
       );
-      context.go(widget.isEditing ? AppRoutes.projects : AppRoutes.projectDetails(project.id));
+      context.go(
+        widget.isEditing
+            ? AppRoutes.projects
+            : AppRoutes.projectDetails(project.id),
+      );
     } catch (error) {
       if (mounted) {
         AppSnackbar.showError(context, error.toString());
@@ -415,8 +419,9 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                   ),
                                   child: Text(
                                     'New projects are created as draft first. Choosing active here promotes the project immediately after creation.',
-                                    style:
-                                        Theme.of(context).textTheme.bodySmall,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
                                   ),
                                 ),
                               if (_status == 'paused')
@@ -426,8 +431,9 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                   ),
                                   child: Text(
                                     'Paused projects remain viewable, but feature collection and submission stay disabled until the project returns to active status.',
-                                    style:
-                                        Theme.of(context).textTheme.bodySmall,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
                                   ),
                                 ),
                               const SizedBox(height: AppSpacing.sm),
@@ -440,8 +446,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                     value: _formatDate(_startDate),
                                     onPressed: () => _pickDate(
                                       isStart: true,
-                                      initialDate:
-                                          _startDate ?? DateTime.now(),
+                                      initialDate: _startDate ?? DateTime.now(),
                                     ),
                                   ),
                                   _DateCard(
@@ -449,7 +454,8 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                     value: _formatDate(_endDate),
                                     onPressed: () => _pickDate(
                                       isStart: false,
-                                      initialDate: _endDate ??
+                                      initialDate:
+                                          _endDate ??
                                           _startDate ??
                                           DateTime.now(),
                                     ),
@@ -580,8 +586,9 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                   ])
                                     FilterChip(
                                       label: Text(type),
-                                      selected:
-                                          _allowedGeometryTypes.contains(type),
+                                      selected: _allowedGeometryTypes.contains(
+                                        type,
+                                      ),
                                       onSelected: (selected) {
                                         setState(() {
                                           if (selected) {
@@ -609,9 +616,9 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                       children: [
                                         Text(
                                           'Dynamic collection fields',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .titleMedium,
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.titleMedium,
                                         ),
                                         const SizedBox(height: AppSpacing.sm),
                                         action,
@@ -623,9 +630,9 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                       Expanded(
                                         child: Text(
                                           'Dynamic collection fields',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .titleMedium,
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.titleMedium,
                                         ),
                                       ),
                                       action,
@@ -811,10 +818,8 @@ class _FieldEditorCard extends StatelessWidget {
             decoration: const InputDecoration(labelText: 'Field type'),
             items: CollectionFieldType.values
                 .map(
-                  (type) => DropdownMenuItem(
-                    value: type,
-                    child: Text(type.name),
-                  ),
+                  (type) =>
+                      DropdownMenuItem(value: type, child: Text(type.name)),
                 )
                 .toList(growable: false),
             onChanged: (value) {
@@ -905,13 +910,13 @@ class _EditableFormField {
     String min = '',
     String max = '',
     this.required = false,
-  })  : keyController = TextEditingController(text: key),
-        labelController = TextEditingController(text: label),
-        hintController = TextEditingController(text: hint),
-        optionsController = TextEditingController(text: options),
-        unitController = TextEditingController(text: unit),
-        minController = TextEditingController(text: min),
-        maxController = TextEditingController(text: max);
+  }) : keyController = TextEditingController(text: key),
+       labelController = TextEditingController(text: label),
+       hintController = TextEditingController(text: hint),
+       optionsController = TextEditingController(text: options),
+       unitController = TextEditingController(text: unit),
+       minController = TextEditingController(text: min),
+       maxController = TextEditingController(text: max);
 
   factory _EditableFormField.fromSchema(CollectionFormFieldSchema field) {
     return _EditableFormField(

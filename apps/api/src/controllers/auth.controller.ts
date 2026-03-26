@@ -1,4 +1,5 @@
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { query, transaction } = require('../config/database');
 const { generateToken, generateRefreshToken } = require('../middleware/auth');
@@ -11,6 +12,41 @@ import {
   notifyActiveAdminsAboutContributorRequest,
   notifyContributorRequestSubmitted,
 } from '../lib/userWorkflow';
+
+const passwordResetExpiryMinutes = Number(
+  process.env.PASSWORD_RESET_TOKEN_EXPIRY_MINUTES || 15,
+);
+
+const shouldExposeDevResetToken = () =>
+  process.env.NODE_ENV !== 'production' ||
+  process.env.EXPOSE_DEV_RESET_TOKEN === 'true';
+
+const hashResetToken = (token: string) =>
+  crypto.createHash('sha256').update(token).digest('hex');
+
+const generateResetToken = () =>
+  crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+
+const ensurePasswordResetTable = async () => {
+  await query(`
+    CREATE TABLE IF NOT EXISTS password_reset_request (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      requested_from_ip INET
+    )
+  `);
+
+  await query(
+    'CREATE INDEX IF NOT EXISTS idx_password_reset_request_user_id ON password_reset_request(user_id)',
+  );
+  await query(
+    'CREATE INDEX IF NOT EXISTS idx_password_reset_request_expires_at ON password_reset_request(expires_at)',
+  );
+};
 
 // Register new user
 const register = async (req, res) => {
@@ -233,6 +269,121 @@ const changePassword = async (req, res) => {
   });
 };
 
+const requestPasswordReset = async (req, res) => {
+  const normalizedEmail = normalizeEmail(req.body?.email);
+  await ensurePasswordResetTable();
+
+  const result = await query(
+    `SELECT id, email, full_name
+     FROM "user"
+     WHERE LOWER(email) = $1
+     LIMIT 1`,
+    [normalizedEmail],
+  );
+
+  let devResetToken: string | null = null;
+  let expiresAt: Date | null = null;
+
+  if (result.rows.length > 0) {
+    const user = result.rows[0];
+    const resetToken = generateResetToken();
+    devResetToken = shouldExposeDevResetToken() ? resetToken : null;
+    expiresAt = new Date(Date.now() + passwordResetExpiryMinutes * 60 * 1000);
+
+    await transaction(async (client) => {
+      await client.query(
+        `UPDATE password_reset_request
+         SET used_at = CURRENT_TIMESTAMP
+         WHERE user_id = $1
+           AND used_at IS NULL`,
+        [user.id],
+      );
+
+      await client.query(
+        `INSERT INTO password_reset_request (user_id, token_hash, expires_at, requested_from_ip)
+         VALUES ($1, $2, $3, $4::inet)`,
+        [user.id, hashResetToken(resetToken), expiresAt, req.ip ?? null],
+      );
+    });
+
+    logger.info('Password reset requested', {
+      userId: user.id,
+      email: user.email,
+      expiresAt: expiresAt.toISOString(),
+      devTokenExposed: shouldExposeDevResetToken(),
+    });
+  }
+
+  res.json({
+    success: true,
+    message:
+      'If an account matches that email, a password reset code has been generated.',
+    data:
+      shouldExposeDevResetToken() && devResetToken != null
+        ? {
+            delivery: 'development-reset-code',
+            dev_reset_token: devResetToken,
+            expires_at: expiresAt?.toISOString() ?? null,
+          }
+        : {
+            delivery: 'email-or-admin-assisted',
+            expires_at: expiresAt?.toISOString() ?? null,
+          },
+  });
+};
+
+const resetPassword = async (req, res) => {
+  const { token, new_password } = req.body;
+  await ensurePasswordResetTable();
+
+  const resetRequestResult = await query(
+    `SELECT prr.id, prr.user_id, u.email
+     FROM password_reset_request prr
+     JOIN "user" u ON u.id = prr.user_id
+     WHERE prr.token_hash = $1
+       AND prr.used_at IS NULL
+       AND prr.expires_at >= CURRENT_TIMESTAMP
+     ORDER BY prr.created_at DESC
+     LIMIT 1`,
+    [hashResetToken(token)],
+  );
+
+  if (resetRequestResult.rows.length === 0) {
+    throw new AppError('Reset token is invalid or expired.', 400);
+  }
+
+  const resetRequest = resetRequestResult.rows[0];
+  const salt = await bcrypt.genSalt(12);
+  const password_hash = await bcrypt.hash(new_password, salt);
+
+  await transaction(async (client) => {
+    await client.query(
+      `UPDATE "user"
+       SET password_hash = $1
+       WHERE id = $2`,
+      [password_hash, resetRequest.user_id],
+    );
+
+    await client.query(
+      `UPDATE password_reset_request
+       SET used_at = CURRENT_TIMESTAMP
+       WHERE user_id = $1
+         AND used_at IS NULL`,
+      [resetRequest.user_id],
+    );
+  });
+
+  logger.info('Password reset completed', {
+    userId: resetRequest.user_id,
+    email: resetRequest.email,
+  });
+
+  res.json({
+    success: true,
+    message: 'Password has been reset successfully.',
+  });
+};
+
 // Logout (client-side token deletion, but we log it)
 const logout = async (req, res) => {
   logger.info('User logged out:', { userId: req.user.id });
@@ -336,29 +487,30 @@ const selfDeactivate = async (req, res) => {
     throw new AppError('Not authenticated', 401);
   }
 
-  if (req.user.role === 'admin') {
-    throw new AppError('Admin accounts cannot self-deactivate through the mobile profile flow.', 403);
+  if (req.user.role !== 'contributor') {
+    throw new AppError(
+      'Only contributor accounts can self-deactivate through the mobile profile flow.',
+      403,
+    );
   }
 
-  if (req.user.role === 'contributor') {
-    const blockingAssignments = await query(
-      `SELECT pa.id
-       FROM project_assignment pa
-       JOIN project p ON p.id = pa.project_id
-       WHERE pa.user_id = $1
-         AND pa.role = 'contributor'
-         AND pa.status = 'approved'
-         AND p.status IN ('draft', 'active', 'paused')
-       LIMIT 1`,
-      [req.user.id],
-    );
+  const blockingAssignments = await query(
+    `SELECT pa.id
+     FROM project_assignment pa
+     JOIN project p ON p.id = pa.project_id
+     WHERE pa.user_id = $1
+       AND pa.role = 'contributor'
+       AND pa.status = 'approved'
+       AND p.status IN ('draft', 'active', 'paused')
+     LIMIT 1`,
+    [req.user.id],
+  );
 
-    if (blockingAssignments.rows.length > 0) {
-      throw new AppError(
-        'You cannot deactivate your account while you still have active project assignments.',
-        409,
-      );
-    }
+  if (blockingAssignments.rows.length > 0) {
+    throw new AppError(
+      'You cannot deactivate your account while you still have active project assignments.',
+      409,
+    );
   }
 
   await query(
@@ -382,6 +534,8 @@ module.exports = {
   getMe,
   updateMe,
   changePassword,
+  requestPasswordReset,
+  resetPassword,
   logout,
   selfDeactivate,
   refreshToken,

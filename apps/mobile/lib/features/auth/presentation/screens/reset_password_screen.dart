@@ -126,6 +126,8 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
       return AppScaffold(
         title: 'Check your email',
         showOfflineBanner: false,
+        showBackButton: true,
+        onBack: () => context.go(AppRoutes.login),
         body: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 480),
@@ -139,20 +141,44 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
                   const Icon(Icons.mark_email_read_outlined, size: 60),
                   const SizedBox(height: AppSpacing.sm),
                   Text(
-                    'We sent a reset link to your email.',
+                    'A password reset code is ready for your account.',
                     style: Theme.of(context).textTheme.titleLarge,
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: AppSpacing.xs),
                   const Text(
-                    'Use the reset token from that link to set a new password.',
+                    'If email delivery is not configured yet, use the development reset code shown below to continue.',
                     textAlign: TextAlign.center,
                   ),
+                  if ((widget.token ?? '').trim().isNotEmpty) ...[
+                    const SizedBox(height: AppSpacing.md),
+                    AppCard(
+                      child: Column(
+                        children: [
+                          Text(
+                            'Development reset code',
+                            style: Theme.of(context).textTheme.titleMedium,
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: AppSpacing.xs),
+                          SelectableText(
+                            widget.token!,
+                            style: Theme.of(context).textTheme.headlineSmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: AppSpacing.md),
                   AppButton(
                     label: 'Continue to reset form',
                     icon: Icons.arrow_forward,
-                    onPressed: () => context.go(AppRoutes.resetPassword),
+                    onPressed: () {
+                      final tokenQuery = (widget.token ?? '').trim().isEmpty
+                          ? ''
+                          : '?token=${Uri.encodeComponent(widget.token!.trim())}';
+                      context.go('${AppRoutes.resetPassword}$tokenQuery');
+                    },
                   ),
                 ],
               ),
@@ -165,6 +191,15 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
     return AppScaffold(
       title: 'Reset password',
       showOfflineBanner: false,
+      showBackButton: true,
+      onBack: () {
+        final navigator = Navigator.of(context);
+        if (navigator.canPop()) {
+          navigator.pop();
+          return;
+        }
+        context.go(AppRoutes.login);
+      },
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 460),

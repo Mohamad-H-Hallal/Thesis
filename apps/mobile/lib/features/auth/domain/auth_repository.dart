@@ -17,7 +17,7 @@ abstract class AuthRepository {
     String? phone,
   });
 
-  Future<void> requestPasswordReset(String email);
+  Future<PasswordResetRequestResult> requestPasswordReset(String email);
 
   Future<void> resetPassword({
     required String token,

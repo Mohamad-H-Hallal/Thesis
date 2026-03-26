@@ -19,10 +19,15 @@ import 'package:lebanese_gis_mobile/features/auth/presentation/screens/login_scr
 import 'package:lebanese_gis_mobile/features/projects/domain/project.dart';
 
 class _TestAuthRepository implements AuthRepository {
-  const _TestAuthRepository({this.loginFailure, this.signupMessage});
+  const _TestAuthRepository({
+    this.loginFailure,
+    this.signupMessage,
+    this.signupFailure,
+  });
 
   final AuthFailure? loginFailure;
   final String? signupMessage;
+  final AuthFailure? signupFailure;
 
   @override
   Future<AuthSession> login({
@@ -50,7 +55,12 @@ class _TestAuthRepository implements AuthRepository {
   Future<void> logout() async {}
 
   @override
-  Future<void> requestPasswordReset(String email) async {}
+  Future<PasswordResetRequestResult> requestPasswordReset(String email) async {
+    return const PasswordResetRequestResult(
+      message: 'Password reset code generated.',
+      devResetToken: '123456',
+    );
+  }
 
   @override
   Future<void> resetPassword({
@@ -71,7 +81,12 @@ class _TestAuthRepository implements AuthRepository {
     required String password,
     required UserRole role,
     String? phone,
-  }) async => signupMessage ?? 'Signup completed';
+  }) async {
+    if (signupFailure != null) {
+      throw signupFailure!;
+    }
+    return signupMessage ?? 'Signup completed';
+  }
 }
 
 class _AuthenticatedAuthController extends AuthController {
@@ -189,7 +204,10 @@ SyncController _buildSyncController() {
   );
 }
 
-AuthSession _sessionForRole(UserRole role, {bool isProtectedSuperAdmin = false}) {
+AuthSession _sessionForRole(
+  UserRole role, {
+  bool isProtectedSuperAdmin = false,
+}) {
   return AuthSession(
     accessToken: 'token',
     refreshToken: 'refresh',
@@ -249,6 +267,15 @@ void main() {
     expect(find.text('Profile'), findsWidgets);
 
     await tester.tap(find.byIcon(Icons.logout).first);
+    await tester.pumpAndSettle();
+    expect(find.text('Do you want to logout?'), findsOneWidget);
+
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.widgetWithText(FilledButton, 'Logout'),
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('Sign in'), findsOneWidget);
@@ -368,10 +395,7 @@ void main() {
       find.byType(TextFormField).at(0),
       'rejected@example.com',
     );
-    await tester.enterText(
-      find.byType(TextFormField).at(1),
-      'Passw0rd!123',
-    );
+    await tester.enterText(find.byType(TextFormField).at(1), 'Passw0rd!123');
 
     final loginButton = find.widgetWithText(FilledButton, 'Login');
     tester.widget<FilledButton>(loginButton).onPressed!.call();
@@ -434,8 +458,7 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
       final repository = const _TestAuthRepository(
-        signupMessage:
-            'Viewer account created successfully. You can log in now.',
+        signupMessage: 'Account created successfully. You can log in now.',
       );
       final container = ProviderContainer(
         overrides: <Override>[
@@ -481,10 +504,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Sign in'), findsOneWidget);
-      expect(
-        find.text('Viewer account created successfully. You can log in now.'),
-        findsWidgets,
-      );
+      expect(find.byType(LoginScreen), findsOneWidget);
     },
   );
 
@@ -495,7 +515,8 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
       final repository = const _TestAuthRepository(
-        signupMessage: 'Your contributor request is pending admin approval.',
+        signupMessage:
+            'Account created successfully. Your contributor request is pending admin approval.',
       );
       final container = ProviderContainer(
         overrides: <Override>[
@@ -535,10 +556,63 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Sign in'), findsOneWidget);
-      expect(
-        find.text('Your contributor request is pending admin approval.'),
-        findsWidgets,
+      expect(find.byType(LoginScreen), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'duplicate email signup stays on signup and highlights the email field',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1440, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final repository = const _TestAuthRepository(
+        signupFailure: AuthFailure(
+          'This email is already registered.',
+          statusCode: 409,
+        ),
       );
+      final container = ProviderContainer(
+        overrides: <Override>[
+          authRepositoryProvider.overrideWithValue(repository),
+          authControllerProvider.overrideWith(
+            (ref) => _UnauthenticatedAuthController(repository),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(_buildRoutedApp(container));
+      await tester.pumpAndSettle();
+
+      final router = container.read(routerProvider);
+      router.go(AppRoutes.signup);
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byType(TextFormField).at(0),
+        'Duplicate User',
+      );
+      await tester.enterText(find.byType(TextFormField).at(1), '03123456');
+      await tester.enterText(
+        find.byType(TextFormField).at(2),
+        'duplicate@example.com',
+      );
+      await tester.enterText(find.byType(TextFormField).at(3), 'Passw0rd!123');
+      await tester.enterText(find.byType(TextFormField).at(4), 'Passw0rd!123');
+
+      final submitButton = find.widgetWithText(
+        FilledButton,
+        'Request contributor access',
+      );
+      await tester.ensureVisible(submitButton);
+      tester.widget<FilledButton>(submitButton).onPressed!.call();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Requested role'), findsOneWidget);
+      expect(find.byType(LoginScreen), findsNothing);
+      expect(find.text('This email is already registered.'), findsWidgets);
+      expect(find.text('duplicate@example.com'), findsOneWidget);
     },
   );
 }

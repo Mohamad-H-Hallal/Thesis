@@ -20,12 +20,12 @@ import '../providers/providers.dart';
 import '../widgets/app_scaffold.dart';
 import 'route_paths.dart';
 
-GoRouter createRouter(Ref ref) {
-  final auth = ref.watch(authControllerProvider);
-
+GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
   return GoRouter(
     initialLocation: AppRoutes.splash,
+    refreshListenable: refreshListenable,
     redirect: (context, state) {
+      final auth = ref.read(authControllerProvider);
       final path = state.uri.path;
       final user = auth.session?.user;
       final isAuthRoute =
@@ -67,7 +67,13 @@ GoRouter createRouter(Ref ref) {
       ),
       GoRoute(
         path: AppRoutes.login,
-        pageBuilder: (_, state) => _buildPage(state, const LoginScreen()),
+        pageBuilder: (_, state) => _buildPage(
+          state,
+          LoginScreen(
+            noticeMessage: state.uri.queryParameters['notice'],
+            noticeIsSuccess: state.uri.queryParameters['success'] == 'true',
+          ),
+        ),
       ),
       GoRoute(
         path: AppRoutes.signup,
@@ -211,7 +217,10 @@ GoRouter createRouter(Ref ref) {
               title: 'Project map',
               showBackButton: true,
               showOfflineBanner: false,
-              body: MapScreen(initialProjectId: projectId, lockProjectSelection: true),
+              body: MapScreen(
+                initialProjectId: projectId,
+                lockProjectSelection: true,
+              ),
             ),
           );
         },

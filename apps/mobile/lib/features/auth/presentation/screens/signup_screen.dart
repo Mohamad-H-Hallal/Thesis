@@ -52,29 +52,28 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
   @override
   void initState() {
     super.initState();
-    _authSubscription = ref.listenManual<AuthState>(
-      authControllerProvider,
-      (previous, next) {
-        final nextError = next.error?.trim();
-        if (!mounted ||
-            next.status != AuthStatus.unauthenticated ||
-            nextError == null ||
-            nextError.isEmpty ||
-            nextError == previous?.error) {
-          return;
-        }
+    _authSubscription = ref.listenManual<AuthState>(authControllerProvider, (
+      previous,
+      next,
+    ) {
+      final nextError = next.error?.trim();
+      if (!mounted ||
+          next.status != AuthStatus.unauthenticated ||
+          nextError == null ||
+          nextError.isEmpty ||
+          nextError == previous?.error) {
+        return;
+      }
 
-        setState(() {
-          _formLevelError = nextError;
-          _emailFieldError =
-              nextError == 'This email is already registered.'
-              ? nextError
-              : null;
-        });
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        AppSnackbar.showError(context, nextError);
-      },
-    );
+      setState(() {
+        _formLevelError = nextError;
+        _emailFieldError = nextError == 'This email is already registered.'
+            ? nextError
+            : null;
+      });
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      AppSnackbar.showError(context, nextError);
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       patchAuthInputAttributes(
         formId: 'signup',
@@ -135,22 +134,21 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
     final authState = ref.read(authControllerProvider);
     if (successMessage != null &&
         (authState.error == null || authState.error!.trim().isEmpty)) {
-      AppSnackbar.showSuccess(
-        context,
-        successMessage,
+      final notice = Uri.encodeComponent(
+        successMessage == 'Account created successfully. You can log in now.'
+            ? 'Account has been created successfully.'
+            : successMessage,
       );
-      context.go(AppRoutes.login);
+      context.go('${AppRoutes.login}?notice=$notice&success=true');
       return;
     }
 
-    final failureMessage =
-        authState.error?.trim().isNotEmpty == true
-            ? authState.error!
-            : 'Signup failed. Please review the form and try again.';
+    final failureMessage = authState.error?.trim().isNotEmpty == true
+        ? authState.error!
+        : 'Signup failed. Please review the form and try again.';
     setState(() {
       _formLevelError = failureMessage;
-      _emailFieldError =
-          failureMessage == 'This email is already registered.'
+      _emailFieldError = failureMessage == 'This email is already registered.'
           ? failureMessage
           : null;
     });

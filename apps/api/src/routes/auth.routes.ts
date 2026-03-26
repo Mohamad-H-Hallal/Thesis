@@ -33,6 +33,20 @@ router.post(
 );
 
 router.post(
+  '/forgot-password',
+  userValidation.forgotPassword,
+  validate,
+  asyncHandler(authController.requestPasswordReset)
+);
+
+router.post(
+  '/reset-password',
+  userValidation.resetPassword,
+  validate,
+  asyncHandler(authController.resetPassword)
+);
+
+router.post(
   '/refresh-token',
   userValidation.refreshToken,
   validate,

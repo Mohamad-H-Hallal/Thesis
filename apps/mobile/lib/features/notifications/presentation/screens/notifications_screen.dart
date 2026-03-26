@@ -30,7 +30,8 @@ class NotificationsScreen extends ConsumerWidget {
           return const AppEmptyState(
             icon: Icons.notifications_off_outlined,
             title: 'No notifications',
-            message: 'Assignment, review, and export updates will appear here.',
+            message:
+                'Contributor requests, project requests, review outcomes, and export updates will appear here.',
           );
         }
 
@@ -54,37 +55,59 @@ class NotificationsScreen extends ConsumerWidget {
             ...List<Widget>.generate(notifications.length, (index) {
               final item = notifications[index];
               return Padding(
-                padding: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                 child: AnimatedReveal(
-                  delay: Duration(milliseconds: index * 55),
+                  delay: Duration(milliseconds: index * 45),
                   child: AppCard(
                     onTap: () => ref
                         .read(notificationsControllerProvider.notifier)
                         .markAsRead(item.id),
-                    child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: CircleAvatar(
-                        radius: 18,
-                        child: Icon(
-                          item.isRead
-                              ? Icons.mark_email_read
-                              : Icons.mark_email_unread,
-                          size: 18,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            CircleAvatar(
+                              radius: 18,
+                              child: Icon(
+                                item.isRead
+                                    ? Icons.mark_email_read_outlined
+                                    : Icons.mark_email_unread_outlined,
+                                size: 18,
+                              ),
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    item.title,
+                                    style: TextStyle(
+                                      fontWeight: item.isRead
+                                          ? FontWeight.w600
+                                          : FontWeight.w700,
+                                    ),
+                                    softWrap: true,
+                                  ),
+                                  const SizedBox(height: AppSpacing.xs),
+                                  Text(item.message, softWrap: true),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                      title: Text(
-                        item.title,
-                        style: TextStyle(
-                          fontWeight: item.isRead
-                              ? FontWeight.w500
-                              : FontWeight.w700,
+                        const SizedBox(height: AppSpacing.sm),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            Chip(label: Text(item.isRead ? 'Read' : 'Unread')),
+                            Chip(label: Text(item.timestamp)),
+                          ],
                         ),
-                      ),
-                      subtitle: Padding(
-                        padding: const EdgeInsets.only(top: AppSpacing.xs),
-                        child: Text(item.message),
-                      ),
-                      trailing: Text(item.timestamp),
+                      ],
                     ),
                   ),
                 ),

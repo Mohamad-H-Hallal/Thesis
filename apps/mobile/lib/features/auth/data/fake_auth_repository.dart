@@ -137,12 +137,12 @@ class FakeAuthRepository implements AuthRepository {
     }
 
     return role == UserRole.contributor
-        ? 'Your contributor request is pending admin approval.'
-        : 'Viewer account created successfully. You can log in now.';
+        ? 'Account created successfully. Your contributor request is pending admin approval.'
+        : 'Account created successfully. You can log in now.';
   }
 
   @override
-  Future<void> requestPasswordReset(String email) async {
+  Future<PasswordResetRequestResult> requestPasswordReset(String email) async {
     await Future<void>.delayed(const Duration(milliseconds: 500));
     if (!email.contains('@')) {
       throw DioException(
@@ -150,6 +150,12 @@ class FakeAuthRepository implements AuthRepository {
         message: 'Please enter a valid email.',
       );
     }
+    return PasswordResetRequestResult(
+      message:
+          'If an account matches that email, a password reset code has been generated.',
+      devResetToken: '123456',
+      expiresAt: DateTime.now().add(const Duration(minutes: 15)),
+    );
   }
 
   @override

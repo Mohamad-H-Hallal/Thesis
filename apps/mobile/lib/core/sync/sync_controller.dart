@@ -96,6 +96,12 @@ class SyncController extends StateNotifier<SyncState> {
   }
 
   Future<void> syncNow({bool background = false}) async {
+    try {
+      await _localStore.initialize();
+    } catch (_) {
+      // The controller state update below will expose the error message.
+    }
+
     if (!state.isReady) {
       await initialize();
       if (!state.isReady) {
@@ -110,6 +116,7 @@ class SyncController extends StateNotifier<SyncState> {
     state = state.copyWith(isSyncing: true, lastError: null);
 
     try {
+      await _localStore.initialize();
       final summary = await _syncEngine.syncPending();
       await _refreshPendingCount();
 
@@ -163,13 +170,13 @@ class SyncController extends StateNotifier<SyncState> {
         isReady: false,
         isInitializing: false,
         autoSyncRunning: false,
-        lastError:
-            'Offline sync storage is not ready yet. ${error.toString()}',
+        lastError: 'Offline sync storage is not ready yet. ${error.toString()}',
       );
     }
   }
 
   Future<void> _refreshPendingCount() async {
+    await _localStore.initialize();
     final stats = await _localStore.getSyncQueueStats();
     state = state.copyWith(
       pendingCount: stats.actionable,

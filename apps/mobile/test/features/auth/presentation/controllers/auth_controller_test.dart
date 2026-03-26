@@ -53,7 +53,12 @@ class _TestAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<void> requestPasswordReset(String email) async {}
+  Future<PasswordResetRequestResult> requestPasswordReset(String email) async {
+    return const PasswordResetRequestResult(
+      message: 'Password reset code generated.',
+      devResetToken: '123456',
+    );
+  }
 
   @override
   Future<void> resetPassword({

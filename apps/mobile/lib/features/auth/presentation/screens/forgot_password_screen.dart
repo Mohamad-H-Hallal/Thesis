@@ -68,13 +68,19 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
     TextInput.finishAutofillContext();
 
     try {
-      await ref
+      final result = await ref
           .read(authControllerProvider.notifier)
           .requestPasswordReset(
             AuthFormValidators.normalize(_emailController.text),
           );
       if (!mounted) return;
-      context.go('${AppRoutes.resetPassword}?mode=sent');
+      final query = <String>[
+        'mode=sent',
+        if ((result.devResetToken ?? '').trim().isNotEmpty)
+          'token=${Uri.encodeComponent(result.devResetToken!.trim())}',
+      ].join('&');
+      AppSnackbar.showSuccess(context, result.message);
+      context.go('${AppRoutes.resetPassword}?$query');
     } catch (error) {
       if (!mounted) return;
       final message = error.toString();
@@ -98,8 +104,9 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
       showOfflineBanner: false,
       showBackButton: true,
       onBack: () {
-        if (context.canPop()) {
-          context.pop();
+        final navigator = Navigator.of(context);
+        if (navigator.canPop()) {
+          navigator.pop();
           return;
         }
         context.go(AppRoutes.login);
@@ -117,7 +124,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                   const AppLogo(size: 64),
                   const SizedBox(height: AppSpacing.sm),
                   Text(
-                    'Enter your account email to receive a password reset link.',
+                    'Enter your account email to generate a password reset code.',
                     style: Theme.of(context).textTheme.bodyMedium,
                     textAlign: TextAlign.center,
                   ),
@@ -149,7 +156,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                         ),
                         const SizedBox(height: AppSpacing.md),
                         AppButton(
-                          label: 'Send reset link',
+                          label: 'Generate reset code',
                           icon: Icons.email_outlined,
                           isLoading: _isSubmitting,
                           onPressed: _isSubmitting ? null : _submit,

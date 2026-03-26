@@ -21,6 +21,10 @@ Executed results:
   - `apps/mobile/test/features/auth/presentation/auth_navigation_widget_test.dart`
 - `PASS` widget coverage now asserts viewer route guards redirect contributor-only shell routes back to projects and signup flows show the correct viewer/contributor success messages:
   - `apps/mobile/test/features/auth/presentation/auth_navigation_widget_test.dart`
+- `PASS` widget coverage now asserts duplicate-email signup stays on the signup screen, preserves the typed email, and does not redirect to login:
+  - `apps/mobile/test/features/auth/presentation/auth_navigation_widget_test.dart`
+- `PASS` widget coverage now asserts the login success notice from signup renders on the login screen:
+  - `apps/mobile/test/widget_test.dart`
 - `PASS` widget coverage now asserts viewers remain read-only on project details with no contributor actions:
   - `apps/mobile/test/features/projects/presentation/project_visibility_widget_test.dart`
 - `PASS` viewer login with wrong password returns `Wrong email or password.`
@@ -86,6 +90,7 @@ Runtime note:
 | Contributor signup pending gate | WORKING | `apps/api/test/security.auth.test.js`, `apps/mobile/test/features/auth/presentation/auth_navigation_widget_test.dart` |
 | Contributor rejected login block | WORKING | `apps/api/test/security.auth.test.js` |
 | Duplicate email signup handling | WORKING | `apps/mobile/lib/features/auth/presentation/screens/signup_screen.dart`, `apps/mobile/test/features/auth/domain/auth_error_mapper_test.dart` |
+| Forgot password / reset password flow | WORKING | `apps/api/src/controllers/auth.controller.ts`, `apps/mobile/lib/features/auth/presentation/screens/forgot_password_screen.dart`, `apps/mobile/lib/features/auth/presentation/screens/reset_password_screen.dart` |
 | Category creation/editing | WORKING | `apps/mobile/lib/features/admin/presentation/screens/categories_screen.dart`, `apps/mobile/lib/features/admin/presentation/screens/category_form_screen.dart` |
 | Category icon upload | WORKING | `apps/api/src/config/upload.ts`, `apps/mobile/lib/features/admin/presentation/screens/category_form_screen.dart` |
 | Project creation/editing | WORKING | `apps/mobile/lib/features/admin/presentation/screens/projects_management_screen.dart`, `apps/mobile/lib/features/admin/presentation/screens/project_form_screen.dart` |
@@ -213,7 +218,7 @@ Verify:
 - profile shows Help & Support content, and protected super admin can edit it
 - super admin can promote eligible viewers/contributors to admin and revert only toggle-promoted admins to their previous role
 - blocked users cannot be promoted/reverted until unblocked
-- viewer and contributor profile screens expose self-deactivate, with confirmation and assignment-state restrictions
+- contributor profile exposes self-deactivate, with confirmation and assignment-state restrictions
 - project map shows a clean empty state when no features exist, not a request error box
 - add-feature flow can create a server draft, attach selected photos, and submit for review
 - project map feature cards and markers open a details sheet showing attributes, status, review notes, and photos
@@ -244,7 +249,7 @@ Verify:
 15. Pause a project, confirm it remains viewable but contributor add/edit/submit actions are blocked, then resume it.
 16. Archive a completed project, then unarchive it and confirm it returns to `completed`.
 17. Update Help & Support content from protected super admin profile and confirm it appears for a different user.
-18. Self-deactivate a viewer or contributor account without blocking assignments and confirm later login is denied until reactivation.
+18. Self-deactivate a contributor account without blocking assignments and confirm later login is denied until reactivation.
 19. Log in as admin and confirm only user-scoped notifications are visible.
 
 ## Remaining Manual Browser Checks

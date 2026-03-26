@@ -80,160 +80,198 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         final featuresAsync = ref.watch(projectMapFeaturesProvider(project.id));
         final canCollectOnMap =
             role == UserRole.contributor &&
-            project.hasApprovedCurrentUserAssignment;
+            project.hasApprovedCurrentUserAssignment &&
+            project.status == 'active';
         final canReview = role == UserRole.admin;
 
-        return Column(
-          children: [
-            SectionHeader(
-              title: widget.lockProjectSelection ? project.name : 'Project Map',
-              subtitle: widget.lockProjectSelection
-                  ? 'Project workspace for collection, review, and map validation.'
-                  : 'Lebanon basemap with project-specific features and review context.',
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            AppCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (!widget.lockProjectSelection) ...[
-                    DropdownButtonFormField<String>(
-                      initialValue: project.id,
-                      isExpanded: true,
-                      decoration: const InputDecoration(labelText: 'Project'),
-                      items: availableProjects
-                          .map(
-                            (item) => DropdownMenuItem(
-                              value: item.id,
-                              child: Text(
-                                item.name,
-                                overflow: TextOverflow.ellipsis,
-                              ),
+        Widget buildControls() {
+          return AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (!widget.lockProjectSelection) ...[
+                  DropdownButtonFormField<String>(
+                    initialValue: project.id,
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'Project'),
+                    items: availableProjects
+                        .map(
+                          (item) => DropdownMenuItem(
+                            value: item.id,
+                            child: Text(
+                              item.name,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                          )
-                          .toList(growable: false),
-                      onChanged: (value) {
-                        if (value == null || value.isEmpty) {
-                          return;
-                        }
-                        setState(() => _selectedProjectId = value);
-                      },
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                  ],
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      StatusChip(status: project.status),
-                      Chip(
-                        label: Text(
-                          project.visibleToViewers ? 'Viewer-visible' : 'Restricted',
-                        ),
-                      ),
-                      Chip(
-                        avatar: Icon(
-                          canCollectOnMap
-                              ? Icons.edit_location_alt_outlined
-                              : Icons.visibility_outlined,
-                          size: 18,
-                        ),
-                        label: Text(
-                          canCollectOnMap ? 'Collection enabled' : 'Read-only',
-                        ),
-                      ),
-                    ],
+                          ),
+                        )
+                        .toList(growable: false),
+                    onChanged: (value) {
+                      if (value == null || value.isEmpty) {
+                        return;
+                      }
+                      setState(() => _selectedProjectId = value);
+                    },
                   ),
                   const SizedBox(height: AppSpacing.sm),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final status in const [
-                        'approved',
-                        'pending_review',
-                        'rejected',
-                        'draft',
-                      ])
-                        FilterChip(
-                          label: Text(_statusLabel(status)),
-                          avatar: Icon(
-                            Icons.circle,
-                            size: 12,
-                            color: _statusColor(status),
-                          ),
-                          selected: _visibleStatuses.contains(status),
-                          onSelected: (selected) {
-                            setState(() {
-                              if (selected) {
-                                _visibleStatuses.add(status);
-                              } else if (_visibleStatuses.length > 1) {
-                                _visibleStatuses.remove(status);
-                              }
-                            });
-                          },
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [
-                      if (canCollectOnMap)
-                        FilledButton.icon(
-                          onPressed: () => context.push(
-                            AppRoutes.addFeatureForProject(project.id),
-                          ),
-                          icon: const Icon(Icons.add_location_alt_outlined),
-                          label: const Text('Add Feature'),
-                        ),
-                      if (canReview)
-                        FilledButton.tonalIcon(
-                          onPressed: () => context.push(AppRoutes.reviewQueue),
-                          icon: const Icon(Icons.rate_review_outlined),
-                          label: const Text('Review Queue'),
-                        ),
-                      OutlinedButton.icon(
-                        onPressed: () => ref.invalidate(
-                          projectMapFeaturesProvider(project.id),
-                        ),
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Refresh'),
-                      ),
-                    ],
-                  ),
                 ],
-              ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Expanded(
-              child: featuresAsync.when(
-                loading: () => const Center(child: CircularProgressIndicator()),
-                error: (error, _) => AppEmptyState(
-                  icon: Icons.error_outline,
-                  title: 'Project map unavailable',
-                  message: '$error',
-                  actionLabel: 'Retry',
-                  onAction: () =>
-                      ref.invalidate(projectMapFeaturesProvider(project.id)),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    StatusChip(status: project.status),
+                    Chip(
+                      label: Text(
+                        project.visibleToViewers
+                            ? 'Viewer-visible'
+                            : 'Restricted',
+                      ),
+                    ),
+                    Chip(
+                      avatar: Icon(
+                        canCollectOnMap
+                            ? Icons.edit_location_alt_outlined
+                            : Icons.visibility_outlined,
+                        size: 18,
+                      ),
+                      label: Text(
+                        canCollectOnMap ? 'Collection enabled' : 'Read-only',
+                      ),
+                    ),
+                  ],
                 ),
-                data: (features) {
-                  final filteredFeatures = features
-                      .where((feature) => _visibleStatuses.contains(feature.status))
-                      .toList(growable: false);
-
-                  return _buildMapWorkspace(
-                    context,
-                    project: project,
-                    features: filteredFeatures,
-                    canCollectOnMap: canCollectOnMap,
-                    canReview: canReview,
-                  );
-                },
-              ),
+                const SizedBox(height: AppSpacing.sm),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final status in const [
+                      'approved',
+                      'pending_review',
+                      'rejected',
+                      'draft',
+                    ])
+                      FilterChip(
+                        label: Text(_statusLabel(status)),
+                        avatar: Icon(
+                          Icons.circle,
+                          size: 12,
+                          color: _statusColor(status),
+                        ),
+                        selected: _visibleStatuses.contains(status),
+                        onSelected: (selected) {
+                          setState(() {
+                            if (selected) {
+                              _visibleStatuses.add(status);
+                            } else if (_visibleStatuses.length > 1) {
+                              _visibleStatuses.remove(status);
+                            }
+                          });
+                        },
+                      ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    if (canCollectOnMap)
+                      FilledButton.icon(
+                        onPressed: () => context.push(
+                          AppRoutes.addFeatureForProject(project.id),
+                        ),
+                        icon: const Icon(Icons.add_location_alt_outlined),
+                        label: const Text('Add Feature'),
+                      ),
+                    if (canReview)
+                      FilledButton.tonalIcon(
+                        onPressed: () => context.push(AppRoutes.reviewQueue),
+                        icon: const Icon(Icons.rate_review_outlined),
+                        label: const Text('Review Queue'),
+                      ),
+                    OutlinedButton.icon(
+                      onPressed: () => ref.invalidate(
+                        projectMapFeaturesProvider(project.id),
+                      ),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Refresh'),
+                    ),
+                  ],
+                ),
+              ],
             ),
-          ],
+          );
+        }
+
+        Widget buildWorkspace() {
+          return featuresAsync.when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (error, _) => AppEmptyState(
+              icon: Icons.error_outline,
+              title: 'Project map unavailable',
+              message: '$error',
+              actionLabel: 'Retry',
+              onAction: () =>
+                  ref.invalidate(projectMapFeaturesProvider(project.id)),
+            ),
+            data: (features) {
+              final filteredFeatures = features
+                  .where((feature) => _visibleStatuses.contains(feature.status))
+                  .toList(growable: false);
+
+              return _buildMapWorkspace(
+                context,
+                project: project,
+                features: filteredFeatures,
+                canCollectOnMap: canCollectOnMap,
+                canReview: canReview,
+              );
+            },
+          );
+        }
+
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxHeight < 860 || constraints.maxWidth < 640) {
+              final workspaceHeight = (constraints.maxHeight * 0.9).clamp(
+                520.0,
+                920.0,
+              );
+              return ListView(
+                children: [
+                  SectionHeader(
+                    title: widget.lockProjectSelection
+                        ? project.name
+                        : 'Project Map',
+                    subtitle: widget.lockProjectSelection
+                        ? 'Project workspace for collection, review, and map validation.'
+                        : 'Lebanon basemap with project-specific features and review context.',
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  buildControls(),
+                  const SizedBox(height: AppSpacing.sm),
+                  SizedBox(height: workspaceHeight, child: buildWorkspace()),
+                ],
+              );
+            }
+
+            return Column(
+              children: [
+                SectionHeader(
+                  title: widget.lockProjectSelection
+                      ? project.name
+                      : 'Project Map',
+                  subtitle: widget.lockProjectSelection
+                      ? 'Project workspace for collection, review, and map validation.'
+                      : 'Lebanon basemap with project-specific features and review context.',
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                buildControls(),
+                const SizedBox(height: AppSpacing.sm),
+                Expanded(child: buildWorkspace()),
+              ],
+            );
+          },
         );
       },
     );
@@ -314,7 +352,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     : 'Approved or submitted features will appear here when they exist.',
                 actionLabel: canCollectOnMap ? 'Add Feature' : null,
                 onAction: canCollectOnMap
-                    ? () => context.push(AppRoutes.addFeatureForProject(project.id))
+                    ? () => context.push(
+                        AppRoutes.addFeatureForProject(project.id),
+                      )
                     : null,
               )
             : ListView(
@@ -468,7 +508,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     }
 
     try {
-      await ref.read(reviewRepositoryProvider).reviewFeature(
+      await ref
+          .read(reviewRepositoryProvider)
+          .reviewFeature(
             featureId: feature.id,
             status: status,
             reviewNotes: note,
@@ -594,11 +636,17 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         if (feature.collectedAt != null)
-                          Text('Collected: ${_formatDateTime(feature.collectedAt!)}'),
+                          Text(
+                            'Collected: ${_formatDateTime(feature.collectedAt!)}',
+                          ),
                         if (feature.submittedAt != null)
-                          Text('Submitted: ${_formatDateTime(feature.submittedAt!)}'),
+                          Text(
+                            'Submitted: ${_formatDateTime(feature.submittedAt!)}',
+                          ),
                         if (feature.reviewedAt != null)
-                          Text('Reviewed: ${_formatDateTime(feature.reviewedAt!)}'),
+                          Text(
+                            'Reviewed: ${_formatDateTime(feature.reviewedAt!)}',
+                          ),
                       ],
                     ),
                   ),
@@ -753,7 +801,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     return features
         .where((feature) => feature.geometry['type'] == 'LineString')
         .map((feature) {
-          final coordinates = feature.geometry['coordinates'] as List? ?? const [];
+          final coordinates =
+              feature.geometry['coordinates'] as List? ?? const [];
           final points = coordinates
               .map((point) {
                 final values = point as List;
@@ -804,8 +853,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   feature.status == 'approved'
                       ? Icons.check
                       : feature.status == 'rejected'
-                          ? Icons.close
-                          : Icons.schedule,
+                      ? Icons.close
+                      : Icons.schedule,
                   color: Colors.white,
                   size: 18,
                 ),

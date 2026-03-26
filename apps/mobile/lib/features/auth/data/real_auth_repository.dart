@@ -155,11 +155,23 @@ class RealAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<void> requestPasswordReset(String email) async {
+  Future<PasswordResetRequestResult> requestPasswordReset(String email) async {
     try {
-      await _apiClient.dio.post<Map<String, dynamic>>(
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '$_authBasePath/forgot-password',
         data: <String, dynamic>{'email': email},
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      final data = Map<String, dynamic>.from(
+        payload['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return PasswordResetRequestResult(
+        message:
+            (payload['message'] as String?)?.trim().isNotEmpty == true
+                ? (payload['message'] as String).trim()
+                : 'Password reset instructions were generated successfully.',
+        devResetToken: (data['dev_reset_token'] as String?)?.trim(),
+        expiresAt: _toDateTime(data['expires_at']),
       );
     } on DioException catch (error) {
       throw mapAuthDioException(
@@ -303,5 +315,15 @@ class RealAuthRepository implements AuthRepository {
       default:
         return UserRole.contributor;
     }
+  }
+
+  DateTime? _toDateTime(dynamic value) {
+    if (value is DateTime) {
+      return value;
+    }
+    if (value is String && value.isNotEmpty) {
+      return DateTime.tryParse(value);
+    }
+    return null;
   }
 }

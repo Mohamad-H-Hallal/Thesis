@@ -10,20 +10,23 @@ const projectStatusTransitions: Record<string, string[]> = {
   draft: ['active'],
   active: ['paused', 'completed'],
   paused: ['active', 'completed'],
-  completed: ['archived'],
+  completed: ['active', 'paused', 'archived'],
   archived: ['completed'],
 };
 
 const assertProjectStatusTransition = (currentStatus: string, nextStatus: string): void => {
-  if (currentStatus === nextStatus) {
+  const current = String(currentStatus).trim().toLowerCase();
+  const next = String(nextStatus).trim().toLowerCase();
+
+  if (current === next) {
     return;
   }
 
   const allowed =
-    projectStatusTransitions[currentStatus as keyof typeof projectStatusTransitions] ?? [];
-  if (!allowed.includes(nextStatus)) {
+    projectStatusTransitions[current as keyof typeof projectStatusTransitions] ?? [];
+  if (!allowed.includes(next)) {
     throw new AppError(
-      `Invalid project status transition from ${currentStatus} to ${nextStatus}`,
+      `Invalid project status transition from ${current} to ${next}`,
       400,
     );
   }

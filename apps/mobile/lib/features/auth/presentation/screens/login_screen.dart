@@ -22,7 +22,14 @@ import '../utils/auth_input_formatters.dart';
 import '../widgets/auth_error_banner.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({
+    this.noticeMessage,
+    this.noticeIsSuccess = false,
+    super.key,
+  });
+
+  final String? noticeMessage;
+  final bool noticeIsSuccess;
 
   @override
   ConsumerState<LoginScreen> createState() => _LoginScreenState();
@@ -43,30 +50,40 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    _authSubscription = ref.listenManual<AuthState>(
-      authControllerProvider,
-      (previous, next) {
-        final nextError = next.error?.trim();
-        if (!mounted ||
-            next.status != AuthStatus.unauthenticated ||
-            nextError == null ||
-            nextError.isEmpty ||
-            nextError == previous?.error) {
-          return;
-        }
+    _authSubscription = ref.listenManual<AuthState>(authControllerProvider, (
+      previous,
+      next,
+    ) {
+      final nextError = next.error?.trim();
+      if (!mounted ||
+          next.status != AuthStatus.unauthenticated ||
+          nextError == null ||
+          nextError.isEmpty ||
+          nextError == previous?.error) {
+        return;
+      }
 
-        setState(() {
-          _formLevelError = nextError;
-        });
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        AppSnackbar.showError(context, nextError);
-      },
-    );
+      setState(() {
+        _formLevelError = nextError;
+      });
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      AppSnackbar.showError(context, nextError);
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       patchAuthInputAttributes(
         formId: 'login',
         fieldKeys: const <String>['email', 'password'],
       );
+      final notice = widget.noticeMessage?.trim();
+      if (!mounted || notice == null || notice.isEmpty) {
+        return;
+      }
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      if (widget.noticeIsSuccess) {
+        AppSnackbar.showSuccess(context, notice);
+      } else {
+        AppSnackbar.showError(context, notice);
+      }
     });
   }
 
@@ -105,13 +122,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
 
     final authState = ref.read(authControllerProvider);
-    if (authState.status == AuthStatus.unauthenticated &&
-        (authState.error == null || authState.error!.trim().isEmpty)) {
+    if (authState.status == AuthStatus.authenticated) {
+      return;
+    }
+
+    final failureMessage = authState.error?.trim().isNotEmpty == true
+        ? authState.error!.trim()
+        : 'Login failed. Please try again.';
+    if (_formLevelError != failureMessage) {
       setState(() {
-        _formLevelError = 'Login failed. Please try again.';
+        _formLevelError = failureMessage;
       });
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      AppSnackbar.showError(context, _formLevelError!);
+      AppSnackbar.showError(context, failureMessage);
     }
   }
 
@@ -254,8 +277,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               child: TextButton(
                                 onPressed: isLoading
                                     ? null
-                                    : () =>
-                                          context.push(AppRoutes.forgotPassword),
+                                    : () => context.push(
+                                        AppRoutes.forgotPassword,
+                                      ),
                                 child: const Text('Forgot password?'),
                               ),
                             ),

@@ -131,6 +131,28 @@ const userValidation = {
       .isJWT()
       .withMessage('Refresh token format is invalid'),
   ] as ValidationChain[],
+  forgotPassword: [
+    body('email')
+      .trim()
+      .isEmail()
+      .normalizeEmail()
+      .withMessage('Valid email is required'),
+  ] as ValidationChain[],
+  resetPassword: [
+    body('token')
+      .trim()
+      .notEmpty()
+      .withMessage('Reset token is required'),
+    body('new_password')
+      .isString()
+      .withMessage('New password must be a string')
+      .isLength({ min: 8 })
+      .withMessage('New password must be at least 8 characters')
+      .matches(strongPasswordPattern)
+      .withMessage(
+        'New password must include uppercase, lowercase, number, and special character'
+      ),
+  ] as ValidationChain[],
 };
 
 // Project validation rules

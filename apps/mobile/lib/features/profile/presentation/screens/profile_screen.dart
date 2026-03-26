@@ -41,9 +41,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       return;
     }
 
-    final emailController = TextEditingController(text: current.supportEmail ?? '');
-    final phoneController = TextEditingController(text: current.supportPhone ?? '');
-    final hoursController = TextEditingController(text: current.officeHours ?? '');
+    final emailController = TextEditingController(
+      text: current.supportEmail ?? '',
+    );
+    final phoneController = TextEditingController(
+      text: current.supportPhone ?? '',
+    );
+    final hoursController = TextEditingController(
+      text: current.officeHours ?? '',
+    );
     final helpController = TextEditingController(text: current.helpText ?? '');
     final formKey = GlobalKey<FormState>();
 
@@ -124,7 +130,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
     setState(() => _isMutating = true);
     try {
-      await ref.read(adminRepositoryProvider).updateSupportSettings(
+      await ref
+          .read(adminRepositoryProvider)
+          .updateSupportSettings(
             supportEmail: AuthFormValidators.normalize(emailController.text),
             supportPhone: AuthFormValidators.normalize(phoneController.text),
             officeHours: AuthFormValidators.normalize(hoursController.text),
@@ -132,7 +140,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           );
       ref.invalidate(supportSettingsProvider);
       if (mounted) {
-        AppSnackbar.showSuccess(context, 'Support settings updated successfully.');
+        AppSnackbar.showSuccess(
+          context,
+          'Support settings updated successfully.',
+        );
       }
     } catch (error) {
       if (mounted) {
@@ -180,7 +191,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       if (!mounted) {
         return;
       }
-      AppSnackbar.showSuccess(context, 'Your account was deactivated successfully.');
+      AppSnackbar.showSuccess(
+        context,
+        'Your account was deactivated successfully.',
+      );
       context.go(AppRoutes.login);
     } catch (error) {
       if (mounted) {
@@ -214,7 +228,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   CircleAvatar(
                     radius: 28,
                     child: Text(
-                      widget.userName.isNotEmpty ? widget.userName[0].toUpperCase() : 'U',
+                      widget.userName.isNotEmpty
+                          ? widget.userName[0].toUpperCase()
+                          : 'U',
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                   ),
@@ -242,7 +258,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 children: [
                   Chip(
                     label: Text(
-                      widget.isSuperAdmin ? 'Super Admin' : widget.userRole.label,
+                      widget.isSuperAdmin
+                          ? 'Super Admin'
+                          : widget.userRole.label,
                     ),
                   ),
                   const Chip(label: Text('Session active')),
@@ -259,7 +277,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.support_agent_outlined),
               title: const Text('Help & Support'),
-              subtitle: Text('Support settings are unavailable right now: $error'),
+              subtitle: Text(
+                'Support settings are unavailable right now: $error',
+              ),
             ),
           ),
           data: (settings) => AppCard(
@@ -322,7 +342,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             ),
           ),
         ),
-        if (widget.userRole != UserRole.admin) ...[
+        if (widget.userRole == UserRole.contributor) ...[
           const SizedBox(height: AppSpacing.md),
           AppCard(
             child: Column(
@@ -334,7 +354,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 const Text(
-                  'You can deactivate your own account if there are no active project assignments blocking that action.',
+                  'You can deactivate your contributor account only when no active project assignments are still blocking that action.',
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 OutlinedButton.icon(
