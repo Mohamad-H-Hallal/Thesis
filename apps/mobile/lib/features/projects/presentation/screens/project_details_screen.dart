@@ -67,6 +67,30 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
   }
 
   Future<void> _requestProjectAccess() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Request contributor access'),
+        content: const Text(
+          'Send a contributor access request for this project?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Send request'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
     setState(() => _requestingAccess = true);
     try {
       await ref
@@ -80,6 +104,57 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
         AppSnackbar.showSuccess(
           context,
           'Project access request submitted successfully.',
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(context, error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _requestingAccess = false);
+      }
+    }
+  }
+
+  Future<void> _cancelProjectAccessRequest() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Cancel project request'),
+        content: const Text(
+          'Cancel your pending contributor access request for this project?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Keep request'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Cancel request'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    setState(() => _requestingAccess = true);
+    try {
+      await ref
+          .read(projectsRepositoryProvider)
+          .cancelProjectAccessRequest(projectId: widget.projectId);
+      ref.invalidate(projectByIdProvider(widget.projectId));
+      ref.invalidate(projectListProvider(ProjectViewScope.public));
+      ref.invalidate(projectListProvider(ProjectViewScope.assigned));
+      ref.invalidate(managedAssignmentsProvider);
+      if (mounted) {
+        AppSnackbar.showSuccess(
+          context,
+          'Project access request cancelled successfully.',
         );
       }
     } catch (error) {
@@ -126,7 +201,8 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
         final canRequestAccess =
             role == UserRole.contributor &&
             contributorRequestStatus == null &&
-            !project.hasApprovedCurrentUserAssignment;
+            !project.hasApprovedCurrentUserAssignment &&
+            project.status == 'active';
 
         return ListView(
           children: [
@@ -263,6 +339,16 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                         _requestingAccess ? 'Submitting...' : 'Request Access',
                       ),
                     ),
+                  if (role == UserRole.contributor &&
+                      contributorRequestStatus ==
+                          ProjectAssignmentStatus.pending)
+                    OutlinedButton.icon(
+                      onPressed: _requestingAccess
+                          ? null
+                          : _cancelProjectAccessRequest,
+                      icon: const Icon(Icons.cancel_outlined),
+                      label: const Text('Cancel Request'),
+                    ),
                 ],
               ),
             ),
@@ -323,6 +409,8 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                           ? 'An admin rejected your previous request. The request stays visible in Requests until it is re-approved.'
                           : contributorRequestStatus == ProjectAssignmentStatus.pending
                               ? 'Your access request is waiting for admin approval.'
+                              : project.status != 'active'
+                                  ? 'This project is not accepting contributor access requests while it is ${project.status}.'
                               : 'This public project is visible to you, but collection actions stay disabled until an admin approves your assignment.',
                     ),
                   ),

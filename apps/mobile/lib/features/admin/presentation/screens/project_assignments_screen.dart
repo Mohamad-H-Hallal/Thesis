@@ -35,6 +35,30 @@ class _ProjectAssignmentsScreenState
   }
 
   Future<void> _assignContributor(ManagedUserSummary user) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Assign contributor'),
+        content: Text(
+          'Assign ${user.fullName} to this project as a contributor?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Assign'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
     setState(() => _isSaving = true);
     try {
       await ref
@@ -95,6 +119,62 @@ class _ProjectAssignmentsScreenState
         AppSnackbar.showSuccess(
           context,
           'Contributor unassigned successfully.',
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(context, error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
+    }
+  }
+
+  Future<void> _updateAssignmentRequest(
+    ManagedAssignmentSummary assignment, {
+    required String status,
+  }) async {
+    final isApprove = status == 'approved';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(isApprove ? 'Approve request' : 'Reject request'),
+        content: Text(
+          isApprove
+              ? 'Approve ${assignment.fullName} for this project?'
+              : 'Reject ${assignment.fullName} for this project?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(isApprove ? 'Approve' : 'Reject'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    try {
+      await ref
+          .read(adminRepositoryProvider)
+          .updateAssignmentStatus(assignmentId: assignment.id, status: status);
+      _invalidate();
+      if (mounted) {
+        AppSnackbar.showSuccess(
+          context,
+          isApprove
+              ? 'Project request approved successfully.'
+              : 'Project request rejected successfully.',
         );
       }
     } catch (error) {
@@ -202,10 +282,11 @@ class _ProjectAssignmentsScreenState
                   const <ManagedAssignmentSummary>[];
               final pendingRequests = projectRequests
                   .where((item) => item.status == 'pending')
-                  .length;
+                  .toList(growable: false);
               final rejectedRequests = projectRequests
                   .where((item) => item.status == 'rejected')
                   .length;
+              final pendingRequestCount = pendingRequests.length;
 
               return ListView(
                 children: [
@@ -234,7 +315,7 @@ class _ProjectAssignmentsScreenState
                         ),
                         const SizedBox(height: AppSpacing.xs),
                         Text(
-                          'Pending: $pendingRequests • Rejected: $rejectedRequests',
+                          'Pending: $pendingRequestCount • Rejected: $rejectedRequests',
                           softWrap: true,
                         ),
                         const SizedBox(height: AppSpacing.sm),
@@ -253,6 +334,34 @@ class _ProjectAssignmentsScreenState
                         ),
                       ],
                     ),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  _AssignmentSection(
+                    title: 'Pending project requests',
+                    emptyTitle: 'No pending project requests',
+                    emptyMessage:
+                        'Contributor self-service project-access requests appear here for approval or rejection.',
+                    children: pendingRequests
+                        .map(
+                          (assignment) => Padding(
+                            padding: const EdgeInsets.only(
+                              bottom: AppSpacing.sm,
+                            ),
+                            child: _PendingRequestCard(
+                              assignment: assignment,
+                              isSaving: _isSaving,
+                              onApprove: () => _updateAssignmentRequest(
+                                assignment,
+                                status: 'approved',
+                              ),
+                              onReject: () => _updateAssignmentRequest(
+                                assignment,
+                                status: 'rejected',
+                              ),
+                            ),
+                          ),
+                        )
+                        .toList(growable: false),
                   ),
                   const SizedBox(height: AppSpacing.md),
                   _AssignmentSection(
@@ -424,6 +533,61 @@ class _AvailableContributorCard extends StatelessWidget {
               icon: const Icon(Icons.person_add_alt_1_outlined),
               label: const Text('Assign contributor'),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PendingRequestCard extends StatelessWidget {
+  const _PendingRequestCard({
+    required this.assignment,
+    required this.isSaving,
+    required this.onApprove,
+    required this.onReject,
+  });
+
+  final ManagedAssignmentSummary assignment;
+  final bool isSaving;
+  final VoidCallback onApprove;
+  final VoidCallback onReject;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            assignment.fullName,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 4),
+          Text(assignment.email, softWrap: true),
+          const SizedBox(height: AppSpacing.sm),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: const [
+              Chip(label: Text('Contributor')),
+              Chip(label: Text('Pending request')),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.tonal(
+                onPressed: isSaving ? null : onReject,
+                child: const Text('Reject'),
+              ),
+              FilledButton(
+                onPressed: isSaving ? null : onApprove,
+                child: const Text('Approve'),
+              ),
+            ],
           ),
         ],
       ),

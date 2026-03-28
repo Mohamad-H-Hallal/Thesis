@@ -30,6 +30,7 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
   @override
   Widget build(BuildContext context) {
     final projectsAsync = ref.watch(projectListProvider(ProjectViewScope.all));
+    final assignmentsAsync = ref.watch(managedAssignmentsProvider);
 
     return projectsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -42,6 +43,7 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
             ref.invalidate(projectListProvider(ProjectViewScope.all)),
       ),
       data: (projects) {
+        final allAssignments = assignmentsAsync.valueOrNull ?? const [];
         final activeProjects = projects
             .where((project) => project.status == 'active')
             .where((project) {
@@ -124,12 +126,12 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
                             Chip(label: Text(project.category)),
                             Chip(
                               label: Text(
-                                '${project.assignedCollectors} assigned contributors',
+                                '${allAssignments.where((item) => item.projectId == project.id && item.status == 'approved').length} assigned contributors',
                               ),
                             ),
                             Chip(
                               label: Text(
-                                '${project.pendingReviews} pending reviews',
+                                '${allAssignments.where((item) => item.projectId == project.id && item.status == 'pending').length} pending requests',
                               ),
                             ),
                           ],

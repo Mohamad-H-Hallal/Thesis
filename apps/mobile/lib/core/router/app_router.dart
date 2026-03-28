@@ -229,13 +229,17 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         path: AppRoutes.addFeature,
         pageBuilder: (_, state) {
           final projectId = state.uri.queryParameters['projectId'];
+          final featureId = state.uri.queryParameters['featureId'];
           return _buildPage(
             state,
             AppScaffold(
-              title: 'Add Feature',
+              title: featureId == null ? 'Add Feature' : 'Edit Draft',
               showBackButton: true,
               showOfflineBanner: false,
-              body: AddFeatureScreen(initialProjectId: projectId),
+              body: AddFeatureScreen(
+                initialProjectId: projectId,
+                draftFeatureId: featureId,
+              ),
             ),
           );
         },

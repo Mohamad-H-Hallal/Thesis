@@ -20,4 +20,6 @@ abstract class ProjectsRepository {
   });
 
   Future<void> requestProjectAccess({required String projectId});
+
+  Future<void> cancelProjectAccessRequest({required String projectId});
 }

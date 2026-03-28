@@ -115,16 +115,6 @@ class _ProjectsManagementScreenState
                     icon: const Icon(Icons.add),
                     label: const Text('Create'),
                   );
-                  final filterAction = OutlinedButton.icon(
-                    onPressed: () =>
-                        setState(() => _showFilters = !_showFilters),
-                    icon: Icon(
-                      _showFilters
-                          ? Icons.filter_alt_off_outlined
-                          : Icons.filter_alt_outlined,
-                    ),
-                    label: Text(_showFilters ? 'Hide filters' : 'Filter'),
-                  );
                   if (constraints.maxWidth < 680) {
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -135,11 +125,7 @@ class _ProjectsManagementScreenState
                               'Provision, update, and route projects into assignments, map collection, reviews, and exports.',
                         ),
                         const SizedBox(height: AppSpacing.sm),
-                        Wrap(
-                          spacing: AppSpacing.sm,
-                          runSpacing: AppSpacing.sm,
-                          children: [action, filterAction],
-                        ),
+                        action,
                       ],
                     );
                   }
@@ -147,10 +133,7 @@ class _ProjectsManagementScreenState
                     title: 'Projects',
                     subtitle:
                         'Provision, update, and route projects into assignments, map collection, reviews, and exports.',
-                    trailing: Wrap(
-                      spacing: AppSpacing.sm,
-                      children: [action, filterAction],
-                    ),
+                    trailing: action,
                   );
                 },
               ),

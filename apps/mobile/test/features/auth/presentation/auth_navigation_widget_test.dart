@@ -69,6 +69,27 @@ class _TestAuthRepository implements AuthRepository {
   }) async {}
 
   @override
+  Future<AuthSession> reactivateContributorAndLogin({
+    required String email,
+    required String password,
+    required bool rememberMe,
+  }) async {
+    if (loginFailure != null) {
+      throw loginFailure!;
+    }
+    return AuthSession(
+      accessToken: 'token',
+      refreshToken: 'refresh',
+      user: AppUser(
+        id: 'user-1',
+        fullName: 'Test User',
+        email: email,
+        role: UserRole.contributor,
+      ),
+    );
+  }
+
+  @override
   Future<void> selfDeactivate() async {}
 
   @override

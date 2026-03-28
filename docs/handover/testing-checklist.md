@@ -39,6 +39,7 @@ Executed results:
 - `PASS` approved contributor sees assigned project only
 - `PASS` admin toggle of `visible_to_viewers` immediately changes viewer-visible project list
 - `PASS` Android-emulator shell now exposes visible primary navigation plus drawer access for admin and super-admin management areas
+- `PASS` Android emulator launch/install/run now succeeds again on `emulator-5554` with `API_BASE_URL=http://10.0.2.2:3000`, and the app process remains alive after boot
 - `PASS` admin and super-admin mobile shells now expose categories, project creation/editing, and project assignment management directly in-app
 - `PASS` users management cards are now responsive on Android and expose protected-super-admin markers plus super-admin-only promote/revert actions for eligible users
 - `PASS` admin dashboard now includes viewer count and active contributor count from real backend user data
@@ -203,9 +204,13 @@ Executed evidence:
 Verify:
 
 - login works against the local API through `10.0.2.2`
+- successful signup returns to login with `Account has been created successfully.`
+- duplicate-email signup stays on signup, keeps entered values, and highlights the email field
 - contributor pending/approved/rejected messages match backend responses
+- forgot-password back returns to login and reset-password works with the development reset token flow
 - role-based shell navigation matches the signed-in user role
 - pending/rejected contributor login stays on the login screen and shows a visible error message
+- deactivated contributor login shows an activation prompt and only proceeds when the contributor confirms reactivation
 - viewer sees only admin-published projects
 - contributor sees both public `Projects` and `Assigned Projects`
 - protected super admin does not appear in user search results or assignment candidate lists
@@ -214,15 +219,17 @@ Verify:
 - admin and super-admin can create project categories directly from mobile
 - admin and super-admin can create/edit projects directly from mobile using real schema fields
 - admin and super-admin can open a project-scoped assignment management screen and assign contributors only
+- contributor access requests require confirmation before submission and can be cancelled while still pending
 - category create/edit supports search plus optional icon upload
 - profile shows Help & Support content, and protected super admin can edit it
 - super admin can promote eligible viewers/contributors to admin and revert only toggle-promoted admins to their previous role
 - blocked users cannot be promoted/reverted until unblocked
 - contributor profile exposes self-deactivate, with confirmation and assignment-state restrictions
 - project map shows a clean empty state when no features exist, not a request error box
-- add-feature flow can create a server draft, attach selected photos, and submit for review
+- add-feature flow can create a server draft, reopen that draft from the map, update it, attach selected photos, and submit for review
 - project map feature cards and markers open a details sheet showing attributes, status, review notes, and photos
 - project map includes status filter chips and a visible map legend so pending/approved/rejected features are clearly distinguished
+- if OSM tiles fail on the emulator network, the map still keeps feature overlays visible and shows a basemap-unavailable message
 - review queue decisions update backend feature status and notifications
 - blocked users cannot log in until an admin or super admin unblocks them
 - users screen supports search, role filters, account-state filters, admin promotion/revert, and block/unblock actions

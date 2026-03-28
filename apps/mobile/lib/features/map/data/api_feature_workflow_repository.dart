@@ -50,6 +50,25 @@ class ApiFeatureWorkflowRepository implements FeatureWorkflowRepository {
   }
 
   @override
+  Future<void> updateDraft({
+    required String featureId,
+    required Map<String, dynamic> geometry,
+    required Map<String, dynamic> attributes,
+  }) async {
+    try {
+      await _apiClient.dio.put<Map<String, dynamic>>(
+        '$_featuresBasePath/$featureId',
+        data: <String, dynamic>{
+          'geom': geometry,
+          'attributes': attributes,
+        },
+      );
+    } on DioException catch (error) {
+      throw Exception(_messageFrom(error, 'Feature draft update failed.'));
+    }
+  }
+
+  @override
   Future<void> uploadPhotos({
     required String featureId,
     required List<String> filePaths,

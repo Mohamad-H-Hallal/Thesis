@@ -60,6 +60,22 @@ class FakeAuthRepository implements AuthRepository {
 
     final normalizedEmail = email.toLowerCase();
 
+    if (normalizedEmail.contains('deactivated-contributor')) {
+      throw DioException(
+        requestOptions: RequestOptions(path: '/api/auth/login'),
+        response: Response(
+          requestOptions: RequestOptions(path: '/api/auth/login'),
+          statusCode: 403,
+          data: const <String, dynamic>{
+            'message':
+                'Your contributor account is deactivated. Activate it to continue logging in.',
+          },
+        ),
+        message:
+            'Your contributor account is deactivated. Activate it to continue logging in.',
+      );
+    }
+
     final isApprovedContributor = normalizedEmail.contains(
       'approved-contributor',
     );
@@ -112,6 +128,37 @@ class FakeAuthRepository implements AuthRepository {
         key: _superAdminKey,
         value: isProtectedSuperAdmin.toString(),
       );
+    }
+
+    _apiClient.setAccessToken(session.accessToken);
+    return session;
+  }
+
+  @override
+  Future<AuthSession> reactivateContributorAndLogin({
+    required String email,
+    required String password,
+    required bool rememberMe,
+  }) async {
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    final session = AuthSession(
+      accessToken: 'token_${DateTime.now().millisecondsSinceEpoch}',
+      refreshToken: 'refresh_${DateTime.now().millisecondsSinceEpoch}',
+      user: AppUser(
+        id: 'user-1',
+        fullName: 'Field Contributor',
+        email: email,
+        role: UserRole.contributor,
+      ),
+    );
+
+    if (rememberMe) {
+      await _storage.write(key: _accessKey, value: session.accessToken);
+      await _storage.write(key: _refreshKey, value: session.refreshToken);
+      await _storage.write(key: _roleKey, value: UserRole.contributor.name);
+      await _storage.write(key: _nameKey, value: session.user.fullName);
+      await _storage.write(key: _emailKey, value: session.user.email);
+      await _storage.write(key: _superAdminKey, value: 'false');
     }
 
     _apiClient.setAccessToken(session.accessToken);

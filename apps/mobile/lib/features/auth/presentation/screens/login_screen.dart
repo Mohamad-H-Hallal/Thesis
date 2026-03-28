@@ -44,6 +44,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _noLeadingSpaceFormatter = NoLeadingSpaceFormatter();
   bool _obscurePassword = true;
   bool _rememberMe = true;
+  bool _reactivationDialogVisible = false;
   String? _formLevelError;
   late final ProviderSubscription<AuthState> _authSubscription;
 
@@ -126,6 +127,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       return;
     }
 
+    if (authState.errorCode == 'deactivated_contributor') {
+      await _promptForReactivation();
+      return;
+    }
+
     final failureMessage = authState.error?.trim().isNotEmpty == true
         ? authState.error!.trim()
         : 'Login failed. Please try again.';
@@ -136,6 +142,72 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
       AppSnackbar.showError(context, failureMessage);
     }
+  }
+
+  Future<void> _promptForReactivation() async {
+    if (_reactivationDialogVisible) {
+      return;
+    }
+    _reactivationDialogVisible = true;
+    final activate = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Activate account'),
+        content: const Text('Do you want to activate your account to login?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('No'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Yes'),
+          ),
+        ],
+      ),
+    );
+    _reactivationDialogVisible = false;
+
+    if (!mounted) {
+      return;
+    }
+
+    if (activate != true) {
+      AppSnackbar.showError(
+        context,
+        'Your contributor account remains inactive until you reactivate it.',
+      );
+      return;
+    }
+
+    await ref
+        .read(authControllerProvider.notifier)
+        .reactivateContributorAndLogin(
+          email: AuthFormValidators.normalize(_emailController.text),
+          password: _passwordController.text,
+          rememberMe: _rememberMe,
+        );
+
+    if (!mounted) {
+      return;
+    }
+
+    final authState = ref.read(authControllerProvider);
+    if (authState.status == AuthStatus.authenticated) {
+      AppSnackbar.showSuccess(
+        context,
+        'Account reactivated successfully. You are now logged in.',
+      );
+      return;
+    }
+
+    final failureMessage = authState.error?.trim().isNotEmpty == true
+        ? authState.error!.trim()
+        : 'Account reactivation failed.';
+    setState(() {
+      _formLevelError = failureMessage;
+    });
+    AppSnackbar.showError(context, failureMessage);
   }
 
   @override
@@ -277,7 +349,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               child: TextButton(
                                 onPressed: isLoading
                                     ? null
-                                    : () => context.push(
+                                    : () => context.go(
                                         AppRoutes.forgotPassword,
                                       ),
                                 child: const Text('Forgot password?'),

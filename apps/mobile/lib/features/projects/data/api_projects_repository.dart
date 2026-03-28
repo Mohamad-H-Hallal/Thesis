@@ -83,6 +83,24 @@ class ApiProjectsRepository implements ProjectsRepository {
     }
   }
 
+  @override
+  Future<void> cancelProjectAccessRequest({required String projectId}) async {
+    try {
+      await _apiClient.dio.delete<Map<String, dynamic>>(
+        '${AppEnv.apiVersionPrefix}/assignments/join/$projectId',
+      );
+    } on DioException catch (error) {
+      final data = error.response?.data;
+      if (data is Map<String, dynamic>) {
+        final message = data['message'] ?? data['error'];
+        if (message is String && message.trim().isNotEmpty) {
+          throw message.trim();
+        }
+      }
+      throw 'Unable to cancel this project access request.';
+    }
+  }
+
   ProjectSummary _toProjectSummary(Map<String, dynamic> row) {
     final schemaRaw = row['collection_form_schema'];
     final schemaMap = _toMap(schemaRaw);

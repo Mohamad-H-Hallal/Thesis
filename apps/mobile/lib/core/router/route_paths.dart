@@ -39,5 +39,19 @@ class AppRoutes {
     return uri.toString();
   }
 
+  static String editDraftFeature({
+    required String projectId,
+    required String featureId,
+  }) {
+    final uri = Uri(
+      path: addFeature,
+      queryParameters: {
+        'projectId': projectId,
+        'featureId': featureId,
+      },
+    );
+    return uri.toString();
+  }
+
   static String mapForProject(String projectId) => '/app/projects/$projectId/map';
 }

@@ -103,14 +103,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
       title: 'Forgot password',
       showOfflineBanner: false,
       showBackButton: true,
-      onBack: () {
-        final navigator = Navigator.of(context);
-        if (navigator.canPop()) {
-          navigator.pop();
-          return;
-        }
-        context.go(AppRoutes.login);
-      },
+      onBack: () => context.go(AppRoutes.login),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 460),

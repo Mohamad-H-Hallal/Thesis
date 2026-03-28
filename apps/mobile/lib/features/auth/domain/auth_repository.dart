@@ -9,6 +9,12 @@ abstract class AuthRepository {
     required bool rememberMe,
   });
 
+  Future<AuthSession> reactivateContributorAndLogin({
+    required String email,
+    required String password,
+    required bool rememberMe,
+  });
+
   Future<String> signup({
     required String fullName,
     required String email,

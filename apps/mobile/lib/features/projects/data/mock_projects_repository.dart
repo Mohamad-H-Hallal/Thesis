@@ -128,6 +128,9 @@ class MockProjectsRepository implements ProjectsRepository {
   @override
   Future<void> requestProjectAccess({required String projectId}) async {}
 
+  @override
+  Future<void> cancelProjectAccessRequest({required String projectId}) async {}
+
   List<ProjectSummary> _allProjects() {
     return <ProjectSummary>[
       ProjectSummary(

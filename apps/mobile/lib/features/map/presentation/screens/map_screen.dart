@@ -40,6 +40,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   };
 
   String? _selectedProjectId;
+  String? _tileFailureMessage;
 
   @override
   Widget build(BuildContext context) {
@@ -305,11 +306,38 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       urlTemplate:
                           'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                       userAgentPackageName: 'lb.gov.gis_collector',
+                      errorTileCallback: (tile, error, stackTrace) {
+                        Object.hash(tile, stackTrace);
+                        if (_tileFailureMessage != null) {
+                          return;
+                        }
+                        final message = error.toString();
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (!mounted || _tileFailureMessage != null) {
+                            return;
+                          }
+                          setState(() {
+                            _tileFailureMessage =
+                                'Basemap tiles are temporarily unavailable. Project features still remain usable.';
+                          });
+                          AppSnackbar.showError(
+                            context,
+                            message.contains('Failed host lookup')
+                                ? 'Basemap tiles are unavailable on this connection. Feature overlays remain available.'
+                                : 'Basemap tiles could not be loaded. Feature overlays remain available.',
+                          );
+                        });
+                      },
                     ),
                     PolygonLayer(polygons: _polygonOverlays(features)),
                     PolylineLayer(polylines: _polylineOverlays(features)),
                     MarkerLayer(
-                      markers: _markerOverlays(features, project, canReview),
+                      markers: _markerOverlays(
+                        features,
+                        project,
+                        canCollectOnMap,
+                        canReview,
+                      ),
                     ),
                   ],
                 ),
@@ -339,6 +367,30 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   ],
                 ),
               ),
+              if (_tileFailureMessage != null)
+                Positioned(
+                  left: 12,
+                  right: 72,
+                  bottom: 12,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: AppCard(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.map_outlined),
+                          const SizedBox(width: AppSpacing.sm),
+                          Expanded(
+                            child: Text(
+                              _tileFailureMessage!,
+                              softWrap: true,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
         );
@@ -372,6 +424,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         onTap: () => _openFeatureDetails(
                           project: project,
                           feature: feature,
+                          canCollectOnMap: canCollectOnMap,
                           canReview: canReview,
                         ),
                         child: Column(
@@ -428,6 +481,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                     _openFeatureDetails(
                                       project: project,
                                       feature: feature,
+                                      canCollectOnMap: canCollectOnMap,
                                       canReview: canReview,
                                     );
                                   },
@@ -533,6 +587,55 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     }
   }
 
+  Future<void> _submitDraft({
+    required String projectId,
+    required MapFeatureSummary feature,
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Submit draft'),
+        content: const Text(
+          'Submit this draft for admin review now?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Submit'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    try {
+      await ref
+          .read(featureWorkflowRepositoryProvider)
+          .submitForReview(feature.id);
+      ref.invalidate(projectMapFeaturesProvider(projectId));
+      ref.invalidate(projectByIdProvider(projectId));
+      ref.invalidate(reviewQueueProvider);
+      if (mounted) {
+        Navigator.of(context).maybePop();
+        AppSnackbar.showSuccess(
+          context,
+          'Draft submitted for review successfully.',
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(context, error.toString());
+      }
+    }
+  }
+
   Future<String?> _promptNote({
     required String title,
     required String hint,
@@ -574,6 +677,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   void _openFeatureDetails({
     required ProjectSummary project,
     required MapFeatureSummary feature,
+    required bool canCollectOnMap,
     required bool canReview,
   }) {
     _focusFeature(feature);
@@ -699,6 +803,37 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                 .toList(growable: false),
                           ),
                   ),
+                  if (canCollectOnMap && feature.status == 'draft')
+                    Padding(
+                      padding: const EdgeInsets.only(top: AppSpacing.md),
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.of(context).maybePop();
+                              this.context.push(
+                                AppRoutes.editDraftFeature(
+                                  projectId: project.id,
+                                  featureId: feature.id,
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.edit_outlined),
+                            label: const Text('Edit Draft'),
+                          ),
+                          FilledButton.icon(
+                            onPressed: () => _submitDraft(
+                              projectId: project.id,
+                              feature: feature,
+                            ),
+                            icon: const Icon(Icons.send_outlined),
+                            label: const Text('Submit Draft'),
+                          ),
+                        ],
+                      ),
+                    ),
                   if (canReview && feature.status != 'draft')
                     Padding(
                       padding: const EdgeInsets.only(top: AppSpacing.md),
@@ -824,6 +959,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   List<Marker> _markerOverlays(
     List<MapFeatureSummary> features,
     ProjectSummary project,
+    bool canCollectOnMap,
     bool canReview,
   ) {
     return features
@@ -841,6 +977,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               onTap: () => _openFeatureDetails(
                 project: project,
                 feature: feature,
+                canCollectOnMap: canCollectOnMap,
                 canReview: canReview,
               ),
               child: Container(

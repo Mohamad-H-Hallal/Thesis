@@ -16,7 +16,7 @@ class OfflineBanner extends ConsumerWidget {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(color: appearance.background),
       child: Wrap(
         spacing: AppSpacing.sm,
@@ -66,7 +66,7 @@ class OfflineBanner extends ConsumerWidget {
         icon: Icons.sync,
         title: 'Preparing sync',
         message:
-            'Local storage is starting. Sync actions will be available shortly.',
+            'Local sync storage is starting.',
         backgroundSeed: _BannerSeed.info,
       );
     }
@@ -77,7 +77,7 @@ class OfflineBanner extends ConsumerWidget {
         title: 'Sync unavailable',
         message: state.lastError?.trim().isNotEmpty == true
             ? state.lastError!
-            : 'Offline storage is not ready yet, so sync actions are temporarily disabled.',
+            : 'Offline sync is unavailable right now.',
         backgroundSeed: _BannerSeed.warning,
       );
     }
@@ -86,7 +86,7 @@ class OfflineBanner extends ConsumerWidget {
       return const _BannerAppearance(
         icon: Icons.sync,
         title: 'Syncing',
-        message: 'Drafts and queued updates are being pushed now.',
+        message: 'Queued updates are syncing now.',
         backgroundSeed: _BannerSeed.info,
       );
     }
@@ -104,8 +104,7 @@ class OfflineBanner extends ConsumerWidget {
       return const _BannerAppearance(
         icon: Icons.cloud_upload_outlined,
         title: 'Queue active',
-        message:
-            'Offline work is stored locally and waiting for the next sync run.',
+        message: 'Queued offline work is waiting for the next sync run.',
         backgroundSeed: _BannerSeed.warning,
       );
     }
@@ -113,8 +112,7 @@ class OfflineBanner extends ConsumerWidget {
     return const _BannerAppearance(
       icon: Icons.cloud_done_outlined,
       title: 'Sync healthy',
-      message:
-          'Queued collection changes are clear and background sync is idle.',
+      message: 'No queued collection changes need syncing.',
       backgroundSeed: _BannerSeed.success,
     );
   }

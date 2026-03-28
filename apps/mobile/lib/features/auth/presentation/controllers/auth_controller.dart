@@ -7,7 +7,12 @@ import '../../domain/auth_repository.dart';
 enum AuthStatus { checking, unauthenticated, loading, authenticated }
 
 class AuthState {
-  const AuthState({required this.status, this.session, this.error});
+  const AuthState({
+    required this.status,
+    this.session,
+    this.error,
+    this.errorCode,
+  });
 
   const AuthState.checking() : this(status: AuthStatus.checking);
   const AuthState.unauthenticated([String? error])
@@ -19,6 +24,7 @@ class AuthState {
   final AuthStatus status;
   final AuthSession? session;
   final String? error;
+  final String? errorCode;
 
   bool get isAuthenticated =>
       status == AuthStatus.authenticated && session != null;
@@ -37,7 +43,11 @@ class AuthController extends StateNotifier<AuthState> {
           ? const AuthState.unauthenticated()
           : AuthState.authenticated(session);
     } catch (error) {
-      state = AuthState.unauthenticated(_messageFromError(error));
+      state = AuthState(
+        status: AuthStatus.unauthenticated,
+        error: _messageFromError(error),
+        errorCode: _codeFromError(error),
+      );
     }
   }
 
@@ -55,7 +65,33 @@ class AuthController extends StateNotifier<AuthState> {
       );
       state = AuthState.authenticated(session);
     } catch (error) {
-      state = AuthState.unauthenticated(_messageFromError(error));
+      state = AuthState(
+        status: AuthStatus.unauthenticated,
+        error: _messageFromError(error),
+        errorCode: _codeFromError(error),
+      );
+    }
+  }
+
+  Future<void> reactivateContributorAndLogin({
+    required String email,
+    required String password,
+    required bool rememberMe,
+  }) async {
+    state = const AuthState.loading();
+    try {
+      final session = await _repository.reactivateContributorAndLogin(
+        email: email,
+        password: password,
+        rememberMe: rememberMe,
+      );
+      state = AuthState.authenticated(session);
+    } catch (error) {
+      state = AuthState(
+        status: AuthStatus.unauthenticated,
+        error: _messageFromError(error),
+        errorCode: _codeFromError(error),
+      );
     }
   }
 
@@ -78,7 +114,11 @@ class AuthController extends StateNotifier<AuthState> {
       state = const AuthState.unauthenticated();
       return message;
     } catch (error) {
-      state = AuthState.unauthenticated(_messageFromError(error));
+      state = AuthState(
+        status: AuthStatus.unauthenticated,
+        error: _messageFromError(error),
+        errorCode: _codeFromError(error),
+      );
       return null;
     }
   }
@@ -94,7 +134,11 @@ class AuthController extends StateNotifier<AuthState> {
       await _repository.selfDeactivate();
       state = const AuthState.unauthenticated();
     } catch (error) {
-      state = AuthState.unauthenticated(_messageFromError(error));
+      state = AuthState(
+        status: AuthStatus.unauthenticated,
+        error: _messageFromError(error),
+        errorCode: _codeFromError(error),
+      );
       rethrow;
     }
   }
@@ -115,5 +159,12 @@ class AuthController extends StateNotifier<AuthState> {
       return error.message;
     }
     return error.toString();
+  }
+
+  String? _codeFromError(Object error) {
+    if (error is AuthFailure) {
+      return error.code;
+    }
+    return null;
   }
 }

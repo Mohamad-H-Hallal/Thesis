@@ -6,19 +6,27 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
-import '../../../../core/widgets/app_button.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
+import '../../../../core/widgets/app_text_field.dart';
+import '../../../../core/widgets/section_header.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/field_collection_validation.dart';
+import '../../domain/map_feature.dart';
 
 class AddFeatureScreen extends ConsumerStatefulWidget {
-  const AddFeatureScreen({super.key, this.initialProjectId});
+  const AddFeatureScreen({
+    super.key,
+    this.initialProjectId,
+    this.draftFeatureId,
+  });
 
   final String? initialProjectId;
+  final String? draftFeatureId;
 
   @override
   ConsumerState<AddFeatureScreen> createState() => _AddFeatureScreenState();
@@ -30,10 +38,12 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
   final ImagePicker _imagePicker = ImagePicker();
 
   int _currentStep = 0;
-  bool _isSubmitting = false;
+  bool _isSaving = false;
 
   String? _selectedProjectId;
   String? _selectedGeometryType;
+  String? _currentDraftFeatureId;
+  String? _hydratedDraftId;
 
   final TextEditingController _latitudeController = TextEditingController();
   final TextEditingController _longitudeController = TextEditingController();
@@ -42,10 +52,14 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       <String, TextEditingController>{};
   final Map<String, dynamic> _attributeValues = <String, dynamic>{};
   final Map<String, String> _fieldErrors = <String, String>{};
-
-  final List<_SelectedPhoto> _photos = <_SelectedPhoto>[];
+  final List<_PendingPhoto> _pendingPhotos = <_PendingPhoto>[];
 
   double? _gpsAccuracyMeters;
+  List<MapFeaturePhoto> _uploadedPhotos = const <MapFeaturePhoto>[];
+
+  bool get _isEditingDraft =>
+      (widget.draftFeatureId?.isNotEmpty ?? false) ||
+      (_currentDraftFeatureId?.isNotEmpty ?? false);
 
   @override
   void dispose() {
@@ -62,18 +76,18 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       return;
     }
 
-    final currentlySelected = projects.any((p) => p.id == _selectedProjectId);
-    if (currentlySelected) {
+    final existingSelection = projects.any((item) => item.id == _selectedProjectId);
+    if (existingSelection) {
       return;
     }
 
-    var fallback = projects.first;
+    ProjectSummary fallback = projects.first;
     final preferredId = widget.initialProjectId;
     if (preferredId != null && preferredId.isNotEmpty) {
-      final matching = projects.where((project) => project.id == preferredId);
-      if (matching.isNotEmpty) {
-        fallback = matching.first;
-      }
+      fallback = projects.firstWhere(
+        (project) => project.id == preferredId,
+        orElse: () => projects.first,
+      );
     }
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -84,13 +98,23 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     });
   }
 
-  void _applyProjectSelection(ProjectSummary project) {
+  void _applyProjectSelection(
+    ProjectSummary project, {
+    MapFeatureSummary? draftFeature,
+  }) {
     final supportedGeometryTypes = _supportedGeometryTypes(project);
-    final geometryType = supportedGeometryTypes.contains(_selectedGeometryType)
-        ? _selectedGeometryType
-        : (supportedGeometryTypes.isEmpty
-              ? null
-              : supportedGeometryTypes.first);
+    final draftGeometryType = draftFeature?.geometry['type'] as String?;
+    final geometryType = draftFeature == null
+        ? (supportedGeometryTypes.contains(_selectedGeometryType)
+              ? _selectedGeometryType
+              : (supportedGeometryTypes.isEmpty
+                    ? null
+                    : supportedGeometryTypes.first))
+        : (supportedGeometryTypes.contains(draftGeometryType)
+              ? draftGeometryType
+              : (supportedGeometryTypes.isEmpty
+                    ? null
+                    : supportedGeometryTypes.first));
 
     for (final controller in _attributeControllers.values) {
       controller.dispose();
@@ -100,25 +124,60 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     _fieldErrors.clear();
 
     for (final field in project.collectionFormSchema.fields) {
-      if (field.type == CollectionFieldType.boolean) {
-        _attributeValues[field.key] = false;
-      } else if (field.type == CollectionFieldType.select) {
-        _attributeValues[field.key] = field.options.isEmpty
-            ? null
-            : field.options.first;
-      } else {
-        _attributeControllers[field.key] = TextEditingController();
+      final value = draftFeature?.attributes[field.key];
+      switch (field.type) {
+        case CollectionFieldType.boolean:
+          _attributeValues[field.key] = value is bool ? value : false;
+          break;
+        case CollectionFieldType.select:
+          _attributeValues[field.key] = value?.toString().isNotEmpty == true
+              ? value.toString()
+              : (field.options.isEmpty ? null : field.options.first);
+          break;
+        case CollectionFieldType.date:
+          _attributeValues[field.key] = value?.toString();
+          break;
+        case CollectionFieldType.text:
+        case CollectionFieldType.multiline:
+        case CollectionFieldType.number:
+          _attributeControllers[field.key] = TextEditingController(
+            text: value?.toString() ?? '',
+          );
+          break;
       }
     }
+
+    final point = _pointFromGeometry(draftFeature?.geometry);
 
     setState(() {
       _selectedProjectId = project.id;
       _selectedGeometryType = geometryType;
-      _photos.clear();
-      _gpsAccuracyMeters = null;
-      _latitudeController.clear();
-      _longitudeController.clear();
+      _uploadedPhotos = draftFeature?.photos ?? const <MapFeaturePhoto>[];
+      _pendingPhotos.clear();
+      _gpsAccuracyMeters = draftFeature?.accuracyMeters;
+      _latitudeController.text = point?.latitude.toStringAsFixed(6) ?? '';
+      _longitudeController.text = point?.longitude.toStringAsFixed(6) ?? '';
       _currentStep = 0;
+      _currentDraftFeatureId = draftFeature?.id;
+      _hydratedDraftId = draftFeature?.id;
+    });
+  }
+
+  void _ensureDraftHydrated(
+    ProjectSummary project,
+    MapFeatureSummary draftFeature,
+  ) {
+    if (_hydratedDraftId == draftFeature.id &&
+        _selectedProjectId == project.id &&
+        _currentDraftFeatureId == draftFeature.id) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _applyProjectSelection(project, draftFeature: draftFeature);
     });
   }
 
@@ -147,7 +206,8 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
   }
 
   Future<void> _pickPhotos(ProjectSummary project) async {
-    final remaining = project.maxPhotos - _photos.length;
+    final remaining =
+        project.maxPhotos - _uploadedPhotos.length - _pendingPhotos.length;
     if (remaining <= 0) {
       AppSnackbar.showError(
         context,
@@ -166,7 +226,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       final selected = await Future.wait(
         filesToAdd.map((file) async {
           final size = await file.length();
-          return _SelectedPhoto(
+          return _PendingPhoto(
             id: _uuid.v4(),
             filePath: file.path,
             fileName: file.name,
@@ -177,7 +237,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       );
 
       setState(() {
-        _photos.addAll(selected);
+        _pendingPhotos.addAll(selected);
       });
 
       if (picked.length > remaining && mounted) {
@@ -204,7 +264,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
           break;
         case CollectionFieldType.number:
           final raw = _attributeControllers[field.key]?.text.trim() ?? '';
-          payload[field.key] = num.tryParse(raw);
+          payload[field.key] = raw.isEmpty ? null : num.tryParse(raw);
           break;
         case CollectionFieldType.select:
         case CollectionFieldType.boolean:
@@ -259,22 +319,14 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
         requiresPhotos: project.requiresPhotos,
         minPhotos: project.minPhotos,
         maxPhotos: project.maxPhotos,
-        actualPhotos: _photos.length,
+        actualPhotos: _uploadedPhotos.length + _pendingPhotos.length,
       );
     }
 
     return null;
   }
 
-  Future<void> _handleContinue(List<ProjectSummary> projects) async {
-    final project = projects.where((p) => p.id == _selectedProjectId).isEmpty
-        ? null
-        : projects.firstWhere((p) => p.id == _selectedProjectId);
-    if (project == null) {
-      AppSnackbar.showError(context, 'Select an assigned project.');
-      return;
-    }
-
+  Future<void> _handleNext(ProjectSummary project) async {
     final validationError = _validateStep(project, _currentStep);
     if (validationError != null) {
       AppSnackbar.showError(context, validationError);
@@ -288,10 +340,29 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     }
   }
 
-  Future<void> _saveToServer(
+  Future<void> _saveFeature(
     ProjectSummary project, {
     required bool submit,
   }) async {
+    if (project.status != 'active') {
+      AppSnackbar.showError(
+        context,
+        'Feature collection is only available while the project is active.',
+      );
+      return;
+    }
+
+    for (var step = 0; step <= 2; step += 1) {
+      final validationError = _validateStep(project, step);
+      if (validationError != null) {
+        setState(() {
+          _currentStep = step;
+        });
+        AppSnackbar.showError(context, validationError);
+        return;
+      }
+    }
+
     final geometry = <String, dynamic>{
       'type': _selectedGeometryType ?? 'Point',
       'coordinates': <double>[
@@ -302,28 +373,40 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
 
     final attributes = _collectAttributeValues(project);
     setState(() {
-      _isSubmitting = true;
+      _isSaving = true;
     });
 
     try {
       final repository = ref.read(featureWorkflowRepositoryProvider);
-      final feature = await repository.createDraft(
-        projectId: project.id,
-        geometry: geometry,
-        attributes: attributes,
-        accuracyMeters: _gpsAccuracyMeters,
-        collectedOffline: false,
-      );
+      String featureId = _currentDraftFeatureId ?? '';
+      if (featureId.isEmpty) {
+        final feature = await repository.createDraft(
+          projectId: project.id,
+          geometry: geometry,
+          attributes: attributes,
+          accuracyMeters: _gpsAccuracyMeters,
+          collectedOffline: false,
+        );
+        featureId = feature.id;
+      } else {
+        await repository.updateDraft(
+          featureId: featureId,
+          geometry: geometry,
+          attributes: attributes,
+        );
+      }
 
-      await repository.uploadPhotos(
-        featureId: feature.id,
-        filePaths: _photos
-            .map((photo) => photo.filePath)
-            .toList(growable: false),
-      );
+      if (_pendingPhotos.isNotEmpty) {
+        await repository.uploadPhotos(
+          featureId: featureId,
+          filePaths: _pendingPhotos
+              .map((photo) => photo.filePath)
+              .toList(growable: false),
+        );
+      }
 
       if (submit) {
-        await repository.submitForReview(feature.id);
+        await repository.submitForReview(featureId);
       }
 
       ref.invalidate(projectMapFeaturesProvider(project.id));
@@ -338,7 +421,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
         context,
         submit
             ? 'Feature submitted for review successfully.'
-            : 'Feature draft saved to the project successfully.',
+            : 'Feature draft saved successfully.',
       );
       context.go(AppRoutes.mapForProject(project.id));
     } catch (error) {
@@ -349,7 +432,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     } finally {
       if (mounted) {
         setState(() {
-          _isSubmitting = false;
+          _isSaving = false;
         });
       }
     }
@@ -360,25 +443,31 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     switch (field.type) {
       case CollectionFieldType.text:
       case CollectionFieldType.multiline:
-        return TextFormField(
-          controller: _attributeControllers[field.key],
-          minLines: field.type == CollectionFieldType.multiline ? 2 : 1,
-          maxLines: field.type == CollectionFieldType.multiline ? 5 : 1,
-          decoration: InputDecoration(
-            labelText: field.required ? '${field.label} *' : field.label,
-            hintText: field.hint,
-            errorText: errorText,
-          ),
+        return AppTextField(
+          label: field.required ? '${field.label} *' : field.label,
+          controller: _attributeControllers[field.key]!,
+          hint: field.hint,
+          minLines: field.type == CollectionFieldType.multiline ? 3 : null,
+          maxLines: field.type == CollectionFieldType.multiline ? 6 : 1,
+          validator: (_) => errorText,
+          onChanged: (_) {
+            if (_fieldErrors.remove(field.key) != null) {
+              setState(() {});
+            }
+          },
         );
       case CollectionFieldType.number:
-        return TextFormField(
-          controller: _attributeControllers[field.key],
+        return AppTextField(
+          label: field.required ? '${field.label} *' : field.label,
+          controller: _attributeControllers[field.key]!,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: InputDecoration(
-            labelText: field.required ? '${field.label} *' : field.label,
-            hintText: field.unit == null ? field.hint : 'Unit: ${field.unit}',
-            errorText: errorText,
-          ),
+          hint: field.unit == null ? field.hint : 'Unit: ${field.unit}',
+          validator: (_) => errorText,
+          onChanged: (_) {
+            if (_fieldErrors.remove(field.key) != null) {
+              setState(() {});
+            }
+          },
         );
       case CollectionFieldType.select:
         return DropdownButtonFormField<String>(
@@ -393,6 +482,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
           onChanged: (value) {
             setState(() {
               _attributeValues[field.key] = value;
+              _fieldErrors.remove(field.key);
             });
           },
           decoration: InputDecoration(
@@ -408,6 +498,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
           onChanged: (nextValue) {
             setState(() {
               _attributeValues[field.key] = nextValue;
+              _fieldErrors.remove(field.key);
             });
           },
           subtitle: errorText == null ? null : Text(errorText),
@@ -482,9 +573,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final projectsAsync = ref.watch(
-      projectListProvider(ProjectViewScope.assigned),
-    );
+    final projectsAsync = ref.watch(projectListProvider(ProjectViewScope.assigned));
 
     return Stack(
       children: [
@@ -509,120 +598,58 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
             }
 
             _ensureProjectSelection(projects);
-            final selectedProject =
-                projects.where((p) => p.id == _selectedProjectId).isEmpty
-                ? projects.first
-                : projects.firstWhere((p) => p.id == _selectedProjectId);
-            final supportedGeometryTypes = _supportedGeometryTypes(
-              selectedProject,
+            final selectedProject = projects.firstWhere(
+              (project) => project.id == _selectedProjectId,
+              orElse: () => projects.first,
             );
 
-            return ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              children: [
-                AppCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'New Feature',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Project-specific collection flow for geometry, attributes, photos, and review submission.',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: List<Widget>.generate(4, (index) {
-                          final labels = const [
-                            'Geometry',
-                            'Attributes',
-                            'Photos',
-                            'Review',
-                          ];
-                          final stateLabel = index < _currentStep
-                              ? '${index + 1}. ${labels[index]}'
-                              : '${index + 1}. ${labels[index]}';
-                          return Chip(
-                            label: Text(stateLabel),
-                            avatar: Icon(
-                              index < _currentStep
-                                  ? Icons.check_circle_outline
-                                  : Icons.radio_button_unchecked,
-                              size: 18,
-                            ),
-                            backgroundColor: index == _currentStep
-                                ? Theme.of(context).colorScheme.primaryContainer
-                                : null,
-                          );
-                        }),
-                      ),
-                    ],
-                  ),
+            if (widget.draftFeatureId != null && widget.draftFeatureId!.isNotEmpty) {
+              final projectId = widget.initialProjectId ?? selectedProject.id;
+              final draftAsync = ref.watch(projectMapFeaturesProvider(projectId));
+
+              return draftAsync.when(
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (error, _) => AppEmptyState(
+                  icon: Icons.error_outline,
+                  title: 'Draft unavailable',
+                  message: '$error',
+                  actionLabel: 'Back to map',
+                  onAction: () => context.go(AppRoutes.mapForProject(projectId)),
                 ),
-                const SizedBox(height: 12),
-                _buildCurrentStepCard(
-                  context,
-                  projects: projects,
-                  selectedProject: selectedProject,
-                  supportedGeometryTypes: supportedGeometryTypes,
-                ),
-                const SizedBox(height: 12),
-                AppCard(
-                  child: Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [
-                      if (_currentStep > 0)
-                        OutlinedButton(
-                          onPressed: _isSubmitting
-                              ? null
-                              : () => setState(() => _currentStep -= 1),
-                          child: const Text('Back'),
-                        ),
-                      if (_currentStep < 3)
-                        AppButton(
-                          label: 'Next',
-                          icon: Icons.arrow_forward,
-                          expand: false,
-                          onPressed: _isSubmitting
-                              ? null
-                              : () => _handleContinue(projects),
-                        ),
-                      if (_currentStep == 3)
-                        OutlinedButton.icon(
-                          onPressed: _isSubmitting
-                              ? null
-                              : () => _saveToServer(
-                                  selectedProject,
-                                  submit: false,
-                                ),
-                          icon: const Icon(Icons.save_outlined),
-                          label: const Text('Save Draft'),
-                        ),
-                      if (_currentStep == 3)
-                        FilledButton.icon(
-                          onPressed: _isSubmitting
-                              ? null
-                              : () => _saveToServer(
-                                  selectedProject,
-                                  submit: true,
-                                ),
-                          icon: const Icon(Icons.send_outlined),
-                          label: const Text('Submit for Review'),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            );
+                data: (features) {
+                  MapFeatureSummary? feature;
+                  for (final item in features) {
+                    if (item.id == widget.draftFeatureId) {
+                      feature = item;
+                      break;
+                    }
+                  }
+
+                  if (feature == null) {
+                    return AppEmptyState(
+                      icon: Icons.edit_off_outlined,
+                      title: 'Draft not found',
+                      message:
+                          'The selected draft could not be loaded from this project.',
+                      actionLabel: 'Back to map',
+                      onAction: () => context.go(AppRoutes.mapForProject(projectId)),
+                    );
+                  }
+
+                  _ensureDraftHydrated(selectedProject, feature);
+                  if (_hydratedDraftId != feature.id) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+
+                  return _buildContent(context, projects, selectedProject);
+                },
+              );
+            }
+
+            return _buildContent(context, projects, selectedProject);
           },
         ),
-        if (_isSubmitting)
+        if (_isSaving)
           Positioned.fill(
             child: ColoredBox(
               color: Colors.black.withValues(alpha: 0.18),
@@ -633,12 +660,111 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     );
   }
 
+  Widget _buildContent(
+    BuildContext context,
+    List<ProjectSummary> projects,
+    ProjectSummary selectedProject,
+  ) {
+    if (selectedProject.status != 'active') {
+      return AppEmptyState(
+        icon: Icons.pause_circle_outline,
+        title: 'Collection unavailable',
+        message:
+            'This project is ${selectedProject.status}. Feature collection and submission are disabled until it returns to active status.',
+        actionLabel: 'Back to map',
+        onAction: () => context.go(AppRoutes.mapForProject(selectedProject.id)),
+      );
+    }
+
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        SectionHeader(
+          title: _isEditingDraft ? 'Edit draft feature' : 'New feature',
+          subtitle:
+              'Capture geometry, fill project attributes, attach photos, and save or submit for review.',
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        AppCard(
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: List<Widget>.generate(4, (index) {
+              const labels = <String>[
+                'Geometry',
+                'Attributes',
+                'Photos',
+                'Review',
+              ];
+              return Chip(
+                avatar: Icon(
+                  index < _currentStep
+                      ? Icons.check_circle_outline
+                      : Icons.radio_button_unchecked,
+                  size: 18,
+                ),
+                backgroundColor: index == _currentStep
+                    ? Theme.of(context).colorScheme.primaryContainer
+                    : null,
+                label: Text('${index + 1}. ${labels[index]}'),
+              );
+            }),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        _buildCurrentStepCard(
+          context,
+          projects: projects,
+          selectedProject: selectedProject,
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        AppCard(
+          child: Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              if (_currentStep > 0)
+                OutlinedButton(
+                  onPressed: _isSaving
+                      ? null
+                      : () => setState(() => _currentStep -= 1),
+                  child: const Text('Back'),
+                ),
+              if (_currentStep < 3)
+                FilledButton.icon(
+                  onPressed: _isSaving ? null : () => _handleNext(selectedProject),
+                  icon: const Icon(Icons.arrow_forward_outlined),
+                  label: const Text('Next'),
+                ),
+              if (_currentStep == 3)
+                OutlinedButton.icon(
+                  onPressed: _isSaving
+                      ? null
+                      : () => _saveFeature(selectedProject, submit: false),
+                  icon: const Icon(Icons.save_outlined),
+                  label: Text(_isEditingDraft ? 'Update Draft' : 'Save Draft'),
+                ),
+              if (_currentStep == 3)
+                FilledButton.icon(
+                  onPressed: _isSaving
+                      ? null
+                      : () => _saveFeature(selectedProject, submit: true),
+                  icon: const Icon(Icons.send_outlined),
+                  label: const Text('Submit for Review'),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildCurrentStepCard(
     BuildContext context, {
     required List<ProjectSummary> projects,
     required ProjectSummary selectedProject,
-    required List<String> supportedGeometryTypes,
   }) {
+    final supportedGeometryTypes = _supportedGeometryTypes(selectedProject);
     switch (_currentStep) {
       case 0:
         return AppCard(
@@ -648,48 +774,47 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
               DropdownButtonFormField<String>(
                 initialValue: _selectedProjectId,
                 isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: 'Assigned Project',
-                ),
+                decoration: const InputDecoration(labelText: 'Assigned project'),
                 items: projects
                     .map(
-                      (project) => DropdownMenuItem(
+                      (project) => DropdownMenuItem<String>(
                         value: project.id,
-                        child: Text(project.name),
+                        child: Text(
+                          project.name,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     )
                     .toList(growable: false),
-                onChanged: (value) {
-                  if (value == null) {
-                    return;
-                  }
-                  final project = projects.firstWhere((p) => p.id == value);
-                  _applyProjectSelection(project);
-                },
+                onChanged: widget.draftFeatureId != null
+                    ? null
+                    : (value) {
+                        if (value == null) {
+                          return;
+                        }
+                        final project = projects.firstWhere((p) => p.id == value);
+                        _applyProjectSelection(project);
+                      },
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.sm),
               if (supportedGeometryTypes.isEmpty)
-                AppCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
-                      Text('Point capture required'),
-                      SizedBox(height: 8),
-                      Text(
-                        'This mobile build supports point capture. Update the project geometry policy to include Point before collecting from this screen.',
-                      ),
-                    ],
-                  ),
+                const AppEmptyState(
+                  icon: Icons.edit_location_alt_outlined,
+                  title: 'Point capture unavailable',
+                  message:
+                      'This mobile build supports point geometry only. Update the project collection schema if you need a different geometry policy.',
                 )
               else
                 DropdownButtonFormField<String>(
                   initialValue: _selectedGeometryType,
                   isExpanded: true,
-                  decoration: const InputDecoration(labelText: 'Geometry Type'),
+                  decoration: const InputDecoration(labelText: 'Geometry type'),
                   items: supportedGeometryTypes
                       .map(
-                        (type) =>
-                            DropdownMenuItem(value: type, child: Text(type)),
+                        (type) => DropdownMenuItem<String>(
+                          value: type,
+                          child: Text(type),
+                        ),
                       )
                       .toList(growable: false),
                   onChanged: (value) {
@@ -698,65 +823,42 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                     });
                   },
                 ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.sm),
               LayoutBuilder(
                 builder: (context, constraints) {
+                  final latitudeField = AppTextField(
+                    label: 'Latitude',
+                    controller: _latitudeController,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                  );
+                  final longitudeField = AppTextField(
+                    label: 'Longitude',
+                    controller: _longitudeController,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                  );
+
                   if (constraints.maxWidth < 520) {
                     return Column(
                       children: [
-                        TextFormField(
-                          controller: _latitudeController,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(
-                            labelText: 'Latitude',
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        TextFormField(
-                          controller: _longitudeController,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(
-                            labelText: 'Longitude',
-                          ),
-                        ),
+                        latitudeField,
+                        const SizedBox(height: AppSpacing.sm),
+                        longitudeField,
                       ],
                     );
                   }
 
                   return Row(
                     children: [
-                      Expanded(
-                        child: TextFormField(
-                          controller: _latitudeController,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(
-                            labelText: 'Latitude',
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _longitudeController,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(
-                            labelText: 'Longitude',
-                          ),
-                        ),
-                      ),
+                      Expanded(child: latitudeField),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(child: longitudeField),
                     ],
                   );
                 },
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.sm),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
@@ -765,25 +867,25 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                     avatar: const Icon(Icons.gps_fixed, size: 18),
                     label: Text(
                       _gpsAccuracyMeters == null
-                          ? 'GPS not captured yet'
+                          ? 'GPS not captured'
                           : 'Accuracy ${_gpsAccuracyMeters!.toStringAsFixed(1)}m (${Phase6Validation.gpsQualityLabel(_gpsAccuracyMeters)})',
                     ),
                   ),
                   Chip(
-                    avatar: const Icon(Icons.rule, size: 18),
+                    avatar: const Icon(Icons.rule_outlined, size: 18),
                     label: Text(
                       'Target <= ${selectedProject.maxGpsAccuracyMeters.toStringAsFixed(1)}m',
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               OutlinedButton.icon(
                 onPressed: supportedGeometryTypes.isEmpty
                     ? null
                     : () => _captureGpsSample(selectedProject),
-                icon: const Icon(Icons.my_location),
-                label: const Text('Capture GPS Sample'),
+                icon: const Icon(Icons.my_location_outlined),
+                label: const Text('Capture GPS sample'),
               ),
             ],
           ),
@@ -794,15 +896,20 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
+                'Collection form',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
                 'Form schema ${selectedProject.collectionFormSchema.version} with ${selectedProject.collectionFormSchema.fields.length} field(s).',
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.sm),
               if (selectedProject.collectionFormSchema.fields.isEmpty)
                 const Text('No dynamic fields are configured for this project.')
               else
                 ...selectedProject.collectionFormSchema.fields.map(
                   (field) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                     child: _buildSchemaField(field),
                   ),
                 ),
@@ -815,93 +922,177 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Photo policy: ${selectedProject.requiresPhotos ? 'Required' : 'Optional'}',
+                'Photos',
+                style: Theme.of(context).textTheme.titleMedium,
               ),
+              const SizedBox(height: AppSpacing.xs),
               Text(
-                'Minimum ${selectedProject.minPhotos} • Maximum ${selectedProject.maxPhotos}',
+                'Policy: ${selectedProject.requiresPhotos ? 'Required' : 'Optional'} • Minimum ${selectedProject.minPhotos} • Maximum ${selectedProject.maxPhotos}',
+                softWrap: true,
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: AppSpacing.sm),
               OutlinedButton.icon(
-                onPressed: () => _pickPhotos(selectedProject),
+                onPressed: _isSaving ? null : () => _pickPhotos(selectedProject),
                 icon: const Icon(Icons.photo_library_outlined),
-                label: const Text('Select Photos'),
+                label: const Text('Add photos'),
               ),
-              const SizedBox(height: 8),
-              if (_photos.isEmpty)
-                const Text('No photos selected yet.')
-              else
-                ..._photos.map(
-                  (photo) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: AppCard(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const CircleAvatar(
-                                child: Icon(Icons.photo_camera_back),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(photo.fileName, softWrap: true),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      '${_formatBytes(photo.sizeBytes)} • ${photo.createdAt.toLocal()}',
-                                      softWrap: true,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline),
-                                onPressed: () {
-                                  setState(() {
-                                    _photos.remove(photo);
-                                  });
-                                },
-                              ),
-                            ],
+              const SizedBox(height: AppSpacing.sm),
+              if (_uploadedPhotos.isEmpty && _pendingPhotos.isEmpty)
+                const Text('No photos attached yet.')
+              else ...[
+                if (_uploadedPhotos.isNotEmpty) ...[
+                  Text(
+                    'Uploaded photos',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  ..._uploadedPhotos.map(
+                    (photo) => Padding(
+                      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+                      child: AppCard(
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const CircleAvatar(
+                            child: Icon(Icons.photo_outlined),
                           ),
-                        ],
+                          title: Text(_photoLabel(photo.filePath), softWrap: true),
+                          subtitle: Text(
+                            photo.status?.trim().isNotEmpty == true
+                                ? 'Uploaded • ${photo.status}'
+                                : 'Uploaded to this draft',
+                            softWrap: true,
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                ),
+                ],
+                if (_pendingPhotos.isNotEmpty) ...[
+                  if (_uploadedPhotos.isNotEmpty)
+                    const SizedBox(height: AppSpacing.sm),
+                  Text(
+                    'New photos',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  ..._pendingPhotos.map(
+                    (photo) => Padding(
+                      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+                      child: AppCard(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const CircleAvatar(
+                              child: Icon(Icons.photo_camera_back_outlined),
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(photo.fileName, softWrap: true),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '${_formatBytes(photo.sizeBytes)} • Pending upload',
+                                    softWrap: true,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline),
+                              onPressed: _isSaving
+                                  ? null
+                                  : () {
+                                      setState(() {
+                                        _pendingPhotos.remove(photo);
+                                      });
+                                    },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ],
           ),
         );
       default:
+        final attributes = _collectAttributeValues(selectedProject);
         return AppCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                selectedProject.name,
+                _isEditingDraft ? 'Draft review' : 'Submission review',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
-              const SizedBox(height: 8),
-              Text('Geometry: ${_selectedGeometryType ?? 'Point'}'),
-              Text(
-                'GPS quality: ${Phase6Validation.gpsQualityLabel(_gpsAccuracyMeters)}',
+              const SizedBox(height: AppSpacing.sm),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  Chip(label: Text(selectedProject.name)),
+                  Chip(label: Text('Geometry: ${_selectedGeometryType ?? 'Point'}')),
+                  Chip(
+                    label: Text(
+                      'Photos: ${_uploadedPhotos.length + _pendingPhotos.length}',
+                    ),
+                  ),
+                ],
               ),
+              const SizedBox(height: AppSpacing.sm),
               Text(
-                'Attributes captured: ${_collectAttributeValues(selectedProject).length}',
+                'Drafts can be saved and reopened from the project map. Submitting sends the draft into the admin review queue.',
+                softWrap: true,
               ),
-              Text('Photos attached: ${_photos.length}'),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                'Captured attributes',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              if (attributes.isEmpty)
+                const Text('No attribute values captured.')
+              else
+                ...attributes.entries.map(
+                  (entry) => Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text('${entry.key}: ${entry.value ?? '—'}'),
+                  ),
+                ),
             ],
           ),
         );
     }
   }
+
+  _GeometryPoint? _pointFromGeometry(Map<String, dynamic>? geometry) {
+    if (geometry == null) {
+      return null;
+    }
+    final type = geometry['type'] as String?;
+    final coordinates = geometry['coordinates'];
+    if (type == 'Point' && coordinates is List && coordinates.length >= 2) {
+      return _GeometryPoint(
+        latitude: (coordinates[1] as num).toDouble(),
+        longitude: (coordinates[0] as num).toDouble(),
+      );
+    }
+    return null;
+  }
+
+  String _photoLabel(String path) {
+    final normalized = path.replaceAll('\\', '/');
+    final segments = normalized.split('/');
+    return segments.isEmpty ? path : segments.last;
+  }
 }
 
-class _SelectedPhoto {
-  const _SelectedPhoto({
+class _PendingPhoto {
+  const _PendingPhoto({
     required this.id,
     required this.filePath,
     required this.fileName,
@@ -914,4 +1105,14 @@ class _SelectedPhoto {
   final String fileName;
   final int sizeBytes;
   final DateTime createdAt;
+}
+
+class _GeometryPoint {
+  const _GeometryPoint({
+    required this.latitude,
+    required this.longitude,
+  });
+
+  final double latitude;
+  final double longitude;
 }

@@ -443,6 +443,7 @@ class ApiAdminRepository implements AdminRepository {
       activeContributorCount: users
           .where((user) => user.role == UserRole.contributor && user.isActive)
           .length,
+      blockedCount: users.where((user) => user.isBlocked).length,
       pendingContributorRequests: pendingRequests.length,
       rejectedContributorRequests: rejectedRequests.length,
       totalProjects: projectRows.length,
@@ -504,7 +505,8 @@ class ApiAdminRepository implements AdminRepository {
       isBlocked: (row['is_blocked'] as bool?) ?? false,
       previousAdminRole: _toOptionalRole(row['previous_admin_role'] as String?),
       canToggleAdminRole: (row['can_toggle_admin_role'] as bool?) ?? false,
-      canBlock: !((row['is_blocked'] as bool?) ?? false) &&
+      canBlock: ((row['is_active'] as bool?) ?? false) &&
+          !((row['is_blocked'] as bool?) ?? false) &&
           !((row['is_protected_super_admin'] as bool?) ?? false),
       canUnblock: (row['is_blocked'] as bool?) ?? false,
       requestStatus: requestStatusRaw == null

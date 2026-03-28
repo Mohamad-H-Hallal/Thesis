@@ -189,20 +189,6 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
       ),
       data: (users) {
         final filtered = _applyFilters(users);
-        final viewerCount = users
-            .where((user) => user.role == UserRole.viewer)
-            .length;
-        final activeContributors = users
-            .where(
-              (user) =>
-                  user.role == UserRole.contributor &&
-                  user.accountState == UserAccountState.active,
-            )
-            .length;
-        final blockedCount = users.where((user) => user.isBlocked).length;
-        final adminCount = users
-            .where((user) => user.role == UserRole.admin)
-            .length;
 
         return ListView(
           children: [
@@ -216,38 +202,6 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Wrap(
-                    spacing: AppSpacing.sm,
-                    runSpacing: AppSpacing.sm,
-                    children: [
-                      _MetricChip(
-                        icon: Icons.groups_outlined,
-                        label: 'Total users',
-                        value: '${users.length}',
-                      ),
-                      _MetricChip(
-                        icon: Icons.admin_panel_settings_outlined,
-                        label: 'Admins',
-                        value: '$adminCount',
-                      ),
-                      _MetricChip(
-                        icon: Icons.visibility_outlined,
-                        label: 'Viewers',
-                        value: '$viewerCount',
-                      ),
-                      _MetricChip(
-                        icon: Icons.edit_location_alt_outlined,
-                        label: 'Active contributors',
-                        value: '$activeContributors',
-                      ),
-                      _MetricChip(
-                        icon: Icons.block_outlined,
-                        label: 'Blocked',
-                        value: '$blockedCount',
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
                   LayoutBuilder(
                     builder: (context, constraints) {
                       final filterButton = OutlinedButton.icon(
@@ -499,41 +453,6 @@ class _UserCard extends StatelessWidget {
               ],
             ),
           ],
-        ],
-      ),
-    );
-  }
-}
-
-class _MetricChip extends StatelessWidget {
-  const _MetricChip({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
-        vertical: AppSpacing.xs,
-      ),
-      decoration: BoxDecoration(
-        borderRadius: AppRadii.md,
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 18),
-          const SizedBox(width: AppSpacing.xs),
-          Text('$label: ', style: Theme.of(context).textTheme.bodySmall),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w700)),
         ],
       ),
     );

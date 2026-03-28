@@ -14,12 +14,14 @@ AuthFailure mapAuthDioException(
       error.type == DioExceptionType.sendTimeout) {
     return const AuthFailure(
       'Request timed out. Please check your connection and try again.',
+      code: 'timeout',
     );
   }
 
   if (error.type == DioExceptionType.connectionError) {
     return const AuthFailure(
       'Network connection failed. Verify internet access and API URL.',
+      code: 'network_error',
     );
   }
 
@@ -28,6 +30,7 @@ AuthFailure mapAuthDioException(
       return AuthFailure(
         responseMessage ?? 'Wrong email or password.',
         statusCode: statusCode,
+        code: 'invalid_credentials',
       );
     case 403:
       final normalized = (responseMessage ?? '').toLowerCase();
@@ -35,34 +38,47 @@ AuthFailure mapAuthDioException(
         return const AuthFailure(
           'Your account has been blocked.',
           statusCode: 403,
+          code: 'blocked_account',
+        );
+      }
+      if (normalized.contains('activate it to continue')) {
+        return const AuthFailure(
+          'Your contributor account is deactivated. Activate it to continue logging in.',
+          statusCode: 403,
+          code: 'deactivated_contributor',
         );
       }
       if (normalized.contains('pending approval')) {
         return const AuthFailure(
           'Your contributor request is still pending approval. You cannot log in yet.',
           statusCode: 403,
+          code: 'pending_contributor',
         );
       }
       if (normalized.contains('request was rejected')) {
         return const AuthFailure(
           'Your contributor request was rejected. You cannot log in with contributor access.',
           statusCode: 403,
+          code: 'rejected_contributor',
         );
       }
       if (normalized.contains('inactive')) {
         return const AuthFailure(
           'This account is inactive.',
           statusCode: 403,
+          code: 'inactive_account',
         );
       }
       return AuthFailure(
         responseMessage ?? 'Your account does not have access to continue.',
         statusCode: statusCode,
+        code: 'forbidden',
       );
     case 404:
       return AuthFailure(
         responseMessage ?? 'This account does not exist.',
         statusCode: statusCode,
+        code: 'account_not_found',
       );
     case 409:
       return AuthFailure(
@@ -70,22 +86,26 @@ AuthFailure mapAuthDioException(
             ? 'This email is already registered.'
             : (responseMessage ?? 'This email is already registered.'),
         statusCode: statusCode,
+        code: 'duplicate_email',
       );
     case 422:
       return AuthFailure(
         responseMessage ??
             'Submitted data is invalid. Please review all fields.',
         statusCode: statusCode,
+        code: 'validation_error',
       );
     case 429:
       return AuthFailure(
         responseMessage ?? 'Too many attempts. Try again in a few minutes.',
         statusCode: statusCode,
+        code: 'rate_limited',
       );
     default:
       return AuthFailure(
         responseMessage ?? fallbackMessage,
         statusCode: statusCode,
+        code: 'unknown_auth_error',
       );
   }
 }

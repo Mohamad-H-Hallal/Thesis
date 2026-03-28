@@ -273,34 +273,61 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         supportAsync.when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (error, _) => AppCard(
-            child: ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.support_agent_outlined),
-              title: const Text('Help & Support'),
-              subtitle: Text(
-                'Support settings are unavailable right now: $error',
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Help & Support',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  'Support settings are unavailable right now: $error',
+                  softWrap: true,
+                ),
+              ],
             ),
           ),
           data: (settings) => AppCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Help & Support',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                    ),
-                    if (widget.isSuperAdmin)
-                      OutlinedButton.icon(
-                        onPressed: _isMutating ? null : _editSupportSettings,
-                        icon: const Icon(Icons.edit_outlined),
-                        label: const Text('Edit'),
-                      ),
-                  ],
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final editButton = OutlinedButton.icon(
+                      onPressed: _isMutating ? null : _editSupportSettings,
+                      icon: const Icon(Icons.edit_outlined),
+                      label: const Text('Edit'),
+                    );
+
+                    if (constraints.maxWidth < 420) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Help & Support',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          if (widget.isSuperAdmin) ...[
+                            const SizedBox(height: AppSpacing.sm),
+                            editButton,
+                          ],
+                        ],
+                      );
+                    }
+
+                    return Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Help & Support',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                        if (widget.isSuperAdmin) editButton,
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 if (!settings.isConfigured)

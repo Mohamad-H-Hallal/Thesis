@@ -23,9 +23,17 @@ class ContributorRequestsScreen extends ConsumerStatefulWidget {
 
 class _ContributorRequestsScreenState
     extends ConsumerState<ContributorRequestsScreen> {
+  final TextEditingController _searchController = TextEditingController();
+
   _RequestGroup _selectedGroup = _RequestGroup.contributor;
   _RequestStateTab _selectedState = _RequestStateTab.pending;
   bool _isMutating = false;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   void _invalidate() {
     ref.invalidate(
@@ -125,6 +133,16 @@ class _ContributorRequestsScreenState
     }
   }
 
+  bool _matchesQuery(Iterable<String?> values) {
+    final query = _searchController.text.trim().toLowerCase();
+    if (query.isEmpty) {
+      return true;
+    }
+    return values.any(
+      (value) => (value ?? '').trim().toLowerCase().contains(query),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final pendingContributorAsync = ref.watch(
@@ -140,53 +158,68 @@ class _ContributorRequestsScreenState
         const SectionHeader(
           title: 'Requests',
           subtitle:
-              'Review contributor account requests and project access requests.',
+              'Review contributor account approvals and contributor project-access requests.',
         ),
         const SizedBox(height: AppSpacing.sm),
         AppCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SegmentedButton<_RequestGroup>(
-                segments: const [
-                  ButtonSegment(
-                    value: _RequestGroup.contributor,
-                    label: Text('Contributor'),
-                    icon: Icon(Icons.person_add_alt_1_outlined),
-                  ),
-                  ButtonSegment(
-                    value: _RequestGroup.project,
-                    label: Text('Projects'),
-                    icon: Icon(Icons.assignment_outlined),
-                  ),
-                ],
-                selected: <_RequestGroup>{_selectedGroup},
-                onSelectionChanged: (selection) {
-                  if (selection.isEmpty) {
-                    return;
-                  }
-                  setState(() => _selectedGroup = selection.first);
-                },
+              SearchBar(
+                controller: _searchController,
+                hintText: _selectedGroup == _RequestGroup.contributor
+                    ? 'Search contributor name, email, or phone'
+                    : 'Search project, contributor, or email',
+                leading: const Icon(Icons.search),
+                onChanged: (_) => setState(() {}),
               ),
               const SizedBox(height: AppSpacing.sm),
-              SegmentedButton<_RequestStateTab>(
-                segments: const [
-                  ButtonSegment(
-                    value: _RequestStateTab.pending,
-                    label: Text('Pending'),
-                  ),
-                  ButtonSegment(
-                    value: _RequestStateTab.rejected,
-                    label: Text('Rejected'),
-                  ),
-                ],
-                selected: <_RequestStateTab>{_selectedState},
-                onSelectionChanged: (selection) {
-                  if (selection.isEmpty) {
-                    return;
-                  }
-                  setState(() => _selectedState = selection.first);
-                },
+              Text(
+                'Request type',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _RequestGroup.values
+                    .map(
+                      (group) => ChoiceChip(
+                        label: Text(
+                          group == _RequestGroup.contributor
+                              ? 'Contributor'
+                              : 'Projects',
+                        ),
+                        selected: _selectedGroup == group,
+                        onSelected: (_) =>
+                            setState(() => _selectedGroup = group),
+                      ),
+                    )
+                    .toList(growable: false),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                'Workflow state',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _RequestStateTab.values
+                    .map(
+                      (tab) => ChoiceChip(
+                        label: Text(
+                          tab == _RequestStateTab.pending
+                              ? 'Pending'
+                              : 'Rejected',
+                        ),
+                        selected: _selectedState == tab,
+                        onSelected: (_) =>
+                            setState(() => _selectedState = tab),
+                      ),
+                    )
+                    .toList(growable: false),
               ),
             ],
           ),
@@ -227,7 +260,17 @@ class _ContributorRequestsScreenState
         ),
       ),
       data: (requests) {
-        if (requests.isEmpty) {
+        final filtered = requests
+            .where(
+              (request) => _matchesQuery(<String?>[
+                request.fullName,
+                request.email,
+                request.phone,
+              ]),
+            )
+            .toList(growable: false);
+
+        if (filtered.isEmpty) {
           return AppEmptyState(
             icon: _selectedState == _RequestStateTab.pending
                 ? Icons.person_search_outlined
@@ -237,12 +280,12 @@ class _ContributorRequestsScreenState
                 : 'No rejected contributor requests',
             message: _selectedState == _RequestStateTab.pending
                 ? 'New contributor signups waiting for approval appear here.'
-                : 'Rejected contributor requests remain here for audit and later recovery.',
+                : 'Rejected contributor requests remain here for review and later recovery.',
           );
         }
 
         return Column(
-          children: requests
+          children: filtered
               .map(
                 (request) => Padding(
                   padding: const EdgeInsets.only(bottom: AppSpacing.sm),
@@ -305,9 +348,14 @@ class _ContributorRequestsScreenState
             .where(
               (item) =>
                   item.status ==
-                  (_selectedState == _RequestStateTab.pending
-                      ? 'pending'
-                      : 'rejected'),
+                      (_selectedState == _RequestStateTab.pending
+                          ? 'pending'
+                          : 'rejected') &&
+                  _matchesQuery(<String?>[
+                    item.projectName,
+                    item.fullName,
+                    item.email,
+                  ]),
             )
             .toList(growable: false);
 

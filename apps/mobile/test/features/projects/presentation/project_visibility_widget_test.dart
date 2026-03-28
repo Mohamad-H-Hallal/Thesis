@@ -40,6 +40,15 @@ class _NoopAuthRepository implements AuthRepository {
   }) async {}
 
   @override
+  Future<AuthSession> reactivateContributorAndLogin({
+    required String email,
+    required String password,
+    required bool rememberMe,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
   Future<void> selfDeactivate() async {}
 
   @override
@@ -195,6 +204,9 @@ class _FakeProjectsRepository implements ProjectsRepository {
 
   @override
   Future<void> requestProjectAccess({required String projectId}) async {}
+
+  @override
+  Future<void> cancelProjectAccessRequest({required String projectId}) async {}
 }
 
 AuthSession _sessionForRole(UserRole role, {String userId = 'user-1'}) {

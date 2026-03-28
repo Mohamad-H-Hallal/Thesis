@@ -80,43 +80,39 @@ class RealAuthRepository implements AuthRepository {
         '$_authBasePath/login',
         data: <String, dynamic>{'email': email, 'password': password},
       );
-
-      final data = Map<String, dynamic>.from(
-        (response.data ?? const <String, dynamic>{})['data'] as Map? ??
-            const <String, dynamic>{},
-      );
-      final accessToken = (data['token'] as String?) ?? '';
-      final refreshToken = (data['refreshToken'] as String?) ?? '';
-      final userMap = Map<String, dynamic>.from(
-        data['user'] as Map? ?? const <String, dynamic>{},
-      );
-      final user = _parseUser(userMap);
-
-      if (accessToken.isEmpty || refreshToken.isEmpty) {
-        throw const AuthFailure('Authentication response is missing tokens.');
-      }
-
-      _apiClient.setAccessToken(accessToken);
-
-      if (rememberMe) {
-        await _persistSession(
-          accessToken: accessToken,
-          refreshToken: refreshToken,
-          user: user,
-        );
-      } else {
-        await _clearStoredSession();
-      }
-
-      return AuthSession(
-        accessToken: accessToken,
-        refreshToken: refreshToken,
-        user: user,
+      return _sessionFromAuthResponse(
+        response.data ?? const <String, dynamic>{},
+        rememberMe: rememberMe,
       );
     } on DioException catch (error) {
       _apiClient.setAccessToken(null);
       await _clearStoredSession();
       throw mapAuthDioException(error, fallbackMessage: 'Login failed.');
+    }
+  }
+
+  @override
+  Future<AuthSession> reactivateContributorAndLogin({
+    required String email,
+    required String password,
+    required bool rememberMe,
+  }) async {
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_authBasePath/reactivate-login',
+        data: <String, dynamic>{'email': email, 'password': password},
+      );
+      return _sessionFromAuthResponse(
+        response.data ?? const <String, dynamic>{},
+        rememberMe: rememberMe,
+      );
+    } on DioException catch (error) {
+      _apiClient.setAccessToken(null);
+      await _clearStoredSession();
+      throw mapAuthDioException(
+        error,
+        fallbackMessage: 'Account reactivation failed.',
+      );
     }
   }
 
@@ -325,5 +321,42 @@ class RealAuthRepository implements AuthRepository {
       return DateTime.tryParse(value);
     }
     return null;
+  }
+
+  Future<AuthSession> _sessionFromAuthResponse(
+    Map<String, dynamic> payload, {
+    required bool rememberMe,
+  }) async {
+    final data = Map<String, dynamic>.from(
+      payload['data'] as Map? ?? const <String, dynamic>{},
+    );
+    final accessToken = (data['token'] as String?) ?? '';
+    final refreshToken = (data['refreshToken'] as String?) ?? '';
+    final userMap = Map<String, dynamic>.from(
+      data['user'] as Map? ?? const <String, dynamic>{},
+    );
+    final user = _parseUser(userMap);
+
+    if (accessToken.isEmpty || refreshToken.isEmpty) {
+      throw const AuthFailure('Authentication response is missing tokens.');
+    }
+
+    _apiClient.setAccessToken(accessToken);
+
+    if (rememberMe) {
+      await _persistSession(
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+        user: user,
+      );
+    } else {
+      await _clearStoredSession();
+    }
+
+    return AuthSession(
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+      user: user,
+    );
   }
 }

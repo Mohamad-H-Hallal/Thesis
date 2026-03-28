@@ -39,6 +39,15 @@ class _FailingAuthRepository implements AuthRepository {
   }) async {}
 
   @override
+  Future<AuthSession> reactivateContributorAndLogin({
+    required String email,
+    required String password,
+    required bool rememberMe,
+  }) async {
+    throw failure;
+  }
+
+  @override
   Future<void> selfDeactivate() async {}
 
   @override

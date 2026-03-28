@@ -9,6 +9,12 @@ abstract class FeatureWorkflowRepository {
     required bool collectedOffline,
   });
 
+  Future<void> updateDraft({
+    required String featureId,
+    required Map<String, dynamic> geometry,
+    required Map<String, dynamic> attributes,
+  });
+
   Future<void> uploadPhotos({
     required String featureId,
     required List<String> filePaths,
@@ -16,4 +22,3 @@ abstract class FeatureWorkflowRepository {
 
   Future<void> submitForReview(String featureId);
 }
-

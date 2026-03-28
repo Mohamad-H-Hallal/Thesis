@@ -251,11 +251,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
             ? 'Project updated successfully.'
             : 'Project created successfully.',
       );
-      context.go(
-        widget.isEditing
-            ? AppRoutes.projects
-            : AppRoutes.projectDetails(project.id),
-      );
+      context.go(AppRoutes.projects);
     } catch (error) {
       if (mounted) {
         AppSnackbar.showError(context, error.toString());

@@ -132,6 +132,7 @@ class AdminDashboardSummary {
     required this.adminCount,
     required this.viewerCount,
     required this.activeContributorCount,
+    required this.blockedCount,
     required this.pendingContributorRequests,
     required this.rejectedContributorRequests,
     required this.totalProjects,
@@ -142,6 +143,7 @@ class AdminDashboardSummary {
   final int adminCount;
   final int viewerCount;
   final int activeContributorCount;
+  final int blockedCount;
   final int pendingContributorRequests;
   final int rejectedContributorRequests;
   final int totalProjects;
