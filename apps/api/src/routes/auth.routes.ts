@@ -33,6 +33,19 @@ router.post(
 );
 
 router.post(
+  '/reactivate-login',
+  auditAction({
+    actionType: 'update',
+    entityType: 'user',
+    resolveEntityId: (_req, _res, body) => body?.data?.user?.id ?? null,
+    resolveNewValues: (req) => ({ email: req.body?.email, event: 'reactivate_login' }),
+  }),
+  userValidation.login,
+  validate,
+  asyncHandler(authController.reactivateContributorLogin)
+);
+
+router.post(
   '/forgot-password',
   userValidation.forgotPassword,
   validate,
@@ -100,7 +113,11 @@ router.post(
     actionType: 'update',
     entityType: 'user',
     resolveEntityId: (req) => req.user?.id ?? null,
-    resolveNewValues: () => ({ is_active: false, event: 'self_deactivate' }),
+    resolveNewValues: () => ({
+      is_active: false,
+      account_state: 'inactive',
+      event: 'self_deactivate',
+    }),
   }),
   asyncHandler(authController.selfDeactivate)
 );

@@ -3,8 +3,6 @@ const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
 import { createNotification, getActiveAdminUsers } from '../lib/userWorkflow';
 
-const viewableProjectStatuses = ['active', 'paused', 'completed'];
-
 const getProjectOrFail = async (projectId: string) => {
   const projectResult = await query(
     `SELECT id, name, status, visible_to_viewers
@@ -244,11 +242,14 @@ const requestJoinProject = async (req, res) => {
   }
 
   const project = await getProjectOrFail(projectId);
-  if (project.status === 'archived' || project.status === 'draft') {
+  if (project.status === 'draft' || project.status === 'archived') {
     throw new AppError('This project is not accepting assignment requests', 409);
   }
-  if (!viewableProjectStatuses.includes(project.status)) {
-    throw new AppError('This project is not available for assignment requests', 409);
+  if (project.status !== 'active') {
+    throw new AppError(
+      'Only active projects accept contributor access requests.',
+      409,
+    );
   }
   if (!project.visible_to_viewers) {
     throw new AppError('Only viewer-visible projects accept self-service assignment requests', 409);
@@ -329,6 +330,47 @@ const requestJoinProject = async (req, res) => {
     success: true,
     message: 'Project access request submitted successfully',
     data: createdRequest,
+  });
+};
+
+const cancelJoinProjectRequest = async (req, res) => {
+  const { projectId } = req.params;
+
+  if (req.user?.role !== 'contributor') {
+    throw new AppError('Only contributors can cancel project access requests', 403);
+  }
+
+  const existingAssignment = await query(
+    `SELECT pa.id, pa.status, p.name AS project_name
+     FROM project_assignment pa
+     JOIN project p ON p.id = pa.project_id
+     WHERE pa.project_id = $1
+       AND pa.user_id = $2
+       AND pa.role = 'contributor'
+     LIMIT 1`,
+    [projectId, req.user.id],
+  );
+
+  if (existingAssignment.rows.length === 0) {
+    throw new AppError('No project access request exists for this project.', 404);
+  }
+
+  const assignment = existingAssignment.rows[0];
+  if (assignment.status !== 'pending') {
+    throw new AppError('Only pending project access requests can be cancelled.', 409);
+  }
+
+  await query('DELETE FROM project_assignment WHERE id = $1', [assignment.id]);
+
+  logger.info('Contributor project access request cancelled', {
+    assignmentId: assignment.id,
+    projectId,
+    contributorId: req.user.id,
+  });
+
+  res.json({
+    success: true,
+    message: 'Project access request cancelled successfully',
   });
 };
 
@@ -447,6 +489,7 @@ module.exports = {
   getProjectAssignments,
   createAssignment,
   requestJoinProject,
+  cancelJoinProjectRequest,
   updateAssignmentStatus,
   removeAssignment,
 };

@@ -160,7 +160,7 @@ const getContributorAccessState = async (
 const getLatestAccountState = async (
   executor: QueryExecutor,
   userId: string
-): Promise<'blocked' | 'active' | null> => {
+): Promise<'blocked' | 'active' | 'inactive' | null> => {
   const result = await runQuery<{ account_state: string | null }>(
     executor,
     `SELECT new_values->>'account_state' AS account_state
@@ -175,7 +175,7 @@ const getLatestAccountState = async (
   );
 
   const state = result.rows[0]?.account_state;
-  if (state === 'blocked' || state === 'active') {
+  if (state === 'blocked' || state === 'active' || state === 'inactive') {
     return state;
   }
   return null;
@@ -200,6 +200,10 @@ const getUserAccessState = async (
   const latestAccountState = await getLatestAccountState(executor, userId);
   if (latestAccountState === 'blocked') {
     return 'blocked';
+  }
+
+  if (latestAccountState === 'inactive') {
+    return 'inactive';
   }
 
   if (role === 'contributor') {

@@ -74,6 +74,18 @@ assignmentRouter.post(
   asyncHandler(assignmentController.requestJoinProject),
 );
 
+assignmentRouter.delete(
+  '/join/:projectId',
+  uuidValidation('projectId'),
+  auditAction({
+    actionType: 'delete',
+    entityType: 'project_assignment',
+    resolveEntityId: (_req, _res, body) => body?.data?.id ?? null,
+  }),
+  validate,
+  asyncHandler(assignmentController.cancelJoinProjectRequest),
+);
+
 // Approve/reject assignment (project admin only)
 assignmentRouter.put(
   '/:assignmentId',

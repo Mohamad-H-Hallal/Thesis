@@ -161,6 +161,12 @@ const login = async (req, res) => {
         403
       );
     }
+    if (accessState === 'inactive' && user.role === 'contributor') {
+      throw new AppError(
+        'Your contributor account is deactivated. Activate it to continue logging in.',
+        403
+      );
+    }
     throw new AppError('This account is inactive.', 403);
   }
 
@@ -266,6 +272,101 @@ const changePassword = async (req, res) => {
   res.json({
     success: true,
     message: 'Password changed successfully',
+  });
+};
+
+const reactivateContributorLogin = async (req, res) => {
+  const { email, password } = req.body;
+
+  const result = await query(
+    `SELECT id, email, password_hash, full_name, phone, role, is_active
+     FROM "user"
+     WHERE LOWER(email) = $1`,
+    [normalizeEmail(email)]
+  );
+
+  if (result.rows.length === 0) {
+    throw new AppError('This account does not exist.', 404);
+  }
+
+  const user = result.rows[0];
+  const isMatch = await bcrypt.compare(password, user.password_hash);
+
+  if (!isMatch) {
+    throw new AppError('Wrong email or password.', 401);
+  }
+
+  if (user.role !== 'contributor') {
+    throw new AppError(
+      'Only contributor accounts can use this reactivation flow.',
+      403
+    );
+  }
+
+  const accessState = await getUserAccessState(query, {
+    userId: user.id,
+    role: user.role,
+    isActive: user.is_active,
+  });
+
+  if (accessState === 'blocked') {
+    throw new AppError('Your account has been blocked.', 403);
+  }
+  if (accessState === 'rejected') {
+    throw new AppError(
+      'Your contributor request was rejected. You cannot log in with contributor access.',
+      403
+    );
+  }
+  if (accessState === 'pending') {
+    throw new AppError(
+      'Your contributor request is still pending approval. You cannot log in yet.',
+      403
+    );
+  }
+
+  if (accessState === 'inactive') {
+    await query(
+      `UPDATE "user"
+       SET is_active = TRUE,
+           last_login = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [user.id],
+    );
+  } else {
+    await query(
+      'UPDATE "user" SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
+      [user.id],
+    );
+  }
+
+  const token = generateToken(user.id, user.role);
+  const refreshToken = generateRefreshToken(user.id);
+
+  logger.info('Contributor account reactivated through login flow', {
+    userId: user.id,
+    email: user.email,
+    wasInactive: accessState === 'inactive',
+  });
+
+  res.json({
+    success: true,
+    message:
+      accessState === 'inactive'
+        ? 'Account reactivated and login successful'
+        : 'Login successful',
+    data: {
+      user: {
+        id: user.id,
+        email: user.email,
+        full_name: user.full_name,
+        phone: user.phone,
+        role: user.role,
+        is_protected_super_admin: isProtectedSuperAdminEmail(user.email),
+      },
+      token,
+      refreshToken,
+    },
   });
 };
 
@@ -456,6 +557,12 @@ const refreshToken = async (req, res) => {
         403
       );
     }
+    if (accessState === 'inactive' && user.role === 'contributor') {
+      throw new AppError(
+        'Your contributor account is deactivated. Activate it to continue logging in.',
+        403
+      );
+    }
     throw new AppError('This account is inactive.', 403);
   }
 
@@ -536,6 +643,7 @@ module.exports = {
   changePassword,
   requestPasswordReset,
   resetPassword,
+  reactivateContributorLogin,
   logout,
   selfDeactivate,
   refreshToken,

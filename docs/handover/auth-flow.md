@@ -103,6 +103,9 @@ Runtime behavior:
   - `Your request is still pending approval. You cannot log in yet.`
 - rejected contributor login is blocked with:
   - `Your contributor request was rejected. You cannot log in with contributor access.`
+- deactivated contributor login is blocked first, then the mobile app prompts:
+  - `Do you want to activate your account to login?`
+- if the contributor confirms reactivation, the app calls `POST /api/v1/auth/reactivate-login` and completes login in one step
 - successful login updates `"user".last_login`
 - failed login does not create a session or token
 
@@ -112,6 +115,7 @@ Endpoints:
 
 - `POST /api/v1/auth/forgot-password`
 - `POST /api/v1/auth/reset-password`
+- `POST /api/v1/auth/reactivate-login`
 
 Rules:
 

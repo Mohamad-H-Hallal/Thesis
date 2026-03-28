@@ -486,6 +486,8 @@ const userController = {
       const normalizedState = String(state);
       if (normalizedState === 'blocked') {
         queryText += ` AND u.is_active = FALSE AND latest_account_state.account_state = 'blocked'`;
+      } else if (normalizedState === 'inactive') {
+        queryText += ` AND u.is_active = FALSE AND latest_account_state.account_state = 'inactive'`;
       } else if (normalizedState === 'pending') {
         queryText += ` AND u.role = 'contributor' AND u.is_active = FALSE AND COALESCE(latest_request.type, 'contributor_request') = 'contributor_request' AND COALESCE(latest_account_state.account_state, 'active') <> 'blocked'`;
       } else if (normalizedState === 'rejected') {
@@ -510,6 +512,8 @@ const userController = {
             ? 'active'
             : row.account_state === 'blocked'
               ? 'blocked'
+              : row.account_state === 'inactive'
+                ? 'inactive'
               : row.role === 'contributor' &&
                   row.latest_request_type === 'contributor_rejected'
                 ? 'rejected'
@@ -519,7 +523,7 @@ const userController = {
         is_blocked: row.account_state === 'blocked',
         can_toggle_admin_role:
           !isProtectedSuperAdminEmail(row.email) &&
-          row.account_state !== 'blocked' &&
+          (row.is_active === true || row.account_state === 'active') &&
           (row.role === 'viewer' ||
             row.role === 'contributor' ||
             (row.role === 'admin' && Boolean(row.previous_admin_role))),
@@ -724,6 +728,15 @@ const userController = {
     });
     if (accessState === 'blocked') {
       throw new AppError('Blocked users must be unblocked before changing roles.', 409);
+    }
+    if (accessState === 'rejected') {
+      throw new AppError('Rejected contributors cannot be promoted until re-approved.', 409);
+    }
+    if (accessState === 'inactive') {
+      throw new AppError('Deactivated users must reactivate before changing roles.', 409);
+    }
+    if (accessState === 'pending') {
+      throw new AppError('Pending contributors cannot be promoted until approved.', 409);
     }
 
     const previousRoleResult =
