@@ -11,6 +11,7 @@ nvm use
 2. Copy `.env.example` to `.env` and fill secrets.
    - Default local DB connection is `localhost:5433`, which matches the standalone local DB stack under `infra/db`.
    - If you want host-side API commands to hit the root Docker compose DB instead, change `DB_PORT` to `55433` explicitly.
+   - Official app runtime uses the root Docker compose stack from the repo root; `infra/db/docker-compose.yml` is not part of normal app runtime.
 3. Install dependencies:
 ```bash
 npm ci
@@ -93,6 +94,7 @@ npm run dev
 - Backup and restore scripts:
   - `infra/db/scripts/backup.ps1`
   - `infra/db/scripts/restore.ps1`
+  - these now target the official compose-backed DB on `localhost:55433` by default
 
 ## Phase 10 Quality Engineering Notes
 - New tests:

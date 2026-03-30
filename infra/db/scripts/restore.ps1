@@ -2,7 +2,9 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$DumpFile,
   [string]$EnvFile = "..\.env",
-  [string]$PgRestoreBinary = "pg_restore"
+  [string]$PgRestoreBinary = "pg_restore",
+  [string]$PgHost = "",
+  [string]$PgPort = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -28,13 +30,18 @@ Get-Content $EnvFile | ForEach-Object {
 $dbName = $vars["POSTGRES_DB"]
 $dbUser = $vars["POSTGRES_USER"]
 $dbPassword = $vars["POSTGRES_PASSWORD"]
+$dbHost = if ([string]::IsNullOrWhiteSpace($PgHost)) { $vars["POSTGRES_HOST"] } else { $PgHost }
+$dbPort = if ([string]::IsNullOrWhiteSpace($PgPort)) { $vars["POSTGRES_PORT"] } else { $PgPort }
 
 if ([string]::IsNullOrWhiteSpace($dbName) -or [string]::IsNullOrWhiteSpace($dbUser) -or [string]::IsNullOrWhiteSpace($dbPassword)) {
   throw "POSTGRES_DB/POSTGRES_USER/POSTGRES_PASSWORD must be set in $EnvFile"
 }
 
+$dbHost = if ([string]::IsNullOrWhiteSpace($dbHost)) { "localhost" } else { $dbHost }
+$dbPort = if ([string]::IsNullOrWhiteSpace($dbPort)) { "55433" } else { $dbPort }
+
 $env:PGPASSWORD = $dbPassword
-& $PgRestoreBinary -h "localhost" -p 5433 -U $dbUser -d $dbName -c $DumpFile
+& $PgRestoreBinary -h $dbHost -p $dbPort -U $dbUser -d $dbName -c $DumpFile
 if ($LASTEXITCODE -ne 0) {
   throw "pg_restore failed with exit code $LASTEXITCODE"
 }

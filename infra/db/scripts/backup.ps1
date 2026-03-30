@@ -1,7 +1,9 @@
 param(
   [string]$EnvFile = "..\.env",
   [string]$OutputDir = "..\backups",
-  [string]$PgDumpBinary = "pg_dump"
+  [string]$PgDumpBinary = "pg_dump",
+  [string]$PgHost = "",
+  [string]$PgPort = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,16 +29,21 @@ Get-Content $EnvFile | ForEach-Object {
 $dbName = $vars["POSTGRES_DB"]
 $dbUser = $vars["POSTGRES_USER"]
 $dbPassword = $vars["POSTGRES_PASSWORD"]
+$dbHost = if ([string]::IsNullOrWhiteSpace($PgHost)) { $vars["POSTGRES_HOST"] } else { $PgHost }
+$dbPort = if ([string]::IsNullOrWhiteSpace($PgPort)) { $vars["POSTGRES_PORT"] } else { $PgPort }
 
 if ([string]::IsNullOrWhiteSpace($dbName) -or [string]::IsNullOrWhiteSpace($dbUser) -or [string]::IsNullOrWhiteSpace($dbPassword)) {
   throw "POSTGRES_DB/POSTGRES_USER/POSTGRES_PASSWORD must be set in $EnvFile"
 }
 
+$dbHost = if ([string]::IsNullOrWhiteSpace($dbHost)) { "localhost" } else { $dbHost }
+$dbPort = if ([string]::IsNullOrWhiteSpace($dbPort)) { "55433" } else { $dbPort }
+
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $backupPath = Join-Path $OutputDir "gis_app_$timestamp.dump"
 
 $env:PGPASSWORD = $dbPassword
-& $PgDumpBinary -h "localhost" -p 5433 -U $dbUser -d $dbName -F c -f $backupPath
+& $PgDumpBinary -h $dbHost -p $dbPort -U $dbUser -d $dbName -F c -f $backupPath
 if ($LASTEXITCODE -ne 0) {
   throw "pg_dump failed with exit code $LASTEXITCODE"
 }

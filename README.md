@@ -60,26 +60,11 @@ docker compose up -d --build
 ```
 
 Notes:
-- Dev DB mapping in root compose is `55433:5432` (to avoid conflict with `infra/db` stack on 5433).
+- This root compose stack is the official app runtime.
+- Dev DB mapping in root compose is `55433:5432`.
 - Optional Adminer in dev root compose: `docker compose --profile devtools up -d adminer`.
 - Dev compose now injects `MIGRATIONS_DIR=/workspace/infra/migrations` through `docker-compose.override.yml` so the bind-mounted repo and migration runner stay aligned.
-
-## Infra DB Local Stack (Alternative)
-
-```powershell
-cd infra\db
-Copy-Item .env.example .env
-docker compose up -d
-```
-
-- PostGIS: `localhost:5433`
-- Adminer: `http://localhost:8080`
-- If `5433` is already in use on Windows, identify/stop the owner first:
-```powershell
-docker ps --filter "publish=5433"
-netstat -ano | findstr :5433
-```
-- If you cannot free `5433`, change `infra/db/docker-compose.yml` port mapping before starting.
+- The old standalone `infra/db` compose stack is not part of the app runtime and should remain stopped unless you intentionally need an isolated DB experiment.
 
 ## API Local (without Docker)
 
@@ -90,8 +75,8 @@ Copy-Item .env.example .env
 # SUPER_ADMIN_EMAIL=superadmin@gov.lb
 # SUPER_ADMIN_PASSWORD=ChangeThis!Gov2026
 # SUPER_ADMIN_FULL_NAME=GIS Super Administrator
-# apps/api/.env.example targets the standalone local DB stack on localhost:5433 by default.
-# If you want host-side API commands to use the root Docker compose DB instead, change DB_PORT to 55433 explicitly.
+# apps/api/.env.example uses a separate local DB path by default.
+# For the official compose-backed runtime DB, change DB_PORT to 55433 explicitly.
 npm ci
 npm run migrate
 npm run dev
@@ -119,6 +104,13 @@ Clean runtime reset:
 - Safest command for the compose-backed app runtime:
   - `docker compose exec api sh -lc "ALLOW_RUNTIME_RESET=true npm run reset:runtime"`
 - This keeps extensions/types/schema/migration tracking, restores the singleton support-settings row, and re-creates the protected super admin from `SUPER_ADMIN_*`.
+
+Official Docker runtime commands:
+- Start: `docker compose up -d db migrate api`
+- Start with web reverse proxy too: `docker compose up -d db migrate api nginx`
+- Stop: `docker compose down`
+- Health: `Invoke-WebRequest http://localhost:3000/health`
+- DB host port for the official runtime: `55433`
 
 ## Mobile Local
 

@@ -47,6 +47,9 @@ SUPER_ADMIN_FULL_NAME=GIS Super Administrator
 docker compose up -d db migrate api
 ```
 
+Use only the repo-root compose stack for normal runtime testing.
+Do not start `infra/db/docker-compose.yml` unless you explicitly need an isolated standalone PostGIS experiment.
+
 4. Verify API health:
 
 ```powershell
@@ -182,6 +185,10 @@ docker compose logs db
 docker compose logs migrate
 docker compose logs api
 ```
+
+Official Docker runtime ports:
+- API: `http://localhost:3000`
+- DB: `localhost:55433`
 
 ### 5) Wrong role behavior in UI
 
