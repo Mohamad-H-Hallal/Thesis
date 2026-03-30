@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../../core/config/app_env.dart';
 import '../../../../core/constants/design_tokens.dart';
+import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_card.dart';
@@ -63,7 +64,10 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
       error: (error, _) => AppEmptyState(
         icon: Icons.error_outline,
         title: 'Categories unavailable',
-        message: '$error',
+        message: userFacingErrorMessage(
+          error,
+          fallback: 'Unable to load categories right now. Please try again.',
+        ),
         actionLabel: 'Retry',
         onAction: () => ref.invalidate(projectCategoriesProvider),
       ),

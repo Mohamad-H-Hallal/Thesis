@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 
 import '../../../core/config/app_env.dart';
+import '../../../core/network/api_error_message.dart';
 import '../../../core/network/api_client.dart';
 import '../domain/map_feature.dart';
 
@@ -46,12 +47,10 @@ class ApiMapRepository {
           })
           .toList(growable: false);
     } on DioException catch (error) {
-      final message = error.response?.data is Map<String, dynamic>
-          ? (error.response?.data as Map<String, dynamic>)['message']
-                    as String? ??
-                'Map features request failed.'
-          : 'Map features request failed.';
-      throw message;
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load project features right now. Please try again.',
+      );
     }
   }
 

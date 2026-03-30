@@ -1,4 +1,7 @@
+import 'package:dio/dio.dart';
+
 import '../../../core/config/app_env.dart';
+import '../../../core/network/api_error_message.dart';
 import '../../../core/network/api_client.dart';
 import '../domain/app_notification.dart';
 import '../domain/notifications_repository.dart';
@@ -12,40 +15,74 @@ class ApiNotificationsRepository implements NotificationsRepository {
 
   @override
   Future<List<AppNotification>> fetchNotifications() async {
-    final response = await _apiClient.dio.get<Map<String, dynamic>>(_notificationsBasePath);
-    final payload = response.data ?? const <String, dynamic>{};
-    final rows = (payload['data'] as List? ?? const <dynamic>[]);
-
-    return rows.map((row) {
-      final map = Map<String, dynamic>.from(row as Map);
-      final createdAtRaw = map['created_at'] as String?;
-      final timestamp = createdAtRaw == null
-          ? 'just now'
-          : _relativeTimestamp(DateTime.tryParse(createdAtRaw));
-
-      return AppNotification(
-        id: (map['id'] as String?) ?? '',
-        title: (map['title'] as String?) ?? 'Notification',
-        message: (map['message'] as String?) ?? '',
-        timestamp: timestamp,
-        isRead: (map['is_read'] as bool?) ?? false,
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        _notificationsBasePath,
       );
-    }).toList(growable: false);
+      final payload = response.data ?? const <String, dynamic>{};
+      final rows = (payload['data'] as List? ?? const <dynamic>[]);
+
+      return rows.map((row) {
+        final map = Map<String, dynamic>.from(row as Map);
+        final createdAtRaw = map['created_at'] as String?;
+        final timestamp = createdAtRaw == null
+            ? 'just now'
+            : _relativeTimestamp(DateTime.tryParse(createdAtRaw));
+
+        return AppNotification(
+          id: (map['id'] as String?) ?? '',
+          title: (map['title'] as String?) ?? 'Notification',
+          message: (map['message'] as String?) ?? '',
+          timestamp: timestamp,
+          isRead: (map['is_read'] as bool?) ?? false,
+        );
+      }).toList(growable: false);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load notifications right now. Please try again.',
+      );
+    }
   }
 
   @override
   Future<void> markAsRead(String notificationId) async {
-    await _apiClient.dio.put<void>('$_notificationsBasePath/$notificationId/read');
+    try {
+      await _apiClient.dio.put<void>(
+        '$_notificationsBasePath/$notificationId/read',
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to update this notification right now.',
+      );
+    }
   }
 
   @override
   Future<void> markAsUnread(String notificationId) async {
-    await _apiClient.dio.put<void>('$_notificationsBasePath/$notificationId/unread');
+    try {
+      await _apiClient.dio.put<void>(
+        '$_notificationsBasePath/$notificationId/unread',
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to update this notification right now.',
+      );
+    }
   }
 
   @override
   Future<void> markAllAsRead() async {
-    await _apiClient.dio.put<void>('$_notificationsBasePath/read-all');
+    try {
+      await _apiClient.dio.put<void>('$_notificationsBasePath/read-all');
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to update notifications right now.',
+      );
+    }
   }
 
   String _relativeTimestamp(DateTime? value) {

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/design_tokens.dart';
+import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/animated_reveal.dart';
@@ -195,7 +196,11 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
       error: (error, _) => AppEmptyState(
         icon: Icons.error_outline,
         title: 'Could not load project',
-        message: 'Error: $error',
+        message: userFacingErrorMessage(
+          error,
+          fallback:
+              'Unable to load project details right now. Please try again.',
+        ),
         actionLabel: 'Back',
         onAction: () => Navigator.of(context).maybePop(),
       ),

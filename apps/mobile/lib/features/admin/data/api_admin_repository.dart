@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../core/config/app_env.dart';
+import '../../../core/network/api_error_message.dart';
 import '../../../core/network/api_client.dart';
 import '../../auth/domain/auth_models.dart';
 import '../../projects/domain/project.dart';
@@ -27,7 +28,7 @@ class ApiAdminRepository implements AdminRepository {
     bool? isActive,
   }) async {
     return _run(() async {
-      final queryParameters = <String, dynamic>{'limit': 250};
+      final queryParameters = <String, dynamic>{'limit': 100};
       if (query?.trim().isNotEmpty ?? false) {
         queryParameters['q'] = query!.trim();
       }
@@ -58,7 +59,7 @@ class ApiAdminRepository implements AdminRepository {
     return _run(() async {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         '$_usersBasePath/contributor-requests',
-        queryParameters: <String, dynamic>{'status': status.name, 'limit': 250},
+        queryParameters: <String, dynamic>{'status': status.name, 'limit': 100},
       );
       final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
       return rows
@@ -164,7 +165,7 @@ class ApiAdminRepository implements AdminRepository {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         '$_assignmentsBasePath/managed',
         queryParameters: <String, dynamic>{
-          'limit': 500,
+          'limit': 100,
           if (status != null && status.trim().isNotEmpty) 'status': status,
         },
       );
@@ -423,7 +424,10 @@ class ApiAdminRepository implements AdminRepository {
       fetchManagedAssignments(),
       _apiClient.dio.get<Map<String, dynamic>>(
         _projectsBasePath,
-        queryParameters: const <String, dynamic>{'access_scope': 'all'},
+        queryParameters: const <String, dynamic>{
+          'access_scope': 'all',
+          'limit': 100,
+        },
       ),
     ]);
 
@@ -757,22 +761,6 @@ class ApiAdminRepository implements AdminRepository {
   }
 
   String _messageFrom(DioException error, String fallback) {
-    final data = error.response?.data;
-    if (data is Map<String, dynamic>) {
-      final message = data['message'] ?? data['error'];
-      if (message is String && message.trim().isNotEmpty) {
-        if (message.trim() == 'Email already registered') {
-          return 'This email is already registered.';
-        }
-        return message.trim();
-      }
-    }
-    if (data is String && data.trim().isNotEmpty) {
-      if (data.trim() == 'Email already registered') {
-        return 'This email is already registered.';
-      }
-      return data.trim();
-    }
-    return fallback;
+    return userFacingDioMessage(error, fallback: fallback);
   }
 }

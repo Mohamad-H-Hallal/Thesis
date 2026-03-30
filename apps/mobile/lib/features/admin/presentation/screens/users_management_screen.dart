@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/constants/design_tokens.dart';
+import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
@@ -183,7 +184,10 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
       error: (error, _) => AppEmptyState(
         icon: Icons.error_outline,
         title: 'Users unavailable',
-        message: '$error',
+        message: userFacingErrorMessage(
+          error,
+          fallback: 'Unable to load users right now. Please try again.',
+        ),
         actionLabel: 'Retry',
         onAction: () => ref.invalidate(managedUsersProvider),
       ),

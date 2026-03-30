@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/design_tokens.dart';
+import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_card.dart';
@@ -223,7 +224,11 @@ class _ProjectAssignmentsScreenState
       error: (error, _) => AppEmptyState(
         icon: Icons.error_outline,
         title: 'Assignments unavailable',
-        message: '$error',
+        message: userFacingErrorMessage(
+          error,
+          fallback:
+              'Unable to load project assignments right now. Please try again.',
+        ),
         actionLabel: 'Back',
         onAction: () => Navigator.of(context).maybePop(),
       ),
@@ -241,7 +246,11 @@ class _ProjectAssignmentsScreenState
           error: (error, _) => AppEmptyState(
             icon: Icons.error_outline,
             title: 'Assigned contributors unavailable',
-            message: '$error',
+            message: userFacingErrorMessage(
+              error,
+              fallback:
+                  'Unable to load project assignments right now. Please try again.',
+            ),
             actionLabel: 'Retry',
             onAction: () =>
                 ref.invalidate(projectAssignmentsProvider(widget.projectId)),
@@ -251,7 +260,11 @@ class _ProjectAssignmentsScreenState
             error: (error, _) => AppEmptyState(
               icon: Icons.error_outline,
               title: 'Available contributors unavailable',
-              message: '$error',
+              message: userFacingErrorMessage(
+                error,
+                fallback:
+                    'Unable to load project assignments right now. Please try again.',
+              ),
               actionLabel: 'Retry',
               onAction: () => ref.invalidate(managedUsersProvider),
             ),

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/design_tokens.dart';
+import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_card.dart';
@@ -37,7 +38,10 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
       error: (error, _) => AppEmptyState(
         icon: Icons.error_outline,
         title: 'Assignments unavailable',
-        message: '$error',
+        message: userFacingErrorMessage(
+          error,
+          fallback: 'Unable to load assignments right now. Please try again.',
+        ),
         actionLabel: 'Retry',
         onAction: () =>
             ref.invalidate(projectListProvider(ProjectViewScope.all)),
@@ -47,7 +51,10 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
         error: (error, _) => AppEmptyState(
           icon: Icons.error_outline,
           title: 'Assignment data unavailable',
-          message: '$error',
+          message: userFacingErrorMessage(
+            error,
+            fallback: 'Unable to load assignments right now. Please try again.',
+          ),
           actionLabel: 'Retry',
           onAction: () => ref.invalidate(managedAssignmentsProvider),
         ),

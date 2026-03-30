@@ -1,4 +1,5 @@
 import '../../../core/config/app_env.dart';
+import '../../../core/network/api_error_message.dart';
 import '../../../core/network/api_client.dart';
 import 'package:dio/dio.dart';
 import '../../auth/domain/auth_models.dart';
@@ -18,18 +19,25 @@ class ApiProjectsRepository implements ProjectsRepository {
     required UserRole role,
     required ProjectViewScope scope,
   }) async {
-    final response = await _apiClient.dio.get<Map<String, dynamic>>(
-      _projectsBasePath,
-      queryParameters: <String, dynamic>{
-        'access_scope': scope.apiValue,
-        'limit': 200,
-      },
-    );
-    final payload = response.data ?? const <String, dynamic>{};
-    final rows = (payload['data'] as List? ?? const <dynamic>[]);
-    return rows
-        .map((row) => _toProjectSummary(Map<String, dynamic>.from(row as Map)))
-        .toList(growable: false);
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        _projectsBasePath,
+        queryParameters: <String, dynamic>{
+          'access_scope': scope.apiValue,
+          'limit': 100,
+        },
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      final rows = (payload['data'] as List? ?? const <dynamic>[]);
+      return rows
+          .map((row) => _toProjectSummary(Map<String, dynamic>.from(row as Map)))
+          .toList(growable: false);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load projects right now. Please try again.',
+      );
+    }
   }
 
   @override
@@ -75,14 +83,10 @@ class ApiProjectsRepository implements ProjectsRepository {
         '${AppEnv.apiVersionPrefix}/assignments/join/$projectId',
       );
     } on DioException catch (error) {
-      final data = error.response?.data;
-      if (data is Map<String, dynamic>) {
-        final message = data['message'] ?? data['error'];
-        if (message is String && message.trim().isNotEmpty) {
-          throw message.trim();
-        }
-      }
-      throw 'Unable to request contributor access for this project.';
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to request contributor access for this project.',
+      );
     }
   }
 
@@ -93,14 +97,10 @@ class ApiProjectsRepository implements ProjectsRepository {
         '${AppEnv.apiVersionPrefix}/assignments/join/$projectId',
       );
     } on DioException catch (error) {
-      final data = error.response?.data;
-      if (data is Map<String, dynamic>) {
-        final message = data['message'] ?? data['error'];
-        if (message is String && message.trim().isNotEmpty) {
-          throw message.trim();
-        }
-      }
-      throw 'Unable to cancel this project access request.';
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to cancel this project access request.',
+      );
     }
   }
 

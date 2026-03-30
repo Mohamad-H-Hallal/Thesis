@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../../../core/constants/design_tokens.dart';
+import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/sync/sync_controller.dart';
@@ -55,7 +56,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       error: (error, _) => AppEmptyState(
         icon: Icons.error_outline,
         title: 'Map data unavailable',
-        message: '$error',
+        message: userFacingErrorMessage(
+          error,
+          fallback: 'Unable to load map data right now. Please try again.',
+        ),
         actionLabel: 'Retry',
         onAction: () => ref.invalidate(mapProjectsProvider),
       ),
@@ -222,7 +226,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             error: (error, _) => AppEmptyState(
               icon: Icons.error_outline,
               title: 'Project map unavailable',
-              message: '$error',
+              message: userFacingErrorMessage(
+                error,
+                fallback:
+                    'Unable to load project features right now. Please try again.',
+              ),
               actionLabel: 'Retry',
               onAction: () =>
                   ref.invalidate(projectMapFeaturesProvider(project.id)),

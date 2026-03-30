@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/design_tokens.dart';
+import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/animated_reveal.dart';
@@ -68,7 +69,10 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
               child: AppEmptyState(
                 icon: Icons.error_outline,
                 title: 'Unable to load projects',
-                message: 'Error: $error',
+                message: userFacingErrorMessage(
+                  error,
+                  fallback: 'Unable to load projects right now. Please try again.',
+                ),
                 actionLabel: 'Retry',
                 onAction: () =>
                     ref.invalidate(projectListProvider(widget.scope)),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/constants/design_tokens.dart';
+import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/widgets/animated_reveal.dart';
 import '../../../../core/widgets/app_card.dart';
@@ -30,7 +31,11 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
       error: (error, _) => AppEmptyState(
         icon: Icons.error_outline,
         title: 'Notifications unavailable',
-        message: '$error',
+        message: userFacingErrorMessage(
+          error,
+          fallback:
+              'Unable to load notifications right now. Please try again.',
+        ),
         actionLabel: 'Retry',
         onAction: () =>
             ref.read(notificationsControllerProvider.notifier).load(),
