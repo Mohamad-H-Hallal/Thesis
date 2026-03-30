@@ -9,6 +9,8 @@
 nvm use
 ```
 2. Copy `.env.example` to `.env` and fill secrets.
+   - Default local DB connection is `localhost:5433`, which matches the standalone local DB stack under `infra/db`.
+   - If you want host-side API commands to hit the root Docker compose DB instead, change `DB_PORT` to `55433` explicitly.
 3. Install dependencies:
 ```bash
 npm ci
@@ -23,6 +25,7 @@ npm run seed
 ```
 5b. Seed realistic staging profile (phase 11):
 ```bash
+ALLOW_DESTRUCTIVE_STAGING_RESET=true
 npm run seed:staging
 npm run staging:verify
 ```
@@ -44,6 +47,7 @@ npm run dev
 - Phase 11 staging profile seed: `npm run seed:staging`
 - Phase 11 staging verification: `npm run staging:verify`
 - Phase 11 full staging flow: `npm run phase11:staging`
+- `seed:staging` is destructive when `STAGING_SEED_RESET=true`; only run it against an isolated DB or with an explicit `ALLOW_DESTRUCTIVE_STAGING_RESET=true` opt-in.
 - Seed: `npm run seed`
 - CI workflow: `.github/workflows/ci.yml`
 - Staging readiness workflow: `.github/workflows/staging-readiness.yml`

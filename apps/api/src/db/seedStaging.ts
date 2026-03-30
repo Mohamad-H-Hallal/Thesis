@@ -2,6 +2,8 @@ import 'dotenv/config';
 import bcrypt from 'bcryptjs';
 import type { PoolClient } from 'pg';
 import { pool } from '../config/database';
+import { validateEnv } from '../config/env';
+import { ensureSuperAdminExists } from '../lib/userWorkflow';
 const logger = require('../utils/logger');
 
 interface SeedConfig {
@@ -79,6 +81,27 @@ const buildConfig = (): SeedConfig => ({
   exportsPerProject: parseIntEnv('STAGING_SEED_EXPORTS_PER_PROJECT', 2, 1),
   defaultPassword: process.env.STAGING_SEED_DEFAULT_PASSWORD ?? 'Phase11@Seed123',
 });
+
+const assertResetIsSafe = (config: SeedConfig): void => {
+  if (!config.reset) {
+    return;
+  }
+
+  const nodeEnv = String(process.env.NODE_ENV ?? 'development').trim().toLowerCase();
+  const allowDestructiveReset =
+    String(process.env.ALLOW_DESTRUCTIVE_STAGING_RESET ?? '')
+      .trim()
+      .toLowerCase() === 'true';
+
+  if (nodeEnv === 'test' || allowDestructiveReset) {
+    return;
+  }
+
+  throw new Error(
+    'Refusing to run STAGING_SEED_RESET=true outside an isolated test environment. ' +
+      'Use a dedicated staging database or set ALLOW_DESTRUCTIVE_STAGING_RESET=true intentionally.'
+  );
+};
 
 const randomInt = (maxExclusive: number): number => Math.floor(Math.random() * maxExclusive);
 
@@ -702,6 +725,7 @@ const getSummaryCounts = async (
 
 const run = async (): Promise<void> => {
   const config = buildConfig();
+  assertResetIsSafe(config);
   const seedTag = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
   const client = await pool.connect();
   const start = Date.now();
@@ -738,6 +762,9 @@ const run = async (): Promise<void> => {
     await seedSupportSettings(client);
 
     await client.query('COMMIT');
+
+    const env = validateEnv();
+    await ensureSuperAdminExists(env);
 
     const summary = await getSummaryCounts(client);
     const elapsedMs = Date.now() - start;

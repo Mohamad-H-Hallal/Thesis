@@ -90,6 +90,8 @@ Copy-Item .env.example .env
 # SUPER_ADMIN_EMAIL=superadmin@gov.lb
 # SUPER_ADMIN_PASSWORD=ChangeThis!Gov2026
 # SUPER_ADMIN_FULL_NAME=GIS Super Administrator
+# apps/api/.env.example targets the standalone local DB stack on localhost:5433 by default.
+# If you want host-side API commands to use the root Docker compose DB instead, change DB_PORT to 55433 explicitly.
 npm ci
 npm run migrate
 npm run dev
@@ -106,6 +108,11 @@ Super admin bootstrap:
 - Set `SUPER_ADMIN_PASSWORD=ChangeThis!Gov2026`
 - Set `SUPER_ADMIN_FULL_NAME=GIS Super Administrator`
 - Configure them in the active `.env` file or Docker environment before first startup.
+
+Staging seed safety:
+- `npm run seed:staging` and `npm run phase11:staging` are destructive when `STAGING_SEED_RESET=true`.
+- Use them only against an isolated staging/test database.
+- Outside CI/test, set `ALLOW_DESTRUCTIVE_STAGING_RESET=true` explicitly if you intentionally want that reset.
 
 ## Mobile Local
 

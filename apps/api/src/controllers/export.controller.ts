@@ -837,7 +837,8 @@ const cleanupOldExports = async () => {
 
       await query(
         `UPDATE shapefile_export 
-         SET file_path = NULL, 
+         SET status = 'failed',
+             file_path = NULL, 
              error_message = 'File deleted after retention period'
          WHERE id = $1`,
         [exp.id]

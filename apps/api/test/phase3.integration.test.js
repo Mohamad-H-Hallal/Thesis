@@ -268,6 +268,36 @@ describe('Phase 3 geospatial integration', () => {
       status: 'approved',
       collectedAt: '2026-02-10T08:00:00Z',
     });
+    await pool.query(
+      `INSERT INTO spatial_feature (
+         project_id,
+         collected_by_user_id,
+         geom,
+         attributes,
+         status,
+         collected_at,
+         reviewed_by_user_id,
+         reviewed_at
+       )
+       SELECT
+         $1,
+         $2,
+         ST_SetSRID(
+           ST_MakePoint(
+             36.5 + ((gs % 25) * 0.02),
+             34.6 + ((gs / 25) * 0.01)
+           ),
+           4326
+         ),
+         '{"tree":"olive"}'::jsonb,
+         'approved'::feature_status,
+         NOW() - ((gs % 30) || ' hours')::interval,
+         $2,
+         NOW() - ((gs % 30) || ' hours')::interval
+       FROM generate_series(1, 400) AS gs`,
+      [projectId, userId]
+    );
+    await pool.query('ANALYZE spatial_feature');
 
     const client = await pool.connect();
     try {
