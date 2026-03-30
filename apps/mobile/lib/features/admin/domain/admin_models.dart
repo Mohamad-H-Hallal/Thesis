@@ -36,9 +36,7 @@ class ManagedUserSummary {
   final bool canBlock;
   final bool canUnblock;
 
-  String get roleLabel => role == UserRole.admin && isProtectedSuperAdmin
-      ? 'Super Admin'
-      : role.label;
+  String get roleLabel => role.label;
 
   String get accountStateLabel {
     switch (accountState) {

@@ -262,6 +262,13 @@ notificationRouter.put(
   asyncHandler(notificationController.markAsRead),
 );
 
+notificationRouter.put(
+  '/:notificationId/unread',
+  uuidValidation('notificationId'),
+  validate,
+  asyncHandler(notificationController.markAsUnread),
+);
+
 // Mark all as read
 notificationRouter.put('/read-all', asyncHandler(notificationController.markAllAsRead));
 

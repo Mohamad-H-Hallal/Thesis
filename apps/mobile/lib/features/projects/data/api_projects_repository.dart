@@ -20,7 +20,10 @@ class ApiProjectsRepository implements ProjectsRepository {
   }) async {
     final response = await _apiClient.dio.get<Map<String, dynamic>>(
       _projectsBasePath,
-      queryParameters: <String, dynamic>{'access_scope': scope.apiValue},
+      queryParameters: <String, dynamic>{
+        'access_scope': scope.apiValue,
+        'limit': 200,
+      },
     );
     final payload = response.data ?? const <String, dynamic>{};
     final rows = (payload['data'] as List? ?? const <dynamic>[]);

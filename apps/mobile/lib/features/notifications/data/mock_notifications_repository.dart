@@ -37,6 +37,11 @@ class MockNotificationsRepository implements NotificationsRepository {
   }
 
   @override
+  Future<void> markAsUnread(String notificationId) async {
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+  }
+
+  @override
   Future<void> markAllAsRead() async {
     await Future<void>.delayed(const Duration(milliseconds: 120));
   }

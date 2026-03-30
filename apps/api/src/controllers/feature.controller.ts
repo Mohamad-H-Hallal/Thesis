@@ -657,7 +657,9 @@ const reviewFeature = async (req: Request, res: Response): Promise<void> => {
        VALUES ($1, 'review_completed', $2, $3, $4)`,
       [
         featureCheck.rows[0].collected_by_user_id,
-        `Feature ${status}`,
+        status === 'approved'
+            ? `Feature approved in ${featureCheck.rows[0].project_name}`
+            : `Feature rejected in ${featureCheck.rows[0].project_name}`,
         status === 'approved'
           ? `Your feature in ${featureCheck.rows[0].project_name} was approved${review_notes ? ` with note: ${review_notes}` : '.'}`
           : `Your feature in ${featureCheck.rows[0].project_name} was rejected${review_notes ? ` with note: ${review_notes}` : '.'}`,

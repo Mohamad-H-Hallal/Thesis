@@ -217,7 +217,6 @@ class _ProjectAssignmentsScreenState
       projectAssignmentsProvider(widget.projectId),
     );
     final usersAsync = ref.watch(managedUsersProvider);
-    final requestsAsync = ref.watch(managedAssignmentsProvider);
 
     return projectAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -257,12 +256,19 @@ class _ProjectAssignmentsScreenState
               onAction: () => ref.invalidate(managedUsersProvider),
             ),
             data: (users) {
-              final assignedContributorIds = assignments
-                  .map((assignment) => assignment.userId)
-                  .toSet();
               final approvedAssignments = assignments
                   .where((assignment) => assignment.status == 'approved')
                   .toList(growable: false);
+              final pendingRequests = assignments
+                  .where((assignment) => assignment.status == 'pending')
+                  .toList(growable: false);
+              final rejectedRequestCount = assignments
+                  .where((assignment) => assignment.status == 'rejected')
+                  .length;
+              final reservedContributorIds = assignments
+                  .where((assignment) => assignment.status != 'rejected')
+                  .map((assignment) => assignment.userId)
+                  .toSet();
               final availableContributors = _filterUsers(
                 users
                     .where(
@@ -270,23 +276,10 @@ class _ProjectAssignmentsScreenState
                           user.role == UserRole.contributor &&
                           user.isActive &&
                           !user.isBlocked &&
-                          !assignedContributorIds.contains(user.id),
+                          !reservedContributorIds.contains(user.id),
                     )
                     .toList(growable: false),
               );
-
-              final projectRequests =
-                  requestsAsync.valueOrNull
-                      ?.where((item) => item.projectId == widget.projectId)
-                      .toList(growable: false) ??
-                  const <ManagedAssignmentSummary>[];
-              final pendingRequests = projectRequests
-                  .where((item) => item.status == 'pending')
-                  .toList(growable: false);
-              final rejectedRequests = projectRequests
-                  .where((item) => item.status == 'rejected')
-                  .length;
-              final pendingRequestCount = pendingRequests.length;
 
               return ListView(
                 children: [
@@ -315,7 +308,7 @@ class _ProjectAssignmentsScreenState
                         ),
                         const SizedBox(height: AppSpacing.xs),
                         Text(
-                          'Pending: $pendingRequestCount • Rejected: $rejectedRequests',
+                          'Pending: ${pendingRequests.length} • Rejected: $rejectedRequestCount',
                           softWrap: true,
                         ),
                         const SizedBox(height: AppSpacing.sm),
@@ -569,9 +562,11 @@ class _PendingRequestCard extends StatelessWidget {
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: const [
-              Chip(label: Text('Contributor')),
-              Chip(label: Text('Pending request')),
+            children: [
+              const Chip(label: Text('Contributor')),
+              const Chip(label: Text('Pending request')),
+              if (assignment.projectStatus.trim().isNotEmpty)
+                Chip(label: Text('Project ${assignment.projectStatus}')),
             ],
           ),
           const SizedBox(height: AppSpacing.sm),

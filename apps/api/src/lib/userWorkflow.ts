@@ -99,7 +99,7 @@ const notifyActiveAdminsAboutContributorRequest = async (
       userId: admin.id,
       type: 'contributor_request',
       title: 'Contributor approval pending',
-      message: `${fullName} (${email}) requested contributor access and is waiting for review.`,
+      message: `${fullName} (${email}) submitted a contributor access request and is waiting for approval.`,
       metadata: {
         user_id: userId,
         requester_name: fullName,
@@ -125,7 +125,8 @@ const notifyContributorRequestSubmitted = async (
     userId,
     type: 'contributor_request',
     title: 'Contributor request submitted',
-    message: 'Your contributor request was submitted and is awaiting admin approval before you can log in.',
+    message:
+      'Your contributor request was submitted successfully and is awaiting admin approval before you can log in.',
     metadata: {
       user_id: userId,
       requester_name: fullName,

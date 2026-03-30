@@ -347,6 +347,28 @@ const notificationController = {
     });
   },
 
+  markAsUnread: async (req, res) => {
+    const { notificationId } = req.params;
+
+    const result = await query(
+      `UPDATE notification
+       SET is_read = false
+       WHERE id = $1 AND user_id = $2
+       RETURNING *`,
+      [notificationId, req.user.id],
+    );
+
+    if (result.rows.length === 0) {
+      throw new AppError('Notification not found', 404);
+    }
+
+    res.json({
+      success: true,
+      message: 'Notification marked as unread',
+      data: result.rows[0],
+    });
+  },
+
   // Mark all notifications as read
   markAllAsRead: async (req, res) => {
     await query('UPDATE notification SET is_read = true WHERE user_id = $1 AND is_read = false', [
@@ -979,7 +1001,8 @@ const userController = {
         userId,
         type: 'contributor_approved',
         title: 'Contributor access approved',
-        message: 'Your contributor access request was approved. You can now log in and use contributor tools.',
+        message:
+          'Your contributor access request was approved. You can now sign in and use contributor tools.',
         metadata: {
           user_id: userId,
           approved_by_user_id: req.user?.id,
@@ -1029,7 +1052,7 @@ const userController = {
         type: 'contributor_rejected',
         title: 'Contributor request rejected',
         message:
-          'Your contributor request was rejected. Your account stays blocked from contributor login until an administrator changes this decision.',
+          'Your contributor request was rejected. Contributor login stays unavailable until an administrator changes this decision.',
         metadata: {
           user_id: userId,
           rejected_by_user_id: req.user?.id,

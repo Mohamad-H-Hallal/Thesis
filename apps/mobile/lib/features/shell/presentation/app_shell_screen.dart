@@ -117,6 +117,7 @@ class AppShellScreen extends ConsumerWidget {
                   Expanded(
                     child: AppScaffold(
                       title: selectedItem.label,
+                      showBackButton: false,
                       actions: shellActions,
                       showOfflineBanner: _shouldShowStatusBanner(
                         session.user,
@@ -144,6 +145,7 @@ class AppShellScreen extends ConsumerWidget {
 
         return AppScaffold(
           title: selectedItem.label,
+          showBackButton: false,
           actions: shellActions,
           showOfflineBanner: _shouldShowStatusBanner(
             session.user,
@@ -273,7 +275,10 @@ class AppShellScreen extends ConsumerWidget {
     if (user.role == UserRole.viewer || user.role == UserRole.admin) {
       return false;
     }
-    return path == AppRoutes.drafts || path == AppRoutes.submissions;
+    return path == AppRoutes.projects ||
+        path == AppRoutes.assignedProjects ||
+        path == AppRoutes.drafts ||
+        path == AppRoutes.submissions;
   }
 
   List<_ShellItem> _mobilePrimaryItems(AppUser user, List<_ShellItem> items) {

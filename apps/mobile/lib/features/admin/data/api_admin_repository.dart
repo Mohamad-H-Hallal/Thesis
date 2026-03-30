@@ -27,7 +27,7 @@ class ApiAdminRepository implements AdminRepository {
     bool? isActive,
   }) async {
     return _run(() async {
-      final queryParameters = <String, dynamic>{'limit': 100};
+      final queryParameters = <String, dynamic>{'limit': 250};
       if (query?.trim().isNotEmpty ?? false) {
         queryParameters['q'] = query!.trim();
       }
@@ -58,7 +58,7 @@ class ApiAdminRepository implements AdminRepository {
     return _run(() async {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         '$_usersBasePath/contributor-requests',
-        queryParameters: <String, dynamic>{'status': status.name, 'limit': 100},
+        queryParameters: <String, dynamic>{'status': status.name, 'limit': 250},
       );
       final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
       return rows
@@ -164,7 +164,7 @@ class ApiAdminRepository implements AdminRepository {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         '$_assignmentsBasePath/managed',
         queryParameters: <String, dynamic>{
-          'limit': 100,
+          'limit': 500,
           if (status != null && status.trim().isNotEmpty) 'status': status,
         },
       );

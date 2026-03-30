@@ -312,11 +312,11 @@ const processExport = async (exportId, projectName) => {
 
       await client.query(
         `INSERT INTO notification (user_id, type, title, message, metadata)
-         VALUES ($1, 'export_ready', 'Export Ready', 
+         VALUES ($1, 'export_ready', 'Export ready for download',
                  $2, $3)`,
         [
           exportData.requested_by_user_id,
-          `${projectName} ${format.toUpperCase()} export is ready for download.`,
+          `${projectName} export (${format.toUpperCase()}) is ready for download.`,
           JSON.stringify({
             export_id: exportId,
             project_id: projectId,
@@ -338,10 +338,10 @@ const processExport = async (exportId, projectName) => {
       format,
     });
   } catch (error: any) {
-    logger.error('Export processing failed:', { 
-      exportId, 
-      error: error.message, 
-      stack: error.stack 
+    logger.error('Export processing failed:', {
+      exportId,
+      error: error.message,
+      stack: error.stack
     });
 
     await transaction(async (client) => {
@@ -355,21 +355,25 @@ const processExport = async (exportId, projectName) => {
       );
 
       const exportDetails = await client.query(
-        'SELECT requested_by_user_id, project_id FROM shapefile_export WHERE id = $1',
+        `SELECT se.requested_by_user_id, se.project_id, p.name AS project_name
+         FROM shapefile_export se
+         JOIN project p ON p.id = se.project_id
+         WHERE se.id = $1`,
         [exportId]
       );
 
       if (exportDetails.rows.length > 0) {
         await client.query(
           `INSERT INTO notification (user_id, type, title, message, metadata)
-           VALUES ($1, 'export_ready', 'Export Failed', 
+           VALUES ($1, 'export_ready', 'Export failed',
                    $2, $3)`,
           [
             exportDetails.rows[0].requested_by_user_id,
-            `The export for this project failed: ${error.message}`,
+            `${exportDetails.rows[0].project_name} export failed. ${error.message}`,
             JSON.stringify({
               export_id: exportId,
               project_id: exportDetails.rows[0].project_id,
+              project_name: exportDetails.rows[0].project_name,
               status: 'failed',
               error: error.message,
             }),

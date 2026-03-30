@@ -16,14 +16,14 @@ class OfflineBanner extends ConsumerWidget {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(color: appearance.background),
       child: Wrap(
-        spacing: AppSpacing.sm,
+        spacing: AppSpacing.xs,
         runSpacing: AppSpacing.xs,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          Icon(appearance.icon, size: 18, color: appearance.foreground),
+          Icon(appearance.icon, size: 16, color: appearance.foreground),
           Text(
             appearance.title,
             style: TextStyle(
@@ -34,26 +34,27 @@ class OfflineBanner extends ConsumerWidget {
           Text(
             appearance.message,
             style: TextStyle(color: appearance.foreground),
+            softWrap: true,
           ),
           if (syncState.isReady && syncState.lastSyncAt != null)
-            Chip(
-              label: Text('Last sync ${_formatTime(syncState.lastSyncAt!)}'),
-              backgroundColor: scheme.surface.withValues(alpha: 0.7),
+            _SyncMetaChip(
+              label: 'Updated ${_formatTime(syncState.lastSyncAt!)}',
+              background: scheme.surface.withValues(alpha: 0.7),
             ),
           if (syncState.isReady && syncState.pendingCount > 0)
-            Chip(
-              label: Text('${syncState.pendingCount} queued'),
-              backgroundColor: scheme.surface.withValues(alpha: 0.7),
+            _SyncMetaChip(
+              label: '${syncState.pendingCount} queued',
+              background: scheme.surface.withValues(alpha: 0.7),
             ),
           if (syncState.isReady && syncState.conflictCount > 0)
-            Chip(
-              label: Text('${syncState.conflictCount} conflicts'),
-              backgroundColor: scheme.errorContainer,
+            _SyncMetaChip(
+              label: '${syncState.conflictCount} conflicts',
+              background: scheme.errorContainer,
             ),
           if (syncState.isReady && syncState.deadLetterCount > 0)
-            Chip(
-              label: Text('${syncState.deadLetterCount} blocked'),
-              backgroundColor: scheme.errorContainer,
+            _SyncMetaChip(
+              label: '${syncState.deadLetterCount} blocked',
+              background: scheme.errorContainer,
             ),
         ],
       ),
@@ -65,8 +66,7 @@ class OfflineBanner extends ConsumerWidget {
       return const _BannerAppearance(
         icon: Icons.sync,
         title: 'Preparing sync',
-        message:
-            'Local sync storage is starting.',
+        message: 'Local sync storage is starting.',
         backgroundSeed: _BannerSeed.info,
       );
     }
@@ -94,8 +94,8 @@ class OfflineBanner extends ConsumerWidget {
     if (state.conflictCount > 0 || state.deadLetterCount > 0) {
       return const _BannerAppearance(
         icon: Icons.error_outline,
-        title: 'Sync attention needed',
-        message: 'Some queued items need review before they can sync cleanly.',
+        title: 'Sync needs attention',
+        message: 'Some queued items need review before they can sync.',
         backgroundSeed: _BannerSeed.error,
       );
     }
@@ -103,7 +103,7 @@ class OfflineBanner extends ConsumerWidget {
     if (state.pendingCount > 0) {
       return const _BannerAppearance(
         icon: Icons.cloud_upload_outlined,
-        title: 'Queue active',
+        title: 'Sync needed',
         message: 'Queued offline work is waiting for the next sync run.',
         backgroundSeed: _BannerSeed.warning,
       );
@@ -111,7 +111,7 @@ class OfflineBanner extends ConsumerWidget {
 
     return const _BannerAppearance(
       icon: Icons.cloud_done_outlined,
-      title: 'Sync healthy',
+      title: 'Sync up to date',
       message: 'No queued collection changes need syncing.',
       backgroundSeed: _BannerSeed.success,
     );
@@ -122,6 +122,28 @@ class OfflineBanner extends ConsumerWidget {
     final hour = local.hour.toString().padLeft(2, '0');
     final minute = local.minute.toString().padLeft(2, '0');
     return '$hour:$minute';
+  }
+}
+
+class _SyncMetaChip extends StatelessWidget {
+  const _SyncMetaChip({required this.label, required this.background});
+
+  final String label;
+  final Color background;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+    );
   }
 }
 

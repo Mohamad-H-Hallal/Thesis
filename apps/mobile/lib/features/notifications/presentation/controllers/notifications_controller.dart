@@ -50,6 +50,35 @@ class NotificationsController
     }
   }
 
+  Future<void> markAsUnread(String id) async {
+    final currentItems = state.valueOrNull;
+    if (currentItems == null) {
+      await load();
+      return;
+    }
+
+    final alreadyUnread = currentItems.any(
+      (item) => item.id == id && !item.isRead,
+    );
+    if (alreadyUnread) {
+      return;
+    }
+
+    state = AsyncData(
+      currentItems
+          .map(
+            (item) => item.id == id ? item.copyWith(isRead: false) : item,
+          )
+          .toList(growable: false),
+    );
+
+    try {
+      await _repository.markAsUnread(id);
+    } catch (_) {
+      await load();
+    }
+  }
+
   Future<void> markAllAsRead() async {
     final currentItems = state.valueOrNull;
     if (currentItems == null || currentItems.every((item) => item.isRead)) {

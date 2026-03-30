@@ -39,6 +39,11 @@ class ApiNotificationsRepository implements NotificationsRepository {
   }
 
   @override
+  Future<void> markAsUnread(String notificationId) async {
+    await _apiClient.dio.put<void>('$_notificationsBasePath/$notificationId/unread');
+  }
+
+  @override
   Future<void> markAllAsRead() async {
     await _apiClient.dio.put<void>('$_notificationsBasePath/read-all');
   }

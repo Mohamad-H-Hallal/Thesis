@@ -30,7 +30,7 @@ class AppUser {
 
   bool get isSuperAdmin => role == UserRole.admin && isProtectedSuperAdmin;
 
-  String get roleLabel => isSuperAdmin ? 'Super Admin' : role.label;
+  String get roleLabel => role.label;
 }
 
 class AuthSession {

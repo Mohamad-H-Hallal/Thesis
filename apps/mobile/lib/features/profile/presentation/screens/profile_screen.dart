@@ -257,11 +257,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 runSpacing: AppSpacing.sm,
                 children: [
                   Chip(
-                    label: Text(
-                      widget.isSuperAdmin
-                          ? 'Super Admin'
-                          : widget.userRole.label,
-                    ),
+                    label: Text(widget.userRole.label),
                   ),
                   const Chip(label: Text('Session active')),
                 ],
@@ -281,9 +277,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: AppSpacing.sm),
-                Text(
-                  'Support settings are unavailable right now: $error',
+                const Text(
+                  'Support contact details are currently unavailable. Please try again later.',
                   softWrap: true,
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                OutlinedButton.icon(
+                  onPressed: () => ref.invalidate(supportSettingsProvider),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry'),
                 ),
               ],
             ),
@@ -332,7 +334,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 const SizedBox(height: AppSpacing.sm),
                 if (!settings.isConfigured)
                   const Text(
-                    'Support contact details are not configured yet. The protected super admin can add them here.',
+                    'Support contact details are currently unavailable. Please try again later.',
                   )
                 else
                   Wrap(

@@ -70,6 +70,19 @@ const getAllProjects = async (req, res) => {
   let queryText = `
     SELECT DISTINCT p.*, pc.name as category_name,
            u.full_name as created_by_name,
+           (SELECT COUNT(*)
+            FROM spatial_feature sf
+            WHERE sf.project_id = p.id
+              AND sf.status = 'approved') as approved_features,
+           (SELECT COUNT(*)
+            FROM spatial_feature sf
+            WHERE sf.project_id = p.id
+              AND sf.status = 'pending_review') as pending_features,
+           (SELECT COUNT(*)
+            FROM project_assignment pac
+            WHERE pac.project_id = p.id
+              AND pac.role = 'contributor'
+              AND pac.status = 'approved') as contributor_count,
            pa_user.role as current_user_assignment_role,
            pa_user.status as current_user_assignment_status
     FROM project p

@@ -93,13 +93,25 @@ const getProjectAssignments = async (req, res) => {
   const { projectId } = req.params;
 
   const result = await query(
-    `SELECT pa.*, u.full_name, u.email, u.phone
+    `SELECT pa.*,
+            p.name AS project_name,
+            p.status AS project_status,
+            u.full_name,
+            u.email,
+            u.phone
      FROM project_assignment pa
+     JOIN project p ON p.id = pa.project_id
      JOIN "user" u ON pa.user_id = u.id
      WHERE pa.project_id = $1
        AND pa.role = 'contributor'
-       AND pa.status = 'approved'
-     ORDER BY u.full_name ASC, pa.created_at DESC`,
+     ORDER BY
+       CASE pa.status
+         WHEN 'approved' THEN 0
+         WHEN 'pending' THEN 1
+         ELSE 2
+       END,
+       u.full_name ASC,
+       pa.created_at DESC`,
     [projectId],
   );
 
@@ -166,8 +178,8 @@ const createAssignment = async (req, res) => {
     await createNotification(client, {
       userId: user_id,
       type: 'assignment',
-      title: 'Project assignment approved',
-      message: `You were assigned to ${project.name} as a contributor. Collection access is now available.`,
+      title: 'Contributor assignment approved',
+      message: `You were assigned to ${project.name}. Contributor collection access is now available for this project.`,
       metadata: {
         assignment_id: row.id,
         project_id,
@@ -293,7 +305,7 @@ const requestJoinProject = async (req, res) => {
         userId: admin.id,
         type: 'assignment',
         title: 'Project access request pending',
-        message: `${req.user.full_name} requested contributor access to ${project.name}.`,
+        message: `${req.user.full_name} requested contributor access to ${project.name}. Review the request to approve or reject project assignment access.`,
         metadata: {
           assignment_id: result.rows[0].id,
           project_id: projectId,
@@ -308,7 +320,7 @@ const requestJoinProject = async (req, res) => {
       userId: req.user.id,
       type: 'assignment',
       title: 'Project access request submitted',
-      message: `Your request to join ${project.name} as a contributor is pending admin review.`,
+      message: `Your request to join ${project.name} as a contributor is pending admin review. You will be notified when the request is approved or rejected.`,
       metadata: {
         assignment_id: result.rows[0].id,
         project_id: projectId,
@@ -421,8 +433,8 @@ const updateAssignmentStatus = async (req, res) => {
           : 'Project access rejected',
       message:
         status === 'approved'
-          ? `Your contributor access request for ${existingAssignment.project_name} was approved.`
-          : `Your contributor access request for ${existingAssignment.project_name} was rejected.`,
+          ? `Your contributor access request for ${existingAssignment.project_name} was approved. You can now open the project with contributor access.`
+          : `Your contributor access request for ${existingAssignment.project_name} was rejected. Contact an administrator if you need a review.`,
       metadata: {
         assignment_id: assignmentId,
         project_id: existingAssignment.project_id,
@@ -462,7 +474,7 @@ const removeAssignment = async (req, res) => {
       userId: assignment.user_id,
       type: 'assignment',
       title: 'Project assignment removed',
-      message: `You were removed from ${assignment.project_name}. Contact an administrator if you still need access.`,
+      message: `You were removed from ${assignment.project_name}. You can request project access again later if you still need contributor access.`,
       metadata: {
         assignment_id: assignmentId,
         project_id: assignment.project_id,

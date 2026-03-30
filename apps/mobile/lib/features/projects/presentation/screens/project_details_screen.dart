@@ -28,6 +28,22 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
   bool _updatingVisibility = false;
   bool _requestingAccess = false;
 
+  void _showCollectionUnavailableMessage(String status) {
+    final normalized = status.trim().toLowerCase();
+    final message = switch (normalized) {
+      'paused' =>
+        'This project is paused. Feature collection is unavailable until the project returns to active status.',
+      'completed' =>
+        'This project is completed. New features cannot be added unless an admin reopens the project.',
+      'archived' =>
+        'This project is archived. Feature collection is unavailable.',
+      'draft' =>
+        'This project is still in draft status. Feature collection is unavailable until the project becomes active.',
+      _ => 'Feature collection is unavailable for this project right now.',
+    };
+    AppSnackbar.showError(context, message);
+  }
+
   Future<void> _toggleViewerVisibility(bool value) async {
     setState(() {
       _updatingVisibility = true;
@@ -197,6 +213,10 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
             role == UserRole.contributor &&
             project.hasApprovedCurrentUserAssignment;
         final isPaused = project.status == 'paused';
+        final canCollectFeatures =
+            role == UserRole.contributor &&
+            hasContributorAssignment &&
+            project.status == 'active';
         final contributorRequestStatus = project.currentUserAssignmentStatus;
         final canRequestAccess =
             role == UserRole.contributor &&
@@ -238,6 +258,12 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                       children: [
                         StatusChip(status: project.status),
                         Chip(label: Text(project.category)),
+                        if (project.startDate != null || project.endDate != null)
+                          Chip(
+                            label: Text(
+                              'Schedule ${_formatDate(project.startDate)} -> ${_formatDate(project.endDate)}',
+                            ),
+                          ),
                         Chip(
                           label: Text(
                             project.visibleToViewers
@@ -248,6 +274,13 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                         Chip(
                           label: Text(
                             'Pending reviews: ${project.pendingReviews}',
+                          ),
+                        ),
+                        Chip(
+                          label: Text(
+                            project.requiresPhotos
+                                ? 'Photos ${project.minPhotos}-${project.maxPhotos}'
+                                : 'Photos optional',
                           ),
                         ),
                       ],
@@ -321,13 +354,15 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                       icon: const Icon(Icons.map_outlined),
                       label: const Text('Open Map'),
                     ),
-                  if (role == UserRole.contributor &&
-                      hasContributorAssignment &&
-                      !isPaused)
+                  if (role == UserRole.contributor && hasContributorAssignment)
                     FilledButton.icon(
-                      onPressed: () => context.push(
-                        AppRoutes.addFeatureForProject(project.id),
-                      ),
+                      onPressed: () {
+                        if (canCollectFeatures) {
+                          context.push(AppRoutes.addFeatureForProject(project.id));
+                          return;
+                        }
+                        _showCollectionUnavailableMessage(project.status);
+                      },
                       icon: const Icon(Icons.add_location_alt_outlined),
                       label: const Text('New Feature'),
                     ),
@@ -373,12 +408,12 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                       label: const Text('Assignments'),
                     ),
                     FilledButton.icon(
-                      onPressed: () => context.push(AppRoutes.reviewQueue),
+                      onPressed: () => context.go(AppRoutes.reviewQueue),
                       icon: const Icon(Icons.rate_review_outlined),
                       label: const Text('Review Queue'),
                     ),
                     FilledButton.icon(
-                      onPressed: () => context.push(AppRoutes.exports),
+                      onPressed: () => context.go(AppRoutes.exports),
                       icon: const Icon(Icons.file_download_outlined),
                       label: const Text('Exports'),
                     ),
@@ -446,6 +481,16 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
         );
       },
     );
+  }
+
+  String _formatDate(DateTime? value) {
+    if (value == null) {
+      return 'Not set';
+    }
+    final local = value.toLocal();
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    return '${local.year}-$month-$day';
   }
 }
 

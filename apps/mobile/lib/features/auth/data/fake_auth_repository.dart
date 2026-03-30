@@ -109,7 +109,7 @@ class FakeAuthRepository implements AuthRepository {
         id: 'user-1',
         fullName: role == UserRole.admin
             ? isProtectedSuperAdmin
-                  ? 'GIS Super Administrator'
+                  ? 'GIS Administrator'
                   : 'Ministry Admin'
             : 'Field Contributor',
         email: email,

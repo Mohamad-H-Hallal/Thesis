@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
+import '../../../../core/sync/sync_controller.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
@@ -46,6 +47,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Widget build(BuildContext context) {
     final session = ref.watch(authControllerProvider).session;
     final role = session?.user.role ?? UserRole.viewer;
+    final syncState = ref.watch(syncControllerProvider);
     final projectsAsync = ref.watch(mapProjectsProvider);
 
     return projectsAsync.when(
@@ -79,9 +81,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           requestedProjectId: widget.initialProjectId,
         );
         final featuresAsync = ref.watch(projectMapFeaturesProvider(project.id));
-        final canCollectOnMap =
+        final hasContributorAssignment =
             role == UserRole.contributor &&
-            project.hasApprovedCurrentUserAssignment &&
+            project.hasApprovedCurrentUserAssignment;
+        final canCollectOnMap =
+            hasContributorAssignment &&
             project.status == 'active';
         final canReview = role == UserRole.admin;
 
@@ -176,17 +180,21 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   spacing: 10,
                   runSpacing: 10,
                   children: [
-                    if (canCollectOnMap)
+                    if (hasContributorAssignment)
                       FilledButton.icon(
-                        onPressed: () => context.push(
-                          AppRoutes.addFeatureForProject(project.id),
-                        ),
+                        onPressed: () {
+                          if (canCollectOnMap) {
+                            context.push(AppRoutes.addFeatureForProject(project.id));
+                            return;
+                          }
+                          _showCollectionUnavailableMessage(project.status);
+                        },
                         icon: const Icon(Icons.add_location_alt_outlined),
                         label: const Text('Add Feature'),
                       ),
                     if (canReview)
                       FilledButton.tonalIcon(
-                        onPressed: () => context.push(AppRoutes.reviewQueue),
+                        onPressed: () => context.go(AppRoutes.reviewQueue),
                         icon: const Icon(Icons.rate_review_outlined),
                         label: const Text('Review Queue'),
                       ),
@@ -199,6 +207,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     ),
                   ],
                 ),
+                if (role == UserRole.contributor) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  _SyncStatusLine(state: syncState),
+                ],
               ],
             ),
           );
@@ -224,6 +236,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 context,
                 project: project,
                 features: filteredFeatures,
+                hasCollectionAccess: hasContributorAssignment,
                 canCollectOnMap: canCollectOnMap,
                 canReview: canReview,
               );
@@ -282,6 +295,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     BuildContext context, {
     required ProjectSummary project,
     required List<MapFeatureSummary> features,
+    required bool hasCollectionAccess,
     required bool canCollectOnMap,
     required bool canReview,
   }) {
@@ -399,14 +413,18 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ? AppEmptyState(
                 icon: Icons.layers_clear_outlined,
                 title: 'No map features match the current filters',
-                message: canCollectOnMap
+                message: hasCollectionAccess
                     ? 'Use Add Feature to collect orchard, field, or tree records for this project.'
                     : 'Approved or submitted features will appear here when they exist.',
-                actionLabel: canCollectOnMap ? 'Add Feature' : null,
-                onAction: canCollectOnMap
-                    ? () => context.push(
-                        AppRoutes.addFeatureForProject(project.id),
-                      )
+                actionLabel: hasCollectionAccess ? 'Add Feature' : null,
+                onAction: hasCollectionAccess
+                    ? () {
+                        if (canCollectOnMap) {
+                          context.push(AppRoutes.addFeatureForProject(project.id));
+                          return;
+                        }
+                        _showCollectionUnavailableMessage(project.status);
+                      }
                     : null,
               )
             : ListView(
@@ -543,6 +561,22 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         );
       },
     );
+  }
+
+  void _showCollectionUnavailableMessage(String status) {
+    final normalized = status.trim().toLowerCase();
+    final message = switch (normalized) {
+      'paused' =>
+        'This project is paused. Feature collection is unavailable until the project returns to active status.',
+      'completed' =>
+        'This project is completed. New features cannot be added unless an admin reopens the project.',
+      'archived' =>
+        'This project is archived. Feature collection is unavailable.',
+      'draft' =>
+        'This project is still in draft status. Feature collection is unavailable until the project becomes active.',
+      _ => 'Feature collection is unavailable for this project right now.',
+    };
+    AppSnackbar.showError(context, message);
   }
 
   Future<void> _reviewFeature({
@@ -1086,6 +1120,68 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final normalized = path.replaceAll('\\', '/');
     final segments = normalized.split('/');
     return segments.isEmpty ? path : segments.last;
+  }
+}
+
+class _SyncStatusLine extends StatelessWidget {
+  const _SyncStatusLine({required this.state});
+
+  final SyncState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    late final IconData icon;
+    late final Color color;
+    late final String text;
+
+    if (state.isInitializing) {
+      icon = Icons.sync;
+      color = scheme.primary;
+      text = 'Preparing offline sync';
+    } else if (!state.isReady) {
+      icon = Icons.cloud_off_outlined;
+      color = scheme.error;
+      text = 'Sync unavailable';
+    } else if (state.isSyncing) {
+      icon = Icons.sync;
+      color = scheme.primary;
+      text = 'Sync in progress';
+    } else if (state.conflictCount > 0 || state.deadLetterCount > 0) {
+      icon = Icons.error_outline;
+      color = scheme.error;
+      text =
+          'Sync needs attention (${state.conflictCount + state.deadLetterCount} issue${state.conflictCount + state.deadLetterCount == 1 ? '' : 's'})';
+    } else if (state.pendingCount > 0) {
+      icon = Icons.cloud_upload_outlined;
+      color = scheme.tertiary;
+      text = '${state.pendingCount} update${state.pendingCount == 1 ? '' : 's'} queued for sync';
+    } else if (state.lastSyncAt != null) {
+      icon = Icons.cloud_done_outlined;
+      color = scheme.primary;
+      final local = state.lastSyncAt!.toLocal();
+      final hour = local.hour.toString().padLeft(2, '0');
+      final minute = local.minute.toString().padLeft(2, '0');
+      text = 'Last refreshed at $hour:$minute';
+    } else {
+      icon = Icons.cloud_done_outlined;
+      color = scheme.primary;
+      text = 'Sync ready';
+    }
+
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: AppSpacing.xs),
+        Expanded(
+          child: Text(
+            text,
+            style: Theme.of(context).textTheme.bodySmall,
+            softWrap: true,
+          ),
+        ),
+      ],
+    );
   }
 }
 

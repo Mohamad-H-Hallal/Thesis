@@ -40,6 +40,8 @@ Executed results:
 - `PASS` admin toggle of `visible_to_viewers` immediately changes viewer-visible project list
 - `PASS` Android-emulator shell now exposes visible primary navigation plus drawer access for admin and super-admin management areas
 - `PASS` Android emulator launch/install/run now succeeds again on `emulator-5554` with `API_BASE_URL=http://10.0.2.2:3000`, and the app process remains alive after boot
+- `PASS` API release-gate now passes production dependency audit after the `path-to-regexp` vulnerability fix in the API lockfile
+- `PASS` staging seed and staging verification now pass deterministically with the current schema rules, including draft-first project creation, seeded support settings, and migration-path validation
 - `PASS` admin and super-admin mobile shells now expose categories, project creation/editing, and project assignment management directly in-app
 - `PASS` users management cards are now responsive on Android and expose protected-super-admin markers plus super-admin-only promote/revert actions for eligible users
 - `PASS` admin dashboard now includes viewer count and active contributor count from real backend user data
@@ -64,6 +66,8 @@ Executed results:
 - `PASS` contributor-only assignment model is enforced; admins are not mixed into project assignment lists
 - `PASS` self-deactivate is available to viewer/contributor accounts with assignment-state validation and results in blocked future login until reactivation
 - `PASS` notifications now support persisted read/unread handling through the API and remain available on later app open
+- `PASS` notification cards now allow toggling a read item back to unread without cross-user leakage
+- `PASS` contributor shell now uses compact sync messaging instead of the earlier oversized banner treatment on project collection screens
 - `PARTIAL` Android live pass on commit `14b85fc` confirmed runtime launch, backend connectivity, login/signup screen rendering, admin shell rendering, and super-admin shell rendering after env bootstrap correction:
   - `docs/handover/evidence/android-live-pass.md`
   - `docs/handover/evidence/android-live-pass/login-screen.png`
@@ -234,6 +238,8 @@ Verify:
 - blocked users cannot log in until an admin or super admin unblocks them
 - users screen supports search, role filters, account-state filters, admin promotion/revert, and block/unblock actions
 - requests screen uses simplified top-level labels `Contributor` and `Projects`
+- notifications support both `Mark read` and `Mark unread`
+- compact sync status appears without compressing project cards or map controls
 - Android debug runtime allows local cleartext traffic for `10.0.2.2`
 - if no emulator is attached in CI/local automation, use `flutter build apk` as the build gate and perform the manual checklist below on a human-started emulator
 

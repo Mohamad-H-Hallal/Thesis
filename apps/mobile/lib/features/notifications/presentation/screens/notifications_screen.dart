@@ -201,6 +201,14 @@ class _NotificationCard extends ConsumerWidget {
                   icon: const Icon(Icons.done_outlined, size: 18),
                   label: const Text('Mark read'),
                 ),
+              if (item.isRead)
+                OutlinedButton.icon(
+                  onPressed: () => ref
+                      .read(notificationsControllerProvider.notifier)
+                      .markAsUnread(item.id),
+                  icon: const Icon(Icons.mark_email_unread_outlined, size: 18),
+                  label: const Text('Mark unread'),
+                ),
             ],
           ),
         ],
