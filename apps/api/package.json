@@ -23,6 +23,7 @@
     "audit:prod": "npm audit --omit=dev",
     "audit:all": "npm audit",
     "migrate": "tsx src/db/migrate.ts",
+    "reset:runtime": "tsx src/db/resetRuntime.ts",
     "seed": "tsx src/db/seed.ts",
     "seed:staging": "tsx src/db/seedStaging.ts",
     "staging:verify": "tsx src/db/stagingVerify.ts",

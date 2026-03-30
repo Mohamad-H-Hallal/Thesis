@@ -29,6 +29,18 @@ ALLOW_DESTRUCTIVE_STAGING_RESET=true
 npm run seed:staging
 npm run staging:verify
 ```
+
+5c. Reset runtime/business data for a clean retest:
+```bash
+ALLOW_RUNTIME_RESET=true
+npm run reset:runtime
+```
+- This is destructive.
+- It keeps the migrated schema, extensions, enums, and migration tracking intact.
+- It clears ordinary runtime data (users, categories, projects, assignments, features, photos, exports, notifications, audit logs, offline map rows, password reset requests, dev seed markers).
+- It then re-ensures the protected super admin from `SUPER_ADMIN_*` and resets the singleton `app_support_settings` row to defaults.
+- For the compose-backed app runtime, prefer running it inside the API container so it targets the same database as mobile:
+  - `docker compose exec api sh -lc "ALLOW_RUNTIME_RESET=true npm run reset:runtime"`
 6. Start API (TypeScript dev runner):
 ```bash
 npm run dev
@@ -47,6 +59,7 @@ npm run dev
 - Phase 11 staging profile seed: `npm run seed:staging`
 - Phase 11 staging verification: `npm run staging:verify`
 - Phase 11 full staging flow: `npm run phase11:staging`
+- Runtime reset for clean retesting: `npm run reset:runtime`
 - `seed:staging` is destructive when `STAGING_SEED_RESET=true`; only run it against an isolated DB or with an explicit `ALLOW_DESTRUCTIVE_STAGING_RESET=true` opt-in.
 - Seed: `npm run seed`
 - CI workflow: `.github/workflows/ci.yml`

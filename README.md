@@ -114,6 +114,12 @@ Staging seed safety:
 - Use them only against an isolated staging/test database.
 - Outside CI/test, set `ALLOW_DESTRUCTIVE_STAGING_RESET=true` explicitly if you intentionally want that reset.
 
+Clean runtime reset:
+- To wipe ordinary runtime/business data while keeping the migrated schema intact, use the API reset script with an explicit safety flag.
+- Safest command for the compose-backed app runtime:
+  - `docker compose exec api sh -lc "ALLOW_RUNTIME_RESET=true npm run reset:runtime"`
+- This keeps extensions/types/schema/migration tracking, restores the singleton support-settings row, and re-creates the protected super admin from `SUPER_ADMIN_*`.
+
 ## Mobile Local
 
 ```powershell
