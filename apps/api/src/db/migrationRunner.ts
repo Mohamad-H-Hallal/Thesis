@@ -1,13 +1,41 @@
-import fs from 'node:fs/promises';
+import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { pool } from '../config/database';
 const logger = require('../utils/logger');
 
-const migrationsDir = path.resolve(
-  process.env.MIGRATIONS_DIR || path.join(process.cwd(), '..', '..', 'infra', 'migrations')
-);
+const resolveMigrationsDir = (): string => {
+  const configuredDir = process.env.MIGRATIONS_DIR?.trim();
+  if (configuredDir) {
+    const resolved = path.resolve(configuredDir);
+    if (!fs.existsSync(resolved)) {
+      throw new Error(`Configured MIGRATIONS_DIR does not exist: ${resolved}`);
+    }
+    return resolved;
+  }
+
+  const candidates = [
+    path.resolve(process.cwd(), 'infra', 'migrations'),
+    path.resolve(process.cwd(), '..', 'infra', 'migrations'),
+    path.resolve(process.cwd(), '..', '..', 'infra', 'migrations'),
+    path.resolve(__dirname, '..', '..', '..', 'infra', 'migrations'),
+    path.resolve(__dirname, '..', '..', '..', '..', 'infra', 'migrations'),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    `Unable to locate infra/migrations. Checked: ${candidates.join(', ')}`
+  );
+};
+
+const migrationsDir = resolveMigrationsDir();
 
 const ensureMigrationsTable = async (client: PoolClient): Promise<void> => {
   await client.query(`
@@ -22,8 +50,8 @@ const ensureMigrationsTable = async (client: PoolClient): Promise<void> => {
 
 const loadMigrationFiles = async (): Promise<string[]> => {
   try {
-    await fs.mkdir(migrationsDir, { recursive: true });
-    const files = await fs.readdir(migrationsDir);
+    await fsPromises.mkdir(migrationsDir, { recursive: true });
+    const files = await fsPromises.readdir(migrationsDir);
     return files
       .filter((file) => file.endsWith('.sql'))
       .sort((a, b) => a.localeCompare(b, 'en'));
@@ -70,7 +98,7 @@ const applyPendingMigrations = async (): Promise<string[]> => {
 
     for (const file of pending) {
       const filePath = path.join(migrationsDir, file);
-      const sql = await fs.readFile(filePath, 'utf8');
+      const sql = await fsPromises.readFile(filePath, 'utf8');
       const checksum = crypto.createHash('sha256').update(sql).digest('hex');
 
       await client.query('BEGIN');

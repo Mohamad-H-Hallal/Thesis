@@ -34,6 +34,7 @@ jobs:
       DB_NAME: gis_app
       DB_USER: gis_user
       DB_PASSWORD: change_me
+      MIGRATIONS_DIR: ${{ github.workspace }}/infra/migrations
       JWT_SECRET: phase10-ci-jwt-secret-12345678901234567890
       JWT_SECRET_CURRENT: phase10-ci-jwt-secret-12345678901234567890
       JWT_REFRESH_SECRET: phase10-ci-refresh-secret-1234567890123456

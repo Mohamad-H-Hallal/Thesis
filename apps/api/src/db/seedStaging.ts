@@ -25,6 +25,7 @@ interface SeedUser {
 interface SeedProject {
   id: string;
   createdByUserId: string;
+  targetStatus: 'draft' | 'active' | 'paused';
 }
 
 const parseIntEnv = (name: string, fallback: number, min = 0): number => {
@@ -103,6 +104,8 @@ const resetDatabase = async (client: PoolClient): Promise<void> => {
       photo,
       spatial_feature,
       shapefile_export,
+      password_reset_request,
+      app_support_settings,
       project_assignment,
       project,
       project_category,
@@ -188,7 +191,14 @@ const createProjects = async (
   admins: SeedUser[],
   categoryIds: string[]
 ): Promise<SeedProject[]> => {
-  const statuses = ['active', 'active', 'active', 'active', 'paused', 'draft'];
+  const statuses: Array<'active' | 'paused' | 'draft'> = [
+    'active',
+    'active',
+    'active',
+    'active',
+    'paused',
+    'draft',
+  ];
   const projects: SeedProject[] = [];
 
   for (let i = 0; i < config.projects; i += 1) {
@@ -226,10 +236,10 @@ const createProjects = async (
          $3,
          $4,
          $5,
-         $6::project_status,
-         CURRENT_DATE - ($7 * INTERVAL '1 day'),
-         CURRENT_DATE + ($8 * INTERVAL '1 day'),
-         $9::jsonb,
+         'draft',
+         CURRENT_DATE - ($6 * INTERVAL '1 day'),
+         CURRENT_DATE + ($7 * INTERVAL '1 day'),
+         $8::jsonb,
          TRUE,
          1,
          5
@@ -241,7 +251,6 @@ const createProjects = async (
         `Phase11 Project ${i + 1}`,
         'Staging project with realistic field collection records',
         'Pilot readiness and deployment validation',
-        status,
         30 + randomInt(90),
         30 + randomInt(180),
         JSON.stringify(formSchema),
@@ -251,10 +260,34 @@ const createProjects = async (
     projects.push({
       id: result.rows[0].id,
       createdByUserId: createdBy.id,
+      targetStatus: status,
     });
   }
 
   return projects;
+};
+
+const promoteProjectsToTargetStatus = async (
+  client: PoolClient,
+  projects: SeedProject[]
+): Promise<void> => {
+  const transitionPaths: Record<SeedProject['targetStatus'], Array<'active' | 'paused'>> = {
+    draft: [],
+    active: ['active'],
+    paused: ['active', 'paused'],
+  };
+
+  for (const project of projects) {
+    const path = transitionPaths[project.targetStatus];
+    for (const nextStatus of path) {
+      await client.query(
+        `UPDATE project
+         SET status = $1::project_status
+         WHERE id = $2`,
+        [nextStatus, project.id]
+      );
+    }
+  }
 };
 
 const seedAssignments = async (
@@ -343,7 +376,7 @@ const seedFeatures = async (
        )
        SELECT
          $1::uuid,
-         ($4::uuid[])[(1 + floor(random() * array_length($4::uuid[], 1)))::int],
+         ($3::uuid[])[(1 + floor(random() * array_length($3::uuid[], 1)))::int],
          ST_SetSRID(ST_MakePoint(35 + random() * 1.7, 33 + random() * 1.7), 4326),
          jsonb_build_object(
            'tree_type', (ARRAY['olive','apple','citrus','cherry','apricot'])[1 + floor(random() * 5)::int],
@@ -352,26 +385,71 @@ const seedFeatures = async (
            'height_m', round((2 + random() * 8)::numeric, 1),
            'source', 'phase11-staging-seed'
          ),
-         CASE
-           WHEN src.r < 0.72 THEN 'approved'::feature_status
-           WHEN src.r < 0.9 THEN 'pending_review'::feature_status
-           ELSE 'draft'::feature_status
-         END,
+         'draft'::feature_status,
          NOW() - (random() * interval '180 days'),
-         CASE WHEN src.r < 0.9 THEN NOW() - (random() * interval '120 days') ELSE NULL END,
-         CASE WHEN src.r < 0.72 THEN NOW() - (random() * interval '90 days') ELSE NULL END,
-         CASE WHEN src.r < 0.72 THEN $3::uuid ELSE NULL END,
-         CASE
-           WHEN src.r < 0.72 THEN 'Approved during phase 11 staging seed'
-           WHEN src.r < 0.9 THEN 'Queued for admin review'
-           ELSE NULL
-         END,
+         NULL,
+         NULL,
+         NULL,
+         NULL,
          round((3 + random() * 15)::numeric, 2),
          (random() < 0.45),
          NOW() - (random() * interval '45 days'),
          1 + floor(random() * 3)::int
-       FROM src`,
-      [project.id, config.featuresPerProject, project.createdByUserId, contributorIds]
+      FROM src`,
+      [project.id, config.featuresPerProject, contributorIds]
+    );
+  }
+};
+
+const promoteSeededFeatures = async (
+  client: PoolClient,
+  projects: SeedProject[]
+): Promise<void> => {
+  for (const project of projects) {
+    await client.query(
+      `WITH eligible AS (
+         SELECT
+           sf.id,
+           random() AS r
+         FROM spatial_feature sf
+         JOIN project p ON p.id = sf.project_id
+         WHERE sf.project_id = $1::uuid
+           AND (
+             NOT p.requires_photos
+             OR (
+               SELECT COUNT(*)
+               FROM photo ph
+               WHERE ph.feature_id = sf.id
+             ) >= COALESCE(p.min_photos, 0)
+           )
+       )
+       UPDATE spatial_feature sf
+       SET
+         status = CASE
+           WHEN eligible.r < 0.72 THEN 'approved'::feature_status
+           WHEN eligible.r < 0.9 THEN 'pending_review'::feature_status
+           ELSE 'draft'::feature_status
+         END,
+         submitted_at = CASE
+           WHEN eligible.r < 0.9 THEN NOW() - (random() * interval '120 days')
+           ELSE NULL
+         END,
+         reviewed_at = CASE
+           WHEN eligible.r < 0.72 THEN NOW() - (random() * interval '90 days')
+           ELSE NULL
+         END,
+         reviewed_by_user_id = CASE
+           WHEN eligible.r < 0.72 THEN $2::uuid
+           ELSE NULL
+         END,
+         review_notes = CASE
+           WHEN eligible.r < 0.72 THEN 'Approved during phase 11 staging seed'
+           WHEN eligible.r < 0.9 THEN 'Queued for admin review'
+           ELSE NULL
+         END
+       FROM eligible
+       WHERE sf.id = eligible.id`,
+      [project.id, project.createdByUserId]
     );
   }
 };
@@ -410,7 +488,6 @@ const seedPhotos = async (
          NOW() - (random() * interval '30 days')
        FROM spatial_feature sf
        WHERE sf.project_id = $1::uuid
-         AND sf.status IN ('approved', 'pending_review')
          AND random() < $2`,
       [project.id, config.photoRatio]
     );
@@ -574,6 +651,33 @@ const seedOfflineMapVersion = async (client: PoolClient): Promise<void> => {
   );
 };
 
+const seedSupportSettings = async (client: PoolClient): Promise<void> => {
+  await client.query(
+    `INSERT INTO app_support_settings (
+       id,
+       support_email,
+       support_phone,
+       office_hours,
+       help_text,
+       updated_at
+     )
+     VALUES (
+       1,
+       'support@gis.gov.lb',
+       '+961 1 555 555',
+       'Monday to Friday, 08:30-16:30',
+       'For help with login, assignments, exports, or field collection workflows, contact the GIS support desk.',
+       NOW()
+     )
+     ON CONFLICT (id) DO UPDATE
+       SET support_email = EXCLUDED.support_email,
+           support_phone = EXCLUDED.support_phone,
+           office_hours = EXCLUDED.office_hours,
+           help_text = EXCLUDED.help_text,
+           updated_at = NOW()`
+  );
+};
+
 const getSummaryCounts = async (
   client: PoolClient
 ): Promise<Record<string, number>> => {
@@ -622,13 +726,16 @@ const run = async (): Promise<void> => {
 
     const categoryIds = await createCategories(client, seedTag);
     const projects = await createProjects(client, config, admins, categoryIds);
+    await promoteProjectsToTargetStatus(client, projects);
     const projectContributors = await seedAssignments(client, config, projects, contributors);
     await seedFeatures(client, config, projects, projectContributors);
     await seedPhotos(client, config, projects);
+    await promoteSeededFeatures(client, projects);
     await seedExports(client, config, projects, projectContributors);
     await seedNotifications(client);
     await seedAuditLogs(client);
     await seedOfflineMapVersion(client);
+    await seedSupportSettings(client);
 
     await client.query('COMMIT');
 

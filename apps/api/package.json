@@ -59,6 +59,9 @@
     "uuid": "^9.0.1",
     "winston": "^3.19.0"
   },
+  "overrides": {
+    "path-to-regexp": "0.1.13"
+  },
   "devDependencies": {
     "@swc/core": "^1.13.6",
     "@swc/jest": "^0.2.39",
