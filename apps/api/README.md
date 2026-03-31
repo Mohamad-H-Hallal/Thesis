@@ -61,6 +61,7 @@ npm run dev
 - Mailpit SMTP:
   - inside Docker: `mailpit:1025`
   - host-side API commands: `localhost:1025`
+- Mailpit captures reset emails locally. To deliver OTPs to a real mailbox, set `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM_EMAIL` in the active `.env`, then restart the API.
 - Required config:
   - `SMTP_HOST`
   - `SMTP_PORT`

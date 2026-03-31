@@ -5,6 +5,27 @@ import { validateEnv } from '../config/env';
 
 let cachedTransporter: nodemailer.Transporter | null = null;
 
+const normalizeEnvelopeAddress = (value: unknown): string | null => {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized.length === 0 ? null : normalized;
+  }
+
+  if (
+    value != null &&
+    typeof value === 'object' &&
+    'address' in value &&
+    typeof (value as { address?: unknown }).address === 'string'
+  ) {
+    const normalized = (value as { address: string }).address
+      .trim()
+      .toLowerCase();
+    return normalized.length === 0 ? null : normalized;
+  }
+
+  return null;
+};
+
 const buildTransport = (): nodemailer.Transporter => {
   const env = validateEnv();
 
@@ -64,13 +85,15 @@ const sendPasswordResetOtpEmail = async ({
   otp: string;
   expiresInMinutes: number;
 }): Promise<void> => {
+  const env = validateEnv();
   const transporter = getTransporter();
   const appName = 'Lebanese GIS Collector';
   const trimmedName = recipientName.trim();
-  const safeName = trimmedName.length == 0 ? 'User' : trimmedName;
+  const safeName = trimmedName.length === 0 ? 'User' : trimmedName;
+  const normalizedRecipient = toEmail.trim().toLowerCase();
 
   try {
-    await transporter.sendMail({
+    const info = await transporter.sendMail({
       from: formatFromHeader(),
       to: toEmail,
       subject: `${appName} password reset code`,
@@ -91,6 +114,25 @@ const sendPasswordResetOtpEmail = async ({
         <p>If you did not request a password reset, you can ignore this email.</p>
       `,
     });
+
+    if (env.NODE_ENV !== 'test') {
+      const acceptedRecipients = (info.accepted ?? [])
+        .map(normalizeEnvelopeAddress)
+        .where((value): value is string => value != null);
+      const rejectedRecipients = (info.rejected ?? [])
+        .map(normalizeEnvelopeAddress)
+        .where((value): value is string => value != null);
+
+      if (
+        !acceptedRecipients.includes(normalizedRecipient) ||
+        rejectedRecipients.includes(normalizedRecipient)
+      ) {
+        throw new AppError(
+          'Password reset email service is unavailable right now. Please contact support.',
+          503,
+        );
+      }
+    }
   } catch (_error) {
     throw new AppError(
       'Password reset email service is unavailable right now. Please contact support.',

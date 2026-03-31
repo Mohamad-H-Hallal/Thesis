@@ -225,184 +225,16 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   Future<void> _showChangePasswordDialog() async {
-    final formKey = GlobalKey<FormState>();
-    final currentController = TextEditingController();
-    final newController = TextEditingController();
-    final confirmController = TextEditingController();
-    bool obscureCurrent = true;
-    bool obscureNew = true;
-    bool obscureConfirm = true;
-    String? dialogError;
-    bool submitting = false;
+    final result = await showDialog<_ChangePasswordDialogResult>(
+      context: context,
+      builder: (_) => const _ChangePasswordDialog(),
+    );
 
-    try {
-      await showDialog<void>(
-        context: context,
-        builder: (dialogContext) {
-          return StatefulBuilder(
-            builder: (context, setDialogState) => AlertDialog(
-              title: const Text('Change password'),
-              content: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 520),
-                child: SingleChildScrollView(
-                  child: Form(
-                    key: formKey,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (dialogError != null) ...[
-                          Text(
-                            dialogError!,
-                            style: TextStyle(
-                              color: Theme.of(context).colorScheme.error,
-                            ),
-                          ),
-                          const SizedBox(height: AppSpacing.sm),
-                        ],
-                        AppTextField(
-                          label: 'Current password',
-                          controller: currentController,
-                          obscureText: obscureCurrent,
-                          enableSuggestions: false,
-                          autocorrect: false,
-                          suffix: IconButton(
-                            tooltip: obscureCurrent
-                                ? 'Show password'
-                                : 'Hide password',
-                            onPressed: () => setDialogState(
-                              () => obscureCurrent = !obscureCurrent,
-                            ),
-                            icon: Icon(
-                              obscureCurrent
-                                  ? Icons.visibility
-                                  : Icons.visibility_off,
-                            ),
-                          ),
-                          validator: (value) =>
-                              AuthFormValidators.requiredField(
-                                value,
-                                fieldLabel: 'Current password',
-                              ),
-                        ),
-                        const SizedBox(height: AppSpacing.sm),
-                        AppTextField(
-                          label: 'New password',
-                          controller: newController,
-                          obscureText: obscureNew,
-                          enableSuggestions: false,
-                          autocorrect: false,
-                          suffix: IconButton(
-                            tooltip: obscureNew
-                                ? 'Show password'
-                                : 'Hide password',
-                            onPressed: () => setDialogState(
-                              () => obscureNew = !obscureNew,
-                            ),
-                            icon: Icon(
-                              obscureNew
-                                  ? Icons.visibility
-                                  : Icons.visibility_off,
-                            ),
-                          ),
-                          validator: AuthFormValidators.password,
-                        ),
-                        const SizedBox(height: AppSpacing.sm),
-                        AppTextField(
-                          label: 'Confirm new password',
-                          controller: confirmController,
-                          obscureText: obscureConfirm,
-                          enableSuggestions: false,
-                          autocorrect: false,
-                          suffix: IconButton(
-                            tooltip: obscureConfirm
-                                ? 'Show password'
-                                : 'Hide password',
-                            onPressed: () => setDialogState(
-                              () => obscureConfirm = !obscureConfirm,
-                            ),
-                            icon: Icon(
-                              obscureConfirm
-                                  ? Icons.visibility
-                                  : Icons.visibility_off,
-                            ),
-                          ),
-                          validator: (value) =>
-                              AuthFormValidators.confirmPassword(
-                                value: value,
-                                password: newController.text,
-                              ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: submitting
-                      ? null
-                      : () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: submitting
-                      ? null
-                      : () async {
-                          setDialogState(() {
-                            dialogError = null;
-                          });
-                          if (!(formKey.currentState?.validate() ?? false)) {
-                            return;
-                          }
-                          setDialogState(() {
-                            submitting = true;
-                          });
-                          try {
-                            await ref
-                                .read(authControllerProvider.notifier)
-                                .changePassword(
-                                  currentPassword: currentController.text,
-                                  newPassword: newController.text,
-                                );
-                            if (!dialogContext.mounted || !mounted) {
-                              return;
-                            }
-                            Navigator.of(dialogContext).pop();
-                            AppSnackbar.showSuccess(
-                              this.context,
-                              'Password changed successfully.',
-                            );
-                          } catch (error) {
-                            if (!dialogContext.mounted) {
-                              return;
-                            }
-                            setDialogState(() {
-                              dialogError = userFacingErrorMessage(
-                                error,
-                                fallback:
-                                    'Unable to change password right now.',
-                              );
-                            });
-                          } finally {
-                            if (dialogContext.mounted) {
-                              setDialogState(() {
-                                submitting = false;
-                              });
-                            }
-                          }
-                        },
-                  child: Text(submitting ? 'Saving...' : 'Save'),
-                ),
-              ],
-            ),
-          );
-        },
-      );
-    } finally {
-      currentController.dispose();
-      newController.dispose();
-      confirmController.dispose();
+    if (!mounted || result != _ChangePasswordDialogResult.success) {
+      return;
     }
+
+    AppSnackbar.showSuccess(context, 'Password changed successfully.');
   }
 
   @override
@@ -454,9 +286,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 spacing: AppSpacing.sm,
                 runSpacing: AppSpacing.sm,
                 children: [
-                  Chip(
-                    label: Text(widget.userRole.label),
-                  ),
+                  Chip(label: Text(widget.userRole.label)),
                   const Chip(label: Text('Session active')),
                 ],
               ),
@@ -574,10 +404,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Security',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
+              Text('Security', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: AppSpacing.sm),
               OutlinedButton.icon(
                 onPressed: _isMutating ? null : _showChangePasswordDialog,
@@ -626,6 +453,178 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           onPressed: widget.onLogout,
           icon: const Icon(Icons.logout),
           label: const Text('Logout'),
+        ),
+      ],
+    );
+  }
+}
+
+enum _ChangePasswordDialogResult { success }
+
+class _ChangePasswordDialog extends ConsumerStatefulWidget {
+  const _ChangePasswordDialog();
+
+  @override
+  ConsumerState<_ChangePasswordDialog> createState() =>
+      _ChangePasswordDialogState();
+}
+
+class _ChangePasswordDialogState extends ConsumerState<_ChangePasswordDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _currentController = TextEditingController();
+  final _newController = TextEditingController();
+  final _confirmController = TextEditingController();
+
+  bool _obscureCurrent = true;
+  bool _obscureNew = true;
+  bool _obscureConfirm = true;
+  bool _isSubmitting = false;
+  String? _dialogError;
+
+  @override
+  void dispose() {
+    _currentController.dispose();
+    _newController.dispose();
+    _confirmController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _dialogError = null;
+    });
+
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+    });
+
+    try {
+      await ref
+          .read(authControllerProvider.notifier)
+          .changePassword(
+            currentPassword: _currentController.text,
+            newPassword: _newController.text,
+          );
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context).pop(_ChangePasswordDialogResult.success);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _dialogError = userFacingErrorMessage(
+          error,
+          fallback: 'Unable to change password right now.',
+        );
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Change password'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: SingleChildScrollView(
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_dialogError != null) ...[
+                  Text(
+                    _dialogError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                ],
+                AppTextField(
+                  label: 'Current password',
+                  controller: _currentController,
+                  obscureText: _obscureCurrent,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  suffix: IconButton(
+                    tooltip: _obscureCurrent
+                        ? 'Show password'
+                        : 'Hide password',
+                    onPressed: () =>
+                        setState(() => _obscureCurrent = !_obscureCurrent),
+                    icon: Icon(
+                      _obscureCurrent ? Icons.visibility : Icons.visibility_off,
+                    ),
+                  ),
+                  validator: (value) => AuthFormValidators.requiredField(
+                    value,
+                    fieldLabel: 'Current password',
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                AppTextField(
+                  label: 'New password',
+                  controller: _newController,
+                  obscureText: _obscureNew,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  suffix: IconButton(
+                    tooltip: _obscureNew ? 'Show password' : 'Hide password',
+                    onPressed: () => setState(() => _obscureNew = !_obscureNew),
+                    icon: Icon(
+                      _obscureNew ? Icons.visibility : Icons.visibility_off,
+                    ),
+                  ),
+                  validator: AuthFormValidators.password,
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                AppTextField(
+                  label: 'Confirm new password',
+                  controller: _confirmController,
+                  obscureText: _obscureConfirm,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  suffix: IconButton(
+                    tooltip: _obscureConfirm
+                        ? 'Show password'
+                        : 'Hide password',
+                    onPressed: () =>
+                        setState(() => _obscureConfirm = !_obscureConfirm),
+                    icon: Icon(
+                      _obscureConfirm ? Icons.visibility : Icons.visibility_off,
+                    ),
+                  ),
+                  validator: (value) => AuthFormValidators.confirmPassword(
+                    value: value,
+                    password: _newController.text,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _isSubmitting ? null : _submit,
+          child: Text(_isSubmitting ? 'Saving...' : 'Save'),
         ),
       ],
     );

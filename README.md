@@ -106,6 +106,7 @@ Password reset email:
 - Reset codes are delivered by real SMTP transport; the mobile UI never exposes a token.
 - Local Docker development uses Mailpit automatically through `docker compose up`.
 - Open `http://localhost:8025` to inspect reset emails during local testing.
+- If you expect delivery to a real mailbox in development, override `SMTP_*` in `.env` with a real SMTP provider and restart the compose stack. Otherwise reset emails stay inside Mailpit.
 - For host-side API commands outside Docker, keep `apps/api/.env` on:
   - `SMTP_HOST=localhost`
   - `SMTP_PORT=1025`

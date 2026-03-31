@@ -29,6 +29,7 @@ Important security behavior:
 3. Submit request.
 4. If the email exists, the app shows a confirmation message.
 5. Check your email for the one-time verification code.
+6. In the local Docker development stack, reset emails are captured by Mailpit at `http://localhost:8025` unless real SMTP settings are configured.
 
 ## Reset Password
 1. Open the reset-password step from the app flow.
