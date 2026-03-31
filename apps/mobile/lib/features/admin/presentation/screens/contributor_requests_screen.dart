@@ -37,15 +37,7 @@ class _ContributorRequestsScreenState
   }
 
   void _invalidate() {
-    ref.invalidate(
-      contributorRequestsProvider(ContributorRequestStatus.pending),
-    );
-    ref.invalidate(
-      contributorRequestsProvider(ContributorRequestStatus.rejected),
-    );
-    ref.invalidate(managedAssignmentsProvider);
-    ref.invalidate(managedUsersProvider);
-    ref.invalidate(adminDashboardProvider);
+    bumpWorkflowRefresh(ref);
   }
 
   Future<void> _approveContributor(String userId) async {

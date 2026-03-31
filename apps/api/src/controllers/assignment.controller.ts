@@ -2,8 +2,10 @@ const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
 import { createNotification, getActiveAdminUsers } from '../lib/userWorkflow';
+import { synchronizeProjectStatuses } from '../lib/projectLifecycle';
 
 const getProjectOrFail = async (projectId: string) => {
+  await synchronizeProjectStatuses(projectId);
   const projectResult = await query(
     `SELECT id, name, status, visible_to_viewers
      FROM project
@@ -60,6 +62,7 @@ const loadAssignmentOrFail = async (assignmentId: string) => {
 };
 
 const getMyAssignments = async (req, res) => {
+  await synchronizeProjectStatuses();
   const { status } = req.query;
 
   let queryText = `
@@ -91,6 +94,7 @@ const getMyAssignments = async (req, res) => {
 
 const getProjectAssignments = async (req, res) => {
   const { projectId } = req.params;
+  await synchronizeProjectStatuses(projectId);
 
   const result = await query(
     `SELECT pa.*,
@@ -206,6 +210,7 @@ const createAssignment = async (req, res) => {
 };
 
 const getManagedAssignments = async (req, res) => {
+  await synchronizeProjectStatuses();
   const { status, page = 1, limit = 50 } = req.query;
   const offset = (page - 1) * limit;
 

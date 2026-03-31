@@ -33,6 +33,7 @@ repo/
 cd D:\GIS_APP
 Copy-Item .env.prod.example .env
 # Replace placeholders and/or use secrets files (see secrets/README.md)
+# Production/staging also require SMTP settings for password reset email.
 # If 80 or 8080 is occupied on your host, set:
 # NGINX_HTTP_PORT=8088
 
@@ -62,6 +63,10 @@ docker compose up -d --build
 Notes:
 - This root compose stack is the official app runtime.
 - Dev DB mapping in root compose is `55433:5432`.
+- Dev SMTP/UI now uses Mailpit through the same compose stack:
+  - SMTP inside Docker: `mailpit:1025`
+  - SMTP from host-side API commands: `localhost:1025`
+  - Mail UI: `http://localhost:8025`
 - Optional Adminer in dev root compose: `docker compose --profile devtools up -d adminer`.
 - Dev compose now injects `MIGRATIONS_DIR=/workspace/infra/migrations` through `docker-compose.override.yml` so the bind-mounted repo and migration runner stay aligned.
 - The old standalone `infra/db` compose stack is not part of the app runtime and should remain stopped unless you intentionally need an isolated DB experiment.
@@ -75,8 +80,7 @@ Copy-Item .env.example .env
 # SUPER_ADMIN_EMAIL=superadmin@gov.lb
 # SUPER_ADMIN_PASSWORD=ChangeThis!Gov2026
 # SUPER_ADMIN_FULL_NAME=GIS Super Administrator
-# apps/api/.env.example uses a separate local DB path by default.
-# For the official compose-backed runtime DB, change DB_PORT to 55433 explicitly.
+# apps/api/.env.example now defaults to the official compose-backed runtime DB on 55433.
 npm ci
 npm run migrate
 npm run dev
@@ -93,6 +97,15 @@ Super admin bootstrap:
 - Set `SUPER_ADMIN_PASSWORD=ChangeThis!Gov2026`
 - Set `SUPER_ADMIN_FULL_NAME=GIS Super Administrator`
 - Configure them in the active `.env` file or Docker environment before first startup.
+
+Password reset email:
+- Forgot-password now sends a real one-time code by email.
+- Local Docker development uses Mailpit automatically through `docker compose up`.
+- Open `http://localhost:8025` to inspect reset emails during local testing.
+- For host-side API commands outside Docker, keep `apps/api/.env` on:
+  - `SMTP_HOST=localhost`
+  - `SMTP_PORT=1025`
+  - `SMTP_FROM_EMAIL=...`
 
 Staging seed safety:
 - `npm run seed:staging` and `npm run phase11:staging` are destructive when `STAGING_SEED_RESET=true`.

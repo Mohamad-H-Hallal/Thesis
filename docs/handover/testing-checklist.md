@@ -61,10 +61,10 @@ Executed results:
 - `PASS` category management now supports search plus optional icon upload from camera/gallery with backend storage
 - `PASS` profile now shows backend-managed Help & Support content and allows protected super admin to update it in-app
 - `PASS` users, categories, requests, assignments, and projects now use a consistent toggleable filter panel instead of permanently expanded chips
-- `PASS` project lifecycle now supports pause, resume, archive, and unarchive back to `completed`
+- `PASS` project lifecycle now supports pause, resume, archive, and unarchive back to `completed`, with read-time auto-sync from `draft -> active` on start date and `draft|active|paused -> completed` after end date
 - `PASS` paused projects remain viewable but collection mutations and review submissions are blocked in backend and mobile flow
 - `PASS` contributor-only assignment model is enforced; admins are not mixed into project assignment lists
-- `PASS` self-deactivate is available to viewer/contributor accounts with assignment-state validation and results in blocked future login until reactivation
+- `PASS` self-deactivate is available to contributor accounts with assignment-state validation and results in blocked future login until reactivation
 - `PASS` notifications now support persisted read/unread handling through the API and remain available on later app open
 - `PASS` notification cards now allow toggling a read item back to unread without cross-user leakage
 - `PASS` contributor shell now uses compact sync messaging instead of the earlier oversized banner treatment on project collection screens
@@ -211,7 +211,7 @@ Verify:
 - successful signup returns to login with `Account has been created successfully.`
 - duplicate-email signup stays on signup, keeps entered values, and highlights the email field
 - contributor pending/approved/rejected messages match backend responses
-- forgot-password back returns to login and reset-password works with the development reset token flow
+- forgot-password back returns to login and reset-password works with the email OTP flow
 - role-based shell navigation matches the signed-in user role
 - pending/rejected contributor login stays on the login screen and shows a visible error message
 - deactivated contributor login shows an activation prompt and only proceeds when the contributor confirms reactivation

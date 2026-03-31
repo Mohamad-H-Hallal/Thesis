@@ -349,7 +349,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               child: TextButton(
                                 onPressed: isLoading
                                     ? null
-                                    : () => context.go(
+                                    : () => context.push(
                                         AppRoutes.forgotPassword,
                                       ),
                                 child: const Text('Forgot password?'),

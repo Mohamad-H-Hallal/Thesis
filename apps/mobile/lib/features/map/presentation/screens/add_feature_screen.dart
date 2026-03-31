@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../../core/constants/design_tokens.dart';
+import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_card.dart';
@@ -250,7 +251,13 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       if (!mounted) {
         return;
       }
-      AppSnackbar.showError(context, 'Photo selection failed: $error');
+      AppSnackbar.showError(
+        context,
+        userFacingErrorMessage(
+          error,
+          fallback: 'Unable to add photos right now. Please try again.',
+        ),
+      );
     }
   }
 
@@ -409,9 +416,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
         await repository.submitForReview(featureId);
       }
 
-      ref.invalidate(projectMapFeaturesProvider(project.id));
-      ref.invalidate(projectByIdProvider(project.id));
-      ref.invalidate(reviewQueueProvider);
+      bumpWorkflowRefresh(ref);
 
       if (!mounted) {
         return;
@@ -428,7 +433,15 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       if (!mounted) {
         return;
       }
-      AppSnackbar.showError(context, error.toString());
+      AppSnackbar.showError(
+        context,
+        userFacingErrorMessage(
+          error,
+          fallback: submit
+              ? 'Unable to submit this feature right now.'
+              : 'Unable to save this draft right now.',
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -582,7 +595,11 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
           error: (error, _) => AppEmptyState(
             icon: Icons.error_outline,
             title: 'Could not load assigned projects',
-            message: '$error',
+            message: userFacingErrorMessage(
+              error,
+              fallback:
+                  'Unable to load assigned projects right now. Please try again.',
+            ),
             actionLabel: 'Retry',
             onAction: () =>
                 ref.invalidate(projectListProvider(ProjectViewScope.assigned)),
@@ -599,7 +616,9 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
 
             _ensureProjectSelection(projects);
             final selectedProject = projects.firstWhere(
-              (project) => project.id == _selectedProjectId,
+              (project) =>
+                  project.id ==
+                  (_selectedProjectId ?? widget.initialProjectId),
               orElse: () => projects.first,
             );
 
@@ -612,11 +631,19 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 error: (error, _) => AppEmptyState(
                   icon: Icons.error_outline,
                   title: 'Draft unavailable',
-                  message: '$error',
+                  message: userFacingErrorMessage(
+                    error,
+                    fallback:
+                        'Unable to load this draft right now. Please try again.',
+                  ),
                   actionLabel: 'Back to map',
                   onAction: () => context.go(AppRoutes.mapForProject(projectId)),
                 ),
                 data: (features) {
+                  final draftProject = projects.firstWhere(
+                    (project) => project.id == projectId,
+                    orElse: () => selectedProject,
+                  );
                   MapFeatureSummary? feature;
                   for (final item in features) {
                     if (item.id == widget.draftFeatureId) {
@@ -636,12 +663,12 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                     );
                   }
 
-                  _ensureDraftHydrated(selectedProject, feature);
+                  _ensureDraftHydrated(draftProject, feature);
                   if (_hydratedDraftId != feature.id) {
                     return const Center(child: CircularProgressIndicator());
                   }
 
-                  return _buildContent(context, projects, selectedProject);
+                  return _buildContent(context, projects, draftProject);
                 },
               );
             }

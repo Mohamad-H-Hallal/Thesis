@@ -147,6 +147,7 @@ class ProjectSummary {
     required this.category,
     this.categoryId,
     required this.status,
+    this.approvedFeatures = 0,
     required this.assignedCollectors,
     required this.pendingReviews,
     required this.description,
@@ -170,6 +171,7 @@ class ProjectSummary {
   final String category;
   final String? categoryId;
   final String status;
+  final int approvedFeatures;
   final int assignedCollectors;
   final int pendingReviews;
   final String description;

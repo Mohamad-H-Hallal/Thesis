@@ -88,10 +88,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         path: AppRoutes.resetPassword,
         pageBuilder: (_, state) => _buildPage(
           state,
-          ResetPasswordScreen(
-            mode: state.uri.queryParameters['mode'],
-            token: state.uri.queryParameters['token'],
-          ),
+          ResetPasswordScreen(email: state.uri.queryParameters['email']),
         ),
       ),
       GoRoute(
@@ -211,6 +208,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         path: '/app/projects/:projectId/map',
         pageBuilder: (_, state) {
           final projectId = state.pathParameters['projectId'] ?? '';
+          final featureId = state.uri.queryParameters['featureId'];
           return _buildPage(
             state,
             AppScaffold(
@@ -219,6 +217,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
               showOfflineBanner: false,
               body: MapScreen(
                 initialProjectId: projectId,
+                initialFeatureId: featureId,
                 lockProjectSelection: true,
               ),
             ),

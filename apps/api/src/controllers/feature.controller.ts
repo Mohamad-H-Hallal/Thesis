@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
+import { synchronizeProjectStatuses } from '../lib/projectLifecycle';
 
 type GeometryType = 'Point' | 'LineString' | 'Polygon';
 
@@ -166,6 +167,7 @@ const getProjectFormSchema = async (projectId: string): Promise<Record<string, u
 };
 
 const assertProjectAllowsCollectionMutations = async (projectId: string): Promise<void> => {
+  await synchronizeProjectStatuses(projectId);
   const projectResult = await query(
     'SELECT id, name, status FROM project WHERE id = $1',
     [projectId]
@@ -276,6 +278,9 @@ const validateAttributesAgainstSchema = (
 };
 
 const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
+  await synchronizeProjectStatuses(
+    typeof req.query.project_id === 'string' ? req.query.project_id : undefined
+  );
   const { project_id, status } = req.query;
   const { page, limit, offset } = getPagination(req.query.page, req.query.limit);
 
@@ -517,7 +522,7 @@ const deleteFeature = async (req: Request, res: Response): Promise<void> => {
   const { featureId } = req.params;
 
   const featureCheck = await query(
-    `SELECT id, status, collected_by_user_id
+    `SELECT id, status, collected_by_user_id, project_id
      FROM spatial_feature
      WHERE id = $1`,
     [featureId]

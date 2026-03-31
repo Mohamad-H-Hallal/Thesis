@@ -230,16 +230,16 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
 
     try {
       final repository = ref.read(adminRepositoryProvider);
-      final project = widget.isEditing
-          ? await repository.updateProject(
-              projectId: widget.projectId!,
-              input: input,
-            )
-          : await repository.createProject(input);
+      if (widget.isEditing) {
+        await repository.updateProject(
+          projectId: widget.projectId!,
+          input: input,
+        );
+      } else {
+        await repository.createProject(input);
+      }
 
-      ref.invalidate(projectListProvider(ProjectViewScope.all));
-      ref.invalidate(projectByIdProvider(project.id));
-      ref.invalidate(projectCategoriesProvider);
+      bumpWorkflowRefresh(ref);
 
       if (!mounted) {
         return;

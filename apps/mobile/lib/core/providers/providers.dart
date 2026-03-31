@@ -109,6 +109,12 @@ final authControllerProvider = StateNotifierProvider<AuthController, AuthState>(
   },
 );
 
+final workflowRefreshTickProvider = StateProvider<int>((ref) => 0);
+
+void bumpWorkflowRefresh(WidgetRef ref) {
+  ref.read(workflowRefreshTickProvider.notifier).state++;
+}
+
 final adminRepositoryProvider = Provider<AdminRepository>((ref) {
   return ApiAdminRepository(ref.watch(apiClientProvider));
 });
@@ -192,6 +198,7 @@ final projectListProvider =
       ref,
       scope,
     ) async {
+      ref.watch(workflowRefreshTickProvider);
       final authState = ref.watch(authControllerProvider);
       final session = authState.session;
       if (session == null) {
@@ -213,6 +220,7 @@ final projectListProvider =
     });
 
 final mapProjectsProvider = FutureProvider<List<ProjectSummary>>((ref) async {
+  ref.watch(workflowRefreshTickProvider);
   final authState = ref.watch(authControllerProvider);
   final session = authState.session;
   if (session == null) {
@@ -270,6 +278,7 @@ final projectMapFeaturesProvider =
       ref,
       projectId,
     ) async {
+      ref.watch(workflowRefreshTickProvider);
       if (projectId.isEmpty) {
         return const <MapFeatureSummary>[];
       }
@@ -280,6 +289,7 @@ final projectByIdProvider = FutureProvider.family<ProjectSummary?, String>((
   ref,
   id,
 ) async {
+  ref.watch(workflowRefreshTickProvider);
   final authState = ref.watch(authControllerProvider);
   final session = authState.session;
   if (session == null) {
@@ -417,6 +427,7 @@ final routerProvider = Provider<GoRouter>((ref) {
 final adminDashboardProvider = FutureProvider<AdminDashboardSummary>((
   ref,
 ) async {
+  ref.watch(workflowRefreshTickProvider);
   return ref.read(adminRepositoryProvider).fetchDashboardSummary();
 });
 
@@ -425,6 +436,7 @@ final contributorRequestsProvider =
       ref,
       status,
     ) async {
+      ref.watch(workflowRefreshTickProvider);
       return ref
           .read(adminRepositoryProvider)
           .fetchContributorRequests(status: status);
@@ -433,17 +445,20 @@ final contributorRequestsProvider =
 final managedUsersProvider = FutureProvider<List<ManagedUserSummary>>((
   ref,
 ) async {
+  ref.watch(workflowRefreshTickProvider);
   return ref.read(adminRepositoryProvider).fetchUsers();
 });
 
 final managedAssignmentsProvider =
     FutureProvider<List<ManagedAssignmentSummary>>((ref) async {
+      ref.watch(workflowRefreshTickProvider);
       return ref.read(adminRepositoryProvider).fetchManagedAssignments();
     });
 
 final projectCategoriesProvider = FutureProvider<List<ProjectCategorySummary>>((
   ref,
 ) async {
+  ref.watch(workflowRefreshTickProvider);
   return ref.read(adminRepositoryProvider).fetchCategories();
 });
 
@@ -452,6 +467,7 @@ final projectAssignmentsProvider =
       ref,
       projectId,
     ) async {
+      ref.watch(workflowRefreshTickProvider);
       return ref
           .read(adminRepositoryProvider)
           .fetchProjectAssignments(projectId);
@@ -460,11 +476,20 @@ final projectAssignmentsProvider =
 final supportSettingsProvider = FutureProvider<SupportContactSettings>((
   ref,
 ) async {
+  ref.watch(workflowRefreshTickProvider);
   return ref.read(adminRepositoryProvider).fetchSupportSettings();
 });
 
 final reviewQueueProvider = FutureProvider<List<ReviewQueueItem>>((ref) async {
-  return ref.read(reviewRepositoryProvider).fetchPendingReviewItems();
+  ref.watch(workflowRefreshTickProvider);
+  return ref.read(reviewRepositoryProvider).fetchReviewItems(status: 'pending_review');
+});
+
+final rejectedReviewQueueProvider = FutureProvider<List<ReviewQueueItem>>((
+  ref,
+) async {
+  ref.watch(workflowRefreshTickProvider);
+  return ref.read(reviewRepositoryProvider).fetchReviewItems(status: 'rejected');
 });
 
 ProjectViewScope _defaultOperationalProjectScope(UserRole role) {

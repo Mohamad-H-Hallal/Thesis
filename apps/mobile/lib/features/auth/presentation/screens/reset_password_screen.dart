@@ -18,10 +18,9 @@ import '../utils/auth_input_formatters.dart';
 import '../widgets/auth_error_banner.dart';
 
 class ResetPasswordScreen extends ConsumerStatefulWidget {
-  const ResetPasswordScreen({this.mode, this.token, super.key});
+  const ResetPasswordScreen({this.email, super.key});
 
-  final String? mode;
-  final String? token;
+  final String? email;
 
   @override
   ConsumerState<ResetPasswordScreen> createState() =>
@@ -30,10 +29,12 @@ class ResetPasswordScreen extends ConsumerStatefulWidget {
 
 class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
   final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _tokenController;
+  late final TextEditingController _emailController;
+  final _otpController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmController = TextEditingController();
-  final _tokenFocus = FocusNode();
+  final _emailFocus = FocusNode();
+  final _otpFocus = FocusNode();
   final _passwordFocus = FocusNode();
   final _confirmFocus = FocusNode();
   final _noLeadingSpaceFormatter = NoLeadingSpaceFormatter();
@@ -46,31 +47,39 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
   @override
   void initState() {
     super.initState();
-    _tokenController = TextEditingController(text: widget.token ?? '');
-
-    if (widget.mode != 'sent') {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        patchAuthInputAttributes(
-          formId: 'reset_password',
-          fieldKeys: const <String>[
-            'reset_token',
-            'new_password',
-            'confirm_password',
-          ],
-        );
-      });
-    }
+    _emailController = TextEditingController(text: widget.email?.trim() ?? '');
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      patchAuthInputAttributes(
+        formId: 'reset_password',
+        fieldKeys: const <String>[
+          'email',
+          'reset_otp',
+          'new_password',
+          'confirm_password',
+        ],
+      );
+    });
   }
 
   @override
   void dispose() {
-    _tokenController.dispose();
+    _emailController.dispose();
+    _otpController.dispose();
     _passwordController.dispose();
     _confirmController.dispose();
-    _tokenFocus.dispose();
+    _emailFocus.dispose();
+    _otpFocus.dispose();
     _passwordFocus.dispose();
     _confirmFocus.dispose();
     super.dispose();
+  }
+
+  void _goBack() {
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+      return;
+    }
+    context.go(AppRoutes.forgotPassword);
   }
 
   Future<void> _submit() async {
@@ -90,21 +99,29 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
     TextInput.finishAutofillContext();
 
     try {
-      await ref
-          .read(authControllerProvider.notifier)
-          .resetPassword(
-            token: AuthFormValidators.normalize(_tokenController.text),
+      await ref.read(authControllerProvider.notifier).resetPassword(
+            email: AuthFormValidators.normalize(_emailController.text),
+            otp: AuthFormValidators.normalize(_otpController.text),
             newPassword: _passwordController.text,
           );
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       AppSnackbar.showSuccess(
         context,
-        'Password reset complete. Please login.',
+        'Password has been reset successfully.',
       );
-      context.go(AppRoutes.login);
+      final notice = Uri.encodeComponent(
+        'Password has been reset successfully. Please sign in.',
+      );
+      context.go('${AppRoutes.login}?notice=$notice&success=true');
     } catch (error) {
-      if (!mounted) return;
-      final message = error.toString();
+      if (!mounted) {
+        return;
+      }
+      final message = error.toString().trim().isEmpty
+          ? 'Unable to reset password right now.'
+          : error.toString().trim();
       setState(() {
         _formLevelError = message;
       });
@@ -120,77 +137,11 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.mode == 'sent') {
-      return AppScaffold(
-        title: 'Check your email',
-        showOfflineBanner: false,
-        showBackButton: true,
-        onBack: () => context.go(AppRoutes.login),
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 480),
-            child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.md),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  const AppLogo(size: 64),
-                  const SizedBox(height: AppSpacing.sm),
-                  const Icon(Icons.mark_email_read_outlined, size: 60),
-                  const SizedBox(height: AppSpacing.sm),
-                  Text(
-                    'A password reset code is ready for your account.',
-                    style: Theme.of(context).textTheme.titleLarge,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                  const Text(
-                    'If email delivery is not configured yet, use the development reset code shown below to continue.',
-                    textAlign: TextAlign.center,
-                  ),
-                  if ((widget.token ?? '').trim().isNotEmpty) ...[
-                    const SizedBox(height: AppSpacing.md),
-                    AppCard(
-                      child: Column(
-                        children: [
-                          Text(
-                            'Development reset code',
-                            style: Theme.of(context).textTheme.titleMedium,
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: AppSpacing.xs),
-                          SelectableText(
-                            widget.token!,
-                            style: Theme.of(context).textTheme.headlineSmall,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: AppSpacing.md),
-                  AppButton(
-                    label: 'Continue to reset form',
-                    icon: Icons.arrow_forward,
-                    onPressed: () {
-                      final tokenQuery = (widget.token ?? '').trim().isEmpty
-                          ? ''
-                          : '?token=${Uri.encodeComponent(widget.token!.trim())}';
-                      context.go('${AppRoutes.resetPassword}$tokenQuery');
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
     return AppScaffold(
       title: 'Reset password',
       showOfflineBanner: false,
       showBackButton: true,
-      onBack: () => context.go(AppRoutes.login),
+      onBack: _goBack,
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 460),
@@ -203,6 +154,12 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
                 children: <Widget>[
                   const AppLogo(size: 64),
                   const SizedBox(height: AppSpacing.sm),
+                  Text(
+                    'Enter the one-time code sent to your email address, then choose a new password.',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: AppSpacing.lg),
                   AppCard(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -212,22 +169,48 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
                           const SizedBox(height: AppSpacing.sm),
                         ],
                         AppTextField(
-                          label: 'Reset token',
-                          hint: 'Paste the reset token from your email',
-                          controller: _tokenController,
+                          label: 'Email address',
+                          hint: 'name@gov.lb',
+                          controller: _emailController,
+                          keyboardType: TextInputType.emailAddress,
                           textInputAction: TextInputAction.next,
-                          focusNode: _tokenFocus,
+                          focusNode: _emailFocus,
+                          onFieldSubmitted: (_) =>
+                              FocusScope.of(context).requestFocus(_otpFocus),
+                          inputFormatters: <TextInputFormatter>[
+                            _noLeadingSpaceFormatter,
+                          ],
+                          autofillHints: const <String>[
+                            AutofillHints.username,
+                            AutofillHints.email,
+                          ],
+                          validator: AuthFormValidators.email,
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        AppTextField(
+                          label: 'One-time code',
+                          hint: 'Enter the 6-digit code',
+                          controller: _otpController,
+                          keyboardType: TextInputType.number,
+                          textInputAction: TextInputAction.next,
+                          focusNode: _otpFocus,
                           onFieldSubmitted: (_) => FocusScope.of(
                             context,
                           ).requestFocus(_passwordFocus),
                           inputFormatters: <TextInputFormatter>[
-                            _noLeadingSpaceFormatter,
+                            FilteringTextInputFormatter.digitsOnly,
+                            LengthLimitingTextInputFormatter(6),
                           ],
-                          validator: (value) =>
-                              AuthFormValidators.requiredField(
-                                value,
-                                fieldLabel: 'Reset token',
-                              ),
+                          validator: (value) {
+                            final trimmed = value?.trim() ?? '';
+                            if (trimmed.isEmpty) {
+                              return 'Reset code is required.';
+                            }
+                            if (trimmed.length != 6) {
+                              return 'Enter the 6-digit reset code.';
+                            }
+                            return null;
+                          },
                         ),
                         const SizedBox(height: AppSpacing.sm),
                         AppTextField(
@@ -263,7 +246,7 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
                         ),
                         const SizedBox(height: AppSpacing.sm),
                         AppTextField(
-                          label: 'Confirm password',
+                          label: 'Confirm new password',
                           hint: 'Re-enter the new password',
                           controller: _confirmController,
                           obscureText: _obscureConfirmPassword,
@@ -297,8 +280,8 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
                         ),
                         const SizedBox(height: AppSpacing.md),
                         AppButton(
-                          label: 'Set new password',
-                          icon: Icons.password,
+                          label: 'Reset password',
+                          icon: Icons.password_outlined,
                           isLoading: _isSubmitting,
                           onPressed: _isSubmitting ? null : _submit,
                         ),

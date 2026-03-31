@@ -100,7 +100,7 @@ Runtime behavior:
 - inactive account maps to:
   - `This account is inactive.`
 - pending contributor login is blocked with:
-  - `Your request is still pending approval. You cannot log in yet.`
+  - `Your contributor request is still pending approval. You cannot log in yet.`
 - rejected contributor login is blocked with:
   - `Your contributor request was rejected. You cannot log in with contributor access.`
 - deactivated contributor login is blocked first, then the mobile app prompts:
@@ -119,16 +119,20 @@ Endpoints:
 
 Rules:
 
-- forgot-password always returns a generic success response so account existence is not leaked
+- forgot-password requires a real registered account and returns:
+  - `This account does not exist.` for unknown emails
 - reset tokens are stored in `password_reset_request`
-- tokens expire after `PASSWORD_RESET_TOKEN_EXPIRY_MINUTES` minutes
+- reset codes are 6-digit one-time passwords
+- reset codes expire after `PASSWORD_RESET_TOKEN_EXPIRY_MINUTES` minutes
 - used and expired tokens cannot be reused
 - passwords are re-hashed into `"user".password_hash` on reset
+- reset delivery is email-based through SMTP transport configuration
 
-Development behavior:
+Local development:
 
-- when email delivery is not configured, the API can expose a development reset code in non-production flows
-- the mobile app forwards that code into the reset screen so the workflow is still testable end to end
+- the repo root Docker dev stack starts Mailpit automatically
+- use `http://localhost:8025` to inspect locally delivered password reset emails
+- the mobile UI never displays the OTP/reset code directly
 
 ## Self-Deactivate
 
@@ -143,6 +147,21 @@ Rules:
 - contributor self-deactivation is blocked when the user still has approved assignments on active, paused, or draft projects
 - successful self-deactivation sets `"user".is_active = false`
 - inactive users cannot log in again until reactivated by an administrator flow
+
+## Change Password
+
+Endpoint:
+
+- `POST /api/v1/auth/change-password`
+
+Rules:
+
+- authenticated users must provide:
+  - `current_password`
+  - `new_password`
+- current password must match `"user".password_hash`
+- new password must satisfy the same password strength policy as signup
+- the mobile profile flow keeps the user on Profile and shows success/failure locally
 
 ## Notifications and Audit
 

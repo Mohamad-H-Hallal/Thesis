@@ -3,6 +3,12 @@ services:
     ports:
       - "55433:5432"
 
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
   migrate:
     build:
       context: .
@@ -22,6 +28,14 @@ services:
     working_dir: /workspace/apps/api
     environment:
       MIGRATIONS_DIR: /workspace/infra/migrations
+      PASSWORD_RESET_TOKEN_EXPIRY_MINUTES: ${PASSWORD_RESET_TOKEN_EXPIRY_MINUTES:-15}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-no-reply@gis.local}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Lebanese GIS Collector}
     command: ["npm", "run", "dev"]
     env_file:
       - .env
@@ -30,6 +44,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      mailpit:
+        condition: service_started
     ports:
       - "3000:3000"
     volumes:

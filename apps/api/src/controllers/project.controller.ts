@@ -1,36 +1,14 @@
 const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
+import {
+  assertProjectStatusTransition,
+  synchronizeProjectStatuses,
+  viewerVisibleStatuses,
+} from '../lib/projectLifecycle';
 
-const viewerVisibleStatuses = ['active', 'paused', 'completed'];
 const projectAccessScopes = ['public', 'assigned', 'all'] as const;
 type ProjectAccessScope = (typeof projectAccessScopes)[number];
-
-const projectStatusTransitions: Record<string, string[]> = {
-  draft: ['active'],
-  active: ['paused', 'completed'],
-  paused: ['active', 'completed'],
-  completed: ['active', 'paused', 'archived'],
-  archived: ['completed'],
-};
-
-const assertProjectStatusTransition = (currentStatus: string, nextStatus: string): void => {
-  const current = String(currentStatus).trim().toLowerCase();
-  const next = String(nextStatus).trim().toLowerCase();
-
-  if (current === next) {
-    return;
-  }
-
-  const allowed =
-    projectStatusTransitions[current as keyof typeof projectStatusTransitions] ?? [];
-  if (!allowed.includes(next)) {
-    throw new AppError(
-      `Invalid project status transition from ${current} to ${next}`,
-      400,
-    );
-  }
-};
 
 const ensureCategoryExists = async (categoryId: string): Promise<void> => {
   const categoryCheck = await query('SELECT id FROM project_category WHERE id = $1', [categoryId]);
@@ -47,6 +25,7 @@ const ensureSchemaObject = (schema: unknown): void => {
 
 // Get all projects (filtered by user access)
 const getAllProjects = async (req, res) => {
+  await synchronizeProjectStatuses();
   const { page = 1, limit = 20, status, category_id } = req.query;
   const requestedScope =
     typeof req.query.access_scope === 'string' ? req.query.access_scope : undefined;
@@ -199,6 +178,7 @@ const getAllProjects = async (req, res) => {
 const getProject = async (req, res) => {
   const { projectId } = req.params;
   const userId = req.user.id;
+  await synchronizeProjectStatuses(projectId);
 
   const result = await query(
     `SELECT p.*, pc.name as category_name,
@@ -305,6 +285,7 @@ const updateProject = async (req, res) => {
     visible_to_viewers,
   } = req.body;
 
+  await synchronizeProjectStatuses(projectId);
   // Build dynamic update query
   const updates: string[] = [];
   const params: unknown[] = [];
@@ -410,6 +391,7 @@ const updateProject = async (req, res) => {
 // Delete/Archive project
 const deleteProject = async (req, res) => {
   const { projectId } = req.params;
+  await synchronizeProjectStatuses(projectId);
 
   await transaction(async (client) => {
     const projectStatusResult = await client.query(
@@ -463,6 +445,7 @@ const deleteProject = async (req, res) => {
 // Get project statistics
 const getProjectStats = async (req, res) => {
   const { projectId } = req.params;
+  await synchronizeProjectStatuses(projectId);
 
   const result = await query('SELECT * FROM project_statistics WHERE project_id = $1', [projectId]);
 
@@ -481,6 +464,7 @@ const getProjectFeatures = async (req, res) => {
   const { projectId } = req.params;
   const { status, page = 1, limit = 50 } = req.query;
   const offset = (page - 1) * limit;
+  await synchronizeProjectStatuses(projectId);
 
   let queryText = `
     SELECT sf.id, sf.status, sf.attributes, sf.accuracy_meters,

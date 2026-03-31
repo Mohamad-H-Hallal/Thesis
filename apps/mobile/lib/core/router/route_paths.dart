@@ -53,5 +53,11 @@ class AppRoutes {
     return uri.toString();
   }
 
-  static String mapForProject(String projectId) => '/app/projects/$projectId/map';
+  static String mapForProject(String projectId, {String? featureId}) {
+    final uri = Uri(
+      path: '/app/projects/$projectId/map',
+      queryParameters: featureId == null ? null : <String, String>{'featureId': featureId},
+    );
+    return uri.toString();
+  }
 }

@@ -48,11 +48,11 @@ class AuthSession {
 class PasswordResetRequestResult {
   const PasswordResetRequestResult({
     required this.message,
-    this.devResetToken,
+    this.email,
     this.expiresAt,
   });
 
   final String message;
-  final String? devResetToken;
+  final String? email;
   final DateTime? expiresAt;
 }

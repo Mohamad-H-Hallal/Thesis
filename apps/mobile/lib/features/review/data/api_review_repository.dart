@@ -13,12 +13,12 @@ class ApiReviewRepository implements ReviewRepository {
   String get _featuresBasePath => '${AppEnv.apiVersionPrefix}/features';
 
   @override
-  Future<List<ReviewQueueItem>> fetchPendingReviewItems() async {
+  Future<List<ReviewQueueItem>> fetchReviewItems({required String status}) async {
     try {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         _featuresBasePath,
-        queryParameters: const <String, dynamic>{
-          'status': 'pending_review',
+        queryParameters: <String, dynamic>{
+          'status': status,
           'limit': 100,
         },
       );
@@ -37,7 +37,7 @@ class ApiReviewRepository implements ReviewRepository {
           projectId: (item['project_id'] as String?) ?? '',
           projectName: (item['project_name'] as String?) ?? 'Project',
           geometryType: (geometry['type'] as String?) ?? 'Point',
-          status: (item['status'] as String?) ?? 'pending_review',
+          status: (item['status'] as String?) ?? status,
           collectedBy: item['collected_by'] as String?,
           collectedAt: DateTime.tryParse(item['collected_at'] as String? ?? ''),
           photoCount: _toInt(item['photo_count']) ?? 0,

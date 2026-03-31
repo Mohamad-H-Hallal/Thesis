@@ -3,6 +3,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { query } from '../config/database';
 const logger = require('../utils/logger');
 import type { user_role } from '../types/roles';
+import { synchronizeProjectStatuses } from '../lib/projectLifecycle';
 
 interface TokenPayload extends JwtPayload {
   userId: string;
@@ -156,6 +157,8 @@ const checkProjectAccess = async (req: Request, res: Response, next: NextFunctio
       });
     }
 
+    await synchronizeProjectStatuses(projectId);
+
     // Admin can access all projects
     if (req.user.role === 'admin') {
       return next();
@@ -243,6 +246,8 @@ const checkProjectAdmin = async (req: Request, res: Response, next: NextFunction
         message: 'Project context is missing',
       });
     }
+
+    await synchronizeProjectStatuses(projectId);
 
     // System admin can access all projects
     if (req.user.role === 'admin') {

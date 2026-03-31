@@ -28,14 +28,21 @@ class _NoopAuthRepository implements AuthRepository {
   @override
   Future<PasswordResetRequestResult> requestPasswordReset(String email) async {
     return const PasswordResetRequestResult(
-      message: 'Password reset code generated.',
-      devResetToken: '123456',
+      message: 'A password reset code was sent to your email address.',
+      email: 'viewer@example.com',
     );
   }
 
   @override
   Future<void> resetPassword({
-    required String token,
+    required String email,
+    required String otp,
+    required String newPassword,
+  }) async {}
+
+  @override
+  Future<void> changePassword({
+    required String currentPassword,
     required String newPassword,
   }) async {}
 
@@ -255,6 +262,7 @@ Widget _wrapWithScope({
       ),
       projectsRepositoryProvider.overrideWithValue(fakeRepository),
       projectListProvider.overrideWith((ref, scope) {
+        ref.watch(workflowRefreshTickProvider);
         return fakeRepository.fetchProjects(
           userId: session.user.id,
           role: session.user.role,
@@ -262,6 +270,7 @@ Widget _wrapWithScope({
         );
       }),
       projectByIdProvider.overrideWith((ref, id) {
+        ref.watch(workflowRefreshTickProvider);
         return fakeRepository.byId(
           id: id,
           userId: session.user.id,
@@ -380,6 +389,9 @@ void main() {
   testWidgets(
     'admin visibility toggle updates project details state after refresh',
     (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1080, 1600));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
       final session = _sessionForRole(UserRole.admin, userId: 'admin-1');
       final repository = _FakeProjectsRepository(<ProjectSummary>[
         _project(
@@ -412,6 +424,9 @@ void main() {
   testWidgets(
     'viewer project details remain read-only without contributor actions',
     (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1080, 1600));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
       final session = _sessionForRole(UserRole.viewer, userId: 'viewer-1');
       final repository = _FakeProjectsRepository(<ProjectSummary>[
         _project(

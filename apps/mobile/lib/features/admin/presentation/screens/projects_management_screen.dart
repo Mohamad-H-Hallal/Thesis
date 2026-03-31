@@ -64,8 +64,7 @@ class _ProjectsManagementScreenState
             .read(adminRepositoryProvider)
             .updateProjectStatus(projectId: project.id, status: nextStatus);
       }
-      ref.invalidate(projectListProvider(ProjectViewScope.all));
-      ref.invalidate(projectByIdProvider(project.id));
+      bumpWorkflowRefresh(ref);
       if (!mounted) {
         return;
       }
@@ -242,6 +241,17 @@ class _ProjectsManagementScreenState
                         builder: (context, constraints) {
                           final menu = PopupMenuButton<String>(
                             onSelected: (value) {
+                              if (value == 'activate') {
+                                _changeProjectStatus(
+                                  project,
+                                  nextStatus: 'active',
+                                  dialogTitle: 'Activate project',
+                                  dialogMessage:
+                                      'Move "${project.name}" from draft into active field operations?',
+                                  successMessage:
+                                      'Project activated successfully.',
+                                );
+                              }
                               if (value == 'pause') {
                                 _changeProjectStatus(
                                   project,
@@ -262,6 +272,39 @@ class _ProjectsManagementScreenState
                                       'Return "${project.name}" to active field operations?',
                                   successMessage:
                                       'Project resumed successfully.',
+                                );
+                              }
+                              if (value == 'complete') {
+                                _changeProjectStatus(
+                                  project,
+                                  nextStatus: 'completed',
+                                  dialogTitle: 'Mark project completed',
+                                  dialogMessage:
+                                      'Mark "${project.name}" as completed? Collection will stop until the project is reopened.',
+                                  successMessage:
+                                      'Project marked completed successfully.',
+                                );
+                              }
+                              if (value == 'reopen-active') {
+                                _changeProjectStatus(
+                                  project,
+                                  nextStatus: 'active',
+                                  dialogTitle: 'Reopen project',
+                                  dialogMessage:
+                                      'Return "${project.name}" to active status?',
+                                  successMessage:
+                                      'Project reopened successfully.',
+                                );
+                              }
+                              if (value == 'reopen-paused') {
+                                _changeProjectStatus(
+                                  project,
+                                  nextStatus: 'paused',
+                                  dialogTitle: 'Restore paused project',
+                                  dialogMessage:
+                                      'Restore "${project.name}" to paused status?',
+                                  successMessage:
+                                      'Project restored to paused status.',
                                 );
                               }
                               if (value == 'archive') {
@@ -288,15 +331,36 @@ class _ProjectsManagementScreenState
                               }
                             },
                             itemBuilder: (context) => [
+                              if (project.status == 'draft')
+                                const PopupMenuItem(
+                                  value: 'activate',
+                                  child: Text('Activate project'),
+                                ),
                               if (project.status == 'active')
                                 const PopupMenuItem(
                                   value: 'pause',
                                   child: Text('Pause project'),
                                 ),
+                              if (project.status == 'active' ||
+                                  project.status == 'paused')
+                                const PopupMenuItem(
+                                  value: 'complete',
+                                  child: Text('Mark completed'),
+                                ),
                               if (project.status == 'paused')
                                 const PopupMenuItem(
                                   value: 'resume',
                                   child: Text('Resume project'),
+                                ),
+                              if (project.status == 'completed')
+                                const PopupMenuItem(
+                                  value: 'reopen-active',
+                                  child: Text('Reopen as active'),
+                                ),
+                              if (project.status == 'completed')
+                                const PopupMenuItem(
+                                  value: 'reopen-paused',
+                                  child: Text('Restore paused state'),
                                 ),
                               if (project.status == 'completed')
                                 const PopupMenuItem(

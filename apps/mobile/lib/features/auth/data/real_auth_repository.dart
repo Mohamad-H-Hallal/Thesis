@@ -165,8 +165,8 @@ class RealAuthRepository implements AuthRepository {
         message:
             (payload['message'] as String?)?.trim().isNotEmpty == true
                 ? (payload['message'] as String).trim()
-                : 'Password reset instructions were generated successfully.',
-        devResetToken: (data['dev_reset_token'] as String?)?.trim(),
+                : 'A password reset code was sent to your email address.',
+        email: (data['email'] as String?)?.trim(),
         expiresAt: _toDateTime(data['expires_at']),
       );
     } on DioException catch (error) {
@@ -179,18 +179,44 @@ class RealAuthRepository implements AuthRepository {
 
   @override
   Future<void> resetPassword({
-    required String token,
+    required String email,
+    required String otp,
     required String newPassword,
   }) async {
     try {
       await _apiClient.dio.post<Map<String, dynamic>>(
         '$_authBasePath/reset-password',
-        data: <String, dynamic>{'token': token, 'new_password': newPassword},
+        data: <String, dynamic>{
+          'email': email,
+          'otp': otp,
+          'new_password': newPassword,
+        },
       );
     } on DioException catch (error) {
       throw mapAuthDioException(
         error,
         fallbackMessage: 'Password reset failed.',
+      );
+    }
+  }
+
+  @override
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_authBasePath/change-password',
+        data: <String, dynamic>{
+          'current_password': currentPassword,
+          'new_password': newPassword,
+        },
+      );
+    } on DioException catch (error) {
+      throw mapAuthDioException(
+        error,
+        fallbackMessage: 'Password change failed.',
       );
     }
   }
@@ -213,14 +239,13 @@ class RealAuthRepository implements AuthRepository {
       await _apiClient.dio.post<Map<String, dynamic>>(
         '$_authBasePath/self-deactivate',
       );
+      _apiClient.setAccessToken(null);
+      await _clearStoredSession();
     } on DioException catch (error) {
       throw mapAuthDioException(
         error,
         fallbackMessage: 'Account deactivation failed.',
       );
-    } finally {
-      _apiClient.setAccessToken(null);
-      await _clearStoredSession();
     }
   }
 

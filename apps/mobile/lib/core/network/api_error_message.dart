@@ -67,7 +67,20 @@ String _sanitizeMessage(
   String message, {
   required String fallback,
 }) {
-  final normalized = message.trim();
+  var normalized = message.trim();
+  if (normalized.isEmpty) {
+    return fallback;
+  }
+
+  const removablePrefixes = <String>[
+    'Exception:',
+    'Error:',
+  ];
+  for (final prefix in removablePrefixes) {
+    if (normalized.startsWith(prefix)) {
+      normalized = normalized.substring(prefix.length).trim();
+    }
+  }
   if (normalized.isEmpty) {
     return fallback;
   }

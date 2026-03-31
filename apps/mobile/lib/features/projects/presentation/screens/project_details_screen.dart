@@ -57,11 +57,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
             projectId: widget.projectId,
             visibleToViewers: value,
           );
-      ref.invalidate(projectsProvider);
-      ref.invalidate(projectListProvider(ProjectViewScope.public));
-      ref.invalidate(projectListProvider(ProjectViewScope.assigned));
-      ref.invalidate(projectListProvider(ProjectViewScope.all));
-      ref.invalidate(projectByIdProvider(widget.projectId));
+      bumpWorkflowRefresh(ref);
       if (mounted) {
         AppSnackbar.showSuccess(
           context,
@@ -72,7 +68,13 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
       }
     } catch (error) {
       if (mounted) {
-        AppSnackbar.showError(context, error.toString());
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to update project visibility right now.',
+          ),
+        );
       }
     } finally {
       if (mounted) {
@@ -113,10 +115,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
       await ref
           .read(projectsRepositoryProvider)
           .requestProjectAccess(projectId: widget.projectId);
-      ref.invalidate(projectByIdProvider(widget.projectId));
-      ref.invalidate(projectListProvider(ProjectViewScope.public));
-      ref.invalidate(projectListProvider(ProjectViewScope.assigned));
-      ref.invalidate(managedAssignmentsProvider);
+      bumpWorkflowRefresh(ref);
       if (mounted) {
         AppSnackbar.showSuccess(
           context,
@@ -125,7 +124,13 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
       }
     } catch (error) {
       if (mounted) {
-        AppSnackbar.showError(context, error.toString());
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to request contributor access right now.',
+          ),
+        );
       }
     } finally {
       if (mounted) {
@@ -164,10 +169,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
       await ref
           .read(projectsRepositoryProvider)
           .cancelProjectAccessRequest(projectId: widget.projectId);
-      ref.invalidate(projectByIdProvider(widget.projectId));
-      ref.invalidate(projectListProvider(ProjectViewScope.public));
-      ref.invalidate(projectListProvider(ProjectViewScope.assigned));
-      ref.invalidate(managedAssignmentsProvider);
+      bumpWorkflowRefresh(ref);
       if (mounted) {
         AppSnackbar.showSuccess(
           context,
@@ -176,7 +178,13 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
       }
     } catch (error) {
       if (mounted) {
-        AppSnackbar.showError(context, error.toString());
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to cancel this project request right now.',
+          ),
+        );
       }
     } finally {
       if (mounted) {
@@ -327,6 +335,11 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                       label: 'Assigned collectors',
                       value: '${project.assignedCollectors}',
                       icon: Icons.groups_outlined,
+                    ),
+                    _MetaTile(
+                      label: 'Approved features',
+                      value: '${project.approvedFeatures}',
+                      icon: Icons.check_circle_outline,
                     ),
                     _MetaTile(
                       label: 'Queue',

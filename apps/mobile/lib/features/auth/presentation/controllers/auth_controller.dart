@@ -129,13 +129,17 @@ class AuthController extends StateNotifier<AuthState> {
   }
 
   Future<void> selfDeactivate() async {
+    final previousSession = state.session;
     state = const AuthState.loading();
     try {
       await _repository.selfDeactivate();
       state = const AuthState.unauthenticated();
     } catch (error) {
       state = AuthState(
-        status: AuthStatus.unauthenticated,
+        status: previousSession == null
+            ? AuthStatus.unauthenticated
+            : AuthStatus.authenticated,
+        session: previousSession,
         error: _messageFromError(error),
         errorCode: _codeFromError(error),
       );
@@ -148,10 +152,25 @@ class AuthController extends StateNotifier<AuthState> {
   }
 
   Future<void> resetPassword({
-    required String token,
+    required String email,
+    required String otp,
     required String newPassword,
   }) {
-    return _repository.resetPassword(token: token, newPassword: newPassword);
+    return _repository.resetPassword(
+      email: email,
+      otp: otp,
+      newPassword: newPassword,
+    );
+  }
+
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) {
+    return _repository.changePassword(
+      currentPassword: currentPassword,
+      newPassword: newPassword,
+    );
   }
 
   String _messageFromError(Object error) {

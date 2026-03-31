@@ -139,10 +139,15 @@ const userValidation = {
       .withMessage('Valid email is required'),
   ] as ValidationChain[],
   resetPassword: [
-    body('token')
+    body('email')
+      .trim()
+      .isEmail()
+      .normalizeEmail()
+      .withMessage('Valid email is required'),
+    body('otp')
       .trim()
       .notEmpty()
-      .withMessage('Reset token is required'),
+      .withMessage('Reset code is required'),
     body('new_password')
       .isString()
       .withMessage('New password must be a string')

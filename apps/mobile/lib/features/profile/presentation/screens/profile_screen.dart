@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/design_tokens.dart';
+import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_card.dart';
@@ -34,6 +35,7 @@ class ProfileScreen extends ConsumerStatefulWidget {
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   bool _isMutating = false;
+  String? _accountAccessError;
 
   Future<void> _editSupportSettings() async {
     final current = await ref.read(supportSettingsProvider.future);
@@ -147,7 +149,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       }
     } catch (error) {
       if (mounted) {
-        AppSnackbar.showError(context, error.toString());
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to update support settings right now.',
+          ),
+        );
       }
     } finally {
       emailController.dispose();
@@ -161,6 +169,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   Future<void> _selfDeactivate() async {
+    setState(() {
+      _accountAccessError = null;
+    });
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -191,19 +202,206 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       if (!mounted) {
         return;
       }
-      AppSnackbar.showSuccess(
-        context,
+      final notice = Uri.encodeComponent(
         'Your account was deactivated successfully.',
       );
-      context.go(AppRoutes.login);
+      context.go('${AppRoutes.login}?notice=$notice&success=true');
     } catch (error) {
       if (mounted) {
-        AppSnackbar.showError(context, error.toString());
+        final message = userFacingErrorMessage(
+          error,
+          fallback: 'Unable to deactivate your account right now.',
+        );
+        setState(() {
+          _accountAccessError = message;
+        });
+        AppSnackbar.showError(context, message);
       }
     } finally {
       if (mounted) {
         setState(() => _isMutating = false);
       }
+    }
+  }
+
+  Future<void> _showChangePasswordDialog() async {
+    final formKey = GlobalKey<FormState>();
+    final currentController = TextEditingController();
+    final newController = TextEditingController();
+    final confirmController = TextEditingController();
+    bool obscureCurrent = true;
+    bool obscureNew = true;
+    bool obscureConfirm = true;
+    String? dialogError;
+    bool submitting = false;
+
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: const Text('Change password'),
+              content: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: SingleChildScrollView(
+                  child: Form(
+                    key: formKey,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (dialogError != null) ...[
+                          Text(
+                            dialogError!,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                        ],
+                        AppTextField(
+                          label: 'Current password',
+                          controller: currentController,
+                          obscureText: obscureCurrent,
+                          enableSuggestions: false,
+                          autocorrect: false,
+                          suffix: IconButton(
+                            tooltip: obscureCurrent
+                                ? 'Show password'
+                                : 'Hide password',
+                            onPressed: () => setDialogState(
+                              () => obscureCurrent = !obscureCurrent,
+                            ),
+                            icon: Icon(
+                              obscureCurrent
+                                  ? Icons.visibility
+                                  : Icons.visibility_off,
+                            ),
+                          ),
+                          validator: (value) =>
+                              AuthFormValidators.requiredField(
+                                value,
+                                fieldLabel: 'Current password',
+                              ),
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        AppTextField(
+                          label: 'New password',
+                          controller: newController,
+                          obscureText: obscureNew,
+                          enableSuggestions: false,
+                          autocorrect: false,
+                          suffix: IconButton(
+                            tooltip: obscureNew
+                                ? 'Show password'
+                                : 'Hide password',
+                            onPressed: () => setDialogState(
+                              () => obscureNew = !obscureNew,
+                            ),
+                            icon: Icon(
+                              obscureNew
+                                  ? Icons.visibility
+                                  : Icons.visibility_off,
+                            ),
+                          ),
+                          validator: AuthFormValidators.password,
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        AppTextField(
+                          label: 'Confirm new password',
+                          controller: confirmController,
+                          obscureText: obscureConfirm,
+                          enableSuggestions: false,
+                          autocorrect: false,
+                          suffix: IconButton(
+                            tooltip: obscureConfirm
+                                ? 'Show password'
+                                : 'Hide password',
+                            onPressed: () => setDialogState(
+                              () => obscureConfirm = !obscureConfirm,
+                            ),
+                            icon: Icon(
+                              obscureConfirm
+                                  ? Icons.visibility
+                                  : Icons.visibility_off,
+                            ),
+                          ),
+                          validator: (value) =>
+                              AuthFormValidators.confirmPassword(
+                                value: value,
+                                password: newController.text,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: submitting
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: submitting
+                      ? null
+                      : () async {
+                          setDialogState(() {
+                            dialogError = null;
+                          });
+                          if (!(formKey.currentState?.validate() ?? false)) {
+                            return;
+                          }
+                          setDialogState(() {
+                            submitting = true;
+                          });
+                          try {
+                            await ref
+                                .read(authControllerProvider.notifier)
+                                .changePassword(
+                                  currentPassword: currentController.text,
+                                  newPassword: newController.text,
+                                );
+                            if (!dialogContext.mounted || !mounted) {
+                              return;
+                            }
+                            Navigator.of(dialogContext).pop();
+                            AppSnackbar.showSuccess(
+                              this.context,
+                              'Password changed successfully.',
+                            );
+                          } catch (error) {
+                            if (!dialogContext.mounted) {
+                              return;
+                            }
+                            setDialogState(() {
+                              dialogError = userFacingErrorMessage(
+                                error,
+                                fallback:
+                                    'Unable to change password right now.',
+                              );
+                            });
+                          } finally {
+                            if (dialogContext.mounted) {
+                              setDialogState(() {
+                                submitting = false;
+                              });
+                            }
+                          }
+                        },
+                  child: Text(submitting ? 'Saving...' : 'Save'),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+    } finally {
+      currentController.dispose();
+      newController.dispose();
+      confirmController.dispose();
     }
   }
 
@@ -371,6 +569,28 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             ),
           ),
         ),
+        const SizedBox(height: AppSpacing.md),
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Security',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              const Text(
+                'Update your password using your current password and the same strength rules required during account creation.',
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              OutlinedButton.icon(
+                onPressed: _isMutating ? null : _showChangePasswordDialog,
+                icon: const Icon(Icons.password_outlined),
+                label: const Text('Change password'),
+              ),
+            ],
+          ),
+        ),
         if (widget.userRole == UserRole.contributor) ...[
           const SizedBox(height: AppSpacing.md),
           AppCard(
@@ -385,6 +605,16 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 const Text(
                   'You can deactivate your contributor account only when no active project assignments are still blocking that action.',
                 ),
+                if (_accountAccessError != null) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  Text(
+                    _accountAccessError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    softWrap: true,
+                  ),
+                ],
                 const SizedBox(height: AppSpacing.sm),
                 OutlinedButton.icon(
                   onPressed: _isMutating ? null : _selfDeactivate,

@@ -51,6 +51,14 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
     super.dispose();
   }
 
+  void _goBackToLogin() {
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+      return;
+    }
+    context.go(AppRoutes.login);
+  }
+
   Future<void> _submit() async {
     setState(() {
       _formLevelError = null;
@@ -67,23 +75,33 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
     FocusScope.of(context).unfocus();
     TextInput.finishAutofillContext();
 
+    final normalizedEmail = AuthFormValidators.normalize(_emailController.text);
+
     try {
       final result = await ref
           .read(authControllerProvider.notifier)
-          .requestPasswordReset(
-            AuthFormValidators.normalize(_emailController.text),
-          );
-      if (!mounted) return;
-      final query = <String>[
-        'mode=sent',
-        if ((result.devResetToken ?? '').trim().isNotEmpty)
-          'token=${Uri.encodeComponent(result.devResetToken!.trim())}',
-      ].join('&');
+          .requestPasswordReset(normalizedEmail);
+      if (!mounted) {
+        return;
+      }
+
       AppSnackbar.showSuccess(context, result.message);
-      context.go('${AppRoutes.resetPassword}?$query');
+      final email = result.email?.trim().isNotEmpty == true
+          ? result.email!.trim()
+          : normalizedEmail;
+      context.push(
+        Uri(
+          path: AppRoutes.resetPassword,
+          queryParameters: <String, String>{'email': email},
+        ).toString(),
+      );
     } catch (error) {
-      if (!mounted) return;
-      final message = error.toString();
+      if (!mounted) {
+        return;
+      }
+      final message = error.toString().trim().isEmpty
+          ? 'Unable to send a reset code right now.'
+          : error.toString().trim();
       setState(() {
         _formLevelError = message;
       });
@@ -103,7 +121,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
       title: 'Forgot password',
       showOfflineBanner: false,
       showBackButton: true,
-      onBack: () => context.go(AppRoutes.login),
+      onBack: _goBackToLogin,
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 460),
@@ -117,7 +135,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                   const AppLogo(size: 64),
                   const SizedBox(height: AppSpacing.sm),
                   Text(
-                    'Enter your account email to generate a password reset code.',
+                    'Enter your registered email address to receive a one-time password reset code.',
                     style: Theme.of(context).textTheme.bodyMedium,
                     textAlign: TextAlign.center,
                   ),
@@ -145,11 +163,19 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                             AutofillHints.username,
                             AutofillHints.email,
                           ],
+                          onChanged: (_) {
+                            if (_formLevelError == null) {
+                              return;
+                            }
+                            setState(() {
+                              _formLevelError = null;
+                            });
+                          },
                           validator: AuthFormValidators.email,
                         ),
                         const SizedBox(height: AppSpacing.md),
                         AppButton(
-                          label: 'Generate reset code',
+                          label: 'Send reset code',
                           icon: Icons.email_outlined,
                           isLoading: _isSubmitting,
                           onPressed: _isSubmitting ? null : _submit,

@@ -26,7 +26,7 @@ The system user role enum is fixed to:
 | Collect field data | No | No | Yes, if assigned and project is active | No |
 | Read assigned projects | Yes | Yes | Yes | No |
 | Read viewer-published projects | Yes | Yes | Yes | Yes |
-| Self-deactivate account | No | No | Yes, if no blocking assignments | Yes |
+| Self-deactivate account | No | No | Yes, if no blocking assignments | No |
 
 ## Protected Super Admin
 
@@ -87,3 +87,7 @@ Viewer:
 - `paused`: viewable but collection and submission are blocked
 - `completed`: viewable, no new collection mutations
 - `archived`: hidden from normal active work, may be restored to `completed`
+- automatic lifecycle sync runs on project reads and project-scoped access checks:
+  - `draft -> active` once `start_date` arrives
+  - `draft|active|paused -> completed` once `end_date` has passed
+- manual transitions remain limited to the API-enforced status rules

@@ -16,7 +16,7 @@ This pass closed the remaining UI/runtime gaps around:
 - stronger user management with block/unblock, admin promotion/revert boundaries, and search/filter tooling
 - hiding the protected super admin from app-facing list responses and assignment eligibility data
 - backend-managed Help & Support settings surfaced in profile and editable by protected super admin
-- self-deactivate workflow for viewer/contributor accounts with assignment-state restrictions
+- self-deactivate workflow for contributor accounts with assignment-state restrictions
 - category search and icon upload support
 - paused project enforcement plus archive/unarchive restore behavior
 - richer project map interactions, including feature status filters, detail sheets, and review actions from the map workspace
@@ -84,7 +84,7 @@ No new schema redesign was introduced. PostgreSQL/PostGIS remains the source of 
 - Completed projects can be archived, and unarchive restores them to `completed`.
 - Support contact details are backend-managed and persist across sessions.
 - Notifications are persisted, user-scoped, and now support read/unread state from the mobile client.
-- Viewer and contributor accounts may self-deactivate when no blocking assignment rule applies.
+- Contributor accounts may self-deactivate when no blocking assignment rule applies.
 
 ## Critical Gaps Check
 

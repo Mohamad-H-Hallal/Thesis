@@ -126,6 +126,10 @@ class ApiProjectsRepository implements ProjectsRepository {
       category: (row['category_name'] as String?) ?? 'Uncategorized',
       categoryId: row['category_id'] as String?,
       status: (row['status'] as String?) ?? 'draft',
+      approvedFeatures:
+          _toInt(row['approved_features']) ??
+          _toInt(row['approvedFeatures']) ??
+          0,
       assignedCollectors:
           _toInt(row['contributor_count']) ??
           _toInt(row['assigned_collectors']) ??

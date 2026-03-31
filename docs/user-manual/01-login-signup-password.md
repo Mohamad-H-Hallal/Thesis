@@ -25,15 +25,17 @@ Important security behavior:
 
 ## Forgot Password
 1. Tap `Forgot password?` on login.
-2. Enter your email.
+2. Enter your registered email.
 3. Submit request.
-4. App shows confirmation state (`Check your email`).
+4. Check your email for the one-time password reset code.
 
-## Reset Password (token simulation flow)
-1. Open reset link route (`/reset-password`) from email/deep link simulation.
-2. Enter new password and confirm password.
-3. Submit.
-4. Return to login and sign in with new password.
+## Reset Password
+1. Open the reset-password step from the app flow.
+2. Enter your email address.
+3. Enter the one-time password reset code from the email.
+4. Enter new password and confirm password.
+5. Submit.
+6. Return to login and sign in with the new password.
 
 ## Error Cases
 - Wrong password: show authentication error.

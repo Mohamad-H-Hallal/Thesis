@@ -9,9 +9,8 @@
 nvm use
 ```
 2. Copy `.env.example` to `.env` and fill secrets.
-   - Default local DB connection is `localhost:5433`, which matches the standalone local DB stack under `infra/db`.
-   - If you want host-side API commands to hit the root Docker compose DB instead, change `DB_PORT` to `55433` explicitly.
-   - Official app runtime uses the root Docker compose stack from the repo root; `infra/db/docker-compose.yml` is not part of normal app runtime.
+   - Default local DB connection is `localhost:55433`, which matches the official root Docker compose stack.
+   - Official app runtime uses the root Docker compose stack from the repo root; `infra/db/docker-compose.yml` is maintenance tooling only, not normal app runtime.
 3. Install dependencies:
 ```bash
 npm ci
@@ -46,6 +45,22 @@ npm run reset:runtime
 ```bash
 npm run dev
 ```
+
+## Password Reset Email
+- Forgot-password sends a real one-time password reset code by email.
+- Local Docker development uses Mailpit from the repo root compose stack.
+- Mailpit UI: `http://localhost:8025`
+- Mailpit SMTP:
+  - inside Docker: `mailpit:1025`
+  - host-side API commands: `localhost:1025`
+- Required config:
+  - `SMTP_HOST`
+  - `SMTP_PORT`
+  - `SMTP_SECURE`
+  - `SMTP_USER` / `SMTP_PASS` if your SMTP relay requires auth
+  - `SMTP_FROM_EMAIL`
+  - optional `SMTP_FROM_NAME`
+  - optional `PASSWORD_RESET_TOKEN_EXPIRY_MINUTES`
 
 ## Quality Gate
 - Lint: `npm run lint`

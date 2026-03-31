@@ -53,5 +53,15 @@ void main() {
         'This email is already registered.',
       );
     });
+
+    test('strips generic exception prefixes from user-facing copy', () {
+      expect(
+        userFacingErrorMessage(
+          Exception('Feature submission failed.'),
+          fallback: 'Something went wrong.',
+        ),
+        'Feature submission failed.',
+      );
+    });
   });
 }

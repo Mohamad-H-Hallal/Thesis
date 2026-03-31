@@ -27,14 +27,21 @@ class _FailingAuthRepository implements AuthRepository {
   @override
   Future<PasswordResetRequestResult> requestPasswordReset(String email) async {
     return const PasswordResetRequestResult(
-      message: 'Password reset code generated.',
-      devResetToken: '123456',
+      message: 'A password reset code was sent to your email address.',
+      email: 'viewer@example.com',
     );
   }
 
   @override
   Future<void> resetPassword({
-    required String token,
+    required String email,
+    required String otp,
+    required String newPassword,
+  }) async {}
+
+  @override
+  Future<void> changePassword({
+    required String currentPassword,
     required String newPassword,
   }) async {}
 

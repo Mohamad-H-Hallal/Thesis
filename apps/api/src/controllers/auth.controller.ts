@@ -12,41 +12,17 @@ import {
   notifyActiveAdminsAboutContributorRequest,
   notifyContributorRequestSubmitted,
 } from '../lib/userWorkflow';
+import { sendPasswordResetOtpEmail } from '../lib/mailer';
 
 const passwordResetExpiryMinutes = Number(
   process.env.PASSWORD_RESET_TOKEN_EXPIRY_MINUTES || 15,
 );
-
-const shouldExposeDevResetToken = () =>
-  process.env.NODE_ENV !== 'production' ||
-  process.env.EXPOSE_DEV_RESET_TOKEN === 'true';
 
 const hashResetToken = (token: string) =>
   crypto.createHash('sha256').update(token).digest('hex');
 
 const generateResetToken = () =>
   crypto.randomInt(0, 1000000).toString().padStart(6, '0');
-
-const ensurePasswordResetTable = async () => {
-  await query(`
-    CREATE TABLE IF NOT EXISTS password_reset_request (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id UUID NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
-      token_hash TEXT NOT NULL,
-      expires_at TIMESTAMPTZ NOT NULL,
-      used_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      requested_from_ip INET
-    )
-  `);
-
-  await query(
-    'CREATE INDEX IF NOT EXISTS idx_password_reset_request_user_id ON password_reset_request(user_id)',
-  );
-  await query(
-    'CREATE INDEX IF NOT EXISTS idx_password_reset_request_expires_at ON password_reset_request(expires_at)',
-  );
-};
 
 // Register new user
 const register = async (req, res) => {
@@ -372,7 +348,6 @@ const reactivateContributorLogin = async (req, res) => {
 
 const requestPasswordReset = async (req, res) => {
   const normalizedEmail = normalizeEmail(req.body?.email);
-  await ensurePasswordResetTable();
 
   const result = await query(
     `SELECT id, email, full_name
@@ -382,75 +357,74 @@ const requestPasswordReset = async (req, res) => {
     [normalizedEmail],
   );
 
-  let devResetToken: string | null = null;
-  let expiresAt: Date | null = null;
-
-  if (result.rows.length > 0) {
-    const user = result.rows[0];
-    const resetToken = generateResetToken();
-    devResetToken = shouldExposeDevResetToken() ? resetToken : null;
-    expiresAt = new Date(Date.now() + passwordResetExpiryMinutes * 60 * 1000);
-
-    await transaction(async (client) => {
-      await client.query(
-        `UPDATE password_reset_request
-         SET used_at = CURRENT_TIMESTAMP
-         WHERE user_id = $1
-           AND used_at IS NULL`,
-        [user.id],
-      );
-
-      await client.query(
-        `INSERT INTO password_reset_request (user_id, token_hash, expires_at, requested_from_ip)
-         VALUES ($1, $2, $3, $4::inet)`,
-        [user.id, hashResetToken(resetToken), expiresAt, req.ip ?? null],
-      );
-    });
-
-    logger.info('Password reset requested', {
-      userId: user.id,
-      email: user.email,
-      expiresAt: expiresAt.toISOString(),
-      devTokenExposed: shouldExposeDevResetToken(),
-    });
+  if (result.rows.length === 0) {
+    throw new AppError('This account does not exist.', 404);
   }
+
+  const user = result.rows[0];
+  const resetToken = generateResetToken();
+  const expiresAt = new Date(Date.now() + passwordResetExpiryMinutes * 60 * 1000);
+
+  await transaction(async (client) => {
+    await client.query(
+      `UPDATE password_reset_request
+       SET used_at = CURRENT_TIMESTAMP
+       WHERE user_id = $1
+         AND used_at IS NULL`,
+      [user.id],
+    );
+
+    await client.query(
+      `INSERT INTO password_reset_request (user_id, token_hash, expires_at, requested_from_ip)
+       VALUES ($1, $2, $3, $4::inet)`,
+      [user.id, hashResetToken(resetToken), expiresAt, req.ip ?? null],
+    );
+  });
+
+  await sendPasswordResetOtpEmail({
+    toEmail: user.email,
+    recipientName: user.full_name ?? 'User',
+    otp: resetToken,
+    expiresInMinutes: passwordResetExpiryMinutes,
+  });
+
+  logger.info('Password reset requested', {
+    userId: user.id,
+    email: user.email,
+    expiresAt: expiresAt.toISOString(),
+  });
 
   res.json({
     success: true,
     message:
-      'If an account matches that email, a password reset code has been generated.',
-    data:
-      shouldExposeDevResetToken() && devResetToken != null
-        ? {
-            delivery: 'development-reset-code',
-            dev_reset_token: devResetToken,
-            expires_at: expiresAt?.toISOString() ?? null,
-          }
-        : {
-            delivery: 'email-or-admin-assisted',
-            expires_at: expiresAt?.toISOString() ?? null,
-          },
+      'A password reset code was sent to your email address.',
+    data: {
+      delivery: 'email',
+      expires_at: expiresAt.toISOString(),
+      email: user.email,
+    },
   });
 };
 
 const resetPassword = async (req, res) => {
-  const { token, new_password } = req.body;
-  await ensurePasswordResetTable();
+  const { email, otp, new_password } = req.body;
+  const normalizedEmail = normalizeEmail(email);
 
   const resetRequestResult = await query(
     `SELECT prr.id, prr.user_id, u.email
      FROM password_reset_request prr
      JOIN "user" u ON u.id = prr.user_id
-     WHERE prr.token_hash = $1
+     WHERE LOWER(u.email) = $1
+       AND prr.token_hash = $2
        AND prr.used_at IS NULL
        AND prr.expires_at >= CURRENT_TIMESTAMP
      ORDER BY prr.created_at DESC
      LIMIT 1`,
-    [hashResetToken(token)],
+    [normalizedEmail, hashResetToken(otp)],
   );
 
   if (resetRequestResult.rows.length === 0) {
-    throw new AppError('Reset token is invalid or expired.', 400);
+    throw new AppError('Reset code is invalid or expired.', 400);
   }
 
   const resetRequest = resetRequestResult.rows[0];

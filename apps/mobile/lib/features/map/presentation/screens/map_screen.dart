@@ -21,11 +21,13 @@ import '../../domain/map_feature.dart';
 class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({
     this.initialProjectId,
+    this.initialFeatureId,
     this.lockProjectSelection = false,
     super.key,
   });
 
   final String? initialProjectId;
+  final String? initialFeatureId;
   final bool lockProjectSelection;
 
   @override
@@ -43,6 +45,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   String? _selectedProjectId;
   String? _tileFailureMessage;
+  String? _autoOpenedFeatureId;
 
   @override
   Widget build(BuildContext context) {
@@ -239,6 +242,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               final filteredFeatures = features
                   .where((feature) => _visibleStatuses.contains(feature.status))
                   .toList(growable: false);
+              _maybeOpenInitialFeatureDetails(
+                project: project,
+                features: filteredFeatures,
+                canCollectOnMap: canCollectOnMap,
+                canReview: canReview,
+              );
 
               return _buildMapWorkspace(
                 context,
@@ -611,8 +620,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             status: status,
             reviewNotes: note,
           );
-      ref.invalidate(projectMapFeaturesProvider(projectId));
-      ref.invalidate(reviewQueueProvider);
+      bumpWorkflowRefresh(ref);
       if (mounted) {
         Navigator.of(context).maybePop();
         AppSnackbar.showSuccess(
@@ -624,7 +632,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       }
     } catch (error) {
       if (mounted) {
-        AppSnackbar.showError(context, error.toString());
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to update this feature review right now.',
+          ),
+        );
       }
     }
   }
@@ -661,9 +675,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       await ref
           .read(featureWorkflowRepositoryProvider)
           .submitForReview(feature.id);
-      ref.invalidate(projectMapFeaturesProvider(projectId));
-      ref.invalidate(projectByIdProvider(projectId));
-      ref.invalidate(reviewQueueProvider);
+      bumpWorkflowRefresh(ref);
       if (mounted) {
         Navigator.of(context).maybePop();
         AppSnackbar.showSuccess(
@@ -673,7 +685,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       }
     } catch (error) {
       if (mounted) {
-        AppSnackbar.showError(context, error.toString());
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to submit this draft right now.',
+          ),
+        );
       }
     }
   }
@@ -919,6 +937,44 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         );
       },
     );
+  }
+
+  void _maybeOpenInitialFeatureDetails({
+    required ProjectSummary project,
+    required List<MapFeatureSummary> features,
+    required bool canCollectOnMap,
+    required bool canReview,
+  }) {
+    final targetFeatureId = widget.initialFeatureId;
+    if (targetFeatureId == null ||
+        targetFeatureId.isEmpty ||
+        _autoOpenedFeatureId == targetFeatureId) {
+      return;
+    }
+
+    MapFeatureSummary? feature;
+    for (final item in features) {
+      if (item.id == targetFeatureId) {
+        feature = item;
+        break;
+      }
+    }
+    if (feature == null) {
+      return;
+    }
+
+    _autoOpenedFeatureId = targetFeatureId;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _openFeatureDetails(
+        project: project,
+        feature: feature!,
+        canCollectOnMap: canCollectOnMap,
+        canReview: canReview,
+      );
+    });
   }
 
   void _focusFeature(MapFeatureSummary feature) {

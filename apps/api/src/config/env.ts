@@ -38,6 +38,14 @@ export interface EnvConfig {
   EXPORT_DIR: string;
   EXPORT_RETENTION_DAYS: number;
   EXPORT_CLEANUP_INTERVAL_HOURS: number;
+  PASSWORD_RESET_TOKEN_EXPIRY_MINUTES: number;
+  SMTP_HOST: string;
+  SMTP_PORT: number;
+  SMTP_SECURE: boolean;
+  SMTP_USER: string;
+  SMTP_PASS: string;
+  SMTP_FROM_EMAIL: string;
+  SMTP_FROM_NAME: string;
   SUPER_ADMIN_EMAIL: string;
   SUPER_ADMIN_PASSWORD: string;
   SUPER_ADMIN_FULL_NAME: string;
@@ -87,6 +95,15 @@ const envSchema = Joi.object({
   EXPORT_DIR: Joi.string().default('./exports'),
   EXPORT_RETENTION_DAYS: Joi.number().integer().min(1).default(7),
   EXPORT_CLEANUP_INTERVAL_HOURS: Joi.number().integer().min(1).default(24),
+  PASSWORD_RESET_TOKEN_EXPIRY_MINUTES: Joi.number().integer().min(5).max(60).default(15),
+
+  SMTP_HOST: Joi.string().allow('').default(''),
+  SMTP_PORT: Joi.number().port().default(1025),
+  SMTP_SECURE: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(false),
+  SMTP_USER: Joi.string().allow('').default(''),
+  SMTP_PASS: Joi.string().allow('').default(''),
+  SMTP_FROM_EMAIL: Joi.string().email({ tlds: { allow: false } }).allow('').default(''),
+  SMTP_FROM_NAME: Joi.string().allow('').default('Lebanese GIS Collector'),
 
   SUPER_ADMIN_EMAIL: Joi.string().allow('').default(''),
   SUPER_ADMIN_PASSWORD: Joi.string().allow('').default(''),
@@ -128,6 +145,16 @@ const validateEnv = (): EnvConfig => {
   if (value.NODE_ENV === 'production' && !hasCompleteSuperAdminConfig) {
     throw new Error(
       'Environment validation failed: production requires SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD, and SUPER_ADMIN_FULL_NAME'
+    );
+  }
+
+  const hasMailConfig = [value.SMTP_HOST, value.SMTP_FROM_EMAIL].every(
+    (item: string) => item.trim().length > 0
+  );
+
+  if (value.NODE_ENV === 'production' && !hasMailConfig) {
+    throw new Error(
+      'Environment validation failed: production requires SMTP_HOST and SMTP_FROM_EMAIL'
     );
   }
 
