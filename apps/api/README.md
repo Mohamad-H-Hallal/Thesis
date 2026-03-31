@@ -56,30 +56,38 @@ npm run dev
   - verify the OTP for the same account
   - submit the new password with the verified reset session
 - The API never exposes a dev/reset token in UI-facing responses.
-- Local Docker development defaults to `MAIL_TRANSPORT=mailpit` from the repo root compose stack.
-- Mailpit UI: `http://localhost:8025`
-- Mailpit SMTP:
-  - inside Docker: `mailpit:1025`
-  - host-side API commands: `localhost:1025`
-- Mailpit captures reset emails locally.
-- To deliver OTPs to a real mailbox, set these in the active `.env`, then restart the API:
-  - `MAIL_TRANSPORT=smtp`
-  - `SMTP_HOST`
-  - `SMTP_PORT`
-  - `SMTP_SECURE`
-  - `SMTP_USER` / `SMTP_PASS` if your relay requires auth
-  - `SMTP_FROM_EMAIL`
-  - optional `SMTP_FROM_NAME`
-- When `MAIL_TRANSPORT=smtp`, the API now returns a delivery failure instead of fake success if:
+- Two supported runtime modes:
+  - Local capture mode:
+    - `MAIL_TRANSPORT=mailpit`
+    - `PASSWORD_RESET_REQUIRE_REAL_DELIVERY=false`
+    - Mailpit UI: `http://localhost:8025`
+    - Mailpit SMTP:
+      - inside Docker: `mailpit:1025`
+      - host-side API commands: `localhost:1025`
+  - Real transactional mode:
+    - `MAIL_TRANSPORT=smtp`
+    - `PASSWORD_RESET_REQUIRE_REAL_DELIVERY=true`
+    - `SMTP_HOST`
+    - `SMTP_PORT`
+    - `SMTP_SECURE`
+    - `SMTP_USER` / `SMTP_PASS` if your relay requires auth
+    - `SMTP_FROM_EMAIL`
+    - optional `SMTP_FROM_NAME`
+- In real transactional mode, forgot-password only succeeds if the provider accepts the recipient for delivery.
+- The API returns a delivery failure instead of fake success if:
   - required SMTP config is missing
-  - the relay rejects the recipient
-  - the SMTP transport fails
+  - the runtime is still using local mail capture
+  - `MAIL_TRANSPORT=smtp` but `SMTP_HOST=mailpit`
+  - the provider rejects the recipient or fails the send attempt
 - Verify the running API container sees the correct config:
-  - `docker compose exec api sh -lc "printenv | grep -E '^(MAIL_TRANSPORT|SMTP_)' | sort"`
+  - `docker compose exec api sh -lc "printenv | grep -E '^(MAIL_TRANSPORT|PASSWORD_RESET_REQUIRE_REAL_DELIVERY|SMTP_)' | sort"`
 - Verify the active transport in logs:
   - `docker compose logs api --tail 50 | grep \"Password reset mail transport initialized\"`
+- Verify a successful provider handoff in logs:
+  - `docker compose logs api --tail 50 | grep \"Password reset email accepted by transport\"`
 - Required config:
   - `MAIL_TRANSPORT`
+  - `PASSWORD_RESET_REQUIRE_REAL_DELIVERY`
   - `SMTP_HOST`
   - `SMTP_PORT`
   - `SMTP_SECURE`

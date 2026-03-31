@@ -12,6 +12,15 @@ const deliveryUnavailableMessage =
 const realDeliveryRequiredMessage =
   'Email delivery is not configured for real password reset yet. Please contact support.';
 
+const isMailpitHost = (value: string): boolean =>
+  value.trim().toLowerCase() === 'mailpit';
+
+const isLocalMailCaptureMode = (
+  env: ReturnType<typeof validateEnv>,
+): boolean =>
+  env.MAIL_TRANSPORT === 'mailpit' ||
+  (env.MAIL_TRANSPORT === 'smtp' && isMailpitHost(env.SMTP_HOST));
+
 const getMailEnv = () => {
   try {
     return validateEnv();
@@ -58,15 +67,16 @@ const buildTransport = (): nodemailer.Transporter => {
     });
   }
 
-  if (env.MAIL_TRANSPORT === 'mailpit') {
+  if (isLocalMailCaptureMode(env)) {
     if (env.PASSWORD_RESET_REQUIRE_REAL_DELIVERY) {
       logger.error(
-        'Password reset email blocked because real delivery is required but Mailpit is active',
+        'Password reset email blocked because real delivery is required but local mail capture is active',
         {
           mailTransport: env.MAIL_TRANSPORT,
           smtpHost: env.SMTP_HOST.trim().length > 0 ? env.SMTP_HOST : 'mailpit',
           smtpPort: env.SMTP_PORT,
           realDeliveryRequired: env.PASSWORD_RESET_REQUIRE_REAL_DELIVERY,
+          effectiveDeliveryMode: 'local_capture',
         },
       );
       throw new AppError(realDeliveryRequiredMessage, 503);
@@ -114,6 +124,9 @@ const getTransporter = (): nodemailer.Transporter => {
   const env = getMailEnv();
   cachedTransporter = buildTransport();
   if (!loggedTransportDetails) {
+    const effectiveDeliveryMode = isLocalMailCaptureMode(env)
+      ? 'local_capture'
+      : 'transactional_smtp';
     logger.info('Password reset mail transport initialized', {
       mailTransport: env.MAIL_TRANSPORT,
       smtpHost:
@@ -125,18 +138,20 @@ const getTransporter = (): nodemailer.Transporter => {
       smtpPort: env.SMTP_PORT,
       smtpSecure: env.SMTP_SECURE,
       realDeliveryRequired: env.PASSWORD_RESET_REQUIRE_REAL_DELIVERY,
+      effectiveDeliveryMode,
       fromEmail:
         env.MAIL_TRANSPORT === 'mailpit' && env.SMTP_FROM_EMAIL.trim().length === 0
             ? 'no-reply@gis.local'
             : env.SMTP_FROM_EMAIL,
     });
-    if (env.MAIL_TRANSPORT === 'mailpit') {
-      logger.warn('Password reset email is using Mailpit; real inbox delivery is disabled for this runtime', {
+    if (isLocalMailCaptureMode(env)) {
+      logger.warn('Password reset email is using local mail capture; real inbox delivery is disabled for this runtime', {
         mailTransport: env.MAIL_TRANSPORT,
         smtpHost:
           env.SMTP_HOST.trim().length > 0 ? env.SMTP_HOST : 'mailpit',
         smtpPort: env.SMTP_PORT,
         realDeliveryRequired: env.PASSWORD_RESET_REQUIRE_REAL_DELIVERY,
+        effectiveDeliveryMode,
       });
     }
     loggedTransportDetails = true;
