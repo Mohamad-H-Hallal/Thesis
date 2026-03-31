@@ -2,6 +2,7 @@ import Joi from 'joi';
 
 export interface EnvConfig {
   NODE_ENV: 'development' | 'test' | 'production';
+  MAIL_TRANSPORT: 'mailpit' | 'smtp';
   PORT: number;
   HOST: string;
   TRUST_PROXY: boolean;
@@ -53,6 +54,7 @@ export interface EnvConfig {
 
 const envSchema = Joi.object({
   NODE_ENV: Joi.string().valid('development', 'test', 'production').default('development'),
+  MAIL_TRANSPORT: Joi.string().valid('mailpit', 'smtp').default('mailpit'),
   PORT: Joi.number().port().default(3000),
   HOST: Joi.string().default('localhost'),
   TRUST_PROXY: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(false),
@@ -148,11 +150,29 @@ const validateEnv = (): EnvConfig => {
     );
   }
 
-  const hasMailConfig = [value.SMTP_HOST, value.SMTP_FROM_EMAIL].every(
-    (item: string) => item.trim().length > 0
+  const hasSmtpConfig = [value.SMTP_HOST, value.SMTP_FROM_EMAIL].every(
+    (item: string) => item.trim().length > 0,
   );
+  const hasExplicitSmtpPort =
+    typeof process.env.SMTP_PORT === 'string' &&
+    process.env.SMTP_PORT.trim().length > 0;
 
-  if (value.NODE_ENV === 'production' && !hasMailConfig) {
+  if (
+    value.MAIL_TRANSPORT === 'smtp' &&
+    (!hasSmtpConfig || !hasExplicitSmtpPort)
+  ) {
+    throw new Error(
+      'Environment validation failed: MAIL_TRANSPORT=smtp requires SMTP_HOST, SMTP_PORT, and SMTP_FROM_EMAIL'
+    );
+  }
+
+  if (value.NODE_ENV === 'production' && value.MAIL_TRANSPORT !== 'smtp') {
+    throw new Error(
+      'Environment validation failed: production requires MAIL_TRANSPORT=smtp'
+    );
+  }
+
+  if (value.NODE_ENV === 'production' && !hasSmtpConfig) {
     throw new Error(
       'Environment validation failed: production requires SMTP_HOST and SMTP_FROM_EMAIL'
     );

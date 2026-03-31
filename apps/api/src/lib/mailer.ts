@@ -2,8 +2,29 @@ import nodemailer from 'nodemailer';
 import type SMTPTransport from 'nodemailer/lib/smtp-transport';
 import { AppError } from '../middleware/error';
 import { validateEnv } from '../config/env';
+const logger = require('../utils/logger');
 
 let cachedTransporter: nodemailer.Transporter | null = null;
+let loggedTransportDetails = false;
+
+const deliveryUnavailableMessage =
+  'We could not send the verification code right now. Please try again later.';
+
+const getMailEnv = () => {
+  try {
+    return validateEnv();
+  } catch (error) {
+    logger.error('Password reset mail configuration validation failed', {
+      error:
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : 'unknown',
+    });
+    throw new AppError(deliveryUnavailableMessage, 503);
+  }
+};
 
 const normalizeEnvelopeAddress = (value: unknown): string | null => {
   if (typeof value === 'string') {
@@ -27,7 +48,7 @@ const normalizeEnvelopeAddress = (value: unknown): string | null => {
 };
 
 const buildTransport = (): nodemailer.Transporter => {
-  const env = validateEnv();
+  const env = getMailEnv();
 
   if (env.NODE_ENV === 'test') {
     return nodemailer.createTransport({
@@ -35,9 +56,22 @@ const buildTransport = (): nodemailer.Transporter => {
     });
   }
 
+  if (env.MAIL_TRANSPORT === 'mailpit') {
+    return nodemailer.createTransport({
+      host: env.SMTP_HOST.trim().length > 0 ? env.SMTP_HOST : 'mailpit',
+      port: env.SMTP_PORT,
+      secure: false,
+    });
+  }
+
   if (!env.SMTP_HOST.trim() || !env.SMTP_FROM_EMAIL.trim()) {
+    logger.error('Password reset SMTP configuration is incomplete', {
+      mailTransport: env.MAIL_TRANSPORT,
+      smtpHostConfigured: env.SMTP_HOST.trim().length > 0,
+      smtpFromConfigured: env.SMTP_FROM_EMAIL.trim().length > 0,
+    });
     throw new AppError(
-      'Password reset email service is unavailable right now. Please contact support.',
+      deliveryUnavailableMessage,
       503,
     );
   }
@@ -62,16 +96,39 @@ const getTransporter = (): nodemailer.Transporter => {
   if (cachedTransporter != null) {
     return cachedTransporter;
   }
+  const env = getMailEnv();
   cachedTransporter = buildTransport();
+  if (!loggedTransportDetails) {
+    logger.info('Password reset mail transport initialized', {
+      mailTransport: env.MAIL_TRANSPORT,
+      smtpHost:
+        env.MAIL_TRANSPORT === 'mailpit'
+          ? env.SMTP_HOST.trim().length > 0
+              ? env.SMTP_HOST
+              : 'mailpit'
+          : env.SMTP_HOST,
+      smtpPort: env.SMTP_PORT,
+      smtpSecure: env.SMTP_SECURE,
+      fromEmail:
+        env.MAIL_TRANSPORT === 'mailpit' && env.SMTP_FROM_EMAIL.trim().length === 0
+            ? 'no-reply@gis.local'
+            : env.SMTP_FROM_EMAIL,
+    });
+    loggedTransportDetails = true;
+  }
   return cachedTransporter;
 };
 
 const formatFromHeader = (): string => {
-  const env = validateEnv();
+  const env = getMailEnv();
+  const fromEmail =
+    env.MAIL_TRANSPORT === 'mailpit' && env.SMTP_FROM_EMAIL.trim().length === 0
+        ? 'no-reply@gis.local'
+        : env.SMTP_FROM_EMAIL;
   if (!env.SMTP_FROM_NAME.trim()) {
-    return env.SMTP_FROM_EMAIL;
+    return fromEmail;
   }
-  return `"${env.SMTP_FROM_NAME.replaceAll('"', '\\"')}" <${env.SMTP_FROM_EMAIL}>`;
+  return `"${env.SMTP_FROM_NAME.replaceAll('"', '\\"')}" <${fromEmail}>`;
 };
 
 const sendPasswordResetOtpEmail = async ({
@@ -85,7 +142,7 @@ const sendPasswordResetOtpEmail = async ({
   otp: string;
   expiresInMinutes: number;
 }): Promise<void> => {
-  const env = validateEnv();
+  const env = getMailEnv();
   const transporter = getTransporter();
   const appName = 'Lebanese GIS Collector';
   const trimmedName = recipientName.trim();
@@ -118,24 +175,53 @@ const sendPasswordResetOtpEmail = async ({
     if (env.NODE_ENV !== 'test') {
       const acceptedRecipients = (info.accepted ?? [])
         .map(normalizeEnvelopeAddress)
-        .where((value): value is string => value != null);
+        .filter((value): value is string => value != null);
       const rejectedRecipients = (info.rejected ?? [])
         .map(normalizeEnvelopeAddress)
-        .where((value): value is string => value != null);
+        .filter((value): value is string => value != null);
 
       if (
         !acceptedRecipients.includes(normalizedRecipient) ||
         rejectedRecipients.includes(normalizedRecipient)
       ) {
+        logger.error('Password reset email rejected by SMTP transport', {
+          mailTransport: env.MAIL_TRANSPORT,
+          toEmail,
+          acceptedRecipients,
+          rejectedRecipients,
+        });
         throw new AppError(
-          'Password reset email service is unavailable right now. Please contact support.',
+          deliveryUnavailableMessage,
           503,
         );
       }
+
+      logger.info('Password reset email accepted by transport', {
+        mailTransport: env.MAIL_TRANSPORT,
+        toEmail,
+        acceptedRecipients,
+      });
     }
-  } catch (_error) {
+  } catch (error) {
+    logger.error('Password reset email delivery failed', {
+      mailTransport: env.MAIL_TRANSPORT,
+      toEmail,
+      smtpHost:
+        env.MAIL_TRANSPORT === 'mailpit'
+          ? env.SMTP_HOST.trim().length > 0
+              ? env.SMTP_HOST
+              : 'mailpit'
+          : env.SMTP_HOST,
+      smtpPort: env.SMTP_PORT,
+      error:
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : 'unknown',
+    });
     throw new AppError(
-      'Password reset email service is unavailable right now. Please contact support.',
+      deliveryUnavailableMessage,
       503,
     );
   }

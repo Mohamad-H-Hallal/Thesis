@@ -104,13 +104,28 @@ Password reset email:
   - OTP verification
   - new password submission
 - Reset codes are delivered by real SMTP transport; the mobile UI never exposes a token.
-- Local Docker development uses Mailpit automatically through `docker compose up`.
+- Local Docker development defaults to `MAIL_TRANSPORT=mailpit`.
 - Open `http://localhost:8025` to inspect reset emails during local testing.
-- If you expect delivery to a real mailbox in development, override `SMTP_*` in `.env` with a real SMTP provider and restart the compose stack. Otherwise reset emails stay inside Mailpit.
+- If you expect delivery to a real mailbox in development, set these values in the active root `.env`, then restart the compose stack:
+  - `MAIL_TRANSPORT=smtp`
+  - `SMTP_HOST=...`
+  - `SMTP_PORT=587` (or your provider's port)
+  - `SMTP_SECURE=false` for STARTTLS on 587, or `true` for implicit TLS on 465
+  - `SMTP_USER=...`
+  - `SMTP_PASS=...`
+  - `SMTP_FROM_EMAIL=...`
+  - optional `SMTP_FROM_NAME=Lebanese GIS Collector`
+- When `MAIL_TRANSPORT=smtp`, the API now fails forgot-password requests if `SMTP_HOST`, `SMTP_PORT`, or `SMTP_FROM_EMAIL` are missing or if the SMTP relay rejects delivery.
+- Otherwise reset emails stay inside Mailpit.
 - For host-side API commands outside Docker, keep `apps/api/.env` on:
+  - `MAIL_TRANSPORT=mailpit`
   - `SMTP_HOST=localhost`
   - `SMTP_PORT=1025`
-  - `SMTP_FROM_EMAIL=...`
+  - `SMTP_FROM_EMAIL=no-reply@gis.local`
+- To verify the running API container is using the intended mail transport:
+  - `docker compose exec api sh -lc "printenv | grep -E '^(MAIL_TRANSPORT|SMTP_)' | sort"`
+- To verify the active transport from logs:
+  - `docker compose logs api --tail 50 | Select-String \"Password reset mail transport initialized\"`
 
 Staging seed safety:
 - `npm run seed:staging` and `npm run phase11:staging` are destructive when `STAGING_SEED_RESET=true`.

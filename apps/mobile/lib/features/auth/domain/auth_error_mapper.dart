@@ -101,6 +101,12 @@ AuthFailure mapAuthDioException(
         statusCode: statusCode,
         code: 'rate_limited',
       );
+    case 503:
+      return AuthFailure(
+        'We could not send the verification code right now. Please try again later.',
+        statusCode: statusCode,
+        code: 'email_delivery_failed',
+      );
     default:
       return AuthFailure(
         responseMessage ?? fallbackMessage,

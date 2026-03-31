@@ -120,4 +120,21 @@ void main() {
       'Request timed out. Please check your connection and try again.',
     );
   });
+
+  test('maps 503 reset email failures to professional delivery copy', () {
+    final failure = mapAuthDioException(
+      dioError(
+        type: DioExceptionType.badResponse,
+        statusCode: 503,
+        data: <String, dynamic>{
+          'message': 'SMTP relay rejected recipient.',
+        },
+      ),
+      fallbackMessage: 'fallback',
+    );
+    expect(
+      failure.message,
+      'We could not send the verification code right now. Please try again later.',
+    );
+  });
 }
