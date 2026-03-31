@@ -14,8 +14,9 @@ import '../../../../core/widgets/app_scaffold.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../utils/auth_form_validators.dart';
-import '../utils/auth_input_formatters.dart';
 import '../widgets/auth_error_banner.dart';
+
+enum _ResetPasswordStep { otp, password }
 
 class ResetPasswordScreen extends ConsumerStatefulWidget {
   const ResetPasswordScreen({this.email, super.key});
@@ -28,31 +29,32 @@ class ResetPasswordScreen extends ConsumerStatefulWidget {
 }
 
 class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
-  final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _emailController;
+  final _otpFormKey = GlobalKey<FormState>();
+  final _passwordFormKey = GlobalKey<FormState>();
   final _otpController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmController = TextEditingController();
-  final _emailFocus = FocusNode();
   final _otpFocus = FocusNode();
   final _passwordFocus = FocusNode();
   final _confirmFocus = FocusNode();
-  final _noLeadingSpaceFormatter = NoLeadingSpaceFormatter();
 
+  _ResetPasswordStep _step = _ResetPasswordStep.otp;
+  bool _isSubmitting = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
-  bool _isSubmitting = false;
-  String? _formLevelError;
+  String? _otpFieldError;
+  String? _stepError;
+  String? _resetSessionToken;
+
+  String get _email => widget.email?.trim() ?? '';
 
   @override
   void initState() {
     super.initState();
-    _emailController = TextEditingController(text: widget.email?.trim() ?? '');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       patchAuthInputAttributes(
         formId: 'reset_password',
         fieldKeys: const <String>[
-          'email',
           'reset_otp',
           'new_password',
           'confirm_password',
@@ -63,11 +65,9 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
 
   @override
   void dispose() {
-    _emailController.dispose();
     _otpController.dispose();
     _passwordController.dispose();
     _confirmController.dispose();
-    _emailFocus.dispose();
     _otpFocus.dispose();
     _passwordFocus.dispose();
     _confirmFocus.dispose();
@@ -75,6 +75,14 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
   }
 
   void _goBack() {
+    if (_step == _ResetPasswordStep.password) {
+      setState(() {
+        _step = _ResetPasswordStep.otp;
+        _stepError = null;
+      });
+      return;
+    }
+
     if (Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
       return;
@@ -82,26 +90,81 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
     context.go(AppRoutes.forgotPassword);
   }
 
-  Future<void> _submit() async {
+  Future<void> _verifyOtp() async {
     setState(() {
-      _formLevelError = null;
+      _otpFieldError = null;
+      _stepError = null;
     });
 
-    if (!_formKey.currentState!.validate()) {
+    if (!_otpFormKey.currentState!.validate()) {
       return;
     }
 
+    setState(() => _isSubmitting = true);
+    FocusScope.of(context).unfocus();
+    TextInput.finishAutofillContext();
+
+    try {
+      final result = await ref
+          .read(authControllerProvider.notifier)
+          .verifyPasswordResetOtp(
+            email: _email,
+            otp: _otpController.text.trim(),
+          );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _resetSessionToken = result.resetToken;
+        _step = _ResetPasswordStep.password;
+      });
+      AppSnackbar.showSuccess(context, result.message);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      final message = error.toString().trim().isEmpty
+          ? 'Unable to verify the code right now.'
+          : error.toString().trim();
+      setState(() {
+        _otpFieldError = message;
+        _stepError = null;
+      });
+      _otpFormKey.currentState?.validate();
+      AppSnackbar.showError(context, message);
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  Future<void> _submitNewPassword() async {
     setState(() {
-      _isSubmitting = true;
+      _stepError = null;
     });
 
+    if (!_passwordFormKey.currentState!.validate()) {
+      return;
+    }
+
+    final resetSessionToken = _resetSessionToken;
+    if (resetSessionToken == null || resetSessionToken.isEmpty) {
+      setState(() {
+        _stepError =
+            'Your verification session expired. Please request a new verification code.';
+        _step = _ResetPasswordStep.otp;
+      });
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
     FocusScope.of(context).unfocus();
     TextInput.finishAutofillContext();
 
     try {
       await ref.read(authControllerProvider.notifier).resetPassword(
-            email: AuthFormValidators.normalize(_emailController.text),
-            otp: AuthFormValidators.normalize(_otpController.text),
+            resetToken: resetSessionToken,
             newPassword: _passwordController.text,
           );
       if (!mounted) {
@@ -109,10 +172,10 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
       }
       AppSnackbar.showSuccess(
         context,
-        'Password has been reset successfully.',
+        'Password has been changed successfully.',
       );
       final notice = Uri.encodeComponent(
-        'Password has been reset successfully. Please sign in.',
+        'Password has been changed successfully.',
       );
       context.go('${AppRoutes.login}?notice=$notice&success=true');
     } catch (error) {
@@ -120,23 +183,196 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
         return;
       }
       final message = error.toString().trim().isEmpty
-          ? 'Unable to reset password right now.'
+          ? 'Unable to change the password right now.'
           : error.toString().trim();
       setState(() {
-        _formLevelError = message;
+        _stepError = message;
       });
       AppSnackbar.showError(context, message);
     } finally {
       if (mounted) {
-        setState(() {
-          _isSubmitting = false;
-        });
+        setState(() => _isSubmitting = false);
       }
     }
   }
 
+  Widget _buildOtpStep(BuildContext context) {
+    return Form(
+      key: _otpFormKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(
+            'Enter the verification code sent to $_email.',
+            style: Theme.of(context).textTheme.bodyMedium,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: AppSpacing.md),
+          if (_stepError != null) ...<Widget>[
+            AuthErrorBanner(message: _stepError!),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+          AppTextField(
+            label: 'Verification code',
+            hint: 'Enter the 6-digit code',
+            controller: _otpController,
+            keyboardType: TextInputType.number,
+            textInputAction: TextInputAction.done,
+            focusNode: _otpFocus,
+            onFieldSubmitted: (_) => _verifyOtp(),
+            inputFormatters: <TextInputFormatter>[
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(6),
+            ],
+            onChanged: (_) {
+              if (_otpFieldError == null && _stepError == null) {
+                return;
+              }
+              setState(() {
+                _otpFieldError = null;
+                _stepError = null;
+              });
+            },
+            validator: (value) {
+              final trimmed = value?.trim() ?? '';
+              if (trimmed.isEmpty) {
+                return 'Verification code is required.';
+              }
+              if (trimmed.length != 6) {
+                return 'Enter the 6-digit verification code.';
+              }
+              return _otpFieldError;
+            },
+          ),
+          const SizedBox(height: AppSpacing.md),
+          AppButton(
+            label: 'Verify code',
+            icon: Icons.verified_outlined,
+            isLoading: _isSubmitting,
+            onPressed: _isSubmitting ? null : _verifyOtp,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPasswordStep(BuildContext context) {
+    return Form(
+      key: _passwordFormKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(
+            'Choose a new password for $_email.',
+            style: Theme.of(context).textTheme.bodyMedium,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: AppSpacing.md),
+          if (_stepError != null) ...<Widget>[
+            AuthErrorBanner(message: _stepError!),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+          AppTextField(
+            label: 'New password',
+            hint: 'At least 8 chars with upper/lower/number/symbol',
+            controller: _passwordController,
+            obscureText: _obscurePassword,
+            textInputAction: TextInputAction.next,
+            focusNode: _passwordFocus,
+            onFieldSubmitted: (_) =>
+                FocusScope.of(context).requestFocus(_confirmFocus),
+            enableSuggestions: false,
+            autocorrect: false,
+            autofillHints: const <String>[AutofillHints.newPassword],
+            suffix: IconButton(
+              tooltip: _obscurePassword ? 'Show password' : 'Hide password',
+              onPressed: () => setState(
+                () => _obscurePassword = !_obscurePassword,
+              ),
+              icon: Icon(
+                _obscurePassword ? Icons.visibility : Icons.visibility_off,
+              ),
+            ),
+            validator: AuthFormValidators.password,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          AppTextField(
+            label: 'Confirm new password',
+            hint: 'Re-enter the new password',
+            controller: _confirmController,
+            obscureText: _obscureConfirmPassword,
+            textInputAction: TextInputAction.done,
+            focusNode: _confirmFocus,
+            onFieldSubmitted: (_) => _submitNewPassword(),
+            enableSuggestions: false,
+            autocorrect: false,
+            autofillHints: const <String>[AutofillHints.newPassword],
+            suffix: IconButton(
+              tooltip: _obscureConfirmPassword
+                  ? 'Show password'
+                  : 'Hide password',
+              onPressed: () => setState(
+                () => _obscureConfirmPassword = !_obscureConfirmPassword,
+              ),
+              icon: Icon(
+                _obscureConfirmPassword
+                    ? Icons.visibility
+                    : Icons.visibility_off,
+              ),
+            ),
+            validator: (value) => AuthFormValidators.confirmPassword(
+              value: value,
+              password: _passwordController.text,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          AppButton(
+            label: 'Change password',
+            icon: Icons.password_outlined,
+            isLoading: _isSubmitting,
+            onPressed: _isSubmitting ? null : _submitNewPassword,
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_email.isEmpty) {
+      return AppScaffold(
+        title: 'Reset password',
+        showOfflineBanner: false,
+        showBackButton: true,
+        onBack: _goBack,
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: Padding(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              child: AppCard(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    const Text(
+                      'Start the password reset process from the email verification step.',
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    AppButton(
+                      label: 'Back to forgot password',
+                      icon: Icons.arrow_back,
+                      onPressed: _goBack,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     return AppScaffold(
       title: 'Reset password',
       showOfflineBanner: false,
@@ -145,152 +381,26 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 460),
-          child: AutofillGroup(
-            child: Form(
-              key: _formKey,
-              child: ListView(
-                shrinkWrap: true,
-                padding: const EdgeInsets.all(AppSpacing.md),
-                children: <Widget>[
-                  const AppLogo(size: 64),
-                  const SizedBox(height: AppSpacing.sm),
-                  Text(
-                    'Enter the one-time code sent to your email address, then choose a new password.',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSpacing.lg),
-                  AppCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: <Widget>[
-                        if (_formLevelError != null) ...<Widget>[
-                          AuthErrorBanner(message: _formLevelError!),
-                          const SizedBox(height: AppSpacing.sm),
-                        ],
-                        AppTextField(
-                          label: 'Email address',
-                          hint: 'name@gov.lb',
-                          controller: _emailController,
-                          keyboardType: TextInputType.emailAddress,
-                          textInputAction: TextInputAction.next,
-                          focusNode: _emailFocus,
-                          onFieldSubmitted: (_) =>
-                              FocusScope.of(context).requestFocus(_otpFocus),
-                          inputFormatters: <TextInputFormatter>[
-                            _noLeadingSpaceFormatter,
-                          ],
-                          autofillHints: const <String>[
-                            AutofillHints.username,
-                            AutofillHints.email,
-                          ],
-                          validator: AuthFormValidators.email,
-                        ),
-                        const SizedBox(height: AppSpacing.sm),
-                        AppTextField(
-                          label: 'One-time code',
-                          hint: 'Enter the 6-digit code',
-                          controller: _otpController,
-                          keyboardType: TextInputType.number,
-                          textInputAction: TextInputAction.next,
-                          focusNode: _otpFocus,
-                          onFieldSubmitted: (_) => FocusScope.of(
-                            context,
-                          ).requestFocus(_passwordFocus),
-                          inputFormatters: <TextInputFormatter>[
-                            FilteringTextInputFormatter.digitsOnly,
-                            LengthLimitingTextInputFormatter(6),
-                          ],
-                          validator: (value) {
-                            final trimmed = value?.trim() ?? '';
-                            if (trimmed.isEmpty) {
-                              return 'Reset code is required.';
-                            }
-                            if (trimmed.length != 6) {
-                              return 'Enter the 6-digit reset code.';
-                            }
-                            return null;
-                          },
-                        ),
-                        const SizedBox(height: AppSpacing.sm),
-                        AppTextField(
-                          label: 'New password',
-                          hint:
-                              'At least 8 chars with upper/lower/number/symbol',
-                          controller: _passwordController,
-                          obscureText: _obscurePassword,
-                          textInputAction: TextInputAction.next,
-                          focusNode: _passwordFocus,
-                          onFieldSubmitted: (_) => FocusScope.of(
-                            context,
-                          ).requestFocus(_confirmFocus),
-                          enableSuggestions: false,
-                          autocorrect: false,
-                          autofillHints: const <String>[
-                            AutofillHints.newPassword,
-                          ],
-                          suffix: IconButton(
-                            tooltip: _obscurePassword
-                                ? 'Show password'
-                                : 'Hide password',
-                            onPressed: () => setState(
-                              () => _obscurePassword = !_obscurePassword,
-                            ),
-                            icon: Icon(
-                              _obscurePassword
-                                  ? Icons.visibility
-                                  : Icons.visibility_off,
-                            ),
-                          ),
-                          validator: AuthFormValidators.password,
-                        ),
-                        const SizedBox(height: AppSpacing.sm),
-                        AppTextField(
-                          label: 'Confirm new password',
-                          hint: 'Re-enter the new password',
-                          controller: _confirmController,
-                          obscureText: _obscureConfirmPassword,
-                          textInputAction: TextInputAction.done,
-                          focusNode: _confirmFocus,
-                          onFieldSubmitted: (_) => _submit(),
-                          enableSuggestions: false,
-                          autocorrect: false,
-                          autofillHints: const <String>[
-                            AutofillHints.newPassword,
-                          ],
-                          suffix: IconButton(
-                            tooltip: _obscureConfirmPassword
-                                ? 'Show password'
-                                : 'Hide password',
-                            onPressed: () => setState(
-                              () => _obscureConfirmPassword =
-                                  !_obscureConfirmPassword,
-                            ),
-                            icon: Icon(
-                              _obscureConfirmPassword
-                                  ? Icons.visibility
-                                  : Icons.visibility_off,
-                            ),
-                          ),
-                          validator: (value) =>
-                              AuthFormValidators.confirmPassword(
-                                value: value,
-                                password: _passwordController.text,
-                              ),
-                        ),
-                        const SizedBox(height: AppSpacing.md),
-                        AppButton(
-                          label: 'Reset password',
-                          icon: Icons.password_outlined,
-                          isLoading: _isSubmitting,
-                          onPressed: _isSubmitting ? null : _submit,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.all(AppSpacing.md),
+            children: <Widget>[
+              const AppLogo(size: 64),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                _step == _ResetPasswordStep.otp
+                    ? 'Step 2 of 3: verify the code sent to your email.'
+                    : 'Step 3 of 3: choose a new password.',
+                style: Theme.of(context).textTheme.bodyMedium,
+                textAlign: TextAlign.center,
               ),
-            ),
+              const SizedBox(height: AppSpacing.lg),
+              AppCard(
+                child: _step == _ResetPasswordStep.otp
+                    ? _buildOtpStep(context)
+                    : _buildPasswordStep(context),
+              ),
+            ],
           ),
         ),
       ),

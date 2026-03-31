@@ -165,7 +165,7 @@ class RealAuthRepository implements AuthRepository {
         message:
             (payload['message'] as String?)?.trim().isNotEmpty == true
                 ? (payload['message'] as String).trim()
-                : 'A password reset code was sent to your email address.',
+                : 'A verification code has been sent to your email.',
         email: (data['email'] as String?)?.trim(),
         expiresAt: _toDateTime(data['expires_at']),
       );
@@ -178,17 +178,58 @@ class RealAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<void> resetPassword({
+  Future<PasswordResetOtpVerificationResult> verifyPasswordResetOtp({
     required String email,
     required String otp,
+  }) async {
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_authBasePath/verify-reset-otp',
+        data: <String, dynamic>{
+          'email': email,
+          'otp': otp,
+        },
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      final data = Map<String, dynamic>.from(
+        payload['data'] as Map? ?? const <String, dynamic>{},
+      );
+      final resetToken = (data['reset_token'] as String?)?.trim() ?? '';
+      final verifiedEmail = (data['email'] as String?)?.trim() ?? email;
+
+      if (resetToken.isEmpty) {
+        throw const AuthFailure(
+          'Password reset verification failed.',
+          code: 'password_reset_verification_failed',
+        );
+      }
+
+      return PasswordResetOtpVerificationResult(
+        message:
+            (payload['message'] as String?)?.trim().isNotEmpty == true
+                ? (payload['message'] as String).trim()
+                : 'Verification code confirmed.',
+        resetToken: resetToken,
+        email: verifiedEmail,
+      );
+    } on DioException catch (error) {
+      throw mapAuthDioException(
+        error,
+        fallbackMessage: 'Verification code confirmation failed.',
+      );
+    }
+  }
+
+  @override
+  Future<void> resetPassword({
+    required String resetToken,
     required String newPassword,
   }) async {
     try {
       await _apiClient.dio.post<Map<String, dynamic>>(
         '$_authBasePath/reset-password',
         data: <String, dynamic>{
-          'email': email,
-          'otp': otp,
+          'reset_token': resetToken,
           'new_password': newPassword,
         },
       );

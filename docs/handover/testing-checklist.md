@@ -95,7 +95,7 @@ Runtime note:
 | Contributor signup pending gate | WORKING | `apps/api/test/security.auth.test.js`, `apps/mobile/test/features/auth/presentation/auth_navigation_widget_test.dart` |
 | Contributor rejected login block | WORKING | `apps/api/test/security.auth.test.js` |
 | Duplicate email signup handling | WORKING | `apps/mobile/lib/features/auth/presentation/screens/signup_screen.dart`, `apps/mobile/test/features/auth/domain/auth_error_mapper_test.dart` |
-| Forgot password / reset password flow | WORKING | `apps/api/src/controllers/auth.controller.ts`, `apps/mobile/lib/features/auth/presentation/screens/forgot_password_screen.dart`, `apps/mobile/lib/features/auth/presentation/screens/reset_password_screen.dart` |
+| Forgot password / reset password flow | WORKING | `apps/api/src/controllers/auth.controller.ts`, `apps/api/src/lib/mailer.ts`, `apps/mobile/lib/features/auth/presentation/screens/forgot_password_screen.dart`, `apps/mobile/lib/features/auth/presentation/screens/reset_password_screen.dart` |
 | Category creation/editing | WORKING | `apps/mobile/lib/features/admin/presentation/screens/categories_screen.dart`, `apps/mobile/lib/features/admin/presentation/screens/category_form_screen.dart` |
 | Category icon upload | WORKING | `apps/api/src/config/upload.ts`, `apps/mobile/lib/features/admin/presentation/screens/category_form_screen.dart` |
 | Project creation/editing | WORKING | `apps/mobile/lib/features/admin/presentation/screens/projects_management_screen.dart`, `apps/mobile/lib/features/admin/presentation/screens/project_form_screen.dart` |

@@ -55,15 +55,24 @@ class _TestAuthRepository implements AuthRepository {
   @override
   Future<PasswordResetRequestResult> requestPasswordReset(String email) async {
     return const PasswordResetRequestResult(
-      message: 'A password reset code was sent to your email address.',
+      message: 'A verification code has been sent to your email.',
       email: 'collector@example.com',
     );
   }
 
   @override
-  Future<void> resetPassword({
+  Future<PasswordResetOtpVerificationResult> verifyPasswordResetOtp({
     required String email,
     required String otp,
+  }) async => const PasswordResetOtpVerificationResult(
+    message: 'Verification code confirmed.',
+    resetToken: 'reset-session-token',
+    email: 'collector@example.com',
+  );
+
+  @override
+  Future<void> resetPassword({
+    required String resetToken,
     required String newPassword,
   }) async {}
 

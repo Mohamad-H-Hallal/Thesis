@@ -198,20 +198,38 @@ class FakeAuthRepository implements AuthRepository {
       );
     }
     return PasswordResetRequestResult(
-      message: 'A password reset code was sent to your email address.',
+      message: 'A verification code has been sent to your email.',
       email: email,
       expiresAt: DateTime.now().add(const Duration(minutes: 15)),
     );
   }
 
   @override
-  Future<void> resetPassword({
+  Future<PasswordResetOtpVerificationResult> verifyPasswordResetOtp({
     required String email,
     required String otp,
+  }) async {
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (!email.contains('@') || otp != '123456') {
+      throw DioException(
+        requestOptions: RequestOptions(path: '/api/auth/verify-reset-otp'),
+        message: 'Verification code is invalid or expired.',
+      );
+    }
+    return PasswordResetOtpVerificationResult(
+      message: 'Verification code confirmed.',
+      resetToken: 'fake-reset-session-token',
+      email: email,
+    );
+  }
+
+  @override
+  Future<void> resetPassword({
+    required String resetToken,
     required String newPassword,
   }) async {
     await Future<void>.delayed(const Duration(milliseconds: 500));
-    if (!email.contains('@') || otp.isEmpty || newPassword.length < 8) {
+    if (resetToken.isEmpty || newPassword.length < 8) {
       throw DioException(
         requestOptions: RequestOptions(path: '/api/auth/reset-password'),
         message: 'Reset password failed.',

@@ -138,7 +138,7 @@ const userValidation = {
       .normalizeEmail()
       .withMessage('Valid email is required'),
   ] as ValidationChain[],
-  resetPassword: [
+  verifyResetOtp: [
     body('email')
       .trim()
       .isEmail()
@@ -146,8 +146,15 @@ const userValidation = {
       .withMessage('Valid email is required'),
     body('otp')
       .trim()
+      .matches(/^\d{6}$/)
+      .withMessage('Enter the 6-digit verification code'),
+  ] as ValidationChain[],
+  resetPassword: [
+    body('reset_token')
+      .isString()
+      .withMessage('Password reset session is required')
       .notEmpty()
-      .withMessage('Reset code is required'),
+      .withMessage('Password reset session is required'),
     body('new_password')
       .isString()
       .withMessage('New password must be a string')

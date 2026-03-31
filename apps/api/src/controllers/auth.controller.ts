@@ -17,12 +17,79 @@ import { sendPasswordResetOtpEmail } from '../lib/mailer';
 const passwordResetExpiryMinutes = Number(
   process.env.PASSWORD_RESET_TOKEN_EXPIRY_MINUTES || 15,
 );
+const passwordResetSessionExpiryMinutes = 10;
 
 const hashResetToken = (token: string) =>
   crypto.createHash('sha256').update(token).digest('hex');
 
 const generateResetToken = () =>
   crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+
+const getPasswordResetSessionSecret = (): string => {
+  const baseSecret =
+    process.env.JWT_SECRET_CURRENT || process.env.JWT_SECRET;
+  if (!baseSecret) {
+    throw new AppError(
+      'Password reset service is unavailable right now. Please contact support.',
+      503,
+    );
+  }
+  return `${baseSecret}:password-reset`;
+};
+
+const generatePasswordResetSessionToken = ({
+  resetRequestId,
+  userId,
+  email,
+}: {
+  resetRequestId: string;
+  userId: string;
+  email: string;
+}): string =>
+  jwt.sign(
+    {
+      purpose: 'password_reset',
+      resetRequestId,
+      userId,
+      email,
+    },
+    getPasswordResetSessionSecret(),
+    { expiresIn: `${passwordResetSessionExpiryMinutes}m` },
+  );
+
+const verifyPasswordResetSessionToken = (
+  resetToken: string,
+): { resetRequestId: string; userId: string; email: string } => {
+  let decoded: any;
+  try {
+    decoded = jwt.verify(resetToken, getPasswordResetSessionSecret());
+  } catch (_error) {
+    throw new AppError(
+      'Password reset session is invalid or expired. Please request a new verification code.',
+      400,
+    );
+  }
+
+  if (
+    !decoded ||
+    typeof decoded !== 'object' ||
+    decoded.purpose !== 'password_reset' ||
+    typeof decoded.resetRequestId !== 'string' ||
+    typeof decoded.userId !== 'string' ||
+    typeof decoded.email !== 'string'
+  ) {
+    throw new AppError(
+      'Password reset session is invalid or expired. Please request a new verification code.',
+      400,
+    );
+  }
+
+  return {
+    resetRequestId: decoded.resetRequestId,
+    userId: decoded.userId,
+    email: decoded.email,
+  };
+};
 
 // Register new user
 const register = async (req, res) => {
@@ -379,13 +446,12 @@ const requestPasswordReset = async (req, res) => {
        VALUES ($1, $2, $3, $4::inet)`,
       [user.id, hashResetToken(resetToken), expiresAt, req.ip ?? null],
     );
-  });
-
-  await sendPasswordResetOtpEmail({
-    toEmail: user.email,
-    recipientName: user.full_name ?? 'User',
-    otp: resetToken,
-    expiresInMinutes: passwordResetExpiryMinutes,
+    await sendPasswordResetOtpEmail({
+      toEmail: user.email,
+      recipientName: user.full_name ?? 'User',
+      otp: resetToken,
+      expiresInMinutes: passwordResetExpiryMinutes,
+    });
   });
 
   logger.info('Password reset requested', {
@@ -396,8 +462,7 @@ const requestPasswordReset = async (req, res) => {
 
   res.json({
     success: true,
-    message:
-      'A password reset code was sent to your email address.',
+    message: 'A verification code has been sent to your email.',
     data: {
       delivery: 'email',
       expires_at: expiresAt.toISOString(),
@@ -406,8 +471,8 @@ const requestPasswordReset = async (req, res) => {
   });
 };
 
-const resetPassword = async (req, res) => {
-  const { email, otp, new_password } = req.body;
+const verifyPasswordResetOtp = async (req, res) => {
+  const { email, otp } = req.body;
   const normalizedEmail = normalizeEmail(email);
 
   const resetRequestResult = await query(
@@ -424,10 +489,68 @@ const resetPassword = async (req, res) => {
   );
 
   if (resetRequestResult.rows.length === 0) {
-    throw new AppError('Reset code is invalid or expired.', 400);
+    throw new AppError('Verification code is invalid or expired.', 400);
   }
 
   const resetRequest = resetRequestResult.rows[0];
+  const sessionToken = generatePasswordResetSessionToken({
+    resetRequestId: resetRequest.id,
+    userId: resetRequest.user_id,
+    email: resetRequest.email,
+  });
+
+  logger.info('Password reset OTP verified', {
+    userId: resetRequest.user_id,
+    email: resetRequest.email,
+  });
+
+  res.json({
+    success: true,
+    message: 'Verification code confirmed.',
+    data: {
+      reset_token: sessionToken,
+      email: resetRequest.email,
+    },
+  });
+};
+
+const resetPassword = async (req, res) => {
+  const { reset_token, new_password } = req.body;
+  const verifiedSession = verifyPasswordResetSessionToken(reset_token);
+
+  const resetRequestResult = await query(
+    `SELECT prr.id, prr.user_id, prr.used_at, prr.expires_at, u.email
+     FROM password_reset_request prr
+     JOIN "user" u ON u.id = prr.user_id
+     WHERE prr.id = $1
+       AND prr.user_id = $2
+       AND LOWER(u.email) = $3
+     LIMIT 1`,
+    [
+      verifiedSession.resetRequestId,
+      verifiedSession.userId,
+      normalizeEmail(verifiedSession.email),
+    ],
+  );
+
+  if (resetRequestResult.rows.length === 0) {
+    throw new AppError(
+      'Password reset session is invalid or expired. Please request a new verification code.',
+      400,
+    );
+  }
+
+  const resetRequest = resetRequestResult.rows[0];
+  if (
+    resetRequest.used_at != null ||
+    new Date(resetRequest.expires_at).getTime() < Date.now()
+  ) {
+    throw new AppError(
+      'Password reset session is invalid or expired. Please request a new verification code.',
+      400,
+    );
+  }
+
   const salt = await bcrypt.genSalt(12);
   const password_hash = await bcrypt.hash(new_password, salt);
 
@@ -455,7 +578,7 @@ const resetPassword = async (req, res) => {
 
   res.json({
     success: true,
-    message: 'Password has been reset successfully.',
+    message: 'Password has been changed successfully.',
   });
 };
 
@@ -616,6 +739,7 @@ module.exports = {
   updateMe,
   changePassword,
   requestPasswordReset,
+  verifyPasswordResetOtp,
   resetPassword,
   reactivateContributorLogin,
   logout,

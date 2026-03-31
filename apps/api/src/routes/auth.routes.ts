@@ -53,6 +53,13 @@ router.post(
 );
 
 router.post(
+  '/verify-reset-otp',
+  userValidation.verifyResetOtp,
+  validate,
+  asyncHandler(authController.verifyPasswordResetOtp)
+);
+
+router.post(
   '/reset-password',
   userValidation.resetPassword,
   validate,

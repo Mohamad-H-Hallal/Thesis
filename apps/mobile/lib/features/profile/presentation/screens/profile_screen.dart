@@ -579,10 +579,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: AppSpacing.sm),
-              const Text(
-                'Update your password using your current password and the same strength rules required during account creation.',
-              ),
-              const SizedBox(height: AppSpacing.sm),
               OutlinedButton.icon(
                 onPressed: _isMutating ? null : _showChangePasswordDialog,
                 icon: const Icon(Icons.password_outlined),

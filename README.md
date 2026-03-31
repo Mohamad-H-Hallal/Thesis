@@ -99,7 +99,11 @@ Super admin bootstrap:
 - Configure them in the active `.env` file or Docker environment before first startup.
 
 Password reset email:
-- Forgot-password now sends a real one-time code by email.
+- Forgot-password now uses a three-step flow:
+  - email verification
+  - OTP verification
+  - new password submission
+- Reset codes are delivered by real SMTP transport; the mobile UI never exposes a token.
 - Local Docker development uses Mailpit automatically through `docker compose up`.
 - Open `http://localhost:8025` to inspect reset emails during local testing.
 - For host-side API commands outside Docker, keep `apps/api/.env` on:

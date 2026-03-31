@@ -13,6 +13,7 @@ import '../../../../core/widgets/app_logo.dart';
 import '../../../../core/widgets/app_scaffold.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
+import '../../domain/auth_failure.dart';
 import '../utils/auth_form_validators.dart';
 import '../utils/auth_input_formatters.dart';
 import '../widgets/auth_error_banner.dart';
@@ -32,6 +33,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
   final _noLeadingSpaceFormatter = NoLeadingSpaceFormatter();
   bool _isSubmitting = false;
   String? _formLevelError;
+  String? _emailFieldError;
 
   @override
   void initState() {
@@ -62,6 +64,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
   Future<void> _submit() async {
     setState(() {
       _formLevelError = null;
+      _emailFieldError = null;
     });
 
     if (!_formKey.currentState!.validate()) {
@@ -102,9 +105,15 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
       final message = error.toString().trim().isEmpty
           ? 'Unable to send a reset code right now.'
           : error.toString().trim();
+      final errorCode = error is AuthFailure ? error.code : null;
       setState(() {
-        _formLevelError = message;
+        _emailFieldError =
+            errorCode == 'account_not_found' || errorCode == 'validation_error'
+            ? message
+            : null;
+        _formLevelError = _emailFieldError == null ? message : null;
       });
+      _formKey.currentState?.validate();
       AppSnackbar.showError(context, message);
     } finally {
       if (mounted) {
@@ -164,14 +173,18 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                             AutofillHints.email,
                           ],
                           onChanged: (_) {
-                            if (_formLevelError == null) {
+                            if (_formLevelError == null &&
+                                _emailFieldError == null) {
                               return;
                             }
                             setState(() {
                               _formLevelError = null;
+                              _emailFieldError = null;
                             });
                           },
-                          validator: AuthFormValidators.email,
+                          validator: (value) =>
+                              _emailFieldError ??
+                              AuthFormValidators.email(value),
                         ),
                         const SizedBox(height: AppSpacing.md),
                         AppButton(

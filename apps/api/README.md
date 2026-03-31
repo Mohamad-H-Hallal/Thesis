@@ -47,7 +47,15 @@ npm run dev
 ```
 
 ## Password Reset Email
-- Forgot-password sends a real one-time password reset code by email.
+- Forgot-password uses:
+  - `POST /api/v1/auth/forgot-password`
+  - `POST /api/v1/auth/verify-reset-otp`
+  - `POST /api/v1/auth/reset-password`
+- The flow is:
+  - request OTP by email
+  - verify the OTP for the same account
+  - submit the new password with the verified reset session
+- The API never exposes a dev/reset token in UI-facing responses.
 - Local Docker development uses Mailpit from the repo root compose stack.
 - Mailpit UI: `http://localhost:8025`
 - Mailpit SMTP:

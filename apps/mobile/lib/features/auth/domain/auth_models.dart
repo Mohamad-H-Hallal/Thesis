@@ -56,3 +56,15 @@ class PasswordResetRequestResult {
   final String? email;
   final DateTime? expiresAt;
 }
+
+class PasswordResetOtpVerificationResult {
+  const PasswordResetOtpVerificationResult({
+    required this.message,
+    required this.resetToken,
+    required this.email,
+  });
+
+  final String message;
+  final String resetToken;
+  final String email;
+}

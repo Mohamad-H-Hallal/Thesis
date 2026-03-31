@@ -27,12 +27,13 @@ Important security behavior:
 1. Tap `Forgot password?` on login.
 2. Enter your registered email.
 3. Submit request.
-4. Check your email for the one-time password reset code.
+4. If the email exists, the app shows a confirmation message.
+5. Check your email for the one-time verification code.
 
 ## Reset Password
 1. Open the reset-password step from the app flow.
-2. Enter your email address.
-3. Enter the one-time password reset code from the email.
+2. Enter only the verification code that was sent to your email.
+3. If the code is valid, continue to the new-password step.
 4. Enter new password and confirm password.
 5. Submit.
 6. Return to login and sign in with the new password.

@@ -151,14 +151,19 @@ class AuthController extends StateNotifier<AuthState> {
     return _repository.requestPasswordReset(email);
   }
 
-  Future<void> resetPassword({
+  Future<PasswordResetOtpVerificationResult> verifyPasswordResetOtp({
     required String email,
     required String otp,
+  }) {
+    return _repository.verifyPasswordResetOtp(email: email, otp: otp);
+  }
+
+  Future<void> resetPassword({
+    required String resetToken,
     required String newPassword,
   }) {
     return _repository.resetPassword(
-      email: email,
-      otp: otp,
+      resetToken: resetToken,
       newPassword: newPassword,
     );
   }

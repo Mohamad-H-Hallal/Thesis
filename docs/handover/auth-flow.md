@@ -114,6 +114,7 @@ Runtime behavior:
 Endpoints:
 
 - `POST /api/v1/auth/forgot-password`
+- `POST /api/v1/auth/verify-reset-otp`
 - `POST /api/v1/auth/reset-password`
 - `POST /api/v1/auth/reactivate-login`
 
@@ -121,12 +122,21 @@ Rules:
 
 - forgot-password requires a real registered account and returns:
   - `This account does not exist.` for unknown emails
-- reset tokens are stored in `password_reset_request`
+- reset codes are stored in `password_reset_request`
 - reset codes are 6-digit one-time passwords
 - reset codes expire after `PASSWORD_RESET_TOKEN_EXPIRY_MINUTES` minutes
-- used and expired tokens cannot be reused
+- old unused reset codes for the same account are invalidated when a new code is issued
+- OTP verification is account-bound:
+  - a code requested for account A cannot be verified for account B
+- OTP verification returns a short-lived internal reset session for the app
+- the final password update requires that verified reset session
+- used and expired codes cannot be reused
 - passwords are re-hashed into `"user".password_hash` on reset
 - reset delivery is email-based through SMTP transport configuration
+- mobile flow is:
+  - Step 1: email
+  - Step 2: OTP only
+  - Step 3: new password only
 
 Local development:
 
