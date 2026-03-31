@@ -9,6 +9,8 @@ let loggedTransportDetails = false;
 
 const deliveryUnavailableMessage =
   'We could not send the verification code right now. Please try again later.';
+const realDeliveryRequiredMessage =
+  'Email delivery is not configured for real password reset yet. Please contact support.';
 
 const getMailEnv = () => {
   try {
@@ -57,6 +59,19 @@ const buildTransport = (): nodemailer.Transporter => {
   }
 
   if (env.MAIL_TRANSPORT === 'mailpit') {
+    if (env.PASSWORD_RESET_REQUIRE_REAL_DELIVERY) {
+      logger.error(
+        'Password reset email blocked because real delivery is required but Mailpit is active',
+        {
+          mailTransport: env.MAIL_TRANSPORT,
+          smtpHost: env.SMTP_HOST.trim().length > 0 ? env.SMTP_HOST : 'mailpit',
+          smtpPort: env.SMTP_PORT,
+          realDeliveryRequired: env.PASSWORD_RESET_REQUIRE_REAL_DELIVERY,
+        },
+      );
+      throw new AppError(realDeliveryRequiredMessage, 503);
+    }
+
     return nodemailer.createTransport({
       host: env.SMTP_HOST.trim().length > 0 ? env.SMTP_HOST : 'mailpit',
       port: env.SMTP_PORT,
@@ -109,6 +124,7 @@ const getTransporter = (): nodemailer.Transporter => {
           : env.SMTP_HOST,
       smtpPort: env.SMTP_PORT,
       smtpSecure: env.SMTP_SECURE,
+      realDeliveryRequired: env.PASSWORD_RESET_REQUIRE_REAL_DELIVERY,
       fromEmail:
         env.MAIL_TRANSPORT === 'mailpit' && env.SMTP_FROM_EMAIL.trim().length === 0
             ? 'no-reply@gis.local'
@@ -120,6 +136,7 @@ const getTransporter = (): nodemailer.Transporter => {
         smtpHost:
           env.SMTP_HOST.trim().length > 0 ? env.SMTP_HOST : 'mailpit',
         smtpPort: env.SMTP_PORT,
+        realDeliveryRequired: env.PASSWORD_RESET_REQUIRE_REAL_DELIVERY,
       });
     }
     loggedTransportDetails = true;

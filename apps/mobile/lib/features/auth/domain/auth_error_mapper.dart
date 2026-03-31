@@ -103,7 +103,8 @@ AuthFailure mapAuthDioException(
       );
     case 503:
       return AuthFailure(
-        'We could not send the verification code right now. Please try again later.',
+        responseMessage ??
+            'We could not send the verification code right now. Please try again later.',
         statusCode: statusCode,
         code: 'email_delivery_failed',
       );

@@ -134,7 +134,26 @@ void main() {
     );
     expect(
       failure.message,
-      'We could not send the verification code right now. Please try again later.',
+      'SMTP relay rejected recipient.',
+    );
+  });
+
+  test('maps 503 reset mode failures using backend copy', () {
+    final failure = mapAuthDioException(
+      dioError(
+        type: DioExceptionType.badResponse,
+        statusCode: 503,
+        data: <String, dynamic>{
+          'message':
+              'Email delivery is not configured for real password reset yet. Please contact support.',
+        },
+      ),
+      fallbackMessage: 'fallback',
+    );
+
+    expect(
+      failure.message,
+      'Email delivery is not configured for real password reset yet. Please contact support.',
     );
   });
 }
