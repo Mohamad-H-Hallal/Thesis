@@ -114,6 +114,14 @@ const getTransporter = (): nodemailer.Transporter => {
             ? 'no-reply@gis.local'
             : env.SMTP_FROM_EMAIL,
     });
+    if (env.MAIL_TRANSPORT === 'mailpit') {
+      logger.warn('Password reset email is using Mailpit; real inbox delivery is disabled for this runtime', {
+        mailTransport: env.MAIL_TRANSPORT,
+        smtpHost:
+          env.SMTP_HOST.trim().length > 0 ? env.SMTP_HOST : 'mailpit',
+        smtpPort: env.SMTP_PORT,
+      });
+    }
     loggedTransportDetails = true;
   }
   return cachedTransporter;
@@ -200,6 +208,12 @@ const sendPasswordResetOtpEmail = async ({
         mailTransport: env.MAIL_TRANSPORT,
         toEmail,
         acceptedRecipients,
+        rejectedRecipients,
+        messageId: info.messageId ?? null,
+        response:
+          typeof info.response === 'string' && info.response.trim().length > 0
+            ? info.response
+            : null,
       });
     }
   } catch (error) {
