@@ -149,6 +149,7 @@ const run = async (): Promise<void> => {
     }
 
     await ensureSuperAdminExists(env);
+    await pool.query('TRUNCATE TABLE audit_log RESTART IDENTITY');
     const summary = await getSummary();
 
     logger.info('Runtime data reset completed', summary);
