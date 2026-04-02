@@ -130,7 +130,6 @@ class AuthController extends StateNotifier<AuthState> {
 
   Future<void> selfDeactivate() async {
     final previousSession = state.session;
-    state = const AuthState.loading();
     try {
       await _repository.selfDeactivate();
       state = const AuthState.unauthenticated();

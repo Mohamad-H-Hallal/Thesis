@@ -427,6 +427,7 @@ final routerProvider = Provider<GoRouter>((ref) {
 final adminDashboardProvider = FutureProvider<AdminDashboardSummary>((
   ref,
 ) async {
+  ref.watch(authControllerProvider.select((state) => state.session?.user.id));
   ref.watch(workflowRefreshTickProvider);
   return ref.read(adminRepositoryProvider).fetchDashboardSummary();
 });
@@ -436,6 +437,9 @@ final contributorRequestsProvider =
       ref,
       status,
     ) async {
+      ref.watch(
+        authControllerProvider.select((state) => state.session?.user.id),
+      );
       ref.watch(workflowRefreshTickProvider);
       return ref
           .read(adminRepositoryProvider)
@@ -445,12 +449,16 @@ final contributorRequestsProvider =
 final managedUsersProvider = FutureProvider<List<ManagedUserSummary>>((
   ref,
 ) async {
+  ref.watch(authControllerProvider.select((state) => state.session?.user.id));
   ref.watch(workflowRefreshTickProvider);
   return ref.read(adminRepositoryProvider).fetchUsers();
 });
 
 final managedAssignmentsProvider =
     FutureProvider<List<ManagedAssignmentSummary>>((ref) async {
+      ref.watch(
+        authControllerProvider.select((state) => state.session?.user.id),
+      );
       ref.watch(workflowRefreshTickProvider);
       return ref.read(adminRepositoryProvider).fetchManagedAssignments();
     });
@@ -458,6 +466,7 @@ final managedAssignmentsProvider =
 final projectCategoriesProvider = FutureProvider<List<ProjectCategorySummary>>((
   ref,
 ) async {
+  ref.watch(authControllerProvider.select((state) => state.session?.user.id));
   ref.watch(workflowRefreshTickProvider);
   return ref.read(adminRepositoryProvider).fetchCategories();
 });
@@ -467,6 +476,9 @@ final projectAssignmentsProvider =
       ref,
       projectId,
     ) async {
+      ref.watch(
+        authControllerProvider.select((state) => state.session?.user.id),
+      );
       ref.watch(workflowRefreshTickProvider);
       return ref
           .read(adminRepositoryProvider)
@@ -476,20 +488,27 @@ final projectAssignmentsProvider =
 final supportSettingsProvider = FutureProvider<SupportContactSettings>((
   ref,
 ) async {
+  ref.watch(authControllerProvider.select((state) => state.session?.user.id));
   ref.watch(workflowRefreshTickProvider);
   return ref.read(adminRepositoryProvider).fetchSupportSettings();
 });
 
 final reviewQueueProvider = FutureProvider<List<ReviewQueueItem>>((ref) async {
+  ref.watch(authControllerProvider.select((state) => state.session?.user.id));
   ref.watch(workflowRefreshTickProvider);
-  return ref.read(reviewRepositoryProvider).fetchReviewItems(status: 'pending_review');
+  return ref
+      .read(reviewRepositoryProvider)
+      .fetchReviewItems(status: 'pending_review');
 });
 
 final rejectedReviewQueueProvider = FutureProvider<List<ReviewQueueItem>>((
   ref,
 ) async {
+  ref.watch(authControllerProvider.select((state) => state.session?.user.id));
   ref.watch(workflowRefreshTickProvider);
-  return ref.read(reviewRepositoryProvider).fetchReviewItems(status: 'rejected');
+  return ref
+      .read(reviewRepositoryProvider)
+      .fetchReviewItems(status: 'rejected');
 });
 
 ProjectViewScope _defaultOperationalProjectScope(UserRole role) {

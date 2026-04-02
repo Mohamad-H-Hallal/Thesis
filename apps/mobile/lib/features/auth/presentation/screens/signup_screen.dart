@@ -41,6 +41,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
   final _passwordFocus = FocusNode();
   final _confirmFocus = FocusNode();
   final _noLeadingSpaceFormatter = NoLeadingSpaceFormatter();
+  final _phoneFormatter = LebanesePhoneFormatter();
 
   UserRole _selectedRole = UserRole.contributor;
   bool _obscurePassword = true;
@@ -124,7 +125,9 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
           email: AuthFormValidators.normalize(_emailController.text),
           password: _passwordController.text,
           role: _selectedRole,
-          phone: AuthFormValidators.normalize(_phoneController.text),
+          phone: AuthFormValidators.normalizeLebanesePhone(
+            _phoneController.text,
+          ),
         );
 
     if (!mounted) {
@@ -276,7 +279,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                                 context,
                               ).requestFocus(_emailFocus),
                               inputFormatters: <TextInputFormatter>[
-                                FilteringTextInputFormatter.digitsOnly,
+                                _phoneFormatter,
                               ],
                               autofillHints: const <String>[
                                 AutofillHints.telephoneNumber,

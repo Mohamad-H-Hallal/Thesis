@@ -25,7 +25,10 @@ abstract class AdminRepository {
 
   Future<ManagedUserSummary> rejectContributor(String userId);
 
-  Future<ManagedUserSummary> toggleAdminRole(String userId);
+  Future<ManagedUserSummary> toggleAdminRole(
+    String userId, {
+    bool forceUnassign = false,
+  });
 
   Future<ManagedUserSummary> blockUser(String userId);
 

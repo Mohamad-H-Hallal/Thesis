@@ -29,6 +29,99 @@ const assertProjectStatusTransition = (currentStatus: string, nextStatus: string
   }
 };
 
+const todayIsoDate = (): string => {
+  const now = new Date();
+  const month = `${now.getMonth() + 1}`.padStart(2, '0');
+  const day = `${now.getDate()}`.padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
+};
+
+const normalizeProjectDateInput = (value: unknown): string | null => {
+  if (value === undefined) {
+    return null;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (value instanceof Date) {
+    const month = `${value.getMonth() + 1}`.padStart(2, '0');
+    const day = `${value.getDate()}`.padStart(2, '0');
+    return `${value.getFullYear()}-${month}-${day}`;
+  }
+  const raw = String(value).trim();
+  if (!raw) {
+    return null;
+  }
+  return raw.slice(0, 10);
+};
+
+const resolveProjectScheduleForMutation = ({
+  currentStatus,
+  nextStatus,
+  currentStartDate,
+  currentEndDate,
+  startDateProvided,
+  endDateProvided,
+  requestedStartDate,
+  requestedEndDate,
+}: {
+  currentStatus: string;
+  nextStatus: string;
+  currentStartDate: unknown;
+  currentEndDate: unknown;
+  startDateProvided: boolean;
+  endDateProvided: boolean;
+  requestedStartDate?: unknown;
+  requestedEndDate?: unknown;
+}): {
+  startDate: string | null;
+  endDate: string | null;
+} => {
+  const today = todayIsoDate();
+  let startDate = startDateProvided
+    ? normalizeProjectDateInput(requestedStartDate)
+    : normalizeProjectDateInput(currentStartDate);
+  let endDate = endDateProvided
+    ? normalizeProjectDateInput(requestedEndDate)
+    : normalizeProjectDateInput(currentEndDate);
+
+  if (nextStatus === 'draft' && startDate !== null && startDate < today) {
+    throw new AppError('Draft projects must use a start date that is today or later.', 422);
+  }
+
+  if (nextStatus === 'active') {
+    if (startDate === null || startDate > today || currentStatus === 'draft') {
+      startDate = today;
+    }
+  }
+
+  if (nextStatus === 'paused' && startDate === null) {
+    startDate = today;
+  }
+
+  if (nextStatus === 'completed') {
+    if (endDate === null || endDate > today) {
+      endDate = today;
+    }
+    if (startDate !== null && endDate < startDate) {
+      throw new AppError(
+        'Completed projects must use an end date on or after the start date.',
+        422,
+      );
+    }
+  }
+
+  if (nextStatus === 'archived' && endDate === null) {
+    endDate = normalizeProjectDateInput(currentEndDate) ?? today;
+  }
+
+  if (startDate !== null && endDate !== null && endDate < startDate) {
+    throw new AppError('End date must be on or after the start date.', 422);
+  }
+
+  return { startDate, endDate };
+};
+
 const synchronizeProjectStatuses = async (projectId?: string): Promise<void> => {
   const conditions = [
     `(status = 'draft' AND start_date IS NOT NULL AND start_date <= CURRENT_DATE AND (end_date IS NULL OR end_date >= CURRENT_DATE))`,
@@ -65,7 +158,10 @@ const synchronizeProjectStatuses = async (projectId?: string): Promise<void> => 
 
 export {
   assertProjectStatusTransition,
+  normalizeProjectDateInput,
   projectStatusTransitions,
+  resolveProjectScheduleForMutation,
   synchronizeProjectStatuses,
+  todayIsoDate,
   viewerVisibleStatuses,
 };

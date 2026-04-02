@@ -3,6 +3,8 @@ const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
 import {
   assertProjectStatusTransition,
+  normalizeProjectDateInput,
+  resolveProjectScheduleForMutation,
   synchronizeProjectStatuses,
   viewerVisibleStatuses,
 } from '../lib/projectLifecycle';
@@ -230,6 +232,16 @@ const createProject = async (req, res) => {
   }
   ensureSchemaObject(collection_form_schema);
   await ensureCategoryExists(category_id);
+  const normalizedSchedule = resolveProjectScheduleForMutation({
+    currentStatus: 'draft',
+    nextStatus: 'draft',
+    currentStartDate: null,
+    currentEndDate: null,
+    startDateProvided: start_date !== undefined,
+    endDateProvided: end_date !== undefined,
+    requestedStartDate: start_date,
+    requestedEndDate: end_date,
+  });
 
   const createdProjectResult = await query(
       `INSERT INTO project (
@@ -244,8 +256,8 @@ const createProject = async (req, res) => {
         name,
         description,
         objectives,
-        start_date,
-        end_date,
+        normalizedSchedule.startDate,
+        normalizedSchedule.endDate,
         JSON.stringify(collection_form_schema),
         requires_photos,
         min_photos,
@@ -292,7 +304,7 @@ const updateProject = async (req, res) => {
   let paramIndex = 1;
 
   const currentProjectResult = await query(
-    'SELECT id, status, category_id FROM project WHERE id = $1',
+    'SELECT id, status, category_id, start_date, end_date FROM project WHERE id = $1',
     [projectId],
   );
   if (currentProjectResult.rows.length === 0) {
@@ -300,6 +312,24 @@ const updateProject = async (req, res) => {
   }
 
   const currentProject = currentProjectResult.rows[0];
+  const currentStartDate = normalizeProjectDateInput(currentProject.start_date);
+  const currentEndDate = normalizeProjectDateInput(currentProject.end_date);
+  const nextStatus = status ?? currentProject.status;
+
+  if (status !== undefined) {
+    assertProjectStatusTransition(currentProject.status, status);
+  }
+
+  const normalizedSchedule = resolveProjectScheduleForMutation({
+    currentStatus: currentProject.status,
+    nextStatus,
+    currentStartDate: currentStartDate,
+    currentEndDate: currentEndDate,
+    startDateProvided: start_date !== undefined,
+    endDateProvided: end_date !== undefined,
+    requestedStartDate: start_date,
+    requestedEndDate: end_date,
+  });
 
   if (category_id !== undefined) {
     await ensureCategoryExists(category_id);
@@ -323,19 +353,24 @@ const updateProject = async (req, res) => {
     paramIndex++;
   }
   if (status !== undefined) {
-    assertProjectStatusTransition(currentProject.status, status);
     updates.push(`status = $${paramIndex}`);
     params.push(status);
     paramIndex++;
   }
-  if (start_date !== undefined) {
+  if (
+    start_date !== undefined ||
+    (status !== undefined && normalizedSchedule.startDate !== currentStartDate)
+  ) {
     updates.push(`start_date = $${paramIndex}`);
-    params.push(start_date);
+    params.push(normalizedSchedule.startDate);
     paramIndex++;
   }
-  if (end_date !== undefined) {
+  if (
+    end_date !== undefined ||
+    (status !== undefined && normalizedSchedule.endDate !== currentEndDate)
+  ) {
     updates.push(`end_date = $${paramIndex}`);
-    params.push(end_date);
+    params.push(normalizedSchedule.endDate);
     paramIndex++;
   }
   if (collection_form_schema !== undefined) {

@@ -8,6 +8,7 @@ import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/section_header.dart';
+import '../../../../core/utils/lebanese_phone.dart';
 import '../../domain/admin_models.dart';
 
 enum _RequestGroup { contributor, project }
@@ -46,6 +47,7 @@ class _ContributorRequestsScreenState
           ref.read(adminRepositoryProvider).approveContributor(userId),
       dialogTitle: 'Approve contributor request',
       dialogMessage: 'Approve this contributor request?',
+      confirmLabel: 'Approve',
       successMessage: 'Contributor request approved.',
     );
   }
@@ -54,7 +56,9 @@ class _ContributorRequestsScreenState
     await _mutate(
       action: () => ref.read(adminRepositoryProvider).rejectContributor(userId),
       dialogTitle: 'Reject contributor request',
-      dialogMessage: 'Reject this contributor request?',
+      dialogMessage:
+          'Reject this contributor request? The contributor will remain unable to sign in until an admin changes this decision.',
+      confirmLabel: 'Reject',
       successMessage: 'Contributor request rejected.',
     );
   }
@@ -73,7 +77,8 @@ class _ContributorRequestsScreenState
           : 'Reject project request',
       dialogMessage: isApprove
           ? 'Approve ${assignment.fullName} for ${assignment.projectName}?'
-          : 'Reject ${assignment.fullName} for ${assignment.projectName}?',
+          : 'Reject ${assignment.fullName} for ${assignment.projectName}? The contributor will stay outside this project until re-approved.',
+      confirmLabel: isApprove ? 'Approve' : 'Reject',
       successMessage: isApprove
           ? 'Project request approved.'
           : 'Project request rejected.',
@@ -84,6 +89,7 @@ class _ContributorRequestsScreenState
     required Future<dynamic> Function() action,
     required String dialogTitle,
     required String dialogMessage,
+    required String confirmLabel,
     required String successMessage,
   }) async {
     final confirmed = await showDialog<bool>(
@@ -98,7 +104,7 @@ class _ContributorRequestsScreenState
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Confirm'),
+            child: Text(confirmLabel),
           ),
         ],
       ),
@@ -117,7 +123,13 @@ class _ContributorRequestsScreenState
       }
     } catch (error) {
       if (mounted) {
-        AppSnackbar.showError(context, error.toString());
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to update this request right now.',
+          ),
+        );
       }
     } finally {
       if (mounted) {
@@ -208,8 +220,7 @@ class _ContributorRequestsScreenState
                               : 'Rejected',
                         ),
                         selected: _selectedState == tab,
-                        onSelected: (_) =>
-                            setState(() => _selectedState = tab),
+                        onSelected: (_) => setState(() => _selectedState = tab),
                       ),
                     )
                     .toList(growable: false),
@@ -289,7 +300,7 @@ class _ContributorRequestsScreenState
                     title: request.fullName,
                     subtitle: request.email,
                     supporting: request.phone?.trim().isNotEmpty == true
-                        ? request.phone!
+                        ? LebanesePhone.format(request.phone)
                         : 'No phone number provided',
                     chips: [
                       Chip(label: Text(request.roleLabel)),

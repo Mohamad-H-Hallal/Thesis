@@ -94,13 +94,13 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
                     runSpacing: 8,
                     children: [
                       ChoiceChip(
-                        label: const Text('Pending reviews'),
+                        label: const Text('Pending'),
                         selected: _filter == _ReviewFilter.pending,
                         onSelected: (_) =>
                             setState(() => _filter = _ReviewFilter.pending),
                       ),
                       ChoiceChip(
-                        label: const Text('Rejected reviews'),
+                        label: const Text('Rejected'),
                         selected: _filter == _ReviewFilter.rejected,
                         onSelected: (_) =>
                             setState(() => _filter = _ReviewFilter.rejected),
@@ -135,18 +135,10 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
                         featureId: item.id,
                       ),
                     ),
-                    onApprove: () => _review(
-                      context,
-                      ref,
-                      item: item,
-                      status: 'approved',
-                    ),
-                    onReject: () => _review(
-                      context,
-                      ref,
-                      item: item,
-                      status: 'rejected',
-                    ),
+                    onApprove: () =>
+                        _review(context, ref, item: item, status: 'approved'),
+                    onReject: () =>
+                        _review(context, ref, item: item, status: 'rejected'),
                   ),
                 ),
               ),
@@ -175,11 +167,9 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
     }
 
     try {
-      await ref.read(reviewRepositoryProvider).reviewFeature(
-            featureId: item.id,
-            status: status,
-            reviewNotes: note,
-          );
+      await ref
+          .read(reviewRepositoryProvider)
+          .reviewFeature(featureId: item.id, status: status, reviewNotes: note);
       bumpWorkflowRefresh(ref);
       if (context.mounted) {
         AppSnackbar.showSuccess(
@@ -208,42 +198,93 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
     required String hint,
     bool requiredNote = false,
   }) async {
-    final controller = TextEditingController();
-    try {
-      return await showDialog<String>(
-        context: context,
-        builder: (context) {
-          return AlertDialog(
-            title: Text(title),
-            content: AppTextField(
+    return showDialog<String>(
+      context: context,
+      builder: (_) => _ReviewNoteDialog(
+        title: title,
+        hint: hint,
+        requiredNote: requiredNote,
+      ),
+    );
+  }
+}
+
+class _ReviewNoteDialog extends StatefulWidget {
+  const _ReviewNoteDialog({
+    required this.title,
+    required this.hint,
+    required this.requiredNote,
+  });
+
+  final String title;
+  final String hint;
+  final bool requiredNote;
+
+  @override
+  State<_ReviewNoteDialog> createState() => _ReviewNoteDialogState();
+}
+
+class _ReviewNoteDialogState extends State<_ReviewNoteDialog> {
+  final TextEditingController _controller = TextEditingController();
+  String? _errorText;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final value = _controller.text.trim();
+    if (widget.requiredNote && value.isEmpty) {
+      setState(() {
+        _errorText = 'A review note is required before you can continue.';
+      });
+      return;
+    }
+    Navigator.of(context).pop(value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_errorText != null) ...[
+              Text(
+                _errorText!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+                softWrap: true,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+            ],
+            AppTextField(
               label: 'Review note',
-              controller: controller,
-              hint: hint,
+              controller: _controller,
+              hint: widget.hint,
               minLines: 2,
               maxLines: 4,
+              onChanged: (_) {
+                if (_errorText != null) {
+                  setState(() => _errorText = null);
+                }
+              },
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () {
-                  final value = controller.text.trim();
-                  if (requiredNote && value.isEmpty) {
-                    return;
-                  }
-                  Navigator.of(context).pop(value);
-                },
-                child: const Text('Save'),
-              ),
-            ],
-          );
-        },
-      );
-    } finally {
-      controller.dispose();
-    }
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Save')),
+      ],
+    );
   }
 }
 

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/design_tokens.dart';
+import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_button.dart';
@@ -47,6 +48,14 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
   String _status = 'draft';
   DateTime? _startDate;
   DateTime? _endDate;
+
+  void _returnToProjects() {
+    if (context.canPop()) {
+      context.pop();
+      return;
+    }
+    context.go(AppRoutes.projects);
+  }
 
   @override
   void dispose() {
@@ -169,6 +178,11 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
       );
       return;
     }
+    final scheduleError = _validateStatusSchedule();
+    if (scheduleError != null) {
+      AppSnackbar.showError(context, scheduleError);
+      return;
+    }
     if (_allowedGeometryTypes.isEmpty) {
       AppSnackbar.showError(
         context,
@@ -251,10 +265,16 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
             ? 'Project updated successfully.'
             : 'Project created successfully.',
       );
-      context.go(AppRoutes.projects);
+      _returnToProjects();
     } catch (error) {
       if (mounted) {
-        AppSnackbar.showError(context, error.toString());
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to save this project right now.',
+          ),
+        );
       }
     } finally {
       if (mounted) {
@@ -274,6 +294,32 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
     return '${value.year}-$month-$day';
   }
 
+  String? _validateStatusSchedule() {
+    final today = DateTime.now();
+    final normalizedToday = DateTime(today.year, today.month, today.day);
+    final start = _startDate == null
+        ? null
+        : DateTime(_startDate!.year, _startDate!.month, _startDate!.day);
+    final end = _endDate == null
+        ? null
+        : DateTime(_endDate!.year, _endDate!.month, _endDate!.day);
+
+    if (_status == 'draft' &&
+        start != null &&
+        start.isBefore(normalizedToday)) {
+      return 'Draft projects must use a start date that is today or later.';
+    }
+    if (_status == 'active' &&
+        start != null &&
+        start.isAfter(normalizedToday)) {
+      return 'Active projects cannot use a future start date.';
+    }
+    if (_status == 'completed' && end != null && end.isAfter(normalizedToday)) {
+      return 'Completed projects cannot use a future end date.';
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final categoriesAsync = ref.watch(projectCategoriesProvider);
@@ -288,7 +334,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
         title: 'Project form unavailable',
         message: '$error',
         actionLabel: 'Back',
-        onAction: () => context.go(AppRoutes.projects),
+        onAction: _returnToProjects,
       ),
       data: (categories) {
         if (categories.isEmpty) {
@@ -298,7 +344,12 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
             message:
                 'Create at least one project category before creating projects.',
             actionLabel: 'Go to categories',
-            onAction: () => context.go(AppRoutes.categories),
+            onAction: () {
+              if (context.canPop()) {
+                context.pop();
+              }
+              context.go(AppRoutes.categories);
+            },
           );
         }
 
@@ -309,7 +360,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
             title: 'Project unavailable',
             message: '$error',
             actionLabel: 'Back',
-            onAction: () => context.go(AppRoutes.projects),
+            onAction: _returnToProjects,
           ),
           data: (project) {
             _initializeForProject(project);
@@ -432,6 +483,23 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                     ).textTheme.bodySmall,
                                   ),
                                 ),
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                  top: AppSpacing.xs,
+                                ),
+                                child: Text(switch (_status) {
+                                  'draft' =>
+                                    'Draft projects should use a start date that is today or later.',
+                                  'active' =>
+                                    'Active projects should be underway now. Future start dates are not allowed.',
+                                  'completed' =>
+                                    'Completed projects should use an end date on or before today.',
+                                  'archived' =>
+                                    'Archived projects stay closed until they are restored to completed status.',
+                                  _ =>
+                                    'Paused projects keep their schedule but remain unavailable for collection until reactivated.',
+                                }, style: Theme.of(context).textTheme.bodySmall),
+                              ),
                               const SizedBox(height: AppSpacing.sm),
                               Wrap(
                                 spacing: AppSpacing.sm,
@@ -680,9 +748,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                               onPressed: _isSaving ? null : _save,
                             ),
                             OutlinedButton(
-                              onPressed: _isSaving
-                                  ? null
-                                  : () => context.go(AppRoutes.projects),
+                              onPressed: _isSaving ? null : _returnToProjects,
                               child: const Text('Cancel'),
                             ),
                           ],

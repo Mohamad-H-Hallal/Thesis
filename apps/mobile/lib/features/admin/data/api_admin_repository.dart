@@ -76,14 +76,17 @@ class ApiAdminRepository implements AdminRepository {
     String? phone,
   }) async {
     return _run(() async {
+      final payload = <String, dynamic>{
+        'full_name': fullName,
+        'email': email,
+        'password': password,
+      };
+      if (phone?.trim().isNotEmpty ?? false) {
+        payload['phone'] = phone!.trim();
+      }
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '$_usersBasePath/admin',
-        data: <String, dynamic>{
-          'full_name': fullName,
-          'email': email,
-          'password': password,
-          'phone': phone,
-        },
+        data: payload,
       );
       final row = Map<String, dynamic>.from(
         response.data?['data'] as Map? ?? const <String, dynamic>{},
@@ -119,10 +122,14 @@ class ApiAdminRepository implements AdminRepository {
   }
 
   @override
-  Future<ManagedUserSummary> toggleAdminRole(String userId) async {
+  Future<ManagedUserSummary> toggleAdminRole(
+    String userId, {
+    bool forceUnassign = false,
+  }) async {
     return _run(() async {
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '$_usersBasePath/$userId/toggle-admin-role',
+        data: <String, dynamic>{'force_unassign': forceUnassign},
       );
       final row = Map<String, dynamic>.from(
         response.data?['data'] as Map? ?? const <String, dynamic>{},
@@ -172,7 +179,8 @@ class ApiAdminRepository implements AdminRepository {
       final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
       return rows
           .map(
-            (row) => _toManagedAssignment(Map<String, dynamic>.from(row as Map)),
+            (row) =>
+                _toManagedAssignment(Map<String, dynamic>.from(row as Map)),
           )
           .toList(growable: false);
     }, fallback: 'Unable to load project requests.');
@@ -235,7 +243,9 @@ class ApiAdminRepository implements AdminRepository {
       );
       final iconUrl = row['icon_url'] as String?;
       if (iconUrl == null || iconUrl.trim().isEmpty) {
-        throw const FormatException('Category icon upload did not return an icon URL.');
+        throw const FormatException(
+          'Category icon upload did not return an icon URL.',
+        );
       }
       return iconUrl.trim();
     }, fallback: 'Unable to upload category icon.');
@@ -509,10 +519,14 @@ class ApiAdminRepository implements AdminRepository {
       isBlocked: (row['is_blocked'] as bool?) ?? false,
       previousAdminRole: _toOptionalRole(row['previous_admin_role'] as String?),
       canToggleAdminRole: (row['can_toggle_admin_role'] as bool?) ?? false,
-      canBlock: ((row['is_active'] as bool?) ?? false) &&
+      canBlock:
+          ((row['is_active'] as bool?) ?? false) &&
           !((row['is_blocked'] as bool?) ?? false) &&
           !((row['is_protected_super_admin'] as bool?) ?? false),
       canUnblock: (row['is_blocked'] as bool?) ?? false,
+      approvedAssignmentCount: _toInt(row['approved_assignment_count']) ?? 0,
+      unassignedAssignmentCount:
+          _toInt(row['unassigned_assignment_count']) ?? 0,
       requestStatus: requestStatusRaw == null
           ? null
           : ContributorRequestStatus.values.byName(requestStatusRaw),

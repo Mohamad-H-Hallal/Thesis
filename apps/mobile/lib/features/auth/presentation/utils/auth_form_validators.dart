@@ -1,3 +1,5 @@
+import '../../../../core/utils/lebanese_phone.dart';
+
 class AuthFormValidators {
   const AuthFormValidators._();
 
@@ -11,10 +13,16 @@ class AuthFormValidators {
   static final RegExp _symbolPattern = RegExp(
     r'[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\\/~`]',
   );
-  static final RegExp _phonePattern = RegExp(r'^\d{8,15}$');
-
   static String normalize(String value) {
     return value.trim().replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  static String normalizeLebanesePhone(String value) {
+    return LebanesePhone.normalize(value);
+  }
+
+  static String formatLebanesePhone(String? value) {
+    return LebanesePhone.format(value);
   }
 
   static String? requiredField(
@@ -87,23 +95,23 @@ class AuthFormValidators {
   }
 
   static String? phoneOptional(String? value) {
-    final normalized = normalize(value ?? '');
+    final normalized = LebanesePhone.normalize(value ?? '');
     if (normalized.isEmpty) {
       return null;
     }
-    if (!_phonePattern.hasMatch(normalized)) {
-      return 'Phone must contain 8 to 15 digits';
+    if (!LebanesePhone.isValid(normalized)) {
+      return 'Enter a valid Lebanese phone number';
     }
     return null;
   }
 
   static String? phoneRequired(String? value) {
-    final normalized = normalize(value ?? '');
+    final normalized = LebanesePhone.normalize(value ?? '');
     if (normalized.isEmpty) {
       return 'Phone is required';
     }
-    if (!_phonePattern.hasMatch(normalized)) {
-      return 'Phone must contain 8 to 15 digits';
+    if (!LebanesePhone.isValid(normalized)) {
+      return 'Enter a valid Lebanese phone number';
     }
     return null;
   }

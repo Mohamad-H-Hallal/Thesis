@@ -271,7 +271,8 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                       children: [
                         StatusChip(status: project.status),
                         Chip(label: Text(project.category)),
-                        if (project.startDate != null || project.endDate != null)
+                        if (project.startDate != null ||
+                            project.endDate != null)
                           Chip(
                             label: Text(
                               'Schedule ${_formatDate(project.startDate)} -> ${_formatDate(project.endDate)}',
@@ -361,81 +362,94 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
             const SizedBox(height: AppSpacing.md),
             AnimatedReveal(
               delay: const Duration(milliseconds: 130),
-              child: Wrap(
-                spacing: 14,
-                runSpacing: 12,
-                children: [
-                  if (role != UserRole.viewer)
-                    FilledButton.icon(
-                      onPressed: () =>
-                          context.push(AppRoutes.mapForProject(project.id)),
-                      icon: const Icon(Icons.map_outlined),
-                      label: const Text('Open Map'),
-                    ),
-                  if (role == UserRole.contributor && hasContributorAssignment)
-                    FilledButton.icon(
-                      onPressed: () {
-                        if (canCollectFeatures) {
-                          context.push(AppRoutes.addFeatureForProject(project.id));
-                          return;
-                        }
-                        _showCollectionUnavailableMessage(project.status);
-                      },
-                      icon: const Icon(Icons.add_location_alt_outlined),
-                      label: const Text('New Feature'),
-                    ),
-                  if (canRequestAccess)
-                    FilledButton.tonalIcon(
-                      onPressed: _requestingAccess ? null : _requestProjectAccess,
-                      icon: const Icon(Icons.how_to_reg_outlined),
-                      label: Text(
-                        _requestingAccess ? 'Submitting...' : 'Request Access',
+              child: Padding(
+                padding: const EdgeInsets.only(top: AppSpacing.xs),
+                child: Wrap(
+                  spacing: 16,
+                  runSpacing: 16,
+                  children: [
+                    if (role != UserRole.viewer)
+                      FilledButton.icon(
+                        onPressed: () =>
+                            context.push(AppRoutes.mapForProject(project.id)),
+                        icon: const Icon(Icons.map_outlined),
+                        label: const Text('Open Map'),
                       ),
-                    ),
-                  if (role == UserRole.contributor &&
-                      contributorRequestStatus ==
-                          ProjectAssignmentStatus.pending)
-                    OutlinedButton.icon(
-                      onPressed: _requestingAccess
-                          ? null
-                          : _cancelProjectAccessRequest,
-                      icon: const Icon(Icons.cancel_outlined),
-                      label: const Text('Cancel Request'),
-                    ),
-                ],
+                    if (role == UserRole.contributor &&
+                        hasContributorAssignment)
+                      FilledButton.icon(
+                        onPressed: () {
+                          if (canCollectFeatures) {
+                            context.push(
+                              AppRoutes.addFeatureForProject(project.id),
+                            );
+                            return;
+                          }
+                          _showCollectionUnavailableMessage(project.status);
+                        },
+                        icon: const Icon(Icons.add_location_alt_outlined),
+                        label: const Text('New Feature'),
+                      ),
+                    if (canRequestAccess)
+                      FilledButton.tonalIcon(
+                        onPressed: _requestingAccess
+                            ? null
+                            : _requestProjectAccess,
+                        icon: const Icon(Icons.how_to_reg_outlined),
+                        label: Text(
+                          _requestingAccess
+                              ? 'Submitting...'
+                              : 'Request Access',
+                        ),
+                      ),
+                    if (role == UserRole.contributor &&
+                        contributorRequestStatus ==
+                            ProjectAssignmentStatus.pending)
+                      OutlinedButton.icon(
+                        onPressed: _requestingAccess
+                            ? null
+                            : _cancelProjectAccessRequest,
+                        icon: const Icon(Icons.cancel_outlined),
+                        label: const Text('Cancel Request'),
+                      ),
+                  ],
+                ),
               ),
             ),
             if (role == UserRole.admin)
               AnimatedReveal(
                 delay: const Duration(milliseconds: 160),
-                child: Wrap(
-                  spacing: 14,
-                  runSpacing: 12,
-                  children: [
-                    FilledButton.icon(
-                      onPressed: () =>
-                          context.push(AppRoutes.projectEdit(project.id)),
-                      icon: const Icon(Icons.edit_outlined),
-                      label: const Text('Edit Project'),
-                    ),
-                    FilledButton.icon(
-                      onPressed: () => context.push(
-                        AppRoutes.projectAssignments(project.id),
+                child: Padding(
+                  padding: const EdgeInsets.only(top: AppSpacing.sm),
+                  child: Wrap(
+                    spacing: 16,
+                    runSpacing: 16,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: () =>
+                            context.push(AppRoutes.projectEdit(project.id)),
+                        icon: const Icon(Icons.edit_outlined),
+                        label: const Text('Edit Project'),
                       ),
-                      icon: const Icon(Icons.assignment_outlined),
-                      label: const Text('Assignments'),
-                    ),
-                    FilledButton.icon(
-                      onPressed: () => context.go(AppRoutes.reviewQueue),
-                      icon: const Icon(Icons.rate_review_outlined),
-                      label: const Text('Review Queue'),
-                    ),
-                    FilledButton.icon(
-                      onPressed: () => context.go(AppRoutes.exports),
-                      icon: const Icon(Icons.file_download_outlined),
-                      label: const Text('Exports'),
-                    ),
-                  ],
+                      FilledButton.icon(
+                        onPressed: () => context.push(
+                          AppRoutes.projectAssignments(project.id),
+                        ),
+                        icon: const Icon(Icons.assignment_outlined),
+                        label: const Text('Assignments'),
+                      ),
+                      FilledButton.icon(
+                        onPressed: () => context.push(AppRoutes.reviewQueue),
+                        icon: const Icon(Icons.rate_review_outlined),
+                        label: const Text('Review Queue'),
+                      ),
+                      FilledButton.icon(
+                        onPressed: () => context.push(AppRoutes.exports),
+                        icon: const Icon(Icons.file_download_outlined),
+                        label: const Text('Exports'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             if (role == UserRole.contributor && !hasContributorAssignment)
@@ -444,27 +458,33 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                 child: AppCard(
                   child: ListTile(
                     leading: Icon(
-                      contributorRequestStatus == ProjectAssignmentStatus.rejected
+                      contributorRequestStatus ==
+                              ProjectAssignmentStatus.rejected
                           ? Icons.cancel_outlined
-                          : contributorRequestStatus == ProjectAssignmentStatus.pending
-                              ? Icons.hourglass_bottom
-                              : Icons.lock_outline,
+                          : contributorRequestStatus ==
+                                ProjectAssignmentStatus.pending
+                          ? Icons.hourglass_bottom
+                          : Icons.lock_outline,
                     ),
                     title: Text(
-                      contributorRequestStatus == ProjectAssignmentStatus.rejected
+                      contributorRequestStatus ==
+                              ProjectAssignmentStatus.rejected
                           ? 'Project access was rejected'
-                          : contributorRequestStatus == ProjectAssignmentStatus.pending
-                              ? 'Project access pending'
-                              : 'Assignment required',
+                          : contributorRequestStatus ==
+                                ProjectAssignmentStatus.pending
+                          ? 'Project access pending'
+                          : 'Assignment required',
                     ),
                     subtitle: Text(
-                      contributorRequestStatus == ProjectAssignmentStatus.rejected
+                      contributorRequestStatus ==
+                              ProjectAssignmentStatus.rejected
                           ? 'An admin rejected your previous request. The request stays visible in Requests until it is re-approved.'
-                          : contributorRequestStatus == ProjectAssignmentStatus.pending
-                              ? 'Your access request is waiting for admin approval.'
-                              : project.status != 'active'
-                                  ? 'This project is not accepting contributor access requests while it is ${project.status}.'
-                              : 'This public project is visible to you, but collection actions stay disabled until an admin approves your assignment.',
+                          : contributorRequestStatus ==
+                                ProjectAssignmentStatus.pending
+                          ? 'Your access request is waiting for admin approval.'
+                          : project.status != 'active'
+                          ? 'This project is not accepting contributor access requests while it is ${project.status}.'
+                          : 'This public project is visible to you, but collection actions stay disabled until an admin approves your assignment.',
                     ),
                   ),
                 ),

@@ -345,6 +345,7 @@ userRouter.put(
 userRouter.post(
   '/:userId/toggle-admin-role',
   uuidValidation('userId'),
+  userValidation.toggleAdminRole,
   validate,
   asyncHandler(userController.toggleAdminRole),
 );

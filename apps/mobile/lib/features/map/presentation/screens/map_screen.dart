@@ -14,6 +14,7 @@ import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
+import '../../../../core/widgets/app_text_field.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/map_feature.dart';
@@ -92,8 +93,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             role == UserRole.contributor &&
             project.hasApprovedCurrentUserAssignment;
         final canCollectOnMap =
-            hasContributorAssignment &&
-            project.status == 'active';
+            hasContributorAssignment && project.status == 'active';
         final canReview = role == UserRole.admin;
 
         Widget buildControls() {
@@ -191,7 +191,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       FilledButton.icon(
                         onPressed: () {
                           if (canCollectOnMap) {
-                            context.push(AppRoutes.addFeatureForProject(project.id));
+                            context.push(
+                              AppRoutes.addFeatureForProject(project.id),
+                            );
                             return;
                           }
                           _showCollectionUnavailableMessage(project.status);
@@ -201,7 +203,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       ),
                     if (canReview)
                       FilledButton.tonalIcon(
-                        onPressed: () => context.go(AppRoutes.reviewQueue),
+                        onPressed: () => context.push(AppRoutes.reviewQueue),
                         icon: const Icon(Icons.rate_review_outlined),
                         label: const Text('Review Queue'),
                       ),
@@ -412,10 +414,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           const Icon(Icons.map_outlined),
                           const SizedBox(width: AppSpacing.sm),
                           Expanded(
-                            child: Text(
-                              _tileFailureMessage!,
-                              softWrap: true,
-                            ),
+                            child: Text(_tileFailureMessage!, softWrap: true),
                           ),
                         ],
                       ),
@@ -437,7 +436,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 onAction: hasCollectionAccess
                     ? () {
                         if (canCollectOnMap) {
-                          context.push(AppRoutes.addFeatureForProject(project.id));
+                          context.push(
+                            AppRoutes.addFeatureForProject(project.id),
+                          );
                           return;
                         }
                         _showCollectionUnavailableMessage(project.status);
@@ -597,9 +598,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   Future<void> _reviewFeature({
-    required String projectId,
     required MapFeatureSummary feature,
     required String status,
+    VoidCallback? onSuccess,
   }) async {
     final note = await _promptNote(
       title: status == 'approved' ? 'Approval note' : 'Rejection note',
@@ -622,7 +623,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           );
       bumpWorkflowRefresh(ref);
       if (mounted) {
-        Navigator.of(context).maybePop();
+        onSuccess?.call();
         AppSnackbar.showSuccess(
           context,
           status == 'approved'
@@ -644,16 +645,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   Future<void> _submitDraft({
-    required String projectId,
     required MapFeatureSummary feature,
+    VoidCallback? onSuccess,
   }) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Submit draft'),
-        content: const Text(
-          'Submit this draft for admin review now?',
-        ),
+        content: const Text('Submit this draft for admin review now?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -677,7 +676,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           .submitForReview(feature.id);
       bumpWorkflowRefresh(ref);
       if (mounted) {
-        Navigator.of(context).maybePop();
+        onSuccess?.call();
         AppSnackbar.showSuccess(
           context,
           'Draft submitted for review successfully.',
@@ -701,36 +700,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required String hint,
     required bool requiredNote,
   }) async {
-    final controller = TextEditingController();
     return showDialog<String>(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(title),
-          content: TextField(
-            controller: controller,
-            minLines: 2,
-            maxLines: 4,
-            decoration: InputDecoration(hintText: hint),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final value = controller.text.trim();
-                if (requiredNote && value.isEmpty) {
-                  return;
-                }
-                Navigator.of(context).pop(value);
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        );
-      },
+      builder: (_) => _MapReviewNoteDialog(
+        title: title,
+        hint: hint,
+        requiredNote: requiredNote,
+      ),
     );
   }
 
@@ -744,7 +720,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (context) {
+      builder: (sheetContext) {
         return SafeArea(
           child: DraggableScrollableSheet(
             expand: false,
@@ -872,7 +848,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         children: [
                           OutlinedButton.icon(
                             onPressed: () {
-                              Navigator.of(context).maybePop();
+                              Navigator.of(sheetContext).pop();
                               this.context.push(
                                 AppRoutes.editDraftFeature(
                                   projectId: project.id,
@@ -885,8 +861,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           ),
                           FilledButton.icon(
                             onPressed: () => _submitDraft(
-                              projectId: project.id,
                               feature: feature,
+                              onSuccess: () => Navigator.of(sheetContext).pop(),
                             ),
                             icon: const Icon(Icons.send_outlined),
                             label: const Text('Submit Draft'),
@@ -903,9 +879,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         children: [
                           FilledButton.icon(
                             onPressed: () => _reviewFeature(
-                              projectId: project.id,
                               feature: feature,
                               status: 'approved',
+                              onSuccess: () => Navigator.of(sheetContext).pop(),
                             ),
                             icon: const Icon(Icons.check_circle_outline),
                             label: Text(
@@ -916,9 +892,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           ),
                           FilledButton.tonalIcon(
                             onPressed: () => _reviewFeature(
-                              projectId: project.id,
                               feature: feature,
                               status: 'rejected',
+                              onSuccess: () => Navigator.of(sheetContext).pop(),
                             ),
                             icon: const Icon(Icons.cancel_outlined),
                             label: Text(
@@ -1219,7 +1195,8 @@ class _SyncStatusLine extends StatelessWidget {
     } else if (state.pendingCount > 0) {
       icon = Icons.cloud_upload_outlined;
       color = scheme.tertiary;
-      text = '${state.pendingCount} update${state.pendingCount == 1 ? '' : 's'} queued for sync';
+      text =
+          '${state.pendingCount} update${state.pendingCount == 1 ? '' : 's'} queued for sync';
     } else if (state.lastSyncAt != null) {
       icon = Icons.cloud_done_outlined;
       color = scheme.primary;
@@ -1244,6 +1221,85 @@ class _SyncStatusLine extends StatelessWidget {
             softWrap: true,
           ),
         ),
+      ],
+    );
+  }
+}
+
+class _MapReviewNoteDialog extends StatefulWidget {
+  const _MapReviewNoteDialog({
+    required this.title,
+    required this.hint,
+    required this.requiredNote,
+  });
+
+  final String title;
+  final String hint;
+  final bool requiredNote;
+
+  @override
+  State<_MapReviewNoteDialog> createState() => _MapReviewNoteDialogState();
+}
+
+class _MapReviewNoteDialogState extends State<_MapReviewNoteDialog> {
+  final TextEditingController _controller = TextEditingController();
+  String? _errorText;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final value = _controller.text.trim();
+    if (widget.requiredNote && value.isEmpty) {
+      setState(() {
+        _errorText = 'A review note is required before you can continue.';
+      });
+      return;
+    }
+    Navigator.of(context).pop(value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_errorText != null) ...[
+              Text(
+                _errorText!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+                softWrap: true,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+            ],
+            AppTextField(
+              label: 'Review note',
+              controller: _controller,
+              hint: widget.hint,
+              minLines: 2,
+              maxLines: 4,
+              onChanged: (_) {
+                if (_errorText != null) {
+                  setState(() => _errorText = null);
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Save')),
       ],
     );
   }

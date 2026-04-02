@@ -3,6 +3,7 @@ import type { NextFunction, Request, Response } from 'express';
 
 const strongPasswordPattern =
   /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
+const lebanesePhonePattern = /^(?:0\d{7}|(?:\+?961)\d{7})$/;
 
 // Validation error handler
 const validate = (req: Request, res: Response, next: NextFunction): Response | void => {
@@ -42,8 +43,8 @@ const userValidation = {
       .trim()
       .notEmpty()
       .withMessage('Phone is required')
-      .matches(/^\+?[0-9-]+$/)
-      .withMessage('Invalid phone number format'),
+      .matches(lebanesePhonePattern)
+      .withMessage('Enter a valid Lebanese phone number'),
     body('role')
       .isIn(['contributor', 'viewer'])
       .withMessage('Role must be contributor or viewer'),
@@ -62,7 +63,10 @@ const userValidation = {
   ] as ValidationChain[],
   update: [
     body('full_name').optional().trim().notEmpty(),
-    body('phone').optional().matches(/^\+?[0-9-]+$/),
+    body('phone')
+      .optional()
+      .matches(lebanesePhonePattern)
+      .withMessage('Enter a valid Lebanese phone number'),
     body('email').optional().isEmail().normalizeEmail(),
   ] as ValidationChain[],
   changePassword: [
@@ -104,15 +108,15 @@ const userValidation = {
       .withMessage('Full name is required'),
     body('phone')
       .optional()
-      .matches(/^\+?[0-9-]+$/)
-      .withMessage('Invalid phone number format'),
+      .matches(lebanesePhonePattern)
+      .withMessage('Enter a valid Lebanese phone number'),
   ] as ValidationChain[],
   adminUpdate: [
     body('full_name').optional().trim().notEmpty().withMessage('Full name cannot be empty'),
     body('phone')
       .optional()
-      .matches(/^\+?[0-9-]+$/)
-      .withMessage('Invalid phone number format'),
+      .matches(lebanesePhonePattern)
+      .withMessage('Enter a valid Lebanese phone number'),
     body('role')
       .optional()
       .isIn(['admin', 'contributor', 'viewer'])
@@ -121,6 +125,12 @@ const userValidation = {
       .optional()
       .isBoolean()
       .withMessage('is_active must be a boolean'),
+  ] as ValidationChain[],
+  toggleAdminRole: [
+    body('force_unassign')
+      .optional()
+      .isBoolean()
+      .withMessage('force_unassign must be a boolean'),
   ] as ValidationChain[],
   refreshToken: [
     body('refresh_token')
@@ -183,6 +193,14 @@ const projectValidation = {
     body('min_photos').optional().isInt({ min: 0 }),
     body('max_photos').optional().isInt({ min: 0 }),
     body('visible_to_viewers').optional().isBoolean(),
+    body('start_date')
+      .optional({ nullable: true })
+      .isISO8601()
+      .withMessage('start_date must be a valid date'),
+    body('end_date')
+      .optional({ nullable: true })
+      .isISO8601()
+      .withMessage('end_date must be a valid date'),
   ] as ValidationChain[],
   update: [
     param('projectId').isUUID().withMessage('Valid project ID is required'),
@@ -195,6 +213,14 @@ const projectValidation = {
     body('min_photos').optional().isInt({ min: 0 }),
     body('max_photos').optional().isInt({ min: 0 }),
     body('visible_to_viewers').optional().isBoolean(),
+    body('start_date')
+      .optional({ nullable: true })
+      .isISO8601()
+      .withMessage('start_date must be a valid date'),
+    body('end_date')
+      .optional({ nullable: true })
+      .isISO8601()
+      .withMessage('end_date must be a valid date'),
   ] as ValidationChain[],
 };
 

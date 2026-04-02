@@ -1,6 +1,7 @@
 import '../../auth/domain/auth_models.dart';
 
 enum ContributorRequestStatus { pending, rejected }
+
 enum UserAccountState { active, pending, rejected, blocked, inactive }
 
 class ManagedUserSummary {
@@ -19,6 +20,8 @@ class ManagedUserSummary {
     this.canToggleAdminRole = false,
     this.canBlock = false,
     this.canUnblock = false,
+    this.approvedAssignmentCount = 0,
+    this.unassignedAssignmentCount = 0,
   });
 
   final String id;
@@ -35,6 +38,8 @@ class ManagedUserSummary {
   final bool canToggleAdminRole;
   final bool canBlock;
   final bool canUnblock;
+  final int approvedAssignmentCount;
+  final int unassignedAssignmentCount;
 
   String get roleLabel => role.label;
 

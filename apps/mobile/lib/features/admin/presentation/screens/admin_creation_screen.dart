@@ -11,12 +11,14 @@ import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/widgets/loading_overlay.dart';
 import '../../../auth/presentation/utils/auth_form_validators.dart';
+import '../../../auth/presentation/utils/auth_input_formatters.dart';
 
 class AdminCreationScreen extends ConsumerStatefulWidget {
   const AdminCreationScreen({super.key});
 
   @override
-  ConsumerState<AdminCreationScreen> createState() => _AdminCreationScreenState();
+  ConsumerState<AdminCreationScreen> createState() =>
+      _AdminCreationScreenState();
 }
 
 class _AdminCreationScreenState extends ConsumerState<AdminCreationScreen> {
@@ -26,6 +28,7 @@ class _AdminCreationScreenState extends ConsumerState<AdminCreationScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmController = TextEditingController();
+  final _phoneFormatter = LebanesePhoneFormatter();
   bool _isSubmitting = false;
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
@@ -56,9 +59,11 @@ class _AdminCreationScreenState extends ConsumerState<AdminCreationScreen> {
             fullName: AuthFormValidators.normalize(_fullNameController.text),
             email: AuthFormValidators.normalize(_emailController.text),
             password: _passwordController.text,
-            phone: AuthFormValidators.normalize(_phoneController.text),
+            phone: AuthFormValidators.normalizeLebanesePhone(
+              _phoneController.text,
+            ),
           );
-      ref.invalidate(managedUsersProvider);
+      bumpWorkflowRefresh(ref);
       if (!mounted) {
         return;
       }
@@ -107,6 +112,8 @@ class _AdminCreationScreenState extends ConsumerState<AdminCreationScreen> {
                         label: 'Phone number',
                         hint: '03xxxxxxx',
                         controller: _phoneController,
+                        keyboardType: TextInputType.phone,
+                        inputFormatters: [_phoneFormatter],
                         validator: AuthFormValidators.phoneOptional,
                       ),
                       const SizedBox(height: AppSpacing.sm),
@@ -124,8 +131,9 @@ class _AdminCreationScreenState extends ConsumerState<AdminCreationScreen> {
                         obscureText: _obscurePassword,
                         validator: AuthFormValidators.password,
                         suffix: IconButton(
-                          onPressed: () =>
-                              setState(() => _obscurePassword = !_obscurePassword),
+                          onPressed: () => setState(
+                            () => _obscurePassword = !_obscurePassword,
+                          ),
                           icon: Icon(
                             _obscurePassword
                                 ? Icons.visibility
@@ -139,13 +147,15 @@ class _AdminCreationScreenState extends ConsumerState<AdminCreationScreen> {
                         hint: 'Re-enter password',
                         controller: _confirmController,
                         obscureText: _obscureConfirm,
-                        validator: (value) => AuthFormValidators.confirmPassword(
-                          value: value,
-                          password: _passwordController.text,
-                        ),
+                        validator: (value) =>
+                            AuthFormValidators.confirmPassword(
+                              value: value,
+                              password: _passwordController.text,
+                            ),
                         suffix: IconButton(
-                          onPressed: () =>
-                              setState(() => _obscureConfirm = !_obscureConfirm),
+                          onPressed: () => setState(
+                            () => _obscureConfirm = !_obscureConfirm,
+                          ),
                           icon: Icon(
                             _obscureConfirm
                                 ? Icons.visibility

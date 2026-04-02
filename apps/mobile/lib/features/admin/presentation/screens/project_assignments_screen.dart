@@ -9,6 +9,7 @@ import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
+import '../../../../core/utils/lebanese_phone.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../domain/admin_models.dart';
 
@@ -63,7 +64,9 @@ class _ProjectAssignmentsScreenState
 
     setState(() => _isSaving = true);
     try {
-      await ref.read(adminRepositoryProvider).createAssignment(
+      await ref
+          .read(adminRepositoryProvider)
+          .createAssignment(
             projectId: widget.projectId,
             userId: user.id,
             role: 'contributor',
@@ -152,11 +155,13 @@ class _ProjectAssignmentsScreenState
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(isApprove ? 'Approve project request' : 'Reject project request'),
+        title: Text(
+          isApprove ? 'Approve project request' : 'Reject project request',
+        ),
         content: Text(
           isApprove
               ? 'Approve ${assignment.fullName} for this project?'
-              : 'Reject ${assignment.fullName} for this project?',
+              : 'Reject ${assignment.fullName} for this project? They will remain outside this project until an admin re-accepts the request.',
         ),
         actions: [
           TextButton(
@@ -219,7 +224,9 @@ class _ProjectAssignmentsScreenState
   @override
   Widget build(BuildContext context) {
     final projectAsync = ref.watch(projectByIdProvider(widget.projectId));
-    final assignmentsAsync = ref.watch(projectAssignmentsProvider(widget.projectId));
+    final assignmentsAsync = ref.watch(
+      projectAssignmentsProvider(widget.projectId),
+    );
     final usersAsync = ref.watch(managedUsersProvider);
 
     return projectAsync.when(
@@ -255,7 +262,8 @@ class _ProjectAssignmentsScreenState
                   'Unable to load project assignments right now. Please try again.',
             ),
             actionLabel: 'Retry',
-            onAction: () => ref.invalidate(projectAssignmentsProvider(widget.projectId)),
+            onAction: () =>
+                ref.invalidate(projectAssignmentsProvider(widget.projectId)),
           ),
           data: (assignments) => usersAsync.when(
             loading: () => const Center(child: CircularProgressIndicator()),
@@ -274,25 +282,28 @@ class _ProjectAssignmentsScreenState
               final approvedAssignments = assignments
                   .where((assignment) => assignment.status == 'approved')
                   .where(
-                    (assignment) => _matchesQuery(
-                      <String?>[assignment.fullName, assignment.email],
-                    ),
+                    (assignment) => _matchesQuery(<String?>[
+                      assignment.fullName,
+                      assignment.email,
+                    ]),
                   )
                   .toList(growable: false);
               final pendingRequests = assignments
                   .where((assignment) => assignment.status == 'pending')
                   .where(
-                    (assignment) => _matchesQuery(
-                      <String?>[assignment.fullName, assignment.email],
-                    ),
+                    (assignment) => _matchesQuery(<String?>[
+                      assignment.fullName,
+                      assignment.email,
+                    ]),
                   )
                   .toList(growable: false);
               final rejectedRequests = assignments
                   .where((assignment) => assignment.status == 'rejected')
                   .where(
-                    (assignment) => _matchesQuery(
-                      <String?>[assignment.fullName, assignment.email],
-                    ),
+                    (assignment) => _matchesQuery(<String?>[
+                      assignment.fullName,
+                      assignment.email,
+                    ]),
                   )
                   .toList(growable: false);
               final reservedContributorIds = assignments
@@ -317,7 +328,8 @@ class _ProjectAssignmentsScreenState
                 children: [
                   SectionHeader(
                     title: 'Project Assignments',
-                    subtitle: 'Manage contributor assignment workflow for ${project.name}.',
+                    subtitle:
+                        'Manage contributor assignments and project-specific access requests for ${project.name}.',
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   AppCard(
@@ -333,14 +345,9 @@ class _ProjectAssignmentsScreenState
                                 children: [
                                   Text(
                                     project.name,
-                                    style: Theme.of(context).textTheme.titleMedium,
-                                  ),
-                                  const SizedBox(height: AppSpacing.xs),
-                                  Text(
-                                    project.description.isEmpty
-                                        ? 'No description provided.'
-                                        : project.description,
-                                    softWrap: true,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.titleMedium,
                                   ),
                                 ],
                               ),
@@ -355,12 +362,41 @@ class _ProjectAssignmentsScreenState
                           runSpacing: 8,
                           children: [
                             Chip(label: Text(project.category)),
-                            Chip(label: Text('${approvedAssignments.length} assigned')),
-                            Chip(label: Text('${pendingRequests.length} pending requests')),
-                            Chip(label: Text('${rejectedRequests.length} rejected requests')),
+                            Chip(
+                              label: Text(
+                                '${approvedAssignments.length} assigned',
+                              ),
+                            ),
+                            Chip(
+                              label: Text(
+                                '${pendingRequests.length} pending requests',
+                              ),
+                            ),
+                            if (rejectedRequests.isNotEmpty)
+                              Chip(
+                                label: Text(
+                                  '${rejectedRequests.length} rejected requests',
+                                ),
+                              ),
                           ],
                         ),
-                        const SizedBox(height: AppSpacing.sm),
+                        if (project.description.isNotEmpty) ...[
+                          const SizedBox(height: AppSpacing.xs),
+                          Text(
+                            project.description,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            softWrap: true,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  AppCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                         SearchBar(
                           controller: _searchController,
                           hintText: 'Search contributors and project requests',
@@ -371,22 +407,32 @@ class _ProjectAssignmentsScreenState
                         Wrap(
                           spacing: 8,
                           runSpacing: 8,
-                          children: _AssignmentSection.values.map((section) {
-                            final (label, count) = switch (section) {
-                              _AssignmentSection.assigned =>
-                                ('Assigned Contributors', approvedAssignments.length),
-                              _AssignmentSection.available =>
-                                ('Available Contributors', availableContributors.length),
-                              _AssignmentSection.requests =>
-                                ('Project Requests', pendingRequests.length + rejectedRequests.length),
-                            };
-                            return ChoiceChip(
-                              label: Text('$label ($count)'),
-                              selected: _selectedSection == section,
-                              onSelected: (_) =>
-                                  setState(() => _selectedSection = section),
-                            );
-                          }).toList(growable: false),
+                          children: _AssignmentSection.values
+                              .map((section) {
+                                final (label, count) = switch (section) {
+                                  _AssignmentSection.assigned => (
+                                    'Assigned',
+                                    approvedAssignments.length,
+                                  ),
+                                  _AssignmentSection.available => (
+                                    'Available',
+                                    availableContributors.length,
+                                  ),
+                                  _AssignmentSection.requests => (
+                                    'Requests',
+                                    pendingRequests.length +
+                                        rejectedRequests.length,
+                                  ),
+                                };
+                                return ChoiceChip(
+                                  label: Text('$label ($count)'),
+                                  selected: _selectedSection == section,
+                                  onSelected: (_) => setState(
+                                    () => _selectedSection = section,
+                                  ),
+                                );
+                              })
+                              .toList(growable: false),
                         ),
                       ],
                     ),
@@ -394,98 +440,106 @@ class _ProjectAssignmentsScreenState
                   const SizedBox(height: AppSpacing.md),
                   switch (_selectedSection) {
                     _AssignmentSection.assigned => _AssignmentListSection(
-                        title: 'Assigned Contributors',
-                        emptyTitle: 'No contributors assigned',
-                        emptyMessage:
-                            'Approved contributors assigned to this project appear here and can be unassigned at any time.',
-                        children: approvedAssignments
-                            .map(
-                              (assignment) => Padding(
-                                padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                                child: _AssignedContributorCard(
-                                  assignment: assignment,
-                                  isSaving: _isSaving,
-                                  onUnassign: () => _removeAssignment(assignment),
-                                ),
+                      title: 'Assigned Contributors',
+                      emptyTitle: 'No contributors assigned',
+                      emptyMessage:
+                          'Approved contributors assigned to this project appear here and can be unassigned at any time.',
+                      children: approvedAssignments
+                          .map(
+                            (assignment) => Padding(
+                              padding: const EdgeInsets.only(
+                                bottom: AppSpacing.sm,
                               ),
-                            )
-                            .toList(growable: false),
-                      ),
+                              child: _AssignedContributorCard(
+                                assignment: assignment,
+                                isSaving: _isSaving,
+                                onUnassign: () => _removeAssignment(assignment),
+                              ),
+                            ),
+                          )
+                          .toList(growable: false),
+                    ),
                     _AssignmentSection.available => _AssignmentListSection(
-                        title: 'Available Approved Contributors',
-                        emptyTitle: 'No eligible contributors available',
-                        emptyMessage:
-                            'Only active approved contributors who are not currently assigned to this project appear here.',
-                        children: availableContributors
-                            .map(
-                              (user) => Padding(
-                                padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                                child: _AvailableContributorCard(
-                                  user: user,
-                                  isSaving: _isSaving,
-                                  onAssign: () => _assignContributor(user),
-                                ),
+                      title: 'Available Approved Contributors',
+                      emptyTitle: 'No eligible contributors available',
+                      emptyMessage:
+                          'Only active approved contributors who are not currently assigned to this project appear here.',
+                      children: availableContributors
+                          .map(
+                            (user) => Padding(
+                              padding: const EdgeInsets.only(
+                                bottom: AppSpacing.sm,
                               ),
-                            )
-                            .toList(growable: false),
-                      ),
+                              child: _AvailableContributorCard(
+                                user: user,
+                                isSaving: _isSaving,
+                                onAssign: () => _assignContributor(user),
+                              ),
+                            ),
+                          )
+                          .toList(growable: false),
+                    ),
                     _AssignmentSection.requests => Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _AssignmentListSection(
-                            title: 'Pending Project Requests',
-                            emptyTitle: 'No pending project requests',
-                            emptyMessage:
-                                'Contributor self-service requests for this project appear here until an admin approves or rejects them.',
-                            children: pendingRequests
-                                .map(
-                                  (assignment) => Padding(
-                                    padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                                    child: _PendingRequestCard(
-                                      assignment: assignment,
-                                      isSaving: _isSaving,
-                                      approveLabel: 'Approve',
-                                      rejectLabel: 'Reject',
-                                      onApprove: () => _updateAssignmentRequest(
-                                        assignment,
-                                        status: 'approved',
-                                      ),
-                                      onReject: () => _updateAssignmentRequest(
-                                        assignment,
-                                        status: 'rejected',
-                                      ),
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _AssignmentListSection(
+                          title: 'Pending Project Requests',
+                          emptyTitle: 'No pending project requests',
+                          emptyMessage:
+                              'Contributor self-service requests for this project appear here until an admin approves or rejects them.',
+                          children: pendingRequests
+                              .map(
+                                (assignment) => Padding(
+                                  padding: const EdgeInsets.only(
+                                    bottom: AppSpacing.sm,
+                                  ),
+                                  child: _PendingRequestCard(
+                                    assignment: assignment,
+                                    isSaving: _isSaving,
+                                    approveLabel: 'Approve',
+                                    rejectLabel: 'Reject',
+                                    onApprove: () => _updateAssignmentRequest(
+                                      assignment,
+                                      status: 'approved',
+                                    ),
+                                    onReject: () => _updateAssignmentRequest(
+                                      assignment,
+                                      status: 'rejected',
                                     ),
                                   ),
-                                )
-                                .toList(growable: false),
-                          ),
-                          const SizedBox(height: AppSpacing.md),
-                          _AssignmentListSection(
-                            title: 'Rejected Project Requests',
-                            emptyTitle: 'No rejected project requests',
-                            emptyMessage:
-                                'Rejected project requests stay here so admins can re-approve them later if needed.',
-                            children: rejectedRequests
-                                .map(
-                                  (assignment) => Padding(
-                                    padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                                    child: _PendingRequestCard(
-                                      assignment: assignment,
-                                      isSaving: _isSaving,
-                                      approveLabel: 'Re-accept',
-                                      rejectLabel: 'Keep rejected',
-                                      onApprove: () => _updateAssignmentRequest(
-                                        assignment,
-                                        status: 'approved',
-                                      ),
-                                      onReject: null,
-                                    ),
+                                ),
+                              )
+                              .toList(growable: false),
+                        ),
+                        const SizedBox(height: AppSpacing.md),
+                        _AssignmentListSection(
+                          title: 'Rejected Project Requests',
+                          emptyTitle: 'No rejected project requests',
+                          emptyMessage:
+                              'Rejected project requests stay here so admins can re-approve them later if needed.',
+                          children: rejectedRequests
+                              .map(
+                                (assignment) => Padding(
+                                  padding: const EdgeInsets.only(
+                                    bottom: AppSpacing.sm,
                                   ),
-                                )
-                                .toList(growable: false),
-                          ),
-                        ],
-                      ),
+                                  child: _PendingRequestCard(
+                                    assignment: assignment,
+                                    isSaving: _isSaving,
+                                    approveLabel: 'Re-accept',
+                                    rejectLabel: 'Keep rejected',
+                                    onApprove: () => _updateAssignmentRequest(
+                                      assignment,
+                                      status: 'approved',
+                                    ),
+                                    onReject: null,
+                                  ),
+                                ),
+                              )
+                              .toList(growable: false),
+                        ),
+                      ],
+                    ),
                   },
                 ],
               );
@@ -547,7 +601,10 @@ class _AssignedContributorCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(assignment.fullName, style: Theme.of(context).textTheme.titleMedium),
+          Text(
+            assignment.fullName,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
           const SizedBox(height: 4),
           Text(assignment.email, softWrap: true),
           const SizedBox(height: AppSpacing.sm),
@@ -596,7 +653,7 @@ class _AvailableContributorCard extends StatelessWidget {
           Text(user.email, softWrap: true),
           if ((user.phone ?? '').trim().isNotEmpty) ...[
             const SizedBox(height: 4),
-            Text(user.phone!, softWrap: true),
+            Text(LebanesePhone.format(user.phone), softWrap: true),
           ],
           const SizedBox(height: AppSpacing.sm),
           Wrap(
@@ -642,7 +699,10 @@ class _PendingRequestCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(assignment.fullName, style: Theme.of(context).textTheme.titleMedium),
+          Text(
+            assignment.fullName,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
           const SizedBox(height: 4),
           Text(assignment.email, softWrap: true),
           const SizedBox(height: AppSpacing.sm),

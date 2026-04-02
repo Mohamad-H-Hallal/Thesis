@@ -8,6 +8,7 @@ import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/section_header.dart';
+import '../../../../core/utils/lebanese_phone.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../domain/admin_models.dart';
 
@@ -33,6 +34,8 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
   }
 
   Future<void> _toggleAdminRole(ManagedUserSummary user) async {
+    final isPromoting = user.role != UserRole.admin;
+    final hasAssignments = user.approvedAssignmentCount > 0;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -44,6 +47,8 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
         content: Text(
           user.role == UserRole.admin
               ? 'Revert ${user.fullName} to ${user.previousAdminRole?.label ?? 'the previous role'}?'
+              : hasAssignments
+              ? 'Promote ${user.fullName} to admin? They are currently assigned to ${user.approvedAssignmentCount} project(s) and will be unassigned before promotion.'
               : 'Promote ${user.fullName} to admin?',
         ),
         actions: [
@@ -53,7 +58,13 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: Text(user.role == UserRole.admin ? 'Revert' : 'Promote'),
+            child: Text(
+              user.role == UserRole.admin
+                  ? 'Revert'
+                  : hasAssignments
+                  ? 'Promote and Unassign'
+                  : 'Promote',
+            ),
           ),
         ],
       ),
@@ -66,7 +77,10 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
     await _mutate(() async {
       final updated = await ref
           .read(adminRepositoryProvider)
-          .toggleAdminRole(user.id);
+          .toggleAdminRole(
+            user.id,
+            forceUnassign: isPromoting && hasAssignments,
+          );
       _invalidate();
       if (!mounted) {
         return;
@@ -74,7 +88,9 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
       AppSnackbar.showSuccess(
         context,
         updated.role == UserRole.admin
-            ? '${updated.fullName} is now an admin.'
+            ? updated.unassignedAssignmentCount > 0
+                  ? '${updated.fullName} is now an admin and was unassigned from ${updated.unassignedAssignmentCount} project(s).'
+                  : '${updated.fullName} is now an admin.'
             : '${updated.fullName} reverted to ${updated.roleLabel}.',
       );
     });
@@ -133,7 +149,13 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
       await action();
     } catch (error) {
       if (mounted) {
-        AppSnackbar.showError(context, error.toString());
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to update this user right now.',
+          ),
+        );
       }
     } finally {
       if (mounted) {
@@ -143,14 +165,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
   }
 
   void _invalidate() {
-    ref.invalidate(managedUsersProvider);
-    ref.invalidate(adminDashboardProvider);
-    ref.invalidate(
-      contributorRequestsProvider(ContributorRequestStatus.pending),
-    );
-    ref.invalidate(
-      contributorRequestsProvider(ContributorRequestStatus.rejected),
-    );
+    bumpWorkflowRefresh(ref);
   }
 
   List<ManagedUserSummary> _applyFilters(List<ManagedUserSummary> users) {
@@ -392,7 +407,7 @@ class _UserCard extends StatelessWidget {
                       Padding(
                         padding: const EdgeInsets.only(top: 2),
                         child: Text(
-                          user.phone!,
+                          LebanesePhone.format(user.phone),
                           style: theme.textTheme.bodySmall,
                         ),
                       ),
@@ -415,6 +430,12 @@ class _UserCard extends StatelessWidget {
                 ),
               if (user.requestStatus != null)
                 Chip(label: Text('Request: ${user.requestStatus!.name}')),
+              if (user.approvedAssignmentCount > 0)
+                Chip(
+                  label: Text(
+                    '${user.approvedAssignmentCount} assigned project${user.approvedAssignmentCount == 1 ? '' : 's'}',
+                  ),
+                ),
               if (user.previousAdminRole != null && user.role == UserRole.admin)
                 Chip(
                   label: Text(

@@ -21,7 +21,7 @@ class AssignmentsScreen extends ConsumerStatefulWidget {
 
 class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
   final TextEditingController _searchController = TextEditingController();
-  String _statusFilter = 'active';
+  String _statusFilter = 'all';
 
   @override
   void dispose() {
@@ -44,7 +44,8 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
           fallback: 'Unable to load assignments right now. Please try again.',
         ),
         actionLabel: 'Retry',
-        onAction: () => ref.invalidate(projectListProvider(ProjectViewScope.all)),
+        onAction: () =>
+            ref.invalidate(projectListProvider(ProjectViewScope.all)),
       ),
       data: (projects) => assignmentsAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -60,9 +61,19 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
         ),
         data: (allAssignments) {
           final query = _searchController.text.trim().toLowerCase();
+          const statusOptions = <String>[
+            'all',
+            'draft',
+            'active',
+            'paused',
+            'completed',
+            'archived',
+          ];
           final filteredProjects = projects
-              .where((project) => const ['active', 'draft', 'paused'].contains(project.status))
-              .where((project) => _statusFilter == 'all' || project.status == _statusFilter)
+              .where(
+                (project) =>
+                    _statusFilter == 'all' || project.status == _statusFilter,
+              )
               .where((project) {
                 if (query.isEmpty) {
                   return true;
@@ -78,7 +89,7 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
               const SectionHeader(
                 title: 'Assignments',
                 subtitle:
-                    'Open a draft, active, or paused project to manage assigned contributors, available approved contributors, and project-specific access requests.',
+                    'Open any project to manage assigned contributors, available approved contributors, and project-specific access requests.',
               ),
               const SizedBox(height: AppSpacing.sm),
               AppCard(
@@ -103,15 +114,18 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
                               Wrap(
                                 spacing: 8,
                                 runSpacing: 8,
-                                children: ['active', 'draft', 'paused']
+                                children: statusOptions
                                     .map(
                                       (status) => ChoiceChip(
                                         label: Text(
-                                          '${status[0].toUpperCase()}${status.substring(1)} projects',
+                                          status == 'all'
+                                              ? 'All projects'
+                                              : '${status[0].toUpperCase()}${status.substring(1)}',
                                         ),
                                         selected: _statusFilter == status,
-                                        onSelected: (_) =>
-                                            setState(() => _statusFilter = status),
+                                        onSelected: (_) => setState(
+                                          () => _statusFilter = status,
+                                        ),
                                       ),
                                     )
                                     .toList(growable: false),
@@ -128,15 +142,18 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
                             Wrap(
                               spacing: 8,
                               runSpacing: 8,
-                              children: ['active', 'draft', 'paused']
+                              children: statusOptions
                                   .map(
                                     (status) => ChoiceChip(
                                       label: Text(
-                                        '${status[0].toUpperCase()}${status.substring(1)} projects',
+                                        status == 'all'
+                                            ? 'All projects'
+                                            : '${status[0].toUpperCase()}${status.substring(1)}',
                                       ),
                                       selected: _statusFilter == status,
-                                      onSelected: (_) =>
-                                          setState(() => _statusFilter = status),
+                                      onSelected: (_) => setState(
+                                        () => _statusFilter = status,
+                                      ),
                                     ),
                                   )
                                   .toList(growable: false),
@@ -154,7 +171,7 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
                   icon: Icons.assignment_outlined,
                   title: 'No projects found',
                   message:
-                      'No draft, active, or paused projects match the current search and status filter.',
+                      'No projects match the current search and status filter.',
                 )
               else
                 ...filteredProjects.map((project) {
@@ -174,7 +191,9 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
                   return Padding(
                     padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                     child: AppCard(
-                      onTap: () => context.push(AppRoutes.projectAssignments(project.id)),
+                      onTap: () => context.push(
+                        AppRoutes.projectAssignments(project.id),
+                      ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -187,7 +206,9 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
                                   children: [
                                     Text(
                                       project.name,
-                                      style: Theme.of(context).textTheme.titleMedium,
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.titleMedium,
                                       softWrap: true,
                                     ),
                                     const SizedBox(height: AppSpacing.xs),
@@ -211,9 +232,15 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
                             children: [
                               Chip(label: Text(project.category)),
                               Chip(label: Text('$assignedCount assigned')),
-                              Chip(label: Text('$pendingCount pending requests')),
+                              Chip(
+                                label: Text('$pendingCount pending requests'),
+                              ),
                               if (rejectedCount > 0)
-                                Chip(label: Text('$rejectedCount rejected requests')),
+                                Chip(
+                                  label: Text(
+                                    '$rejectedCount rejected requests',
+                                  ),
+                                ),
                             ],
                           ),
                         ],

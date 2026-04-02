@@ -62,6 +62,14 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       (widget.draftFeatureId?.isNotEmpty ?? false) ||
       (_currentDraftFeatureId?.isNotEmpty ?? false);
 
+  void _returnToProjectMap(String projectId) {
+    if (context.canPop()) {
+      context.pop();
+      return;
+    }
+    context.go(AppRoutes.mapForProject(projectId));
+  }
+
   @override
   void dispose() {
     _latitudeController.dispose();
@@ -77,7 +85,9 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       return;
     }
 
-    final existingSelection = projects.any((item) => item.id == _selectedProjectId);
+    final existingSelection = projects.any(
+      (item) => item.id == _selectedProjectId,
+    );
     if (existingSelection) {
       return;
     }
@@ -218,7 +228,43 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     }
 
     try {
-      final picked = await _imagePicker.pickMultiImage(imageQuality: 82);
+      final source = await showModalBottomSheet<_PhotoPickerSource>(
+        context: context,
+        builder: (context) => SafeArea(
+          child: Wrap(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_camera_outlined),
+                title: const Text('Take photo'),
+                onTap: () =>
+                    Navigator.of(context).pop(_PhotoPickerSource.camera),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Choose from gallery'),
+                onTap: () =>
+                    Navigator.of(context).pop(_PhotoPickerSource.gallery),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (source == null) {
+        return;
+      }
+
+      final picked = await (source == _PhotoPickerSource.camera
+          ? () async {
+              final captured = await _imagePicker.pickImage(
+                source: ImageSource.camera,
+                imageQuality: 82,
+              );
+              if (captured == null) {
+                return <XFile>[];
+              }
+              return <XFile>[captured];
+            }()
+          : _imagePicker.pickMultiImage(imageQuality: 82));
       if (picked.isEmpty) {
         return;
       }
@@ -428,7 +474,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
             ? 'Feature submitted for review successfully.'
             : 'Feature draft saved successfully.',
       );
-      context.go(AppRoutes.mapForProject(project.id));
+      _returnToProjectMap(project.id);
     } catch (error) {
       if (!mounted) {
         return;
@@ -586,7 +632,9 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final projectsAsync = ref.watch(projectListProvider(ProjectViewScope.assigned));
+    final projectsAsync = ref.watch(
+      projectListProvider(ProjectViewScope.assigned),
+    );
 
     return Stack(
       children: [
@@ -617,14 +665,16 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
             _ensureProjectSelection(projects);
             final selectedProject = projects.firstWhere(
               (project) =>
-                  project.id ==
-                  (_selectedProjectId ?? widget.initialProjectId),
+                  project.id == (_selectedProjectId ?? widget.initialProjectId),
               orElse: () => projects.first,
             );
 
-            if (widget.draftFeatureId != null && widget.draftFeatureId!.isNotEmpty) {
+            if (widget.draftFeatureId != null &&
+                widget.draftFeatureId!.isNotEmpty) {
               final projectId = widget.initialProjectId ?? selectedProject.id;
-              final draftAsync = ref.watch(projectMapFeaturesProvider(projectId));
+              final draftAsync = ref.watch(
+                projectMapFeaturesProvider(projectId),
+              );
 
               return draftAsync.when(
                 loading: () => const Center(child: CircularProgressIndicator()),
@@ -637,7 +687,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                         'Unable to load this draft right now. Please try again.',
                   ),
                   actionLabel: 'Back to map',
-                  onAction: () => context.go(AppRoutes.mapForProject(projectId)),
+                  onAction: () => _returnToProjectMap(projectId),
                 ),
                 data: (features) {
                   final draftProject = projects.firstWhere(
@@ -659,7 +709,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                       message:
                           'The selected draft could not be loaded from this project.',
                       actionLabel: 'Back to map',
-                      onAction: () => context.go(AppRoutes.mapForProject(projectId)),
+                      onAction: () => _returnToProjectMap(projectId),
                     );
                   }
 
@@ -699,7 +749,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
         message:
             'This project is ${selectedProject.status}. Feature collection and submission are disabled until it returns to active status.',
         actionLabel: 'Back to map',
-        onAction: () => context.go(AppRoutes.mapForProject(selectedProject.id)),
+        onAction: () => _returnToProjectMap(selectedProject.id),
       );
     }
 
@@ -759,7 +809,9 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 ),
               if (_currentStep < 3)
                 FilledButton.icon(
-                  onPressed: _isSaving ? null : () => _handleNext(selectedProject),
+                  onPressed: _isSaving
+                      ? null
+                      : () => _handleNext(selectedProject),
                   icon: const Icon(Icons.arrow_forward_outlined),
                   label: const Text('Next'),
                 ),
@@ -801,7 +853,9 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
               DropdownButtonFormField<String>(
                 initialValue: _selectedProjectId,
                 isExpanded: true,
-                decoration: const InputDecoration(labelText: 'Assigned project'),
+                decoration: const InputDecoration(
+                  labelText: 'Assigned project',
+                ),
                 items: projects
                     .map(
                       (project) => DropdownMenuItem<String>(
@@ -819,7 +873,9 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                         if (value == null) {
                           return;
                         }
-                        final project = projects.firstWhere((p) => p.id == value);
+                        final project = projects.firstWhere(
+                          (p) => p.id == value,
+                        );
                         _applyProjectSelection(project);
                       },
               ),
@@ -856,14 +912,16 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                   final latitudeField = AppTextField(
                     label: 'Latitude',
                     controller: _latitudeController,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                   );
                   final longitudeField = AppTextField(
                     label: 'Longitude',
                     controller: _longitudeController,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                   );
 
                   if (constraints.maxWidth < 520) {
@@ -948,10 +1006,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Photos',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
+              Text('Photos', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: AppSpacing.xs),
               Text(
                 'Policy: ${selectedProject.requiresPhotos ? 'Required' : 'Optional'} • Minimum ${selectedProject.minPhotos} • Maximum ${selectedProject.maxPhotos}',
@@ -959,9 +1014,11 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
               ),
               const SizedBox(height: AppSpacing.sm),
               OutlinedButton.icon(
-                onPressed: _isSaving ? null : () => _pickPhotos(selectedProject),
-                icon: const Icon(Icons.photo_library_outlined),
-                label: const Text('Add photos'),
+                onPressed: _isSaving
+                    ? null
+                    : () => _pickPhotos(selectedProject),
+                icon: const Icon(Icons.add_a_photo_outlined),
+                label: const Text('Add Photos'),
               ),
               const SizedBox(height: AppSpacing.sm),
               if (_uploadedPhotos.isEmpty && _pendingPhotos.isEmpty)
@@ -982,7 +1039,10 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                           leading: const CircleAvatar(
                             child: Icon(Icons.photo_outlined),
                           ),
-                          title: Text(_photoLabel(photo.filePath), softWrap: true),
+                          title: Text(
+                            _photoLabel(photo.filePath),
+                            softWrap: true,
+                          ),
                           subtitle: Text(
                             photo.status?.trim().isNotEmpty == true
                                 ? 'Uploaded • ${photo.status}'
@@ -1062,7 +1122,11 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 runSpacing: 8,
                 children: [
                   Chip(label: Text(selectedProject.name)),
-                  Chip(label: Text('Geometry: ${_selectedGeometryType ?? 'Point'}')),
+                  Chip(
+                    label: Text(
+                      'Geometry: ${_selectedGeometryType ?? 'Point'}',
+                    ),
+                  ),
                   Chip(
                     label: Text(
                       'Photos: ${_uploadedPhotos.length + _pendingPhotos.length}',
@@ -1134,11 +1198,10 @@ class _PendingPhoto {
   final DateTime createdAt;
 }
 
+enum _PhotoPickerSource { camera, gallery }
+
 class _GeometryPoint {
-  const _GeometryPoint({
-    required this.latitude,
-    required this.longitude,
-  });
+  const _GeometryPoint({required this.latitude, required this.longitude});
 
   final double latitude;
   final double longitude;

@@ -10,7 +10,9 @@ import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/widgets/section_header.dart';
+import '../../../admin/domain/admin_models.dart';
 import '../../../auth/domain/auth_models.dart';
+import '../../../auth/presentation/utils/auth_input_formatters.dart';
 import '../../../auth/presentation/utils/auth_form_validators.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -42,130 +44,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (!mounted) {
       return;
     }
-
-    final emailController = TextEditingController(
-      text: current.supportEmail ?? '',
-    );
-    final phoneController = TextEditingController(
-      text: current.supportPhone ?? '',
-    );
-    final hoursController = TextEditingController(
-      text: current.officeHours ?? '',
-    );
-    final helpController = TextEditingController(text: current.helpText ?? '');
-    final formKey = GlobalKey<FormState>();
-
-    final confirmed = await showDialog<bool>(
+    final result = await showDialog<_SupportSettingsDialogResult>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Edit help & support'),
-        content: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Form(
-            key: formKey,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AppTextField(
-                    label: 'Support email',
-                    controller: emailController,
-                    keyboardType: TextInputType.emailAddress,
-                    validator: (value) {
-                      final trimmed = value?.trim() ?? '';
-                      if (trimmed.isEmpty) {
-                        return null;
-                      }
-                      return AuthFormValidators.email(trimmed);
-                    },
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  AppTextField(
-                    label: 'Support phone',
-                    controller: phoneController,
-                    keyboardType: TextInputType.phone,
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  AppTextField(
-                    label: 'Office hours',
-                    controller: hoursController,
-                    minLines: 2,
-                    maxLines: 3,
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  AppTextField(
-                    label: 'Help text',
-                    controller: helpController,
-                    minLines: 3,
-                    maxLines: 6,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              if (!(formKey.currentState?.validate() ?? false)) {
-                return;
-              }
-              Navigator.of(context).pop(true);
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
+      builder: (_) => _SupportSettingsDialog(settings: current),
     );
 
-    if (confirmed != true) {
-      emailController.dispose();
-      phoneController.dispose();
-      hoursController.dispose();
-      helpController.dispose();
+    if (!mounted || result != _SupportSettingsDialogResult.success) {
       return;
     }
 
-    setState(() => _isMutating = true);
-    try {
-      await ref
-          .read(adminRepositoryProvider)
-          .updateSupportSettings(
-            supportEmail: AuthFormValidators.normalize(emailController.text),
-            supportPhone: AuthFormValidators.normalize(phoneController.text),
-            officeHours: AuthFormValidators.normalize(hoursController.text),
-            helpText: AuthFormValidators.normalize(helpController.text),
-          );
-      ref.invalidate(supportSettingsProvider);
-      if (mounted) {
-        AppSnackbar.showSuccess(
-          context,
-          'Support settings updated successfully.',
-        );
-      }
-    } catch (error) {
-      if (mounted) {
-        AppSnackbar.showError(
-          context,
-          userFacingErrorMessage(
-            error,
-            fallback: 'Unable to update support settings right now.',
-          ),
-        );
-      }
-    } finally {
-      emailController.dispose();
-      phoneController.dispose();
-      hoursController.dispose();
-      helpController.dispose();
-      if (mounted) {
-        setState(() => _isMutating = false);
-      }
-    }
+    ref.invalidate(supportSettingsProvider);
+    AppSnackbar.showSuccess(context, 'Support settings updated successfully.');
   }
 
   Future<void> _selfDeactivate() async {
@@ -379,7 +268,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         _SupportItem(
                           icon: Icons.phone_outlined,
                           label: 'Support phone',
-                          value: settings.supportPhone!,
+                          value: AuthFormValidators.formatLebanesePhone(
+                            settings.supportPhone,
+                          ),
                         ),
                       if ((settings.officeHours ?? '').trim().isNotEmpty)
                         _SupportItem(
@@ -460,6 +351,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 }
 
 enum _ChangePasswordDialogResult { success }
+
+enum _SupportSettingsDialogResult { success }
 
 class _ChangePasswordDialog extends ConsumerStatefulWidget {
   const _ChangePasswordDialog();
@@ -611,6 +504,176 @@ class _ChangePasswordDialogState extends ConsumerState<_ChangePasswordDialog> {
                     value: value,
                     password: _newController.text,
                   ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _isSubmitting ? null : _submit,
+          child: Text(_isSubmitting ? 'Saving...' : 'Save'),
+        ),
+      ],
+    );
+  }
+}
+
+class _SupportSettingsDialog extends ConsumerStatefulWidget {
+  const _SupportSettingsDialog({required this.settings});
+
+  final SupportContactSettings settings;
+
+  @override
+  ConsumerState<_SupportSettingsDialog> createState() =>
+      _SupportSettingsDialogState();
+}
+
+class _SupportSettingsDialogState
+    extends ConsumerState<_SupportSettingsDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _emailController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _hoursController = TextEditingController();
+  final _helpController = TextEditingController();
+  final _phoneFormatter = LebanesePhoneFormatter();
+
+  bool _isSubmitting = false;
+  String? _dialogError;
+
+  @override
+  void initState() {
+    super.initState();
+    _emailController.text = widget.settings.supportEmail ?? '';
+    _phoneController.text = AuthFormValidators.formatLebanesePhone(
+      widget.settings.supportPhone,
+    );
+    _hoursController.text = widget.settings.officeHours ?? '';
+    _helpController.text = widget.settings.helpText ?? '';
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _phoneController.dispose();
+    _hoursController.dispose();
+    _helpController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _dialogError = null;
+      _isSubmitting = true;
+    });
+
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      setState(() => _isSubmitting = false);
+      return;
+    }
+
+    try {
+      final normalizedEmail = AuthFormValidators.normalize(
+        _emailController.text,
+      );
+      final normalizedPhone = AuthFormValidators.normalizeLebanesePhone(
+        _phoneController.text,
+      );
+      final normalizedHours = AuthFormValidators.normalize(
+        _hoursController.text,
+      );
+      final normalizedHelpText = AuthFormValidators.normalize(
+        _helpController.text,
+      );
+      await ref
+          .read(adminRepositoryProvider)
+          .updateSupportSettings(
+            supportEmail: normalizedEmail.isEmpty ? null : normalizedEmail,
+            supportPhone: normalizedPhone.isEmpty ? null : normalizedPhone,
+            officeHours: normalizedHours.isEmpty ? null : normalizedHours,
+            helpText: normalizedHelpText.isEmpty ? null : normalizedHelpText,
+          );
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context).pop(_SupportSettingsDialogResult.success);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _dialogError = userFacingErrorMessage(
+          error,
+          fallback: 'Unable to update support settings right now.',
+        );
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Edit help & support'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: SingleChildScrollView(
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_dialogError != null) ...[
+                  Text(
+                    _dialogError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    softWrap: true,
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                ],
+                AppTextField(
+                  label: 'Support email',
+                  controller: _emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  validator: (value) {
+                    final trimmed = value?.trim() ?? '';
+                    if (trimmed.isEmpty) {
+                      return null;
+                    }
+                    return AuthFormValidators.email(trimmed);
+                  },
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                AppTextField(
+                  label: 'Support phone',
+                  controller: _phoneController,
+                  keyboardType: TextInputType.phone,
+                  inputFormatters: [_phoneFormatter],
+                  validator: AuthFormValidators.phoneOptional,
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                AppTextField(
+                  label: 'Office hours',
+                  controller: _hoursController,
+                  minLines: 2,
+                  maxLines: 3,
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                AppTextField(
+                  label: 'Help text',
+                  controller: _helpController,
+                  minLines: 3,
+                  maxLines: 6,
                 ),
               ],
             ),

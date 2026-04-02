@@ -439,7 +439,8 @@ const userController = {
              u.is_active,
              latest_promotion.previous_admin_role,
              latest_request.type AS latest_request_type,
-             latest_account_state.account_state
+             latest_account_state.account_state,
+             approved_assignment_summary.approved_assignment_count
       FROM "user" u
       LEFT JOIN LATERAL (
         SELECT al.old_values->>'role' AS previous_admin_role
@@ -470,6 +471,13 @@ const userController = {
         ORDER BY al.created_at DESC
         LIMIT 1
       ) latest_account_state ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*)::integer AS approved_assignment_count
+        FROM project_assignment pa
+        WHERE pa.user_id = u.id
+          AND pa.role = 'contributor'
+          AND pa.status = 'approved'
+      ) approved_assignment_summary ON TRUE
       WHERE 1=1
     `;
 
@@ -543,6 +551,7 @@ const userController = {
                   ? 'pending'
                   : 'inactive',
         is_blocked: row.account_state === 'blocked',
+        approved_assignment_count: row.approved_assignment_count ?? 0,
         can_toggle_admin_role:
           !isProtectedSuperAdminEmail(row.email) &&
           (row.is_active === true || row.account_state === 'active') &&
@@ -748,6 +757,7 @@ const userController = {
       role: currentUser.role,
       isActive: currentUser.is_active,
     });
+    const forceUnassign = req.body?.force_unassign === true;
     if (accessState === 'blocked') {
       throw new AppError('Blocked users must be unblocked before changing roles.', 409);
     }
@@ -796,7 +806,43 @@ const userController = {
       );
     }
 
+    const approvedAssignmentCountResult = await query(
+      `SELECT COUNT(*)::integer AS approved_assignment_count
+       FROM project_assignment
+       WHERE user_id = $1
+         AND role = 'contributor'
+         AND status = 'approved'`,
+      [userId],
+    );
+    const approvedAssignmentCount =
+      approvedAssignmentCountResult.rows[0]?.approved_assignment_count ?? 0;
+
+    if (
+      currentUser.role === 'contributor' &&
+      nextRole === 'admin' &&
+      approvedAssignmentCount > 0 &&
+      !forceUnassign
+    ) {
+      throw new AppError(
+        `This contributor is assigned to ${approvedAssignmentCount} project(s). Confirm promotion to admin to unassign them first.`,
+        409,
+      );
+    }
+
     const result = await transaction(async (client) => {
+      let removedAssignmentCount = 0;
+      if (currentUser.role === 'contributor' && nextRole === 'admin') {
+        const removedAssignments = await client.query(
+          `DELETE FROM project_assignment
+           WHERE user_id = $1
+             AND role = 'contributor'
+             AND status = 'approved'
+           RETURNING id`,
+          [userId],
+        );
+        removedAssignmentCount = removedAssignments.rowCount ?? 0;
+      }
+
       const updated = await client.query(
         `UPDATE "user"
          SET role = $1
@@ -820,7 +866,11 @@ const userController = {
         ],
       );
 
-      return updated.rows[0];
+      return {
+        ...updated.rows[0],
+        approved_assignment_count: 0,
+        unassigned_assignment_count: removedAssignmentCount,
+      };
     });
 
     res.json({
@@ -834,6 +884,8 @@ const userController = {
         is_protected_super_admin: false,
         previous_admin_role: nextRole === 'admin' ? currentUser.role : (previousRole ?? null),
         can_toggle_admin_role: true,
+        approved_assignment_count: result.approved_assignment_count ?? 0,
+        unassigned_assignment_count: result.unassigned_assignment_count ?? 0,
       },
     });
   },
