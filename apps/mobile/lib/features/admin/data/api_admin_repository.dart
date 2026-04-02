@@ -427,44 +427,27 @@ class ApiAdminRepository implements AdminRepository {
 
   @override
   Future<AdminDashboardSummary> fetchDashboardSummary() async {
-    final results = await Future.wait([
-      fetchUsers(),
-      fetchContributorRequests(status: ContributorRequestStatus.pending),
-      fetchContributorRequests(status: ContributorRequestStatus.rejected),
-      fetchManagedAssignments(),
-      _apiClient.dio.get<Map<String, dynamic>>(
-        _projectsBasePath,
-        queryParameters: const <String, dynamic>{
-          'access_scope': 'all',
-          'limit': 100,
-        },
-      ),
-    ]);
-
-    final users = results[0] as List<ManagedUserSummary>;
-    final pendingRequests = results[1] as List<ManagedUserSummary>;
-    final rejectedRequests = results[2] as List<ManagedUserSummary>;
-    final assignments = results[3] as List<ManagedAssignmentSummary>;
-    final projectRows =
-        (((results[4] as dynamic).data ?? const <String, dynamic>{})['data']
-            as List? ??
-        const <dynamic>[]);
-
-    return AdminDashboardSummary(
-      totalUsers: users.length,
-      adminCount: users.where((user) => user.role == UserRole.admin).length,
-      viewerCount: users.where((user) => user.role == UserRole.viewer).length,
-      activeContributorCount: users
-          .where((user) => user.role == UserRole.contributor && user.isActive)
-          .length,
-      blockedCount: users.where((user) => user.isBlocked).length,
-      pendingContributorRequests: pendingRequests.length,
-      rejectedContributorRequests: rejectedRequests.length,
-      totalProjects: projectRows.length,
-      pendingAssignments: assignments
-          .where((item) => item.status == 'pending')
-          .length,
-    );
+    return _run(() async {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_usersBasePath/dashboard-summary',
+      );
+      final row = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return AdminDashboardSummary(
+        totalUsers: _toInt(row['total_users']) ?? 0,
+        adminCount: _toInt(row['admin_count']) ?? 0,
+        viewerCount: _toInt(row['viewer_count']) ?? 0,
+        activeContributorCount: _toInt(row['active_contributor_count']) ?? 0,
+        blockedCount: _toInt(row['blocked_count']) ?? 0,
+        pendingContributorRequests:
+            _toInt(row['pending_contributor_requests']) ?? 0,
+        rejectedContributorRequests:
+            _toInt(row['rejected_contributor_requests']) ?? 0,
+        totalProjects: _toInt(row['total_projects']) ?? 0,
+        pendingAssignments: _toInt(row['pending_assignments']) ?? 0,
+      );
+    }, fallback: 'Unable to load the admin dashboard right now.');
   }
 
   @override

@@ -1,9 +1,6 @@
 import 'package:dio/dio.dart';
 
-String userFacingErrorMessage(
-  Object error, {
-  required String fallback,
-}) {
+String userFacingErrorMessage(Object error, {required String fallback}) {
   if (error is DioException) {
     return userFacingDioMessage(error, fallback: fallback);
   }
@@ -13,10 +10,7 @@ String userFacingErrorMessage(
   return _sanitizeMessage(error.toString(), fallback: fallback);
 }
 
-String userFacingDioMessage(
-  DioException error, {
-  required String fallback,
-}) {
+String userFacingDioMessage(DioException error, {required String fallback}) {
   if (error.type == DioExceptionType.connectionTimeout ||
       error.type == DioExceptionType.receiveTimeout ||
       error.type == DioExceptionType.sendTimeout ||
@@ -42,6 +36,10 @@ String userFacingDioMessage(
     }
   }
 
+  if (statusCode == 429) {
+    return 'Requests are temporarily limited. Please wait a moment and try again.';
+  }
+
   if (extracted != null && extracted.trim().isNotEmpty) {
     return _sanitizeMessage(extracted, fallback: fallback);
   }
@@ -56,7 +54,8 @@ String? _extractMessage(DioException error) {
     final value = data['message'] ?? data['error'];
     if (value is String && value.trim().isNotEmpty) {
       final trimmed = value.trim();
-      if (trimmed.toLowerCase() == 'validation failed' && fieldMessage != null) {
+      if (trimmed.toLowerCase() == 'validation failed' &&
+          fieldMessage != null) {
         return fieldMessage;
       }
       return trimmed;
@@ -89,19 +88,13 @@ String? _extractFirstFieldError(Object? errors) {
   return null;
 }
 
-String _sanitizeMessage(
-  String message, {
-  required String fallback,
-}) {
+String _sanitizeMessage(String message, {required String fallback}) {
   var normalized = message.trim();
   if (normalized.isEmpty) {
     return fallback;
   }
 
-  const removablePrefixes = <String>[
-    'Exception:',
-    'Error:',
-  ];
+  const removablePrefixes = <String>['Exception:', 'Error:'];
   for (final prefix in removablePrefixes) {
     if (normalized.startsWith(prefix)) {
       normalized = normalized.substring(prefix.length).trim();
@@ -133,6 +126,10 @@ String _sanitizeMessage(
       lower.startsWith('type ') ||
       technicalFragments.any(lower.contains)) {
     return fallback;
+  }
+
+  if (lower.contains('too many requests')) {
+    return 'Requests are temporarily limited. Please wait a moment and try again.';
   }
 
   return normalized;

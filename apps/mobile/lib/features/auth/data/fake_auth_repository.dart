@@ -16,6 +16,7 @@ class FakeAuthRepository implements AuthRepository {
   static const _roleKey = 'user_role';
   static const _nameKey = 'user_name';
   static const _emailKey = 'user_email';
+  static const _phoneKey = 'user_phone';
   static const _superAdminKey = 'is_protected_super_admin';
 
   @override
@@ -36,6 +37,7 @@ class FakeAuthRepository implements AuthRepository {
       fullName: await _storage.read(key: _nameKey) ?? 'GIS Officer',
       email: await _storage.read(key: _emailKey) ?? 'officer@gov.lb',
       role: role,
+      phone: await _storage.read(key: _phoneKey),
       isProtectedSuperAdmin: isProtectedSuperAdmin,
     );
 
@@ -114,6 +116,7 @@ class FakeAuthRepository implements AuthRepository {
             : 'Field Contributor',
         email: email,
         role: role,
+        phone: '70123456',
         isProtectedSuperAdmin: isProtectedSuperAdmin,
       ),
     );
@@ -124,6 +127,7 @@ class FakeAuthRepository implements AuthRepository {
       await _storage.write(key: _roleKey, value: role.name);
       await _storage.write(key: _nameKey, value: session.user.fullName);
       await _storage.write(key: _emailKey, value: session.user.email);
+      await _storage.write(key: _phoneKey, value: session.user.phone ?? '');
       await _storage.write(
         key: _superAdminKey,
         value: isProtectedSuperAdmin.toString(),
@@ -149,6 +153,7 @@ class FakeAuthRepository implements AuthRepository {
         fullName: 'Field Contributor',
         email: email,
         role: UserRole.contributor,
+        phone: '70123456',
       ),
     );
 
@@ -158,6 +163,7 @@ class FakeAuthRepository implements AuthRepository {
       await _storage.write(key: _roleKey, value: UserRole.contributor.name);
       await _storage.write(key: _nameKey, value: session.user.fullName);
       await _storage.write(key: _emailKey, value: session.user.email);
+      await _storage.write(key: _phoneKey, value: session.user.phone ?? '');
       await _storage.write(key: _superAdminKey, value: 'false');
     }
 
@@ -252,6 +258,29 @@ class FakeAuthRepository implements AuthRepository {
   }
 
   @override
+  Future<AppUser> updateProfile({String? fullName, String? phone}) async {
+    final currentName = await _storage.read(key: _nameKey) ?? 'GIS Officer';
+    final currentEmail =
+        await _storage.read(key: _emailKey) ?? 'officer@gov.lb';
+    final currentPhone = await _storage.read(key: _phoneKey);
+    final role = _toRole(await _storage.read(key: _roleKey));
+    final isProtectedSuperAdmin =
+        await _storage.read(key: _superAdminKey) == 'true';
+    final user = AppUser(
+      id: 'user-1',
+      fullName: fullName ?? currentName,
+      email: currentEmail,
+      role: role,
+      phone: phone ?? currentPhone,
+      isProtectedSuperAdmin: isProtectedSuperAdmin,
+    );
+    await _storage.write(key: _nameKey, value: user.fullName);
+    await _storage.write(key: _emailKey, value: user.email);
+    await _storage.write(key: _phoneKey, value: user.phone ?? '');
+    return user;
+  }
+
+  @override
   Future<void> logout() async {
     _apiClient.setAccessToken(null);
     await _storage.delete(key: _accessKey);
@@ -259,6 +288,7 @@ class FakeAuthRepository implements AuthRepository {
     await _storage.delete(key: _roleKey);
     await _storage.delete(key: _nameKey);
     await _storage.delete(key: _emailKey);
+    await _storage.delete(key: _phoneKey);
     await _storage.delete(key: _superAdminKey);
   }
 
@@ -270,6 +300,7 @@ class FakeAuthRepository implements AuthRepository {
     await _storage.delete(key: _roleKey);
     await _storage.delete(key: _nameKey);
     await _storage.delete(key: _emailKey);
+    await _storage.delete(key: _phoneKey);
     await _storage.delete(key: _superAdminKey);
   }
 

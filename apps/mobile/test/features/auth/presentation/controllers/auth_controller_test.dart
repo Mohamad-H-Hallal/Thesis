@@ -83,6 +83,17 @@ class _TestAuthRepository implements AuthRepository {
   }) async {}
 
   @override
+  Future<AppUser> updateProfile({String? fullName, String? phone}) async {
+    return AppUser(
+      id: 'u1',
+      fullName: fullName ?? 'Collector User',
+      email: 'collector@example.com',
+      role: UserRole.contributor,
+      phone: phone,
+    );
+  }
+
+  @override
   Future<AuthSession> reactivateContributorAndLogin({
     required String email,
     required String password,

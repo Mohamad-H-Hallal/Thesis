@@ -19,6 +19,7 @@ class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({
     required this.userName,
     required this.email,
+    required this.phone,
     required this.userRole,
     required this.onLogout,
     required this.isSuperAdmin,
@@ -27,6 +28,7 @@ class ProfileScreen extends ConsumerStatefulWidget {
 
   final String userName;
   final String email;
+  final String? phone;
   final UserRole userRole;
   final bool isSuperAdmin;
   final VoidCallback onLogout;
@@ -126,6 +128,19 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     AppSnackbar.showSuccess(context, 'Password changed successfully.');
   }
 
+  Future<void> _showEditPhoneDialog() async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => _EditPhoneDialog(initialPhone: widget.phone),
+    );
+
+    if (!mounted || result == null) {
+      return;
+    }
+
+    AppSnackbar.showSuccess(context, 'Phone number updated successfully.');
+  }
+
   @override
   Widget build(BuildContext context) {
     final supportAsync = ref.watch(supportSettingsProvider);
@@ -165,6 +180,32 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(widget.email, softWrap: true),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            const Icon(Icons.phone_outlined, size: 18),
+                            const SizedBox(width: AppSpacing.xs),
+                            Expanded(
+                              child: Text(
+                                AuthFormValidators.formatLebanesePhone(
+                                      widget.phone,
+                                    ).trim().isEmpty
+                                    ? 'No phone number added'
+                                    : AuthFormValidators.formatLebanesePhone(
+                                        widget.phone,
+                                      ),
+                                softWrap: true,
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Edit phone number',
+                              onPressed: _isMutating
+                                  ? null
+                                  : _showEditPhoneDialog,
+                              icon: const Icon(Icons.edit_outlined),
+                            ),
+                          ],
+                        ),
                       ],
                     ),
                   ),
@@ -353,6 +394,124 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 enum _ChangePasswordDialogResult { success }
 
 enum _SupportSettingsDialogResult { success }
+
+class _EditPhoneDialog extends ConsumerStatefulWidget {
+  const _EditPhoneDialog({required this.initialPhone});
+
+  final String? initialPhone;
+
+  @override
+  ConsumerState<_EditPhoneDialog> createState() => _EditPhoneDialogState();
+}
+
+class _EditPhoneDialogState extends ConsumerState<_EditPhoneDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _phoneController = TextEditingController();
+  final _phoneFormatter = LebanesePhoneFormatter();
+  bool _isSubmitting = false;
+  String? _dialogError;
+
+  @override
+  void initState() {
+    super.initState();
+    _phoneController.text = AuthFormValidators.formatLebanesePhone(
+      widget.initialPhone,
+    );
+  }
+
+  @override
+  void dispose() {
+    _phoneController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _dialogError = null;
+    });
+
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+    try {
+      await ref
+          .read(authControllerProvider.notifier)
+          .updateProfile(
+            phone: AuthFormValidators.normalizeLebanesePhone(
+              _phoneController.text,
+            ),
+          );
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context).pop(_phoneController.text.trim());
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _dialogError = userFacingErrorMessage(
+          error,
+          fallback: 'Unable to update your phone number right now.',
+        );
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Edit phone number'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: SingleChildScrollView(
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_dialogError != null) ...[
+                  Text(
+                    _dialogError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    softWrap: true,
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                ],
+                AppTextField(
+                  label: 'Phone number',
+                  hint: '70 123 456',
+                  controller: _phoneController,
+                  keyboardType: TextInputType.phone,
+                  inputFormatters: [_phoneFormatter],
+                  validator: AuthFormValidators.phoneRequired,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _isSubmitting ? null : _submit,
+          child: Text(_isSubmitting ? 'Saving...' : 'Save'),
+        ),
+      ],
+    );
+  }
+}
 
 class _ChangePasswordDialog extends ConsumerStatefulWidget {
   const _ChangePasswordDialog();

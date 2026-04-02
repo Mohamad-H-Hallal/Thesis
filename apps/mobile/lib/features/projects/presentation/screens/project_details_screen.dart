@@ -14,6 +14,7 @@ import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../domain/project.dart';
+import '../../../review/presentation/screens/review_queue_screen.dart';
 
 class ProjectDetailsScreen extends ConsumerStatefulWidget {
   const ProjectDetailsScreen({required this.projectId, super.key});
@@ -191,6 +192,51 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
         setState(() => _requestingAccess = false);
       }
     }
+  }
+
+  void _openApprovedReviews(ProjectSummary project) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => FractionallySizedBox(
+        heightFactor: 0.88,
+        child: ProjectApprovedReviewsSheet(
+          projectId: project.id,
+          projectName: project.name,
+          onOpenMap: (item) {
+            Navigator.of(sheetContext).pop();
+            context.push(
+              AppRoutes.mapForProject(item.projectId, featureId: item.id),
+            );
+          },
+          onReject: (item) async {
+            try {
+              await ref
+                  .read(reviewRepositoryProvider)
+                  .reviewFeature(featureId: item.id, status: 'rejected');
+              bumpWorkflowRefresh(ref);
+              if (mounted) {
+                AppSnackbar.showSuccess(
+                  context,
+                  'Approved review moved to rejected successfully.',
+                );
+              }
+            } catch (error) {
+              if (mounted) {
+                AppSnackbar.showError(
+                  context,
+                  userFacingErrorMessage(
+                    error,
+                    fallback:
+                        'Unable to update this approved review right now.',
+                  ),
+                );
+              }
+            }
+          },
+        ),
+      ),
+    );
   }
 
   @override
@@ -442,6 +488,11 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                         onPressed: () => context.push(AppRoutes.reviewQueue),
                         icon: const Icon(Icons.rate_review_outlined),
                         label: const Text('Review Queue'),
+                      ),
+                      FilledButton.tonalIcon(
+                        onPressed: () => _openApprovedReviews(project),
+                        icon: const Icon(Icons.verified_outlined),
+                        label: const Text('Approved Reviews'),
                       ),
                       FilledButton.icon(
                         onPressed: () => context.push(AppRoutes.exports),

@@ -30,7 +30,9 @@ class ApiProjectsRepository implements ProjectsRepository {
       final payload = response.data ?? const <String, dynamic>{};
       final rows = (payload['data'] as List? ?? const <dynamic>[]);
       return rows
-          .map((row) => _toProjectSummary(Map<String, dynamic>.from(row as Map)))
+          .map(
+            (row) => _toProjectSummary(Map<String, dynamic>.from(row as Map)),
+          )
           .toList(growable: false);
     } on DioException catch (error) {
       throw userFacingDioMessage(
@@ -55,8 +57,14 @@ class ApiProjectsRepository implements ProjectsRepository {
         payload['data'] as Map? ?? const <String, dynamic>{},
       );
       return _toProjectSummary(row);
-    } catch (_) {
-      return null;
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404) {
+        return null;
+      }
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load project details right now. Please try again.',
+      );
     }
   }
 

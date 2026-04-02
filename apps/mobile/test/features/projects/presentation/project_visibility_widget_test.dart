@@ -56,6 +56,17 @@ class _NoopAuthRepository implements AuthRepository {
   }) async {}
 
   @override
+  Future<AppUser> updateProfile({String? fullName, String? phone}) async {
+    return AppUser(
+      id: 'user-1',
+      fullName: fullName ?? 'viewer user',
+      email: 'viewer@example.com',
+      role: UserRole.viewer,
+      phone: phone,
+    );
+  }
+
+  @override
   Future<AuthSession> reactivateContributorAndLogin({
     required String email,
     required String password,

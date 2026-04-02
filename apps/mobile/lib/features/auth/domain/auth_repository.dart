@@ -40,6 +40,8 @@ abstract class AuthRepository {
     required String newPassword,
   });
 
+  Future<AppUser> updateProfile({String? fullName, String? phone});
+
   Future<void> selfDeactivate();
 
   Future<void> logout();

@@ -19,6 +19,7 @@ class AppUser {
     required this.fullName,
     required this.email,
     required this.role,
+    this.phone,
     this.isProtectedSuperAdmin = false,
   });
 
@@ -26,11 +27,31 @@ class AppUser {
   final String fullName;
   final String email;
   final UserRole role;
+  final String? phone;
   final bool isProtectedSuperAdmin;
 
   bool get isSuperAdmin => role == UserRole.admin && isProtectedSuperAdmin;
 
   String get roleLabel => role.label;
+
+  AppUser copyWith({
+    String? id,
+    String? fullName,
+    String? email,
+    UserRole? role,
+    String? phone,
+    bool? isProtectedSuperAdmin,
+  }) {
+    return AppUser(
+      id: id ?? this.id,
+      fullName: fullName ?? this.fullName,
+      email: email ?? this.email,
+      role: role ?? this.role,
+      phone: phone ?? this.phone,
+      isProtectedSuperAdmin:
+          isProtectedSuperAdmin ?? this.isProtectedSuperAdmin,
+    );
+  }
 }
 
 class AuthSession {

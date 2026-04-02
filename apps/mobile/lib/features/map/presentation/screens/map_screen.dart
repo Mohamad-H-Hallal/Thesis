@@ -821,9 +821,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                     imagePath:
                                         photo.thumbnailPath ?? photo.filePath,
                                     label: _photoLabel(photo.filePath),
-                                    subtitle: photo.status?.isNotEmpty == true
-                                        ? 'Status: ${photo.status}'
-                                        : 'Captured photo',
+                                    subtitle: photo.takenAt == null
+                                        ? 'Captured photo'
+                                        : 'Captured ${_formatDateTime(photo.takenAt!)}',
                                   ),
                                 )
                                 .toList(growable: false),

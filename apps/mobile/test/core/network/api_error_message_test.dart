@@ -10,9 +10,7 @@ void main() {
         response: Response<dynamic>(
           requestOptions: RequestOptions(path: '/projects'),
           statusCode: 400,
-          data: <String, dynamic>{
-            'message': 'limit must be between 1 and 100',
-          },
+          data: <String, dynamic>{'message': 'limit must be between 1 and 100'},
         ),
       );
 
@@ -68,6 +66,27 @@ void main() {
           fallback: 'Unable to load projects right now. Please try again.',
         ),
         'Your session may have expired. Please sign in again.',
+      );
+    });
+
+    test('maps rate limits to calm retry-later copy', () {
+      final error = DioException(
+        requestOptions: RequestOptions(path: '/users'),
+        response: Response<dynamic>(
+          requestOptions: RequestOptions(path: '/users'),
+          statusCode: 429,
+          data: <String, dynamic>{
+            'message': 'Too many requests from this IP, please try again later',
+          },
+        ),
+      );
+
+      expect(
+        userFacingErrorMessage(
+          error,
+          fallback: 'Unable to load users right now. Please try again.',
+        ),
+        'Requests are temporarily limited. Please wait a moment and try again.',
       );
     });
 

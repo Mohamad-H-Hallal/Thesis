@@ -20,6 +20,7 @@ class RealAuthRepository implements AuthRepository {
   static const _nameKey = 'user_name';
   static const _emailKey = 'user_email';
   static const _userIdKey = 'user_id';
+  static const _phoneKey = 'user_phone';
   static const _superAdminKey = 'is_protected_super_admin';
 
   String get _authBasePath => '${AppEnv.apiVersionPrefix}/auth';
@@ -162,10 +163,9 @@ class RealAuthRepository implements AuthRepository {
         payload['data'] as Map? ?? const <String, dynamic>{},
       );
       return PasswordResetRequestResult(
-        message:
-            (payload['message'] as String?)?.trim().isNotEmpty == true
-                ? (payload['message'] as String).trim()
-                : 'A verification code has been sent to your email.',
+        message: (payload['message'] as String?)?.trim().isNotEmpty == true
+            ? (payload['message'] as String).trim()
+            : 'A verification code has been sent to your email.',
         email: (data['email'] as String?)?.trim(),
         expiresAt: _toDateTime(data['expires_at']),
       );
@@ -185,10 +185,7 @@ class RealAuthRepository implements AuthRepository {
     try {
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '$_authBasePath/verify-reset-otp',
-        data: <String, dynamic>{
-          'email': email,
-          'otp': otp,
-        },
+        data: <String, dynamic>{'email': email, 'otp': otp},
       );
       final payload = response.data ?? const <String, dynamic>{};
       final data = Map<String, dynamic>.from(
@@ -205,10 +202,9 @@ class RealAuthRepository implements AuthRepository {
       }
 
       return PasswordResetOtpVerificationResult(
-        message:
-            (payload['message'] as String?)?.trim().isNotEmpty == true
-                ? (payload['message'] as String).trim()
-                : 'Verification code confirmed.',
+        message: (payload['message'] as String?)?.trim().isNotEmpty == true
+            ? (payload['message'] as String).trim()
+            : 'Verification code confirmed.',
         resetToken: resetToken,
         email: verifiedEmail,
       );
@@ -263,6 +259,35 @@ class RealAuthRepository implements AuthRepository {
   }
 
   @override
+  Future<AppUser> updateProfile({String? fullName, String? phone}) async {
+    try {
+      final data = <String, dynamic>{};
+      if (fullName != null) {
+        data['full_name'] = fullName;
+      }
+      if (phone != null) {
+        data['phone'] = phone;
+      }
+      final response = await _apiClient.dio.put<Map<String, dynamic>>(
+        '$_authBasePath/me',
+        data: data,
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      final userMap = Map<String, dynamic>.from(
+        payload['data'] as Map? ?? const <String, dynamic>{},
+      );
+      final user = _parseUser(userMap);
+      await _persistUserMetadata(user);
+      return user;
+    } on DioException catch (error) {
+      throw mapAuthDioException(
+        error,
+        fallbackMessage: 'Profile update failed.',
+      );
+    }
+  }
+
+  @override
   Future<void> logout() async {
     try {
       await _apiClient.dio.post<Map<String, dynamic>>('$_authBasePath/logout');
@@ -304,6 +329,7 @@ class RealAuthRepository implements AuthRepository {
     await _storage.write(key: _userIdKey, value: user.id);
     await _storage.write(key: _nameKey, value: user.fullName);
     await _storage.write(key: _emailKey, value: user.email);
+    await _storage.write(key: _phoneKey, value: user.phone ?? '');
     await _storage.write(key: _roleKey, value: user.role.name);
     await _storage.write(
       key: _superAdminKey,
@@ -315,6 +341,7 @@ class RealAuthRepository implements AuthRepository {
     final userId = await _storage.read(key: _userIdKey);
     final name = await _storage.read(key: _nameKey);
     final email = await _storage.read(key: _emailKey);
+    final phone = await _storage.read(key: _phoneKey);
     final role = await _storage.read(key: _roleKey);
     final isProtectedSuperAdmin = await _storage.read(key: _superAdminKey);
 
@@ -327,6 +354,7 @@ class RealAuthRepository implements AuthRepository {
       fullName: name,
       email: email,
       role: _toRole(role),
+      phone: phone?.trim().isNotEmpty == true ? phone!.trim() : null,
       isProtectedSuperAdmin: isProtectedSuperAdmin == 'true',
     );
   }
@@ -337,6 +365,7 @@ class RealAuthRepository implements AuthRepository {
     await _storage.delete(key: _roleKey);
     await _storage.delete(key: _nameKey);
     await _storage.delete(key: _emailKey);
+    await _storage.delete(key: _phoneKey);
     await _storage.delete(key: _userIdKey);
     await _storage.delete(key: _superAdminKey);
   }
@@ -355,6 +384,7 @@ class RealAuthRepository implements AuthRepository {
         (map['fullName'] as String?) ??
         'Unknown User';
     final email = (map['email'] as String?) ?? 'unknown@example.com';
+    final phone = (map['phone'] as String?)?.trim();
     final roleRaw = map['role'] as String?;
     final isProtectedSuperAdmin =
         (map['is_protected_super_admin'] as bool?) ?? false;
@@ -364,6 +394,7 @@ class RealAuthRepository implements AuthRepository {
       fullName: fullName,
       email: email,
       role: _toRole(roleRaw),
+      phone: phone?.isNotEmpty == true ? phone : null,
       isProtectedSuperAdmin: isProtectedSuperAdmin,
     );
   }

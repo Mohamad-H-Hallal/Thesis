@@ -150,13 +150,22 @@ class _ContributorRequestsScreenState
 
   @override
   Widget build(BuildContext context) {
-    final pendingContributorAsync = ref.watch(
-      contributorRequestsProvider(ContributorRequestStatus.pending),
-    );
-    final rejectedContributorAsync = ref.watch(
-      contributorRequestsProvider(ContributorRequestStatus.rejected),
-    );
-    final assignmentsAsync = ref.watch(managedAssignmentsProvider);
+    final contributorAsync = _selectedGroup == _RequestGroup.contributor
+        ? ref.watch(
+            contributorRequestsProvider(
+              _selectedState == _RequestStateTab.pending
+                  ? ContributorRequestStatus.pending
+                  : ContributorRequestStatus.rejected,
+            ),
+          )
+        : const AsyncValue<List<ManagedUserSummary>>.data(
+            <ManagedUserSummary>[],
+          );
+    final assignmentsAsync = _selectedGroup == _RequestGroup.project
+        ? ref.watch(managedAssignmentsProvider)
+        : const AsyncValue<List<ManagedAssignmentSummary>>.data(
+            <ManagedAssignmentSummary>[],
+          );
 
     return ListView(
       children: [
@@ -230,24 +239,16 @@ class _ContributorRequestsScreenState
         ),
         const SizedBox(height: AppSpacing.md),
         if (_selectedGroup == _RequestGroup.contributor)
-          _buildContributorRequests(
-            pendingContributorAsync: pendingContributorAsync,
-            rejectedContributorAsync: rejectedContributorAsync,
-          )
+          _buildContributorRequests(contributorAsync)
         else
           _buildProjectRequests(assignmentsAsync),
       ],
     );
   }
 
-  Widget _buildContributorRequests({
-    required AsyncValue<List<ManagedUserSummary>> pendingContributorAsync,
-    required AsyncValue<List<ManagedUserSummary>> rejectedContributorAsync,
-  }) {
-    final currentAsync = _selectedState == _RequestStateTab.pending
-        ? pendingContributorAsync
-        : rejectedContributorAsync;
-
+  Widget _buildContributorRequests(
+    AsyncValue<List<ManagedUserSummary>> currentAsync,
+  ) {
     return currentAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (error, _) => AppEmptyState(

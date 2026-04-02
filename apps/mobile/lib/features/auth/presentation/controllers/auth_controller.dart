@@ -177,6 +177,38 @@ class AuthController extends StateNotifier<AuthState> {
     );
   }
 
+  Future<void> updateProfile({String? fullName, String? phone}) async {
+    final session = state.session;
+    if (session == null) {
+      throw const AuthFailure(
+        'Your session may have expired. Please sign in again.',
+        code: 'session_missing',
+      );
+    }
+
+    try {
+      final updatedUser = await _repository.updateProfile(
+        fullName: fullName,
+        phone: phone,
+      );
+      state = AuthState.authenticated(
+        AuthSession(
+          accessToken: session.accessToken,
+          refreshToken: session.refreshToken,
+          user: updatedUser,
+        ),
+      );
+    } catch (error) {
+      state = AuthState(
+        status: AuthStatus.authenticated,
+        session: session,
+        error: _messageFromError(error),
+        errorCode: _codeFromError(error),
+      );
+      rethrow;
+    }
+  }
+
   String _messageFromError(Object error) {
     if (error is AuthFailure) {
       return error.message;

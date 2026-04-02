@@ -14,20 +14,15 @@ import {
 } from '../lib/userWorkflow';
 import { sendPasswordResetOtpEmail } from '../lib/mailer';
 
-const passwordResetExpiryMinutes = Number(
-  process.env.PASSWORD_RESET_TOKEN_EXPIRY_MINUTES || 15,
-);
+const passwordResetExpiryMinutes = Number(process.env.PASSWORD_RESET_TOKEN_EXPIRY_MINUTES || 15);
 const passwordResetSessionExpiryMinutes = 10;
 
-const hashResetToken = (token: string) =>
-  crypto.createHash('sha256').update(token).digest('hex');
+const hashResetToken = (token: string) => crypto.createHash('sha256').update(token).digest('hex');
 
-const generateResetToken = () =>
-  crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+const generateResetToken = () => crypto.randomInt(0, 1000000).toString().padStart(6, '0');
 
 const getPasswordResetSessionSecret = (): string => {
-  const baseSecret =
-    process.env.JWT_SECRET_CURRENT || process.env.JWT_SECRET;
+  const baseSecret = process.env.JWT_SECRET_CURRENT || process.env.JWT_SECRET;
   if (!baseSecret) {
     throw new AppError(
       'Password reset service is unavailable right now. Please contact support.',
@@ -116,7 +111,7 @@ const register = async (req, res) => {
       `INSERT INTO "user" (email, password_hash, full_name, phone, role, is_active)
        VALUES ($1, $2, $3, $4, $5::user_role, $6)
        RETURNING id, email, full_name, phone, role, is_active, created_at`,
-      [normalizedEmail, password_hash, full_name, phone, publicRole, isActive]
+      [normalizedEmail, password_hash, full_name, phone, publicRole, isActive],
     );
 
     const createdUser = result.rows[0];
@@ -167,7 +162,7 @@ const login = async (req, res) => {
   const result = await query(
     `SELECT id, email, password_hash, full_name, phone, role, is_active 
      FROM "user" WHERE LOWER(email) = $1`,
-    [normalizeEmail(email)]
+    [normalizeEmail(email)],
   );
 
   if (result.rows.length === 0) {
@@ -195,28 +190,26 @@ const login = async (req, res) => {
     if (accessState === 'rejected') {
       throw new AppError(
         'Your contributor request was rejected. You cannot log in with contributor access.',
-        403
+        403,
       );
     }
     if (accessState === 'pending') {
       throw new AppError(
         'Your contributor request is still pending approval. You cannot log in yet.',
-        403
+        403,
       );
     }
     if (accessState === 'inactive' && user.role === 'contributor') {
       throw new AppError(
         'Your contributor account is deactivated. Activate it to continue logging in.',
-        403
+        403,
       );
     }
     throw new AppError('This account is inactive.', 403);
   }
 
   // Update last login
-  await query('UPDATE "user" SET last_login = CURRENT_TIMESTAMP WHERE id = $1', [
-    user.id,
-  ]);
+  await query('UPDATE "user" SET last_login = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
 
   // Generate tokens
   const token = generateToken(user.id, user.role);
@@ -247,7 +240,7 @@ const getMe = async (req, res) => {
   const result = await query(
     `SELECT id, email, full_name, phone, role, created_at, last_login, profile_picture_url
      FROM "user" WHERE id = $1`,
-    [req.user.id]
+    [req.user.id],
   );
 
   res.json({
@@ -269,7 +262,7 @@ const updateMe = async (req, res) => {
          phone = COALESCE($2, phone)
      WHERE id = $3
      RETURNING id, email, full_name, phone, role, profile_picture_url`,
-    [full_name, phone, req.user.id]
+    [full_name, phone, req.user.id],
   );
 
   logger.info('User profile updated:', { userId: req.user.id });
@@ -277,7 +270,10 @@ const updateMe = async (req, res) => {
   res.json({
     success: true,
     message: 'Profile updated successfully',
-    data: result.rows[0],
+    data: {
+      ...result.rows[0],
+      is_protected_super_admin: isProtectedSuperAdminEmail(result.rows[0].email),
+    },
   });
 };
 
@@ -286,10 +282,7 @@ const changePassword = async (req, res) => {
   const { current_password, new_password } = req.body;
 
   // Get user with password
-  const result = await query(
-    'SELECT password_hash FROM "user" WHERE id = $1',
-    [req.user.id]
-  );
+  const result = await query('SELECT password_hash FROM "user" WHERE id = $1', [req.user.id]);
 
   const user = result.rows[0];
 
@@ -305,10 +298,7 @@ const changePassword = async (req, res) => {
   const password_hash = await bcrypt.hash(new_password, salt);
 
   // Update password
-  await query('UPDATE "user" SET password_hash = $1 WHERE id = $2', [
-    password_hash,
-    req.user.id,
-  ]);
+  await query('UPDATE "user" SET password_hash = $1 WHERE id = $2', [password_hash, req.user.id]);
 
   logger.info('Password changed:', { userId: req.user.id });
 
@@ -325,7 +315,7 @@ const reactivateContributorLogin = async (req, res) => {
     `SELECT id, email, password_hash, full_name, phone, role, is_active
      FROM "user"
      WHERE LOWER(email) = $1`,
-    [normalizeEmail(email)]
+    [normalizeEmail(email)],
   );
 
   if (result.rows.length === 0) {
@@ -340,10 +330,7 @@ const reactivateContributorLogin = async (req, res) => {
   }
 
   if (user.role !== 'contributor') {
-    throw new AppError(
-      'Only contributor accounts can use this reactivation flow.',
-      403
-    );
+    throw new AppError('Only contributor accounts can use this reactivation flow.', 403);
   }
 
   const accessState = await getUserAccessState(query, {
@@ -358,13 +345,13 @@ const reactivateContributorLogin = async (req, res) => {
   if (accessState === 'rejected') {
     throw new AppError(
       'Your contributor request was rejected. You cannot log in with contributor access.',
-      403
+      403,
     );
   }
   if (accessState === 'pending') {
     throw new AppError(
       'Your contributor request is still pending approval. You cannot log in yet.',
-      403
+      403,
     );
   }
 
@@ -377,10 +364,7 @@ const reactivateContributorLogin = async (req, res) => {
       [user.id],
     );
   } else {
-    await query(
-      'UPDATE "user" SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
-      [user.id],
-    );
+    await query('UPDATE "user" SET last_login = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
   }
 
   const token = generateToken(user.id, user.role);
@@ -395,9 +379,7 @@ const reactivateContributorLogin = async (req, res) => {
   res.json({
     success: true,
     message:
-      accessState === 'inactive'
-        ? 'Account reactivated and login successful'
-        : 'Login successful',
+      accessState === 'inactive' ? 'Account reactivated and login successful' : 'Login successful',
     data: {
       user: {
         id: user.id,
@@ -526,11 +508,7 @@ const resetPassword = async (req, res) => {
        AND prr.user_id = $2
        AND LOWER(u.email) = $3
      LIMIT 1`,
-    [
-      verifiedSession.resetRequestId,
-      verifiedSession.userId,
-      normalizeEmail(verifiedSession.email),
-    ],
+    [verifiedSession.resetRequestId, verifiedSession.userId, normalizeEmail(verifiedSession.email)],
   );
 
   if (resetRequestResult.rows.length === 0) {
@@ -541,10 +519,7 @@ const resetPassword = async (req, res) => {
   }
 
   const resetRequest = resetRequestResult.rows[0];
-  if (
-    resetRequest.used_at != null ||
-    new Date(resetRequest.expires_at).getTime() < Date.now()
-  ) {
+  if (resetRequest.used_at != null || new Date(resetRequest.expires_at).getTime() < Date.now()) {
     throw new AppError(
       'Password reset session is invalid or expired. Please request a new verification code.',
       400,
@@ -599,10 +574,10 @@ const refreshToken = async (req, res) => {
   let decoded: any;
   const refreshSecrets = [
     process.env.JWT_REFRESH_SECRET_CURRENT || process.env.JWT_REFRESH_SECRET,
-    ...((process.env.JWT_REFRESH_SECRET_PREVIOUS || '')
+    ...(process.env.JWT_REFRESH_SECRET_PREVIOUS || '')
       .split(',')
       .map((value: string) => value.trim())
-      .filter(Boolean)),
+      .filter(Boolean),
   ].filter(Boolean) as string[];
 
   try {
@@ -625,7 +600,7 @@ const refreshToken = async (req, res) => {
   const result = await query(
     `SELECT id, email, full_name, phone, role, is_active
      FROM "user" WHERE id = $1`,
-    [decoded.userId]
+    [decoded.userId],
   );
 
   if (result.rows.length === 0) {
@@ -645,19 +620,19 @@ const refreshToken = async (req, res) => {
     if (accessState === 'rejected') {
       throw new AppError(
         'Your contributor request was rejected. You cannot log in with contributor access.',
-        403
+        403,
       );
     }
     if (accessState === 'pending') {
       throw new AppError(
         'Your contributor request is still pending approval. You cannot log in yet.',
-        403
+        403,
       );
     }
     if (accessState === 'inactive' && user.role === 'contributor') {
       throw new AppError(
         'Your contributor account is deactivated. Activate it to continue logging in.',
-        403
+        403,
       );
     }
     throw new AppError('This account is inactive.', 403);

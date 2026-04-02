@@ -19,13 +19,9 @@ const assertProjectStatusTransition = (currentStatus: string, nextStatus: string
     return;
   }
 
-  const allowed =
-    projectStatusTransitions[current as keyof typeof projectStatusTransitions] ?? [];
+  const allowed = projectStatusTransitions[current as keyof typeof projectStatusTransitions] ?? [];
   if (!allowed.includes(next)) {
-    throw new AppError(
-      `Invalid project status transition from ${current} to ${next}`,
-      400,
-    );
+    throw new AppError(`Invalid project status transition from ${current} to ${next}`, 400);
   }
 };
 
@@ -90,13 +86,35 @@ const resolveProjectScheduleForMutation = ({
   }
 
   if (nextStatus === 'active') {
-    if (startDate === null || startDate > today || currentStatus === 'draft') {
+    if (
+      startDate === null ||
+      startDate > today ||
+      ['draft', 'completed', 'archived'].includes(currentStatus)
+    ) {
       startDate = today;
+    }
+    if (
+      !endDateProvided &&
+      ['completed', 'archived'].includes(currentStatus) &&
+      endDate !== null &&
+      endDate <= today
+    ) {
+      endDate = null;
     }
   }
 
-  if (nextStatus === 'paused' && startDate === null) {
-    startDate = today;
+  if (nextStatus === 'paused') {
+    if (startDate === null) {
+      startDate = today;
+    }
+    if (
+      !endDateProvided &&
+      ['completed', 'archived'].includes(currentStatus) &&
+      endDate !== null &&
+      endDate <= today
+    ) {
+      endDate = null;
+    }
   }
 
   if (nextStatus === 'completed') {
@@ -125,7 +143,8 @@ const resolveProjectScheduleForMutation = ({
 const synchronizeProjectStatuses = async (projectId?: string): Promise<void> => {
   const conditions = [
     `(status = 'draft' AND start_date IS NOT NULL AND start_date <= CURRENT_DATE AND (end_date IS NULL OR end_date >= CURRENT_DATE))`,
-    `(status IN ('draft', 'active', 'paused') AND end_date IS NOT NULL AND end_date < CURRENT_DATE)`,
+    `(status IN ('active', 'paused') AND end_date IS NOT NULL AND end_date <= CURRENT_DATE)`,
+    `(status = 'draft' AND end_date IS NOT NULL AND end_date < CURRENT_DATE)`,
   ];
 
   const params: unknown[] = [];
@@ -138,7 +157,11 @@ const synchronizeProjectStatuses = async (projectId?: string): Promise<void> => 
     `
       UPDATE project
       SET status = CASE
-        WHEN status IN ('draft', 'active', 'paused')
+        WHEN status IN ('active', 'paused')
+          AND end_date IS NOT NULL
+          AND end_date <= CURRENT_DATE
+          THEN 'completed'::project_status
+        WHEN status = 'draft'
           AND end_date IS NOT NULL
           AND end_date < CURRENT_DATE
           THEN 'completed'::project_status

@@ -55,6 +55,17 @@ class _FailingAuthRepository implements AuthRepository {
   }) async {}
 
   @override
+  Future<AppUser> updateProfile({String? fullName, String? phone}) async {
+    return AppUser(
+      id: 'user-1',
+      fullName: fullName ?? 'Test User',
+      email: 'viewer@example.com',
+      role: UserRole.viewer,
+      phone: phone,
+    );
+  }
+
+  @override
   Future<AuthSession> reactivateContributorAndLogin({
     required String email,
     required String password,

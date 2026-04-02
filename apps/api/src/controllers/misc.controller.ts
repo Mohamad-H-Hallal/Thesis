@@ -421,6 +421,86 @@ const notificationController = {
 // ============================================================================
 
 const userController = {
+  getDashboardSummary: async (req, res) => {
+    const actorIsProtectedSuperAdmin = isProtectedSuperAdminEmail(req.user?.email);
+    const protectedEmail = getProtectedSuperAdminEmail();
+
+    const userSummaryResult = await query(
+      `SELECT COUNT(*)::integer AS total_users,
+              COUNT(*) FILTER (WHERE u.role = 'admin')::integer AS admin_count,
+              COUNT(*) FILTER (WHERE u.role = 'viewer')::integer AS viewer_count,
+              COUNT(*) FILTER (
+                WHERE u.role = 'contributor'
+                  AND u.is_active = TRUE
+              )::integer AS active_contributor_count,
+              COUNT(*) FILTER (
+                WHERE latest_account_state.account_state = 'blocked'
+              )::integer AS blocked_count
+       FROM "user" u
+       LEFT JOIN LATERAL (
+         SELECT al.new_values->>'account_state' AS account_state
+         FROM audit_log al
+         WHERE al.entity_type = 'user'
+           AND al.entity_id = u.id
+           AND al.action_type = 'update'
+           AND al.new_values ? 'account_state'
+         ORDER BY al.created_at DESC
+         LIMIT 1
+       ) latest_account_state ON TRUE
+       WHERE LOWER(u.email) <> $1
+         AND ($2::boolean = TRUE OR u.role IN ('viewer', 'contributor'))`,
+      [protectedEmail, actorIsProtectedSuperAdmin],
+    );
+
+    const contributorRequestSummaryResult = await query(
+      `SELECT COUNT(*) FILTER (
+                WHERE COALESCE(latest_request.type, 'contributor_request') = 'contributor_request'
+              )::integer AS pending_contributor_requests,
+              COUNT(*) FILTER (
+                WHERE latest_request.type = 'contributor_rejected'
+              )::integer AS rejected_contributor_requests
+       FROM "user" u
+       LEFT JOIN LATERAL (
+         SELECT n.type
+         FROM notification n
+         WHERE n.user_id = u.id
+           AND n.type IN ('contributor_request', 'contributor_rejected', 'contributor_approved')
+         ORDER BY n.created_at DESC
+         LIMIT 1
+       ) latest_request ON TRUE
+       WHERE u.role = 'contributor'
+         AND LOWER(u.email) <> $1
+         AND u.is_active = FALSE`,
+      [protectedEmail],
+    );
+
+    const [projectCountResult, pendingAssignmentsResult] = await Promise.all([
+      query(`SELECT COUNT(*)::integer AS total_projects FROM project`),
+      query(
+        `SELECT COUNT(*)::integer AS pending_assignments
+         FROM project_assignment
+         WHERE status = 'pending'`,
+      ),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        total_users: userSummaryResult.rows[0]?.total_users ?? 0,
+        admin_count: userSummaryResult.rows[0]?.admin_count ?? 0,
+        viewer_count: userSummaryResult.rows[0]?.viewer_count ?? 0,
+        active_contributor_count: userSummaryResult.rows[0]?.active_contributor_count ?? 0,
+        blocked_count: userSummaryResult.rows[0]?.blocked_count ?? 0,
+        pending_contributor_requests:
+          contributorRequestSummaryResult.rows[0]?.pending_contributor_requests ?? 0,
+        rejected_contributor_requests:
+          contributorRequestSummaryResult.rows[0]?.rejected_contributor_requests ?? 0,
+        total_projects: projectCountResult.rows[0]?.total_projects ?? 0,
+        pending_assignments: pendingAssignmentsResult.rows[0]?.pending_assignments ?? 0,
+      },
+    });
+  },
+
   // Get all users (admin only)
   getAll: async (req, res) => {
     const { role, is_active, page = 1, limit = 50, q, state } = req.query;
@@ -544,12 +624,11 @@ const userController = {
               ? 'blocked'
               : row.account_state === 'inactive'
                 ? 'inactive'
-              : row.role === 'contributor' &&
-                  row.latest_request_type === 'contributor_rejected'
-                ? 'rejected'
-                : row.role === 'contributor'
-                  ? 'pending'
-                  : 'inactive',
+                : row.role === 'contributor' && row.latest_request_type === 'contributor_rejected'
+                  ? 'rejected'
+                  : row.role === 'contributor'
+                    ? 'pending'
+                    : 'inactive',
         is_blocked: row.account_state === 'blocked',
         approved_assignment_count: row.approved_assignment_count ?? 0,
         can_toggle_admin_role:

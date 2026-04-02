@@ -1009,9 +1009,9 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 id: photo.id,
                 imagePath: photo.thumbnailPath ?? photo.filePath,
                 label: _photoLabel(photo.filePath),
-                subtitle: photo.status?.trim().isNotEmpty == true
-                    ? 'Uploaded • ${photo.status}'
-                    : 'Uploaded to this draft',
+                subtitle: photo.takenAt == null
+                    ? 'Uploaded to this draft'
+                    : 'Captured ${_formatDateTime(photo.takenAt!)}',
               ),
             )
             .toList(growable: false);
@@ -1150,6 +1150,15 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     final normalized = path.replaceAll('\\', '/');
     final segments = normalized.split('/');
     return segments.isEmpty ? path : segments.last;
+  }
+
+  String _formatDateTime(DateTime value) {
+    final local = value.toLocal();
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '${local.year}-$month-$day $hour:$minute';
   }
 }
 

@@ -224,10 +224,10 @@ class AppShellScreen extends ConsumerWidget {
     final tooltip = syncState.isInitializing
         ? 'Preparing local sync storage'
         : !syncState.isReady
-            ? 'Sync unavailable until local storage is ready'
-            : syncState.isSyncing
-                ? 'Sync in progress'
-                : 'Sync now';
+        ? 'Sync unavailable until local storage is ready'
+        : syncState.isSyncing
+        ? 'Sync in progress'
+        : 'Sync now';
     return Stack(
       alignment: Alignment.center,
       children: [
@@ -382,6 +382,7 @@ class AppShellScreen extends ConsumerWidget {
           return ProfileScreen(
             userName: session.user.fullName,
             email: session.user.email,
+            phone: session.user.phone,
             userRole: session.user.role,
             isSuperAdmin: session.user.isSuperAdmin,
             onLogout: () => _confirmLogout(context, ref),

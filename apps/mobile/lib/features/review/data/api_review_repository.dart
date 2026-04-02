@@ -13,12 +13,17 @@ class ApiReviewRepository implements ReviewRepository {
   String get _featuresBasePath => '${AppEnv.apiVersionPrefix}/features';
 
   @override
-  Future<List<ReviewQueueItem>> fetchReviewItems({required String status}) async {
+  Future<List<ReviewQueueItem>> fetchReviewItems({
+    required String status,
+    String? projectId,
+  }) async {
     try {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         _featuresBasePath,
         queryParameters: <String, dynamic>{
           'status': status,
+          if (projectId != null && projectId.trim().isNotEmpty)
+            'project_id': projectId.trim(),
           'limit': 100,
         },
       );
@@ -26,23 +31,27 @@ class ApiReviewRepository implements ReviewRepository {
       final payload = response.data ?? const <String, dynamic>{};
       final rows = (payload['data'] as List? ?? const <dynamic>[]);
 
-      return rows.map((row) {
-        final item = Map<String, dynamic>.from(row as Map);
-        final geometry = Map<String, dynamic>.from(
-          item['geometry'] as Map? ?? const <String, dynamic>{},
-        );
+      return rows
+          .map((row) {
+            final item = Map<String, dynamic>.from(row as Map);
+            final geometry = Map<String, dynamic>.from(
+              item['geometry'] as Map? ?? const <String, dynamic>{},
+            );
 
-        return ReviewQueueItem(
-          id: (item['id'] as String?) ?? '',
-          projectId: (item['project_id'] as String?) ?? '',
-          projectName: (item['project_name'] as String?) ?? 'Project',
-          geometryType: (geometry['type'] as String?) ?? 'Point',
-          status: (item['status'] as String?) ?? status,
-          collectedBy: item['collected_by'] as String?,
-          collectedAt: DateTime.tryParse(item['collected_at'] as String? ?? ''),
-          photoCount: _toInt(item['photo_count']) ?? 0,
-        );
-      }).toList(growable: false);
+            return ReviewQueueItem(
+              id: (item['id'] as String?) ?? '',
+              projectId: (item['project_id'] as String?) ?? '',
+              projectName: (item['project_name'] as String?) ?? 'Project',
+              geometryType: (geometry['type'] as String?) ?? 'Point',
+              status: (item['status'] as String?) ?? status,
+              collectedBy: item['collected_by'] as String?,
+              collectedAt: DateTime.tryParse(
+                item['collected_at'] as String? ?? '',
+              ),
+              photoCount: _toInt(item['photo_count']) ?? 0,
+            );
+          })
+          .toList(growable: false);
     } on DioException catch (error) {
       throw _messageFrom(error, 'Review queue request failed.');
     }

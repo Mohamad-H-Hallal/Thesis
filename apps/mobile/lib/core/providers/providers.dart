@@ -511,15 +511,22 @@ final rejectedReviewQueueProvider = FutureProvider<List<ReviewQueueItem>>((
       .fetchReviewItems(status: 'rejected');
 });
 
-final approvedReviewQueueProvider = FutureProvider<List<ReviewQueueItem>>((
-  ref,
-) async {
-  ref.watch(authControllerProvider.select((state) => state.session?.user.id));
-  ref.watch(workflowRefreshTickProvider);
-  return ref
-      .read(reviewRepositoryProvider)
-      .fetchReviewItems(status: 'approved');
-});
+final projectApprovedReviewQueueProvider =
+    FutureProvider.family<List<ReviewQueueItem>, String>((
+      ref,
+      projectId,
+    ) async {
+      ref.watch(
+        authControllerProvider.select((state) => state.session?.user.id),
+      );
+      ref.watch(workflowRefreshTickProvider);
+      if (projectId.trim().isEmpty) {
+        return const <ReviewQueueItem>[];
+      }
+      return ref
+          .read(reviewRepositoryProvider)
+          .fetchReviewItems(status: 'approved', projectId: projectId);
+    });
 
 ProjectViewScope _defaultOperationalProjectScope(UserRole role) {
   switch (role) {

@@ -327,6 +327,8 @@ userRouter.post(
   asyncHandler(userController.createAdmin),
 );
 
+userRouter.get('/dashboard-summary', asyncHandler(userController.getDashboardSummary));
+
 // Get single user
 userRouter.get('/:userId', uuidValidation('userId'), validate, asyncHandler(userController.getOne));
 

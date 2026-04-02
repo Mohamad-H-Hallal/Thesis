@@ -1,7 +1,10 @@
 import 'review_item.dart';
 
 abstract class ReviewRepository {
-  Future<List<ReviewQueueItem>> fetchReviewItems({required String status});
+  Future<List<ReviewQueueItem>> fetchReviewItems({
+    required String status,
+    String? projectId,
+  });
 
   Future<void> reviewFeature({
     required String featureId,

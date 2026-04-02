@@ -35,12 +35,9 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final pendingAsync = ref.watch(reviewQueueProvider);
-    final rejectedAsync = ref.watch(rejectedReviewQueueProvider);
-
     final currentAsync = _filter == _ReviewFilter.pending
-        ? pendingAsync
-        : rejectedAsync;
+        ? ref.watch(reviewQueueProvider)
+        : ref.watch(rejectedReviewQueueProvider);
 
     return currentAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -104,11 +101,6 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
                         selected: _filter == _ReviewFilter.rejected,
                         onSelected: (_) =>
                             setState(() => _filter = _ReviewFilter.rejected),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: () => _openApprovedReviews(context, ref),
-                        icon: const Icon(Icons.verified_outlined, size: 18),
-                        label: const Text('Approved by project'),
                       ),
                     ],
                   ),
@@ -208,23 +200,6 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
     return showDialog<String>(
       context: context,
       builder: (_) => _ReviewNoteDialog(title: title, hint: hint),
-    );
-  }
-
-  void _openApprovedReviews(BuildContext context, WidgetRef ref) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => FractionallySizedBox(
-        heightFactor: 0.88,
-        child: _ApprovedReviewsSheet(
-          onOpenMap: (item) => context.push(
-            AppRoutes.mapForProject(item.projectId, featureId: item.id),
-          ),
-          onReject: (item) =>
-              _review(context, ref, item: item, status: 'rejected'),
-        ),
-      ),
     );
   }
 }
@@ -377,26 +352,25 @@ class _ReviewItemCard extends StatelessWidget {
   }
 }
 
-class _ApprovedReviewsSheet extends ConsumerStatefulWidget {
-  const _ApprovedReviewsSheet({
+class ProjectApprovedReviewsSheet extends ConsumerWidget {
+  const ProjectApprovedReviewsSheet({
+    required this.projectId,
+    required this.projectName,
     required this.onOpenMap,
     required this.onReject,
+    super.key,
   });
 
+  final String projectId;
+  final String projectName;
   final ValueChanged<ReviewQueueItem> onOpenMap;
   final Future<void> Function(ReviewQueueItem item) onReject;
 
   @override
-  ConsumerState<_ApprovedReviewsSheet> createState() =>
-      _ApprovedReviewsSheetState();
-}
-
-class _ApprovedReviewsSheetState extends ConsumerState<_ApprovedReviewsSheet> {
-  String _selectedProjectId = 'all';
-
-  @override
-  Widget build(BuildContext context) {
-    final approvedAsync = ref.watch(approvedReviewQueueProvider);
+  Widget build(BuildContext context, WidgetRef ref) {
+    final approvedAsync = ref.watch(
+      projectApprovedReviewQueueProvider(projectId),
+    );
 
     return approvedAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -409,31 +383,13 @@ class _ApprovedReviewsSheetState extends ConsumerState<_ApprovedReviewsSheet> {
               'Unable to load approved reviews right now. Please try again.',
         ),
         actionLabel: 'Retry',
-        onAction: () => ref.invalidate(approvedReviewQueueProvider),
+        onAction: () =>
+            ref.invalidate(projectApprovedReviewQueueProvider(projectId)),
       ),
       data: (items) {
-        final grouped = <String, List<ReviewQueueItem>>{};
-        final projectNames = <String, String>{};
-        for (final item in items) {
-          grouped
-              .putIfAbsent(item.projectId, () => <ReviewQueueItem>[])
-              .add(item);
-          projectNames[item.projectId] = item.projectName;
-        }
-
-        final projectIds = grouped.keys.toList(growable: false)
-          ..sort(
-            (a, b) => (projectNames[a] ?? '').compareTo(projectNames[b] ?? ''),
-          );
-        final effectiveProjectId =
-            _selectedProjectId == 'all' ||
-                projectIds.contains(_selectedProjectId)
-            ? _selectedProjectId
-            : (projectIds.isEmpty ? 'all' : projectIds.first);
-        final visibleItems = effectiveProjectId == 'all'
-            ? items
-            : grouped[effectiveProjectId] ?? const <ReviewQueueItem>[];
-
+        final visibleItems = items
+            .where((item) => item.projectId == projectId)
+            .toList(growable: false);
         return ListView(
           padding: const EdgeInsets.all(AppSpacing.md),
           children: [
@@ -443,41 +399,18 @@ class _ApprovedReviewsSheetState extends ConsumerState<_ApprovedReviewsSheet> {
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
-              'Browse approved feature reviews by project and reopen them when needed.',
+              'Approved reviews for $projectName only.',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
-            const SizedBox(height: AppSpacing.sm),
-            if (items.isEmpty)
-              const AppEmptyState(
+            const SizedBox(height: AppSpacing.md),
+            if (visibleItems.isEmpty)
+              AppEmptyState(
                 icon: Icons.verified_outlined,
                 title: 'No approved reviews',
                 message:
-                    'Approved feature reviews will appear here after moderation.',
+                    'Approved reviews for $projectName will appear here after moderation.',
               )
-            else ...[
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  ChoiceChip(
-                    label: Text('All projects (${items.length})'),
-                    selected: effectiveProjectId == 'all',
-                    onSelected: (_) =>
-                        setState(() => _selectedProjectId = 'all'),
-                  ),
-                  ...projectIds.map(
-                    (projectId) => ChoiceChip(
-                      label: Text(
-                        '${projectNames[projectId] ?? 'Project'} (${grouped[projectId]?.length ?? 0})',
-                      ),
-                      selected: effectiveProjectId == projectId,
-                      onSelected: (_) =>
-                          setState(() => _selectedProjectId = projectId),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.md),
+            else
               ...visibleItems.map(
                 (item) => Padding(
                   padding: const EdgeInsets.only(bottom: AppSpacing.sm),
@@ -529,12 +462,12 @@ class _ApprovedReviewsSheetState extends ConsumerState<_ApprovedReviewsSheet> {
                           runSpacing: 8,
                           children: [
                             OutlinedButton.icon(
-                              onPressed: () => widget.onOpenMap(item),
+                              onPressed: () => onOpenMap(item),
                               icon: const Icon(Icons.map_outlined, size: 18),
                               label: const Text('Open on map'),
                             ),
                             FilledButton.tonalIcon(
-                              onPressed: () => widget.onReject(item),
+                              onPressed: () => onReject(item),
                               icon: const Icon(Icons.cancel_outlined, size: 18),
                               label: const Text('Reject'),
                             ),
@@ -545,7 +478,6 @@ class _ApprovedReviewsSheetState extends ConsumerState<_ApprovedReviewsSheet> {
                   ),
                 ),
               ),
-            ],
           ],
         );
       },
