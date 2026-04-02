@@ -5,11 +5,18 @@
   "main": "dist/server.js",
   "scripts": {
     "pretest": "npm run build",
+    "pretest:ci": "npm run test:db:prepare",
+    "pretest:unit": "npm run test:db:prepare",
+    "pretest:phase3": "npm run test:db:prepare",
+    "pretest:e2e": "npm run test:db:prepare",
+    "pretest:perf:bbox": "npm run test:db:prepare",
+    "pretest:perf:exports": "npm run test:db:prepare",
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "jest --config jest.config.cjs --coverage --runInBand",
+    "test:db:prepare": "tsx src/db/prepareTestDb.ts",
     "test:ci": "jest --config jest.config.cjs --coverage --runInBand --ci --testPathIgnorePatterns test/phase10.performance",
     "test:unit": "jest --config jest.config.cjs --runInBand test/app.test.js",
     "test:phase3": "jest --config jest.config.cjs --runInBand test/phase3.integration.test.js",
@@ -62,7 +69,8 @@
     "winston": "^3.19.0"
   },
   "overrides": {
-    "path-to-regexp": "0.1.13"
+    "path-to-regexp": "0.1.13",
+    "lodash": "4.18.1"
   },
   "devDependencies": {
     "@swc/core": "^1.13.6",

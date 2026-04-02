@@ -86,6 +86,24 @@ npm run migrate
 npm run dev
 ```
 
+API tests:
+
+```powershell
+cd D:\GIS_APP
+docker compose up -d db
+cd apps\api
+npm ci
+npm run test:ci
+```
+
+Notes:
+- API tests use an isolated database by default:
+  - host `localhost`
+  - port `55433`
+  - database `gis_app_test`
+- Override the isolated test target with `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_DB_NAME`, `TEST_DB_USER`, `TEST_DB_PASSWORD`, and optional `TEST_DB_ADMIN_DB`.
+- `npm run test:db:prepare` creates the test database if it is missing and applies migrations before the API test commands run.
+
 Health:
 - `http://localhost:3000/health`
 - `http://localhost:3000/ready`
@@ -153,6 +171,7 @@ Official Docker runtime commands:
 - Stop: `docker compose down`
 - Health: `Invoke-WebRequest http://localhost:3000/health`
 - DB host port for the official runtime: `55433`
+- API test DB on the same server: `gis_app_test`
 
 ## Mobile Local
 

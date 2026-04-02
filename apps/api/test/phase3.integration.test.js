@@ -1,4 +1,3 @@
-require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const request = require('supertest');
 const { Pool } = require('pg');

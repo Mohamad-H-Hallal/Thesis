@@ -128,6 +128,8 @@ Runtime note:
 Run:
 
 ```powershell
+cd D:\GIS_APP
+docker compose up -d db
 cd D:\GIS_APP\apps\api
 npm run lint
 npm run typecheck
@@ -135,6 +137,10 @@ npm run migrate
 npm run test:ci
 npm run build
 ```
+
+Notes:
+- `npm run test:ci` uses the isolated `gis_app_test` database on the compose-backed PostGIS server by default.
+- The backend test runner prepares and migrates the isolated test database automatically.
 
 Verify:
 

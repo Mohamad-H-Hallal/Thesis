@@ -1,4 +1,3 @@
-require('dotenv').config();
 const request = require('supertest');
 const { buildApp } = require('../src/app');
 const { closePool } = require('../src/config/database');

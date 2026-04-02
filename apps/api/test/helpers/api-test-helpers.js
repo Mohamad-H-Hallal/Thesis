@@ -1,4 +1,3 @@
-require('dotenv').config();
 const fs = require('fs').promises;
 const bcrypt = require('bcryptjs');
 const request = require('supertest');
@@ -47,12 +46,14 @@ const resetDb = async () => {
     TRUNCATE TABLE
       notification,
       audit_log,
+      password_reset_request,
       photo,
       spatial_feature,
       shapefile_export,
       project_assignment,
       project,
       project_category,
+      lebanon_offline_map,
       "user"
     RESTART IDENTITY CASCADE
   `);
@@ -83,7 +84,7 @@ const registerUser = async ({
   role = 'contributor',
   fullName = 'Phase10 User',
   password = 'Passw0rd!123',
-  phone = '+96170000000',
+  phone = '+9617012345',
   emailPrefix = 'phase10-user',
 } = {}) => {
   const email = uniqueEmail(emailPrefix);
@@ -114,7 +115,7 @@ const registerUser = async ({
 const createAdminUser = async ({
   fullName = 'Phase10 Admin',
   password = 'Passw0rd!123',
-  phone = '+96170000000',
+  phone = '+9617012345',
   emailPrefix = 'phase10-admin',
   email,
 } = {}) => {

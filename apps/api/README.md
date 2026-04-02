@@ -1,7 +1,7 @@
 # GIS API
 
 ![API Coverage Gate](https://img.shields.io/badge/API%20coverage%20gate-enforced-brightgreen)
-![API Coverage Threshold](https://img.shields.io/badge/coverage%20threshold-lines%20%E2%89%A5%2030%25-blue)
+![API Coverage Threshold](https://img.shields.io/badge/coverage%20threshold-lines%20%E2%89%A5%2025%25-blue)
 
 ## Local Setup
 1. Use Node LTS 22:
@@ -11,26 +11,29 @@ nvm use
 2. Copy `.env.example` to `.env` and fill secrets.
    - Default local DB connection is `localhost:55433`, which matches the official root Docker compose stack.
    - Official app runtime uses the root Docker compose stack from the repo root; `infra/db/docker-compose.yml` is maintenance tooling only, not normal app runtime.
-3. Install dependencies:
+3. Copy `.env.test.example` to `.env.test` if you need to override the isolated API test DB target.
+   - Default test DB connection is `localhost:55433`, database `gis_app_test`.
+   - Test commands do not reuse the normal runtime database.
+4. Install dependencies:
 ```bash
 npm ci
 ```
-4. Run migrations:
+5. Run migrations:
 ```bash
 npm run migrate
 ```
-5. Seed development data (optional but recommended):
+6. Seed development data (optional but recommended):
 ```bash
 npm run seed
 ```
-5b. Seed realistic staging profile (phase 11):
+6b. Seed realistic staging profile (phase 11):
 ```bash
 ALLOW_DESTRUCTIVE_STAGING_RESET=true
 npm run seed:staging
 npm run staging:verify
 ```
 
-5c. Reset runtime/business data for a clean retest:
+6c. Reset runtime/business data for a clean retest:
 ```bash
 ALLOW_RUNTIME_RESET=true
 npm run reset:runtime
@@ -41,10 +44,29 @@ npm run reset:runtime
 - It then re-ensures the protected super admin from `SUPER_ADMIN_*` and resets the singleton `app_support_settings` row to defaults.
 - For the compose-backed app runtime, prefer running it inside the API container so it targets the same database as mobile:
   - `docker compose exec api sh -lc "ALLOW_RUNTIME_RESET=true npm run reset:runtime"`
-6. Start API (TypeScript dev runner):
+7. Start API (TypeScript dev runner):
 ```bash
 npm run dev
 ```
+
+## API Test Runtime
+- Start the shared PostGIS service for local backend tests:
+```bash
+docker compose up -d db
+```
+- Prepare the isolated test database explicitly if needed:
+```bash
+npm run test:db:prepare
+```
+- Run the CI-equivalent backend suite:
+```bash
+npm run test:ci
+```
+- The backend test commands now:
+  - use `TEST_DB_*` settings instead of the normal runtime DB
+  - default to `localhost:55433` / `gis_app_test`
+  - create the test database if it is missing
+  - apply migrations before the API test suites run
 
 ## Password Reset Email
 - Forgot-password uses:
@@ -116,8 +138,8 @@ npm run dev
 - Staging readiness workflow: `.github/workflows/staging-readiness.yml`
 - Jest coverage thresholds are enforced in `jest.config.cjs`:
   - coverage is collected from `src/**/*.ts`
-  - lines `>= 30%`
-  - statements `>= 30%`
+  - lines `>= 25%`
+  - statements `>= 25%`
   - functions `>= 20%`
   - branches `>= 15%`
 

@@ -29,11 +29,12 @@ jobs:
         working-directory: apps/api
     env:
       NODE_ENV: test
-      DB_HOST: localhost
-      DB_PORT: 5432
-      DB_NAME: gis_app
-      DB_USER: gis_user
-      DB_PASSWORD: change_me
+      TEST_DB_HOST: localhost
+      TEST_DB_PORT: 5432
+      TEST_DB_NAME: gis_app_test
+      TEST_DB_USER: gis_user
+      TEST_DB_PASSWORD: change_me
+      TEST_DB_ADMIN_DB: postgres
       MIGRATIONS_DIR: ${{ github.workspace }}/infra/migrations
       JWT_SECRET: phase10-ci-jwt-secret-12345678901234567890
       JWT_SECRET_CURRENT: phase10-ci-jwt-secret-12345678901234567890
@@ -61,17 +62,17 @@ jobs:
 
       - name: Validate CI environment
         run: |
-          node -e "const required = ['DB_HOST','DB_PORT','DB_NAME','DB_USER','DB_PASSWORD','JWT_SECRET_CURRENT','JWT_REFRESH_SECRET_CURRENT']; const missing = required.filter((key) => !process.env[key]); if (missing.length) { console.error(`Missing required CI env vars: ${missing.join(', ')}`); process.exit(1); } console.log('CI environment validated');"
+          node -e "const required = ['TEST_DB_HOST','TEST_DB_PORT','TEST_DB_NAME','TEST_DB_USER','TEST_DB_PASSWORD','JWT_SECRET_CURRENT','JWT_REFRESH_SECRET_CURRENT']; const missing = required.filter((key) => !process.env[key]); if (missing.length) { console.error(`Missing required CI env vars: ${missing.join(', ')}`); process.exit(1); } console.log('CI environment validated');"
 
       - name: Install
         run: npm ci
 
       - name: Wait for PostGIS
         run: |
-          node -e "const { Client } = require('pg'); let retries = 30; const run = async () => { while (retries-- > 0) { const client = new Client({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT), database: process.env.DB_NAME, user: process.env.DB_USER, password: process.env.DB_PASSWORD }); try { await client.connect(); await client.query('select 1'); await client.end(); console.log('PostGIS is ready'); process.exit(0); } catch (err) { try { await client.end(); } catch {} if (retries <= 0) { console.error(err); process.exit(1); } await new Promise((r) => setTimeout(r, 2000)); } } }; run();"
+          node -e "const { Client } = require('pg'); let retries = 30; const run = async () => { while (retries-- > 0) { const client = new Client({ host: process.env.TEST_DB_HOST, port: Number(process.env.TEST_DB_PORT), database: process.env.TEST_DB_ADMIN_DB || 'postgres', user: process.env.TEST_DB_USER, password: process.env.TEST_DB_PASSWORD }); try { await client.connect(); await client.query('select 1'); await client.end(); console.log('PostGIS is ready'); process.exit(0); } catch (err) { try { await client.end(); } catch {} if (retries <= 0) { console.error(err); process.exit(1); } await new Promise((r) => setTimeout(r, 2000)); } } }; run();"
 
-      - name: Migrate
-        run: npm run migrate
+      - name: Prepare Test DB
+        run: npm run test:db:prepare
 
       - name: OpenAPI Contract Check
         run: npm run openapi:check

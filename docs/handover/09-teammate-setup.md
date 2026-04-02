@@ -60,6 +60,22 @@ Expected:
 - HTTP `200`
 - JSON body with `"success": true`
 
+5. Run backend tests against the isolated API test database:
+
+```powershell
+cd apps\api
+npm ci
+npm run test:ci
+```
+
+Notes:
+- Backend tests use `gis_app_test` on the same compose-backed PostGIS server by default.
+- The default local test target is:
+  - host `localhost`
+  - port `55433`
+  - database `gis_app_test`
+- Override with `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_DB_NAME`, `TEST_DB_USER`, `TEST_DB_PASSWORD`, and optional `TEST_DB_ADMIN_DB` if needed.
+
 ## Mobile Setup
 
 1. Install dependencies:
@@ -200,6 +216,7 @@ Re-test with a fresh account:
 ## Teammate Verification Checklist
 
 - backend health reachable on `http://localhost:3000/health`
+- `apps/api` `npm run test:ci` succeeds
 - emulator appears in `flutter devices`
 - `flutter run` succeeds with `10.0.2.2`
 - viewer flow works

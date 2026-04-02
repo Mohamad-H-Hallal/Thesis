@@ -29,7 +29,7 @@ describe('Security: registration, contributor approval, and protected super admi
       email,
       password: 'Passw0rd!123',
       full_name: 'Security Candidate',
-      phone: '+96170000000',
+      phone: '+9617012345',
       role: 'admin',
     });
 
@@ -140,7 +140,7 @@ describe('Security: registration, contributor approval, and protected super admi
         email: `forbidden-${Date.now()}@gov.lb`,
         password: 'Passw0rd!123',
         full_name: 'Forbidden Admin',
-        phone: '+96170000000',
+        phone: '+9617012345',
       });
 
     expect(forbiddenCreate.status).toBe(403);
@@ -152,7 +152,7 @@ describe('Security: registration, contributor approval, and protected super admi
         email: `allowed-${Date.now()}@gov.lb`,
         password: 'Passw0rd!123',
         full_name: 'Allowed Admin',
-        phone: '+96170000000',
+        phone: '+9617012345',
       });
 
     expect(allowedCreate.status).toBe(201);

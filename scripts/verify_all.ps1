@@ -30,6 +30,7 @@ function Invoke-Step {
 }
 
 Invoke-Step -Name 'Docker compose config validation' -Command "docker compose -f $ComposeFile config" -WorkDir $RepoRoot -LogFile (Join-Path $evidenceDir 'verify-docker-config.log')
+Invoke-Step -Name 'Dev PostGIS for backend tests' -Command 'docker compose up -d db' -WorkDir $RepoRoot -LogFile (Join-Path $evidenceDir 'verify-dev-db-up.log')
 
 $apiDir = Join-Path $RepoRoot 'apps/api'
 Invoke-Step -Name 'API npm ci' -Command 'npm ci' -WorkDir $apiDir -LogFile (Join-Path $evidenceDir 'verify-backend-npm-ci.log')
