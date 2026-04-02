@@ -105,6 +105,11 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
                         onSelected: (_) =>
                             setState(() => _filter = _ReviewFilter.rejected),
                       ),
+                      OutlinedButton.icon(
+                        onPressed: () => _openApprovedReviews(context, ref),
+                        icon: const Icon(Icons.verified_outlined, size: 18),
+                        label: const Text('Approved by project'),
+                      ),
                     ],
                   ),
                 ],
@@ -159,8 +164,7 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
       title: status == 'approved' ? 'Approval note' : 'Rejection note',
       hint: status == 'approved'
           ? 'Optional context for the contributor.'
-          : 'Required reason for rejection.',
-      requiredNote: status == 'rejected',
+          : 'Optional context for the contributor.',
     );
     if (note == null) {
       return;
@@ -169,7 +173,11 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
     try {
       await ref
           .read(reviewRepositoryProvider)
-          .reviewFeature(featureId: item.id, status: status, reviewNotes: note);
+          .reviewFeature(
+            featureId: item.id,
+            status: status,
+            reviewNotes: note.trim().isEmpty ? null : note.trim(),
+          );
       bumpWorkflowRefresh(ref);
       if (context.mounted) {
         AppSnackbar.showSuccess(
@@ -196,29 +204,36 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
     BuildContext context, {
     required String title,
     required String hint,
-    bool requiredNote = false,
   }) async {
     return showDialog<String>(
       context: context,
-      builder: (_) => _ReviewNoteDialog(
-        title: title,
-        hint: hint,
-        requiredNote: requiredNote,
+      builder: (_) => _ReviewNoteDialog(title: title, hint: hint),
+    );
+  }
+
+  void _openApprovedReviews(BuildContext context, WidgetRef ref) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => FractionallySizedBox(
+        heightFactor: 0.88,
+        child: _ApprovedReviewsSheet(
+          onOpenMap: (item) => context.push(
+            AppRoutes.mapForProject(item.projectId, featureId: item.id),
+          ),
+          onReject: (item) =>
+              _review(context, ref, item: item, status: 'rejected'),
+        ),
       ),
     );
   }
 }
 
 class _ReviewNoteDialog extends StatefulWidget {
-  const _ReviewNoteDialog({
-    required this.title,
-    required this.hint,
-    required this.requiredNote,
-  });
+  const _ReviewNoteDialog({required this.title, required this.hint});
 
   final String title;
   final String hint;
-  final bool requiredNote;
 
   @override
   State<_ReviewNoteDialog> createState() => _ReviewNoteDialogState();
@@ -226,7 +241,6 @@ class _ReviewNoteDialog extends StatefulWidget {
 
 class _ReviewNoteDialogState extends State<_ReviewNoteDialog> {
   final TextEditingController _controller = TextEditingController();
-  String? _errorText;
 
   @override
   void dispose() {
@@ -235,14 +249,7 @@ class _ReviewNoteDialogState extends State<_ReviewNoteDialog> {
   }
 
   void _submit() {
-    final value = _controller.text.trim();
-    if (widget.requiredNote && value.isEmpty) {
-      setState(() {
-        _errorText = 'A review note is required before you can continue.';
-      });
-      return;
-    }
-    Navigator.of(context).pop(value);
+    Navigator.of(context).pop(_controller.text.trim());
   }
 
   @override
@@ -254,25 +261,12 @@ class _ReviewNoteDialogState extends State<_ReviewNoteDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (_errorText != null) ...[
-              Text(
-                _errorText!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-                softWrap: true,
-              ),
-              const SizedBox(height: AppSpacing.sm),
-            ],
             AppTextField(
               label: 'Review note',
               controller: _controller,
               hint: widget.hint,
               minLines: 2,
               maxLines: 4,
-              onChanged: (_) {
-                if (_errorText != null) {
-                  setState(() => _errorText = null);
-                }
-              },
             ),
           ],
         ),
@@ -360,11 +354,12 @@ class _ReviewItemCard extends StatelessWidget {
                 icon: const Icon(Icons.check_circle_outline, size: 18),
                 label: Text(isRejected ? 'Re-approve' : 'Approve'),
               ),
-              FilledButton.tonalIcon(
-                onPressed: onReject,
-                icon: const Icon(Icons.cancel_outlined, size: 18),
-                label: Text(isRejected ? 'Keep rejected' : 'Reject'),
-              ),
+              if (!isRejected)
+                FilledButton.tonalIcon(
+                  onPressed: onReject,
+                  icon: const Icon(Icons.cancel_outlined, size: 18),
+                  label: const Text('Reject'),
+                ),
             ],
           ),
         ],
@@ -379,5 +374,181 @@ class _ReviewItemCard extends StatelessWidget {
     final hour = local.hour.toString().padLeft(2, '0');
     final minute = local.minute.toString().padLeft(2, '0');
     return '${local.year}-$month-$day $hour:$minute';
+  }
+}
+
+class _ApprovedReviewsSheet extends ConsumerStatefulWidget {
+  const _ApprovedReviewsSheet({
+    required this.onOpenMap,
+    required this.onReject,
+  });
+
+  final ValueChanged<ReviewQueueItem> onOpenMap;
+  final Future<void> Function(ReviewQueueItem item) onReject;
+
+  @override
+  ConsumerState<_ApprovedReviewsSheet> createState() =>
+      _ApprovedReviewsSheetState();
+}
+
+class _ApprovedReviewsSheetState extends ConsumerState<_ApprovedReviewsSheet> {
+  String _selectedProjectId = 'all';
+
+  @override
+  Widget build(BuildContext context) {
+    final approvedAsync = ref.watch(approvedReviewQueueProvider);
+
+    return approvedAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (error, _) => AppEmptyState(
+        icon: Icons.error_outline,
+        title: 'Approved reviews unavailable',
+        message: userFacingErrorMessage(
+          error,
+          fallback:
+              'Unable to load approved reviews right now. Please try again.',
+        ),
+        actionLabel: 'Retry',
+        onAction: () => ref.invalidate(approvedReviewQueueProvider),
+      ),
+      data: (items) {
+        final grouped = <String, List<ReviewQueueItem>>{};
+        final projectNames = <String, String>{};
+        for (final item in items) {
+          grouped
+              .putIfAbsent(item.projectId, () => <ReviewQueueItem>[])
+              .add(item);
+          projectNames[item.projectId] = item.projectName;
+        }
+
+        final projectIds = grouped.keys.toList(growable: false)
+          ..sort(
+            (a, b) => (projectNames[a] ?? '').compareTo(projectNames[b] ?? ''),
+          );
+        final effectiveProjectId =
+            _selectedProjectId == 'all' ||
+                projectIds.contains(_selectedProjectId)
+            ? _selectedProjectId
+            : (projectIds.isEmpty ? 'all' : projectIds.first);
+        final visibleItems = effectiveProjectId == 'all'
+            ? items
+            : grouped[effectiveProjectId] ?? const <ReviewQueueItem>[];
+
+        return ListView(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          children: [
+            Text(
+              'Approved Reviews',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              'Browse approved feature reviews by project and reopen them when needed.',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            if (items.isEmpty)
+              const AppEmptyState(
+                icon: Icons.verified_outlined,
+                title: 'No approved reviews',
+                message:
+                    'Approved feature reviews will appear here after moderation.',
+              )
+            else ...[
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    label: Text('All projects (${items.length})'),
+                    selected: effectiveProjectId == 'all',
+                    onSelected: (_) =>
+                        setState(() => _selectedProjectId = 'all'),
+                  ),
+                  ...projectIds.map(
+                    (projectId) => ChoiceChip(
+                      label: Text(
+                        '${projectNames[projectId] ?? 'Project'} (${grouped[projectId]?.length ?? 0})',
+                      ),
+                      selected: effectiveProjectId == projectId,
+                      onSelected: (_) =>
+                          setState(() => _selectedProjectId = projectId),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.md),
+              ...visibleItems.map(
+                (item) => Padding(
+                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                  child: AppCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    item.projectName,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.titleMedium,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '${item.geometryType} • ${item.collectedBy ?? 'Unknown collector'}',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                            const StatusChip(status: 'approved'),
+                          ],
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            Chip(
+                              label: Text('Feature ${item.id.substring(0, 8)}'),
+                            ),
+                            Chip(label: Text('${item.photoCount} photo(s)')),
+                          ],
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: () => widget.onOpenMap(item),
+                              icon: const Icon(Icons.map_outlined, size: 18),
+                              label: const Text('Open on map'),
+                            ),
+                            FilledButton.tonalIcon(
+                              onPressed: () => widget.onReject(item),
+                              icon: const Icon(Icons.cancel_outlined, size: 18),
+                              label: const Text('Reject'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        );
+      },
+    );
   }
 }

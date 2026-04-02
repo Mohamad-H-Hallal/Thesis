@@ -18,6 +18,7 @@ import '../../../../core/widgets/app_text_field.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/map_feature.dart';
+import '../widgets/feature_photo_gallery.dart';
 
 class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({
@@ -606,8 +607,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       title: status == 'approved' ? 'Approval note' : 'Rejection note',
       hint: status == 'approved'
           ? 'Optional context for the contributor.'
-          : 'Required reason for rejection.',
-      requiredNote: status == 'rejected',
+          : 'Optional context for the contributor.',
     );
     if (note == null) {
       return;
@@ -619,7 +619,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           .reviewFeature(
             featureId: feature.id,
             status: status,
-            reviewNotes: note,
+            reviewNotes: note.trim().isEmpty ? null : note.trim(),
           );
       bumpWorkflowRefresh(ref);
       if (mounted) {
@@ -698,15 +698,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Future<String?> _promptNote({
     required String title,
     required String hint,
-    required bool requiredNote,
   }) async {
     return showDialog<String>(
       context: context,
-      builder: (_) => _MapReviewNoteDialog(
-        title: title,
-        hint: hint,
-        requiredNote: requiredNote,
-      ),
+      builder: (_) => _MapReviewNoteDialog(title: title, hint: hint),
     );
   }
 
@@ -818,22 +813,17 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                             title: 'No photos attached',
                             message: 'Photos will appear here after upload.',
                           )
-                        : Column(
-                            children: feature.photos
+                        : FeaturePhotoGallery(
+                            items: feature.photos
                                 .map(
-                                  (photo) => AppCard(
-                                    child: ListTile(
-                                      contentPadding: EdgeInsets.zero,
-                                      leading: const CircleAvatar(
-                                        child: Icon(Icons.photo_outlined),
-                                      ),
-                                      title: Text(_photoLabel(photo.filePath)),
-                                      subtitle: Text(
-                                        photo.status?.isNotEmpty == true
-                                            ? 'Status: ${photo.status}'
-                                            : 'Captured photo',
-                                      ),
-                                    ),
+                                  (photo) => FeaturePhotoGalleryItem(
+                                    id: photo.id,
+                                    imagePath:
+                                        photo.thumbnailPath ?? photo.filePath,
+                                    label: _photoLabel(photo.filePath),
+                                    subtitle: photo.status?.isNotEmpty == true
+                                        ? 'Status: ${photo.status}'
+                                        : 'Captured photo',
                                   ),
                                 )
                                 .toList(growable: false),
@@ -877,32 +867,34 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         spacing: 8,
                         runSpacing: 8,
                         children: [
-                          FilledButton.icon(
-                            onPressed: () => _reviewFeature(
-                              feature: feature,
-                              status: 'approved',
-                              onSuccess: () => Navigator.of(sheetContext).pop(),
+                          if (feature.status == 'pending_review' ||
+                              feature.status == 'rejected')
+                            FilledButton.icon(
+                              onPressed: () => _reviewFeature(
+                                feature: feature,
+                                status: 'approved',
+                                onSuccess: () =>
+                                    Navigator.of(sheetContext).pop(),
+                              ),
+                              icon: const Icon(Icons.check_circle_outline),
+                              label: Text(
+                                feature.status == 'rejected'
+                                    ? 'Re-approve'
+                                    : 'Approve',
+                              ),
                             ),
-                            icon: const Icon(Icons.check_circle_outline),
-                            label: Text(
-                              feature.status == 'approved'
-                                  ? 'Re-approve'
-                                  : 'Approve',
+                          if (feature.status == 'pending_review' ||
+                              feature.status == 'approved')
+                            FilledButton.tonalIcon(
+                              onPressed: () => _reviewFeature(
+                                feature: feature,
+                                status: 'rejected',
+                                onSuccess: () =>
+                                    Navigator.of(sheetContext).pop(),
+                              ),
+                              icon: const Icon(Icons.cancel_outlined),
+                              label: const Text('Reject'),
                             ),
-                          ),
-                          FilledButton.tonalIcon(
-                            onPressed: () => _reviewFeature(
-                              feature: feature,
-                              status: 'rejected',
-                              onSuccess: () => Navigator.of(sheetContext).pop(),
-                            ),
-                            icon: const Icon(Icons.cancel_outlined),
-                            label: Text(
-                              feature.status == 'rejected'
-                                  ? 'Re-reject'
-                                  : 'Reject',
-                            ),
-                          ),
                         ],
                       ),
                     ),
@@ -1227,15 +1219,10 @@ class _SyncStatusLine extends StatelessWidget {
 }
 
 class _MapReviewNoteDialog extends StatefulWidget {
-  const _MapReviewNoteDialog({
-    required this.title,
-    required this.hint,
-    required this.requiredNote,
-  });
+  const _MapReviewNoteDialog({required this.title, required this.hint});
 
   final String title;
   final String hint;
-  final bool requiredNote;
 
   @override
   State<_MapReviewNoteDialog> createState() => _MapReviewNoteDialogState();
@@ -1243,7 +1230,6 @@ class _MapReviewNoteDialog extends StatefulWidget {
 
 class _MapReviewNoteDialogState extends State<_MapReviewNoteDialog> {
   final TextEditingController _controller = TextEditingController();
-  String? _errorText;
 
   @override
   void dispose() {
@@ -1252,14 +1238,7 @@ class _MapReviewNoteDialogState extends State<_MapReviewNoteDialog> {
   }
 
   void _submit() {
-    final value = _controller.text.trim();
-    if (widget.requiredNote && value.isEmpty) {
-      setState(() {
-        _errorText = 'A review note is required before you can continue.';
-      });
-      return;
-    }
-    Navigator.of(context).pop(value);
+    Navigator.of(context).pop(_controller.text.trim());
   }
 
   @override
@@ -1271,25 +1250,12 @@ class _MapReviewNoteDialogState extends State<_MapReviewNoteDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (_errorText != null) ...[
-              Text(
-                _errorText!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-                softWrap: true,
-              ),
-              const SizedBox(height: AppSpacing.sm),
-            ],
             AppTextField(
               label: 'Review note',
               controller: _controller,
               hint: widget.hint,
               minLines: 2,
               maxLines: 4,
-              onChanged: (_) {
-                if (_errorText != null) {
-                  setState(() => _errorText = null);
-                }
-              },
             ),
           ],
         ),

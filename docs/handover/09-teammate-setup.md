@@ -49,6 +49,7 @@ docker compose up -d db migrate api
 
 Use only the repo-root compose stack for normal runtime testing.
 Do not start `infra/db/docker-compose.yml` unless you explicitly need an isolated standalone PostGIS experiment.
+The compose API service uses a Docker-specific watcher (`npm run dev:docker`) so backend source changes restart reliably on Windows bind mounts.
 
 4. Verify API health:
 

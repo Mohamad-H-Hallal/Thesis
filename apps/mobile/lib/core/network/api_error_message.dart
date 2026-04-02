@@ -52,14 +52,40 @@ String userFacingDioMessage(
 String? _extractMessage(DioException error) {
   final data = error.response?.data;
   if (data is Map<String, dynamic>) {
+    final fieldMessage = _extractFirstFieldError(data['errors']);
     final value = data['message'] ?? data['error'];
     if (value is String && value.trim().isNotEmpty) {
-      return value.trim();
+      final trimmed = value.trim();
+      if (trimmed.toLowerCase() == 'validation failed' && fieldMessage != null) {
+        return fieldMessage;
+      }
+      return trimmed;
     }
+    return fieldMessage;
   }
   if (data is String && data.trim().isNotEmpty) {
     return data.trim();
   }
+  return null;
+}
+
+String? _extractFirstFieldError(Object? errors) {
+  if (errors is! List) {
+    return null;
+  }
+
+  for (final item in errors) {
+    if (item is String && item.trim().isNotEmpty) {
+      return item.trim();
+    }
+    if (item is Map<String, dynamic>) {
+      final nested = item['message'] ?? item['msg'];
+      if (nested is String && nested.trim().isNotEmpty) {
+        return nested.trim();
+      }
+    }
+  }
+
   return null;
 }
 

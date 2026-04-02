@@ -61,6 +61,39 @@ const loadAssignmentOrFail = async (assignmentId: string) => {
   return assignmentResult.rows[0];
 };
 
+const assertProjectAssignmentsMutable = (
+  project: { status?: string; name?: string },
+  action: 'assign' | 'review_request' | 'remove_assignment',
+) => {
+  if (project.status !== 'completed' && project.status !== 'archived') {
+    return;
+  }
+
+  const projectLabel = project.name ? `"${project.name}"` : 'This project';
+  const reason =
+    project.status === 'completed'
+      ? `${projectLabel} is completed, so assignments are view-only.`
+      : `${projectLabel} is archived, so assignments are view-only.`;
+
+  switch (action) {
+    case 'assign':
+      throw new AppError(
+        `${reason} Contributors cannot be assigned or reassigned in this status.`,
+        409,
+      );
+    case 'review_request':
+      throw new AppError(
+        `${reason} Project access requests cannot be changed in this status.`,
+        409,
+      );
+    case 'remove_assignment':
+      throw new AppError(
+        `${reason} Existing assignments cannot be removed in this status.`,
+        409,
+      );
+  }
+};
+
 const getMyAssignments = async (req, res) => {
   await synchronizeProjectStatuses();
   const { status } = req.query;
@@ -133,9 +166,7 @@ const createAssignment = async (req, res) => {
     getContributorOrFail(user_id),
   ]);
 
-  if (project.status === 'archived') {
-    throw new AppError('Cannot assign contributors to archived projects', 409);
-  }
+  assertProjectAssignmentsMutable(project, 'assign');
 
   const existingAssignment = await query(
     `SELECT id, status
@@ -400,6 +431,10 @@ const updateAssignmentStatus = async (req, res) => {
   }
 
   const existingAssignment = await loadAssignmentOrFail(assignmentId);
+  assertProjectAssignmentsMutable(
+    { status: existingAssignment.project_status, name: existingAssignment.project_name },
+    'review_request',
+  );
 
   if (existingAssignment.status === status) {
     return res.json({
@@ -471,6 +506,10 @@ const removeAssignment = async (req, res) => {
   const { assignmentId } = req.params;
 
   const assignment = await loadAssignmentOrFail(assignmentId);
+  assertProjectAssignmentsMutable(
+    { status: assignment.project_status, name: assignment.project_name },
+    'remove_assignment',
+  );
 
   await transaction(async (client) => {
     await client.query('DELETE FROM project_assignment WHERE id = $1', [assignmentId]);

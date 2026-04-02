@@ -88,6 +88,7 @@ AuthFailure mapAuthDioException(
         statusCode: statusCode,
         code: 'duplicate_email',
       );
+    case 400:
     case 422:
       return AuthFailure(
         responseMessage ??
@@ -119,29 +120,41 @@ AuthFailure mapAuthDioException(
 
 String? _extractMessage(Object? data) {
   if (data is Map<String, dynamic>) {
+    final fieldMessage = _extractFirstFieldError(data['errors']);
     final message = data['message'] ?? data['error'];
     if (message is String && message.trim().isNotEmpty) {
-      return message.trim();
+      final trimmed = message.trim();
+      if (trimmed.toLowerCase() == 'validation failed' && fieldMessage != null) {
+        return fieldMessage;
+      }
+      return trimmed;
     }
 
-    final errors = data['errors'];
-    if (errors is List) {
-      for (final item in errors) {
-        if (item is String && item.trim().isNotEmpty) {
-          return item.trim();
-        }
-        if (item is Map<String, dynamic>) {
-          final nested = item['message'] ?? item['msg'];
-          if (nested is String && nested.trim().isNotEmpty) {
-            return nested.trim();
-          }
-        }
-      }
-    }
+    return fieldMessage;
   }
 
   if (data is String && data.trim().isNotEmpty) {
     return data.trim();
+  }
+
+  return null;
+}
+
+String? _extractFirstFieldError(Object? errors) {
+  if (errors is! List) {
+    return null;
+  }
+
+  for (final item in errors) {
+    if (item is String && item.trim().isNotEmpty) {
+      return item.trim();
+    }
+    if (item is Map<String, dynamic>) {
+      final nested = item['message'] ?? item['msg'];
+      if (nested is String && nested.trim().isNotEmpty) {
+        return nested.trim();
+      }
+    }
   }
 
   return null;

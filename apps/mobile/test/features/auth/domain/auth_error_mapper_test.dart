@@ -110,6 +110,25 @@ void main() {
     expect(failure.message, 'Password policy violation');
   });
 
+  test('maps 400 validation failure using the first field error message', () {
+    final failure = mapAuthDioException(
+      dioError(
+        type: DioExceptionType.badResponse,
+        statusCode: 400,
+        data: <String, dynamic>{
+          'message': 'Validation failed',
+          'errors': <Map<String, dynamic>>[
+            <String, dynamic>{'msg': 'Enter a valid phone number.', 'path': 'phone'},
+          ],
+        },
+      ),
+      fallbackMessage: 'fallback',
+    );
+
+    expect(failure.message, 'Enter a valid phone number.');
+    expect(failure.code, 'validation_error');
+  });
+
   test('maps timeouts to connectivity guidance', () {
     final failure = mapAuthDioException(
       dioError(type: DioExceptionType.connectionTimeout),

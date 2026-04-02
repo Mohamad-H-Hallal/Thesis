@@ -3,7 +3,8 @@ import type { NextFunction, Request, Response } from 'express';
 
 const strongPasswordPattern =
   /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
-const lebanesePhonePattern = /^(?:0\d{7}|(?:\+?961)\d{7})$/;
+const phonePattern = /^\d{8}$/;
+const digitsOnly = (value: unknown): string => String(value ?? '').replace(/\D/g, '');
 
 // Validation error handler
 const validate = (req: Request, res: Response, next: NextFunction): Response | void => {
@@ -40,11 +41,12 @@ const userValidation = {
       .notEmpty()
       .withMessage('Full name is required'),
     body('phone')
+      .customSanitizer(digitsOnly)
       .trim()
       .notEmpty()
-      .withMessage('Phone is required')
-      .matches(lebanesePhonePattern)
-      .withMessage('Enter a valid Lebanese phone number'),
+      .withMessage('Enter a valid phone number.')
+      .matches(phonePattern)
+      .withMessage('Enter a valid phone number.'),
     body('role')
       .isIn(['contributor', 'viewer'])
       .withMessage('Role must be contributor or viewer'),
@@ -65,8 +67,9 @@ const userValidation = {
     body('full_name').optional().trim().notEmpty(),
     body('phone')
       .optional()
-      .matches(lebanesePhonePattern)
-      .withMessage('Enter a valid Lebanese phone number'),
+      .customSanitizer(digitsOnly)
+      .matches(phonePattern)
+      .withMessage('Enter a valid phone number.'),
     body('email').optional().isEmail().normalizeEmail(),
   ] as ValidationChain[],
   changePassword: [
@@ -108,15 +111,17 @@ const userValidation = {
       .withMessage('Full name is required'),
     body('phone')
       .optional()
-      .matches(lebanesePhonePattern)
-      .withMessage('Enter a valid Lebanese phone number'),
+      .customSanitizer(digitsOnly)
+      .matches(phonePattern)
+      .withMessage('Enter a valid phone number.'),
   ] as ValidationChain[],
   adminUpdate: [
     body('full_name').optional().trim().notEmpty().withMessage('Full name cannot be empty'),
     body('phone')
       .optional()
-      .matches(lebanesePhonePattern)
-      .withMessage('Enter a valid Lebanese phone number'),
+      .customSanitizer(digitsOnly)
+      .matches(phonePattern)
+      .withMessage('Enter a valid phone number.'),
     body('role')
       .optional()
       .isIn(['admin', 'contributor', 'viewer'])
@@ -291,6 +296,39 @@ const categoryValidation = {
   ] as ValidationChain[],
 };
 
+const settingsValidation = {
+  updateSupport: [
+    body('support_email')
+      .optional({ nullable: true })
+      .customSanitizer((value) => {
+        if (value === null || value === undefined) {
+          return value;
+        }
+        const normalized = String(value).trim();
+        return normalized.length === 0 ? null : normalized;
+      })
+      .isEmail()
+      .withMessage('Valid email is required'),
+    body('support_phone')
+      .optional({ nullable: true })
+      .customSanitizer((value) => {
+        if (value === null || value === undefined) {
+          return value;
+        }
+        const normalized = digitsOnly(value);
+        return normalized.length === 0 ? null : normalized;
+      })
+      .matches(phonePattern)
+      .withMessage('Enter a valid phone number.'),
+    body('office_hours')
+      .optional({ nullable: true })
+      .trim(),
+    body('help_text')
+      .optional({ nullable: true })
+      .trim(),
+  ] as ValidationChain[],
+};
+
 // Export validation rules
 const exportValidation = {
   create: [
@@ -374,6 +412,7 @@ export {
   featureValidation,
   assignmentValidation,
   categoryValidation,
+  settingsValidation,
   exportValidation,
   paginationValidation,
   bboxValidation,

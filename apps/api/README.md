@@ -49,6 +49,11 @@ npm run reset:runtime
 npm run dev
 ```
 
+Docker dev runtime note:
+- The repo-root compose dev stack runs the API with `npm run dev:docker`.
+- That command uses `nodemon --legacy-watch` so backend source changes reliably reload on Windows bind-mounted Docker workspaces.
+- If you are developing inside Docker, prefer the compose API service instead of starting a second host-side `npm run dev` process.
+
 ## API Test Runtime
 - Start the shared PostGIS service for local backend tests:
 ```bash

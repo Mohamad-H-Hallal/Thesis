@@ -25,6 +25,33 @@ void main() {
       );
     });
 
+    test('extracts field-level validation messages when available', () {
+      final error = DioException(
+        requestOptions: RequestOptions(path: '/auth/register'),
+        response: Response<dynamic>(
+          requestOptions: RequestOptions(path: '/auth/register'),
+          statusCode: 400,
+          data: <String, dynamic>{
+            'message': 'Validation failed',
+            'errors': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'msg': 'Enter a valid phone number.',
+                'path': 'phone',
+              },
+            ],
+          },
+        ),
+      );
+
+      expect(
+        userFacingErrorMessage(
+          error,
+          fallback: 'Unable to create this account right now.',
+        ),
+        'Enter a valid phone number.',
+      );
+    });
+
     test('maps session failures to a sign-in prompt', () {
       final error = DioException(
         requestOptions: RequestOptions(path: '/projects'),

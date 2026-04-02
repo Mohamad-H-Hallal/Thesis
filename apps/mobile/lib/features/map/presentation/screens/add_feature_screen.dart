@@ -18,6 +18,7 @@ import '../../../../core/widgets/section_header.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/field_collection_validation.dart';
 import '../../domain/map_feature.dart';
+import '../widgets/feature_photo_gallery.dart';
 
 class AddFeatureScreen extends ConsumerStatefulWidget {
   const AddFeatureScreen({
@@ -1002,6 +1003,36 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
           ),
         );
       case 2:
+        final uploadedPhotoItems = _uploadedPhotos
+            .map(
+              (photo) => FeaturePhotoGalleryItem(
+                id: photo.id,
+                imagePath: photo.thumbnailPath ?? photo.filePath,
+                label: _photoLabel(photo.filePath),
+                subtitle: photo.status?.trim().isNotEmpty == true
+                    ? 'Uploaded • ${photo.status}'
+                    : 'Uploaded to this draft',
+              ),
+            )
+            .toList(growable: false);
+        final pendingPhotoItems = _pendingPhotos
+            .map(
+              (photo) => FeaturePhotoGalleryItem(
+                id: photo.id,
+                imagePath: photo.filePath,
+                label: photo.fileName,
+                subtitle: '${_formatBytes(photo.sizeBytes)} • Pending upload',
+                isLocalFile: true,
+                onRemove: _isSaving
+                    ? null
+                    : () {
+                        setState(() {
+                          _pendingPhotos.remove(photo);
+                        });
+                      },
+              ),
+            )
+            .toList(growable: false);
         return AppCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1030,29 +1061,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                     style: Theme.of(context).textTheme.titleSmall,
                   ),
                   const SizedBox(height: AppSpacing.xs),
-                  ..._uploadedPhotos.map(
-                    (photo) => Padding(
-                      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-                      child: AppCard(
-                        child: ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: const CircleAvatar(
-                            child: Icon(Icons.photo_outlined),
-                          ),
-                          title: Text(
-                            _photoLabel(photo.filePath),
-                            softWrap: true,
-                          ),
-                          subtitle: Text(
-                            photo.status?.trim().isNotEmpty == true
-                                ? 'Uploaded • ${photo.status}'
-                                : 'Uploaded to this draft',
-                            softWrap: true,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
+                  FeaturePhotoGallery(items: uploadedPhotoItems),
                 ],
                 if (_pendingPhotos.isNotEmpty) ...[
                   if (_uploadedPhotos.isNotEmpty)
@@ -1062,45 +1071,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                     style: Theme.of(context).textTheme.titleSmall,
                   ),
                   const SizedBox(height: AppSpacing.xs),
-                  ..._pendingPhotos.map(
-                    (photo) => Padding(
-                      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-                      child: AppCard(
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const CircleAvatar(
-                              child: Icon(Icons.photo_camera_back_outlined),
-                            ),
-                            const SizedBox(width: AppSpacing.sm),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(photo.fileName, softWrap: true),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    '${_formatBytes(photo.sizeBytes)} • Pending upload',
-                                    softWrap: true,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline),
-                              onPressed: _isSaving
-                                  ? null
-                                  : () {
-                                      setState(() {
-                                        _pendingPhotos.remove(photo);
-                                      });
-                                    },
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
+                  FeaturePhotoGallery(items: pendingPhotoItems),
                 ],
               ],
             ],

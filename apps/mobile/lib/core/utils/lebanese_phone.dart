@@ -2,19 +2,14 @@ class LebanesePhone {
   const LebanesePhone._();
 
   static final RegExp _digitsOnlyPattern = RegExp(r'\D');
-  static final RegExp _localPattern = RegExp(r'^0\d{7}$');
-  static final RegExp _internationalPattern = RegExp(r'^961\d{7}$');
+  static final RegExp _localPattern = RegExp(r'^\d{8}$');
 
   static String digitsOnly(String value) {
     return value.replaceAll(_digitsOnlyPattern, '');
   }
 
   static String normalize(String value) {
-    final digits = digitsOnly(value);
-    if (_internationalPattern.hasMatch(digits)) {
-      return '0${digits.substring(3)}';
-    }
-    return digits;
+    return digitsOnly(value);
   }
 
   static bool isValid(String value) {

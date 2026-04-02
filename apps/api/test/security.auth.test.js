@@ -8,7 +8,11 @@ const {
   shutdown,
   registerUser,
   createAdminUser,
+  loginUser,
   approveContributorRequest,
+  createCategory,
+  createProject,
+  createAssignment,
 } = require('./helpers/api-test-helpers');
 
 describe('Security: registration, contributor approval, and protected super admin controls', () => {
@@ -29,7 +33,7 @@ describe('Security: registration, contributor approval, and protected super admi
       email,
       password: 'Passw0rd!123',
       full_name: 'Security Candidate',
-      phone: '+9617012345',
+      phone: '70123456',
       role: 'admin',
     });
 
@@ -140,7 +144,7 @@ describe('Security: registration, contributor approval, and protected super admi
         email: `forbidden-${Date.now()}@gov.lb`,
         password: 'Passw0rd!123',
         full_name: 'Forbidden Admin',
-        phone: '+9617012345',
+        phone: '70123456',
       });
 
     expect(forbiddenCreate.status).toBe(403);
@@ -152,7 +156,7 @@ describe('Security: registration, contributor approval, and protected super admi
         email: `allowed-${Date.now()}@gov.lb`,
         password: 'Passw0rd!123',
         full_name: 'Allowed Admin',
-        phone: '+9617012345',
+        phone: '70123456',
       });
 
     expect(allowedCreate.status).toBe(201);
@@ -209,6 +213,108 @@ describe('Security: registration, contributor approval, and protected super admi
       .set(authHeader(superAdmin.token));
 
     expect(denyFixedRevert.status).toBe(400);
+  });
+
+  test('promoting a contributor to admin removes assignments but keeps historical features intact', async () => {
+    const superAdmin = await createAdminUser({
+      email: 'superadmin@gov.lb',
+      fullName: 'Protected Super Admin',
+    });
+    const contributor = await registerUser({
+      role: 'contributor',
+      fullName: 'Field Contributor',
+      emailPrefix: 'field-contributor',
+    });
+
+    await approveContributorRequest({
+      token: superAdmin.token,
+      userId: contributor.user.id,
+    });
+
+    const category = await createCategory({
+      token: superAdmin.token,
+      name: `Integrity Category ${Date.now()}`,
+    });
+    const project = await createProject({
+      token: superAdmin.token,
+      categoryId: category.id,
+      name: `Integrity Project ${Date.now()}`,
+    });
+
+    const activateProject = await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}`)
+      .set(authHeader(superAdmin.token))
+      .send({ status: 'active' });
+    expect(activateProject.status).toBe(200);
+
+    await createAssignment({
+      token: superAdmin.token,
+      projectId: project.id,
+      userId: contributor.user.id,
+    });
+
+    const contributorLogin = await loginUser({
+      email: contributor.email,
+      password: contributor.password,
+    });
+
+    const createFeature = await request(app)
+      .post(`${API_PREFIX}/features`)
+      .set(authHeader(contributorLogin.token))
+      .send({
+        project_id: project.id,
+        geom: {
+          type: 'Point',
+          coordinates: [35.5, 33.9],
+        },
+        attributes: {
+          tree_type: 'oak',
+          condition: 'healthy',
+        },
+      });
+    expect(createFeature.status).toBe(201);
+
+    const featureId = createFeature.body.data.id;
+
+    const submitFeature = await request(app)
+      .post(`${API_PREFIX}/features/${featureId}/submit`)
+      .set(authHeader(contributorLogin.token));
+    expect(submitFeature.status).toBe(200);
+
+    const approveFeature = await request(app)
+      .post(`${API_PREFIX}/features/${featureId}/review`)
+      .set(authHeader(superAdmin.token))
+      .send({ status: 'approved' });
+    expect(approveFeature.status).toBe(200);
+
+    const promote = await request(app)
+      .post(`${API_PREFIX}/users/${contributor.user.id}/toggle-admin-role`)
+      .set(authHeader(superAdmin.token))
+      .send({ force_unassign: true });
+
+    expect(promote.status).toBe(200);
+    expect(promote.body.data.role).toBe('admin');
+    expect(promote.body.data.unassigned_assignment_count).toBe(1);
+
+    const assignmentsAfter = await pool.query(
+      `SELECT COUNT(*)::int AS count
+       FROM project_assignment
+       WHERE user_id = $1`,
+      [contributor.user.id],
+    );
+    expect(assignmentsAfter.rows[0].count).toBe(0);
+
+    const featureAfter = await pool.query(
+      `SELECT id, project_id, collected_by_user_id, status
+       FROM spatial_feature
+       WHERE id = $1`,
+      [featureId],
+    );
+
+    expect(featureAfter.rows).toHaveLength(1);
+    expect(featureAfter.rows[0].project_id).toBe(project.id);
+    expect(featureAfter.rows[0].collected_by_user_id).toBe(contributor.user.id);
+    expect(featureAfter.rows[0].status).toBe('approved');
   });
 
   test('blocked account cannot log in until unblocked', async () => {

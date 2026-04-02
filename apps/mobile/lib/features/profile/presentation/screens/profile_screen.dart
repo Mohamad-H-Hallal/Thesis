@@ -656,6 +656,7 @@ class _SupportSettingsDialogState
                 const SizedBox(height: AppSpacing.sm),
                 AppTextField(
                   label: 'Support phone',
+                  hint: '70 123 456',
                   controller: _phoneController,
                   keyboardType: TextInputType.phone,
                   inputFormatters: [_phoneFormatter],

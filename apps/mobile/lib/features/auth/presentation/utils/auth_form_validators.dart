@@ -100,7 +100,7 @@ class AuthFormValidators {
       return null;
     }
     if (!LebanesePhone.isValid(normalized)) {
-      return 'Enter a valid Lebanese phone number';
+      return 'Enter a valid phone number.';
     }
     return null;
   }
@@ -108,10 +108,10 @@ class AuthFormValidators {
   static String? phoneRequired(String? value) {
     final normalized = LebanesePhone.normalize(value ?? '');
     if (normalized.isEmpty) {
-      return 'Phone is required';
+      return 'Enter a valid phone number.';
     }
     if (!LebanesePhone.isValid(normalized)) {
-      return 'Enter a valid Lebanese phone number';
+      return 'Enter a valid phone number.';
     }
     return null;
   }

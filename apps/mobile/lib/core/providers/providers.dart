@@ -511,6 +511,16 @@ final rejectedReviewQueueProvider = FutureProvider<List<ReviewQueueItem>>((
       .fetchReviewItems(status: 'rejected');
 });
 
+final approvedReviewQueueProvider = FutureProvider<List<ReviewQueueItem>>((
+  ref,
+) async {
+  ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+  ref.watch(workflowRefreshTickProvider);
+  return ref
+      .read(reviewRepositoryProvider)
+      .fetchReviewItems(status: 'approved');
+});
+
 ProjectViewScope _defaultOperationalProjectScope(UserRole role) {
   switch (role) {
     case UserRole.admin:

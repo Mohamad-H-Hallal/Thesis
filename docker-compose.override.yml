@@ -30,7 +30,7 @@ services:
       MIGRATIONS_DIR: /workspace/infra/migrations
       MAIL_TRANSPORT: ${MAIL_TRANSPORT:-mailpit}
       PASSWORD_RESET_TOKEN_EXPIRY_MINUTES: ${PASSWORD_RESET_TOKEN_EXPIRY_MINUTES:-15}
-    command: ["npm", "run", "dev"]
+    command: ["npm", "run", "dev:docker"]
     env_file:
       - .env
     depends_on:

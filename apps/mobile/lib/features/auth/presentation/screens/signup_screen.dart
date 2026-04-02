@@ -48,6 +48,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
   bool _obscureConfirmPassword = true;
   String? _formLevelError;
   String? _emailFieldError;
+  String? _phoneFieldError;
   late final ProviderSubscription<AuthState> _authSubscription;
 
   @override
@@ -69,6 +70,9 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
       setState(() {
         _formLevelError = nextError;
         _emailFieldError = nextError == 'This email is already registered.'
+            ? nextError
+            : null;
+        _phoneFieldError = nextError == 'Enter a valid phone number.'
             ? nextError
             : null;
       });
@@ -109,6 +113,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
     setState(() {
       _formLevelError = null;
       _emailFieldError = null;
+      _phoneFieldError = null;
     });
 
     if (!_formKey.currentState!.validate()) {
@@ -152,6 +157,9 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
     setState(() {
       _formLevelError = failureMessage;
       _emailFieldError = failureMessage == 'This email is already registered.'
+          ? failureMessage
+          : null;
+      _phoneFieldError = failureMessage == 'Enter a valid phone number.'
           ? failureMessage
           : null;
     });
@@ -270,7 +278,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                             const SizedBox(height: AppSpacing.sm),
                             AppTextField(
                               label: 'Phone number',
-                              hint: '03xxxxxxx',
+                              hint: '70 123 456',
                               controller: _phoneController,
                               keyboardType: TextInputType.phone,
                               textInputAction: TextInputAction.next,
@@ -284,7 +292,19 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                               autofillHints: const <String>[
                                 AutofillHints.telephoneNumber,
                               ],
-                              validator: AuthFormValidators.phoneRequired,
+                              onChanged: (_) {
+                                if (_formLevelError == null &&
+                                    _phoneFieldError == null) {
+                                  return;
+                                }
+                                setState(() {
+                                  _formLevelError = null;
+                                  _phoneFieldError = null;
+                                });
+                              },
+                              validator: (value) =>
+                                  _phoneFieldError ??
+                                  AuthFormValidators.phoneRequired(value),
                             ),
                             const SizedBox(height: AppSpacing.sm),
                             AppTextField(

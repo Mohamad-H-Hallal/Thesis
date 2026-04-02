@@ -84,7 +84,7 @@ const registerUser = async ({
   role = 'contributor',
   fullName = 'Phase10 User',
   password = 'Passw0rd!123',
-  phone = '+9617012345',
+  phone = '70123456',
   emailPrefix = 'phase10-user',
 } = {}) => {
   const email = uniqueEmail(emailPrefix);
@@ -115,7 +115,7 @@ const registerUser = async ({
 const createAdminUser = async ({
   fullName = 'Phase10 Admin',
   password = 'Passw0rd!123',
-  phone = '+9617012345',
+  phone = '70123456',
   emailPrefix = 'phase10-admin',
   email,
 } = {}) => {

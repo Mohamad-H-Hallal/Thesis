@@ -279,6 +279,11 @@ class _ProjectAssignmentsScreenState
               onAction: () => ref.invalidate(managedUsersProvider),
             ),
             data: (users) {
+              final isViewOnlyProject =
+                  project.status == 'completed' || project.status == 'archived';
+              final effectiveSection = isViewOnlyProject
+                  ? _AssignmentSection.assigned
+                  : _selectedSection;
               final approvedAssignments = assignments
                   .where((assignment) => assignment.status == 'approved')
                   .where(
@@ -328,8 +333,9 @@ class _ProjectAssignmentsScreenState
                 children: [
                   SectionHeader(
                     title: 'Project Assignments',
-                    subtitle:
-                        'Manage contributor assignments and project-specific access requests for ${project.name}.',
+                    subtitle: isViewOnlyProject
+                        ? 'Assignments are view-only for ${project.status} projects.'
+                        : 'Manage contributor assignments and project-specific access requests for ${project.name}.',
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   AppCard(
@@ -356,39 +362,8 @@ class _ProjectAssignmentsScreenState
                             StatusChip(status: project.status),
                           ],
                         ),
-                        const SizedBox(height: AppSpacing.sm),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            Chip(label: Text(project.category)),
-                            Chip(
-                              label: Text(
-                                '${approvedAssignments.length} assigned',
-                              ),
-                            ),
-                            Chip(
-                              label: Text(
-                                '${pendingRequests.length} pending requests',
-                              ),
-                            ),
-                            if (rejectedRequests.isNotEmpty)
-                              Chip(
-                                label: Text(
-                                  '${rejectedRequests.length} rejected requests',
-                                ),
-                              ),
-                          ],
-                        ),
-                        if (project.description.isNotEmpty) ...[
-                          const SizedBox(height: AppSpacing.xs),
-                          Text(
-                            project.description,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            softWrap: true,
-                          ),
-                        ],
+                        const SizedBox(height: AppSpacing.xs),
+                        Chip(label: Text(project.category)),
                       ],
                     ),
                   ),
@@ -399,51 +374,60 @@ class _ProjectAssignmentsScreenState
                       children: [
                         SearchBar(
                           controller: _searchController,
-                          hintText: 'Search contributors and project requests',
+                          hintText: isViewOnlyProject
+                              ? 'Search assigned contributors'
+                              : 'Search contributors and project requests',
                           leading: const Icon(Icons.search),
                           onChanged: (_) => setState(() {}),
                         ),
                         const SizedBox(height: AppSpacing.sm),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: _AssignmentSection.values
-                              .map((section) {
-                                final (label, count) = switch (section) {
-                                  _AssignmentSection.assigned => (
-                                    'Assigned',
-                                    approvedAssignments.length,
-                                  ),
-                                  _AssignmentSection.available => (
-                                    'Available',
-                                    availableContributors.length,
-                                  ),
-                                  _AssignmentSection.requests => (
-                                    'Requests',
-                                    pendingRequests.length +
-                                        rejectedRequests.length,
-                                  ),
-                                };
-                                return ChoiceChip(
-                                  label: Text('$label ($count)'),
-                                  selected: _selectedSection == section,
-                                  onSelected: (_) => setState(
-                                    () => _selectedSection = section,
-                                  ),
-                                );
-                              })
-                              .toList(growable: false),
-                        ),
+                        if (isViewOnlyProject)
+                          Text(
+                            'Completed and archived projects keep assignment history visible, but assignment changes are disabled.',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          )
+                        else
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: _AssignmentSection.values
+                                .map((section) {
+                                  final (label, count) = switch (section) {
+                                    _AssignmentSection.assigned => (
+                                      'Assigned',
+                                      approvedAssignments.length,
+                                    ),
+                                    _AssignmentSection.available => (
+                                      'Available',
+                                      availableContributors.length,
+                                    ),
+                                    _AssignmentSection.requests => (
+                                      'Requests',
+                                      pendingRequests.length +
+                                          rejectedRequests.length,
+                                    ),
+                                  };
+                                  return ChoiceChip(
+                                    label: Text('$label ($count)'),
+                                    selected: effectiveSection == section,
+                                    onSelected: (_) => setState(
+                                      () => _selectedSection = section,
+                                    ),
+                                  );
+                                })
+                                .toList(growable: false),
+                          ),
                       ],
                     ),
                   ),
                   const SizedBox(height: AppSpacing.md),
-                  switch (_selectedSection) {
+                  switch (effectiveSection) {
                     _AssignmentSection.assigned => _AssignmentListSection(
                       title: 'Assigned Contributors',
                       emptyTitle: 'No contributors assigned',
-                      emptyMessage:
-                          'Approved contributors assigned to this project appear here and can be unassigned at any time.',
+                      emptyMessage: isViewOnlyProject
+                          ? 'Approved contributors assigned to this project remain visible here for reference.'
+                          : 'Approved contributors assigned to this project appear here and can be unassigned at any time.',
                       children: approvedAssignments
                           .map(
                             (assignment) => Padding(
@@ -453,6 +437,7 @@ class _ProjectAssignmentsScreenState
                               child: _AssignedContributorCard(
                                 assignment: assignment,
                                 isSaving: _isSaving,
+                                isViewOnly: isViewOnlyProject,
                                 onUnassign: () => _removeAssignment(assignment),
                               ),
                             ),
@@ -588,11 +573,13 @@ class _AssignedContributorCard extends StatelessWidget {
   const _AssignedContributorCard({
     required this.assignment,
     required this.isSaving,
+    required this.isViewOnly,
     required this.onUnassign,
   });
 
   final ManagedAssignmentSummary assignment;
   final bool isSaving;
+  final bool isViewOnly;
   final VoidCallback onUnassign;
 
   @override
@@ -616,15 +603,17 @@ class _AssignedContributorCard extends StatelessWidget {
               Chip(label: Text('Assigned')),
             ],
           ),
-          const SizedBox(height: AppSpacing.sm),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton.icon(
-              onPressed: isSaving ? null : onUnassign,
-              icon: const Icon(Icons.person_remove_outlined),
-              label: const Text('Unassign'),
+          if (!isViewOnly) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: isSaving ? null : onUnassign,
+                icon: const Icon(Icons.person_remove_outlined),
+                label: const Text('Unassign'),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );

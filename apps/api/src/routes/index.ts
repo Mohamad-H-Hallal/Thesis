@@ -11,6 +11,7 @@ const { authenticate, authorize, checkProjectAdmin } = require('../middleware/au
 const {
   assignmentValidation,
   categoryValidation,
+  settingsValidation,
   userValidation,
   validate,
   paginationValidation,
@@ -290,6 +291,8 @@ settingsRouter.get('/support', asyncHandler(settingsController.getSupport));
 settingsRouter.put(
   '/support',
   authorize('admin'),
+  settingsValidation.updateSupport,
+  validate,
   asyncHandler(settingsController.updateSupport),
 );
 

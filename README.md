@@ -69,6 +69,8 @@ Notes:
   - Mail UI: `http://localhost:8025`
 - Optional Adminer in dev root compose: `docker compose --profile devtools up -d adminer`.
 - Dev compose now injects `MIGRATIONS_DIR=/workspace/infra/migrations` through `docker-compose.override.yml` so the bind-mounted repo and migration runner stay aligned.
+- Dev compose now runs the API with `npm run dev:docker`, which uses `nodemon --legacy-watch` for reliable source reloads on Windows bind mounts.
+- Backend validation and route changes should now trigger an in-container restart during normal Docker development without requiring a manual container recreate.
 - The old standalone `infra/db` compose stack is not part of the app runtime and should remain stopped unless you intentionally need an isolated DB experiment.
 
 ## API Local (without Docker)

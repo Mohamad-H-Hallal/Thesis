@@ -110,7 +110,7 @@ class _AdminCreationScreenState extends ConsumerState<AdminCreationScreen> {
                       const SizedBox(height: AppSpacing.sm),
                       AppTextField(
                         label: 'Phone number',
-                        hint: '03xxxxxxx',
+                        hint: '70 123 456',
                         controller: _phoneController,
                         keyboardType: TextInputType.phone,
                         inputFormatters: [_phoneFormatter],
