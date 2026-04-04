@@ -13,6 +13,7 @@ import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../auth/domain/auth_models.dart';
+import '../../../map/presentation/widgets/project_quick_map_card.dart';
 import '../../domain/project.dart';
 import '../../../review/presentation/screens/review_queue_screen.dart';
 
@@ -288,6 +289,15 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
             const SectionHeader(
               title: 'Project Details',
               subtitle: 'Operational summary and field actions',
+            ),
+            const SizedBox(height: AppSpacing.md),
+            AnimatedReveal(
+              delay: const Duration(milliseconds: 60),
+              child: ProjectQuickMapCard(
+                projectId: project.id,
+                onOpenFullscreen: () =>
+                    context.push(AppRoutes.mapForProject(project.id)),
+              ),
             ),
             const SizedBox(height: AppSpacing.md),
             AnimatedReveal(

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:uuid/uuid.dart';
 
 import '../../features/projects/domain/project.dart';
@@ -11,6 +13,7 @@ class MemoryLocalStore implements LocalStore {
   final Map<String, ProjectSummary> _projects = {};
   final Map<String, LocalDraftFeature> _drafts = {};
   final Map<String, SyncQueueItem> _syncQueue = {};
+  final Map<String, OfflineMapPackage> _offlinePackages = {};
 
   @override
   Future<void> initialize() async {
@@ -23,6 +26,7 @@ class MemoryLocalStore implements LocalStore {
     _projects.clear();
     _drafts.clear();
     _syncQueue.clear();
+    _offlinePackages.clear();
   }
 
   void _checkInit() {
@@ -96,10 +100,11 @@ class MemoryLocalStore implements LocalStore {
         'draft_id': draft.id,
         'project_id': draft.projectId,
         'geometry_type': draft.geometryType,
-        'attributes': {'raw': draft.attributesJson},
-        'photo_paths': draft.photos
-            .map((photo) => photo.filePath)
-            .toList(growable: false),
+        'geometry': jsonDecode(draft.geometryJson) as Map<String, dynamic>,
+        'attributes': jsonDecode(draft.attributesJson) as Map<String, dynamic>,
+        'photo_paths': draft.remoteVersion == null
+            ? draft.photos.map((photo) => photo.filePath).toList(growable: false)
+            : const <String>[],
         'status': draft.status,
         'local_version': draft.localVersion,
       },
@@ -122,6 +127,12 @@ class MemoryLocalStore implements LocalStore {
   }
 
   @override
+  Future<LocalDraftFeature?> getDraftById(String draftId) async {
+    _checkInit();
+    return _drafts[draftId];
+  }
+
+  @override
   Future<void> updateDraftStatus(
     String draftId, {
     required String status,
@@ -136,6 +147,28 @@ class MemoryLocalStore implements LocalStore {
       remoteVersion: remoteVersion,
       updatedAt: DateTime.now(),
     );
+  }
+
+  @override
+  Future<void> upsertOfflineMapPackage(OfflineMapPackage package) async {
+    _checkInit();
+    if (package.isCurrent) {
+      _offlinePackages.updateAll(
+        (_, existing) => existing.copyWith(isCurrent: false),
+      );
+    }
+    _offlinePackages[package.version] = package;
+  }
+
+  @override
+  Future<OfflineMapPackage?> getCurrentOfflineMapPackage() async {
+    _checkInit();
+    for (final package in _offlinePackages.values) {
+      if (package.isCurrent) {
+        return package;
+      }
+    }
+    return null;
   }
 
   @override

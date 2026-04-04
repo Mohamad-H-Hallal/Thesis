@@ -1,4 +1,5 @@
 import '../../projects/domain/project.dart';
+import 'package:latlong2/latlong.dart';
 
 class Phase6Validation {
   const Phase6Validation._();
@@ -6,31 +7,43 @@ class Phase6Validation {
   static String? validateGeometry({
     required String geometryType,
     required List<String> allowedGeometryTypes,
-    required double? latitude,
-    required double? longitude,
-    required double? gpsAccuracyMeters,
+    required List<LatLng> vertices,
+    double? gpsAccuracyMeters,
     required double maxGpsAccuracyMeters,
   }) {
     if (!allowedGeometryTypes.contains(geometryType)) {
       return 'Geometry type is not allowed for this project.';
     }
 
-    if (latitude == null || longitude == null) {
-      return 'Capture coordinates before continuing.';
+    switch (geometryType) {
+      case 'Point':
+        if (vertices.length != 1) {
+          return 'Place one point on the map before continuing.';
+        }
+        break;
+      case 'LineString':
+        if (vertices.length < 2) {
+          return 'Add at least two vertices to draw a line.';
+        }
+        break;
+      case 'Polygon':
+        if (vertices.length < 3) {
+          return 'Add at least three vertices to draw a polygon.';
+        }
+        break;
     }
 
-    if (latitude < -90 ||
-        latitude > 90 ||
-        longitude < -180 ||
-        longitude > 180) {
-      return 'Captured coordinates are out of valid range.';
+    for (final vertex in vertices) {
+      if (vertex.latitude < -90 ||
+          vertex.latitude > 90 ||
+          vertex.longitude < -180 ||
+          vertex.longitude > 180) {
+        return 'Captured coordinates are out of valid range.';
+      }
     }
 
-    if (gpsAccuracyMeters == null || gpsAccuracyMeters <= 0) {
-      return 'GPS accuracy is required.';
-    }
-
-    if (gpsAccuracyMeters > maxGpsAccuracyMeters) {
+    if (gpsAccuracyMeters != null &&
+        gpsAccuracyMeters > maxGpsAccuracyMeters) {
       return 'GPS accuracy (${gpsAccuracyMeters.toStringAsFixed(1)}m) is above allowed threshold (${maxGpsAccuracyMeters.toStringAsFixed(1)}m).';
     }
 

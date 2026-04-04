@@ -12,6 +12,7 @@ import 'local_store.dart';
 class SqliteLocalStore implements LocalStore {
   Database? _db;
   final Uuid _uuid = const Uuid();
+  static const _dbVersion = 2;
 
   @override
   Future<void> initialize() async {
@@ -24,62 +25,101 @@ class SqliteLocalStore implements LocalStore {
 
     _db = await openDatabase(
       dbPath,
-      version: 1,
+      version: _dbVersion,
       onCreate: (db, version) async {
-        await db.execute('''
-          CREATE TABLE projects_cache (
-            id TEXT PRIMARY KEY,
-            payload_json TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-          );
-        ''');
-
-        await db.execute('''
-          CREATE TABLE draft_features (
-            id TEXT PRIMARY KEY,
-            project_id TEXT NOT NULL,
-            project_name TEXT NOT NULL,
-            geometry_type TEXT NOT NULL,
-            attributes_json TEXT NOT NULL,
-            status TEXT NOT NULL,
-            local_version INTEGER NOT NULL,
-            remote_version INTEGER,
-            collected_offline INTEGER NOT NULL,
-            updated_at TEXT NOT NULL
-          );
-        ''');
-
-        await db.execute('''
-          CREATE TABLE draft_photos (
-            id TEXT PRIMARY KEY,
-            draft_id TEXT NOT NULL,
-            file_path TEXT NOT NULL,
-            created_at TEXT NOT NULL
-          );
-        ''');
-
-        await db.execute('''
-          CREATE TABLE sync_queue (
-            id TEXT PRIMARY KEY,
-            entity_type TEXT NOT NULL,
-            entity_id TEXT NOT NULL,
-            operation TEXT NOT NULL,
-            payload_json TEXT NOT NULL,
-            local_version INTEGER NOT NULL,
-            idempotency_key TEXT NOT NULL,
-            attempt_count INTEGER NOT NULL,
-            status TEXT NOT NULL,
-            next_retry_at TEXT,
-            last_error TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-          );
-        ''');
-
-        await db.execute(
-          'CREATE INDEX idx_sync_queue_due ON sync_queue(status, next_retry_at);',
-        );
+        await _createSchema(db);
       },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute(
+            "ALTER TABLE draft_features ADD COLUMN geometry_json TEXT NOT NULL DEFAULT '{\"type\":\"Point\",\"coordinates\":[]}'",
+          );
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS offline_map_packages (
+              version TEXT PRIMARY KEY,
+              zoom_level_min INTEGER NOT NULL,
+              zoom_level_max INTEGER NOT NULL,
+              downloaded_at TEXT,
+              last_updated_at TEXT NOT NULL,
+              tile_count INTEGER,
+              size_bytes INTEGER,
+              tile_source TEXT,
+              is_current INTEGER NOT NULL
+            );
+          ''');
+        }
+      },
+    );
+  }
+
+  Future<void> _createSchema(Database db) async {
+    await db.execute('''
+      CREATE TABLE projects_cache (
+        id TEXT PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    ''');
+
+    await db.execute('''
+      CREATE TABLE draft_features (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        project_name TEXT NOT NULL,
+        geometry_type TEXT NOT NULL,
+        geometry_json TEXT NOT NULL,
+        attributes_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        local_version INTEGER NOT NULL,
+        remote_version INTEGER,
+        collected_offline INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    ''');
+
+    await db.execute('''
+      CREATE TABLE draft_photos (
+        id TEXT PRIMARY KEY,
+        draft_id TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    ''');
+
+    await db.execute('''
+      CREATE TABLE sync_queue (
+        id TEXT PRIMARY KEY,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        local_version INTEGER NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        next_retry_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    ''');
+
+    await db.execute('''
+      CREATE TABLE offline_map_packages (
+        version TEXT PRIMARY KEY,
+        zoom_level_min INTEGER NOT NULL,
+        zoom_level_max INTEGER NOT NULL,
+        downloaded_at TEXT,
+        last_updated_at TEXT NOT NULL,
+        tile_count INTEGER,
+        size_bytes INTEGER,
+        tile_source TEXT,
+        is_current INTEGER NOT NULL
+      );
+    ''');
+
+    await db.execute(
+      'CREATE INDEX idx_sync_queue_due ON sync_queue(status, next_retry_at);',
     );
   }
 
@@ -203,11 +243,12 @@ class SqliteLocalStore implements LocalStore {
             'draft_id': draft.id,
             'project_id': draft.projectId,
             'geometry_type': draft.geometryType,
+            'geometry': jsonDecode(draft.geometryJson) as Map<String, dynamic>,
             'attributes':
                 jsonDecode(draft.attributesJson) as Map<String, dynamic>,
-            'photo_paths': draft.photos
-                .map((p) => p.filePath)
-                .toList(growable: false),
+            'photo_paths': draft.remoteVersion == null
+                ? draft.photos.map((p) => p.filePath).toList(growable: false)
+                : const <String>[],
             'status': draft.status,
             'local_version': draft.localVersion,
           },
@@ -256,6 +297,40 @@ class SqliteLocalStore implements LocalStore {
   }
 
   @override
+  Future<LocalDraftFeature?> getDraftById(String draftId) async {
+    final db = await _database;
+    final rows = await db.query(
+      'draft_features',
+      where: 'id = ?',
+      whereArgs: [draftId],
+      limit: 1,
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+
+    final photosRows = await db.query(
+      'draft_photos',
+      where: 'draft_id = ?',
+      whereArgs: [draftId],
+    );
+    final photos = photosRows
+        .map(
+          (photoRow) => DraftPhoto.fromMap({
+            'id': photoRow['id'] as String,
+            'file_path': photoRow['file_path'] as String,
+            'created_at': photoRow['created_at'] as String,
+          }),
+        )
+        .toList(growable: false);
+
+    return LocalDraftFeature.fromRowMap(
+      Map<String, dynamic>.from(rows.first),
+      photos,
+    );
+  }
+
+  @override
   Future<void> updateDraftStatus(
     String draftId, {
     required String status,
@@ -276,6 +351,40 @@ class SqliteLocalStore implements LocalStore {
       where: 'id = ?',
       whereArgs: [draftId],
     );
+  }
+
+  @override
+  Future<void> upsertOfflineMapPackage(OfflineMapPackage package) async {
+    final db = await _database;
+    await db.transaction((txn) async {
+      if (package.isCurrent) {
+        await txn.update(
+          'offline_map_packages',
+          {'is_current': 0},
+        );
+      }
+
+      await txn.insert(
+        'offline_map_packages',
+        package.toRowMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    });
+  }
+
+  @override
+  Future<OfflineMapPackage?> getCurrentOfflineMapPackage() async {
+    final db = await _database;
+    final rows = await db.query(
+      'offline_map_packages',
+      where: 'is_current = 1',
+      limit: 1,
+      orderBy: 'last_updated_at DESC',
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+    return OfflineMapPackage.fromRowMap(Map<String, dynamic>.from(rows.first));
   }
 
   @override

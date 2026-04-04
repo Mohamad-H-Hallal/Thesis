@@ -390,7 +390,7 @@ const getFeature = async (req: Request, res: Response): Promise<void> => {
 };
 
 const createFeature = async (req: Request, res: Response): Promise<void> => {
-  const { project_id, geom, attributes, accuracy_meters, collected_offline = false } = req.body;
+  const { id, project_id, geom, attributes, accuracy_meters, collected_offline = false } = req.body;
 
   await assertProjectAllowsCollectionMutations(project_id);
   const normalizedGeometry = validateGeoJsonGeometry(geom);
@@ -409,19 +409,21 @@ const createFeature = async (req: Request, res: Response): Promise<void> => {
 
   const result = await query(
     `INSERT INTO spatial_feature (
-      project_id, collected_by_user_id, geom, attributes,
+      id, project_id, collected_by_user_id, geom, attributes,
       accuracy_meters, collected_offline, status
     ) VALUES (
-      $1,
+      COALESCE($1::uuid, uuid_generate_v4()),
       $2,
-      ST_SetSRID(ST_GeomFromGeoJSON($3), 4326),
-      $4,
+      $3,
+      ST_SetSRID(ST_GeomFromGeoJSON($4), 4326),
       $5,
       $6,
+      $7,
       'draft'
     )
-    RETURNING id, status, collected_at, ST_AsGeoJSON(geom) as geometry`,
+    RETURNING id, status, version, collected_at, ST_AsGeoJSON(geom) as geometry`,
     [
+      id ?? null,
       project_id,
       req.user?.id,
       JSON.stringify(normalizedGeometry),
@@ -931,26 +933,28 @@ const batchCreateFeatures = async (req: Request, res: Response): Promise<void> =
     const results: any[] = [];
 
     for (const feature of features) {
-      const { project_id, geom, attributes, accuracy_meters, collected_offline } = feature;
+      const { id, project_id, geom, attributes, accuracy_meters, collected_offline } = feature;
       const normalizedGeometry = validateGeoJsonGeometry(geom);
       const formSchema = await getProjectFormSchema(project_id);
       const normalizedAttributes = validateAttributesAgainstSchema(attributes, formSchema);
 
       const result = await client.query(
         `INSERT INTO spatial_feature (
-          project_id, collected_by_user_id, geom, attributes,
+          id, project_id, collected_by_user_id, geom, attributes,
           accuracy_meters, collected_offline, status
         ) VALUES (
-          $1,
+          COALESCE($1::uuid, uuid_generate_v4()),
           $2,
-          ST_SetSRID(ST_GeomFromGeoJSON($3), 4326),
-          $4,
+          $3,
+          ST_SetSRID(ST_GeomFromGeoJSON($4), 4326),
           $5,
           $6,
+          $7,
           'draft'
         )
-        RETURNING id, status, collected_at`,
+        RETURNING id, status, version, collected_at`,
         [
+          id ?? null,
           project_id,
           req.user?.id,
           JSON.stringify(normalizedGeometry),

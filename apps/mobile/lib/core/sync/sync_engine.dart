@@ -1,5 +1,8 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
+
+import '../config/app_env.dart';
 import '../network/api_client.dart';
 import '../offline/local_store.dart';
 import '../offline/local_models.dart';
@@ -109,32 +112,165 @@ class SyncEngine {
   }
 
   Future<SyncPushResult> _push(SyncQueueItem item) async {
-    await Future<void>.delayed(const Duration(milliseconds: 280));
-
-    // Keep API sync shape ready: idempotency key is prepared for future backend calls.
-    _apiClient.dio.options.headers['Idempotency-Key'] = item.idempotencyKey;
+    if (item.entityType != 'draft_feature') {
+      return SyncPushResult(
+        status: SyncPushStatus.failed,
+        error: 'Unsupported sync entity: ${item.entityType}.',
+      );
+    }
 
     final payload = item.payload;
-    final remoteVersion = (payload['simulated_remote_version'] as int?) ?? 0;
+    final featureId = payload['draft_id'] as String? ?? item.entityId;
+    final projectId = payload['project_id'] as String?;
+    final geometry = payload['geometry'];
+    final attributes = payload['attributes'];
+    final status = payload['status'] as String? ?? 'draft';
+    final photoPaths = ((payload['photo_paths'] as List?) ?? const <dynamic>[])
+        .whereType<String>()
+        .where((path) => path.trim().isNotEmpty)
+        .toList(growable: false);
 
-    if (item.localVersion <= remoteVersion) {
-      return SyncPushResult(
-        status: SyncPushStatus.conflict,
-        remoteVersion: remoteVersion,
-        error: 'Local version is older than remote.',
-      );
-    }
-
-    if (payload['force_fail'] == true) {
+    if (projectId == null ||
+        projectId.isEmpty ||
+        geometry is! Map<String, dynamic> ||
+        attributes is! Map<String, dynamic>) {
       return const SyncPushResult(
         status: SyncPushStatus.failed,
-        error: 'Simulated transient network error.',
+        error: 'Offline draft payload is incomplete.',
       );
     }
 
-    return SyncPushResult(
-      status: SyncPushStatus.success,
-      remoteVersion: item.localVersion,
+    final previousHeaders = Map<String, dynamic>.from(
+      _apiClient.dio.options.headers,
     );
+    _apiClient.dio.options.headers['Idempotency-Key'] = item.idempotencyKey;
+
+    try {
+      int? remoteVersion;
+      if (item.operation == SyncOperationType.create) {
+        final response = await _apiClient.dio.post<Map<String, dynamic>>(
+          '${AppEnv.apiVersionPrefix}/features',
+          data: <String, dynamic>{
+            'id': featureId,
+            'project_id': projectId,
+            'geom': geometry,
+            'attributes': attributes,
+            'collected_offline': true,
+          },
+        );
+        remoteVersion = _readVersion(response.data);
+      } else if (item.operation == SyncOperationType.update) {
+        final response = await _apiClient.dio.put<Map<String, dynamic>>(
+          '${AppEnv.apiVersionPrefix}/features/$featureId',
+          data: <String, dynamic>{
+            'geom': geometry,
+            'attributes': attributes,
+          },
+        );
+        remoteVersion = _readVersion(response.data);
+      } else {
+        return SyncPushResult(
+          status: SyncPushStatus.failed,
+          error: 'Unsupported sync operation: ${item.operation.name}.',
+        );
+      }
+
+      if (photoPaths.isNotEmpty) {
+        final formData = FormData.fromMap(<String, dynamic>{
+          'photos': await Future.wait(
+            photoPaths.map(
+              (path) => MultipartFile.fromFile(path),
+            ),
+          ),
+        });
+
+        await _apiClient.dio.post<Map<String, dynamic>>(
+          '${AppEnv.apiVersionPrefix}/photos/feature/$featureId',
+          data: formData,
+          options: Options(
+            headers: <String, dynamic>{
+              'Content-Type': 'multipart/form-data',
+            },
+          ),
+        );
+      }
+
+      if (status == 'submitted' || status == 'under_review') {
+        await _apiClient.dio.post<Map<String, dynamic>>(
+          '${AppEnv.apiVersionPrefix}/features/$featureId/submit',
+        );
+      }
+
+      return SyncPushResult(
+        status: SyncPushStatus.success,
+        remoteVersion: remoteVersion ?? item.localVersion,
+      );
+    } on DioException catch (error) {
+      final statusCode = error.response?.statusCode;
+      final message = _extractMessage(error, fallback: 'Offline sync failed.');
+
+      if (statusCode == 409) {
+        return SyncPushResult(
+          status: SyncPushStatus.conflict,
+          error: message,
+          remoteVersion: _readVersion(error.response?.data),
+        );
+      }
+
+      return SyncPushResult(
+        status: SyncPushStatus.failed,
+        error: message,
+      );
+    } finally {
+      _apiClient.dio.options.headers
+        ..clear()
+        ..addAll(previousHeaders);
+    }
+  }
+
+  int? _readVersion(dynamic payload) {
+    final data = payload?['data'];
+    if (data is Map<String, dynamic>) {
+      final version = data['version'];
+      if (version is int) {
+        return version;
+      }
+      if (version is num) {
+        return version.toInt();
+      }
+    }
+    if (payload is Map<String, dynamic>) {
+      final version = payload['version'];
+      if (version is int) {
+        return version;
+      }
+      if (version is num) {
+        return version.toInt();
+      }
+    }
+    return null;
+  }
+
+  String _extractMessage(DioException error, {required String fallback}) {
+    final data = error.response?.data;
+    if (data is Map<String, dynamic>) {
+      final errors = data['errors'];
+      if (errors is List && errors.isNotEmpty) {
+        final first = errors.first;
+        if (first is Map && first['msg'] is String) {
+          final msg = (first['msg'] as String).trim();
+          if (msg.isNotEmpty) {
+            return msg;
+          }
+        }
+      }
+      final message = data['message'] ?? data['error'];
+      if (message is String && message.trim().isNotEmpty) {
+        return message.trim();
+      }
+    } else if (data is String && data.trim().isNotEmpty) {
+      return data.trim();
+    }
+    return fallback;
   }
 }

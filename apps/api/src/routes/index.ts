@@ -4,6 +4,7 @@ const photoController = require('../controllers/photo.controller');
 const {
   categoryController,
   notificationController,
+  offlineMapController,
   settingsController,
   userController,
 } = require('../controllers/misc.controller');
@@ -296,6 +297,10 @@ settingsRouter.put(
   asyncHandler(settingsController.updateSupport),
 );
 
+const offlineMapRouter = express.Router();
+offlineMapRouter.use(authenticate);
+offlineMapRouter.get('/current', asyncHandler(offlineMapController.getCurrent));
+
 // ============================================================================
 // USER MANAGEMENT ROUTES (Admin only)
 // ============================================================================
@@ -446,6 +451,7 @@ module.exports = {
   photoRouter,
   categoryRouter,
   notificationRouter,
+  offlineMapRouter,
   settingsRouter,
   userRouter,
 };

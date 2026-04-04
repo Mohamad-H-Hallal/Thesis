@@ -26,6 +26,7 @@ const {
   photoRouter,
   categoryRouter,
   notificationRouter,
+  offlineMapRouter,
   settingsRouter,
   userRouter,
 } = require('./routes/index');
@@ -195,6 +196,7 @@ const buildApp = (env) => {
         photos: `${normalizedApiPrefix}/photos`,
         categories: `${normalizedApiPrefix}/categories`,
         notifications: `${normalizedApiPrefix}/notifications`,
+        offlineMap: `${normalizedApiPrefix}/offline-map`,
         settings: `${normalizedApiPrefix}/settings`,
         users: `${normalizedApiPrefix}/users (admin only)`,
       },
@@ -216,6 +218,7 @@ const buildApp = (env) => {
     app.use(`${prefix}/photos`, photoRouter);
     app.use(`${prefix}/categories`, categoryRouter);
     app.use(`${prefix}/notifications`, notificationRouter);
+    app.use(`${prefix}/offline-map`, offlineMapRouter);
     app.use(`${prefix}/settings`, settingsRouter);
     app.use(`${prefix}/users`, userRouter);
     app.get(prefix, metadataHandler);

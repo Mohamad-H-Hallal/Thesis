@@ -54,12 +54,91 @@ class DraftPhoto {
   }
 }
 
+class OfflineMapPackage {
+  const OfflineMapPackage({
+    required this.version,
+    required this.zoomLevelMin,
+    required this.zoomLevelMax,
+    this.downloadedAt,
+    required this.lastUpdatedAt,
+    this.tileCount,
+    this.sizeBytes,
+    this.tileSource,
+    required this.isCurrent,
+  });
+
+  final String version;
+  final int zoomLevelMin;
+  final int zoomLevelMax;
+  final DateTime? downloadedAt;
+  final DateTime lastUpdatedAt;
+  final int? tileCount;
+  final int? sizeBytes;
+  final String? tileSource;
+  final bool isCurrent;
+
+  OfflineMapPackage copyWith({
+    String? version,
+    int? zoomLevelMin,
+    int? zoomLevelMax,
+    DateTime? downloadedAt,
+    DateTime? lastUpdatedAt,
+    int? tileCount,
+    int? sizeBytes,
+    String? tileSource,
+    bool? isCurrent,
+  }) {
+    return OfflineMapPackage(
+      version: version ?? this.version,
+      zoomLevelMin: zoomLevelMin ?? this.zoomLevelMin,
+      zoomLevelMax: zoomLevelMax ?? this.zoomLevelMax,
+      downloadedAt: downloadedAt ?? this.downloadedAt,
+      lastUpdatedAt: lastUpdatedAt ?? this.lastUpdatedAt,
+      tileCount: tileCount ?? this.tileCount,
+      sizeBytes: sizeBytes ?? this.sizeBytes,
+      tileSource: tileSource ?? this.tileSource,
+      isCurrent: isCurrent ?? this.isCurrent,
+    );
+  }
+
+  Map<String, dynamic> toRowMap() {
+    return {
+      'version': version,
+      'zoom_level_min': zoomLevelMin,
+      'zoom_level_max': zoomLevelMax,
+      'downloaded_at': downloadedAt?.toIso8601String(),
+      'last_updated_at': lastUpdatedAt.toIso8601String(),
+      'tile_count': tileCount,
+      'size_bytes': sizeBytes,
+      'tile_source': tileSource,
+      'is_current': isCurrent ? 1 : 0,
+    };
+  }
+
+  factory OfflineMapPackage.fromRowMap(Map<String, dynamic> row) {
+    return OfflineMapPackage(
+      version: row['version'] as String,
+      zoomLevelMin: row['zoom_level_min'] as int,
+      zoomLevelMax: row['zoom_level_max'] as int,
+      downloadedAt: row['downloaded_at'] == null
+          ? null
+          : DateTime.parse(row['downloaded_at'] as String),
+      lastUpdatedAt: DateTime.parse(row['last_updated_at'] as String),
+      tileCount: row['tile_count'] as int?,
+      sizeBytes: row['size_bytes'] as int?,
+      tileSource: row['tile_source'] as String?,
+      isCurrent: (row['is_current'] as int) == 1,
+    );
+  }
+}
+
 class LocalDraftFeature {
   const LocalDraftFeature({
     required this.id,
     required this.projectId,
     required this.projectName,
     required this.geometryType,
+    required this.geometryJson,
     required this.attributesJson,
     required this.photos,
     required this.status,
@@ -73,6 +152,7 @@ class LocalDraftFeature {
   final String projectId;
   final String projectName;
   final String geometryType;
+  final String geometryJson;
   final String attributesJson;
   final List<DraftPhoto> photos;
   final String status;
@@ -97,6 +177,7 @@ class LocalDraftFeature {
       'project_id': projectId,
       'project_name': projectName,
       'geometry_type': geometryType,
+      'geometry_json': geometryJson,
       'attributes_json': attributesJson,
       'status': status,
       'local_version': localVersion,
@@ -109,6 +190,7 @@ class LocalDraftFeature {
   LocalDraftFeature copyWith({
     String? projectName,
     String? geometryType,
+    String? geometryJson,
     String? attributesJson,
     String? status,
     int? localVersion,
@@ -121,6 +203,7 @@ class LocalDraftFeature {
       projectId: projectId,
       projectName: projectName ?? this.projectName,
       geometryType: geometryType ?? this.geometryType,
+      geometryJson: geometryJson ?? this.geometryJson,
       attributesJson: attributesJson ?? this.attributesJson,
       photos: photos ?? this.photos,
       status: status ?? this.status,
@@ -140,6 +223,7 @@ class LocalDraftFeature {
       projectId: row['project_id'] as String,
       projectName: row['project_name'] as String,
       geometryType: row['geometry_type'] as String,
+      geometryJson: row['geometry_json'] as String? ?? '{"type":"Point","coordinates":[]}',
       attributesJson: row['attributes_json'] as String,
       photos: photos,
       status: row['status'] as String,

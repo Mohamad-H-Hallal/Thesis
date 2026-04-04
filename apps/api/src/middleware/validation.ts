@@ -232,6 +232,7 @@ const projectValidation = {
 // Feature validation rules
 const featureValidation = {
   create: [
+    body('id').optional().isUUID().withMessage('Valid feature ID is required'),
     body('project_id').isUUID().withMessage('Valid project ID is required'),
     body('geom').notEmpty().withMessage('Geometry is required'),
     body('geom.type')

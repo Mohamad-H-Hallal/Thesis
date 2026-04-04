@@ -172,6 +172,15 @@ class _FakeLocalStore implements LocalStore {
       const <LocalDraftFeature>[];
 
   @override
+  Future<LocalDraftFeature?> getDraftById(String draftId) async => null;
+
+  @override
+  Future<void> upsertOfflineMapPackage(OfflineMapPackage package) async {}
+
+  @override
+  Future<OfflineMapPackage?> getCurrentOfflineMapPackage() async => null;
+
+  @override
   Future<List<SyncQueueItem>> getDueSyncItems(
     DateTime now, {
     int limit = 20,

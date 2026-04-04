@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 
+import '../../../core/offline/local_models.dart';
 import '../../../core/config/app_env.dart';
 import '../../../core/network/api_error_message.dart';
 import '../../../core/network/api_client.dart';
@@ -50,6 +51,42 @@ class ApiMapRepository {
       throw userFacingDioMessage(
         error,
         fallback: 'Unable to load project features right now. Please try again.',
+      );
+    }
+  }
+
+  Future<OfflineMapPackage?> fetchCurrentOfflineMapPackage() async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '${AppEnv.apiVersionPrefix}/offline-map/current',
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      final row = Map<String, dynamic>.from(
+        payload['data'] as Map? ?? const <String, dynamic>{},
+      );
+      if (row.isEmpty) {
+        return null;
+      }
+
+      return OfflineMapPackage(
+        version: (row['version'] as String?) ?? 'lebanon-satellite-v1',
+        zoomLevelMin: _toInt(row['zoom_level_min']) ?? 7,
+        zoomLevelMax: _toInt(row['zoom_level_max']) ?? 18,
+        downloadedAt: _toDateTime(row['downloaded_at']),
+        lastUpdatedAt: _toDateTime(row['last_updated_at']) ?? DateTime.now(),
+        tileCount: _toInt(row['tile_count']),
+        sizeBytes: _toInt(row['size_bytes']),
+        tileSource: row['tile_source'] as String?,
+        isCurrent: (row['is_current'] as bool?) ?? true,
+      );
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404) {
+        return null;
+      }
+      throw userFacingDioMessage(
+        error,
+        fallback:
+            'Unable to load offline map metadata right now. Please try again.',
       );
     }
   }

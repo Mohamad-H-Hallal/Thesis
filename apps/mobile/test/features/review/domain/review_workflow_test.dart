@@ -9,6 +9,7 @@ void main() {
       projectId: 'proj-1',
       projectName: 'Bekaa',
       geometryType: 'Point',
+      geometryJson: '{"type":"Point","coordinates":[35.58,33.92]}',
       attributesJson: '{"attributes":{"tree":"olive"}}',
       photos: const <DraftPhoto>[],
       status: DraftWorkflowStatus.draft,

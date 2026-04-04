@@ -5,6 +5,7 @@ import 'package:lebanese_gis_mobile/core/providers/providers.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_models.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_repository.dart';
 import 'package:lebanese_gis_mobile/features/auth/presentation/controllers/auth_controller.dart';
+import 'package:lebanese_gis_mobile/features/map/domain/map_feature.dart';
 import 'package:lebanese_gis_mobile/features/projects/domain/project.dart';
 import 'package:lebanese_gis_mobile/features/projects/domain/projects_repository.dart';
 import 'package:lebanese_gis_mobile/features/projects/presentation/screens/home_projects_screen.dart';
@@ -297,6 +298,10 @@ Widget _wrapWithScope({
           role: session.user.role,
         );
       }),
+      projectMapFeaturesProvider.overrideWith(
+        (ref, projectId) async => const <MapFeatureSummary>[],
+      ),
+      offlineMapPackageProvider.overrideWith((ref) async => null),
     ],
     child: MaterialApp(home: Scaffold(body: child)),
   );
@@ -429,12 +434,14 @@ void main() {
           child: const ProjectDetailsScreen(projectId: 'admin-project'),
         ),
       );
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
 
       expect(find.text('Contributor only'), findsOneWidget);
 
       await tester.tap(find.byType(Switch));
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
 
       expect(find.text('Project is now visible to viewers.'), findsOneWidget);
       expect(find.text('Viewer visible'), findsOneWidget);
@@ -464,7 +471,8 @@ void main() {
           child: const ProjectDetailsScreen(projectId: 'viewer-project'),
         ),
       );
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
 
       expect(find.text('Viewer access'), findsOneWidget);
       expect(find.text('Read only'), findsOneWidget);

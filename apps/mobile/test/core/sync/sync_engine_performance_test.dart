@@ -14,6 +14,7 @@ LocalDraftFeature _buildDraft({
     projectId: 'project-perf',
     projectName: 'Perf Project',
     geometryType: 'Point',
+    geometryJson: '{"type":"Point","coordinates":[35.58,33.92]}',
     attributesJson: '{"tree_type":"olive"}',
     photos: const <DraftPhoto>[],
     status: 'draft',
@@ -36,6 +37,10 @@ SyncQueueItem _queueItem({
       'draft_id': draftId,
       'project_id': 'project-perf',
       'geometry_type': 'Point',
+      'geometry': <String, dynamic>{
+        'type': 'Point',
+        'coordinates': <double>[35.58, 33.92],
+      },
       'attributes': <String, dynamic>{'tree_type': 'olive'},
       'status': 'draft',
       'local_version': version,
@@ -59,9 +64,55 @@ void main() {
       await store.dispose();
     });
 
+    final dio = Dio();
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          final payload = options.data is Map<String, dynamic>
+              ? Map<String, dynamic>.from(options.data as Map<String, dynamic>)
+              : const <String, dynamic>{};
+
+          if (options.method == 'POST' && options.path.endsWith('/features')) {
+            handler.resolve(
+              Response<Map<String, dynamic>>(
+                requestOptions: options,
+                statusCode: 201,
+                data: <String, dynamic>{
+                  'data': <String, dynamic>{
+                    'id': payload['id'] ?? payload['draft_id'],
+                    'version': payload['local_version'] ?? 1,
+                  },
+                },
+              ),
+            );
+            return;
+          }
+
+          if (options.method == 'POST' && options.path.endsWith('/submit')) {
+            handler.resolve(
+              Response<Map<String, dynamic>>(
+                requestOptions: options,
+                statusCode: 200,
+                data: const <String, dynamic>{'success': true},
+              ),
+            );
+            return;
+          }
+
+          handler.resolve(
+            Response<Map<String, dynamic>>(
+              requestOptions: options,
+              statusCode: 200,
+              data: const <String, dynamic>{'success': true},
+            ),
+          );
+        },
+      ),
+    );
+
     final engine = SyncEngine(
       localStore: store,
-      apiClient: ApiClient(dio: Dio()),
+      apiClient: ApiClient(dio: dio),
     );
 
     const count = 8;

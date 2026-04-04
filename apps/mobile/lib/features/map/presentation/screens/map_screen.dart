@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
+import '../../../../core/offline/local_models.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/sync/sync_controller.dart';
@@ -17,6 +18,7 @@ import '../../../../core/widgets/status_chip.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../../projects/domain/project.dart';
+import '../../domain/lebanon_map.dart';
 import '../../domain/map_feature.dart';
 import '../widgets/feature_photo_gallery.dart';
 
@@ -38,6 +40,7 @@ class MapScreen extends ConsumerStatefulWidget {
 
 class _MapScreenState extends ConsumerState<MapScreen> {
   final MapController _mapController = MapController();
+  final TextEditingController _searchController = TextEditingController();
   final Set<String> _visibleStatuses = <String>{
     'approved',
     'pending_review',
@@ -46,8 +49,68 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   };
 
   String? _selectedProjectId;
+  String? _selectedFeatureChip;
   String? _tileFailureMessage;
   String? _autoOpenedFeatureId;
+  String? _offlineDownloadProgressLabel;
+  String? _offlineDownloadResultLabel;
+  bool _isDownloadingOffline = false;
+  bool _isMainMapReady = false;
+  VoidCallback? _pendingMainMapAction;
+  late final MapOptions _mainMapOptions = MapOptions(
+    initialCenter: LebanonMapConfig.center,
+    initialZoom: LebanonMapConfig.fullscreenInitialZoom,
+    initialCameraFit: LebanonMapConfig.fullscreenFit,
+    minZoom: LebanonMapConfig.fullscreenMinZoom,
+    maxZoom: LebanonMapConfig.fullscreenMaxZoom,
+    cameraConstraint: LebanonMapConfig.cameraConstraint,
+    onMapReady: _handleMainMapReady,
+  );
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _handleMainMapReady() {
+    if (!mounted) {
+      return;
+    }
+    final pendingAction = _pendingMainMapAction;
+    _pendingMainMapAction = null;
+    if (!_isMainMapReady) {
+      setState(() {
+        _isMainMapReady = true;
+      });
+    }
+    if (pendingAction != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        pendingAction();
+      });
+    }
+  }
+
+  void _runMainMapAction(
+    VoidCallback action, {
+    bool queueUntilReady = false,
+  }) {
+    if (_isMainMapReady) {
+      action();
+      return;
+    }
+    if (queueUntilReady) {
+      _pendingMainMapAction = action;
+      return;
+    }
+    AppSnackbar.showError(
+      context,
+      'Map is still preparing. Please try again in a moment.',
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -90,6 +153,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           requestedProjectId: widget.initialProjectId,
         );
         final featuresAsync = ref.watch(projectMapFeaturesProvider(project.id));
+        final offlineMapPackageAsync = ref.watch(offlineMapPackageProvider);
         final hasContributorAssignment =
             role == UserRole.contributor &&
             project.hasApprovedCurrentUserAssignment;
@@ -122,7 +186,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       if (value == null || value.isEmpty) {
                         return;
                       }
-                      setState(() => _selectedProjectId = value);
+                      setState(() {
+                        _selectedProjectId = value;
+                        _selectedFeatureChip = null;
+                        _searchController.clear();
+                        _tileFailureMessage = null;
+                      });
                     },
                   ),
                   const SizedBox(height: AppSpacing.sm),
@@ -132,6 +201,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   runSpacing: 8,
                   children: [
                     StatusChip(status: project.status),
+                    Chip(
+                      avatar: const Icon(Icons.satellite_alt_outlined, size: 18),
+                      label: const Text('Satellite basemap'),
+                    ),
                     Chip(
                       label: Text(
                         project.visibleToViewers
@@ -217,6 +290,29 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     ),
                   ],
                 ),
+                const SizedBox(height: AppSpacing.sm),
+                offlineMapPackageAsync.when(
+                  loading: () => const Text('Checking offline Lebanon map package...'),
+                  error: (error, _) => Text(
+                    userFacingErrorMessage(
+                      error,
+                      fallback:
+                          'Offline map metadata is unavailable right now.',
+                    ),
+                  ),
+                  data: (offlinePackage) => _OfflineMapStatusCard(
+                    package: offlinePackage,
+                    isDownloading: _isDownloadingOffline,
+                    progressLabel: _offlineDownloadProgressLabel,
+                    statusLabel: _offlineDownloadResultLabel,
+                    onDownloadOverview: offlinePackage == null
+                        ? null
+                        : () => _downloadLebanonOverview(offlinePackage),
+                    onDownloadVisible: offlinePackage == null || !_isMainMapReady
+                        ? null
+                        : () => _downloadVisibleRegion(offlinePackage),
+                  ),
+                ),
                 if (role == UserRole.contributor) ...[
                   const SizedBox(height: AppSpacing.sm),
                   _SyncStatusLine(state: syncState),
@@ -226,7 +322,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           );
         }
 
-        Widget buildWorkspace() {
+        Widget buildWorkspace({Widget? embeddedControls}) {
           return featuresAsync.when(
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (error, _) => AppEmptyState(
@@ -242,8 +338,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   ref.invalidate(projectMapFeaturesProvider(project.id)),
             ),
             data: (features) {
+              final quickFeatureChips = _deriveFeatureChips(project, features);
               final filteredFeatures = features
                   .where((feature) => _visibleStatuses.contains(feature.status))
+                  .where(
+                    (feature) => _matchesSearchAndChip(
+                      feature,
+                      query: _searchController.text,
+                      selectedChip: _selectedFeatureChip,
+                    ),
+                  )
                   .toList(growable: false);
               _maybeOpenInitialFeatureDetails(
                 project: project,
@@ -256,9 +360,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 context,
                 project: project,
                 features: filteredFeatures,
+                quickFeatureChips: quickFeatureChips,
+                offlinePackageAsync: offlineMapPackageAsync,
                 hasCollectionAccess: hasContributorAssignment,
                 canCollectOnMap: canCollectOnMap,
                 canReview: canReview,
+                embeddedControls: embeddedControls,
               );
             },
           );
@@ -267,11 +374,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         return LayoutBuilder(
           builder: (context, constraints) {
             if (constraints.maxHeight < 860 || constraints.maxWidth < 640) {
-              final workspaceHeight = (constraints.maxHeight * 0.9).clamp(
-                520.0,
-                920.0,
-              );
-              return ListView(
+              return Column(
                 children: [
                   SectionHeader(
                     title: widget.lockProjectSelection
@@ -282,9 +385,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         : 'Lebanon basemap with project-specific features and review context.',
                   ),
                   const SizedBox(height: AppSpacing.sm),
-                  buildControls(),
-                  const SizedBox(height: AppSpacing.sm),
-                  SizedBox(height: workspaceHeight, child: buildWorkspace()),
+                  Expanded(
+                    child: buildWorkspace(
+                      embeddedControls: buildControls(),
+                    ),
+                  ),
                 ],
               );
             }
@@ -315,115 +420,23 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     BuildContext context, {
     required ProjectSummary project,
     required List<MapFeatureSummary> features,
+    required List<String> quickFeatureChips,
+    required AsyncValue<OfflineMapPackage?> offlinePackageAsync,
     required bool hasCollectionAccess,
     required bool canCollectOnMap,
     required bool canReview,
+    Widget? embeddedControls,
   }) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final mapCard = AppCard(
-          padding: EdgeInsets.zero,
-          child: Stack(
-            children: [
-              ClipRRect(
-                borderRadius: AppRadii.lg,
-                child: FlutterMap(
-                  mapController: _mapController,
-                  options: const MapOptions(
-                    initialCenter: LatLng(33.8547, 35.8623),
-                    initialZoom: 8,
-                    minZoom: 6,
-                    maxZoom: 18,
-                  ),
-                  children: [
-                    TileLayer(
-                      urlTemplate:
-                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      userAgentPackageName: 'lb.gov.gis_collector',
-                      errorTileCallback: (tile, error, stackTrace) {
-                        Object.hash(tile, stackTrace);
-                        if (_tileFailureMessage != null) {
-                          return;
-                        }
-                        final message = error.toString();
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (!mounted || _tileFailureMessage != null) {
-                            return;
-                          }
-                          setState(() {
-                            _tileFailureMessage =
-                                'Basemap tiles are temporarily unavailable. Project features still remain usable.';
-                          });
-                          AppSnackbar.showError(
-                            context,
-                            message.contains('Failed host lookup')
-                                ? 'Basemap tiles are unavailable on this connection. Feature overlays remain available.'
-                                : 'Basemap tiles could not be loaded. Feature overlays remain available.',
-                          );
-                        });
-                      },
-                    ),
-                    PolygonLayer(polygons: _polygonOverlays(features)),
-                    PolylineLayer(polylines: _polylineOverlays(features)),
-                    MarkerLayer(
-                      markers: _markerOverlays(
-                        features,
-                        project,
-                        canCollectOnMap,
-                        canReview,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Positioned(
-                right: 12,
-                top: 12,
-                child: Column(
-                  children: [
-                    FloatingActionButton.small(
-                      heroTag: 'map_zoom_in',
-                      onPressed: () => _mapController.move(
-                        _mapController.camera.center,
-                        _mapController.camera.zoom + 1,
-                      ),
-                      child: const Icon(Icons.add),
-                    ),
-                    const SizedBox(height: 8),
-                    FloatingActionButton.small(
-                      heroTag: 'map_zoom_out',
-                      onPressed: () => _mapController.move(
-                        _mapController.camera.center,
-                        _mapController.camera.zoom - 1,
-                      ),
-                      child: const Icon(Icons.remove),
-                    ),
-                  ],
-                ),
-              ),
-              if (_tileFailureMessage != null)
-                Positioned(
-                  left: 12,
-                  right: 72,
-                  bottom: 12,
-                  child: Material(
-                    color: Colors.transparent,
-                    child: AppCard(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Icon(Icons.map_outlined),
-                          const SizedBox(width: AppSpacing.sm),
-                          Expanded(
-                            child: Text(_tileFailureMessage!, softWrap: true),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
+        final mapCard = _buildConstrainedMapCard(
+          context,
+          project: project,
+          features: features,
+          quickFeatureChips: quickFeatureChips,
+          offlinePackage: offlinePackageAsync.valueOrNull,
+          canCollectOnMap: canCollectOnMap,
+          canReview: canReview,
         );
 
         final featureList = features.isEmpty
@@ -537,6 +550,99 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   ),
                 ],
               );
+        final featureListContent = features.isEmpty
+            ? featureList
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Project Features',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  ...features.map(
+                    (feature) => Padding(
+                      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                      child: AppCard(
+                        onTap: () => _openFeatureDetails(
+                          project: project,
+                          feature: feature,
+                          canCollectOnMap: canCollectOnMap,
+                          canReview: canReview,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Feature ${feature.id.substring(0, 8)}',
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.titleMedium,
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        '${feature.geometry['type'] ?? 'Geometry'} • ${feature.photoCount} photo(s)',
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.bodySmall,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: AppSpacing.sm),
+                                StatusChip(status: feature.status),
+                              ],
+                            ),
+                            const SizedBox(height: AppSpacing.xs),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                if (feature.collectedBy != null)
+                                  Chip(
+                                    label: Text(
+                                      'Collector: ${feature.collectedBy}',
+                                    ),
+                                  ),
+                                if (feature.accuracyMeters != null)
+                                  Chip(
+                                    label: Text(
+                                      'GPS ${feature.accuracyMeters!.toStringAsFixed(1)}m',
+                                    ),
+                                  ),
+                                TextButton.icon(
+                                  onPressed: () {
+                                    _focusFeature(feature);
+                                    _openFeatureDetails(
+                                      project: project,
+                                      feature: feature,
+                                      canCollectOnMap: canCollectOnMap,
+                                      canReview: canReview,
+                                    );
+                                  },
+                                  icon: const Icon(
+                                    Icons.center_focus_strong,
+                                    size: 18,
+                                  ),
+                                  label: const Text('View details'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              );
 
         final legendCard = AppCard(
           child: Wrap(
@@ -554,17 +660,20 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           ),
         );
 
-        if (constraints.maxHeight < 720) {
-          final mapHeight = constraints.maxHeight * 0.48;
-          final listHeight = constraints.maxHeight * 0.42;
+        if (constraints.maxHeight < 720 || embeddedControls != null) {
+          final mapHeight = (constraints.maxHeight * 0.44).clamp(280.0, 520.0);
           return ListView(
             physics: const AlwaysScrollableScrollPhysics(),
             children: [
               legendCard,
               const SizedBox(height: AppSpacing.sm),
               SizedBox(height: mapHeight, child: mapCard),
+              if (embeddedControls != null) ...[
+                const SizedBox(height: AppSpacing.sm),
+                embeddedControls,
+              ],
               const SizedBox(height: AppSpacing.sm),
-              SizedBox(height: listHeight, child: featureList),
+              featureListContent,
             ],
           );
         }
@@ -580,6 +689,452 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         );
       },
     );
+  }
+
+  Widget _buildConstrainedMapCard(
+    BuildContext context, {
+    required ProjectSummary project,
+    required List<MapFeatureSummary> features,
+    required List<String> quickFeatureChips,
+    required OfflineMapPackage? offlinePackage,
+    required bool canCollectOnMap,
+    required bool canReview,
+  }) {
+    return AppCard(
+      padding: EdgeInsets.zero,
+      child: Stack(
+        children: [
+          FutureBuilder<_OfflineTileAssets?>(
+            future: offlinePackage == null
+                ? Future<_OfflineTileAssets?>.value(null)
+                : _loadOfflineTileAssets(offlinePackage),
+            builder: (context, snapshot) {
+              return ClipRRect(
+                borderRadius: AppRadii.lg,
+                child: FlutterMap(
+                  mapController: _mapController,
+                  options: _mainMapOptions,
+                  children: [
+                    TileLayer(
+                      urlTemplate: LebanonMapConfig.basemapUrlTemplate(
+                        LebanonBasemapStyle.satellite,
+                      ),
+                      userAgentPackageName: 'lb.gov.gis_collector',
+                      errorTileCallback: (tile, error, stackTrace) {
+                        Object.hash(tile, stackTrace);
+                        if (_tileFailureMessage != null) {
+                          return;
+                        }
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (!mounted || _tileFailureMessage != null) {
+                            return;
+                          }
+                          setState(() {
+                            _tileFailureMessage =
+                                'Satellite tiles are temporarily unavailable. Cached tiles and project features remain usable.';
+                          });
+                        });
+                      },
+                    ),
+                    if (snapshot.data != null)
+                      TileLayer(
+                        urlTemplate: snapshot.data!.templatePath,
+                        tileProvider: FileTileProvider(),
+                        fallbackUrl: snapshot.data!.fallbackPath,
+                        userAgentPackageName: 'lb.gov.gis_collector',
+                      ),
+                    PolygonLayer(polygons: _polygonOverlays(features)),
+                    PolylineLayer(polylines: _polylineOverlays(features)),
+                    MarkerLayer(
+                      markers: _markerOverlays(
+                        features,
+                        project,
+                        canCollectOnMap,
+                        canReview,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          Positioned(
+            left: 12,
+            right: 72,
+            top: 12,
+            child: Material(
+              color: Colors.transparent,
+              child: AppCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: _searchController,
+                      textInputAction: TextInputAction.search,
+                      decoration: InputDecoration(
+                        hintText: 'Search project features',
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: _searchController.text.trim().isEmpty
+                            ? null
+                            : IconButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _searchController.clear();
+                                  });
+                                },
+                                icon: const Icon(Icons.clear),
+                              ),
+                      ),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    if (quickFeatureChips.isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: quickFeatureChips
+                              .map(
+                                (chip) => Padding(
+                                  padding: const EdgeInsets.only(right: 8),
+                                  child: ChoiceChip(
+                                    label: Text(chip),
+                                    selected: _selectedFeatureChip == chip,
+                                    onSelected: (selected) {
+                                      setState(() {
+                                        _selectedFeatureChip =
+                                            selected ? chip : null;
+                                      });
+                                    },
+                                  ),
+                                ),
+                              )
+                              .toList(growable: false),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            right: 12,
+            bottom: 12,
+            child: Column(
+              children: [
+                FloatingActionButton.small(
+                  heroTag: 'map_fit_lebanon',
+                  onPressed: _isMainMapReady
+                      ? () => _runMainMapAction(
+                          () => _mapController.fitCamera(
+                            LebanonMapConfig.lebanonFit(),
+                          ),
+                        )
+                      : null,
+                  child: const Icon(Icons.zoom_out_map_outlined),
+                ),
+                const SizedBox(height: 8),
+                FloatingActionButton.small(
+                  heroTag: 'map_zoom_in',
+                  onPressed: _isMainMapReady
+                      ? () => _runMainMapAction(
+                          () => _mapController.move(
+                            _mapController.camera.center,
+                            _mapController.camera.zoom + 1,
+                          ),
+                        )
+                      : null,
+                  child: const Icon(Icons.add),
+                ),
+                const SizedBox(height: 8),
+                FloatingActionButton.small(
+                  heroTag: 'map_zoom_out',
+                  onPressed: _isMainMapReady
+                      ? () => _runMainMapAction(
+                          () => _mapController.move(
+                            _mapController.camera.center,
+                            _mapController.camera.zoom - 1,
+                          ),
+                        )
+                      : null,
+                  child: const Icon(Icons.remove),
+                ),
+              ],
+            ),
+          ),
+          if (_tileFailureMessage != null)
+            Positioned(
+              left: 12,
+              right: 72,
+              bottom: 12,
+              child: Material(
+                color: Colors.transparent,
+                child: AppCard(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.cloud_off_outlined),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: Text(_tileFailureMessage!, softWrap: true),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  List<String> _deriveFeatureChips(
+    ProjectSummary project,
+    List<MapFeatureSummary> features,
+  ) {
+    final chips = <String>{};
+    for (final field in project.collectionFormSchema.fields) {
+      if (field.type == CollectionFieldType.select &&
+          _looksLikeFeatureTypeField(field.key, field.label)) {
+        chips.addAll(
+          field.options
+              .map((option) => option.trim())
+              .where((option) => option.isNotEmpty),
+        );
+      }
+    }
+
+    if (chips.isEmpty) {
+      final counts = <String, int>{};
+      for (final feature in features) {
+        for (final entry in feature.attributes.entries) {
+          if (!_looksLikeFeatureTypeField(entry.key, entry.key)) {
+            continue;
+          }
+          final value = '${entry.value}'.trim();
+          if (value.isEmpty || value.length > 24) {
+            continue;
+          }
+          counts[value] = (counts[value] ?? 0) + 1;
+        }
+      }
+      final ranked = counts.entries.toList(growable: false)
+        ..sort((left, right) => right.value.compareTo(left.value));
+      chips.addAll(
+        ranked.take(6).map((entry) => entry.key).where((value) => value.isNotEmpty),
+      );
+    }
+
+    return chips.take(6).toList(growable: false);
+  }
+
+  bool _looksLikeFeatureTypeField(String key, String label) {
+    final normalized = '${key.toLowerCase()} ${label.toLowerCase()}';
+    return normalized.contains('type') ||
+        normalized.contains('species') ||
+        normalized.contains('crop') ||
+        normalized.contains('tree') ||
+        normalized.contains('orchard');
+  }
+
+  bool _matchesSearchAndChip(
+    MapFeatureSummary feature, {
+    required String query,
+    required String? selectedChip,
+  }) {
+    final haystack = _featureSearchBlob(feature);
+    if (selectedChip != null && selectedChip.trim().isNotEmpty) {
+      final chip = selectedChip.toLowerCase();
+      final hasChip = feature.attributes.values.any(
+        (value) => '$value'.toLowerCase().contains(chip),
+      );
+      if (!hasChip) {
+        return false;
+      }
+    }
+
+    final normalizedQuery = query.trim().toLowerCase();
+    if (normalizedQuery.isEmpty) {
+      return true;
+    }
+    return haystack.contains(normalizedQuery);
+  }
+
+  String _featureSearchBlob(MapFeatureSummary feature) {
+    final buffer = StringBuffer()
+      ..write(feature.id.toLowerCase())
+      ..write(' ')
+      ..write('${feature.geometry['type'] ?? ''}'.toLowerCase());
+    for (final entry in feature.attributes.entries) {
+      buffer
+        ..write(' ')
+        ..write(entry.key.toLowerCase())
+        ..write(' ')
+        ..write('${entry.value}'.toLowerCase());
+    }
+    return buffer.toString();
+  }
+
+  Future<_OfflineTileAssets> _loadOfflineTileAssets(
+    OfflineMapPackage package,
+  ) async {
+    final manager = ref.read(offlineTileCacheManagerProvider);
+    final values = await Future.wait<String>([
+      manager.localTileTemplate(
+        package: package,
+        basemapStyle: LebanonBasemapStyle.satellite,
+      ),
+      manager.transparentFallbackPath(),
+    ]);
+    return _OfflineTileAssets(
+      templatePath: values[0],
+      fallbackPath: values[1],
+    );
+  }
+
+  Future<void> _downloadLebanonOverview(OfflineMapPackage package) async {
+    if (_isDownloadingOffline) {
+      return;
+    }
+    setState(() {
+      _isDownloadingOffline = true;
+      _offlineDownloadProgressLabel = 'Preparing Lebanon package download...';
+      _offlineDownloadResultLabel = null;
+    });
+    try {
+      final manager = ref.read(offlineTileCacheManagerProvider);
+      final summary = await ref
+          .read(offlineTileCacheManagerProvider)
+          .cacheLebanonOverview(
+            package: package,
+            onProgress: (progress) {
+              if (!mounted) {
+                return;
+              }
+              setState(() {
+                _offlineDownloadProgressLabel =
+                    'Downloading Lebanon tiles ${progress.completedTiles}/${progress.requestedTiles} • ${progress.downloadedTiles} new • ${progress.skippedTiles} cached${progress.failedTiles > 0 ? ' • ${progress.failedTiles} failed' : ''}';
+              });
+            },
+          );
+      await manager.refreshStats(package);
+      ref.invalidate(offlineMapPackageProvider);
+      if (mounted) {
+        final hasUsableTiles =
+            summary.downloadedTiles > 0 || summary.skippedTiles > 0;
+        final message =
+            'Lebanon package updated. ${summary.downloadedTiles} new tile(s), ${summary.skippedTiles} cached${summary.failedTiles > 0 ? ', ${summary.failedTiles} failed' : ''}.';
+        setState(() {
+          _offlineDownloadResultLabel = message;
+        });
+        if (hasUsableTiles) {
+          AppSnackbar.showSuccess(context, message);
+        } else {
+          AppSnackbar.showError(
+            context,
+            'Unable to cache Lebanon map tiles right now. Please try again later.',
+          );
+        }
+      }
+    } catch (error) {
+      if (mounted) {
+        final message = userFacingErrorMessage(
+          error,
+          fallback: 'Unable to download Lebanon overview tiles right now.',
+        );
+        setState(() {
+          _offlineDownloadResultLabel = message;
+        });
+        AppSnackbar.showError(
+          context,
+          message,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDownloadingOffline = false;
+          _offlineDownloadProgressLabel = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _downloadVisibleRegion(OfflineMapPackage package) async {
+    if (_isDownloadingOffline) {
+      return;
+    }
+    if (!_isMainMapReady) {
+      AppSnackbar.showError(
+        context,
+        'Map is still preparing. Wait for the map to finish loading before downloading the visible area.',
+      );
+      return;
+    }
+    setState(() {
+      _isDownloadingOffline = true;
+      _offlineDownloadProgressLabel = 'Preparing visible-area download...';
+      _offlineDownloadResultLabel = null;
+    });
+    try {
+      final manager = ref.read(offlineTileCacheManagerProvider);
+      final summary = await manager
+          .cacheVisibleRegion(
+            package: package,
+            basemapStyle: LebanonBasemapStyle.satellite,
+            bounds: _mapController.camera.visibleBounds,
+            currentZoom: _mapController.camera.zoom,
+            onProgress: (progress) {
+              if (!mounted) {
+                return;
+              }
+              setState(() {
+                _offlineDownloadProgressLabel =
+                    'Downloading visible area ${progress.completedTiles}/${progress.requestedTiles} • ${progress.downloadedTiles} new • ${progress.skippedTiles} cached${progress.failedTiles > 0 ? ' • ${progress.failedTiles} failed' : ''}';
+              });
+            },
+          );
+      await manager.refreshStats(package);
+      ref.invalidate(offlineMapPackageProvider);
+      if (mounted) {
+        final hasUsableTiles =
+            summary.downloadedTiles > 0 || summary.skippedTiles > 0;
+        final message =
+            'Visible-area package updated. ${summary.downloadedTiles} new tile(s), ${summary.skippedTiles} cached${summary.failedTiles > 0 ? ', ${summary.failedTiles} failed' : ''}.';
+        setState(() {
+          _offlineDownloadResultLabel = message;
+        });
+        if (hasUsableTiles) {
+          AppSnackbar.showSuccess(context, message);
+        } else {
+          AppSnackbar.showError(
+            context,
+            'Unable to cache visible-area tiles right now. Please try again later.',
+          );
+        }
+      }
+    } catch (error) {
+      if (mounted) {
+        final message = userFacingErrorMessage(
+          error,
+          fallback: 'Unable to download visible map tiles right now.',
+        );
+        setState(() {
+          _offlineDownloadResultLabel = message;
+        });
+        AppSnackbar.showError(
+          context,
+          message,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDownloadingOffline = false;
+          _offlineDownloadProgressLabel = null;
+        });
+      }
+    }
   }
 
   void _showCollectionUnavailableMessage(String status) {
@@ -950,7 +1505,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     if (point == null) {
       return;
     }
-    _mapController.move(point, 15);
+    _runMainMapAction(
+      () => _mapController.move(point, 15),
+      queueUntilReady: true,
+    );
   }
 
   ProjectSummary _resolveSelectedProject(
@@ -1216,6 +1774,113 @@ class _SyncStatusLine extends StatelessWidget {
       ],
     );
   }
+}
+
+class _OfflineMapStatusCard extends StatelessWidget {
+  const _OfflineMapStatusCard({
+    required this.package,
+    required this.isDownloading,
+    required this.progressLabel,
+    required this.statusLabel,
+    required this.onDownloadOverview,
+    required this.onDownloadVisible,
+  });
+
+  final OfflineMapPackage? package;
+  final bool isDownloading;
+  final String? progressLabel;
+  final String? statusLabel;
+  final VoidCallback? onDownloadOverview;
+  final VoidCallback? onDownloadVisible;
+
+  @override
+  Widget build(BuildContext context) {
+    if (package == null) {
+      return const Text(
+        'Offline Lebanon map metadata is not available yet.',
+      );
+    }
+
+    final downloadedAt = package!.downloadedAt;
+    final downloadedSummary = downloadedAt == null
+        ? 'Not downloaded yet'
+        : 'Downloaded ${downloadedAt.toLocal().year}-${downloadedAt.toLocal().month.toString().padLeft(2, '0')}-${downloadedAt.toLocal().day.toString().padLeft(2, '0')}';
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Offline Lebanon map',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'Version ${package!.version} • ${package!.tileSource ?? 'tile package'}',
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${package!.tileCount ?? 0} cached tile(s) • ${_formatBytes(package!.sizeBytes ?? 0)} • $downloadedSummary',
+            softWrap: true,
+          ),
+          if (progressLabel != null) ...[
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              progressLabel!,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ] else if (statusLabel != null && statusLabel!.trim().isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              statusLabel!,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+          const SizedBox(height: AppSpacing.sm),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.tonalIcon(
+                onPressed: isDownloading ? null : onDownloadOverview,
+                icon: const Icon(Icons.download_outlined),
+                label: Text(
+                  isDownloading ? 'Downloading...' : 'Download Lebanon',
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: isDownloading ? null : onDownloadVisible,
+                icon: const Icon(Icons.crop_free_outlined),
+                label: const Text('Download visible area'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _formatBytes(int bytes) {
+    if (bytes < 1024) {
+      return '$bytes B';
+    }
+    final kb = bytes / 1024;
+    if (kb < 1024) {
+      return '${kb.toStringAsFixed(1)} KB';
+    }
+    final mb = kb / 1024;
+    return '${mb.toStringAsFixed(2)} MB';
+  }
+}
+
+class _OfflineTileAssets {
+  const _OfflineTileAssets({
+    required this.templatePath,
+    required this.fallbackPath,
+  });
+
+  final String templatePath;
+  final String fallbackPath;
 }
 
 class _MapReviewNoteDialog extends StatefulWidget {

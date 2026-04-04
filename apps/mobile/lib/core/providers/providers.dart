@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -20,6 +22,7 @@ import '../../features/exports/domain/exports_repository.dart';
 import '../../features/exports/presentation/controllers/exports_controller.dart';
 import '../../features/map/data/api_feature_workflow_repository.dart';
 import '../../features/map/data/api_map_repository.dart';
+import '../../features/map/data/offline_tile_cache_manager.dart';
 import '../../features/map/domain/feature_workflow_repository.dart';
 import '../../features/map/domain/map_feature.dart';
 import '../../features/notifications/data/api_notifications_repository.dart';
@@ -75,6 +78,10 @@ final projectsRepositoryProvider = Provider<ProjectsRepository>((ref) {
 
 final mapRepositoryProvider = Provider<ApiMapRepository>((ref) {
   return ApiMapRepository(ref.watch(apiClientProvider));
+});
+
+final offlineTileCacheManagerProvider = Provider<OfflineTileCacheManager>((ref) {
+  return OfflineTileCacheManager(localStore: ref.watch(localStoreProvider));
 });
 
 final featureWorkflowRepositoryProvider = Provider<FeatureWorkflowRepository>((
@@ -156,10 +163,11 @@ final offlineBootstrapProvider = FutureProvider<void>((ref) async {
           id: item.id,
           projectId: 'seed-project',
           projectName: item.projectName,
-          geometryType: item.geometryType,
-          attributesJson: '{"source":"seed"}',
-          photos: const [],
-          status: item.status,
+        geometryType: item.geometryType,
+        geometryJson: '{"type":"Point","coordinates":[35.5,33.9]}',
+        attributesJson: '{"source":"seed"}',
+        photos: const [],
+        status: item.status,
           localVersion: 1,
           updatedAt: DateTime.now().subtract(const Duration(hours: 2)),
         ),
@@ -282,8 +290,49 @@ final projectMapFeaturesProvider =
       if (projectId.isEmpty) {
         return const <MapFeatureSummary>[];
       }
-      return ref.read(mapRepositoryProvider).fetchProjectFeatures(projectId);
+      final localDrafts = await ref.watch(localDraftFeaturesProvider.future);
+      final projectDrafts = localDrafts
+          .where((draft) => draft.projectId == projectId)
+          .toList(growable: false);
+      final localFeatures = projectDrafts
+          .map(_mapFeatureFromLocalDraft)
+          .toList(growable: false);
+
+      try {
+        final remoteFeatures = await ref
+            .read(mapRepositoryProvider)
+            .fetchProjectFeatures(projectId);
+        return _mergeProjectFeatures(remoteFeatures, projectDrafts);
+      } catch (_) {
+        if (localFeatures.isNotEmpty) {
+          return localFeatures;
+        }
+        rethrow;
+      }
     });
+
+final offlineMapPackageProvider = FutureProvider<OfflineMapPackage?>((ref) async {
+  await ref.watch(offlineBootstrapProvider.future);
+  final localStore = ref.watch(localStoreProvider);
+  final localPackage = await localStore.getCurrentOfflineMapPackage();
+  try {
+    final remotePackage = await ref
+        .read(mapRepositoryProvider)
+        .fetchCurrentOfflineMapPackage();
+    final effectivePackage = _mergeOfflineMapPackage(
+      remote: remotePackage,
+      local: localPackage,
+    );
+    if (effectivePackage != null) {
+      await localStore.upsertOfflineMapPackage(effectivePackage);
+      return effectivePackage;
+    }
+  } catch (_) {
+    // Fall back to local cached package below.
+  }
+
+  return localPackage;
+});
 
 final projectByIdProvider = FutureProvider.family<ProjectSummary?, String>((
   ref,
@@ -555,4 +604,89 @@ ProjectViewScope _effectiveProjectScopeForRole({
           ? ProjectViewScope.assigned
           : requestedScope;
   }
+}
+
+MapFeatureSummary _mapFeatureFromLocalDraft(LocalDraftFeature draft) {
+  return MapFeatureSummary(
+    id: draft.id,
+    status: switch (draft.status) {
+      'submitted' || 'under_review' => 'pending_review',
+      'approved' => 'approved',
+      'rejected' => 'rejected',
+      _ => 'draft',
+    },
+    geometry: _decodeJsonMap(draft.geometryJson),
+    attributes: _decodeJsonMap(draft.attributesJson),
+    collectedAt: draft.updatedAt,
+    photoCount: draft.photos.length,
+    photos: draft.photos
+        .map(
+          (photo) => MapFeaturePhoto(
+            id: photo.id,
+            filePath: photo.filePath,
+            takenAt: photo.createdAt,
+          ),
+        )
+        .toList(growable: false),
+  );
+}
+
+List<MapFeatureSummary> _mergeProjectFeatures(
+  List<MapFeatureSummary> remote,
+  List<LocalDraftFeature> localDrafts,
+) {
+  final merged = <String, MapFeatureSummary>{};
+  for (final item in remote) {
+    merged[item.id] = item;
+  }
+  for (final draft in localDrafts) {
+    final item = _mapFeatureFromLocalDraft(draft);
+    if (draft.remoteVersion != null && merged.containsKey(item.id)) {
+      continue;
+    }
+    merged[item.id] = item;
+  }
+  final values = merged.values.toList(growable: false);
+  values.sort((a, b) {
+    final left = a.collectedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+    final right = b.collectedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+    return right.compareTo(left);
+  });
+  return values;
+}
+
+Map<String, dynamic> _decodeJsonMap(String rawJson) {
+  try {
+    final decoded = jsonDecode(rawJson);
+    if (decoded is Map<String, dynamic>) {
+      return decoded;
+    }
+    if (decoded is Map) {
+      return Map<String, dynamic>.from(decoded);
+    }
+  } catch (_) {}
+  return const <String, dynamic>{};
+}
+
+OfflineMapPackage? _mergeOfflineMapPackage({
+  required OfflineMapPackage? remote,
+  required OfflineMapPackage? local,
+}) {
+  if (remote == null) {
+    return local;
+  }
+  if (local == null || local.version != remote.version) {
+    return remote;
+  }
+  return OfflineMapPackage(
+    version: remote.version,
+    zoomLevelMin: remote.zoomLevelMin,
+    zoomLevelMax: remote.zoomLevelMax,
+    downloadedAt: local.downloadedAt,
+    lastUpdatedAt: remote.lastUpdatedAt,
+    tileCount: local.tileCount,
+    sizeBytes: local.sizeBytes,
+    tileSource: remote.tileSource,
+    isCurrent: remote.isCurrent,
+  );
 }

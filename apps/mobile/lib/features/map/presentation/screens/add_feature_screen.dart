@@ -1,13 +1,16 @@
-import 'dart:math';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
+import '../../../../core/offline/local_models.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_card.dart';
@@ -17,6 +20,7 @@ import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/widgets/section_header.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/field_collection_validation.dart';
+import '../../domain/lebanon_map.dart';
 import '../../domain/map_feature.dart';
 import '../widgets/feature_photo_gallery.dart';
 
@@ -36,28 +40,38 @@ class AddFeatureScreen extends ConsumerStatefulWidget {
 
 class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
   final Uuid _uuid = const Uuid();
-  final Random _random = Random();
   final ImagePicker _imagePicker = ImagePicker();
+  final MapController _geometryMapController = MapController();
 
   int _currentStep = 0;
   bool _isSaving = false;
+  bool _isGeometryMapReady = false;
 
   String? _selectedProjectId;
   String? _selectedGeometryType;
   String? _currentDraftFeatureId;
   String? _hydratedDraftId;
-
-  final TextEditingController _latitudeController = TextEditingController();
-  final TextEditingController _longitudeController = TextEditingController();
+  VoidCallback? _pendingGeometryMapAction;
 
   final Map<String, TextEditingController> _attributeControllers =
       <String, TextEditingController>{};
   final Map<String, dynamic> _attributeValues = <String, dynamic>{};
   final Map<String, String> _fieldErrors = <String, String>{};
   final List<_PendingPhoto> _pendingPhotos = <_PendingPhoto>[];
+  final List<LatLng> _geometryVertices = <LatLng>[];
 
   double? _gpsAccuracyMeters;
   List<MapFeaturePhoto> _uploadedPhotos = const <MapFeaturePhoto>[];
+  late final MapOptions _geometryMapOptions = MapOptions(
+    initialCenter: LebanonMapConfig.center,
+    initialZoom: LebanonMapConfig.drawingInitialZoom,
+    initialCameraFit: LebanonMapConfig.drawingFit,
+    minZoom: LebanonMapConfig.drawingMinZoom,
+    maxZoom: LebanonMapConfig.drawingMaxZoom,
+    cameraConstraint: LebanonMapConfig.cameraConstraint,
+    onMapReady: _handleGeometryMapReady,
+    onTap: _handleGeometryMapTap,
+  );
 
   bool get _isEditingDraft =>
       (widget.draftFeatureId?.isNotEmpty ?? false) ||
@@ -73,12 +87,49 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
 
   @override
   void dispose() {
-    _latitudeController.dispose();
-    _longitudeController.dispose();
     for (final controller in _attributeControllers.values) {
       controller.dispose();
     }
     super.dispose();
+  }
+
+  void _handleGeometryMapReady() {
+    if (!mounted) {
+      return;
+    }
+    final pendingAction = _pendingGeometryMapAction;
+    _pendingGeometryMapAction = null;
+    if (!_isGeometryMapReady) {
+      setState(() {
+        _isGeometryMapReady = true;
+      });
+    }
+    if (pendingAction != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        pendingAction();
+      });
+    }
+  }
+
+  void _runGeometryMapAction(
+    VoidCallback action, {
+    bool queueUntilReady = false,
+  }) {
+    if (_isGeometryMapReady) {
+      action();
+      return;
+    }
+    if (queueUntilReady) {
+      _pendingGeometryMapAction = action;
+      return;
+    }
+    AppSnackbar.showError(
+      context,
+      'Geometry map is still preparing. Please try again in a moment.',
+    );
   }
 
   void _ensureProjectSelection(List<ProjectSummary> projects) {
@@ -159,7 +210,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       }
     }
 
-    final point = _pointFromGeometry(draftFeature?.geometry);
+    final geometryVertices = _geometryVerticesFromGeometry(draftFeature?.geometry);
 
     setState(() {
       _selectedProjectId = project.id;
@@ -167,12 +218,18 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       _uploadedPhotos = draftFeature?.photos ?? const <MapFeaturePhoto>[];
       _pendingPhotos.clear();
       _gpsAccuracyMeters = draftFeature?.accuracyMeters;
-      _latitudeController.text = point?.latitude.toStringAsFixed(6) ?? '';
-      _longitudeController.text = point?.longitude.toStringAsFixed(6) ?? '';
+      _geometryVertices
+        ..clear()
+        ..addAll(geometryVertices);
       _currentStep = 0;
       _currentDraftFeatureId = draftFeature?.id;
       _hydratedDraftId = draftFeature?.id;
     });
+
+    _runGeometryMapAction(
+      _fitGeometryOrLebanon,
+      queueUntilReady: true,
+    );
   }
 
   void _ensureDraftHydrated(
@@ -195,25 +252,56 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
 
   List<String> _supportedGeometryTypes(ProjectSummary project) {
     return project.allowedGeometryTypes
-        .where((type) => type == 'Point')
+        .where(
+          (type) => type == 'Point' || type == 'LineString' || type == 'Polygon',
+        )
         .toList(growable: false);
   }
 
-  void _captureGpsSample(ProjectSummary project) {
-    final latitude = 33.1 + (_random.nextDouble() * 1.45);
-    final longitude = 35.1 + (_random.nextDouble() * 1.25);
-    final accuracy = 3 + (_random.nextDouble() * 18);
+  void _fitGeometryOrLebanon() {
+    if (_geometryVertices.isEmpty) {
+      _geometryMapController.fitCamera(
+        LebanonMapConfig.lebanonFit(
+          padding: const EdgeInsets.all(18),
+        ),
+      );
+      return;
+    }
 
+    if (_geometryVertices.length == 1) {
+      final point = _geometryVertices.first;
+      _geometryMapController.move(point, 15);
+      return;
+    }
+
+    _geometryMapController.fitCamera(
+      CameraFit.bounds(
+        bounds: LatLngBounds.fromPoints(_geometryVertices),
+        padding: const EdgeInsets.all(28),
+      ),
+    );
+  }
+
+  void _handleGeometryMapTap(TapPosition _, LatLng point) {
+    if (!LebanonMapConfig.contains(point)) {
+      AppSnackbar.showError(
+        context,
+        'Geometry capture is restricted to Lebanon.',
+      );
+      return;
+    }
     setState(() {
-      _latitudeController.text = latitude.toStringAsFixed(6);
-      _longitudeController.text = longitude.toStringAsFixed(6);
-      _gpsAccuracyMeters = accuracy;
+      if ((_selectedGeometryType ?? 'Point') == 'Point') {
+        _geometryVertices
+          ..clear()
+          ..add(point);
+      } else {
+        _geometryVertices.add(point);
+      }
     });
-
-    final quality = Phase6Validation.gpsQualityLabel(_gpsAccuracyMeters);
-    AppSnackbar.showSuccess(
-      context,
-      'GPS sample captured: ${accuracy.toStringAsFixed(1)}m ($quality).',
+    _runGeometryMapAction(
+      _fitGeometryOrLebanon,
+      queueUntilReady: true,
     );
   }
 
@@ -332,21 +420,17 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
 
   String? _validateStep(ProjectSummary project, int stepIndex) {
     if (_supportedGeometryTypes(project).isEmpty) {
-      return 'This project does not allow point capture yet. Update the project geometry policy before collecting from mobile.';
+      return 'This project does not allow supported mobile geometry capture yet.';
     }
 
     if (stepIndex == 0) {
       if (_selectedProjectId == null || _selectedProjectId!.isEmpty) {
         return 'Select an assigned project.';
       }
-
-      final lat = double.tryParse(_latitudeController.text.trim());
-      final lon = double.tryParse(_longitudeController.text.trim());
       return Phase6Validation.validateGeometry(
         geometryType: _selectedGeometryType ?? 'Point',
         allowedGeometryTypes: _supportedGeometryTypes(project),
-        latitude: lat,
-        longitude: lon,
+        vertices: List<LatLng>.from(_geometryVertices),
         gpsAccuracyMeters: _gpsAccuracyMeters,
         maxGpsAccuracyMeters: project.maxGpsAccuracyMeters,
       );
@@ -398,10 +482,10 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     ProjectSummary project, {
     required bool submit,
   }) async {
-    if (project.status != 'active') {
+    if (submit && project.status != 'active') {
       AppSnackbar.showError(
         context,
-        'Feature collection is only available while the project is active.',
+        'Feature submission is only available while the project is active.',
       );
       return;
     }
@@ -417,15 +501,10 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       }
     }
 
-    final geometry = <String, dynamic>{
-      'type': _selectedGeometryType ?? 'Point',
-      'coordinates': <double>[
-        double.parse(_longitudeController.text.trim()),
-        double.parse(_latitudeController.text.trim()),
-      ],
-    };
+    final geometry = _buildGeometryPayload();
 
     final attributes = _collectAttributeValues(project);
+    final draftId = _currentDraftFeatureId ?? _uuid.v4();
     setState(() {
       _isSaving = true;
     });
@@ -477,6 +556,17 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       );
       _returnToProjectMap(project.id);
     } catch (error) {
+      if (await _saveLocallyIfNeeded(
+        error,
+        project: project,
+        draftId: draftId,
+        geometry: geometry,
+        attributes: attributes,
+        submit: submit,
+      )) {
+        return;
+      }
+
       if (!mounted) {
         return;
       }
@@ -496,6 +586,155 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
         });
       }
     }
+  }
+
+  Future<bool> _saveLocallyIfNeeded(
+    Object error, {
+    required ProjectSummary project,
+    required String draftId,
+    required Map<String, dynamic> geometry,
+    required Map<String, dynamic> attributes,
+    required bool submit,
+  }) async {
+    if (!_shouldPersistLocally(error)) {
+      return false;
+    }
+
+    final localStore = ref.read(localStoreProvider);
+    final now = DateTime.now();
+    final existingDraft = await localStore.getDraftById(draftId);
+    final offlineDraft = LocalDraftFeature(
+      id: draftId,
+      projectId: project.id,
+      projectName: project.name,
+      geometryType: _selectedGeometryType ?? 'Point',
+      geometryJson: jsonEncode(geometry),
+      attributesJson: jsonEncode(attributes),
+      photos: <DraftPhoto>[
+        if (existingDraft != null) ...existingDraft.photos,
+        ..._pendingPhotos.map(
+          (photo) => DraftPhoto(
+            id: photo.id,
+            filePath: photo.filePath,
+            createdAt: photo.createdAt,
+          ),
+        ),
+      ],
+      status: submit ? 'submitted' : 'draft',
+      localVersion: (existingDraft?.localVersion ?? 0) + 1,
+      remoteVersion: existingDraft?.remoteVersion,
+      updatedAt: now,
+    );
+
+    await localStore.upsertDraft(offlineDraft);
+    bumpWorkflowRefresh(ref);
+
+    if (mounted) {
+      AppSnackbar.showSuccess(
+        context,
+        submit
+            ? 'Feature saved offline and queued for submission when the connection returns.'
+            : 'Feature draft saved offline and queued for sync.',
+      );
+      _returnToProjectMap(project.id);
+    }
+    return true;
+  }
+
+  bool _shouldPersistLocally(Object error) {
+    final message = userFacingErrorMessage(error, fallback: '').toLowerCase();
+    return message.contains('network') ||
+        message.contains('offline') ||
+        message.contains('connection') ||
+        message.contains('socket') ||
+        message.contains('timed out') ||
+        message.contains('host lookup') ||
+        message.contains('temporarily unavailable');
+  }
+
+  Map<String, dynamic> _buildGeometryPayload() {
+    final type = _selectedGeometryType ?? 'Point';
+    switch (type) {
+      case 'LineString':
+        return <String, dynamic>{
+          'type': 'LineString',
+          'coordinates': _geometryVertices
+              .map((point) => <double>[point.longitude, point.latitude])
+              .toList(growable: false),
+        };
+      case 'Polygon':
+        final ring = _geometryVertices
+            .map((point) => <double>[point.longitude, point.latitude])
+            .toList(growable: true);
+        if (ring.isNotEmpty) {
+          final first = ring.first;
+          final last = ring.last;
+          if (first[0] != last[0] || first[1] != last[1]) {
+            ring.add(<double>[first[0], first[1]]);
+          }
+        }
+        return <String, dynamic>{
+          'type': 'Polygon',
+          'coordinates': <List<List<double>>>[ring],
+        };
+      case 'Point':
+      default:
+        final point = _geometryVertices.first;
+        return <String, dynamic>{
+          'type': 'Point',
+          'coordinates': <double>[point.longitude, point.latitude],
+        };
+    }
+  }
+
+  List<LatLng> _geometryVerticesFromGeometry(Map<String, dynamic>? geometry) {
+    if (geometry == null) {
+      return const <LatLng>[];
+    }
+
+    final type = geometry['type'] as String?;
+    final coordinates = geometry['coordinates'];
+    if (type == 'Point' && coordinates is List && coordinates.length >= 2) {
+      return <LatLng>[
+        LatLng(
+          (coordinates[1] as num).toDouble(),
+          (coordinates[0] as num).toDouble(),
+        ),
+      ];
+    }
+    if (type == 'LineString' && coordinates is List) {
+      return coordinates
+          .whereType<List>()
+          .where((point) => point.length >= 2)
+          .map(
+            (point) => LatLng(
+              (point[1] as num).toDouble(),
+              (point[0] as num).toDouble(),
+            ),
+          )
+          .toList(growable: false);
+    }
+    if (type == 'Polygon' &&
+        coordinates is List &&
+        coordinates.isNotEmpty &&
+        coordinates.first is List) {
+      final ring = coordinates.first as List;
+      final points = ring
+          .whereType<List>()
+          .where((point) => point.length >= 2)
+          .map(
+            (point) => LatLng(
+              (point[1] as num).toDouble(),
+              (point[0] as num).toDouble(),
+            ),
+          )
+          .toList(growable: false);
+      if (points.length >= 2 && points.first == points.last) {
+        return points.sublist(0, points.length - 1);
+      }
+      return points;
+    }
+    return const <LatLng>[];
   }
 
   Widget _buildSchemaField(CollectionFormFieldSchema field) {
@@ -884,9 +1123,9 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
               if (supportedGeometryTypes.isEmpty)
                 const AppEmptyState(
                   icon: Icons.edit_location_alt_outlined,
-                  title: 'Point capture unavailable',
+                  title: 'Geometry capture unavailable',
                   message:
-                      'This mobile build supports point geometry only. Update the project collection schema if you need a different geometry policy.',
+                      'This project does not expose a supported geometry type for mobile capture.',
                 )
               else
                 DropdownButtonFormField<String>(
@@ -908,41 +1147,40 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                   },
                 ),
               const SizedBox(height: AppSpacing.sm),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final latitudeField = AppTextField(
-                    label: 'Latitude',
-                    controller: _latitudeController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                  );
-                  final longitudeField = AppTextField(
-                    label: 'Longitude',
-                    controller: _longitudeController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                  );
-
-                  if (constraints.maxWidth < 520) {
-                    return Column(
-                      children: [
-                        latitudeField,
-                        const SizedBox(height: AppSpacing.sm),
-                        longitudeField,
-                      ],
-                    );
-                  }
-
-                  return Row(
-                    children: [
-                      Expanded(child: latitudeField),
-                      const SizedBox(width: AppSpacing.sm),
-                      Expanded(child: longitudeField),
-                    ],
-                  );
-                },
+              Text(
+                'Draw the feature geometry directly on the Lebanon map. Point adds one location, line adds multiple vertices, and polygon closes the outline automatically.',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              _GeometryCaptureMapCard(
+                mapController: _geometryMapController,
+                mapOptions: _geometryMapOptions,
+                geometryType: _selectedGeometryType ?? 'Point',
+                vertices: _geometryVertices,
+                isMapReady: _isGeometryMapReady,
+                onUndo: _isSaving || _geometryVertices.isEmpty
+                    ? null
+                    : () {
+                        setState(() {
+                          _geometryVertices.removeLast();
+                        });
+                        _runGeometryMapAction(
+                          _fitGeometryOrLebanon,
+                          queueUntilReady: true,
+                        );
+                      },
+                onClear: _isSaving || _geometryVertices.isEmpty
+                    ? null
+                    : () {
+                        setState(() {
+                          _geometryVertices.clear();
+                        });
+                        _runGeometryMapAction(
+                          _fitGeometryOrLebanon,
+                          queueUntilReady: true,
+                        );
+                      },
+                onFitLebanon: () => _runGeometryMapAction(_fitGeometryOrLebanon),
               ),
               const SizedBox(height: AppSpacing.sm),
               Wrap(
@@ -950,28 +1188,20 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 runSpacing: 8,
                 children: [
                   Chip(
-                    avatar: const Icon(Icons.gps_fixed, size: 18),
+                    avatar: const Icon(Icons.edit_location_alt_outlined, size: 18),
                     label: Text(
-                      _gpsAccuracyMeters == null
-                          ? 'GPS not captured'
-                          : 'Accuracy ${_gpsAccuracyMeters!.toStringAsFixed(1)}m (${Phase6Validation.gpsQualityLabel(_gpsAccuracyMeters)})',
+                      _geometryVertices.isEmpty
+                          ? 'No geometry captured yet'
+                          : _geometrySummary(),
                     ),
                   ),
                   Chip(
                     avatar: const Icon(Icons.rule_outlined, size: 18),
                     label: Text(
-                      'Target <= ${selectedProject.maxGpsAccuracyMeters.toStringAsFixed(1)}m',
+                      'Lebanon-only capture',
                     ),
                   ),
                 ],
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              OutlinedButton.icon(
-                onPressed: supportedGeometryTypes.isEmpty
-                    ? null
-                    : () => _captureGpsSample(selectedProject),
-                icon: const Icon(Icons.my_location_outlined),
-                label: const Text('Capture GPS sample'),
               ),
             ],
           ),
@@ -1098,6 +1328,8 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                       'Geometry: ${_selectedGeometryType ?? 'Point'}',
                     ),
                   ),
+                  if (_geometryVertices.isNotEmpty)
+                    Chip(label: Text(_geometrySummary())),
                   Chip(
                     label: Text(
                       'Photos: ${_uploadedPhotos.length + _pendingPhotos.length}',
@@ -1131,19 +1363,21 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     }
   }
 
-  _GeometryPoint? _pointFromGeometry(Map<String, dynamic>? geometry) {
-    if (geometry == null) {
-      return null;
+  String _geometrySummary() {
+    final geometryType = _selectedGeometryType ?? 'Point';
+    switch (geometryType) {
+      case 'LineString':
+        return 'Line with ${_geometryVertices.length} vertex${_geometryVertices.length == 1 ? '' : 'es'}';
+      case 'Polygon':
+        return 'Polygon outline with ${_geometryVertices.length} point${_geometryVertices.length == 1 ? '' : 's'}';
+      case 'Point':
+      default:
+        if (_geometryVertices.isEmpty) {
+          return 'Point not placed yet';
+        }
+        final point = _geometryVertices.first;
+        return 'Point ${point.latitude.toStringAsFixed(5)}, ${point.longitude.toStringAsFixed(5)}';
     }
-    final type = geometry['type'] as String?;
-    final coordinates = geometry['coordinates'];
-    if (type == 'Point' && coordinates is List && coordinates.length >= 2) {
-      return _GeometryPoint(
-        latitude: (coordinates[1] as num).toDouble(),
-        longitude: (coordinates[0] as num).toDouble(),
-      );
-    }
-    return null;
   }
 
   String _photoLabel(String path) {
@@ -1180,9 +1414,128 @@ class _PendingPhoto {
 
 enum _PhotoPickerSource { camera, gallery }
 
-class _GeometryPoint {
-  const _GeometryPoint({required this.latitude, required this.longitude});
+class _GeometryCaptureMapCard extends StatelessWidget {
+  const _GeometryCaptureMapCard({
+    required this.mapController,
+    required this.mapOptions,
+    required this.geometryType,
+    required this.vertices,
+    required this.isMapReady,
+    required this.onUndo,
+    required this.onClear,
+    required this.onFitLebanon,
+  });
 
-  final double latitude;
-  final double longitude;
+  final MapController mapController;
+  final MapOptions mapOptions;
+  final String geometryType;
+  final List<LatLng> vertices;
+  final bool isMapReady;
+  final VoidCallback? onUndo;
+  final VoidCallback? onClear;
+  final VoidCallback onFitLebanon;
+
+  @override
+  Widget build(BuildContext context) {
+    final polygonPoints = geometryType == 'Polygon' && vertices.length >= 3
+        ? <LatLng>[
+            ...vertices,
+            vertices.first,
+          ]
+        : const <LatLng>[];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          height: 320,
+          child: ClipRRect(
+            borderRadius: AppRadii.lg,
+            child: FlutterMap(
+              mapController: mapController,
+              options: mapOptions,
+              children: [
+                TileLayer(
+                  urlTemplate: LebanonMapConfig.basemapUrlTemplate(
+                    LebanonBasemapStyle.satellite,
+                  ),
+                  userAgentPackageName: 'lb.gov.gis_collector',
+                ),
+                if (polygonPoints.isNotEmpty)
+                  PolygonLayer(
+                    polygons: [
+                      Polygon(
+                        points: polygonPoints,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.primary.withValues(alpha: 0.20),
+                        borderColor: Theme.of(context).colorScheme.primary,
+                        borderStrokeWidth: 2.5,
+                      ),
+                    ],
+                  ),
+                if (geometryType == 'LineString' && vertices.length >= 2)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: vertices,
+                        color: Theme.of(context).colorScheme.primary,
+                        strokeWidth: 4,
+                      ),
+                    ],
+                  ),
+                MarkerLayer(
+                  markers: vertices
+                      .map(
+                        (point) => Marker(
+                          width: 32,
+                          height: 32,
+                          point: point,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Theme.of(context).colorScheme.primary,
+                              border: Border.all(color: Colors.white, width: 2),
+                            ),
+                            child: Center(
+                              child: Text(
+                                '${vertices.indexOf(point) + 1}',
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(color: Colors.white),
+                              ),
+                            ),
+                          ),
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            OutlinedButton.icon(
+              onPressed: onUndo,
+              icon: const Icon(Icons.undo_outlined),
+              label: const Text('Undo'),
+            ),
+            OutlinedButton.icon(
+              onPressed: onClear,
+              icon: const Icon(Icons.clear_outlined),
+              label: const Text('Clear'),
+            ),
+            OutlinedButton.icon(
+              onPressed: isMapReady ? onFitLebanon : null,
+              icon: const Icon(Icons.zoom_out_map_outlined),
+              label: const Text('Fit Lebanon'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
 }

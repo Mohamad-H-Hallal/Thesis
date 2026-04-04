@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:lebanese_gis_mobile/features/map/domain/field_collection_validation.dart';
 import 'package:lebanese_gis_mobile/features/projects/domain/project.dart';
 
@@ -8,8 +9,7 @@ void main() {
       final error = Phase6Validation.validateGeometry(
         geometryType: 'Point',
         allowedGeometryTypes: const <String>['Point', 'Polygon'],
-        latitude: 33.92,
-        longitude: 35.58,
+        vertices: const <LatLng>[LatLng(33.92, 35.58)],
         gpsAccuracyMeters: 7.5,
         maxGpsAccuracyMeters: 12,
       );
@@ -21,8 +21,7 @@ void main() {
       final error = Phase6Validation.validateGeometry(
         geometryType: 'Point',
         allowedGeometryTypes: const <String>['Point'],
-        latitude: 33.92,
-        longitude: 35.58,
+        vertices: const <LatLng>[LatLng(33.92, 35.58)],
         gpsAccuracyMeters: 22,
         maxGpsAccuracyMeters: 12,
       );

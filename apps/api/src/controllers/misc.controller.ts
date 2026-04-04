@@ -44,6 +44,37 @@ const getSupportSettingsRow = async () => {
   return inserted.rows[0];
 };
 
+const ensureCurrentOfflineMapRow = async () => {
+  const currentResult = await query(
+    `SELECT id, version, zoom_level_min, zoom_level_max, downloaded_at,
+            last_updated_at, tile_count, size_bytes, tile_source, is_current
+     FROM lebanon_offline_map
+     WHERE is_current = TRUE
+     ORDER BY last_updated_at DESC
+     LIMIT 1`,
+  );
+
+  if (currentResult.rows.length > 0) {
+    return currentResult.rows[0];
+  }
+
+  const inserted = await query(
+    `INSERT INTO lebanon_offline_map (
+       version,
+       zoom_level_min,
+       zoom_level_max,
+       tile_source,
+       is_current
+     )
+     VALUES ($1, $2, $3, $4, TRUE)
+     RETURNING id, version, zoom_level_min, zoom_level_max, downloaded_at,
+               last_updated_at, tile_count, size_bytes, tile_source, is_current`,
+    ['lebanon-satellite-v1', 7, 18, 'esri_world_imagery'],
+  );
+
+  return inserted.rows[0];
+};
+
 const getUserForAdminMutation = async (userId: string) => {
   const result = await query(
     `SELECT id, email, full_name, phone, role, is_active
@@ -282,6 +313,17 @@ const settingsController = {
       success: true,
       message: 'Support settings updated successfully',
       data: result.rows[0],
+    });
+  },
+};
+
+const offlineMapController = {
+  getCurrent: async (_req, res) => {
+    const row = await ensureCurrentOfflineMapRow();
+
+    res.json({
+      success: true,
+      data: row,
     });
   },
 };
@@ -1210,6 +1252,7 @@ const userController = {
 module.exports = {
   categoryController,
   notificationController,
+  offlineMapController,
   settingsController,
   userController,
 };

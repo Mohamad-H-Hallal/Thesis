@@ -46,6 +46,18 @@ class TrackingLocalStore implements LocalStore {
   Future<List<LocalDraftFeature>> getDrafts() => _inner.getDrafts();
 
   @override
+  Future<LocalDraftFeature?> getDraftById(String draftId) =>
+      _inner.getDraftById(draftId);
+
+  @override
+  Future<void> upsertOfflineMapPackage(OfflineMapPackage package) =>
+      _inner.upsertOfflineMapPackage(package);
+
+  @override
+  Future<OfflineMapPackage?> getCurrentOfflineMapPackage() =>
+      _inner.getCurrentOfflineMapPackage();
+
+  @override
   Future<void> updateDraftStatus(
     String draftId, {
     required String status,
@@ -125,6 +137,7 @@ LocalDraftFeature _buildDraft({
     projectId: 'project-1',
     projectName: 'Bekaa Orchard Census 2026',
     geometryType: 'Point',
+    geometryJson: '{"type":"Point","coordinates":[35.58,33.92]}',
     attributesJson: '{"tree_type":"olive"}',
     photos: const <DraftPhoto>[],
     status: 'draft',
@@ -149,6 +162,10 @@ SyncQueueItem _queueItem({
       'draft_id': draftId,
       'project_id': 'project-1',
       'geometry_type': 'Point',
+      'geometry': <String, dynamic>{
+        'type': 'Point',
+        'coordinates': <double>[35.58, 33.92],
+      },
       'attributes': <String, dynamic>{'tree_type': 'olive'},
       'status': 'draft',
       'local_version': localVersion,
@@ -169,11 +186,130 @@ void main() {
     late TrackingLocalStore store;
     late SyncEngine syncEngine;
     late ApiClient apiClient;
+    late List<String?> sentIdempotencyKeys;
 
     setUp(() async {
       store = TrackingLocalStore(MemoryLocalStore());
       await store.initialize();
-      apiClient = ApiClient(dio: Dio());
+      final dio = Dio();
+      sentIdempotencyKeys = <String?>[];
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            sentIdempotencyKeys.add(options.headers['Idempotency-Key'] as String?);
+            final payload = options.data is Map<String, dynamic>
+                ? Map<String, dynamic>.from(options.data as Map<String, dynamic>)
+                : const <String, dynamic>{};
+
+            if (options.method == 'POST' && options.path.endsWith('/features')) {
+              final featureId = (payload['id'] ?? payload['draft_id'] ?? '')
+                  .toString();
+              if (featureId.contains('failed') ||
+                  featureId.contains('retry') ||
+                  featureId.contains('idempotency') ||
+                  featureId.contains('dead-letter')) {
+                handler.reject(
+                  DioException(
+                    requestOptions: options,
+                    response: Response<Map<String, dynamic>>(
+                      requestOptions: options,
+                      statusCode: 503,
+                      data: const <String, dynamic>{
+                        'message': 'Simulated transient network error',
+                      },
+                    ),
+                    type: DioExceptionType.badResponse,
+                  ),
+                );
+                return;
+              }
+
+              if (featureId.contains('conflict')) {
+                handler.reject(
+                  DioException(
+                    requestOptions: options,
+                    response: Response<Map<String, dynamic>>(
+                      requestOptions: options,
+                      statusCode: 409,
+                      data: <String, dynamic>{
+                        'message': 'Simulated version conflict',
+                        'version': 3,
+                      },
+                    ),
+                    type: DioExceptionType.badResponse,
+                  ),
+                );
+                return;
+              }
+
+              handler.resolve(
+                Response<Map<String, dynamic>>(
+                  requestOptions: options,
+                  statusCode: 201,
+                  data: <String, dynamic>{
+                    'data': <String, dynamic>{
+                      'id': payload['id'] ?? payload['draft_id'],
+                      'version': payload['local_version'],
+                    },
+                  },
+                ),
+              );
+              return;
+            }
+
+            if (options.method == 'PUT' && options.path.contains('/features/')) {
+              handler.resolve(
+                Response<Map<String, dynamic>>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: <String, dynamic>{
+                    'data': <String, dynamic>{
+                      'version': payload['local_version'] ?? 1,
+                    },
+                  },
+                ),
+              );
+              return;
+            }
+
+            if (options.method == 'POST' &&
+                options.path.contains('/photos/feature/')) {
+              handler.resolve(
+                Response<Map<String, dynamic>>(
+                  requestOptions: options,
+                  statusCode: 201,
+                  data: const <String, dynamic>{'success': true},
+                ),
+              );
+              return;
+            }
+
+            if (options.method == 'POST' && options.path.endsWith('/submit')) {
+              handler.resolve(
+                Response<Map<String, dynamic>>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: const <String, dynamic>{'success': true},
+                ),
+              );
+              return;
+            }
+
+            handler.reject(
+              DioException(
+                requestOptions: options,
+                response: Response<Map<String, dynamic>>(
+                  requestOptions: options,
+                  statusCode: 404,
+                  data: const <String, dynamic>{'message': 'Unexpected test route'},
+                ),
+                type: DioExceptionType.badResponse,
+              ),
+            );
+          },
+        ),
+      );
+      apiClient = ApiClient(dio: dio);
       syncEngine = SyncEngine(localStore: store, apiClient: apiClient);
     });
 
@@ -399,7 +535,7 @@ void main() {
       final firstSummary = await syncEngine.syncPending();
       expect(firstSummary.failed, 1);
       expect(firstSummary.deadLettered, 0);
-      expect(apiClient.dio.options.headers['Idempotency-Key'], key);
+      expect(sentIdempotencyKeys.last, key);
 
       final failedAfterFirst = (await store.getDueSyncItems(
         DateTime.now().add(const Duration(days: 1)),
@@ -417,7 +553,7 @@ void main() {
       final secondSummary = await syncEngine.syncPending();
       expect(secondSummary.failed, 1);
       expect(secondSummary.deadLettered, 0);
-      expect(apiClient.dio.options.headers['Idempotency-Key'], key);
+      expect(sentIdempotencyKeys.last, key);
 
       final failedAfterSecond = (await store.getDueSyncItems(
         DateTime.now().add(const Duration(days: 1)),
