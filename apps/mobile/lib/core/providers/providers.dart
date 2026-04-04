@@ -22,7 +22,9 @@ import '../../features/exports/domain/exports_repository.dart';
 import '../../features/exports/presentation/controllers/exports_controller.dart';
 import '../../features/map/data/api_feature_workflow_repository.dart';
 import '../../features/map/data/api_map_repository.dart';
+import '../../features/map/data/device_current_location_service.dart';
 import '../../features/map/data/offline_tile_cache_manager.dart';
+import '../../features/map/domain/current_location_service.dart';
 import '../../features/map/domain/feature_workflow_repository.dart';
 import '../../features/map/domain/map_feature.dart';
 import '../../features/notifications/data/api_notifications_repository.dart';
@@ -80,8 +82,14 @@ final mapRepositoryProvider = Provider<ApiMapRepository>((ref) {
   return ApiMapRepository(ref.watch(apiClientProvider));
 });
 
-final offlineTileCacheManagerProvider = Provider<OfflineTileCacheManager>((ref) {
+final offlineTileCacheManagerProvider = Provider<OfflineTileCacheManager>((
+  ref,
+) {
   return OfflineTileCacheManager(localStore: ref.watch(localStoreProvider));
+});
+
+final currentLocationServiceProvider = Provider<CurrentLocationService>((ref) {
+  return const DeviceCurrentLocationService();
 });
 
 final featureWorkflowRepositoryProvider = Provider<FeatureWorkflowRepository>((
@@ -163,11 +171,11 @@ final offlineBootstrapProvider = FutureProvider<void>((ref) async {
           id: item.id,
           projectId: 'seed-project',
           projectName: item.projectName,
-        geometryType: item.geometryType,
-        geometryJson: '{"type":"Point","coordinates":[35.5,33.9]}',
-        attributesJson: '{"source":"seed"}',
-        photos: const [],
-        status: item.status,
+          geometryType: item.geometryType,
+          geometryJson: '{"type":"Point","coordinates":[35.5,33.9]}',
+          attributesJson: '{"source":"seed"}',
+          photos: const [],
+          status: item.status,
           localVersion: 1,
           updatedAt: DateTime.now().subtract(const Duration(hours: 2)),
         ),
@@ -311,7 +319,9 @@ final projectMapFeaturesProvider =
       }
     });
 
-final offlineMapPackageProvider = FutureProvider<OfflineMapPackage?>((ref) async {
+final offlineMapPackageProvider = FutureProvider<OfflineMapPackage?>((
+  ref,
+) async {
   await ref.watch(offlineBootstrapProvider.future);
   final localStore = ref.watch(localStoreProvider);
   final localPackage = await localStore.getCurrentOfflineMapPackage();

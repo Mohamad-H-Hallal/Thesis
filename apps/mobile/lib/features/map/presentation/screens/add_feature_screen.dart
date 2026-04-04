@@ -19,6 +19,7 @@ import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/widgets/section_header.dart';
 import '../../../projects/domain/project.dart';
+import '../../domain/current_location_service.dart';
 import '../../domain/field_collection_validation.dart';
 import '../../domain/lebanon_map.dart';
 import '../../domain/map_feature.dart';
@@ -61,6 +62,9 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
   final List<LatLng> _geometryVertices = <LatLng>[];
 
   double? _gpsAccuracyMeters;
+  LatLng? _currentLocation;
+  bool _isLocating = false;
+  LebanonBasemapStyle _drawingBasemapStyle = LebanonBasemapStyle.satellite;
   List<MapFeaturePhoto> _uploadedPhotos = const <MapFeaturePhoto>[];
   late final MapOptions _geometryMapOptions = MapOptions(
     initialCenter: LebanonMapConfig.center,
@@ -114,22 +118,42 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     }
   }
 
+  bool _isMapControllerLifecycleError(Object error) {
+    return error.toString().contains(
+      'You need to have FlutterMap widget rendered at least once before using MapController',
+    );
+  }
+
   void _runGeometryMapAction(
     VoidCallback action, {
     bool queueUntilReady = false,
   }) {
-    if (_isGeometryMapReady) {
+    if (!_isGeometryMapReady) {
+      if (queueUntilReady) {
+        _pendingGeometryMapAction = action;
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        'Geometry map is still preparing. Please try again in a moment.',
+      );
+      return;
+    }
+
+    try {
       action();
-      return;
+    } catch (error) {
+      if (_isMapControllerLifecycleError(error)) {
+        _pendingGeometryMapAction = action;
+        if (mounted) {
+          setState(() {
+            _isGeometryMapReady = false;
+          });
+        }
+        return;
+      }
+      rethrow;
     }
-    if (queueUntilReady) {
-      _pendingGeometryMapAction = action;
-      return;
-    }
-    AppSnackbar.showError(
-      context,
-      'Geometry map is still preparing. Please try again in a moment.',
-    );
   }
 
   void _ensureProjectSelection(List<ProjectSummary> projects) {
@@ -210,7 +234,9 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       }
     }
 
-    final geometryVertices = _geometryVerticesFromGeometry(draftFeature?.geometry);
+    final geometryVertices = _geometryVerticesFromGeometry(
+      draftFeature?.geometry,
+    );
 
     setState(() {
       _selectedProjectId = project.id;
@@ -226,10 +252,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       _hydratedDraftId = draftFeature?.id;
     });
 
-    _runGeometryMapAction(
-      _fitGeometryOrLebanon,
-      queueUntilReady: true,
-    );
+    _runGeometryMapAction(_fitGeometryOrLebanon, queueUntilReady: true);
   }
 
   void _ensureDraftHydrated(
@@ -253,7 +276,8 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
   List<String> _supportedGeometryTypes(ProjectSummary project) {
     return project.allowedGeometryTypes
         .where(
-          (type) => type == 'Point' || type == 'LineString' || type == 'Polygon',
+          (type) =>
+              type == 'Point' || type == 'LineString' || type == 'Polygon',
         )
         .toList(growable: false);
   }
@@ -261,9 +285,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
   void _fitGeometryOrLebanon() {
     if (_geometryVertices.isEmpty) {
       _geometryMapController.fitCamera(
-        LebanonMapConfig.lebanonFit(
-          padding: const EdgeInsets.all(18),
-        ),
+        LebanonMapConfig.lebanonFit(padding: const EdgeInsets.all(18)),
       );
       return;
     }
@@ -299,10 +321,73 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
         _geometryVertices.add(point);
       }
     });
-    _runGeometryMapAction(
-      _fitGeometryOrLebanon,
-      queueUntilReady: true,
-    );
+    _runGeometryMapAction(_fitGeometryOrLebanon, queueUntilReady: true);
+  }
+
+  Future<void> _useCurrentLocationForGeometry() async {
+    if (_isLocating) {
+      return;
+    }
+    setState(() {
+      _isLocating = true;
+    });
+
+    try {
+      final location = await ref
+          .read(currentLocationServiceProvider)
+          .fetchCurrentLocation();
+      if (!LebanonMapConfig.contains(location.position)) {
+        if (mounted) {
+          AppSnackbar.showError(
+            context,
+            'Current location is outside the Lebanon map workspace.',
+          );
+        }
+        return;
+      }
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _currentLocation = location.position;
+        _gpsAccuracyMeters = location.accuracyMeters;
+        if ((_selectedGeometryType ?? 'Point') == 'Point') {
+          _geometryVertices
+            ..clear()
+            ..add(location.position);
+        }
+      });
+      _runGeometryMapAction(
+        () => _geometryMapController.move(location.position, 16),
+        queueUntilReady: true,
+      );
+      if (mounted && (_selectedGeometryType ?? 'Point') != 'Point') {
+        AppSnackbar.showSuccess(
+          context,
+          'Map centered on the current location. Tap the map to place geometry vertices.',
+        );
+      }
+    } on CurrentLocationFailure catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(context, error.message);
+      }
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to get the current location right now.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLocating = false;
+        });
+      }
+    }
   }
 
   Future<void> _pickPhotos(ProjectSummary project) async {
@@ -1148,16 +1233,19 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 ),
               const SizedBox(height: AppSpacing.sm),
               Text(
-                'Draw the feature geometry directly on the Lebanon map. Point adds one location, line adds multiple vertices, and polygon closes the outline automatically.',
+                'Use the field map to capture geometry directly in Lebanon. Hybrid imagery, labels, and current location are available for field collection.',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
               const SizedBox(height: AppSpacing.sm),
               _GeometryCaptureMapCard(
                 mapController: _geometryMapController,
                 mapOptions: _geometryMapOptions,
+                basemapStyle: _drawingBasemapStyle,
                 geometryType: _selectedGeometryType ?? 'Point',
                 vertices: _geometryVertices,
                 isMapReady: _isGeometryMapReady,
+                currentLocation: _currentLocation,
+                isLocating: _isLocating,
                 onUndo: _isSaving || _geometryVertices.isEmpty
                     ? null
                     : () {
@@ -1180,7 +1268,16 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                           queueUntilReady: true,
                         );
                       },
-                onFitLebanon: () => _runGeometryMapAction(_fitGeometryOrLebanon),
+                onUseCurrentLocation: _isSaving
+                    ? null
+                    : _useCurrentLocationForGeometry,
+                onToggleBasemap: (style) {
+                  setState(() {
+                    _drawingBasemapStyle = style;
+                  });
+                },
+                onFitLebanon: () =>
+                    _runGeometryMapAction(_fitGeometryOrLebanon),
               ),
               const SizedBox(height: AppSpacing.sm),
               Wrap(
@@ -1188,7 +1285,10 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 runSpacing: 8,
                 children: [
                   Chip(
-                    avatar: const Icon(Icons.edit_location_alt_outlined, size: 18),
+                    avatar: const Icon(
+                      Icons.edit_location_alt_outlined,
+                      size: 18,
+                    ),
                     label: Text(
                       _geometryVertices.isEmpty
                           ? 'No geometry captured yet'
@@ -1197,10 +1297,15 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                   ),
                   Chip(
                     avatar: const Icon(Icons.rule_outlined, size: 18),
-                    label: Text(
-                      'Lebanon-only capture',
-                    ),
+                    label: Text('Lebanon-only capture'),
                   ),
+                  if (_gpsAccuracyMeters != null)
+                    Chip(
+                      avatar: const Icon(Icons.my_location, size: 18),
+                      label: Text(
+                        'GPS ${_gpsAccuracyMeters!.toStringAsFixed(0)}m',
+                      ),
+                    ),
                 ],
               ),
             ],
@@ -1418,96 +1523,177 @@ class _GeometryCaptureMapCard extends StatelessWidget {
   const _GeometryCaptureMapCard({
     required this.mapController,
     required this.mapOptions,
+    required this.basemapStyle,
     required this.geometryType,
     required this.vertices,
     required this.isMapReady,
+    required this.currentLocation,
+    required this.isLocating,
     required this.onUndo,
     required this.onClear,
+    required this.onUseCurrentLocation,
+    required this.onToggleBasemap,
     required this.onFitLebanon,
   });
 
   final MapController mapController;
   final MapOptions mapOptions;
+  final LebanonBasemapStyle basemapStyle;
   final String geometryType;
   final List<LatLng> vertices;
   final bool isMapReady;
+  final LatLng? currentLocation;
+  final bool isLocating;
   final VoidCallback? onUndo;
   final VoidCallback? onClear;
+  final VoidCallback? onUseCurrentLocation;
+  final ValueChanged<LebanonBasemapStyle> onToggleBasemap;
   final VoidCallback onFitLebanon;
 
   @override
   Widget build(BuildContext context) {
     final polygonPoints = geometryType == 'Polygon' && vertices.length >= 3
-        ? <LatLng>[
-            ...vertices,
-            vertices.first,
-          ]
+        ? <LatLng>[...vertices, vertices.first]
         : const <LatLng>[];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          height: 320,
+          height: 360,
           child: ClipRRect(
             borderRadius: AppRadii.lg,
-            child: FlutterMap(
-              mapController: mapController,
-              options: mapOptions,
+            child: Stack(
               children: [
-                TileLayer(
-                  urlTemplate: LebanonMapConfig.basemapUrlTemplate(
-                    LebanonBasemapStyle.satellite,
-                  ),
-                  userAgentPackageName: 'lb.gov.gis_collector',
-                ),
-                if (polygonPoints.isNotEmpty)
-                  PolygonLayer(
-                    polygons: [
-                      Polygon(
-                        points: polygonPoints,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.primary.withValues(alpha: 0.20),
-                        borderColor: Theme.of(context).colorScheme.primary,
-                        borderStrokeWidth: 2.5,
+                FlutterMap(
+                  mapController: mapController,
+                  options: mapOptions,
+                  children: [
+                    TileLayer(
+                      urlTemplate: LebanonMapConfig.basemapUrlTemplate(
+                        basemapStyle,
                       ),
-                    ],
-                  ),
-                if (geometryType == 'LineString' && vertices.length >= 2)
-                  PolylineLayer(
-                    polylines: [
-                      Polyline(
-                        points: vertices,
-                        color: Theme.of(context).colorScheme.primary,
-                        strokeWidth: 4,
+                      userAgentPackageName: 'lb.gov.gis_collector',
+                    ),
+                    if (LebanonMapConfig.referenceLabelUrlTemplate(
+                          basemapStyle,
+                        ) !=
+                        null)
+                      TileLayer(
+                        urlTemplate: LebanonMapConfig.referenceLabelUrlTemplate(
+                          basemapStyle,
+                        )!,
+                        userAgentPackageName: 'lb.gov.gis_collector',
                       ),
-                    ],
-                  ),
-                MarkerLayer(
-                  markers: vertices
-                      .map(
-                        (point) => Marker(
-                          width: 32,
-                          height: 32,
-                          point: point,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Theme.of(context).colorScheme.primary,
-                              border: Border.all(color: Colors.white, width: 2),
-                            ),
-                            child: Center(
-                              child: Text(
-                                '${vertices.indexOf(point) + 1}',
-                                style: Theme.of(context).textTheme.labelSmall
-                                    ?.copyWith(color: Colors.white),
-                              ),
+                    if (polygonPoints.isNotEmpty)
+                      PolygonLayer(
+                        polygons: [
+                          Polygon(
+                            points: polygonPoints,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.primary.withValues(alpha: 0.20),
+                            borderColor: Theme.of(context).colorScheme.primary,
+                            borderStrokeWidth: 2.5,
+                          ),
+                        ],
+                      ),
+                    if (geometryType == 'LineString' && vertices.length >= 2)
+                      PolylineLayer(
+                        polylines: [
+                          Polyline(
+                            points: vertices,
+                            color: Theme.of(context).colorScheme.primary,
+                            strokeWidth: 4,
+                          ),
+                        ],
+                      ),
+                    if (currentLocation != null)
+                      MarkerLayer(
+                        markers: [
+                          Marker(
+                            point: currentLocation!,
+                            width: 46,
+                            height: 46,
+                            child: const Icon(
+                              Icons.my_location,
+                              color: Color(0xFF1565C0),
+                              size: 28,
                             ),
                           ),
+                        ],
+                      ),
+                    MarkerLayer(
+                      markers: vertices
+                          .asMap()
+                          .entries
+                          .map(
+                            (entry) => Marker(
+                              width: 34,
+                              height: 34,
+                              point: entry.value,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Theme.of(context).colorScheme.primary,
+                                  border: Border.all(
+                                    color: Colors.white,
+                                    width: 2,
+                                  ),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    '${entry.key + 1}',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelSmall
+                                        ?.copyWith(color: Colors.white),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(growable: false),
+                    ),
+                  ],
+                ),
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  top: 12,
+                  child: AppCard(
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            geometryType == 'Point'
+                                ? 'Tap once to place the feature.'
+                                : geometryType == 'LineString'
+                                ? 'Tap to add line vertices in order.'
+                                : 'Tap to trace the polygon boundary.',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
                         ),
-                      )
-                      .toList(growable: false),
+                        const SizedBox(width: AppSpacing.sm),
+                        SegmentedButton<LebanonBasemapStyle>(
+                          segments: const [
+                            ButtonSegment(
+                              value: LebanonBasemapStyle.satellite,
+                              label: Text('Hybrid'),
+                            ),
+                            ButtonSegment(
+                              value: LebanonBasemapStyle.street,
+                              label: Text('Street'),
+                            ),
+                          ],
+                          selected: <LebanonBasemapStyle>{basemapStyle},
+                          showSelectedIcon: false,
+                          onSelectionChanged: (selection) =>
+                              onToggleBasemap(selection.first),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -1518,6 +1704,21 @@ class _GeometryCaptureMapCard extends StatelessWidget {
           spacing: 8,
           runSpacing: 8,
           children: [
+            FilledButton.tonalIcon(
+              onPressed: isLocating ? null : onUseCurrentLocation,
+              icon: isLocating
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.my_location_outlined),
+              label: Text(
+                geometryType == 'Point'
+                    ? 'Use current location'
+                    : 'Center on current location',
+              ),
+            ),
             OutlinedButton.icon(
               onPressed: onUndo,
               icon: const Icon(Icons.undo_outlined),

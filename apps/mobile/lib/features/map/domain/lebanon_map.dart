@@ -60,6 +60,15 @@ class LebanonMapConfig {
     }
   }
 
+  static String? referenceLabelUrlTemplate(LebanonBasemapStyle style) {
+    switch (style) {
+      case LebanonBasemapStyle.satellite:
+        return 'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
+      case LebanonBasemapStyle.street:
+        return null;
+    }
+  }
+
   static String basemapLabel(LebanonBasemapStyle style) {
     switch (style) {
       case LebanonBasemapStyle.satellite:

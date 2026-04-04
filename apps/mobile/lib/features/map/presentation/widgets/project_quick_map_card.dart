@@ -10,6 +10,7 @@ import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../domain/lebanon_map.dart';
 import '../../domain/map_feature.dart';
+import '../../domain/map_geometry.dart';
 
 class ProjectQuickMapCard extends ConsumerWidget {
   const ProjectQuickMapCard({
@@ -49,7 +50,7 @@ class ProjectQuickMapCard extends ConsumerWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Lebanon-only preview for this project.',
+                        'Lebanon-only preview with project features and place labels.',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ],
@@ -65,7 +66,7 @@ class ProjectQuickMapCard extends ConsumerWidget {
             ),
           ),
           SizedBox(
-            height: 240,
+            height: 280,
             child: ClipRRect(
               borderRadius: const BorderRadius.vertical(
                 bottom: Radius.circular(20),
@@ -97,6 +98,12 @@ class ProjectQuickMapCard extends ConsumerWidget {
                       ),
                       userAgentPackageName: 'lb.gov.gis_collector',
                     ),
+                    TileLayer(
+                      urlTemplate: LebanonMapConfig.referenceLabelUrlTemplate(
+                        LebanonBasemapStyle.satellite,
+                      )!,
+                      userAgentPackageName: 'lb.gov.gis_collector',
+                    ),
                     PolygonLayer(polygons: _polygonOverlays(features)),
                     PolylineLayer(polylines: _polylineOverlays(features)),
                     MarkerLayer(markers: _markerOverlays(features)),
@@ -114,20 +121,10 @@ class ProjectQuickMapCard extends ConsumerWidget {
     return features
         .where((feature) => feature.geometry['type'] == 'Polygon')
         .map((feature) {
-          final coordinates = feature.geometry['coordinates'] as List?;
-          final firstRing = coordinates?.isNotEmpty == true
-              ? coordinates!.first as List?
-              : null;
-          final points = (firstRing ?? const <dynamic>[])
-              .whereType<List>()
-              .where((point) => point.length >= 2)
-              .map(
-                (point) => LatLng(
-                  (point[1] as num).toDouble(),
-                  (point[0] as num).toDouble(),
-                ),
-              )
-              .toList(growable: false);
+          final points = polygonGeometryPoints(feature.geometry);
+          if (points.isEmpty) {
+            return null;
+          }
           return Polygon(
             points: points,
             color: _statusColor(feature.status).withValues(alpha: 0.18),
@@ -135,6 +132,7 @@ class ProjectQuickMapCard extends ConsumerWidget {
             borderColor: _statusColor(feature.status),
           );
         })
+        .whereType<Polygon>()
         .toList(growable: false);
   }
 
@@ -142,24 +140,17 @@ class ProjectQuickMapCard extends ConsumerWidget {
     return features
         .where((feature) => feature.geometry['type'] == 'LineString')
         .map((feature) {
-          final coordinates =
-              feature.geometry['coordinates'] as List? ?? const <dynamic>[];
-          final points = coordinates
-              .whereType<List>()
-              .where((point) => point.length >= 2)
-              .map(
-                (point) => LatLng(
-                  (point[1] as num).toDouble(),
-                  (point[0] as num).toDouble(),
-                ),
-              )
-              .toList(growable: false);
+          final points = lineGeometryPoints(feature.geometry);
+          if (points.isEmpty) {
+            return null;
+          }
           return Polyline(
             points: points,
             color: _statusColor(feature.status),
             strokeWidth: 3,
           );
         })
+        .whereType<Polyline>()
         .toList(growable: false);
   }
 
@@ -188,15 +179,7 @@ class ProjectQuickMapCard extends ConsumerWidget {
   }
 
   LatLng? _pointFromGeometry(Map<String, dynamic> geometry) {
-    final type = geometry['type'] as String?;
-    final coordinates = geometry['coordinates'];
-    if (type == 'Point' && coordinates is List && coordinates.length >= 2) {
-      return LatLng(
-        (coordinates[1] as num).toDouble(),
-        (coordinates[0] as num).toDouble(),
-      );
-    }
-    return null;
+    return geometryFocusPoint(geometry);
   }
 
   Color _statusColor(String status) {
