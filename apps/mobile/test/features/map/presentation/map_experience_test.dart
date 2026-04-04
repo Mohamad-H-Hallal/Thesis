@@ -240,10 +240,13 @@ AuthSession _session(UserRole role) {
   );
 }
 
-ProjectSummary _projectSummary() {
+ProjectSummary _projectSummary({
+  String name = 'Olive Tree Census',
+  String id = 'project-1',
+}) {
   return ProjectSummary(
-    id: 'project-1',
-    name: 'Olive Tree Census',
+    id: id,
+    name: name,
     category: 'Fruit Trees',
     status: 'active',
     assignedCollectors: 2,
@@ -371,6 +374,76 @@ void main() {
           accuracyMeters: 6,
         ),
       );
+      final project = _projectSummary(
+        name: 'Valley Parking Rehabilitation and Orchard Inventory',
+      );
+
+      await tester.pumpWidget(
+        _wrapWithScope(
+          overrides: <Override>[
+            authControllerProvider.overrideWith(
+              (ref) =>
+                  _AuthenticatedAuthController(_session(UserRole.contributor)),
+            ),
+            syncControllerProvider.overrideWith(
+              (ref) => _buildSyncController(),
+            ),
+            currentLocationServiceProvider.overrideWithValue(locationService),
+            mapProjectsProvider.overrideWith(
+              (ref) async => <ProjectSummary>[project],
+            ),
+            projectMapFeaturesProvider.overrideWith(
+              (ref, projectId) async => _projectFeatures(),
+            ),
+            offlineMapPackageProvider.overrideWith(
+              (ref) async => _offlinePackage(),
+            ),
+          ],
+          child: const MapScreen(
+            initialProjectId: 'project-1',
+            lockProjectSelection: true,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Features (2)'), findsOneWidget);
+      expect(find.text('Offline imagery'), findsOneWidget);
+      expect(find.text('Lebanon workspace'), findsOneWidget);
+
+      final projectTitle = tester.widget<Text>(
+        find.text('Valley Parking Rehabilitation and Orchard Inventory').first,
+      );
+      expect(projectTitle.maxLines, 1);
+      expect(projectTitle.overflow, TextOverflow.ellipsis);
+
+      await tester.tap(find.byTooltip('Current location'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(locationService.callCount, 1);
+      expect(find.text('GPS 6m'), findsWidgets);
+
+      await tester.tap(find.text('Features (2)'));
+      await tester.pumpAndSettle();
+      expect(find.text('Project features'), findsOneWidget);
+      expect(find.textContaining('visible item(s)'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'map screen handles out-of-lebanon current location gracefully',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(430, 932));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final locationService = _FakeCurrentLocationService(
+        const CurrentLocationSnapshot(
+          position: LatLng(32.0, 34.0),
+          accuracyMeters: 14,
+        ),
+      );
       final project = _projectSummary();
 
       await tester.pumpWidget(
@@ -403,21 +476,20 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.text('Save Lebanon overview'), findsOneWidget);
-      expect(find.text('Lebanon only'), findsOneWidget);
-      expect(find.textContaining('Olive Tree Census'), findsWidgets);
-
-      final locationFab = find.byWidgetPredicate(
-        (widget) =>
-            widget is FloatingActionButton &&
-            widget.heroTag == 'map_current_location',
-      );
-      tester.widget<FloatingActionButton>(locationFab).onPressed!.call();
+      await tester.tap(find.byTooltip('Current location'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
 
-      expect(locationService.callCount, 1);
-      expect(find.text('GPS 6m'), findsWidgets);
+      expect(
+        find.text(
+          'Current location is outside Lebanon. Staying on the project workspace.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Current location is outside the Lebanon map workspace.'),
+        findsNothing,
+      );
     },
   );
 

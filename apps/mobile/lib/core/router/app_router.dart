@@ -1,4 +1,4 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -211,14 +211,14 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
           final featureId = state.uri.queryParameters['featureId'];
           return _buildPage(
             state,
-            AppScaffold(
-              title: 'Project map',
-              showBackButton: true,
-              showOfflineBanner: false,
-              body: MapScreen(
-                initialProjectId: projectId,
-                initialFeatureId: featureId,
-                lockProjectSelection: true,
+            Scaffold(
+              appBar: AppBar(title: const Text('Project map')),
+              body: SafeArea(
+                child: MapScreen(
+                  initialProjectId: projectId,
+                  initialFeatureId: featureId,
+                  lockProjectSelection: true,
+                ),
               ),
             ),
           );
