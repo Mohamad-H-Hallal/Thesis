@@ -409,8 +409,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(find.text('Features (2)'), findsOneWidget);
-      expect(find.text('Offline imagery'), findsOneWidget);
-      expect(find.text('Lebanon workspace'), findsOneWidget);
+      expect(find.text('Offline'), findsNothing);
+      expect(find.text('Lebanon workspace'), findsNothing);
+      expect(find.text('Search visible features'), findsNothing);
+      expect(find.byTooltip('Offline imagery'), findsOneWidget);
 
       final projectTitle = tester.widget<Text>(
         find.text('Valley Parking Rehabilitation and Orchard Inventory').first,
@@ -418,12 +420,23 @@ void main() {
       expect(projectTitle.maxLines, 1);
       expect(projectTitle.overflow, TextOverflow.ellipsis);
 
+      await tester.tap(find.byTooltip('Search and filters'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Search visible features'), findsOneWidget);
+      expect(find.text('Lebanon workspace'), findsOneWidget);
+
       await tester.tap(find.byTooltip('Current location'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(locationService.callCount, 1);
       expect(find.text('GPS 6m'), findsWidgets);
+
+      await tester.tap(find.byTooltip('Hide map filters'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Search visible features'), findsNothing);
 
       await tester.tap(find.text('Features (2)'));
       await tester.pumpAndSettle();
