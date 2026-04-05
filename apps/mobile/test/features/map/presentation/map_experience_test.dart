@@ -413,7 +413,7 @@ void main() {
       expect(find.text('Features (2)'), findsOneWidget);
       expect(find.text('Offline'), findsNothing);
       expect(find.text('Lebanon workspace'), findsNothing);
-      expect(find.text('Search visible features'), findsNothing);
+      expect(find.text('Search visible features'), findsOneWidget);
       expect(find.byTooltip('Offline map'), findsOneWidget);
       expect(find.byTooltip('Map style'), findsOneWidget);
 
@@ -426,7 +426,8 @@ void main() {
       await tester.tap(find.byTooltip('Show quick filters'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Lebanon workspace'), findsOneWidget);
+      expect(find.widgetWithText(FilterChip, 'All pins'), findsOneWidget);
+      expect(find.widgetWithText(FilterChip, 'Pending review'), findsOneWidget);
       expect(find.text('Street view'), findsOneWidget);
 
       await tester.tap(find.byTooltip('Current location'));
@@ -439,15 +440,23 @@ void main() {
       await tester.tap(find.byTooltip('Hide quick filters'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Search visible features'), findsNothing);
+      expect(find.text('Search visible features'), findsOneWidget);
 
-      await tester.tap(find.text('Features (2)'));
+      await tester.tap(find.byTooltip('Show quick filters'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.widgetWithText(FilterChip, 'Pending review'));
+      await tester.tap(find.widgetWithText(FilterChip, 'Pending review'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Features (1)'), findsOneWidget);
+      expect(find.text('Pending review'), findsOneWidget);
+
+      await tester.tap(find.text('Features (1)'));
       await tester.pumpAndSettle();
       expect(find.text('Project features'), findsOneWidget);
-      expect(find.textContaining('2 of 2 item(s)'), findsOneWidget);
+      expect(find.textContaining('1 of 1 item(s)'), findsOneWidget);
       expect(find.text('Search this project\'s features'), findsOneWidget);
       expect(find.widgetWithText(ChoiceChip, 'Pending'), findsOneWidget);
-      expect(find.widgetWithText(ChoiceChip, 'Point'), findsOneWidget);
 
       await tester.enterText(
         find.widgetWithText(TextField, 'Search this project\'s features'),
@@ -455,8 +464,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Orchard'), findsOneWidget);
-      expect(find.text('Olive'), findsNothing);
+      expect(find.textContaining('Karim'), findsWidgets);
     },
   );
 
@@ -514,6 +522,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Offline map'), findsOneWidget);
+      expect(find.byTooltip('Close offline map'), findsOneWidget);
       expect(
         find.textContaining('current satellite map on this device'),
         findsOneWidget,
@@ -525,6 +534,11 @@ void main() {
       expect(find.text('Save Lebanon overview'), findsOneWidget);
       expect(find.text('Save this view'), findsOneWidget);
       expect(find.textContaining('Save the current'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Close offline map'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Offline map'), findsNothing);
     },
   );
 
