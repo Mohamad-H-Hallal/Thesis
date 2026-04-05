@@ -282,6 +282,7 @@ List<MapFeatureSummary> _projectFeatures() {
         'coordinates': <double>[35.5018, 33.8938],
       },
       attributes: <String, dynamic>{'tree_type': 'Olive'},
+      collectedBy: 'Rana',
       photoCount: 2,
     ),
     MapFeatureSummary(
@@ -295,6 +296,7 @@ List<MapFeatureSummary> _projectFeatures() {
         ],
       },
       attributes: <String, dynamic>{'tree_type': 'Orchard'},
+      collectedBy: 'Karim',
       photoCount: 0,
     ),
   ];
@@ -412,7 +414,8 @@ void main() {
       expect(find.text('Offline'), findsNothing);
       expect(find.text('Lebanon workspace'), findsNothing);
       expect(find.text('Search visible features'), findsNothing);
-      expect(find.byTooltip('Offline imagery'), findsOneWidget);
+      expect(find.byTooltip('Offline map'), findsOneWidget);
+      expect(find.byTooltip('Map style'), findsOneWidget);
 
       final projectTitle = tester.widget<Text>(
         find.text('Valley Parking Rehabilitation and Orchard Inventory').first,
@@ -420,11 +423,11 @@ void main() {
       expect(projectTitle.maxLines, 1);
       expect(projectTitle.overflow, TextOverflow.ellipsis);
 
-      await tester.tap(find.byTooltip('Search and filters'));
+      await tester.tap(find.byTooltip('Show quick filters'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Search visible features'), findsOneWidget);
       expect(find.text('Lebanon workspace'), findsOneWidget);
+      expect(find.text('Street view'), findsOneWidget);
 
       await tester.tap(find.byTooltip('Current location'));
       await tester.pump();
@@ -433,7 +436,7 @@ void main() {
       expect(locationService.callCount, 1);
       expect(find.text('GPS 6m'), findsWidgets);
 
-      await tester.tap(find.byTooltip('Hide map filters'));
+      await tester.tap(find.byTooltip('Hide quick filters'));
       await tester.pumpAndSettle();
 
       expect(find.text('Search visible features'), findsNothing);
@@ -441,23 +444,27 @@ void main() {
       await tester.tap(find.text('Features (2)'));
       await tester.pumpAndSettle();
       expect(find.text('Project features'), findsOneWidget);
-      expect(find.textContaining('visible item(s)'), findsOneWidget);
+      expect(find.textContaining('2 of 2 item(s)'), findsOneWidget);
+      expect(find.text('Search this project\'s features'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, 'Pending'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, 'Point'), findsOneWidget);
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Search this project\'s features'),
+        'Karim',
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Orchard'), findsOneWidget);
+      expect(find.text('Olive'), findsNothing);
     },
   );
 
   testWidgets(
-    'map screen handles out-of-lebanon current location gracefully',
+    'project map supports clear map styles and honest offline wording',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(430, 932));
       addTearDown(() => tester.binding.setSurfaceSize(null));
-
-      final locationService = _FakeCurrentLocationService(
-        const CurrentLocationSnapshot(
-          position: LatLng(32.0, 34.0),
-          accuracyMeters: 14,
-        ),
-      );
-      final project = _projectSummary();
 
       await tester.pumpWidget(
         _wrapWithScope(
@@ -469,9 +476,16 @@ void main() {
             syncControllerProvider.overrideWith(
               (ref) => _buildSyncController(),
             ),
-            currentLocationServiceProvider.overrideWithValue(locationService),
+            currentLocationServiceProvider.overrideWithValue(
+              _FakeCurrentLocationService(
+                const CurrentLocationSnapshot(
+                  position: LatLng(33.8938, 35.5018),
+                  accuracyMeters: 6,
+                ),
+              ),
+            ),
             mapProjectsProvider.overrideWith(
-              (ref) async => <ProjectSummary>[project],
+              (ref) async => <ProjectSummary>[_projectSummary()],
             ),
             projectMapFeaturesProvider.overrideWith(
               (ref, projectId) async => _projectFeatures(),
@@ -489,22 +503,88 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
-      await tester.tap(find.byTooltip('Current location'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(find.byTooltip('Map style'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Satellite').last);
+      await tester.pumpAndSettle();
 
+      expect(find.text('Satellite'), findsWidgets);
+
+      await tester.tap(find.byTooltip('Offline map'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Offline map'), findsOneWidget);
       expect(
-        find.text(
-          'Current location is outside Lebanon. Staying on the project workspace.',
-        ),
+        find.textContaining('current satellite map on this device'),
         findsOneWidget,
       );
       expect(
-        find.text('Current location is outside the Lebanon map workspace.'),
-        findsNothing,
+        find.textContaining('Only areas saved here will stay visible'),
+        findsOneWidget,
       );
+      expect(find.text('Save Lebanon overview'), findsOneWidget);
+      expect(find.text('Save this view'), findsOneWidget);
+      expect(find.textContaining('Save the current'), findsOneWidget);
     },
   );
+
+  testWidgets('map screen handles out-of-lebanon current location gracefully', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(430, 932));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final locationService = _FakeCurrentLocationService(
+      const CurrentLocationSnapshot(
+        position: LatLng(32.0, 34.0),
+        accuracyMeters: 14,
+      ),
+    );
+    final project = _projectSummary();
+
+    await tester.pumpWidget(
+      _wrapWithScope(
+        overrides: <Override>[
+          authControllerProvider.overrideWith(
+            (ref) =>
+                _AuthenticatedAuthController(_session(UserRole.contributor)),
+          ),
+          syncControllerProvider.overrideWith((ref) => _buildSyncController()),
+          currentLocationServiceProvider.overrideWithValue(locationService),
+          mapProjectsProvider.overrideWith(
+            (ref) async => <ProjectSummary>[project],
+          ),
+          projectMapFeaturesProvider.overrideWith(
+            (ref, projectId) async => _projectFeatures(),
+          ),
+          offlineMapPackageProvider.overrideWith(
+            (ref) async => _offlinePackage(),
+          ),
+        ],
+        child: const MapScreen(
+          initialProjectId: 'project-1',
+          lockProjectSelection: true,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.tap(find.byTooltip('Current location'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(
+      find.text(
+        'Current location is outside Lebanon. Staying on the project workspace.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Current location is outside the Lebanon map workspace.'),
+      findsNothing,
+    );
+  });
 
   testWidgets(
     'add feature screen exposes current-location driven geometry capture',

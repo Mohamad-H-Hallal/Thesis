@@ -42,6 +42,7 @@ class MapScreen extends ConsumerStatefulWidget {
 
 class _MapScreenState extends ConsumerState<MapScreen> {
   final MapController _mapController = MapController();
+  final NetworkTileProvider _networkTileProvider = NetworkTileProvider();
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _projectMapSearchFocusNode = FocusNode();
   final Set<String> _visibleStatuses = <String>{
@@ -142,10 +143,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           package: offlinePackage,
           basemapStyle: _basemapStyle,
         );
-        await manager.refreshStats(
-          offlinePackage,
-          basemapStyle: _basemapStyle,
-        );
+        await manager.refreshStats(offlinePackage, basemapStyle: _basemapStyle);
         ref.invalidate(offlineMapPackageProvider);
         if (!mounted) {
           return;
@@ -176,10 +174,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     _setProjectMapPanelExpanded(false);
   }
 
-  void _setProjectMapPanelExpanded(
-    bool expanded, {
-    bool focusSearch = false,
-  }) {
+  void _setProjectMapPanelExpanded(bool expanded, {bool focusSearch = false}) {
     if (!mounted) {
       return;
     }
@@ -432,6 +427,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   ),
                   data: (offlinePackage) => _OfflineMapStatusCard(
                     package: offlinePackage,
+                    basemapStyle: _basemapStyle,
                     isDownloading: _isDownloadingOffline,
                     progressLabel: _offlineDownloadProgressLabel,
                     statusLabel: _offlineDownloadResultLabel,
@@ -866,21 +862,20 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           child: _ProjectMapFloatingPanel(
             project: project,
             featureCount: features.length,
-            searchController: _searchController,
-            searchFocusNode: _projectMapSearchFocusNode,
             quickFeatureChips: quickFeatureChips,
             selectedFeatureChip: _selectedFeatureChip,
+            basemapStyle: _basemapStyle,
             gpsAccuracyMeters: _currentLocationAccuracyMeters,
             isExpanded: _projectMapPanelExpanded,
-            onSearchChanged: () => setState(() {}),
-            onClearSearch: () {
-              setState(() {
-                _searchController.clear();
-              });
-            },
             onChipSelected: (chip) {
               setState(() {
                 _selectedFeatureChip = chip;
+              });
+            },
+            onBasemapStyleChanged: (style) {
+              setState(() {
+                _basemapStyle = style;
+                _tileFailureMessage = null;
               });
             },
             onOpenOfflineTools: () => _openOfflineToolsSheet(
@@ -889,8 +884,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ),
             onToggleExpanded: () =>
                 _setProjectMapPanelExpanded(!_projectMapPanelExpanded),
-            onFocusSearch: () =>
-                _setProjectMapPanelExpanded(true, focusSearch: true),
           ),
         ),
         Positioned(
@@ -1029,7 +1022,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               ),
             TileLayer(
               urlTemplate: LebanonMapConfig.basemapUrlTemplate(_basemapStyle),
-              tileProvider: _AppNetworkTileProvider(),
+              tileProvider: _networkTileProvider,
               userAgentPackageName: 'lb.gov.gis_collector',
               errorTileCallback: (tile, error, stackTrace) {
                 Object.hash(tile, stackTrace);
@@ -1052,7 +1045,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             if (labelOverlayUrl != null)
               TileLayer(
                 urlTemplate: labelOverlayUrl,
-                tileProvider: _AppNetworkTileProvider(),
+                tileProvider: _networkTileProvider,
                 userAgentPackageName: 'lb.gov.gis_collector',
               ),
             PolygonLayer(polygons: _polygonOverlays(features)),
@@ -1139,7 +1132,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       urlTemplate: LebanonMapConfig.basemapUrlTemplate(
                         _basemapStyle,
                       ),
-                      tileProvider: _AppNetworkTileProvider(),
+                      tileProvider: _networkTileProvider,
                       userAgentPackageName: 'lb.gov.gis_collector',
                       errorTileCallback: (tile, error, stackTrace) {
                         Object.hash(tile, stackTrace);
@@ -1505,7 +1498,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final buffer = StringBuffer()
       ..write(feature.id.toLowerCase())
       ..write(' ')
-      ..write('${feature.geometry['type'] ?? ''}'.toLowerCase());
+      ..write('${feature.geometry['type'] ?? ''}'.toLowerCase())
+      ..write(' ')
+      ..write(_featureBrowserTitle(feature).toLowerCase())
+      ..write(' ')
+      ..write(_statusLabel(feature.status).toLowerCase());
+    if (feature.collectedBy != null && feature.collectedBy!.trim().isNotEmpty) {
+      buffer
+        ..write(' ')
+        ..write(feature.collectedBy!.toLowerCase());
+    }
     for (final entry in feature.attributes.entries) {
       buffer
         ..write(' ')
@@ -1614,122 +1616,32 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (sheetContext) {
-        return SafeArea(
-          child: DraggableScrollableSheet(
-            expand: false,
-            initialChildSize: 0.56,
-            minChildSize: 0.3,
-            maxChildSize: 0.92,
-            builder: (context, controller) {
-              return ListView(
-                controller: controller,
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.md,
-                  AppSpacing.sm,
-                  AppSpacing.md,
-                  AppSpacing.xl,
-                ),
-                children: [
-                  Center(
-                    child: Container(
-                      width: 44,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.outlineVariant,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Text(
-                    'Project features',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${features.length} visible item(s) in ${project.name}',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  if (features.isEmpty)
-                    AppEmptyState(
-                      icon: Icons.layers_clear_outlined,
-                      title: 'No features match the current filters',
-                      message:
-                          'Adjust the search or quick filters to explore more of this project.',
-                      actionLabel: canCollectOnMap ? 'Add Feature' : null,
-                      onAction: canCollectOnMap
-                          ? () {
-                              Navigator.of(sheetContext).pop();
-                              context.push(
-                                AppRoutes.addFeatureForProject(project.id),
-                              );
-                            }
-                          : null,
-                    )
-                  else
-                    ...features.map(
-                      (feature) => Padding(
-                        padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                        child: AppCard(
-                          onTap: () {
-                            Navigator.of(sheetContext).pop();
-                            _focusFeature(feature);
-                            _openFeatureDetails(
-                              project: project,
-                              feature: feature,
-                              canCollectOnMap: canCollectOnMap,
-                              canReview: canReview,
-                            );
-                          },
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Container(
-                                width: 12,
-                                height: 12,
-                                margin: const EdgeInsets.only(top: 6),
-                                decoration: BoxDecoration(
-                                  color: _statusColor(feature.status),
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                              const SizedBox(width: AppSpacing.sm),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      _featureBrowserTitle(feature),
-                                      style: Theme.of(
-                                        context,
-                                      ).textTheme.titleMedium,
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      _featureBrowserSubtitle(feature),
-                                      style: Theme.of(
-                                        context,
-                                      ).textTheme.bodySmall,
-                                      softWrap: true,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: AppSpacing.sm),
-                              StatusChip(status: feature.status),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              );
-            },
-          ),
-        );
-      },
+      builder: (sheetContext) => _ProjectFeatureBrowserSheet(
+        project: project,
+        features: features,
+        canCollectOnMap: canCollectOnMap,
+        featureTitleBuilder: _featureBrowserTitle,
+        featureSubtitleBuilder: _featureBrowserSubtitle,
+        searchBlobBuilder: _featureSearchBlob,
+        statusLabelBuilder: _statusLabel,
+        statusColorBuilder: _statusColor,
+        onAddFeature: canCollectOnMap
+            ? () {
+                Navigator.of(sheetContext).pop();
+                context.push(AppRoutes.addFeatureForProject(project.id));
+              }
+            : null,
+        onSelectFeature: (feature) {
+          Navigator.of(sheetContext).pop();
+          _focusFeature(feature);
+          _openFeatureDetails(
+            project: project,
+            feature: feature,
+            canCollectOnMap: canCollectOnMap,
+            canReview: canReview,
+          );
+        },
+      ),
     );
   }
 
@@ -1753,17 +1665,18 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             shrinkWrap: true,
             children: [
               Text(
-                'Offline imagery',
+                'Offline map',
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               const SizedBox(height: AppSpacing.xs),
               Text(
-                'Save Lebanon imagery or the current map view to this device for field browsing when connectivity drops.',
+                'Save the current ${LebanonMapConfig.basemapLabel(_basemapStyle).toLowerCase()} map on this device for offline browsing later. Only areas saved here will stay visible when the connection drops.',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
               const SizedBox(height: AppSpacing.md),
               _OfflineMapStatusCard(
                 package: offlinePackage,
+                basemapStyle: _basemapStyle,
                 isDownloading: _isDownloadingOffline,
                 progressLabel: _offlineDownloadProgressLabel,
                 statusLabel: _offlineDownloadResultLabel,
@@ -1814,10 +1727,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   ) async {
     final manager = ref.read(offlineTileCacheManagerProvider);
     final values = await Future.wait<String>([
-      manager.localTileTemplate(
-        package: package,
-        basemapStyle: basemapStyle,
-      ),
+      manager.localTileTemplate(package: package, basemapStyle: basemapStyle),
       manager.transparentFallbackPath(),
     ]);
     return _OfflineTileAssets(templatePath: values[0], fallbackPath: values[1]);
@@ -1829,7 +1739,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     }
     setState(() {
       _isDownloadingOffline = true;
-      _offlineDownloadProgressLabel = 'Preparing Lebanon offline imagery...';
+      _offlineDownloadProgressLabel =
+          'Preparing the Lebanon overview for offline browsing...';
       _offlineDownloadResultLabel = null;
     });
     try {
@@ -1845,7 +1756,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               }
               setState(() {
                 _offlineDownloadProgressLabel =
-                    'Saving Lebanon imagery ${progress.completedTiles}/${progress.requestedTiles} • ${progress.downloadedTiles} new • ${progress.skippedTiles} cached${progress.failedTiles > 0 ? ' • ${progress.failedTiles} failed' : ''}';
+                    'Saving the Lebanon overview ${progress.completedTiles}/${progress.requestedTiles} • ${progress.downloadedTiles} new • ${progress.skippedTiles} already on this device${progress.failedTiles > 0 ? ' • ${progress.failedTiles} failed' : ''}';
               });
             },
           );
@@ -1855,7 +1766,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         final hasUsableTiles =
             summary.downloadedTiles > 0 || summary.skippedTiles > 0;
         final message =
-            'Lebanon offline imagery updated. ${summary.downloadedTiles} new tile(s), ${summary.skippedTiles} cached${summary.failedTiles > 0 ? ', ${summary.failedTiles} failed' : ''}.';
+            'Lebanon overview saved for offline browsing. ${summary.downloadedTiles} new map image(s), ${summary.skippedTiles} already on this device${summary.failedTiles > 0 ? ', ${summary.failedTiles} failed' : ''}.';
         setState(() {
           _offlineDownloadResultLabel = message;
         });
@@ -1864,7 +1775,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         } else {
           AppSnackbar.showError(
             context,
-            'Unable to save Lebanon offline imagery right now. Please try again later.',
+            'Unable to save the Lebanon overview right now. Please try again later.',
           );
         }
       }
@@ -1872,7 +1783,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       if (mounted) {
         final message = userFacingErrorMessage(
           error,
-          fallback: 'Unable to save Lebanon offline imagery right now.',
+          fallback: 'Unable to save the Lebanon overview right now.',
         );
         setState(() {
           _offlineDownloadResultLabel = message;
@@ -1911,7 +1822,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     setState(() {
       _isDownloadingOffline = true;
       _offlineDownloadProgressLabel =
-          'Preparing current view for offline use...';
+          'Preparing the visible map area for offline browsing...';
       _offlineDownloadResultLabel = null;
     });
     try {
@@ -1927,7 +1838,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           }
           setState(() {
             _offlineDownloadProgressLabel =
-                'Saving current view ${progress.completedTiles}/${progress.requestedTiles} • ${progress.downloadedTiles} new • ${progress.skippedTiles} cached${progress.failedTiles > 0 ? ' • ${progress.failedTiles} failed' : ''}';
+                'Saving this visible area ${progress.completedTiles}/${progress.requestedTiles} • ${progress.downloadedTiles} new • ${progress.skippedTiles} already on this device${progress.failedTiles > 0 ? ' • ${progress.failedTiles} failed' : ''}';
           });
         },
       );
@@ -1937,7 +1848,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         final hasUsableTiles =
             summary.downloadedTiles > 0 || summary.skippedTiles > 0;
         final message =
-            'Current view saved for offline use. ${summary.downloadedTiles} new tile(s), ${summary.skippedTiles} cached${summary.failedTiles > 0 ? ', ${summary.failedTiles} failed' : ''}.';
+            'Visible area saved for offline browsing. ${summary.downloadedTiles} new map image(s), ${summary.skippedTiles} already on this device${summary.failedTiles > 0 ? ', ${summary.failedTiles} failed' : ''}.';
         setState(() {
           _offlineDownloadResultLabel = message;
         });
@@ -1946,7 +1857,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         } else {
           AppSnackbar.showError(
             context,
-            'Unable to save the current view for offline use right now. Please try again later.',
+            'Unable to save this visible area right now. Please try again later.',
           );
         }
       }
@@ -1954,8 +1865,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       if (mounted) {
         final message = userFacingErrorMessage(
           error,
-          fallback:
-              'Unable to save the current map view for offline use right now.',
+          fallback: 'Unable to save this visible map area right now.',
         );
         setState(() {
           _offlineDownloadResultLabel = message;
@@ -1992,7 +1902,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             _locationNoticeMessage =
                 'Current location is outside Lebanon. Staying on the project workspace.';
           });
-          final fit = _preferredProjectFit ??
+          final fit =
+              _preferredProjectFit ??
               LebanonMapConfig.lebanonFit(
                 padding: const EdgeInsets.fromLTRB(36, 148, 36, 144),
               );
@@ -2596,34 +2507,28 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
   const _ProjectMapFloatingPanel({
     required this.project,
     required this.featureCount,
-    required this.searchController,
-    required this.searchFocusNode,
     required this.quickFeatureChips,
     required this.selectedFeatureChip,
+    required this.basemapStyle,
     required this.gpsAccuracyMeters,
     required this.isExpanded,
-    required this.onSearchChanged,
-    required this.onClearSearch,
     required this.onChipSelected,
+    required this.onBasemapStyleChanged,
     required this.onOpenOfflineTools,
     required this.onToggleExpanded,
-    required this.onFocusSearch,
   });
 
   final ProjectSummary project;
   final int featureCount;
-  final TextEditingController searchController;
-  final FocusNode searchFocusNode;
   final List<String> quickFeatureChips;
   final String? selectedFeatureChip;
+  final LebanonBasemapStyle basemapStyle;
   final double? gpsAccuracyMeters;
   final bool isExpanded;
-  final VoidCallback onSearchChanged;
-  final VoidCallback onClearSearch;
   final ValueChanged<String?> onChipSelected;
+  final ValueChanged<LebanonBasemapStyle> onBasemapStyleChanged;
   final VoidCallback onOpenOfflineTools;
   final VoidCallback onToggleExpanded;
-  final VoidCallback onFocusSearch;
 
   @override
   Widget build(BuildContext context) {
@@ -2668,20 +2573,21 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: AppSpacing.sm),
-                  _MapPanelIconButton(
-                    tooltip: 'Search and filters',
-                    icon: Icons.search_rounded,
-                    onPressed: onFocusSearch,
+                  _MapStyleMenuButton(
+                    basemapStyle: basemapStyle,
+                    onSelected: onBasemapStyleChanged,
                   ),
                   const SizedBox(width: 6),
                   _MapPanelIconButton(
-                    tooltip: 'Offline imagery',
+                    tooltip: 'Offline map',
                     icon: Icons.download_for_offline_outlined,
                     onPressed: onOpenOfflineTools,
                   ),
                   const SizedBox(width: 6),
                   _MapPanelIconButton(
-                    tooltip: isExpanded ? 'Hide map filters' : 'Show map filters',
+                    tooltip: isExpanded
+                        ? 'Hide quick filters'
+                        : 'Show quick filters',
                     icon: isExpanded
                         ? Icons.keyboard_arrow_up_rounded
                         : Icons.tune_rounded,
@@ -2699,6 +2605,12 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                       icon: Icons.layers_outlined,
                       label: activeFilterLabel,
                     ),
+                    _MapInfoPill(
+                      icon: basemapStyle == LebanonBasemapStyle.satellite
+                          ? Icons.satellite_alt_outlined
+                          : Icons.map_outlined,
+                      label: LebanonMapConfig.basemapLabel(basemapStyle),
+                    ),
                     if (gpsAccuracyMeters != null)
                       _MapInfoPill(
                         icon: Icons.my_location,
@@ -2708,24 +2620,6 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                 ),
               ],
               if (isExpanded) ...[
-                const SizedBox(height: AppSpacing.sm),
-                TextField(
-                  controller: searchController,
-                  focusNode: searchFocusNode,
-                  textInputAction: TextInputAction.search,
-                  decoration: InputDecoration(
-                    isDense: true,
-                    hintText: 'Search visible features',
-                    prefixIcon: const Icon(Icons.search),
-                    suffixIcon: searchController.text.trim().isEmpty
-                        ? null
-                        : IconButton(
-                            onPressed: onClearSearch,
-                            icon: const Icon(Icons.clear),
-                          ),
-                  ),
-                  onChanged: (_) => onSearchChanged(),
-                ),
                 const SizedBox(height: AppSpacing.sm),
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
@@ -2758,8 +2652,11 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                       label: 'Lebanon workspace',
                     ),
                     _MapInfoPill(
-                      icon: Icons.map_outlined,
-                      label: 'Street labels',
+                      icon: basemapStyle == LebanonBasemapStyle.satellite
+                          ? Icons.satellite_alt_outlined
+                          : Icons.map_outlined,
+                      label:
+                          '${LebanonMapConfig.basemapLabel(basemapStyle)} view',
                     ),
                     if (gpsAccuracyMeters != null)
                       _MapInfoPill(
@@ -2895,18 +2792,6 @@ class _MapWorkspaceNotice extends StatelessWidget {
   }
 }
 
-class _AppNetworkTileProvider extends TileProvider {
-  _AppNetworkTileProvider();
-
-  @override
-  ImageProvider getImage(TileCoordinates coordinates, TileLayer options) {
-    return NetworkImage(
-      getTileUrl(coordinates, options),
-      headers: Map<String, String>.from(headers),
-    );
-  }
-}
-
 class _MapPanelIconButton extends StatelessWidget {
   const _MapPanelIconButton({
     required this.tooltip,
@@ -2929,10 +2814,71 @@ class _MapPanelIconButton extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
           onTap: onPressed,
-          child: SizedBox(
-            width: 38,
-            height: 38,
-            child: Icon(icon, size: 20),
+          child: SizedBox(width: 38, height: 38, child: Icon(icon, size: 20)),
+        ),
+      ),
+    );
+  }
+}
+
+class _MapStyleMenuButton extends StatelessWidget {
+  const _MapStyleMenuButton({
+    required this.basemapStyle,
+    required this.onSelected,
+  });
+
+  final LebanonBasemapStyle basemapStyle;
+  final ValueChanged<LebanonBasemapStyle> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return PopupMenuButton<LebanonBasemapStyle>(
+      tooltip: 'Map style',
+      onSelected: onSelected,
+      itemBuilder: (context) => <PopupMenuEntry<LebanonBasemapStyle>>[
+        for (final style in LebanonBasemapStyle.values)
+          PopupMenuItem<LebanonBasemapStyle>(
+            value: style,
+            child: Row(
+              children: [
+                Icon(
+                  style == LebanonBasemapStyle.satellite
+                      ? Icons.satellite_alt_outlined
+                      : Icons.map_outlined,
+                  size: 18,
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Text(LebanonMapConfig.basemapLabel(style)),
+                const Spacer(),
+                if (style == basemapStyle)
+                  Icon(Icons.check_rounded, size: 18, color: scheme.primary),
+              ],
+            ),
+          ),
+      ],
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: scheme.secondaryContainer.withValues(alpha: 0.7),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                basemapStyle == LebanonBasemapStyle.satellite
+                    ? Icons.satellite_alt_outlined
+                    : Icons.map_outlined,
+                size: 18,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                LebanonMapConfig.basemapLabel(basemapStyle),
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+            ],
           ),
         ),
       ),
@@ -2941,10 +2887,7 @@ class _MapPanelIconButton extends StatelessWidget {
 }
 
 class _MapInfoPill extends StatelessWidget {
-  const _MapInfoPill({
-    required this.icon,
-    required this.label,
-  });
+  const _MapInfoPill({required this.icon, required this.label});
 
   final IconData icon;
   final String label;
@@ -2995,11 +2938,7 @@ class _MapFloatingActionButton extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(18),
           onTap: onPressed,
-          child: SizedBox(
-            width: 48,
-            height: 48,
-            child: Center(child: child),
-          ),
+          child: SizedBox(width: 48, height: 48, child: Center(child: child)),
         ),
       ),
     );
@@ -3117,9 +3056,288 @@ class _SyncStatusLine extends StatelessWidget {
   }
 }
 
+class _ProjectFeatureBrowserSheet extends StatefulWidget {
+  const _ProjectFeatureBrowserSheet({
+    required this.project,
+    required this.features,
+    required this.canCollectOnMap,
+    required this.featureTitleBuilder,
+    required this.featureSubtitleBuilder,
+    required this.searchBlobBuilder,
+    required this.statusLabelBuilder,
+    required this.statusColorBuilder,
+    required this.onSelectFeature,
+    this.onAddFeature,
+  });
+
+  final ProjectSummary project;
+  final List<MapFeatureSummary> features;
+  final bool canCollectOnMap;
+  final String Function(MapFeatureSummary feature) featureTitleBuilder;
+  final String Function(MapFeatureSummary feature) featureSubtitleBuilder;
+  final String Function(MapFeatureSummary feature) searchBlobBuilder;
+  final String Function(String status) statusLabelBuilder;
+  final Color Function(String status) statusColorBuilder;
+  final VoidCallback? onAddFeature;
+  final ValueChanged<MapFeatureSummary> onSelectFeature;
+
+  @override
+  State<_ProjectFeatureBrowserSheet> createState() =>
+      _ProjectFeatureBrowserSheetState();
+}
+
+class _ProjectFeatureBrowserSheetState
+    extends State<_ProjectFeatureBrowserSheet> {
+  final TextEditingController _searchController = TextEditingController();
+  String? _statusFilter;
+  String? _geometryTypeFilter;
+
+  static const List<String> _statusOrder = <String>[
+    'approved',
+    'pending_review',
+    'rejected',
+    'draft',
+  ];
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  List<MapFeatureSummary> get _filteredFeatures {
+    final query = _searchController.text.trim().toLowerCase();
+    return widget.features
+        .where((feature) {
+          if (_statusFilter != null && feature.status != _statusFilter) {
+            return false;
+          }
+          if (_geometryTypeFilter != null &&
+              '${feature.geometry['type'] ?? ''}' != _geometryTypeFilter) {
+            return false;
+          }
+          if (query.isEmpty) {
+            return true;
+          }
+          return widget.searchBlobBuilder(feature).contains(query);
+        })
+        .toList(growable: false);
+  }
+
+  List<String> get _geometryTypes {
+    final values =
+        widget.features
+            .map((feature) => '${feature.geometry['type'] ?? 'Unknown'}')
+            .toSet()
+            .toList(growable: false)
+          ..sort();
+    return values;
+  }
+
+  String _geometryLabel(String geometryType) {
+    switch (geometryType) {
+      case 'Point':
+        return 'Point';
+      case 'LineString':
+        return 'Line';
+      case 'Polygon':
+        return 'Polygon';
+      default:
+        return geometryType;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filteredFeatures = _filteredFeatures;
+    final geometryTypes = _geometryTypes;
+
+    return SafeArea(
+      child: DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.62,
+        minChildSize: 0.34,
+        maxChildSize: 0.92,
+        builder: (context, controller) {
+          return ListView(
+            controller: controller,
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.md,
+              AppSpacing.sm,
+              AppSpacing.md,
+              AppSpacing.xl,
+            ),
+            children: [
+              Center(
+                child: Container(
+                  width: 44,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                'Project features',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${filteredFeatures.length} of ${widget.features.length} item(s) in ${widget.project.name}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: AppSpacing.md),
+              TextField(
+                controller: _searchController,
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: 'Search this project\'s features',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _searchController.text.trim().isEmpty
+                      ? null
+                      : IconButton(
+                          onPressed: () {
+                            setState(() {
+                              _searchController.clear();
+                            });
+                          },
+                          icon: const Icon(Icons.clear),
+                        ),
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    ChoiceChip(
+                      label: const Text('All'),
+                      selected: _statusFilter == null,
+                      onSelected: (_) {
+                        setState(() {
+                          _statusFilter = null;
+                        });
+                      },
+                    ),
+                    for (final status in _statusOrder) ...[
+                      const SizedBox(width: 8),
+                      ChoiceChip(
+                        label: Text(widget.statusLabelBuilder(status)),
+                        selected: _statusFilter == status,
+                        onSelected: (selected) {
+                          setState(() {
+                            _statusFilter = selected ? status : null;
+                          });
+                        },
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (geometryTypes.length > 1) ...[
+                const SizedBox(height: AppSpacing.sm),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      ChoiceChip(
+                        label: const Text('Any geometry'),
+                        selected: _geometryTypeFilter == null,
+                        onSelected: (_) {
+                          setState(() {
+                            _geometryTypeFilter = null;
+                          });
+                        },
+                      ),
+                      for (final geometryType in geometryTypes) ...[
+                        const SizedBox(width: 8),
+                        ChoiceChip(
+                          label: Text(_geometryLabel(geometryType)),
+                          selected: _geometryTypeFilter == geometryType,
+                          onSelected: (selected) {
+                            setState(() {
+                              _geometryTypeFilter = selected
+                                  ? geometryType
+                                  : null;
+                            });
+                          },
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: AppSpacing.md),
+              if (filteredFeatures.isEmpty)
+                AppEmptyState(
+                  icon: Icons.layers_clear_outlined,
+                  title: 'No features match these filters',
+                  message:
+                      'Try a different search, status, or geometry filter for this project.',
+                  actionLabel: widget.canCollectOnMap ? 'Add Feature' : null,
+                  onAction: widget.onAddFeature,
+                )
+              else
+                ...filteredFeatures.map(
+                  (feature) => Padding(
+                    padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                    child: AppCard(
+                      onTap: () => widget.onSelectFeature(feature),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 12,
+                            height: 12,
+                            margin: const EdgeInsets.only(top: 6),
+                            decoration: BoxDecoration(
+                              color: widget.statusColorBuilder(feature.status),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: AppSpacing.sm),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  widget.featureTitleBuilder(feature),
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.titleMedium,
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  widget.featureSubtitleBuilder(feature),
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                  softWrap: true,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: AppSpacing.sm),
+                          StatusChip(status: feature.status),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _OfflineMapStatusCard extends StatelessWidget {
   const _OfflineMapStatusCard({
     required this.package,
+    required this.basemapStyle,
     required this.isDownloading,
     required this.progressLabel,
     required this.statusLabel,
@@ -3128,6 +3346,7 @@ class _OfflineMapStatusCard extends StatelessWidget {
   });
 
   final OfflineMapPackage? package;
+  final LebanonBasemapStyle basemapStyle;
   final bool isDownloading;
   final String? progressLabel;
   final String? statusLabel;
@@ -3137,36 +3356,57 @@ class _OfflineMapStatusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (package == null) {
-      return const Text('Offline imagery metadata is not available yet.');
+      return const Text('Offline map information is not available yet.');
     }
 
     final downloadedAt = package!.downloadedAt;
     final downloadedSummary = downloadedAt == null
-        ? 'No offline imagery saved on this device yet'
-        : 'Saved ${downloadedAt.toLocal().year}-${downloadedAt.toLocal().month.toString().padLeft(2, '0')}-${downloadedAt.toLocal().day.toString().padLeft(2, '0')}';
+        ? 'No saved offline areas on this device yet'
+        : 'Saved on ${downloadedAt.toLocal().year}-${downloadedAt.toLocal().month.toString().padLeft(2, '0')}-${downloadedAt.toLocal().day.toString().padLeft(2, '0')}';
+    final savedImageCount = package!.tileCount ?? 0;
 
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Offline imagery cache',
+            'Saved offline map',
             style: Theme.of(context).textTheme.titleSmall,
           ),
           const SizedBox(height: AppSpacing.xs),
           Text(
-            'Stores Lebanon satellite tiles on this device for offline browsing in saved areas.',
+            'Previously saved areas remain visible later on this device. Areas you do not save still need an internet connection.',
             softWrap: true,
           ),
           const SizedBox(height: AppSpacing.xs),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _MapInfoPill(
+                icon: basemapStyle == LebanonBasemapStyle.satellite
+                    ? Icons.satellite_alt_outlined
+                    : Icons.map_outlined,
+                label: '${LebanonMapConfig.basemapLabel(basemapStyle)} view',
+              ),
+              _MapInfoPill(
+                icon: Icons.storage_rounded,
+                label:
+                    '$savedImageCount saved map image${savedImageCount == 1 ? '' : 's'}',
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.xs),
           Text(
-            'Package ${package!.version} • Source ${package!.tileSource ?? 'imagery tiles'}',
+            '${_formatBytes(package!.sizeBytes ?? 0)} • $downloadedSummary',
+            softWrap: true,
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 4),
           Text(
-            '${package!.tileCount ?? 0} cached tile(s) • ${_formatBytes(package!.sizeBytes ?? 0)} • $downloadedSummary',
+            'Map source: ${package!.tileSource ?? 'Base map imagery'}',
             softWrap: true,
+            style: Theme.of(context).textTheme.bodySmall,
           ),
           if (progressLabel != null) ...[
             const SizedBox(height: AppSpacing.xs),
@@ -3176,21 +3416,32 @@ class _OfflineMapStatusCard extends StatelessWidget {
             Text(statusLabel!, style: Theme.of(context).textTheme.bodySmall),
           ],
           const SizedBox(height: AppSpacing.sm),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          const _MapWorkspaceNotice(
+            icon: Icons.info_outline,
+            message:
+                'Save Lebanon overview for a light nationwide background, or save this view to keep the area currently on screen available later without signal.',
+            toneColor: Color(0xFF1565C0),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Column(
             children: [
-              FilledButton.tonalIcon(
+              _OfflineActionCard(
+                icon: Icons.public_rounded,
+                title: 'Save Lebanon overview',
+                description:
+                    'Saves a light nationwide background in the current map style for quick orientation across Lebanon when you are offline.',
+                actionLabel: isDownloading ? 'Saving...' : 'Save overview',
                 onPressed: isDownloading ? null : onDownloadOverview,
-                icon: const Icon(Icons.download_outlined),
-                label: Text(
-                  isDownloading ? 'Saving...' : 'Save Lebanon overview',
-                ),
+                filled: true,
               ),
-              OutlinedButton.icon(
+              const SizedBox(height: AppSpacing.sm),
+              _OfflineActionCard(
+                icon: Icons.crop_free_outlined,
+                title: 'Save this view',
+                description:
+                    'Saves only the area currently visible on your screen in the current map style for offline browsing later.',
+                actionLabel: 'Save visible area',
                 onPressed: isDownloading ? null : onDownloadVisible,
-                icon: const Icon(Icons.crop_free_outlined),
-                label: const Text('Save current view'),
               ),
             ],
           ),
@@ -3209,6 +3460,82 @@ class _OfflineMapStatusCard extends StatelessWidget {
     }
     final mb = kb / 1024;
     return '${mb.toStringAsFixed(2)} MB';
+  }
+}
+
+class _OfflineActionCard extends StatelessWidget {
+  const _OfflineActionCard({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.actionLabel,
+    required this.onPressed,
+    this.filled = false,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final String actionLabel;
+  final VoidCallback? onPressed;
+  final bool filled;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(icon, size: 20, color: scheme.primary),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        description,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: filled
+                  ? FilledButton.tonalIcon(
+                      onPressed: onPressed,
+                      icon: const Icon(Icons.download_outlined),
+                      label: Text(actionLabel),
+                    )
+                  : OutlinedButton.icon(
+                      onPressed: onPressed,
+                      icon: const Icon(Icons.download_outlined),
+                      label: Text(actionLabel),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
