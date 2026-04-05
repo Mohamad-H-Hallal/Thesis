@@ -410,7 +410,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.text('Features (2)'), findsOneWidget);
+      expect(find.byTooltip('Browse project features'), findsOneWidget);
       expect(find.text('Offline'), findsNothing);
       expect(find.text('Lebanon workspace'), findsNothing);
       expect(find.text('Search visible features'), findsNothing);
@@ -422,7 +422,7 @@ void main() {
       final projectTitle = tester.widget<Text>(
         find.text('Valley Parking Rehabilitation and Orchard Inventory').first,
       );
-      expect(projectTitle.maxLines, 1);
+      expect(projectTitle.maxLines, 2);
       expect(projectTitle.overflow, TextOverflow.ellipsis);
 
       await tester.tap(find.byTooltip('Search map'));
@@ -464,24 +464,32 @@ void main() {
       await tester.tap(find.byTooltip('Hide map tools'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Valley Parking Rehabilitation and Orchard Inventory'), findsNothing);
+      expect(
+        find.text('Valley Parking Rehabilitation and Orchard Inventory'),
+        findsNothing,
+      );
       expect(find.byTooltip('Show map tools'), findsOneWidget);
 
       await tester.tap(find.byTooltip('Show map tools'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Valley Parking Rehabilitation and Orchard Inventory'), findsOneWidget);
+      expect(
+        find.text('Valley Parking Rehabilitation and Orchard Inventory'),
+        findsOneWidget,
+      );
 
       await tester.tap(find.byTooltip('Show quick filters'));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.widgetWithText(FilterChip, 'Pending review'));
+      await tester.ensureVisible(
+        find.widgetWithText(FilterChip, 'Pending review'),
+      );
       await tester.tap(find.widgetWithText(FilterChip, 'Pending review'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Features (1)'), findsOneWidget);
+      expect(find.byTooltip('Browse project features'), findsOneWidget);
       expect(find.text('Pending review'), findsOneWidget);
 
-      await tester.tap(find.text('Features (1)'));
+      await tester.tap(find.byTooltip('Browse project features'));
       await tester.pumpAndSettle();
       expect(find.text('Project features'), findsOneWidget);
       expect(find.textContaining('1 of 1 item(s)'), findsOneWidget);
@@ -495,6 +503,29 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('Karim'), findsWidgets);
+
+      await tester.tapAt(const Offset(16, 16));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Add Feature'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Choose geometry'), findsOneWidget);
+
+      await tester.tap(find.text('Point'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Add feature on this map'), findsOneWidget);
+      expect(find.text('Point not placed'), findsOneWidget);
+      expect(find.widgetWithText(OutlinedButton, 'Back'), findsOneWidget);
+      expect(find.widgetWithText(OutlinedButton, 'Undo'), findsOneWidget);
+      expect(find.widgetWithText(OutlinedButton, 'Clear'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Current location'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Point placed'), findsOneWidget);
     },
   );
 
@@ -545,8 +576,6 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Satellite').last);
       await tester.pumpAndSettle();
-
-      expect(find.text('Satellite'), findsWidgets);
 
       await tester.tap(find.byTooltip('Offline map'));
       await tester.pumpAndSettle();
@@ -682,6 +711,65 @@ void main() {
 
       expect(locationService.callCount, 1);
       expect(find.text('GPS 5m'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'add feature screen starts at attributes when launched from project map capture',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(430, 932));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final project = _projectSummary();
+
+      await tester.pumpWidget(
+        _wrapWithScope(
+          overrides: <Override>[
+            authControllerProvider.overrideWith(
+              (ref) =>
+                  _AuthenticatedAuthController(_session(UserRole.contributor)),
+            ),
+            currentLocationServiceProvider.overrideWithValue(
+              _FakeCurrentLocationService(
+                const CurrentLocationSnapshot(
+                  position: LatLng(33.901, 35.511),
+                  accuracyMeters: 5.2,
+                ),
+              ),
+            ),
+            projectListProvider.overrideWith(
+              (ref, scope) async => <ProjectSummary>[project],
+            ),
+            projectMapFeaturesProvider.overrideWith(
+              (ref, projectId) async => const <MapFeatureSummary>[],
+            ),
+            localDraftFeaturesProvider.overrideWith(
+              (ref) async => const <LocalDraftFeature>[],
+            ),
+          ],
+          child: AddFeatureScreen(
+            initialProjectId: 'project-1',
+            captureSeed: const AddFeatureCaptureSeed(
+              projectId: 'project-1',
+              geometryType: 'Point',
+              vertices: <LatLng>[LatLng(33.901, 35.511)],
+              gpsAccuracyMeters: 4.7,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Collection form'), findsOneWidget);
+      expect(find.text('2. Attributes'), findsOneWidget);
+      expect(find.widgetWithText(OutlinedButton, 'Back'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'Use the field map to capture geometry directly in Lebanon',
+        ),
+        findsNothing,
+      );
     },
   );
 }

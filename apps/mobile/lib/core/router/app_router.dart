@@ -229,6 +229,9 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         pageBuilder: (_, state) {
           final projectId = state.uri.queryParameters['projectId'];
           final featureId = state.uri.queryParameters['featureId'];
+          final captureSeed = state.extra is AddFeatureCaptureSeed
+              ? state.extra as AddFeatureCaptureSeed
+              : null;
           return _buildPage(
             state,
             AppScaffold(
@@ -238,6 +241,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
               body: AddFeatureScreen(
                 initialProjectId: projectId,
                 draftFeatureId: featureId,
+                captureSeed: captureSeed,
               ),
             ),
           );

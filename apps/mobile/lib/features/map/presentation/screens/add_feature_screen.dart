@@ -25,15 +25,31 @@ import '../../domain/lebanon_map.dart';
 import '../../domain/map_feature.dart';
 import '../widgets/feature_photo_gallery.dart';
 
+class AddFeatureCaptureSeed {
+  const AddFeatureCaptureSeed({
+    required this.projectId,
+    required this.geometryType,
+    required this.vertices,
+    this.gpsAccuracyMeters,
+  });
+
+  final String projectId;
+  final String geometryType;
+  final List<LatLng> vertices;
+  final double? gpsAccuracyMeters;
+}
+
 class AddFeatureScreen extends ConsumerStatefulWidget {
   const AddFeatureScreen({
     super.key,
     this.initialProjectId,
     this.draftFeatureId,
+    this.captureSeed,
   });
 
   final String? initialProjectId;
   final String? draftFeatureId;
+  final AddFeatureCaptureSeed? captureSeed;
 
   @override
   ConsumerState<AddFeatureScreen> createState() => _AddFeatureScreenState();
@@ -53,6 +69,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
   String? _currentDraftFeatureId;
   String? _hydratedDraftId;
   VoidCallback? _pendingGeometryMapAction;
+  bool _captureSeedApplied = false;
 
   final Map<String, TextEditingController> _attributeControllers =
       <String, TextEditingController>{};
@@ -190,18 +207,30 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     MapFeatureSummary? draftFeature,
   }) {
     final supportedGeometryTypes = _supportedGeometryTypes(project);
+    final captureSeed = draftFeature == null
+        ? _captureSeedForProject(project)
+        : null;
     final draftGeometryType = draftFeature?.geometry['type'] as String?;
-    final geometryType = draftFeature == null
-        ? (supportedGeometryTypes.contains(_selectedGeometryType)
-              ? _selectedGeometryType
-              : (supportedGeometryTypes.isEmpty
-                    ? null
-                    : supportedGeometryTypes.first))
-        : (supportedGeometryTypes.contains(draftGeometryType)
-              ? draftGeometryType
-              : (supportedGeometryTypes.isEmpty
-                    ? null
-                    : supportedGeometryTypes.first));
+    final geometryType = switch ((draftFeature, captureSeed)) {
+      (MapFeatureSummary _, _) =>
+        supportedGeometryTypes.contains(draftGeometryType)
+            ? draftGeometryType
+            : (supportedGeometryTypes.isEmpty
+                  ? null
+                  : supportedGeometryTypes.first),
+      (_, AddFeatureCaptureSeed seed) =>
+        supportedGeometryTypes.contains(seed.geometryType)
+            ? seed.geometryType
+            : (supportedGeometryTypes.isEmpty
+                  ? null
+                  : supportedGeometryTypes.first),
+      _ =>
+        supportedGeometryTypes.contains(_selectedGeometryType)
+            ? _selectedGeometryType
+            : (supportedGeometryTypes.isEmpty
+                  ? null
+                  : supportedGeometryTypes.first),
+    };
 
     for (final controller in _attributeControllers.values) {
       controller.dispose();
@@ -235,7 +264,8 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     }
 
     final geometryVertices = _geometryVerticesFromGeometry(
-      draftFeature?.geometry,
+      draftFeature?.geometry ??
+          (captureSeed == null ? null : _captureSeedGeometry(captureSeed)),
     );
 
     setState(() {
@@ -243,16 +273,67 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       _selectedGeometryType = geometryType;
       _uploadedPhotos = draftFeature?.photos ?? const <MapFeaturePhoto>[];
       _pendingPhotos.clear();
-      _gpsAccuracyMeters = draftFeature?.accuracyMeters;
+      _gpsAccuracyMeters =
+          draftFeature?.accuracyMeters ?? captureSeed?.gpsAccuracyMeters;
       _geometryVertices
         ..clear()
         ..addAll(geometryVertices);
-      _currentStep = 0;
+      _currentStep = captureSeed == null ? 0 : 1;
       _currentDraftFeatureId = draftFeature?.id;
       _hydratedDraftId = draftFeature?.id;
     });
+    if (captureSeed != null) {
+      _captureSeedApplied = true;
+    }
 
     _runGeometryMapAction(_fitGeometryOrLebanon, queueUntilReady: true);
+  }
+
+  AddFeatureCaptureSeed? _captureSeedForProject(ProjectSummary project) {
+    final seed = widget.captureSeed;
+    if (_captureSeedApplied || seed == null) {
+      return null;
+    }
+    if (seed.projectId != project.id) {
+      return null;
+    }
+    return seed;
+  }
+
+  Map<String, dynamic> _captureSeedGeometry(AddFeatureCaptureSeed seed) {
+    switch (seed.geometryType) {
+      case 'LineString':
+        return <String, dynamic>{
+          'type': 'LineString',
+          'coordinates': seed.vertices
+              .map((point) => <double>[point.longitude, point.latitude])
+              .toList(growable: false),
+        };
+      case 'Polygon':
+        final ring = seed.vertices
+            .map((point) => <double>[point.longitude, point.latitude])
+            .toList(growable: true);
+        if (ring.isNotEmpty) {
+          final first = ring.first;
+          final last = ring.last;
+          if (first[0] != last[0] || first[1] != last[1]) {
+            ring.add(<double>[first[0], first[1]]);
+          }
+        }
+        return <String, dynamic>{
+          'type': 'Polygon',
+          'coordinates': <List<List<double>>>[ring],
+        };
+      case 'Point':
+      default:
+        final point = seed.vertices.isEmpty ? null : seed.vertices.first;
+        return <String, dynamic>{
+          'type': 'Point',
+          'coordinates': point == null
+              ? const <double>[]
+              : <double>[point.longitude, point.latitude],
+        };
+    }
   }
 
   void _ensureDraftHydrated(
