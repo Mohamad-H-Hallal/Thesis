@@ -413,15 +413,34 @@ void main() {
       expect(find.text('Features (2)'), findsOneWidget);
       expect(find.text('Offline'), findsNothing);
       expect(find.text('Lebanon workspace'), findsNothing);
-      expect(find.text('Search visible features'), findsOneWidget);
+      expect(find.text('Search visible features'), findsNothing);
       expect(find.byTooltip('Offline map'), findsOneWidget);
       expect(find.byTooltip('Map style'), findsOneWidget);
+      expect(find.byTooltip('Search map'), findsOneWidget);
+      expect(find.byTooltip('Hide map tools'), findsOneWidget);
 
       final projectTitle = tester.widget<Text>(
         find.text('Valley Parking Rehabilitation and Orchard Inventory').first,
       );
       expect(projectTitle.maxLines, 1);
       expect(projectTitle.overflow, TextOverflow.ellipsis);
+
+      await tester.tap(find.byTooltip('Search map'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Search visible features'), findsOneWidget);
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Search visible features'),
+        'Karim',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Close search'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Search visible features'), findsNothing);
+      expect(find.text('Karim'), findsOneWidget);
 
       await tester.tap(find.byTooltip('Show quick filters'));
       await tester.pumpAndSettle();
@@ -440,7 +459,18 @@ void main() {
       await tester.tap(find.byTooltip('Hide quick filters'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Search visible features'), findsOneWidget);
+      expect(find.text('Search visible features'), findsNothing);
+
+      await tester.tap(find.byTooltip('Hide map tools'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Valley Parking Rehabilitation and Orchard Inventory'), findsNothing);
+      expect(find.byTooltip('Show map tools'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Show map tools'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Valley Parking Rehabilitation and Orchard Inventory'), findsOneWidget);
 
       await tester.tap(find.byTooltip('Show quick filters'));
       await tester.pumpAndSettle();
