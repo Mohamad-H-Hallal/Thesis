@@ -414,10 +414,9 @@ void main() {
       expect(find.text('Offline'), findsNothing);
       expect(find.text('Lebanon workspace'), findsNothing);
       expect(find.text('Search visible features'), findsNothing);
-      expect(find.byTooltip('Offline map'), findsOneWidget);
       expect(find.byTooltip('Map style'), findsOneWidget);
       expect(find.byTooltip('Search map'), findsOneWidget);
-      expect(find.byTooltip('Hide map tools'), findsOneWidget);
+      expect(find.byTooltip('More map tools'), findsOneWidget);
 
       final projectTitle = tester.widget<Text>(
         find.text('Valley Parking Rehabilitation and Orchard Inventory').first,
@@ -461,7 +460,9 @@ void main() {
 
       expect(find.text('Search visible features'), findsNothing);
 
-      await tester.tap(find.byTooltip('Hide map tools'));
+      await tester.tap(find.byTooltip('More map tools'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Hide map tools').last);
       await tester.pumpAndSettle();
 
       expect(
@@ -577,7 +578,9 @@ void main() {
       await tester.tap(find.text('Satellite').last);
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byTooltip('Offline map'));
+      await tester.tap(find.byTooltip('More map tools'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Offline map').last);
       await tester.pumpAndSettle();
 
       expect(find.text('Offline map'), findsOneWidget);

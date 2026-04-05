@@ -69,6 +69,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool _isMainMapReady = false;
   bool _isLocating = false;
   bool _isPrimingProjectMapTiles = false;
+  bool _isRecoveringProjectMapVisibleTiles = false;
   bool _isProjectMapPanelVisible = true;
   bool _projectMapPanelExpanded = false;
   bool _projectMapSearchOpen = false;
@@ -77,6 +78,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   MapCamera? _latestMapCamera;
   String? _lastAutoFrameKey;
   String? _lastPrimedProjectMapKey;
+  String? _lastVisibleTileRecoveryKey;
   CameraFit? _preferredProjectFit;
   VoidCallback? _pendingMainMapAction;
   String? _captureGeometryType;
@@ -175,6 +177,62 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     });
   }
 
+  void _scheduleProjectMapVisibleTileRecovery(
+    OfflineMapPackage? offlinePackage,
+  ) {
+    if (!widget.lockProjectSelection ||
+        offlinePackage == null ||
+        _isRecoveringProjectMapVisibleTiles) {
+      return;
+    }
+
+    final camera = _latestMapCamera;
+    if (camera == null) {
+      return;
+    }
+
+    final recoveryKey =
+        '${offlinePackage.version}:${_basemapStyle.name}:${camera.zoom.floor()}:${camera.center.latitude.toStringAsFixed(3)}:${camera.center.longitude.toStringAsFixed(3)}';
+    if (_lastVisibleTileRecoveryKey == recoveryKey) {
+      return;
+    }
+
+    _isRecoveringProjectMapVisibleTiles = true;
+    _lastVisibleTileRecoveryKey = recoveryKey;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        final manager = ref.read(offlineTileCacheManagerProvider);
+        final summary = await manager.cacheVisibleRegion(
+          package: offlinePackage,
+          basemapStyle: _basemapStyle,
+          bounds: camera.visibleBounds,
+          currentZoom: camera.zoom,
+        );
+        await manager.refreshStats(offlinePackage, basemapStyle: _basemapStyle);
+        ref.invalidate(offlineMapPackageProvider);
+        if (!mounted) {
+          return;
+        }
+        if (summary.downloadedTiles > 0 || summary.skippedTiles > 0) {
+          setState(() {
+            _tileFailureMessage =
+                'Showing saved map images for this project view while live imagery catches up.';
+          });
+        }
+      } catch (_) {
+        if (mounted) {
+          setState(() {
+            _tileFailureMessage ??=
+                'Map tiles are loading more slowly than expected. Project features remain available.';
+          });
+        }
+      } finally {
+        _isRecoveringProjectMapVisibleTiles = false;
+      }
+    });
+  }
+
   void _handleMainMapTap(TapPosition tapPosition, LatLng point) {
     if (_isProjectMapCaptureMode && widget.lockProjectSelection) {
       _handleProjectMapCaptureTap(point);
@@ -250,14 +308,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _tileFailureMessage?.trim().isNotEmpty == true,
     ].where((value) => value).length;
     final topPadding = _isProjectMapCaptureMode
-        ? 96.0
+        ? 92.0
         : !_isProjectMapPanelVisible
-        ? 18.0
+        ? 14.0
         : (_projectMapSearchOpen || expanded)
-        ? 142.0
-        : 88.0;
+        ? 132.0
+        : 76.0;
     final bottomPadding =
-        (_isProjectMapCaptureMode ? 102.0 : 58.0) + (noticeCount * 24.0);
+        (_isProjectMapCaptureMode ? 96.0 : 42.0) + (noticeCount * 24.0);
     return EdgeInsets.fromLTRB(28, topPadding, 28, bottomPadding);
   }
 
@@ -1253,11 +1311,20 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         Positioned(
           right: 12,
           bottom: _isProjectMapCaptureMode
-              ? 108
+              ? 102
               : canCollectOnMap
-              ? 56
-              : 10,
+              ? 52
+              : 12,
           child: _MapControlRail(
+            featureCount: features.length,
+            onOpenFeatures: _isProjectMapCaptureMode
+                ? null
+                : () => _openFeatureBrowser(
+                    project: project,
+                    features: features,
+                    canCollectOnMap: canCollectOnMap,
+                    canReview: canReview,
+                  ),
             onCenterCurrentLocation: _isLocating
                 ? null
                 : _centerMainMapOnCurrentLocation,
@@ -1314,10 +1381,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             left: 12,
             right: 84,
             bottom: _isProjectMapCaptureMode
-                ? 118
+                ? 108
                 : canCollectOnMap
-                ? 64
-                : 52,
+                ? 54
+                : 44,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1329,24 +1396,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               ],
             ),
           ),
-        if (!_isProjectMapCaptureMode)
-          Positioned(
-            left: 12,
-            bottom: 8,
-            child: _ProjectMapActionBar(
-              featureCount: features.length,
-              onOpenFeatures: () => _openFeatureBrowser(
-                project: project,
-                features: features,
-                canCollectOnMap: canCollectOnMap,
-                canReview: canReview,
-              ),
-            ),
-          ),
         if (hasCollectionAccess && !_isProjectMapCaptureMode)
           Positioned(
             right: 12,
-            bottom: 8,
+            bottom: 6,
             child: Tooltip(
               message: 'Add Feature',
               child: FloatingActionButton.small(
@@ -1417,18 +1470,22 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               userAgentPackageName: 'lb.gov.gis_collector',
               errorTileCallback: (tile, error, stackTrace) {
                 Object.hash(tile, stackTrace);
-                if (_tileFailureMessage != null ||
-                    _basemapStyle != LebanonBasemapStyle.satellite) {
-                  return;
-                }
+                _scheduleProjectMapVisibleTileRecovery(offlinePackage);
                 WidgetsBinding.instance.addPostFrameCallback((_) {
                   if (!mounted || _tileFailureMessage != null) {
                     return;
                   }
                   setState(() {
-                    _tileFailureMessage = snapshot.data == null
-                        ? 'Live satellite imagery is temporarily unavailable. The map is still usable with available labels and project features.'
-                        : 'Showing saved offline imagery. Live labels may be limited until the connection returns.';
+                    _tileFailureMessage = switch (_basemapStyle) {
+                      LebanonBasemapStyle.satellite =>
+                        snapshot.data == null
+                            ? 'Live satellite imagery is temporarily unavailable. The map is still usable with available labels and project features.'
+                            : 'Showing saved map images while live satellite imagery catches up.',
+                      LebanonBasemapStyle.street =>
+                        snapshot.data == null
+                            ? 'Live street map tiles are temporarily unavailable. Project features remain available.'
+                            : 'Showing saved map images while live street tiles catch up.',
+                    };
                   });
                 });
               },
@@ -2861,6 +2918,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             width: 34,
             height: 34,
             child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
               onTap: !interactive
                   ? null
                   : () {
@@ -2872,27 +2930,31 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         canReview: canReview,
                       );
                     },
-              child: Container(
-                decoration: BoxDecoration(
-                  color: color,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 2.4),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x33000000),
-                      blurRadius: 8,
-                      offset: Offset(0, 3),
-                    ),
-                  ],
-                ),
-                child: Icon(
-                  feature.status == 'approved'
-                      ? Icons.check
-                      : feature.status == 'rejected'
-                      ? Icons.close
-                      : Icons.schedule,
-                  color: Colors.white,
-                  size: 14,
+              child: Center(
+                child: Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    color: color,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 1.8),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x33000000),
+                        blurRadius: 6,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Icon(
+                    feature.status == 'approved'
+                        ? Icons.check
+                        : feature.status == 'rejected'
+                        ? Icons.close
+                        : Icons.schedule,
+                    color: Colors.white,
+                    size: 11,
+                  ),
                 ),
               ),
             ),
@@ -3080,23 +3142,25 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                               icon: Icons.category_outlined,
                               label: project.category,
                               textStyle: metaTheme,
+                              maxWidth: 128,
                             ),
                             _CompactMapMetaPill(
                               icon: Icons.place_outlined,
                               label: '$featureCount visible',
                               textStyle: metaTheme,
+                              maxWidth: 92,
                             ),
                           ],
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(width: AppSpacing.sm),
+                  const SizedBox(width: 8),
                   _MapStyleMenuButton(
                     basemapStyle: basemapStyle,
                     onSelected: onBasemapStyleChanged,
                   ),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 4),
                   _MapPanelIconButton(
                     tooltip: isSearchOpen ? 'Close search' : 'Search map',
                     icon: isSearchOpen
@@ -3104,13 +3168,7 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                         : Icons.search_rounded,
                     onPressed: onSearchPressed,
                   ),
-                  const SizedBox(width: 6),
-                  _MapPanelIconButton(
-                    tooltip: 'Offline map',
-                    icon: Icons.download_for_offline_outlined,
-                    onPressed: onOpenOfflineTools,
-                  ),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 4),
                   _MapPanelIconButton(
                     tooltip: isExpanded
                         ? 'Hide quick filters'
@@ -3120,11 +3178,10 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                         : Icons.tune_rounded,
                     onPressed: onToggleExpanded,
                   ),
-                  const SizedBox(width: 6),
-                  _MapPanelIconButton(
-                    tooltip: 'Hide map tools',
-                    icon: Icons.visibility_off_outlined,
-                    onPressed: onHidePanel,
+                  const SizedBox(width: 4),
+                  _ProjectMapOverflowMenuButton(
+                    onOpenOfflineTools: onOpenOfflineTools,
+                    onHidePanel: onHidePanel,
                   ),
                 ],
               ),
@@ -3276,6 +3333,8 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
 
 class _MapControlRail extends StatelessWidget {
   const _MapControlRail({
+    required this.featureCount,
+    required this.onOpenFeatures,
     required this.onCenterCurrentLocation,
     required this.onFitProject,
     required this.onZoomIn,
@@ -3283,6 +3342,8 @@ class _MapControlRail extends StatelessWidget {
     required this.isLocating,
   });
 
+  final int featureCount;
+  final VoidCallback? onOpenFeatures;
   final VoidCallback? onCenterCurrentLocation;
   final VoidCallback? onFitProject;
   final VoidCallback? onZoomIn;
@@ -3294,6 +3355,15 @@ class _MapControlRail extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (onOpenFeatures != null) ...[
+          _MapFloatingActionButton(
+            tooltip: 'Browse project features',
+            onPressed: onOpenFeatures,
+            badgeLabel: '$featureCount',
+            child: const Icon(Icons.layers_outlined, size: 20),
+          ),
+          const SizedBox(height: 8),
+        ],
         _MapFloatingActionButton(
           tooltip: 'Current location',
           onPressed: onCenterCurrentLocation,
@@ -3324,66 +3394,6 @@ class _MapControlRail extends StatelessWidget {
           child: const Icon(Icons.remove),
         ),
       ],
-    );
-  }
-}
-
-class _ProjectMapActionBar extends StatelessWidget {
-  const _ProjectMapActionBar({
-    required this.featureCount,
-    required this.onOpenFeatures,
-  });
-
-  final int featureCount;
-  final VoidCallback onOpenFeatures;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Tooltip(
-      message: 'Browse project features',
-      child: Material(
-        elevation: 6,
-        color: scheme.surface.withValues(alpha: 0.94),
-        borderRadius: BorderRadius.circular(18),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(18),
-          onTap: onOpenFeatures,
-          child: SizedBox(
-            width: 48,
-            height: 48,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                const Center(child: Icon(Icons.layers_outlined, size: 22)),
-                Positioned(
-                  right: 4,
-                  top: 4,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: scheme.primary,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 5,
-                        vertical: 2,
-                      ),
-                      child: Text(
-                        '$featureCount',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: scheme.onPrimary,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
@@ -3691,11 +3701,11 @@ class _MapPanelIconButton extends StatelessWidget {
       message: tooltip,
       child: Material(
         color: scheme.secondaryContainer.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(13),
         child: InkWell(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(13),
           onTap: onPressed,
-          child: SizedBox(width: 34, height: 34, child: Icon(icon, size: 18)),
+          child: SizedBox(width: 32, height: 32, child: Icon(icon, size: 17)),
         ),
       ),
     );
@@ -3741,17 +3751,79 @@ class _MapStyleMenuButton extends StatelessWidget {
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: scheme.secondaryContainer.withValues(alpha: 0.7),
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(13),
         ),
         child: SizedBox(
-          width: 34,
-          height: 34,
+          width: 32,
+          height: 32,
           child: Icon(
             basemapStyle == LebanonBasemapStyle.satellite
                 ? Icons.satellite_alt_outlined
                 : Icons.map_outlined,
-            size: 18,
+            size: 17,
           ),
+        ),
+      ),
+    );
+  }
+}
+
+enum _ProjectMapOverflowAction { offlineMap, hideTools }
+
+class _ProjectMapOverflowMenuButton extends StatelessWidget {
+  const _ProjectMapOverflowMenuButton({
+    required this.onOpenOfflineTools,
+    required this.onHidePanel,
+  });
+
+  final VoidCallback onOpenOfflineTools;
+  final VoidCallback onHidePanel;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return PopupMenuButton<_ProjectMapOverflowAction>(
+      tooltip: 'More map tools',
+      onSelected: (action) {
+        switch (action) {
+          case _ProjectMapOverflowAction.offlineMap:
+            onOpenOfflineTools();
+            break;
+          case _ProjectMapOverflowAction.hideTools:
+            onHidePanel();
+            break;
+        }
+      },
+      itemBuilder: (context) =>
+          const <PopupMenuEntry<_ProjectMapOverflowAction>>[
+            PopupMenuItem<_ProjectMapOverflowAction>(
+              value: _ProjectMapOverflowAction.offlineMap,
+              child: ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.download_for_offline_outlined, size: 18),
+                title: Text('Offline map'),
+              ),
+            ),
+            PopupMenuItem<_ProjectMapOverflowAction>(
+              value: _ProjectMapOverflowAction.hideTools,
+              child: ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.visibility_off_outlined, size: 18),
+                title: Text('Hide map tools'),
+              ),
+            ),
+          ],
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: scheme.secondaryContainer.withValues(alpha: 0.7),
+          borderRadius: BorderRadius.circular(13),
+        ),
+        child: const SizedBox(
+          width: 32,
+          height: 32,
+          child: Icon(Icons.more_horiz_rounded, size: 17),
         ),
       ),
     );
@@ -3763,11 +3835,13 @@ class _CompactMapMetaPill extends StatelessWidget {
     required this.icon,
     required this.label,
     this.textStyle,
+    this.maxWidth = 90,
   });
 
   final IconData icon;
   final String label;
   final TextStyle? textStyle;
+  final double maxWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -3785,7 +3859,7 @@ class _CompactMapMetaPill extends StatelessWidget {
             Icon(icon, size: 12, color: scheme.primary),
             const SizedBox(width: 4),
             ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 90),
+              constraints: BoxConstraints(maxWidth: maxWidth),
               child: Text(
                 label,
                 maxLines: 1,
@@ -3834,11 +3908,13 @@ class _MapFloatingActionButton extends StatelessWidget {
     required this.tooltip,
     required this.onPressed,
     required this.child,
+    this.badgeLabel,
   });
 
   final String tooltip;
   final VoidCallback? onPressed;
   final Widget child;
+  final String? badgeLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -3852,7 +3928,41 @@ class _MapFloatingActionButton extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(18),
           onTap: onPressed,
-          child: SizedBox(width: 48, height: 48, child: Center(child: child)),
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Center(child: child),
+                if (badgeLabel != null)
+                  Positioned(
+                    right: 4,
+                    top: 4,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: scheme.primary,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 1.5,
+                        ),
+                        child: Text(
+                          badgeLabel!,
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(
+                                color: scheme.onPrimary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );
