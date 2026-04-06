@@ -437,7 +437,10 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                         onPressed: () {
                           if (canCollectFeatures) {
                             context.push(
-                              AppRoutes.addFeatureForProject(project.id),
+                              AppRoutes.mapForProject(
+                                project.id,
+                                startCapture: true,
+                              ),
                             );
                             return;
                           }

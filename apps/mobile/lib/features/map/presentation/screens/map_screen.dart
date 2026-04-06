@@ -29,12 +29,14 @@ class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({
     this.initialProjectId,
     this.initialFeatureId,
+    this.startCaptureOnOpen = false,
     this.lockProjectSelection = false,
     super.key,
   });
 
   final String? initialProjectId;
   final String? initialFeatureId;
+  final bool startCaptureOnOpen;
   final bool lockProjectSelection;
 
   @override
@@ -75,6 +77,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool _projectMapSearchOpen = false;
   bool _isProjectMapCaptureMode = false;
   bool _isProjectMapGeometryChooserOpen = false;
+  bool _hasHandledStartCaptureOnOpen = false;
   LebanonBasemapStyle _basemapStyle = LebanonBasemapStyle.satellite;
   MapCamera? _latestMapCamera;
   String? _lastAutoFrameKey;
@@ -531,6 +534,17 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       gpsAccuracyMeters: _captureGpsAccuracyMeters,
     );
 
+    final result = await context.push<AddFeatureFlowResult>(
+      AppRoutes.addFeatureForProject(project.id),
+      extra: seed,
+    );
+    if (!mounted) {
+      return;
+    }
+    if (result == null || result.shouldResumeCapture) {
+      return;
+    }
+
     setState(() {
       _isProjectMapGeometryChooserOpen = false;
       _projectMapGeometryTypeOptions = const <String>[];
@@ -539,8 +553,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _captureVertices.clear();
       _captureGpsAccuracyMeters = null;
     });
-
-    await context.push(AppRoutes.addFeatureForProject(project.id), extra: seed);
+    if (result.successMessage != null && result.successMessage!.isNotEmpty) {
+      AppSnackbar.showSuccess(context, result.successMessage!);
+    }
   }
 
   String _projectMapCaptureInstruction() {
@@ -654,6 +669,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         final canCollectOnMap =
             hasContributorAssignment && project.status == 'active';
         final canReview = role == UserRole.admin;
+        _maybeStartProjectMapCaptureOnOpen(
+          project: project,
+          canCollectOnMap: canCollectOnMap,
+        );
 
         Widget buildControls() {
           return AppCard(
@@ -2544,6 +2563,27 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _ => 'Feature collection is unavailable for this project right now.',
     };
     AppSnackbar.showError(context, message);
+  }
+
+  void _maybeStartProjectMapCaptureOnOpen({
+    required ProjectSummary project,
+    required bool canCollectOnMap,
+  }) {
+    if (!widget.startCaptureOnOpen || _hasHandledStartCaptureOnOpen) {
+      return;
+    }
+
+    _hasHandledStartCaptureOnOpen = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      if (canCollectOnMap) {
+        _startProjectMapFeatureCapture(project);
+        return;
+      }
+      _showCollectionUnavailableMessage(project.status);
+    });
   }
 
   Future<void> _reviewFeature({

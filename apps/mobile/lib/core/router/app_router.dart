@@ -209,6 +209,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         pageBuilder: (_, state) {
           final projectId = state.pathParameters['projectId'] ?? '';
           final featureId = state.uri.queryParameters['featureId'];
+          final startCapture = state.uri.queryParameters['startCapture'] == '1';
           return _buildPage(
             state,
             Scaffold(
@@ -217,6 +218,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
                 child: MapScreen(
                   initialProjectId: projectId,
                   initialFeatureId: featureId,
+                  startCaptureOnOpen: startCapture,
                   lockProjectSelection: true,
                 ),
               ),

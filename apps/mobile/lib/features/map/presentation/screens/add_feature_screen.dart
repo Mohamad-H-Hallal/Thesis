@@ -39,6 +39,22 @@ class AddFeatureCaptureSeed {
   final double? gpsAccuracyMeters;
 }
 
+class AddFeatureFlowResult {
+  const AddFeatureFlowResult.resumeCapture()
+    : featureId = null,
+      successMessage = null;
+
+  const AddFeatureFlowResult.completed({
+    required this.featureId,
+    required this.successMessage,
+  });
+
+  final String? featureId;
+  final String? successMessage;
+
+  bool get shouldResumeCapture => successMessage == null;
+}
+
 class AddFeatureScreen extends ConsumerStatefulWidget {
   const AddFeatureScreen({
     super.key,
@@ -98,12 +114,14 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       (widget.draftFeatureId?.isNotEmpty ?? false) ||
       (_currentDraftFeatureId?.isNotEmpty ?? false);
 
-  void _returnToProjectMap(String projectId) {
+  void _returnToProjectMap(String projectId, {AddFeatureFlowResult? result}) {
     if (context.canPop()) {
-      context.pop();
+      context.pop(result);
       return;
     }
-    context.go(AppRoutes.mapForProject(projectId));
+    context.go(
+      AppRoutes.mapForProject(projectId, featureId: result?.featureId),
+    );
   }
 
   @override
@@ -714,13 +732,15 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
         return;
       }
 
-      AppSnackbar.showSuccess(
-        context,
-        submit
-            ? 'Feature submitted for review successfully.'
-            : 'Feature draft saved successfully.',
+      _returnToProjectMap(
+        project.id,
+        result: AddFeatureFlowResult.completed(
+          featureId: featureId,
+          successMessage: submit
+              ? 'Feature submitted for review successfully.'
+              : 'Feature draft saved successfully.',
+        ),
       );
-      _returnToProjectMap(project.id);
     } catch (error) {
       if (await _saveLocallyIfNeeded(
         error,
@@ -796,13 +816,15 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     bumpWorkflowRefresh(ref);
 
     if (mounted) {
-      AppSnackbar.showSuccess(
-        context,
-        submit
-            ? 'Feature saved offline and queued for submission when the connection returns.'
-            : 'Feature draft saved offline and queued for sync.',
+      _returnToProjectMap(
+        project.id,
+        result: AddFeatureFlowResult.completed(
+          featureId: draftId,
+          successMessage: submit
+              ? 'Feature saved offline and queued for submission when the connection returns.'
+              : 'Feature draft saved offline and queued for sync.',
+        ),
       );
-      _returnToProjectMap(project.id);
     }
     return true;
   }
@@ -1210,8 +1232,22 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 OutlinedButton(
                   onPressed: _isSaving
                       ? null
-                      : () => setState(() => _currentStep -= 1),
-                  child: const Text('Back'),
+                      : () {
+                          if (widget.captureSeed != null && !_isEditingDraft) {
+                            _returnToProjectMap(
+                              selectedProject.id,
+                              result:
+                                  const AddFeatureFlowResult.resumeCapture(),
+                            );
+                            return;
+                          }
+                          setState(() => _currentStep -= 1);
+                        },
+                  child: Text(
+                    widget.captureSeed != null && !_isEditingDraft
+                        ? 'Back to map'
+                        : 'Back',
+                  ),
                 ),
               if (_currentStep < 3)
                 FilledButton.icon(

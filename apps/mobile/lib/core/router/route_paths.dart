@@ -28,7 +28,8 @@ class AppRoutes {
   static String categoryEdit(String id) => '/app/categories/$id/edit';
   static const projectCreate = '/app/projects/new';
   static String projectEdit(String id) => '/app/projects/$id/edit';
-  static String projectAssignments(String id) => '/app/projects/$id/assignments';
+  static String projectAssignments(String id) =>
+      '/app/projects/$id/assignments';
   static String projectDetails(String id) => '/app/projects/$id';
 
   static String addFeatureForProject(String projectId) {
@@ -45,18 +46,26 @@ class AppRoutes {
   }) {
     final uri = Uri(
       path: addFeature,
-      queryParameters: {
-        'projectId': projectId,
-        'featureId': featureId,
-      },
+      queryParameters: {'projectId': projectId, 'featureId': featureId},
     );
     return uri.toString();
   }
 
-  static String mapForProject(String projectId, {String? featureId}) {
+  static String mapForProject(
+    String projectId, {
+    String? featureId,
+    bool startCapture = false,
+  }) {
+    final queryParameters = <String, String>{};
+    if (featureId != null) {
+      queryParameters['featureId'] = featureId;
+    }
+    if (startCapture) {
+      queryParameters['startCapture'] = '1';
+    }
     final uri = Uri(
       path: '/app/projects/$projectId/map',
-      queryParameters: featureId == null ? null : <String, String>{'featureId': featureId},
+      queryParameters: queryParameters.isEmpty ? null : queryParameters,
     );
     return uri.toString();
   }

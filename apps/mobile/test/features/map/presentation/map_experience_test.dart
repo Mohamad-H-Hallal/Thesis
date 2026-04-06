@@ -766,7 +766,10 @@ void main() {
 
       expect(find.text('Collection form'), findsOneWidget);
       expect(find.text('2. Attributes'), findsOneWidget);
-      expect(find.widgetWithText(OutlinedButton, 'Back'), findsOneWidget);
+      expect(
+        find.widgetWithText(OutlinedButton, 'Back to map'),
+        findsOneWidget,
+      );
       expect(
         find.textContaining(
           'Use the field map to capture geometry directly in Lebanon',

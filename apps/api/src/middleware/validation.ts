@@ -240,7 +240,16 @@ const featureValidation = {
       .withMessage('Invalid geometry type'),
     body('geom.coordinates').isArray().withMessage('Coordinates must be an array'),
     body('attributes').isObject().withMessage('Attributes must be a JSON object'),
-    body('accuracy_meters').optional().isFloat({ min: 0 }),
+    body('accuracy_meters')
+      .customSanitizer((value) => {
+        if (value === null || value === undefined || value === '') {
+          return undefined;
+        }
+        return value;
+      })
+      .optional()
+      .isFloat({ min: 0 })
+      .withMessage('GPS accuracy must be a positive number when provided'),
     body('collected_offline').optional().isBoolean(),
   ] as ValidationChain[],
   update: [

@@ -23,15 +23,19 @@ class ApiFeatureWorkflowRepository implements FeatureWorkflowRepository {
     required bool collectedOffline,
   }) async {
     try {
+      final payload = <String, dynamic>{
+        'project_id': projectId,
+        'geom': geometry,
+        'attributes': attributes,
+        'collected_offline': collectedOffline,
+      };
+      if (accuracyMeters != null) {
+        payload['accuracy_meters'] = accuracyMeters;
+      }
+
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         _featuresBasePath,
-        data: <String, dynamic>{
-          'project_id': projectId,
-          'geom': geometry,
-          'attributes': attributes,
-          'accuracy_meters': accuracyMeters,
-          'collected_offline': collectedOffline,
-        },
+        data: payload,
       );
 
       final data = Map<String, dynamic>.from(
@@ -58,10 +62,7 @@ class ApiFeatureWorkflowRepository implements FeatureWorkflowRepository {
     try {
       await _apiClient.dio.put<Map<String, dynamic>>(
         '$_featuresBasePath/$featureId',
-        data: <String, dynamic>{
-          'geom': geometry,
-          'attributes': attributes,
-        },
+        data: <String, dynamic>{'geom': geometry, 'attributes': attributes},
       );
     } on DioException catch (error) {
       throw Exception(_messageFrom(error, 'Feature draft update failed.'));
@@ -80,10 +81,8 @@ class ApiFeatureWorkflowRepository implements FeatureWorkflowRepository {
     try {
       final files = await Future.wait(
         filePaths.map(
-          (filePath) async => MultipartFile.fromFile(
-            filePath,
-            filename: p.basename(filePath),
-          ),
+          (filePath) async =>
+              MultipartFile.fromFile(filePath, filename: p.basename(filePath)),
         ),
       );
 
@@ -114,14 +113,42 @@ class ApiFeatureWorkflowRepository implements FeatureWorkflowRepository {
   String _messageFrom(DioException error, String fallback) {
     final data = error.response?.data;
     if (data is Map<String, dynamic>) {
+      final fieldMessage = _extractFirstFieldError(data['errors']);
       final message = data['message'] ?? data['error'];
       if (message is String && message.trim().isNotEmpty) {
-        return message.trim();
+        final trimmed = message.trim();
+        if (trimmed.toLowerCase() == 'validation failed' &&
+            fieldMessage != null) {
+          return fieldMessage;
+        }
+        return trimmed;
+      }
+      if (fieldMessage != null) {
+        return fieldMessage;
       }
     }
     if (data is String && data.trim().isNotEmpty) {
       return data.trim();
     }
     return fallback;
+  }
+
+  String? _extractFirstFieldError(Object? errors) {
+    if (errors is! List) {
+      return null;
+    }
+
+    for (final item in errors) {
+      if (item is! Map) {
+        continue;
+      }
+      final raw = Map<String, dynamic>.from(item);
+      final message = raw['message'] ?? raw['msg'];
+      if (message is String && message.trim().isNotEmpty) {
+        return message.trim();
+      }
+    }
+
+    return null;
   }
 }
