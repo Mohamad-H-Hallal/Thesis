@@ -74,6 +74,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool _projectMapPanelExpanded = false;
   bool _projectMapSearchOpen = false;
   bool _isProjectMapCaptureMode = false;
+  bool _isProjectMapGeometryChooserOpen = false;
   LebanonBasemapStyle _basemapStyle = LebanonBasemapStyle.satellite;
   MapCamera? _latestMapCamera;
   String? _lastAutoFrameKey;
@@ -83,6 +84,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   VoidCallback? _pendingMainMapAction;
   String? _captureGeometryType;
   double? _captureGpsAccuracyMeters;
+  List<String> _projectMapGeometryTypeOptions = const <String>[];
   late final MapOptions _mainMapOptions = MapOptions(
     initialCenter: LebanonMapConfig.center,
     initialZoom: LebanonMapConfig.fullscreenInitialZoom,
@@ -396,23 +398,43 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       return;
     }
 
-    String? selectedGeometryType;
     if (supportedGeometryTypes.length == 1) {
-      selectedGeometryType = supportedGeometryTypes.first;
-    } else {
-      selectedGeometryType = await showModalBottomSheet<String>(
-        context: context,
-        backgroundColor: Colors.transparent,
-        builder: (sheetContext) =>
-            _ProjectMapGeometryTypeSheet(geometryTypes: supportedGeometryTypes),
-      );
+      _enterProjectMapCapture(supportedGeometryTypes.first);
+      return;
     }
 
-    if (!mounted || selectedGeometryType == null) {
+    if (!mounted) {
       return;
     }
 
     setState(() {
+      _isProjectMapGeometryChooserOpen = true;
+      _projectMapGeometryTypeOptions = List<String>.from(
+        supportedGeometryTypes,
+      );
+      _projectMapSearchOpen = false;
+      _projectMapPanelExpanded = false;
+      _locationNoticeMessage = null;
+    });
+  }
+
+  void _dismissProjectMapGeometryChooser() {
+    if (!mounted || !_isProjectMapGeometryChooserOpen) {
+      return;
+    }
+    setState(() {
+      _isProjectMapGeometryChooserOpen = false;
+      _projectMapGeometryTypeOptions = const <String>[];
+    });
+  }
+
+  void _enterProjectMapCapture(String selectedGeometryType) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isProjectMapGeometryChooserOpen = false;
+      _projectMapGeometryTypeOptions = const <String>[];
       _isProjectMapCaptureMode = true;
       _captureGeometryType = selectedGeometryType;
       _captureVertices.clear();
@@ -428,6 +450,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       return;
     }
     setState(() {
+      _isProjectMapGeometryChooserOpen = false;
+      _projectMapGeometryTypeOptions = const <String>[];
       _isProjectMapCaptureMode = false;
       _captureGeometryType = null;
       _captureVertices.clear();
@@ -508,6 +532,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     );
 
     setState(() {
+      _isProjectMapGeometryChooserOpen = false;
+      _projectMapGeometryTypeOptions = const <String>[];
       _isProjectMapCaptureMode = false;
       _captureGeometryType = null;
       _captureVertices.clear();
@@ -1308,6 +1334,30 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   ],
                 ),
         ),
+        if (_isProjectMapGeometryChooserOpen)
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _dismissProjectMapGeometryChooser,
+              child: ColoredBox(
+                color: theme.colorScheme.scrim.withValues(alpha: 0.18),
+              ),
+            ),
+          ),
+        if (_isProjectMapGeometryChooserOpen)
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: 12,
+            child: SafeArea(
+              top: false,
+              child: _InlineProjectMapGeometryTypeSheet(
+                geometryTypes: _projectMapGeometryTypeOptions,
+                onSelected: _enterProjectMapCapture,
+                onClose: _dismissProjectMapGeometryChooser,
+              ),
+            ),
+          ),
         Positioned(
           right: 12,
           bottom: _isProjectMapCaptureMode
@@ -1317,7 +1367,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               : 12,
           child: _MapControlRail(
             featureCount: features.length,
-            onOpenFeatures: _isProjectMapCaptureMode
+            onOpenFeatures:
+                _isProjectMapCaptureMode || _isProjectMapGeometryChooserOpen
                 ? null
                 : () => _openFeatureBrowser(
                     project: project,
@@ -1325,10 +1376,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     canCollectOnMap: canCollectOnMap,
                     canReview: canReview,
                   ),
-            onCenterCurrentLocation: _isLocating
+            onCenterCurrentLocation:
+                _isLocating || _isProjectMapGeometryChooserOpen
                 ? null
                 : _centerMainMapOnCurrentLocation,
-            onFitProject: _isMainMapReady
+            onFitProject: _isProjectMapGeometryChooserOpen
+                ? null
+                : _isMainMapReady
                 ? () => _runMainMapAction(
                     () => _mapController.fitCamera(
                       _preferredProjectFit ??
@@ -1341,7 +1395,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     queueUntilReady: true,
                   )
                 : null,
-            onZoomIn: _isMainMapReady
+            onZoomIn: _isProjectMapGeometryChooserOpen
+                ? null
+                : _isMainMapReady
                 ? () => _runMainMapAction(
                     () => _mapController.move(
                       _latestMapCamera?.center ?? LebanonMapConfig.center,
@@ -1357,7 +1413,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     queueUntilReady: true,
                   )
                 : null,
-            onZoomOut: _isMainMapReady
+            onZoomOut: _isProjectMapGeometryChooserOpen
+                ? null
+                : _isMainMapReady
                 ? () => _runMainMapAction(
                     () => _mapController.move(
                       _latestMapCamera?.center ?? LebanonMapConfig.center,
@@ -1396,7 +1454,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               ],
             ),
           ),
-        if (hasCollectionAccess && !_isProjectMapCaptureMode)
+        if (hasCollectionAccess &&
+            !_isProjectMapCaptureMode &&
+            !_isProjectMapGeometryChooserOpen)
           Positioned(
             right: 12,
             bottom: 6,
@@ -3509,100 +3569,112 @@ class _ProjectMapCaptureActionBar extends StatelessWidget {
       borderRadius: BorderRadius.circular(24),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              OutlinedButton.icon(
-                onPressed: onBack,
-                icon: const Icon(Icons.arrow_back_outlined),
-                label: const Text('Back'),
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            OutlinedButton.icon(
+              onPressed: onBack,
+              icon: const Icon(Icons.arrow_back_outlined),
+              label: const Text('Back'),
+            ),
+            OutlinedButton.icon(
+              onPressed: onUndo,
+              icon: const Icon(Icons.undo_outlined),
+              label: const Text('Undo'),
+            ),
+            OutlinedButton.icon(
+              onPressed: onClear,
+              icon: const Icon(Icons.clear_outlined),
+              label: const Text('Clear'),
+            ),
+            FilledButton.icon(
+              onPressed: canContinue ? onContinue : null,
+              icon: const Icon(Icons.arrow_forward_outlined),
+              label: Text(
+                geometryType == 'Point' ? 'Continue' : 'Continue to details',
               ),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                onPressed: onUndo,
-                icon: const Icon(Icons.undo_outlined),
-                label: const Text('Undo'),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                onPressed: onClear,
-                icon: const Icon(Icons.clear_outlined),
-                label: const Text('Clear'),
-              ),
-              const SizedBox(width: 8),
-              FilledButton.icon(
-                onPressed: canContinue ? onContinue : null,
-                icon: const Icon(Icons.arrow_forward_outlined),
-                label: Text(
-                  geometryType == 'Point' ? 'Continue' : 'Continue to details',
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-class _ProjectMapGeometryTypeSheet extends StatelessWidget {
-  const _ProjectMapGeometryTypeSheet({required this.geometryTypes});
+class _InlineProjectMapGeometryTypeSheet extends StatelessWidget {
+  const _InlineProjectMapGeometryTypeSheet({
+    required this.geometryTypes,
+    required this.onSelected,
+    required this.onClose,
+  });
 
   final List<String> geometryTypes;
+  final ValueChanged<String> onSelected;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return SafeArea(
+    return Material(
+      elevation: 10,
+      color: theme.colorScheme.surface,
+      borderRadius: BorderRadius.circular(24),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        child: Material(
-          color: theme.colorScheme.surface,
-          borderRadius: BorderRadius.circular(24),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                Center(
-                  child: Container(
-                    width: 44,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.outlineVariant,
-                      borderRadius: BorderRadius.circular(999),
+                Expanded(
+                  child: Center(
+                    child: Container(
+                      width: 44,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.outlineVariant,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
                     ),
                   ),
                 ),
-                const SizedBox(height: 12),
-                Text(
-                  'Choose geometry',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
+                Tooltip(
+                  message: 'Close geometry chooser',
+                  child: IconButton(
+                    onPressed: onClose,
+                    icon: const Icon(Icons.close_rounded),
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  'Start the feature directly on this project map.',
-                  style: theme.textTheme.bodySmall,
-                ),
-                const SizedBox(height: 12),
-                for (final geometryType in geometryTypes) ...[
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(_geometryTypeIcon(geometryType)),
-                    title: Text(_geometryTypeLabel(geometryType)),
-                    subtitle: Text(_geometryTypeDescription(geometryType)),
-                    onTap: () => Navigator.of(context).pop(geometryType),
-                  ),
-                  if (geometryType != geometryTypes.last)
-                    const Divider(height: 1),
-                ],
               ],
             ),
-          ),
+            const SizedBox(height: 8),
+            Text(
+              'Choose geometry',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Start the feature directly on this project map.',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            for (final geometryType in geometryTypes) ...[
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(_geometryTypeIcon(geometryType)),
+                title: Text(_geometryTypeLabel(geometryType)),
+                subtitle: Text(_geometryTypeDescription(geometryType)),
+                onTap: () => onSelected(geometryType),
+              ),
+              if (geometryType != geometryTypes.last) const Divider(height: 1),
+            ],
+          ],
         ),
       ),
     );
