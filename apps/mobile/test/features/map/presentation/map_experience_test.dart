@@ -512,6 +512,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Choose geometry'), findsOneWidget);
+      expect(find.byTooltip('Current location'), findsNothing);
 
       await tester.tap(find.text('Point'));
       await tester.pumpAndSettle();
@@ -585,6 +586,7 @@ void main() {
 
       expect(find.text('Offline map'), findsOneWidget);
       expect(find.byTooltip('Close offline map'), findsOneWidget);
+      expect(find.byTooltip('Current location'), findsNothing);
       expect(
         find.textContaining('current satellite map on this device'),
         findsOneWidget,

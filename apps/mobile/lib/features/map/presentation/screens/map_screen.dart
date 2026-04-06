@@ -52,7 +52,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   ];
 
   final MapController _mapController = MapController();
-  final NetworkTileProvider _networkTileProvider = NetworkTileProvider();
+  final NetworkTileProvider _mainBasemapTileProvider = NetworkTileProvider();
+  final NetworkTileProvider _mainLabelTileProvider = NetworkTileProvider(
+    silenceExceptions: true,
+  );
+  final NetworkTileProvider _previewBasemapTileProvider = NetworkTileProvider();
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _projectMapSearchFocusNode = FocusNode();
   final Set<String> _visibleStatuses = Set<String>.from(_projectMapStatusOrder);
@@ -77,6 +81,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool _projectMapSearchOpen = false;
   bool _isProjectMapCaptureMode = false;
   bool _isProjectMapGeometryChooserOpen = false;
+  bool _isProjectMapModalSheetOpen = false;
   bool _hasHandledStartCaptureOnOpen = false;
   LebanonBasemapStyle _basemapStyle = LebanonBasemapStyle.satellite;
   MapCamera? _latestMapCamera;
@@ -88,6 +93,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   String? _captureGeometryType;
   double? _captureGpsAccuracyMeters;
   List<String> _projectMapGeometryTypeOptions = const <String>[];
+  bool _tileFailureUsesSavedImagery = false;
   late final MapOptions _mainMapOptions = MapOptions(
     initialCenter: LebanonMapConfig.center,
     initialZoom: LebanonMapConfig.fullscreenInitialZoom,
@@ -107,6 +113,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _basemapStyle = LebanonBasemapStyle.street;
     }
   }
+
+  bool get _isProjectMapSecondaryOverlayOpen =>
+      _isProjectMapGeometryChooserOpen || _isProjectMapModalSheetOpen;
 
   @override
   void dispose() {
@@ -167,13 +176,15 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         if (summary.downloadedTiles > 0 || summary.skippedTiles > 0) {
           setState(() {
             _tileFailureMessage = null;
+            _tileFailureUsesSavedImagery = false;
           });
         }
       } catch (_) {
         if (mounted) {
           setState(() {
             _tileFailureMessage ??=
-                'Map tiles are loading more slowly than expected. Project features remain available.';
+                'The live map is taking longer than usual. Project features remain available.';
+            _tileFailureUsesSavedImagery = false;
           });
         }
       } finally {
@@ -222,14 +233,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         if (summary.downloadedTiles > 0 || summary.skippedTiles > 0) {
           setState(() {
             _tileFailureMessage =
-                'Showing saved map images for this project view while live imagery catches up.';
+                'Showing saved map imagery for this area while the live map finishes loading.';
+            _tileFailureUsesSavedImagery = true;
           });
         }
       } catch (_) {
         if (mounted) {
           setState(() {
             _tileFailureMessage ??=
-                'Map tiles are loading more slowly than expected. Project features remain available.';
+                'The live map is taking longer than usual. Project features remain available.';
+            _tileFailureUsesSavedImagery = false;
           });
         }
       } finally {
@@ -704,6 +717,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         _selectedFeatureChip = null;
                         _searchController.clear();
                         _tileFailureMessage = null;
+                        _tileFailureUsesSavedImagery = false;
                         _locationNoticeMessage = null;
                         _lastAutoFrameKey = null;
                         _preferredProjectFit = null;
@@ -1230,9 +1244,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         ),
       if (_tileFailureMessage?.trim().isNotEmpty == true)
         _MapWorkspaceNotice(
-          icon: Icons.cloud_off_outlined,
+          icon: _tileFailureUsesSavedImagery
+              ? Icons.map_outlined
+              : Icons.cloud_off_outlined,
           message: _tileFailureMessage!,
-          toneColor: theme.colorScheme.secondary,
+          toneColor: _tileFailureUsesSavedImagery
+              ? theme.colorScheme.primary
+              : theme.colorScheme.secondary,
         ),
     ];
 
@@ -1324,6 +1342,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                   setState(() {
                                     _basemapStyle = style;
                                     _tileFailureMessage = null;
+                                    _tileFailureUsesSavedImagery = false;
                                   });
                                 },
                                 onOpenOfflineTools: () =>
@@ -1377,83 +1396,76 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               ),
             ),
           ),
-        Positioned(
-          right: 12,
-          bottom: _isProjectMapCaptureMode
-              ? 102
-              : canCollectOnMap
-              ? 52
-              : 12,
-          child: _MapControlRail(
-            featureCount: features.length,
-            onOpenFeatures:
-                _isProjectMapCaptureMode || _isProjectMapGeometryChooserOpen
-                ? null
-                : () => _openFeatureBrowser(
-                    project: project,
-                    features: features,
-                    canCollectOnMap: canCollectOnMap,
-                    canReview: canReview,
-                  ),
-            onCenterCurrentLocation:
-                _isLocating || _isProjectMapGeometryChooserOpen
-                ? null
-                : _centerMainMapOnCurrentLocation,
-            onFitProject: _isProjectMapGeometryChooserOpen
-                ? null
-                : _isMainMapReady
-                ? () => _runMainMapAction(
-                    () => _mapController.fitCamera(
-                      _preferredProjectFit ??
-                          LebanonMapConfig.lebanonFit(
-                            padding: _projectViewportPadding(
-                              expanded: _projectMapPanelExpanded,
+        if (!_isProjectMapSecondaryOverlayOpen)
+          Positioned(
+            right: 12,
+            bottom: _isProjectMapCaptureMode
+                ? 102
+                : canCollectOnMap
+                ? 52
+                : 12,
+            child: _MapControlRail(
+              featureCount: features.length,
+              onOpenFeatures: _isProjectMapCaptureMode
+                  ? null
+                  : () => _openFeatureBrowser(
+                      project: project,
+                      features: features,
+                      canCollectOnMap: canCollectOnMap,
+                      canReview: canReview,
+                    ),
+              onCenterCurrentLocation: _isLocating
+                  ? null
+                  : _centerMainMapOnCurrentLocation,
+              onFitProject: _isMainMapReady
+                  ? () => _runMainMapAction(
+                      () => _mapController.fitCamera(
+                        _preferredProjectFit ??
+                            LebanonMapConfig.lebanonFit(
+                              padding: _projectViewportPadding(
+                                expanded: _projectMapPanelExpanded,
+                              ),
                             ),
-                          ),
-                    ),
-                    queueUntilReady: true,
-                  )
-                : null,
-            onZoomIn: _isProjectMapGeometryChooserOpen
-                ? null
-                : _isMainMapReady
-                ? () => _runMainMapAction(
-                    () => _mapController.move(
-                      _latestMapCamera?.center ?? LebanonMapConfig.center,
-                      ((_latestMapCamera?.zoom ??
-                                  LebanonMapConfig.fullscreenInitialZoom) +
-                              1)
-                          .clamp(
-                            LebanonMapConfig.fullscreenMinZoom,
-                            LebanonMapConfig.fullscreenMaxZoom,
-                          )
-                          .toDouble(),
-                    ),
-                    queueUntilReady: true,
-                  )
-                : null,
-            onZoomOut: _isProjectMapGeometryChooserOpen
-                ? null
-                : _isMainMapReady
-                ? () => _runMainMapAction(
-                    () => _mapController.move(
-                      _latestMapCamera?.center ?? LebanonMapConfig.center,
-                      ((_latestMapCamera?.zoom ??
-                                  LebanonMapConfig.fullscreenInitialZoom) -
-                              1)
-                          .clamp(
-                            LebanonMapConfig.fullscreenMinZoom,
-                            LebanonMapConfig.fullscreenMaxZoom,
-                          )
-                          .toDouble(),
-                    ),
-                    queueUntilReady: true,
-                  )
-                : null,
-            isLocating: _isLocating,
+                      ),
+                      queueUntilReady: true,
+                    )
+                  : null,
+              onZoomIn: _isMainMapReady
+                  ? () => _runMainMapAction(
+                      () => _mapController.move(
+                        _latestMapCamera?.center ?? LebanonMapConfig.center,
+                        ((_latestMapCamera?.zoom ??
+                                    LebanonMapConfig.fullscreenInitialZoom) +
+                                1)
+                            .clamp(
+                              LebanonMapConfig.fullscreenMinZoom,
+                              LebanonMapConfig.fullscreenMaxZoom,
+                            )
+                            .toDouble(),
+                      ),
+                      queueUntilReady: true,
+                    )
+                  : null,
+              onZoomOut: _isMainMapReady
+                  ? () => _runMainMapAction(
+                      () => _mapController.move(
+                        _latestMapCamera?.center ?? LebanonMapConfig.center,
+                        ((_latestMapCamera?.zoom ??
+                                    LebanonMapConfig.fullscreenInitialZoom) -
+                                1)
+                            .clamp(
+                              LebanonMapConfig.fullscreenMinZoom,
+                              LebanonMapConfig.fullscreenMaxZoom,
+                            )
+                            .toDouble(),
+                      ),
+                      queueUntilReady: true,
+                    )
+                  : null,
+              isLocating: _isLocating,
+            ),
           ),
-        ),
-        if (notices.isNotEmpty)
+        if (notices.isNotEmpty && !_isProjectMapSecondaryOverlayOpen)
           Positioned(
             left: 12,
             right: 84,
@@ -1475,7 +1487,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           ),
         if (hasCollectionAccess &&
             !_isProjectMapCaptureMode &&
-            !_isProjectMapGeometryChooserOpen)
+            !_isProjectMapSecondaryOverlayOpen)
           Positioned(
             right: 12,
             bottom: 6,
@@ -1538,14 +1550,20 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           children: [
             if (snapshot.data != null)
               TileLayer(
+                key: ValueKey<String>(
+                  'project_map_offline_tiles_${_basemapStyle.name}_${snapshot.data!.templatePath}',
+                ),
                 urlTemplate: snapshot.data!.templatePath,
                 tileProvider: FileTileProvider(),
                 fallbackUrl: snapshot.data!.fallbackPath,
                 userAgentPackageName: 'lb.gov.gis_collector',
               ),
             TileLayer(
+              key: ValueKey<String>(
+                'project_map_live_basemap_${_basemapStyle.name}',
+              ),
               urlTemplate: LebanonMapConfig.basemapUrlTemplate(_basemapStyle),
-              tileProvider: _networkTileProvider,
+              tileProvider: _mainBasemapTileProvider,
               userAgentPackageName: 'lb.gov.gis_collector',
               errorTileCallback: (tile, error, stackTrace) {
                 Object.hash(tile, stackTrace);
@@ -1558,21 +1576,25 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     _tileFailureMessage = switch (_basemapStyle) {
                       LebanonBasemapStyle.satellite =>
                         snapshot.data == null
-                            ? 'Live satellite imagery is temporarily unavailable. The map is still usable with available labels and project features.'
-                            : 'Showing saved map images while live satellite imagery catches up.',
+                            ? 'The live map is temporarily unavailable. Project features remain available.'
+                            : 'Showing saved map imagery for this area while the live map finishes loading.',
                       LebanonBasemapStyle.street =>
                         snapshot.data == null
-                            ? 'Live street map tiles are temporarily unavailable. Project features remain available.'
-                            : 'Showing saved map images while live street tiles catch up.',
+                            ? 'The live map is temporarily unavailable. Project features remain available.'
+                            : 'Showing saved map imagery for this area while the live map finishes loading.',
                     };
+                    _tileFailureUsesSavedImagery = snapshot.data != null;
                   });
                 });
               },
             ),
             if (labelOverlayUrl != null)
               TileLayer(
+                key: ValueKey<String>(
+                  'project_map_label_overlay_${_basemapStyle.name}',
+                ),
                 urlTemplate: labelOverlayUrl,
-                tileProvider: _networkTileProvider,
+                tileProvider: _mainLabelTileProvider,
                 userAgentPackageName: 'lb.gov.gis_collector',
               ),
             PolygonLayer(polygons: _polygonOverlays(features)),
@@ -1724,16 +1746,22 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   children: [
                     if (snapshot.data != null)
                       TileLayer(
+                        key: ValueKey<String>(
+                          'preview_offline_tiles_${_basemapStyle.name}_${snapshot.data!.templatePath}',
+                        ),
                         urlTemplate: snapshot.data!.templatePath,
                         tileProvider: FileTileProvider(),
                         fallbackUrl: snapshot.data!.fallbackPath,
                         userAgentPackageName: 'lb.gov.gis_collector',
                       ),
                     TileLayer(
+                      key: ValueKey<String>(
+                        'preview_live_basemap_${_basemapStyle.name}',
+                      ),
                       urlTemplate: LebanonMapConfig.basemapUrlTemplate(
                         _basemapStyle,
                       ),
-                      tileProvider: _networkTileProvider,
+                      tileProvider: _previewBasemapTileProvider,
                       userAgentPackageName: 'lb.gov.gis_collector',
                       errorTileCallback: (tile, error, stackTrace) {
                         Object.hash(tile, stackTrace);
@@ -1748,13 +1776,17 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           setState(() {
                             _tileFailureMessage = snapshot.data == null
                                 ? 'Live satellite imagery is temporarily unavailable.'
-                                : 'Using saved offline imagery. Live labels may be limited until the connection returns.';
+                                : 'Showing saved map imagery for this area while the live map finishes loading.';
+                            _tileFailureUsesSavedImagery = snapshot.data != null;
                           });
                         });
                       },
                     ),
                     if (labelOverlayUrl != null)
                       TileLayer(
+                        key: ValueKey<String>(
+                          'preview_label_overlay_${_basemapStyle.name}',
+                        ),
                         urlTemplate: labelOverlayUrl,
                         userAgentPackageName: 'lb.gov.gis_collector',
                       ),
@@ -1835,6 +1867,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                             setState(() {
                               _basemapStyle = selection.first;
                               _tileFailureMessage = null;
+                              _tileFailureUsesSavedImagery = false;
                             });
                           },
                         ),
@@ -2216,40 +2249,53 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required bool canCollectOnMap,
     required bool canReview,
   }) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) => _ProjectFeatureBrowserSheet(
-        project: project,
-        features: features,
-        canCollectOnMap: canCollectOnMap,
-        featureTitleBuilder: _featureBrowserTitle,
-        featureSubtitleBuilder: _featureBrowserSubtitle,
-        searchBlobBuilder: _featureSearchBlob,
-        statusLabelBuilder: _statusLabel,
-        statusColorBuilder: _statusColor,
-        onAddFeature: canCollectOnMap
-            ? () {
-                Navigator.of(sheetContext).pop();
-                if (widget.lockProjectSelection) {
-                  _startProjectMapFeatureCapture(project);
-                  return;
+    if (mounted) {
+      setState(() {
+        _isProjectMapModalSheetOpen = true;
+      });
+    }
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (sheetContext) => _ProjectFeatureBrowserSheet(
+          project: project,
+          features: features,
+          canCollectOnMap: canCollectOnMap,
+          featureTitleBuilder: _featureBrowserTitle,
+          featureSubtitleBuilder: _featureBrowserSubtitle,
+          searchBlobBuilder: _featureSearchBlob,
+          statusLabelBuilder: _statusLabel,
+          statusColorBuilder: _statusColor,
+          onAddFeature: canCollectOnMap
+              ? () {
+                  Navigator.of(sheetContext).pop();
+                  if (widget.lockProjectSelection) {
+                    _startProjectMapFeatureCapture(project);
+                    return;
+                  }
+                  context.push(AppRoutes.addFeatureForProject(project.id));
                 }
-                context.push(AppRoutes.addFeatureForProject(project.id));
-              }
-            : null,
-        onSelectFeature: (feature) {
-          Navigator.of(sheetContext).pop();
-          _focusFeature(feature);
-          _openFeatureDetails(
-            project: project,
-            feature: feature,
-            canCollectOnMap: canCollectOnMap,
-            canReview: canReview,
-          );
-        },
-      ),
-    );
+              : null,
+          onSelectFeature: (feature) {
+            Navigator.of(sheetContext).pop();
+            _focusFeature(feature);
+            _openFeatureDetails(
+              project: project,
+              feature: feature,
+              canCollectOnMap: canCollectOnMap,
+              canReview: canReview,
+            );
+          },
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProjectMapModalSheetOpen = false;
+        });
+      }
+    }
   }
 
   Future<void> _openOfflineToolsSheet({
@@ -2257,28 +2303,41 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required bool hasCollectionAccess,
   }) async {
     final syncState = ref.read(syncControllerProvider);
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => _OfflineMapSheet(
-        basemapStyle: _basemapStyle,
-        offlinePackage: offlinePackage,
-        hasCollectionAccess: hasCollectionAccess,
-        isDownloadingOffline: _isDownloadingOffline,
-        offlineDownloadProgressLabel: _offlineDownloadProgressLabel,
-        offlineDownloadResultLabel: _offlineDownloadResultLabel,
-        syncState: syncState,
-        canDownloadVisible: offlinePackage != null && _isMainMapReady,
-        onClose: () => Navigator.of(context).pop(),
-        onDownloadOverview: offlinePackage == null
-            ? null
-            : () => _downloadLebanonOverview(offlinePackage),
-        onDownloadVisible: offlinePackage == null || !_isMainMapReady
-            ? null
-            : () => _downloadVisibleRegion(offlinePackage),
-      ),
-    );
+    if (mounted) {
+      setState(() {
+        _isProjectMapModalSheetOpen = true;
+      });
+    }
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (context) => _OfflineMapSheet(
+          basemapStyle: _basemapStyle,
+          offlinePackage: offlinePackage,
+          hasCollectionAccess: hasCollectionAccess,
+          isDownloadingOffline: _isDownloadingOffline,
+          offlineDownloadProgressLabel: _offlineDownloadProgressLabel,
+          offlineDownloadResultLabel: _offlineDownloadResultLabel,
+          syncState: syncState,
+          canDownloadVisible: offlinePackage != null && _isMainMapReady,
+          onClose: () => Navigator.of(context).pop(),
+          onDownloadOverview: offlinePackage == null
+              ? null
+              : () => _downloadLebanonOverview(offlinePackage),
+          onDownloadVisible: offlinePackage == null || !_isMainMapReady
+              ? null
+              : () => _downloadVisibleRegion(offlinePackage),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProjectMapModalSheetOpen = false;
+        });
+      }
+    }
   }
 
   String _featureBrowserTitle(MapFeatureSummary feature) {
