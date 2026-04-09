@@ -482,4 +482,54 @@ void main() {
       expect(find.text('Visible to viewers'), findsNothing);
     },
   );
+
+  testWidgets(
+    'project details places the quick map below the main project summary',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1080, 1600));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final session = _sessionForRole(
+        UserRole.contributor,
+        userId: 'contributor-1',
+      );
+      final repository = _FakeProjectsRepository(<ProjectSummary>[
+        _project(
+          id: 'contributor-project',
+          name: 'Bekaa Valley Survey',
+          assignments: <ProjectAssignment>[
+            ProjectAssignment(
+              userId: 'contributor-1',
+              role: ProjectAssignmentRole.contributor,
+              status: ProjectAssignmentStatus.approved,
+              assignedAt: DateTime.utc(2026, 4, 1),
+            ),
+          ],
+        ),
+      ]);
+
+      await tester.pumpWidget(
+        _wrapWithScope(
+          session: session,
+          projects: const <ProjectSummary>[],
+          repository: repository,
+          child: const ProjectDetailsScreen(projectId: 'contributor-project'),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      final summaryTitleTop = tester.getTopLeft(
+        find.text('Bekaa Valley Survey'),
+      );
+      final quickMapTop = tester.getTopLeft(find.text('Project map'));
+
+      expect(quickMapTop.dy, greaterThan(summaryTitleTop.dy));
+      expect(
+        find.text('Preview the Lebanon workspace before opening the full map.'),
+        findsOneWidget,
+      );
+      expect(find.text('Open map'), findsOneWidget);
+    },
+  );
 }

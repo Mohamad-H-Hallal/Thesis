@@ -295,15 +295,6 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
             ),
             const SizedBox(height: AppSpacing.md),
             AnimatedReveal(
-              delay: const Duration(milliseconds: 60),
-              child: ProjectQuickMapCard(
-                projectId: project.id,
-                onOpenFullscreen: () =>
-                    context.push(AppRoutes.mapForProject(project.id)),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            AnimatedReveal(
               child: AppCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -476,6 +467,15 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                       ),
                   ],
                 ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            AnimatedReveal(
+              delay: const Duration(milliseconds: 150),
+              child: ProjectQuickMapCard(
+                projectId: project.id,
+                onOpenFullscreen: () =>
+                    context.push(AppRoutes.mapForProject(project.id)),
               ),
             ),
             if (role == UserRole.admin)

@@ -350,8 +350,13 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Project map'), findsOneWidget);
-      expect(find.text('Lebanon preview'), findsWidgets);
+      expect(
+        find.text('Preview the Lebanon workspace before opening the full map.'),
+        findsOneWidget,
+      );
       expect(find.text('2 features'), findsOneWidget);
+      expect(find.text('Lebanon workspace'), findsOneWidget);
+      expect(find.text('Tap to open'), findsOneWidget);
 
       await tester.tap(find.text('Open map'));
       await tester.pump();

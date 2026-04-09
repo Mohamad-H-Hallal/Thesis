@@ -89,7 +89,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   String? _lastPrimedProjectMapKey;
   String? _lastProjectMapSurfaceWarmupKey;
   String? _lastVisibleTileRecoveryKey;
-  CameraFit? _preferredProjectFit;
   VoidCallback? _pendingMainMapAction;
   String? _captureGeometryType;
   double? _captureGpsAccuracyMeters;
@@ -130,6 +129,32 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       case LebanonBasemapStyle.street:
         return const Color(0xFFECE3D3);
     }
+  }
+
+  String _savedImageryFallbackNotice() {
+    return 'Using saved map imagery for this area while live tiles reconnect.';
+  }
+
+  String _liveTilesUnavailableNotice() {
+    return 'Live map tiles are temporarily unavailable. Project features remain available.';
+  }
+
+  void _notifyProjectMapTileFailure({
+    required OfflineMapPackage? offlinePackage,
+    required bool hasSavedOfflineImagery,
+  }) {
+    _scheduleProjectMapVisibleTileRecovery(offlinePackage);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _tileFailureMessage != null) {
+        return;
+      }
+      _showTileNotice(
+        hasSavedOfflineImagery
+            ? _savedImageryFallbackNotice()
+            : _liveTilesUnavailableNotice(),
+        usesSavedImagery: hasSavedOfflineImagery,
+      );
+    });
   }
 
   void _clearLocationNotice() {
@@ -286,8 +311,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           );
           _showTileNotice(
             hasSavedOfflineImagery
-                ? 'Showing saved map imagery for this area for now. Live map imagery will return when available.'
-                : 'Live map loading is taking longer than usual. Project features remain available.',
+                ? _savedImageryFallbackNotice()
+                : _liveTilesUnavailableNotice(),
             usesSavedImagery: hasSavedOfflineImagery,
           );
         }
@@ -378,7 +403,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         }
         if (summary.downloadedTiles > 0 || summary.skippedTiles > 0) {
           _showTileNotice(
-            'Showing saved map imagery for this area for now. Live map imagery will return when available.',
+            _savedImageryFallbackNotice(),
             usesSavedImagery: true,
           );
         }
@@ -389,8 +414,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           );
           _showTileNotice(
             hasSavedOfflineImagery
-                ? 'Showing saved map imagery for this area for now. Live map imagery will return when available.'
-                : 'Live map loading is taking longer than usual. Project features remain available.',
+                ? _savedImageryFallbackNotice()
+                : _liveTilesUnavailableNotice(),
             usesSavedImagery: hasSavedOfflineImagery,
           );
         }
@@ -881,7 +906,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         _selectedFeatureChip = null;
                         _searchController.clear();
                         _lastAutoFrameKey = null;
-                        _preferredProjectFit = null;
                       });
                       _clearTileNotice();
                       _clearLocationNotice();
@@ -1394,7 +1418,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required bool canCollectOnMap,
     required bool canReview,
   }) {
-    _scheduleProjectAutoFrame(project: project, features: features);
+    _scheduleProjectAutoFrame(project: project);
     _scheduleProjectMapTilePrime(offlinePackage);
     _scheduleProjectMapSurfaceWarmup(offlinePackage);
 
@@ -1591,7 +1615,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               onFitProject: _isMainMapReady
                   ? () => _runMainMapAction(
                       () => _mapController.fitCamera(
-                        _preferredProjectFit ?? _defaultProjectWorkspaceFit(),
+                        _defaultProjectWorkspaceFit(),
                       ),
                       queueUntilReady: true,
                     )
@@ -1737,22 +1761,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   'project_map_live_basemap_${_basemapStyle.name}',
                 ),
                 urlTemplate: LebanonMapConfig.basemapUrlTemplate(_basemapStyle),
-                tileProvider: NetworkTileProvider(),
+                tileProvider: NetworkTileProvider(silenceExceptions: true),
                 userAgentPackageName: 'lb.gov.gis_collector',
                 errorTileCallback: (tile, error, stackTrace) {
                   Object.hash(tile, stackTrace);
-                  _scheduleProjectMapVisibleTileRecovery(offlinePackage);
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (!mounted || _tileFailureMessage != null) {
-                      return;
-                    }
-                    _showTileNotice(
-                      !hasSavedOfflineImagery
-                          ? 'The live map is temporarily unavailable. Project features remain available.'
-                          : 'Showing saved map imagery for this area for now. Live map imagery will return when available.',
-                      usesSavedImagery: hasSavedOfflineImagery,
-                    );
-                  });
+                  _notifyProjectMapTileFailure(
+                    offlinePackage: offlinePackage,
+                    hasSavedOfflineImagery: hasSavedOfflineImagery,
+                  );
                 },
               ),
             if (labelOverlayUrl != null)
@@ -1934,25 +1950,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         urlTemplate: LebanonMapConfig.basemapUrlTemplate(
                           _basemapStyle,
                         ),
-                        tileProvider: NetworkTileProvider(),
+                        tileProvider: NetworkTileProvider(
+                          silenceExceptions: true,
+                        ),
                         userAgentPackageName: 'lb.gov.gis_collector',
                         errorTileCallback: (tile, error, stackTrace) {
                           Object.hash(tile, stackTrace);
-                          if (_tileFailureMessage != null ||
-                              _basemapStyle != LebanonBasemapStyle.satellite) {
-                            return;
-                          }
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            if (!mounted || _tileFailureMessage != null) {
-                              return;
-                            }
-                            _showTileNotice(
-                              !canUseSavedOfflineImagery
-                                  ? 'The live map is temporarily unavailable. Project features remain available.'
-                                  : 'Showing saved map imagery for this area for now. Live map imagery will return when available.',
-                              usesSavedImagery: canUseSavedOfflineImagery,
-                            );
-                          });
+                          _notifyProjectMapTileFailure(
+                            offlinePackage: offlinePackage,
+                            hasSavedOfflineImagery: canUseSavedOfflineImagery,
+                          );
                         },
                       ),
                     if (labelOverlayUrl != null)
@@ -1961,6 +1968,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           'preview_label_overlay_${_basemapStyle.name}',
                         ),
                         urlTemplate: labelOverlayUrl,
+                        tileProvider: NetworkTileProvider(
+                          silenceExceptions: true,
+                        ),
                         userAgentPackageName: 'lb.gov.gis_collector',
                       ),
                     PolygonLayer(polygons: _polygonOverlays(features)),
@@ -2324,11 +2334,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     return buffer.toString();
   }
 
-  void _scheduleProjectAutoFrame({
-    required ProjectSummary project,
-    required List<MapFeatureSummary> features,
-  }) {
-    _preferredProjectFit = _projectCameraFit(features);
+  void _scheduleProjectAutoFrame({required ProjectSummary project}) {
     final frameKey = project.id;
     if (_lastAutoFrameKey == frameKey) {
       return;
@@ -2343,66 +2349,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         queueUntilReady: true,
       );
     });
-  }
-
-  CameraFit _projectCameraFit(List<MapFeatureSummary> features) {
-    final points = features
-        .expand(_geometryPointsForFeature)
-        .toList(growable: false);
-    if (points.isEmpty) {
-      return _defaultProjectWorkspaceFit();
-    }
-    if (points.length == 1) {
-      final point = points.first;
-      const latOffset = 0.045;
-      const lngOffset = 0.055;
-      final southWest = _clampPointToLebanon(
-        LatLng(point.latitude - latOffset, point.longitude - lngOffset),
-      );
-      final northEast = _clampPointToLebanon(
-        LatLng(point.latitude + latOffset, point.longitude + lngOffset),
-      );
-      return CameraFit.bounds(
-        bounds: LatLngBounds(southWest, northEast),
-        padding: _projectViewportPadding(expanded: _projectMapPanelExpanded),
-      );
-    }
-    return CameraFit.bounds(
-      bounds: LatLngBounds.fromPoints(points),
-      padding: _projectViewportPadding(expanded: _projectMapPanelExpanded),
-    );
-  }
-
-  Iterable<LatLng> _geometryPointsForFeature(MapFeatureSummary feature) sync* {
-    final geometry = feature.geometry;
-    final type = geometry['type'];
-    if (type == 'Point') {
-      final point = geometryFocusPoint(geometry);
-      if (point != null) {
-        yield point;
-      }
-      return;
-    }
-    if (type == 'LineString') {
-      yield* lineGeometryPoints(geometry);
-      return;
-    }
-    if (type == 'Polygon') {
-      yield* polygonGeometryPoints(geometry);
-    }
-  }
-
-  LatLng _clampPointToLebanon(LatLng point) {
-    return LatLng(
-      point.latitude.clamp(
-        LebanonMapConfig.southWest.latitude,
-        LebanonMapConfig.northEast.latitude,
-      ),
-      point.longitude.clamp(
-        LebanonMapConfig.southWest.longitude,
-        LebanonMapConfig.northEast.longitude,
-      ),
-    );
   }
 
   Future<void> _openFeatureBrowser({
@@ -2701,7 +2647,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           _showLocationNotice(
             'Current location is outside Lebanon. Staying on the project workspace.',
           );
-          final fit = _preferredProjectFit ?? _defaultProjectWorkspaceFit();
+          final fit = _defaultProjectWorkspaceFit();
           _runMainMapAction(
             () => _mapController.fitCamera(fit),
             queueUntilReady: true,
@@ -3509,9 +3455,7 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                     onPressed: onToggleExpanded,
                   ),
                   const SizedBox(width: 2),
-                  _ProjectMapOverflowMenuButton(
-                    onHidePanel: onHidePanel,
-                  ),
+                  _ProjectMapOverflowMenuButton(onHidePanel: onHidePanel),
                 ],
               ),
               if (isSearchOpen) ...[
@@ -4127,9 +4071,7 @@ class _MapStyleMenuButton extends StatelessWidget {
 enum _ProjectMapOverflowAction { hideTools }
 
 class _ProjectMapOverflowMenuButton extends StatelessWidget {
-  const _ProjectMapOverflowMenuButton({
-    required this.onHidePanel,
-  });
+  const _ProjectMapOverflowMenuButton({required this.onHidePanel});
 
   final VoidCallback onHidePanel;
 
