@@ -423,6 +423,8 @@ void main() {
       );
       expect(projectTitle.maxLines, 2);
       expect(projectTitle.overflow, TextOverflow.ellipsis);
+      expect(find.text('Category: Fruit Trees'), findsOneWidget);
+      expect(find.text('Showing 2 features'), findsOneWidget);
 
       await tester.tap(find.byTooltip('Search map'));
       await tester.pumpAndSettle();
@@ -464,6 +466,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Hide map tools').last);
       await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
 
       expect(
         find.text('Valley Parking Rehabilitation and Orchard Inventory'),
@@ -588,17 +591,37 @@ void main() {
       expect(find.byTooltip('Close offline map'), findsOneWidget);
       expect(find.byTooltip('Current location'), findsNothing);
       expect(
-        find.textContaining('current satellite map on this device'),
+        find.textContaining('stays readable without signal'),
         findsOneWidget,
       );
       expect(
-        find.textContaining('Only areas saved here will stay visible'),
+        find.textContaining('Unsaved areas still need an internet connection'),
+        findsOneWidget,
+      );
+      await tester.dragUntilVisible(
+        find.text('How to test offline browsing'),
+        find.byType(ListView).last,
+        const Offset(0, -220),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('How to test offline browsing'), findsOneWidget);
+      expect(
+        find.textContaining('Turn off Wi-Fi or mobile data'),
         findsOneWidget,
       );
       expect(find.text('Save Lebanon overview'), findsOneWidget);
       expect(find.text('Save this view'), findsOneWidget);
-      expect(find.textContaining('Save the current'), findsOneWidget);
+      expect(
+        find.textContaining('only the map area currently visible on screen'),
+        findsOneWidget,
+      );
 
+      await tester.dragUntilVisible(
+        find.byTooltip('Close offline map'),
+        find.byType(ListView).last,
+        const Offset(0, 220),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Close offline map'));
       await tester.pumpAndSettle();
 
@@ -662,6 +685,53 @@ void main() {
       find.text('Current location is outside the Lebanon map workspace.'),
       findsNothing,
     );
+  });
+
+  testWidgets('project map stays usable when the project has no features', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(430, 932));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      _wrapWithScope(
+        overrides: <Override>[
+          authControllerProvider.overrideWith(
+            (ref) =>
+                _AuthenticatedAuthController(_session(UserRole.contributor)),
+          ),
+          syncControllerProvider.overrideWith((ref) => _buildSyncController()),
+          currentLocationServiceProvider.overrideWithValue(
+            _FakeCurrentLocationService(
+              const CurrentLocationSnapshot(
+                position: LatLng(33.8938, 35.5018),
+                accuracyMeters: 6,
+              ),
+            ),
+          ),
+          mapProjectsProvider.overrideWith(
+            (ref) async => <ProjectSummary>[_projectSummary()],
+          ),
+          projectMapFeaturesProvider.overrideWith(
+            (ref, projectId) async => const <MapFeatureSummary>[],
+          ),
+          offlineMapPackageProvider.overrideWith(
+            (ref) async => _offlinePackage(),
+          ),
+        ],
+        child: const MapScreen(
+          initialProjectId: 'project-1',
+          lockProjectSelection: true,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Showing 0 features'), findsOneWidget);
+    expect(find.byTooltip('Add Feature'), findsOneWidget);
+    expect(find.byTooltip('Fit project workspace'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(

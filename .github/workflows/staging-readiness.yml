@@ -40,6 +40,12 @@ jobs:
       DB_NAME: gis_app
       DB_USER: gis_user
       DB_PASSWORD: change_me
+      TEST_DB_HOST: localhost
+      TEST_DB_PORT: 5432
+      TEST_DB_NAME: gis_app_test
+      TEST_DB_USER: gis_user
+      TEST_DB_PASSWORD: change_me
+      TEST_DB_ADMIN_DB: postgres
       MIGRATIONS_DIR: ${{ github.workspace }}/infra/migrations
       JWT_SECRET: phase11-ci-jwt-secret-12345678901234567890
       JWT_SECRET_CURRENT: phase11-ci-jwt-secret-12345678901234567890

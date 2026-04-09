@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -52,11 +54,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   ];
 
   final MapController _mapController = MapController();
-  final NetworkTileProvider _mainBasemapTileProvider = NetworkTileProvider();
-  final NetworkTileProvider _mainLabelTileProvider = NetworkTileProvider(
-    silenceExceptions: true,
-  );
-  final NetworkTileProvider _previewBasemapTileProvider = NetworkTileProvider();
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _projectMapSearchFocusNode = FocusNode();
   final Set<String> _visibleStatuses = Set<String>.from(_projectMapStatusOrder);
@@ -98,6 +95,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   double? _captureGpsAccuracyMeters;
   List<String> _projectMapGeometryTypeOptions = const <String>[];
   bool _tileFailureUsesSavedImagery = false;
+  Timer? _locationNoticeTimer;
+  Timer? _tileNoticeTimer;
   late final MapOptions _mainMapOptions = MapOptions(
     initialCenter: LebanonMapConfig.center,
     initialZoom: LebanonMapConfig.fullscreenInitialZoom,
@@ -133,6 +132,79 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     }
   }
 
+  void _clearLocationNotice() {
+    _locationNoticeTimer?.cancel();
+    _locationNoticeTimer = null;
+    if (!mounted || _locationNoticeMessage == null) {
+      return;
+    }
+    setState(() {
+      _locationNoticeMessage = null;
+    });
+  }
+
+  void _showLocationNotice(
+    String message, {
+    Duration duration = const Duration(seconds: 4),
+  }) {
+    _locationNoticeTimer?.cancel();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _locationNoticeMessage = message;
+    });
+    _locationNoticeTimer = Timer(duration, () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        if (_locationNoticeMessage == message) {
+          _locationNoticeMessage = null;
+        }
+      });
+    });
+  }
+
+  void _clearTileNotice() {
+    _tileNoticeTimer?.cancel();
+    _tileNoticeTimer = null;
+    if (!mounted ||
+        (_tileFailureMessage == null && !_tileFailureUsesSavedImagery)) {
+      return;
+    }
+    setState(() {
+      _tileFailureMessage = null;
+      _tileFailureUsesSavedImagery = false;
+    });
+  }
+
+  void _showTileNotice(
+    String message, {
+    required bool usesSavedImagery,
+    Duration duration = const Duration(seconds: 5),
+  }) {
+    _tileNoticeTimer?.cancel();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _tileFailureMessage = message;
+      _tileFailureUsesSavedImagery = usesSavedImagery;
+    });
+    _tileNoticeTimer = Timer(duration, () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        if (_tileFailureMessage == message) {
+          _tileFailureMessage = null;
+          _tileFailureUsesSavedImagery = false;
+        }
+      });
+    });
+  }
+
   Future<_OfflineTileAssets?> _offlineTileAssetsFuture(
     OfflineMapPackage? package,
   ) {
@@ -148,6 +220,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   @override
   void dispose() {
+    _locationNoticeTimer?.cancel();
+    _tileNoticeTimer?.cancel();
     _searchController.dispose();
     _projectMapSearchFocusNode.dispose();
     super.dispose();
@@ -203,22 +277,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           return;
         }
         if (summary.downloadedTiles > 0 || summary.skippedTiles > 0) {
-          setState(() {
-            _tileFailureMessage = null;
-            _tileFailureUsesSavedImagery = false;
-          });
+          _clearTileNotice();
         }
       } catch (_) {
         if (mounted) {
           final hasSavedOfflineImagery = _hasSavedOfflineImagery(
             offlinePackage,
           );
-          setState(() {
-            _tileFailureMessage ??= hasSavedOfflineImagery
-                ? 'Using saved map imagery for this area while the live map loads.'
-                : 'The live map is taking longer than usual. Project features remain available.';
-            _tileFailureUsesSavedImagery = hasSavedOfflineImagery;
-          });
+          _showTileNotice(
+            hasSavedOfflineImagery
+                ? 'Showing saved map imagery for this area for now. Live map imagery will return when available.'
+                : 'Live map loading is taking longer than usual. Project features remain available.',
+            usesSavedImagery: hasSavedOfflineImagery,
+          );
         }
       } finally {
         _isPrimingProjectMapTiles = false;
@@ -306,23 +377,22 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           return;
         }
         if (summary.downloadedTiles > 0 || summary.skippedTiles > 0) {
-          setState(() {
-            _tileFailureMessage =
-                'Using saved map imagery for this area while the live map loads.';
-            _tileFailureUsesSavedImagery = true;
-          });
+          _showTileNotice(
+            'Showing saved map imagery for this area for now. Live map imagery will return when available.',
+            usesSavedImagery: true,
+          );
         }
       } catch (_) {
         if (mounted) {
           final hasSavedOfflineImagery = _hasSavedOfflineImagery(
             offlinePackage,
           );
-          setState(() {
-            _tileFailureMessage ??= hasSavedOfflineImagery
-                ? 'Using saved map imagery for this area while the live map loads.'
-                : 'The live map is taking longer than usual. Project features remain available.';
-            _tileFailureUsesSavedImagery = hasSavedOfflineImagery;
-          });
+          _showTileNotice(
+            hasSavedOfflineImagery
+                ? 'Showing saved map imagery for this area for now. Live map imagery will return when available.'
+                : 'Live map loading is taking longer than usual. Project features remain available.',
+            usesSavedImagery: hasSavedOfflineImagery,
+          );
         }
       } finally {
         _isRecoveringProjectMapVisibleTiles = false;
@@ -414,6 +484,21 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final bottomPadding =
         (_isProjectMapCaptureMode ? 92.0 : 26.0) + (noticeCount * 14.0);
     return EdgeInsets.fromLTRB(22, topPadding, 22, bottomPadding);
+  }
+
+  CameraFit _defaultProjectWorkspaceFit() {
+    final padding = _projectViewportPadding(expanded: _projectMapPanelExpanded);
+    final bounds = LatLngBounds(
+      LatLng(
+        LebanonMapConfig.southWest.latitude + 0.06,
+        LebanonMapConfig.southWest.longitude + 0.02,
+      ),
+      LatLng(
+        LebanonMapConfig.northEast.latitude - 0.05,
+        LebanonMapConfig.northEast.longitude - 0.03,
+      ),
+    );
+    return CameraFit.bounds(bounds: bounds, padding: padding);
   }
 
   String _visibleStatusSummaryLabel() {
@@ -509,8 +594,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       );
       _projectMapSearchOpen = false;
       _projectMapPanelExpanded = false;
-      _locationNoticeMessage = null;
     });
+    _clearLocationNotice();
   }
 
   void _dismissProjectMapGeometryChooser() {
@@ -536,8 +621,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _captureGpsAccuracyMeters = _currentLocationAccuracyMeters;
       _projectMapSearchOpen = false;
       _projectMapPanelExpanded = false;
-      _locationNoticeMessage = null;
     });
+    _clearLocationNotice();
   }
 
   void _cancelProjectMapFeatureCapture() {
@@ -795,12 +880,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         _selectedProjectId = value;
                         _selectedFeatureChip = null;
                         _searchController.clear();
-                        _tileFailureMessage = null;
-                        _tileFailureUsesSavedImagery = false;
-                        _locationNoticeMessage = null;
                         _lastAutoFrameKey = null;
                         _preferredProjectFit = null;
                       });
+                      _clearTileNotice();
+                      _clearLocationNotice();
                     },
                   ),
                   const SizedBox(height: AppSpacing.sm),
@@ -1316,8 +1400,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
     final theme = Theme.of(context);
     final locationNotice = _locationNoticeMessage?.trim().isNotEmpty == true
-        ? _MapWorkspaceNotice(
-            icon: Icons.travel_explore_outlined,
+        ? _MapWorkspaceCompactNotice(
+            icon: Icons.my_location_outlined,
             message: _locationNoticeMessage!,
             toneColor: theme.colorScheme.primary,
           )
@@ -1333,10 +1417,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 : theme.colorScheme.secondary,
           )
         : null;
-    final rightRailTop = _isProjectMapPanelVisible
-        ? (_projectMapSearchOpen || _projectMapPanelExpanded ? 144.0 : 102.0)
-        : 58.0;
-    final addFeatureBottom = _isProjectMapCaptureMode ? 102.0 : 12.0;
+    final addFeatureBottom = _isProjectMapCaptureMode ? 102.0 : 14.0;
+    final rightRailBottom = _isProjectMapCaptureMode ? 108.0 : 74.0;
 
     return Stack(
       children: [
@@ -1368,93 +1450,99 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   onChangeGeometryType: () =>
                       _startProjectMapFeatureCapture(project),
                 )
-              : Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              : Stack(
                   children: [
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 360),
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 220),
-                        switchInCurve: Curves.easeOutCubic,
-                        switchOutCurve: Curves.easeInCubic,
-                        transitionBuilder: (child, animation) => FadeTransition(
-                          opacity: animation,
-                          child: SizeTransition(
-                            sizeFactor: animation,
-                            axisAlignment: -1,
-                            child: child,
-                          ),
+                    Padding(
+                      padding: const EdgeInsets.only(right: 64),
+                      child: Align(
+                        alignment: Alignment.topLeft,
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 220),
+                          switchInCurve: Curves.easeOutCubic,
+                          switchOutCurve: Curves.easeInCubic,
+                          transitionBuilder: (child, animation) =>
+                              FadeTransition(
+                                opacity: animation,
+                                child: SizeTransition(
+                                  sizeFactor: animation,
+                                  axisAlignment: -1,
+                                  child: child,
+                                ),
+                              ),
+                          child: _isProjectMapPanelVisible
+                              ? _ProjectMapFloatingPanel(
+                                  key: const ValueKey<String>(
+                                    'project_map_panel_visible',
+                                  ),
+                                  project: project,
+                                  featureCount: features.length,
+                                  searchController: _searchController,
+                                  searchFocusNode: _projectMapSearchFocusNode,
+                                  quickFeatureChips: quickFeatureChips,
+                                  selectedFeatureChip: _selectedFeatureChip,
+                                  visibleStatuses: _visibleStatuses,
+                                  basemapStyle: _basemapStyle,
+                                  gpsAccuracyMeters:
+                                      _currentLocationAccuracyMeters,
+                                  isExpanded: _projectMapPanelExpanded,
+                                  isSearchOpen: _projectMapSearchOpen,
+                                  searchSummaryLabel: _searchSummaryLabel(),
+                                  onSearchChanged: () => setState(() {}),
+                                  onClearSearch: () {
+                                    setState(() {
+                                      _searchController.clear();
+                                    });
+                                  },
+                                  onSearchPressed: () =>
+                                      _setProjectMapPanelState(
+                                        visible: true,
+                                        searchOpen: !_projectMapSearchOpen,
+                                        expanded: _projectMapSearchOpen
+                                            ? _projectMapPanelExpanded
+                                            : false,
+                                        focusSearch: !_projectMapSearchOpen,
+                                      ),
+                                  onChipSelected: (chip) {
+                                    setState(() {
+                                      _selectedFeatureChip = chip;
+                                    });
+                                  },
+                                  onResetVisibleStatuses: _resetVisibleStatuses,
+                                  onToggleVisibleStatus: _toggleVisibleStatus,
+                                  visibleStatusSummaryLabel:
+                                      _visibleStatusSummaryLabel(),
+                                  onBasemapStyleChanged: (style) {
+                                    setState(() {
+                                      _basemapStyle = style;
+                                    });
+                                    _clearTileNotice();
+                                  },
+                                  onOpenOfflineTools: () =>
+                                      _openOfflineToolsSheet(
+                                        offlinePackage: offlinePackage,
+                                        hasCollectionAccess:
+                                            hasCollectionAccess,
+                                      ),
+                                  onToggleExpanded: () =>
+                                      _setProjectMapPanelState(
+                                        visible: true,
+                                        expanded: !_projectMapPanelExpanded,
+                                      ),
+                                  onHidePanel: () =>
+                                      _setProjectMapPanelVisible(false),
+                                )
+                              : const SizedBox.shrink(),
                         ),
-                        child: _isProjectMapPanelVisible
-                            ? _ProjectMapFloatingPanel(
-                                key: const ValueKey<String>(
-                                  'project_map_panel_visible',
-                                ),
-                                project: project,
-                                featureCount: features.length,
-                                searchController: _searchController,
-                                searchFocusNode: _projectMapSearchFocusNode,
-                                quickFeatureChips: quickFeatureChips,
-                                selectedFeatureChip: _selectedFeatureChip,
-                                visibleStatuses: _visibleStatuses,
-                                basemapStyle: _basemapStyle,
-                                gpsAccuracyMeters:
-                                    _currentLocationAccuracyMeters,
-                                isExpanded: _projectMapPanelExpanded,
-                                isSearchOpen: _projectMapSearchOpen,
-                                searchSummaryLabel: _searchSummaryLabel(),
-                                onSearchChanged: () => setState(() {}),
-                                onClearSearch: () {
-                                  setState(() {
-                                    _searchController.clear();
-                                  });
-                                },
-                                onSearchPressed: () => _setProjectMapPanelState(
-                                  visible: true,
-                                  searchOpen: !_projectMapSearchOpen,
-                                  expanded: _projectMapSearchOpen
-                                      ? _projectMapPanelExpanded
-                                      : false,
-                                  focusSearch: !_projectMapSearchOpen,
-                                ),
-                                onChipSelected: (chip) {
-                                  setState(() {
-                                    _selectedFeatureChip = chip;
-                                  });
-                                },
-                                onResetVisibleStatuses: _resetVisibleStatuses,
-                                onToggleVisibleStatus: _toggleVisibleStatus,
-                                visibleStatusSummaryLabel:
-                                    _visibleStatusSummaryLabel(),
-                                onBasemapStyleChanged: (style) {
-                                  setState(() {
-                                    _basemapStyle = style;
-                                    _tileFailureMessage = null;
-                                    _tileFailureUsesSavedImagery = false;
-                                  });
-                                },
-                                onOpenOfflineTools: () =>
-                                    _openOfflineToolsSheet(
-                                      offlinePackage: offlinePackage,
-                                      hasCollectionAccess: hasCollectionAccess,
-                                    ),
-                                onToggleExpanded: () =>
-                                    _setProjectMapPanelState(
-                                      visible: true,
-                                      expanded: !_projectMapPanelExpanded,
-                                    ),
-                                onHidePanel: () =>
-                                    _setProjectMapPanelVisible(false),
-                              )
-                            : const SizedBox.shrink(),
                       ),
                     ),
-                    const Spacer(),
                     if (!_isProjectMapPanelVisible)
-                      _MapPanelIconButton(
-                        tooltip: 'Show map tools',
-                        icon: Icons.layers_outlined,
-                        onPressed: () => _setProjectMapPanelVisible(true),
+                      Align(
+                        alignment: Alignment.topRight,
+                        child: _MapPanelIconButton(
+                          tooltip: 'Show map tools',
+                          icon: Icons.layers_outlined,
+                          onPressed: () => _setProjectMapPanelVisible(true),
+                        ),
                       ),
                   ],
                 ),
@@ -1485,8 +1573,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           ),
         if (!_isProjectMapSecondaryOverlayOpen)
           Positioned(
-            top: rightRailTop,
-            right: 12,
+            right: 14,
+            bottom: rightRailBottom,
             child: _MapControlRail(
               featureCount: features.length,
               onOpenFeatures: _isProjectMapCaptureMode
@@ -1503,12 +1591,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               onFitProject: _isMainMapReady
                   ? () => _runMainMapAction(
                       () => _mapController.fitCamera(
-                        _preferredProjectFit ??
-                            LebanonMapConfig.lebanonFit(
-                              padding: _projectViewportPadding(
-                                expanded: _projectMapPanelExpanded,
-                              ),
-                            ),
+                        _preferredProjectFit ?? _defaultProjectWorkspaceFit(),
                       ),
                       queueUntilReady: true,
                     )
@@ -1550,19 +1633,24 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           ),
         if (locationNotice != null && !_isProjectMapSecondaryOverlayOpen)
           Positioned(
-            left: 12,
-            right: 88,
+            left: 16,
+            right: 16,
             bottom: addFeatureBottom + 54,
-            child: locationNotice,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 296),
+                child: locationNotice,
+              ),
+            ),
           ),
         if (tileNotice != null && !_isProjectMapSecondaryOverlayOpen)
           Positioned(
             left: 16,
             right: 16,
-            bottom: addFeatureBottom + 6,
+            bottom: addFeatureBottom + 10,
             child: Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 320),
+                constraints: const BoxConstraints(maxWidth: 296),
                 child: tileNotice,
               ),
             ),
@@ -1649,7 +1737,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   'project_map_live_basemap_${_basemapStyle.name}',
                 ),
                 urlTemplate: LebanonMapConfig.basemapUrlTemplate(_basemapStyle),
-                tileProvider: _mainBasemapTileProvider,
+                tileProvider: NetworkTileProvider(),
                 userAgentPackageName: 'lb.gov.gis_collector',
                 errorTileCallback: (tile, error, stackTrace) {
                   Object.hash(tile, stackTrace);
@@ -1658,19 +1746,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     if (!mounted || _tileFailureMessage != null) {
                       return;
                     }
-                    setState(() {
-                      _tileFailureMessage = switch (_basemapStyle) {
-                        LebanonBasemapStyle.satellite =>
-                          !hasSavedOfflineImagery
-                              ? 'The live map is temporarily unavailable. Project features remain available.'
-                              : 'Using saved map imagery for this area while the live map loads.',
-                        LebanonBasemapStyle.street =>
-                          !hasSavedOfflineImagery
-                              ? 'The live map is temporarily unavailable. Project features remain available.'
-                              : 'Using saved map imagery for this area while the live map loads.',
-                      };
-                      _tileFailureUsesSavedImagery = hasSavedOfflineImagery;
-                    });
+                    _showTileNotice(
+                      !hasSavedOfflineImagery
+                          ? 'The live map is temporarily unavailable. Project features remain available.'
+                          : 'Showing saved map imagery for this area for now. Live map imagery will return when available.',
+                      usesSavedImagery: hasSavedOfflineImagery,
+                    );
                   });
                 },
               ),
@@ -1680,7 +1761,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   'project_map_label_overlay_${_basemapStyle.name}',
                 ),
                 urlTemplate: labelOverlayUrl,
-                tileProvider: _mainLabelTileProvider,
+                tileProvider: NetworkTileProvider(silenceExceptions: true),
                 userAgentPackageName: 'lb.gov.gis_collector',
               ),
             PolygonLayer(polygons: _polygonOverlays(features)),
@@ -1853,7 +1934,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         urlTemplate: LebanonMapConfig.basemapUrlTemplate(
                           _basemapStyle,
                         ),
-                        tileProvider: _previewBasemapTileProvider,
+                        tileProvider: NetworkTileProvider(),
                         userAgentPackageName: 'lb.gov.gis_collector',
                         errorTileCallback: (tile, error, stackTrace) {
                           Object.hash(tile, stackTrace);
@@ -1865,13 +1946,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                             if (!mounted || _tileFailureMessage != null) {
                               return;
                             }
-                            setState(() {
-                              _tileFailureMessage = !canUseSavedOfflineImagery
-                                  ? 'Live satellite imagery is temporarily unavailable.'
-                                  : 'Using saved map imagery for this area while the live map loads.';
-                              _tileFailureUsesSavedImagery =
-                                  canUseSavedOfflineImagery;
-                            });
+                            _showTileNotice(
+                              !canUseSavedOfflineImagery
+                                  ? 'The live map is temporarily unavailable. Project features remain available.'
+                                  : 'Showing saved map imagery for this area for now. Live map imagery will return when available.',
+                              usesSavedImagery: canUseSavedOfflineImagery,
+                            );
                           });
                         },
                       ),
@@ -1959,9 +2039,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           onSelectionChanged: (selection) {
                             setState(() {
                               _basemapStyle = selection.first;
-                              _tileFailureMessage = null;
-                              _tileFailureUsesSavedImagery = false;
                             });
+                            _clearTileNotice();
                           },
                         ),
                       ],
@@ -2262,12 +2341,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       }
       _runMainMapAction(
         () => _mapController.fitCamera(
-          _preferredProjectFit ??
-              LebanonMapConfig.lebanonFit(
-                padding: _projectViewportPadding(
-                  expanded: _projectMapPanelExpanded,
-                ),
-              ),
+          _preferredProjectFit ?? _defaultProjectWorkspaceFit(),
         ),
         queueUntilReady: true,
       );
@@ -2279,9 +2353,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         .expand(_geometryPointsForFeature)
         .toList(growable: false);
     if (points.isEmpty) {
-      return LebanonMapConfig.lebanonFit(
-        padding: _projectViewportPadding(expanded: _projectMapPanelExpanded),
-      );
+      return _defaultProjectWorkspaceFit();
     }
     if (points.length == 1) {
       final point = points.first;
@@ -2501,13 +2573,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         final hasUsableTiles =
             summary.downloadedTiles > 0 || summary.skippedTiles > 0;
         final message =
-            'Lebanon overview saved for offline browsing. ${summary.downloadedTiles} new map image(s), ${summary.skippedTiles} already on this device${summary.failedTiles > 0 ? ', ${summary.failedTiles} failed' : ''}.';
+            'Lebanon overview saved on this device. ${summary.downloadedTiles} new map image(s), ${summary.skippedTiles} already available${summary.failedTiles > 0 ? ', ${summary.failedTiles} failed' : ''}.';
         setState(() {
           _offlineDownloadResultLabel = message;
         });
-        if (hasUsableTiles) {
-          AppSnackbar.showSuccess(context, message);
-        } else {
+        if (!hasUsableTiles) {
           AppSnackbar.showError(
             context,
             'Unable to save the Lebanon overview right now. Please try again later.',
@@ -2523,7 +2593,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         setState(() {
           _offlineDownloadResultLabel = message;
         });
-        AppSnackbar.showError(context, message);
       }
     } finally {
       if (mounted) {
@@ -2583,13 +2652,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         final hasUsableTiles =
             summary.downloadedTiles > 0 || summary.skippedTiles > 0;
         final message =
-            'Visible area saved for offline browsing. ${summary.downloadedTiles} new map image(s), ${summary.skippedTiles} already on this device${summary.failedTiles > 0 ? ', ${summary.failedTiles} failed' : ''}.';
+            'This visible area is saved on this device. ${summary.downloadedTiles} new map image(s), ${summary.skippedTiles} already available${summary.failedTiles > 0 ? ', ${summary.failedTiles} failed' : ''}.';
         setState(() {
           _offlineDownloadResultLabel = message;
         });
-        if (hasUsableTiles) {
-          AppSnackbar.showSuccess(context, message);
-        } else {
+        if (!hasUsableTiles) {
           AppSnackbar.showError(
             context,
             'Unable to save this visible area right now. Please try again later.',
@@ -2605,7 +2672,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         setState(() {
           _offlineDownloadResultLabel = message;
         });
-        AppSnackbar.showError(context, message);
       }
     } finally {
       if (mounted) {
@@ -2634,16 +2700,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           setState(() {
             _currentLocation = null;
             _currentLocationAccuracyMeters = null;
-            _locationNoticeMessage =
-                'Current location is outside Lebanon. Staying on the project workspace.';
           });
-          final fit =
-              _preferredProjectFit ??
-              LebanonMapConfig.lebanonFit(
-                padding: _projectViewportPadding(
-                  expanded: _projectMapPanelExpanded,
-                ),
-              );
+          _showLocationNotice(
+            'Current location is outside Lebanon. Staying on the project workspace.',
+          );
+          final fit = _preferredProjectFit ?? _defaultProjectWorkspaceFit();
           _runMainMapAction(
             () => _mapController.fitCamera(fit),
             queueUntilReady: true,
@@ -2665,15 +2726,18 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           _captureVertices
             ..clear()
             ..add(location.position);
-          _locationNoticeMessage =
-              'Current location set for the feature point.';
-        } else if (_isProjectMapCaptureMode) {
-          _locationNoticeMessage =
-              'Map centered on the current location. Continue drawing on the map.';
-        } else {
-          _locationNoticeMessage = null;
-        }
+        } else if (_isProjectMapCaptureMode) {}
       });
+      if (_isProjectMapCaptureMode &&
+          (_captureGeometryType ?? 'Point') == 'Point') {
+        _showLocationNotice('Current location set for the feature point.');
+      } else if (_isProjectMapCaptureMode) {
+        _showLocationNotice(
+          'Map centered on the current location. Continue drawing on the map.',
+        );
+      } else {
+        _clearLocationNotice();
+      }
       _runMainMapAction(
         () => _mapController.move(location.position, 16),
         queueUntilReady: true,
@@ -3354,6 +3418,9 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final activeFilterLabel = selectedFeatureChip ?? 'All features';
+    final visibleCountLabel = featureCount == 1
+        ? 'Showing 1 feature'
+        : 'Showing $featureCount features';
 
     return AnimatedSize(
       duration: const Duration(milliseconds: 220),
@@ -3385,14 +3452,29 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 4),
-                        Text(
-                          '${project.category} ? $featureCount visible',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                            fontWeight: FontWeight.w600,
-                          ),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            _CompactMapMetaPill(
+                              icon: Icons.category_outlined,
+                              label: 'Category: ${project.category}',
+                              maxWidth: 150,
+                              textStyle: theme.textTheme.labelSmall?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            _CompactMapMetaPill(
+                              icon: Icons.location_on_outlined,
+                              label: visibleCountLabel,
+                              maxWidth: 128,
+                              textStyle: theme.textTheme.labelSmall?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -4142,11 +4224,13 @@ class _CompactMapMetaPill extends StatelessWidget {
     required this.icon,
     required this.label,
     this.textStyle,
+    this.maxWidth = 110,
   });
 
   final IconData icon;
   final String label;
   final TextStyle? textStyle;
+  final double maxWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -4164,7 +4248,7 @@ class _CompactMapMetaPill extends StatelessWidget {
             Icon(icon, size: 12, color: scheme.primary),
             const SizedBox(width: 4),
             ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 90),
+              constraints: BoxConstraints(maxWidth: maxWidth),
               child: Text(
                 label,
                 maxLines: 1,
@@ -4749,7 +4833,7 @@ class _OfflineMapSheet extends StatelessWidget {
                                 ),
                                 const SizedBox(height: AppSpacing.xs),
                                 Text(
-                                  'Save the current ${LebanonMapConfig.basemapLabel(basemapStyle).toLowerCase()} map on this device for offline browsing later. Only areas saved here will stay visible when the connection drops.',
+                                  'Save map imagery on this device so this project area stays readable without signal. Saved areas remain visible later. Unsaved areas still need an internet connection.',
                                   style: Theme.of(context).textTheme.bodyMedium,
                                 ),
                               ],
@@ -4774,6 +4858,22 @@ class _OfflineMapSheet extends StatelessWidget {
                         onDownloadVisible: canDownloadVisible
                             ? onDownloadVisible
                             : null,
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                      AppCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'How to test offline browsing',
+                              style: Theme.of(context).textTheme.titleSmall,
+                            ),
+                            const SizedBox(height: AppSpacing.xs),
+                            const Text(
+                              '1. Save Lebanon overview or save the current view.\n2. Turn off Wi-Fi or mobile data on the device or emulator.\n3. Reopen this project map. Saved areas stay visible; unsaved areas still need a connection.',
+                            ),
+                          ],
+                        ),
                       ),
                       if (hasCollectionAccess) ...[
                         const SizedBox(height: AppSpacing.md),
@@ -4827,12 +4927,12 @@ class _OfflineMapStatusCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Saved offline map',
+            'Saved offline imagery',
             style: Theme.of(context).textTheme.titleSmall,
           ),
           const SizedBox(height: AppSpacing.xs),
           Text(
-            'Previously saved areas remain visible later on this device. Areas you do not save still need an internet connection.',
+            'Saved areas remain visible later on this device. Save Lebanon overview for a light country-wide reference, or save the current view before heading into a low-signal field area.',
             softWrap: true,
           ),
           const SizedBox(height: AppSpacing.xs),
@@ -4876,7 +4976,7 @@ class _OfflineMapStatusCard extends StatelessWidget {
           const _MapWorkspaceNotice(
             icon: Icons.info_outline,
             message:
-                'Save Lebanon overview for a light nationwide background, or save this view to keep the area currently on screen available later without signal.',
+                'Save Lebanon overview for quick orientation across the country, or save this view to keep only the area currently on screen available later without signal.',
             toneColor: Color(0xFF1565C0),
           ),
           const SizedBox(height: AppSpacing.sm),
@@ -4886,7 +4986,7 @@ class _OfflineMapStatusCard extends StatelessWidget {
                 icon: Icons.public_rounded,
                 title: 'Save Lebanon overview',
                 description:
-                    'Saves a light nationwide background in the current map style for quick orientation across Lebanon when you are offline.',
+                    'Saves a lightweight Lebanon-wide reference map in the current style. Use it for orientation when you are offline.',
                 actionLabel: isDownloading ? 'Saving...' : 'Save overview',
                 onPressed: isDownloading ? null : onDownloadOverview,
                 filled: true,
@@ -4896,7 +4996,7 @@ class _OfflineMapStatusCard extends StatelessWidget {
                 icon: Icons.crop_free_outlined,
                 title: 'Save this view',
                 description:
-                    'Saves only the area currently visible on your screen in the current map style for offline browsing later.',
+                    'Saves only the map area currently visible on screen in the current style. Use it after zooming to the project area you need in the field.',
                 actionLabel: 'Save visible area',
                 onPressed: isDownloading ? null : onDownloadVisible,
               ),
