@@ -61,6 +61,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   final FocusNode _projectMapSearchFocusNode = FocusNode();
   final Set<String> _visibleStatuses = Set<String>.from(_projectMapStatusOrder);
   final List<LatLng> _captureVertices = <LatLng>[];
+  final Map<String, Future<_OfflineTileAssets?>> _offlineTileAssetsFutureCache =
+      <String, Future<_OfflineTileAssets?>>{};
 
   String? _selectedProjectId;
   String? _selectedFeatureChip;
@@ -75,6 +77,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool _isMainMapReady = false;
   bool _isLocating = false;
   bool _isPrimingProjectMapTiles = false;
+  bool _isWarmingProjectMapSurface = false;
   bool _isRecoveringProjectMapVisibleTiles = false;
   bool _isProjectMapPanelVisible = true;
   bool _projectMapPanelExpanded = false;
@@ -87,6 +90,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   MapCamera? _latestMapCamera;
   String? _lastAutoFrameKey;
   String? _lastPrimedProjectMapKey;
+  String? _lastProjectMapSurfaceWarmupKey;
   String? _lastVisibleTileRecoveryKey;
   CameraFit? _preferredProjectFit;
   VoidCallback? _pendingMainMapAction;
@@ -116,6 +120,31 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   bool get _isProjectMapSecondaryOverlayOpen =>
       _isProjectMapGeometryChooserOpen || _isProjectMapModalSheetOpen;
+
+  bool _hasSavedOfflineImagery(OfflineMapPackage? package) =>
+      (package?.tileCount ?? 0) > 0;
+
+  Color _projectMapSurfaceFallbackColor() {
+    switch (_basemapStyle) {
+      case LebanonBasemapStyle.satellite:
+        return const Color(0xFFB3C2C7);
+      case LebanonBasemapStyle.street:
+        return const Color(0xFFECE3D3);
+    }
+  }
+
+  Future<_OfflineTileAssets?> _offlineTileAssetsFuture(
+    OfflineMapPackage? package,
+  ) {
+    if (package == null) {
+      return Future<_OfflineTileAssets?>.value(null);
+    }
+    final key = '${package.version}:${_basemapStyle.name}';
+    return _offlineTileAssetsFutureCache.putIfAbsent(
+      key,
+      () => _loadOfflineTileAssets(package, _basemapStyle),
+    );
+  }
 
   @override
   void dispose() {
@@ -181,14 +210,60 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         }
       } catch (_) {
         if (mounted) {
+          final hasSavedOfflineImagery = _hasSavedOfflineImagery(
+            offlinePackage,
+          );
           setState(() {
-            _tileFailureMessage ??=
-                'The live map is taking longer than usual. Project features remain available.';
-            _tileFailureUsesSavedImagery = false;
+            _tileFailureMessage ??= hasSavedOfflineImagery
+                ? 'Using saved map imagery for this area while the live map loads.'
+                : 'The live map is taking longer than usual. Project features remain available.';
+            _tileFailureUsesSavedImagery = hasSavedOfflineImagery;
           });
         }
       } finally {
         _isPrimingProjectMapTiles = false;
+      }
+    });
+  }
+
+  void _scheduleProjectMapSurfaceWarmup(OfflineMapPackage? offlinePackage) {
+    if (!widget.lockProjectSelection ||
+        offlinePackage == null ||
+        !_isMainMapReady ||
+        _isWarmingProjectMapSurface ||
+        _isProjectMapSecondaryOverlayOpen) {
+      return;
+    }
+
+    final camera = _latestMapCamera;
+    if (camera == null) {
+      return;
+    }
+
+    final warmupKey =
+        '${offlinePackage.version}:${_basemapStyle.name}:${camera.zoom.floor()}:${camera.center.latitude.toStringAsFixed(3)}:${camera.center.longitude.toStringAsFixed(3)}';
+    if (_lastProjectMapSurfaceWarmupKey == warmupKey) {
+      return;
+    }
+
+    _isWarmingProjectMapSurface = true;
+    _lastProjectMapSurfaceWarmupKey = warmupKey;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        final manager = ref.read(offlineTileCacheManagerProvider);
+        await manager.cacheVisibleRegion(
+          package: offlinePackage,
+          basemapStyle: _basemapStyle,
+          bounds: camera.visibleBounds,
+          currentZoom: camera.zoom,
+        );
+        await manager.refreshStats(offlinePackage, basemapStyle: _basemapStyle);
+        ref.invalidate(offlineMapPackageProvider);
+      } catch (_) {
+        // Keep the map usable even if the warmup request cannot complete.
+      } finally {
+        _isWarmingProjectMapSurface = false;
       }
     });
   }
@@ -233,16 +308,20 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         if (summary.downloadedTiles > 0 || summary.skippedTiles > 0) {
           setState(() {
             _tileFailureMessage =
-                'Showing saved map imagery for this area while the live map finishes loading.';
+                'Using saved map imagery for this area while the live map loads.';
             _tileFailureUsesSavedImagery = true;
           });
         }
       } catch (_) {
         if (mounted) {
+          final hasSavedOfflineImagery = _hasSavedOfflineImagery(
+            offlinePackage,
+          );
           setState(() {
-            _tileFailureMessage ??=
-                'The live map is taking longer than usual. Project features remain available.';
-            _tileFailureUsesSavedImagery = false;
+            _tileFailureMessage ??= hasSavedOfflineImagery
+                ? 'Using saved map imagery for this area while the live map loads.'
+                : 'The live map is taking longer than usual. Project features remain available.';
+            _tileFailureUsesSavedImagery = hasSavedOfflineImagery;
           });
         }
       } finally {
@@ -326,15 +405,15 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _tileFailureMessage?.trim().isNotEmpty == true,
     ].where((value) => value).length;
     final topPadding = _isProjectMapCaptureMode
-        ? 92.0
+        ? 82.0
         : !_isProjectMapPanelVisible
-        ? 14.0
+        ? 12.0
         : (_projectMapSearchOpen || expanded)
-        ? 132.0
-        : 76.0;
+        ? 116.0
+        : 64.0;
     final bottomPadding =
-        (_isProjectMapCaptureMode ? 96.0 : 42.0) + (noticeCount * 24.0);
-    return EdgeInsets.fromLTRB(28, topPadding, 28, bottomPadding);
+        (_isProjectMapCaptureMode ? 92.0 : 26.0) + (noticeCount * 14.0);
+    return EdgeInsets.fromLTRB(22, topPadding, 22, bottomPadding);
   }
 
   String _visibleStatusSummaryLabel() {
@@ -1233,38 +1312,46 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }) {
     _scheduleProjectAutoFrame(project: project, features: features);
     _scheduleProjectMapTilePrime(offlinePackage);
+    _scheduleProjectMapSurfaceWarmup(offlinePackage);
 
     final theme = Theme.of(context);
-    final notices = <Widget>[
-      if (_locationNoticeMessage?.trim().isNotEmpty == true)
-        _MapWorkspaceNotice(
-          icon: Icons.travel_explore_outlined,
-          message: _locationNoticeMessage!,
-          toneColor: theme.colorScheme.primary,
-        ),
-      if (_tileFailureMessage?.trim().isNotEmpty == true)
-        _MapWorkspaceNotice(
-          icon: _tileFailureUsesSavedImagery
-              ? Icons.map_outlined
-              : Icons.cloud_off_outlined,
-          message: _tileFailureMessage!,
-          toneColor: _tileFailureUsesSavedImagery
-              ? theme.colorScheme.primary
-              : theme.colorScheme.secondary,
-        ),
-    ];
+    final locationNotice = _locationNoticeMessage?.trim().isNotEmpty == true
+        ? _MapWorkspaceNotice(
+            icon: Icons.travel_explore_outlined,
+            message: _locationNoticeMessage!,
+            toneColor: theme.colorScheme.primary,
+          )
+        : null;
+    final tileNotice = _tileFailureMessage?.trim().isNotEmpty == true
+        ? _MapWorkspaceCompactNotice(
+            icon: _tileFailureUsesSavedImagery
+                ? Icons.map_outlined
+                : Icons.cloud_off_outlined,
+            message: _tileFailureMessage!,
+            toneColor: _tileFailureUsesSavedImagery
+                ? theme.colorScheme.primary
+                : theme.colorScheme.secondary,
+          )
+        : null;
+    final rightRailTop = _isProjectMapPanelVisible
+        ? (_projectMapSearchOpen || _projectMapPanelExpanded ? 144.0 : 102.0)
+        : 58.0;
+    final addFeatureBottom = _isProjectMapCaptureMode ? 102.0 : 12.0;
 
     return Stack(
       children: [
         Positioned.fill(
           child: ClipRRect(
             borderRadius: AppRadii.lg,
-            child: _buildMapCanvas(
-              project: project,
-              features: features,
-              offlinePackage: offlinePackage,
-              canCollectOnMap: canCollectOnMap,
-              canReview: canReview,
+            child: ColoredBox(
+              color: _projectMapSurfaceFallbackColor(),
+              child: _buildMapCanvas(
+                project: project,
+                features: features,
+                offlinePackage: offlinePackage,
+                canCollectOnMap: canCollectOnMap,
+                canReview: canReview,
+              ),
             ),
           ),
         ),
@@ -1284,7 +1371,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               : Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 360),
                       child: AnimatedSwitcher(
                         duration: const Duration(milliseconds: 220),
                         switchInCurve: Curves.easeOutCubic,
@@ -1361,14 +1449,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                             : const SizedBox.shrink(),
                       ),
                     ),
-                    if (!_isProjectMapPanelVisible) ...[
-                      const SizedBox(width: 8),
+                    const Spacer(),
+                    if (!_isProjectMapPanelVisible)
                       _MapPanelIconButton(
                         tooltip: 'Show map tools',
                         icon: Icons.layers_outlined,
                         onPressed: () => _setProjectMapPanelVisible(true),
                       ),
-                    ],
                   ],
                 ),
         ),
@@ -1398,12 +1485,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           ),
         if (!_isProjectMapSecondaryOverlayOpen)
           Positioned(
+            top: rightRailTop,
             right: 12,
-            bottom: _isProjectMapCaptureMode
-                ? 102
-                : canCollectOnMap
-                ? 52
-                : 12,
             child: _MapControlRail(
               featureCount: features.length,
               onOpenFeatures: _isProjectMapCaptureMode
@@ -1465,32 +1548,31 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               isLocating: _isLocating,
             ),
           ),
-        if (notices.isNotEmpty && !_isProjectMapSecondaryOverlayOpen)
+        if (locationNotice != null && !_isProjectMapSecondaryOverlayOpen)
           Positioned(
             left: 12,
-            right: 84,
-            bottom: _isProjectMapCaptureMode
-                ? 108
-                : canCollectOnMap
-                ? 54
-                : 44,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                for (var index = 0; index < notices.length; index++) ...[
-                  notices[index],
-                  if (index != notices.length - 1)
-                    const SizedBox(height: AppSpacing.xs),
-                ],
-              ],
+            right: 88,
+            bottom: addFeatureBottom + 54,
+            child: locationNotice,
+          ),
+        if (tileNotice != null && !_isProjectMapSecondaryOverlayOpen)
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: addFeatureBottom + 6,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 320),
+                child: tileNotice,
+              ),
             ),
           ),
         if (hasCollectionAccess &&
             !_isProjectMapCaptureMode &&
             !_isProjectMapSecondaryOverlayOpen)
           Positioned(
-            right: 12,
-            bottom: 6,
+            right: 14,
+            bottom: 14,
             child: Tooltip(
               message: 'Add Feature',
               child: FloatingActionButton.small(
@@ -1536,19 +1618,22 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required bool canReview,
   }) {
     return FutureBuilder<_OfflineTileAssets?>(
-      future: offlinePackage == null
-          ? Future<_OfflineTileAssets?>.value(null)
-          : _loadOfflineTileAssets(offlinePackage, _basemapStyle),
+      future: _offlineTileAssetsFuture(offlinePackage),
       builder: (context, snapshot) {
         final labelOverlayUrl = LebanonMapConfig.referenceLabelUrlTemplate(
           _basemapStyle,
         );
+        final hasSavedOfflineImagery = _hasSavedOfflineImagery(offlinePackage);
+        final canUseSavedOfflineImagery =
+            snapshot.data != null && hasSavedOfflineImagery;
+        final preferSavedImagery =
+            _tileFailureUsesSavedImagery && canUseSavedOfflineImagery;
         final theme = Theme.of(context);
         return FlutterMap(
           mapController: _mapController,
           options: _mainMapOptions,
           children: [
-            if (snapshot.data != null)
+            if (canUseSavedOfflineImagery)
               TileLayer(
                 key: ValueKey<String>(
                   'project_map_offline_tiles_${_basemapStyle.name}_${snapshot.data!.templatePath}',
@@ -1558,36 +1643,37 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 fallbackUrl: snapshot.data!.fallbackPath,
                 userAgentPackageName: 'lb.gov.gis_collector',
               ),
-            TileLayer(
-              key: ValueKey<String>(
-                'project_map_live_basemap_${_basemapStyle.name}',
-              ),
-              urlTemplate: LebanonMapConfig.basemapUrlTemplate(_basemapStyle),
-              tileProvider: _mainBasemapTileProvider,
-              userAgentPackageName: 'lb.gov.gis_collector',
-              errorTileCallback: (tile, error, stackTrace) {
-                Object.hash(tile, stackTrace);
-                _scheduleProjectMapVisibleTileRecovery(offlinePackage);
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (!mounted || _tileFailureMessage != null) {
-                    return;
-                  }
-                  setState(() {
-                    _tileFailureMessage = switch (_basemapStyle) {
-                      LebanonBasemapStyle.satellite =>
-                        snapshot.data == null
-                            ? 'The live map is temporarily unavailable. Project features remain available.'
-                            : 'Showing saved map imagery for this area while the live map finishes loading.',
-                      LebanonBasemapStyle.street =>
-                        snapshot.data == null
-                            ? 'The live map is temporarily unavailable. Project features remain available.'
-                            : 'Showing saved map imagery for this area while the live map finishes loading.',
-                    };
-                    _tileFailureUsesSavedImagery = snapshot.data != null;
+            if (!preferSavedImagery)
+              TileLayer(
+                key: ValueKey<String>(
+                  'project_map_live_basemap_${_basemapStyle.name}',
+                ),
+                urlTemplate: LebanonMapConfig.basemapUrlTemplate(_basemapStyle),
+                tileProvider: _mainBasemapTileProvider,
+                userAgentPackageName: 'lb.gov.gis_collector',
+                errorTileCallback: (tile, error, stackTrace) {
+                  Object.hash(tile, stackTrace);
+                  _scheduleProjectMapVisibleTileRecovery(offlinePackage);
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (!mounted || _tileFailureMessage != null) {
+                      return;
+                    }
+                    setState(() {
+                      _tileFailureMessage = switch (_basemapStyle) {
+                        LebanonBasemapStyle.satellite =>
+                          !hasSavedOfflineImagery
+                              ? 'The live map is temporarily unavailable. Project features remain available.'
+                              : 'Using saved map imagery for this area while the live map loads.',
+                        LebanonBasemapStyle.street =>
+                          !hasSavedOfflineImagery
+                              ? 'The live map is temporarily unavailable. Project features remain available.'
+                              : 'Using saved map imagery for this area while the live map loads.',
+                      };
+                      _tileFailureUsesSavedImagery = hasSavedOfflineImagery;
+                    });
                   });
-                });
-              },
-            ),
+                },
+              ),
             if (labelOverlayUrl != null)
               TileLayer(
                 key: ValueKey<String>(
@@ -1732,19 +1818,24 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       child: Stack(
         children: [
           FutureBuilder<_OfflineTileAssets?>(
-            future: offlinePackage == null
-                ? Future<_OfflineTileAssets?>.value(null)
-                : _loadOfflineTileAssets(offlinePackage, _basemapStyle),
+            future: _offlineTileAssetsFuture(offlinePackage),
             builder: (context, snapshot) {
               final labelOverlayUrl =
                   LebanonMapConfig.referenceLabelUrlTemplate(_basemapStyle);
+              final hasSavedOfflineImagery = _hasSavedOfflineImagery(
+                offlinePackage,
+              );
+              final canUseSavedOfflineImagery =
+                  snapshot.data != null && hasSavedOfflineImagery;
+              final preferSavedImagery =
+                  _tileFailureUsesSavedImagery && canUseSavedOfflineImagery;
               return ClipRRect(
                 borderRadius: AppRadii.lg,
                 child: FlutterMap(
                   mapController: _mapController,
                   options: _mainMapOptions,
                   children: [
-                    if (snapshot.data != null)
+                    if (canUseSavedOfflineImagery)
                       TileLayer(
                         key: ValueKey<String>(
                           'preview_offline_tiles_${_basemapStyle.name}_${snapshot.data!.templatePath}',
@@ -1754,34 +1845,36 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         fallbackUrl: snapshot.data!.fallbackPath,
                         userAgentPackageName: 'lb.gov.gis_collector',
                       ),
-                    TileLayer(
-                      key: ValueKey<String>(
-                        'preview_live_basemap_${_basemapStyle.name}',
-                      ),
-                      urlTemplate: LebanonMapConfig.basemapUrlTemplate(
-                        _basemapStyle,
-                      ),
-                      tileProvider: _previewBasemapTileProvider,
-                      userAgentPackageName: 'lb.gov.gis_collector',
-                      errorTileCallback: (tile, error, stackTrace) {
-                        Object.hash(tile, stackTrace);
-                        if (_tileFailureMessage != null ||
-                            _basemapStyle != LebanonBasemapStyle.satellite) {
-                          return;
-                        }
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (!mounted || _tileFailureMessage != null) {
+                    if (!preferSavedImagery)
+                      TileLayer(
+                        key: ValueKey<String>(
+                          'preview_live_basemap_${_basemapStyle.name}',
+                        ),
+                        urlTemplate: LebanonMapConfig.basemapUrlTemplate(
+                          _basemapStyle,
+                        ),
+                        tileProvider: _previewBasemapTileProvider,
+                        userAgentPackageName: 'lb.gov.gis_collector',
+                        errorTileCallback: (tile, error, stackTrace) {
+                          Object.hash(tile, stackTrace);
+                          if (_tileFailureMessage != null ||
+                              _basemapStyle != LebanonBasemapStyle.satellite) {
                             return;
                           }
-                          setState(() {
-                            _tileFailureMessage = snapshot.data == null
-                                ? 'Live satellite imagery is temporarily unavailable.'
-                                : 'Showing saved map imagery for this area while the live map finishes loading.';
-                            _tileFailureUsesSavedImagery = snapshot.data != null;
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (!mounted || _tileFailureMessage != null) {
+                              return;
+                            }
+                            setState(() {
+                              _tileFailureMessage = !canUseSavedOfflineImagery
+                                  ? 'Live satellite imagery is temporarily unavailable.'
+                                  : 'Using saved map imagery for this area while the live map loads.';
+                              _tileFailureUsesSavedImagery =
+                                  canUseSavedOfflineImagery;
+                            });
                           });
-                        });
-                      },
-                    ),
+                        },
+                      ),
                     if (labelOverlayUrl != null)
                       TileLayer(
                         key: ValueKey<String>(
@@ -3261,17 +3354,16 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final activeFilterLabel = selectedFeatureChip ?? 'All features';
-    final metaTheme = theme.textTheme.labelSmall;
 
     return AnimatedSize(
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
       child: Material(
         elevation: 8,
-        color: scheme.surface.withValues(alpha: 0.94),
+        color: scheme.surface.withValues(alpha: 0.93),
         borderRadius: BorderRadius.circular(24),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+          padding: const EdgeInsets.fromLTRB(10, 10, 10, 9),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -3292,34 +3384,25 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                             height: 1.15,
                           ),
                         ),
-                        const SizedBox(height: 6),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: [
-                            _CompactMapMetaPill(
-                              icon: Icons.category_outlined,
-                              label: project.category,
-                              textStyle: metaTheme,
-                              maxWidth: 128,
-                            ),
-                            _CompactMapMetaPill(
-                              icon: Icons.place_outlined,
-                              label: '$featureCount visible',
-                              textStyle: metaTheme,
-                              maxWidth: 92,
-                            ),
-                          ],
+                        const SizedBox(height: 4),
+                        Text(
+                          '${project.category} ? $featureCount visible',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 6),
                   _MapStyleMenuButton(
                     basemapStyle: basemapStyle,
                     onSelected: onBasemapStyleChanged,
                   ),
-                  const SizedBox(width: 4),
+                  const SizedBox(width: 2),
                   _MapPanelIconButton(
                     tooltip: isSearchOpen ? 'Close search' : 'Search map',
                     icon: isSearchOpen
@@ -3327,7 +3410,7 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                         : Icons.search_rounded,
                     onPressed: onSearchPressed,
                   ),
-                  const SizedBox(width: 4),
+                  const SizedBox(width: 2),
                   _MapPanelIconButton(
                     tooltip: isExpanded
                         ? 'Hide quick filters'
@@ -3337,7 +3420,7 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                         : Icons.tune_rounded,
                     onPressed: onToggleExpanded,
                   ),
-                  const SizedBox(width: 4),
+                  const SizedBox(width: 2),
                   _ProjectMapOverflowMenuButton(
                     onOpenOfflineTools: onOpenOfflineTools,
                     onHidePanel: onHidePanel,
@@ -3511,8 +3594,10 @@ class _MapControlRail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Column(
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         if (onOpenFeatures != null) ...[
           _MapFloatingActionButton(
@@ -3521,36 +3606,48 @@ class _MapControlRail extends StatelessWidget {
             badgeLabel: '$featureCount',
             child: const Icon(Icons.layers_outlined, size: 20),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
         ],
-        _MapFloatingActionButton(
-          tooltip: 'Current location',
-          onPressed: onCenterCurrentLocation,
-          child: isLocating
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.my_location_outlined),
-        ),
-        const SizedBox(height: 8),
-        _MapFloatingActionButton(
-          tooltip: 'Fit project workspace',
-          onPressed: onFitProject,
-          child: const Icon(Icons.center_focus_strong_outlined),
-        ),
-        const SizedBox(height: 8),
-        _MapFloatingActionButton(
-          tooltip: 'Zoom in',
-          onPressed: onZoomIn,
-          child: const Icon(Icons.add),
-        ),
-        const SizedBox(height: 8),
-        _MapFloatingActionButton(
-          tooltip: 'Zoom out',
-          onPressed: onZoomOut,
-          child: const Icon(Icons.remove),
+        Material(
+          elevation: 6,
+          color: scheme.surface.withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _GroupedMapRailButton(
+                tooltip: 'Current location',
+                onPressed: onCenterCurrentLocation,
+                icon: isLocating
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.my_location_outlined),
+                isTop: true,
+              ),
+              const _GroupedMapRailDivider(),
+              _GroupedMapRailButton(
+                tooltip: 'Fit project workspace',
+                onPressed: onFitProject,
+                icon: const Icon(Icons.center_focus_strong_outlined),
+              ),
+              const _GroupedMapRailDivider(),
+              _GroupedMapRailButton(
+                tooltip: 'Zoom in',
+                onPressed: onZoomIn,
+                icon: const Icon(Icons.add),
+              ),
+              const _GroupedMapRailDivider(),
+              _GroupedMapRailButton(
+                tooltip: 'Zoom out',
+                onPressed: onZoomOut,
+                icon: const Icon(Icons.remove),
+                isBottom: true,
+              ),
+            ],
+          ),
         ),
       ],
     );
@@ -3854,6 +3951,45 @@ class _MapWorkspaceNotice extends StatelessWidget {
   }
 }
 
+class _MapWorkspaceCompactNotice extends StatelessWidget {
+  const _MapWorkspaceCompactNotice({
+    required this.icon,
+    required this.message,
+    required this.toneColor,
+  });
+
+  final IconData icon;
+  final String message;
+  final Color toneColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      elevation: 3,
+      color: toneColor.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(999),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: toneColor, size: 15),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                message,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _MapPanelIconButton extends StatelessWidget {
   const _MapPanelIconButton({
     required this.tooltip,
@@ -3872,11 +4008,11 @@ class _MapPanelIconButton extends StatelessWidget {
       message: tooltip,
       child: Material(
         color: scheme.secondaryContainer.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(13),
+        borderRadius: BorderRadius.circular(12),
         child: InkWell(
-          borderRadius: BorderRadius.circular(13),
+          borderRadius: BorderRadius.circular(12),
           onTap: onPressed,
-          child: SizedBox(width: 32, height: 32, child: Icon(icon, size: 17)),
+          child: SizedBox(width: 30, height: 30, child: Icon(icon, size: 16)),
         ),
       ),
     );
@@ -3922,16 +4058,16 @@ class _MapStyleMenuButton extends StatelessWidget {
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: scheme.secondaryContainer.withValues(alpha: 0.7),
-          borderRadius: BorderRadius.circular(13),
+          borderRadius: BorderRadius.circular(12),
         ),
         child: SizedBox(
-          width: 32,
-          height: 32,
+          width: 30,
+          height: 30,
           child: Icon(
             basemapStyle == LebanonBasemapStyle.satellite
                 ? Icons.satellite_alt_outlined
                 : Icons.map_outlined,
-            size: 17,
+            size: 16,
           ),
         ),
       ),
@@ -3994,7 +4130,7 @@ class _ProjectMapOverflowMenuButton extends StatelessWidget {
         child: const SizedBox(
           width: 32,
           height: 32,
-          child: Icon(Icons.more_horiz_rounded, size: 17),
+          child: Icon(Icons.more_horiz_rounded, size: 16),
         ),
       ),
     );
@@ -4006,13 +4142,11 @@ class _CompactMapMetaPill extends StatelessWidget {
     required this.icon,
     required this.label,
     this.textStyle,
-    this.maxWidth = 90,
   });
 
   final IconData icon;
   final String label;
   final TextStyle? textStyle;
-  final double maxWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -4030,7 +4164,7 @@ class _CompactMapMetaPill extends StatelessWidget {
             Icon(icon, size: 12, color: scheme.primary),
             const SizedBox(width: 4),
             ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: maxWidth),
+              constraints: const BoxConstraints(maxWidth: 90),
               child: Text(
                 label,
                 maxLines: 1,
@@ -4068,6 +4202,56 @@ class _MapInfoPill extends StatelessWidget {
             const SizedBox(width: 6),
             Text(label, style: Theme.of(context).textTheme.bodySmall),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GroupedMapRailDivider extends StatelessWidget {
+  const _GroupedMapRailDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Divider(
+      height: 1,
+      thickness: 0.8,
+      indent: 8,
+      endIndent: 8,
+      color: Theme.of(context).colorScheme.outlineVariant,
+    );
+  }
+}
+
+class _GroupedMapRailButton extends StatelessWidget {
+  const _GroupedMapRailButton({
+    required this.tooltip,
+    required this.onPressed,
+    required this.icon,
+    this.isTop = false,
+    this.isBottom = false,
+  });
+
+  final String tooltip;
+  final VoidCallback? onPressed;
+  final Widget icon;
+  final bool isTop;
+  final bool isBottom;
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = BorderRadius.vertical(
+      top: isTop ? const Radius.circular(22) : Radius.zero,
+      bottom: isBottom ? const Radius.circular(22) : Radius.zero,
+    );
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: radius,
+          onTap: onPressed,
+          child: SizedBox(width: 44, height: 42, child: Center(child: icon)),
         ),
       ),
     );
