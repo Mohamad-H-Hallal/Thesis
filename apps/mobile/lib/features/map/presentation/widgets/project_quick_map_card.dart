@@ -25,6 +25,12 @@ class ProjectQuickMapCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final featuresAsync = ref.watch(projectMapFeaturesProvider(projectId));
+    final featureCount = featuresAsync.valueOrNull?.length;
+    final featureCountLabel = featureCount == null
+        ? 'Loading features'
+        : featureCount == 1
+        ? '1 feature'
+        : '$featureCount features';
 
     return AppCard(
       padding: EdgeInsets.zero,
@@ -45,69 +51,105 @@ class ProjectQuickMapCard extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Quick Map',
+                        'Project map',
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Lebanon-only preview with project features and place labels.',
+                        'Lebanon preview',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ],
                   ),
                 ),
+                _QuickMapPill(
+                  icon: Icons.place_outlined,
+                  label: featureCountLabel,
+                ),
+                const SizedBox(width: AppSpacing.sm),
                 if (onOpenFullscreen != null)
                   TextButton.icon(
                     onPressed: onOpenFullscreen,
                     icon: const Icon(Icons.open_in_full_outlined),
-                    label: const Text('Open full map'),
+                    label: const Text('Open map'),
                   ),
               ],
             ),
           ),
-          SizedBox(
-            height: 280,
-            child: ClipRRect(
-              borderRadius: const BorderRadius.vertical(
-                bottom: Radius.circular(20),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.md,
+              0,
+              AppSpacing.md,
+              AppSpacing.md,
+            ),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Theme.of(context).dividerColor),
               ),
-              child: featuresAsync.when(
-                loading: () => const Center(child: CircularProgressIndicator()),
-                error: (error, _) => AppEmptyState(
-                  icon: Icons.map_outlined,
-                  title: 'Map preview unavailable',
-                  message: userFacingErrorMessage(
-                    error,
-                    fallback:
-                        'Unable to load the project preview map right now.',
-                  ),
-                ),
-                data: (features) => FlutterMap(
-                  options: MapOptions(
-                    initialCenter: LebanonMapConfig.center,
-                    initialZoom: LebanonMapConfig.quickInitialZoom,
-                    initialCameraFit: LebanonMapConfig.quickFit,
-                    minZoom: LebanonMapConfig.quickMinZoom,
-                    maxZoom: LebanonMapConfig.quickMaxZoom,
-                    cameraConstraint: LebanonMapConfig.cameraConstraint,
-                  ),
-                  children: [
-                    TileLayer(
-                      urlTemplate: LebanonMapConfig.basemapUrlTemplate(
-                        LebanonBasemapStyle.satellite,
+              child: SizedBox(
+                height: 252,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: featuresAsync.when(
+                          loading: () =>
+                              const Center(child: CircularProgressIndicator()),
+                          error: (error, _) => AppEmptyState(
+                            icon: Icons.map_outlined,
+                            title: 'Map preview unavailable',
+                            message: userFacingErrorMessage(
+                              error,
+                              fallback:
+                                  'Unable to load the project preview map right now.',
+                            ),
+                          ),
+                          data: (features) => FlutterMap(
+                            options: MapOptions(
+                              initialCenter: LebanonMapConfig.center,
+                              initialZoom: LebanonMapConfig.quickInitialZoom,
+                              initialCameraFit: LebanonMapConfig.quickFit,
+                              minZoom: LebanonMapConfig.quickMinZoom,
+                              maxZoom: LebanonMapConfig.quickMaxZoom,
+                              cameraConstraint:
+                                  LebanonMapConfig.cameraConstraint,
+                            ),
+                            children: [
+                              TileLayer(
+                                urlTemplate: LebanonMapConfig.basemapUrlTemplate(
+                                  LebanonBasemapStyle.satellite,
+                                ),
+                                userAgentPackageName: 'lb.gov.gis_collector',
+                              ),
+                              TileLayer(
+                                urlTemplate:
+                                    LebanonMapConfig.referenceLabelUrlTemplate(
+                                      LebanonBasemapStyle.satellite,
+                                    )!,
+                                userAgentPackageName: 'lb.gov.gis_collector',
+                              ),
+                              PolygonLayer(polygons: _polygonOverlays(features)),
+                              PolylineLayer(
+                                polylines: _polylineOverlays(features),
+                              ),
+                              MarkerLayer(markers: _markerOverlays(features)),
+                            ],
+                          ),
+                        ),
                       ),
-                      userAgentPackageName: 'lb.gov.gis_collector',
-                    ),
-                    TileLayer(
-                      urlTemplate: LebanonMapConfig.referenceLabelUrlTemplate(
-                        LebanonBasemapStyle.satellite,
-                      )!,
-                      userAgentPackageName: 'lb.gov.gis_collector',
-                    ),
-                    PolygonLayer(polygons: _polygonOverlays(features)),
-                    PolylineLayer(polylines: _polylineOverlays(features)),
-                    MarkerLayer(markers: _markerOverlays(features)),
-                  ],
+                      Positioned(
+                        left: 12,
+                        top: 12,
+                        child: _QuickMapPill(
+                          icon: Icons.public_outlined,
+                          label: 'Lebanon preview',
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -163,13 +205,20 @@ class ProjectQuickMapCard extends ConsumerWidget {
           }
           return Marker(
             point: point,
-            width: 18,
-            height: 18,
-            child: DecoratedBox(
+            width: 20,
+            height: 20,
+            child: Container(
               decoration: BoxDecoration(
                 color: _statusColor(feature.status),
                 shape: BoxShape.circle,
                 border: Border.all(color: Colors.white, width: 1.5),
+                boxShadow: const [
+                  BoxShadow(
+                    blurRadius: 6,
+                    offset: Offset(0, 2),
+                    color: Color(0x26000000),
+                  ),
+                ],
               ),
             ),
           );
@@ -193,5 +242,40 @@ class ProjectQuickMapCard extends ConsumerWidget {
       default:
         return const Color(0xFF1A73E8);
     }
+  }
+}
+
+class _QuickMapPill extends StatelessWidget {
+  const _QuickMapPill({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.82),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: scheme.primary),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

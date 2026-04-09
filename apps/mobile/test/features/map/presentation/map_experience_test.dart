@@ -349,15 +349,11 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Quick Map'), findsOneWidget);
-      expect(
-        find.text(
-          'Lebanon-only preview with project features and place labels.',
-        ),
-        findsOneWidget,
-      );
+      expect(find.text('Project map'), findsOneWidget);
+      expect(find.text('Lebanon preview'), findsWidgets);
+      expect(find.text('2 features'), findsOneWidget);
 
-      await tester.tap(find.text('Open full map'));
+      await tester.tap(find.text('Open map'));
       await tester.pump();
 
       expect(openedFullscreen, isTrue);
@@ -415,6 +411,7 @@ void main() {
       expect(find.text('Lebanon workspace'), findsNothing);
       expect(find.text('Search visible features'), findsNothing);
       expect(find.byTooltip('Map style'), findsOneWidget);
+      expect(find.byTooltip('Offline map'), findsOneWidget);
       expect(find.byTooltip('Search map'), findsOneWidget);
       expect(find.byTooltip('More map tools'), findsOneWidget);
 
@@ -423,8 +420,8 @@ void main() {
       );
       expect(projectTitle.maxLines, 2);
       expect(projectTitle.overflow, TextOverflow.ellipsis);
-      expect(find.text('Category: Fruit Trees'), findsOneWidget);
-      expect(find.text('Showing 2 features'), findsOneWidget);
+      expect(find.text('Fruit Trees'), findsOneWidget);
+      expect(find.text('2 features'), findsWidgets);
 
       await tester.tap(find.byTooltip('Search map'));
       await tester.pumpAndSettle();
@@ -582,9 +579,7 @@ void main() {
       await tester.tap(find.text('Satellite').last);
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byTooltip('More map tools'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Offline map').last);
+      await tester.tap(find.byTooltip('Offline map'));
       await tester.pumpAndSettle();
 
       expect(find.text('Offline map'), findsOneWidget);
@@ -595,18 +590,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.textContaining('Unsaved areas still need an internet connection'),
-        findsOneWidget,
-      );
-      await tester.dragUntilVisible(
-        find.text('How to test offline browsing'),
-        find.byType(ListView).last,
-        const Offset(0, -220),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('How to test offline browsing'), findsOneWidget);
-      expect(
-        find.textContaining('Turn off Wi-Fi or mobile data'),
+        find.textContaining('Saved areas remain visible later'),
         findsOneWidget,
       );
       expect(find.text('Save Lebanon overview'), findsOneWidget);
@@ -728,7 +712,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('Showing 0 features'), findsOneWidget);
+    expect(find.text('0 features'), findsWidgets);
     expect(find.byTooltip('Add Feature'), findsOneWidget);
     expect(find.byTooltip('Fit project workspace'), findsOneWidget);
     expect(tester.takeException(), isNull);

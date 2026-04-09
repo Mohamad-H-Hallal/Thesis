@@ -2329,8 +2329,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required List<MapFeatureSummary> features,
   }) {
     _preferredProjectFit = _projectCameraFit(features);
-    final frameKey =
-        '${project.id}|${features.map((feature) => feature.id).join(',')}';
+    final frameKey = project.id;
     if (_lastAutoFrameKey == frameKey) {
       return;
     }
@@ -2340,9 +2339,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         return;
       }
       _runMainMapAction(
-        () => _mapController.fitCamera(
-          _preferredProjectFit ?? _defaultProjectWorkspaceFit(),
-        ),
+        () => _mapController.fitCamera(_defaultProjectWorkspaceFit()),
         queueUntilReady: true,
       );
     });
@@ -3419,8 +3416,11 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
     final scheme = theme.colorScheme;
     final activeFilterLabel = selectedFeatureChip ?? 'All features';
     final visibleCountLabel = featureCount == 1
-        ? 'Showing 1 feature'
-        : 'Showing $featureCount features';
+        ? '1 feature'
+        : '$featureCount features';
+    final categoryLabel = project.category.trim().isEmpty
+        ? 'Project'
+        : project.category.trim();
 
     return AnimatedSize(
       duration: const Duration(milliseconds: 220),
@@ -3458,8 +3458,8 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                           children: [
                             _CompactMapMetaPill(
                               icon: Icons.category_outlined,
-                              label: 'Category: ${project.category}',
-                              maxWidth: 150,
+                              label: categoryLabel,
+                              maxWidth: 126,
                               textStyle: theme.textTheme.labelSmall?.copyWith(
                                 color: scheme.onSurfaceVariant,
                                 fontWeight: FontWeight.w600,
@@ -3468,7 +3468,7 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                             _CompactMapMetaPill(
                               icon: Icons.location_on_outlined,
                               label: visibleCountLabel,
-                              maxWidth: 128,
+                              maxWidth: 104,
                               textStyle: theme.textTheme.labelSmall?.copyWith(
                                 color: scheme.onSurfaceVariant,
                                 fontWeight: FontWeight.w600,
@@ -3483,6 +3483,12 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                   _MapStyleMenuButton(
                     basemapStyle: basemapStyle,
                     onSelected: onBasemapStyleChanged,
+                  ),
+                  const SizedBox(width: 2),
+                  _MapPanelIconButton(
+                    tooltip: 'Offline map',
+                    icon: Icons.download_for_offline_outlined,
+                    onPressed: onOpenOfflineTools,
                   ),
                   const SizedBox(width: 2),
                   _MapPanelIconButton(
@@ -3504,7 +3510,6 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                   ),
                   const SizedBox(width: 2),
                   _ProjectMapOverflowMenuButton(
-                    onOpenOfflineTools: onOpenOfflineTools,
                     onHidePanel: onHidePanel,
                   ),
                 ],
@@ -3995,44 +4000,6 @@ class _InlineProjectMapGeometryTypeSheet extends StatelessWidget {
   }
 }
 
-class _MapWorkspaceNotice extends StatelessWidget {
-  const _MapWorkspaceNotice({
-    required this.icon,
-    required this.message,
-    required this.toneColor,
-  });
-
-  final IconData icon;
-  final String message;
-  final Color toneColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      elevation: 4,
-      color: toneColor.withValues(alpha: 0.14),
-      borderRadius: BorderRadius.circular(18),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: toneColor, size: 18),
-            const SizedBox(width: AppSpacing.sm),
-            Expanded(
-              child: Text(
-                message,
-                style: Theme.of(context).textTheme.bodySmall,
-                softWrap: true,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _MapWorkspaceCompactNotice extends StatelessWidget {
   const _MapWorkspaceCompactNotice({
     required this.icon,
@@ -4157,15 +4124,13 @@ class _MapStyleMenuButton extends StatelessWidget {
   }
 }
 
-enum _ProjectMapOverflowAction { offlineMap, hideTools }
+enum _ProjectMapOverflowAction { hideTools }
 
 class _ProjectMapOverflowMenuButton extends StatelessWidget {
   const _ProjectMapOverflowMenuButton({
-    required this.onOpenOfflineTools,
     required this.onHidePanel,
   });
 
-  final VoidCallback onOpenOfflineTools;
   final VoidCallback onHidePanel;
 
   @override
@@ -4175,9 +4140,6 @@ class _ProjectMapOverflowMenuButton extends StatelessWidget {
       tooltip: 'More map tools',
       onSelected: (action) {
         switch (action) {
-          case _ProjectMapOverflowAction.offlineMap:
-            onOpenOfflineTools();
-            break;
           case _ProjectMapOverflowAction.hideTools:
             onHidePanel();
             break;
@@ -4185,15 +4147,6 @@ class _ProjectMapOverflowMenuButton extends StatelessWidget {
       },
       itemBuilder: (context) =>
           const <PopupMenuEntry<_ProjectMapOverflowAction>>[
-            PopupMenuItem<_ProjectMapOverflowAction>(
-              value: _ProjectMapOverflowAction.offlineMap,
-              child: ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.download_for_offline_outlined, size: 18),
-                title: Text('Offline map'),
-              ),
-            ),
             PopupMenuItem<_ProjectMapOverflowAction>(
               value: _ProjectMapOverflowAction.hideTools,
               child: ListTile(
@@ -4833,7 +4786,7 @@ class _OfflineMapSheet extends StatelessWidget {
                                 ),
                                 const SizedBox(height: AppSpacing.xs),
                                 Text(
-                                  'Save map imagery on this device so this project area stays readable without signal. Saved areas remain visible later. Unsaved areas still need an internet connection.',
+                                  'Save map imagery on this device so this project area stays readable without signal.',
                                   style: Theme.of(context).textTheme.bodyMedium,
                                 ),
                               ],
@@ -4858,22 +4811,6 @@ class _OfflineMapSheet extends StatelessWidget {
                         onDownloadVisible: canDownloadVisible
                             ? onDownloadVisible
                             : null,
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      AppCard(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'How to test offline browsing',
-                              style: Theme.of(context).textTheme.titleSmall,
-                            ),
-                            const SizedBox(height: AppSpacing.xs),
-                            const Text(
-                              '1. Save Lebanon overview or save the current view.\n2. Turn off Wi-Fi or mobile data on the device or emulator.\n3. Reopen this project map. Saved areas stay visible; unsaved areas still need a connection.',
-                            ),
-                          ],
-                        ),
                       ),
                       if (hasCollectionAccess) ...[
                         const SizedBox(height: AppSpacing.md),
@@ -4932,7 +4869,7 @@ class _OfflineMapStatusCard extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.xs),
           Text(
-            'Saved areas remain visible later on this device. Save Lebanon overview for a light country-wide reference, or save the current view before heading into a low-signal field area.',
+            'Saved areas remain visible later on this device.',
             softWrap: true,
           ),
           const SizedBox(height: AppSpacing.xs),
@@ -4973,20 +4910,13 @@ class _OfflineMapStatusCard extends StatelessWidget {
             Text(statusLabel!, style: Theme.of(context).textTheme.bodySmall),
           ],
           const SizedBox(height: AppSpacing.sm),
-          const _MapWorkspaceNotice(
-            icon: Icons.info_outline,
-            message:
-                'Save Lebanon overview for quick orientation across the country, or save this view to keep only the area currently on screen available later without signal.',
-            toneColor: Color(0xFF1565C0),
-          ),
-          const SizedBox(height: AppSpacing.sm),
           Column(
             children: [
               _OfflineActionCard(
                 icon: Icons.public_rounded,
                 title: 'Save Lebanon overview',
                 description:
-                    'Saves a lightweight Lebanon-wide reference map in the current style. Use it for orientation when you are offline.',
+                    'Saves a lightweight Lebanon-wide reference map in the current style.',
                 actionLabel: isDownloading ? 'Saving...' : 'Save overview',
                 onPressed: isDownloading ? null : onDownloadOverview,
                 filled: true,
@@ -4996,7 +4926,7 @@ class _OfflineMapStatusCard extends StatelessWidget {
                 icon: Icons.crop_free_outlined,
                 title: 'Save this view',
                 description:
-                    'Saves only the map area currently visible on screen in the current style. Use it after zooming to the project area you need in the field.',
+                    'Saves only the map area currently visible on screen in the current style.',
                 actionLabel: 'Save visible area',
                 onPressed: isDownloading ? null : onDownloadVisible,
               ),
