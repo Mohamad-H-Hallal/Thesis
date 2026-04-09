@@ -39,18 +39,27 @@ class ProjectQuickMapCard extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
-                child: Text(
-                  'Project map',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Quick map',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'A live Lebanon preview before opening the full map.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-              _QuickMapPill(
-                icon: Icons.place_outlined,
-                label: featureCountLabel,
               ),
               if (onOpenFullscreen != null) ...[
                 const SizedBox(width: AppSpacing.sm),
@@ -62,12 +71,10 @@ class ProjectQuickMapCard extends ConsumerWidget {
               ],
             ],
           ),
-          const SizedBox(height: AppSpacing.xs),
-          Text(
-            'Preview the Lebanon workspace before opening the full map.',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: scheme.onSurfaceVariant,
-            ),
+          const SizedBox(height: AppSpacing.sm),
+          _QuickMapPill(
+            icon: Icons.place_outlined,
+            label: featureCountLabel,
           ),
           const SizedBox(height: AppSpacing.md),
           Material(
@@ -81,9 +88,16 @@ class ProjectQuickMapCard extends ConsumerWidget {
                   borderRadius: BorderRadius.circular(22),
                   border: Border.all(color: theme.dividerColor),
                   color: scheme.surfaceContainerLow,
+                  boxShadow: [
+                    BoxShadow(
+                      blurRadius: 18,
+                      offset: const Offset(0, 10),
+                      color: scheme.shadow.withValues(alpha: 0.08),
+                    ),
+                  ],
                 ),
                 child: SizedBox(
-                  height: 236,
+                  height: 228,
                   child: Stack(
                     children: [
                       Positioned.fill(
@@ -143,10 +157,36 @@ class ProjectQuickMapCard extends ConsumerWidget {
                       ),
                       Positioned(
                         left: 12,
+                        right: 12,
                         top: 12,
-                        child: _QuickMapPill(
-                          icon: Icons.public_outlined,
-                          label: 'Lebanon workspace',
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            const _QuickMapPill(
+                              icon: Icons.public_outlined,
+                              label: 'Lebanon workspace',
+                            ),
+                            DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: scheme.surface.withValues(alpha: 0.9),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 7,
+                                ),
+                                child: Text(
+                                  'Interactive preview',
+                                  style: theme.textTheme.labelMedium?.copyWith(
+                                    color: scheme.onSurfaceVariant,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       if (onOpenFullscreen != null)
@@ -173,7 +213,7 @@ class ProjectQuickMapCard extends ConsumerWidget {
                                   ),
                                   const SizedBox(width: 6),
                                   Text(
-                                    'Tap to open',
+                                    'Open full map',
                                     style: theme.textTheme.labelMedium
                                         ?.copyWith(
                                           color: scheme.onSurfaceVariant,

@@ -300,13 +300,30 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
+                      'Project overview',
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(
                       project.name,
                       style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        StatusChip(status: project.status),
+                        Chip(label: Text(project.category)),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     Text(project.description),
                     if ((project.objectives ?? '').trim().isNotEmpty) ...[
-                      const SizedBox(height: AppSpacing.sm),
+                      const SizedBox(height: AppSpacing.md),
                       Text(
                         'Objectives',
                         style: Theme.of(context).textTheme.titleMedium,
@@ -314,13 +331,11 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                       const SizedBox(height: AppSpacing.xs),
                       Text(project.objectives!, softWrap: true),
                     ],
-                    const SizedBox(height: 12),
+                    const SizedBox(height: AppSpacing.md),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        StatusChip(status: project.status),
-                        Chip(label: Text(project.category)),
                         if (project.startDate != null ||
                             project.endDate != null)
                           Chip(
@@ -469,15 +484,6 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: AppSpacing.lg),
-            AnimatedReveal(
-              delay: const Duration(milliseconds: 150),
-              child: ProjectQuickMapCard(
-                projectId: project.id,
-                onOpenFullscreen: () =>
-                    context.push(AppRoutes.mapForProject(project.id)),
-              ),
-            ),
             if (role == UserRole.admin)
               AnimatedReveal(
                 delay: const Duration(milliseconds: 160),
@@ -582,6 +588,24 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                   ),
                 ),
               ),
+            const SizedBox(height: AppSpacing.lg),
+            AnimatedReveal(
+              delay: const Duration(milliseconds: 200),
+              child: const SectionHeader(
+                title: 'Quick Map',
+                subtitle:
+                    'Preview the Lebanon workspace before opening the full map.',
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            AnimatedReveal(
+              delay: const Duration(milliseconds: 210),
+              child: ProjectQuickMapCard(
+                projectId: project.id,
+                onOpenFullscreen: () =>
+                    context.push(AppRoutes.mapForProject(project.id)),
+              ),
+            ),
           ],
         );
       },

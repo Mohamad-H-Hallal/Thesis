@@ -53,7 +53,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     'draft',
   ];
 
-  final MapController _mapController = MapController();
+  MapController _mapController = MapController();
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _projectMapSearchFocusNode = FocusNode();
   final Set<String> _visibleStatuses = Set<String>.from(_projectMapStatusOrder);
@@ -83,6 +83,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool _isProjectMapGeometryChooserOpen = false;
   bool _isProjectMapModalSheetOpen = false;
   bool _hasHandledStartCaptureOnOpen = false;
+  int _projectMapViewportVersion = 0;
   LebanonBasemapStyle _basemapStyle = LebanonBasemapStyle.satellite;
   MapCamera? _latestMapCamera;
   String? _lastAutoFrameKey;
@@ -111,13 +112,24 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   @override
   void initState() {
     super.initState();
-    if (widget.lockProjectSelection) {
-      _basemapStyle = LebanonBasemapStyle.street;
-    }
   }
 
   bool get _isProjectMapSecondaryOverlayOpen =>
       _isProjectMapGeometryChooserOpen || _isProjectMapModalSheetOpen;
+
+  void _resetProjectMapViewport() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isMainMapReady = false;
+      _latestMapCamera = null;
+      _lastProjectMapSurfaceWarmupKey = null;
+      _lastVisibleTileRecoveryKey = null;
+      _mapController = MapController();
+      _projectMapViewportVersion++;
+    });
+  }
 
   bool _hasSavedOfflineImagery(OfflineMapPackage? package) =>
       (package?.tileCount ?? 0) > 0;
@@ -494,36 +506,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool get _hasAllVisibleStatusesSelected =>
       _visibleStatuses.length == _projectMapStatusOrder.length;
 
-  EdgeInsets _projectViewportPadding({required bool expanded}) {
-    final noticeCount = [
-      _locationNoticeMessage?.trim().isNotEmpty == true,
-      _tileFailureMessage?.trim().isNotEmpty == true,
-    ].where((value) => value).length;
-    final topPadding = _isProjectMapCaptureMode
-        ? 82.0
-        : !_isProjectMapPanelVisible
-        ? 12.0
-        : (_projectMapSearchOpen || expanded)
-        ? 116.0
-        : 64.0;
-    final bottomPadding =
-        (_isProjectMapCaptureMode ? 92.0 : 26.0) + (noticeCount * 14.0);
-    return EdgeInsets.fromLTRB(22, topPadding, 22, bottomPadding);
-  }
-
-  CameraFit _defaultProjectWorkspaceFit() {
-    final padding = _projectViewportPadding(expanded: _projectMapPanelExpanded);
-    final bounds = LatLngBounds(
-      LatLng(
-        LebanonMapConfig.southWest.latitude + 0.06,
-        LebanonMapConfig.southWest.longitude + 0.02,
-      ),
-      LatLng(
-        LebanonMapConfig.northEast.latitude - 0.05,
-        LebanonMapConfig.northEast.longitude - 0.03,
-      ),
-    );
-    return CameraFit.bounds(bounds: bounds, padding: padding);
+  void _focusLebanonWorkspace({bool queueUntilReady = false}) {
+    if (!_isMainMapReady) {
+      if (queueUntilReady) {
+        _pendingMainMapAction = _resetProjectMapViewport;
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        'Map is still preparing. Please try again in a moment.',
+      );
+      return;
+    }
+    _resetProjectMapViewport();
   }
 
   String _visibleStatusSummaryLabel() {
@@ -1477,9 +1472,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               : Stack(
                   children: [
                     Padding(
-                      padding: const EdgeInsets.only(right: 64),
+                      padding: EdgeInsets.only(
+                        right: _isProjectMapPanelVisible ? 0 : 64,
+                      ),
                       child: Align(
-                        alignment: Alignment.topLeft,
+                        alignment: Alignment.topCenter,
                         child: AnimatedSwitcher(
                           duration: const Duration(milliseconds: 220),
                           switchInCurve: Curves.easeOutCubic,
@@ -1494,66 +1491,70 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                 ),
                               ),
                           child: _isProjectMapPanelVisible
-                              ? _ProjectMapFloatingPanel(
+                              ? SizedBox(
                                   key: const ValueKey<String>(
                                     'project_map_panel_visible',
                                   ),
-                                  project: project,
-                                  featureCount: features.length,
-                                  searchController: _searchController,
-                                  searchFocusNode: _projectMapSearchFocusNode,
-                                  quickFeatureChips: quickFeatureChips,
-                                  selectedFeatureChip: _selectedFeatureChip,
-                                  visibleStatuses: _visibleStatuses,
-                                  basemapStyle: _basemapStyle,
-                                  gpsAccuracyMeters:
-                                      _currentLocationAccuracyMeters,
-                                  isExpanded: _projectMapPanelExpanded,
-                                  isSearchOpen: _projectMapSearchOpen,
-                                  searchSummaryLabel: _searchSummaryLabel(),
-                                  onSearchChanged: () => setState(() {}),
-                                  onClearSearch: () {
-                                    setState(() {
-                                      _searchController.clear();
-                                    });
-                                  },
-                                  onSearchPressed: () =>
-                                      _setProjectMapPanelState(
-                                        visible: true,
-                                        searchOpen: !_projectMapSearchOpen,
-                                        expanded: _projectMapSearchOpen
-                                            ? _projectMapPanelExpanded
-                                            : false,
-                                        focusSearch: !_projectMapSearchOpen,
-                                      ),
-                                  onChipSelected: (chip) {
-                                    setState(() {
-                                      _selectedFeatureChip = chip;
-                                    });
-                                  },
-                                  onResetVisibleStatuses: _resetVisibleStatuses,
-                                  onToggleVisibleStatus: _toggleVisibleStatus,
-                                  visibleStatusSummaryLabel:
-                                      _visibleStatusSummaryLabel(),
-                                  onBasemapStyleChanged: (style) {
-                                    setState(() {
-                                      _basemapStyle = style;
-                                    });
-                                    _clearTileNotice();
-                                  },
-                                  onOpenOfflineTools: () =>
-                                      _openOfflineToolsSheet(
-                                        offlinePackage: offlinePackage,
-                                        hasCollectionAccess:
-                                            hasCollectionAccess,
-                                      ),
-                                  onToggleExpanded: () =>
-                                      _setProjectMapPanelState(
-                                        visible: true,
-                                        expanded: !_projectMapPanelExpanded,
-                                      ),
-                                  onHidePanel: () =>
-                                      _setProjectMapPanelVisible(false),
+                                  width: double.infinity,
+                                  child: _ProjectMapFloatingPanel(
+                                    project: project,
+                                    featureCount: features.length,
+                                    searchController: _searchController,
+                                    searchFocusNode: _projectMapSearchFocusNode,
+                                    quickFeatureChips: quickFeatureChips,
+                                    selectedFeatureChip: _selectedFeatureChip,
+                                    visibleStatuses: _visibleStatuses,
+                                    basemapStyle: _basemapStyle,
+                                    gpsAccuracyMeters:
+                                        _currentLocationAccuracyMeters,
+                                    isExpanded: _projectMapPanelExpanded,
+                                    isSearchOpen: _projectMapSearchOpen,
+                                    searchSummaryLabel: _searchSummaryLabel(),
+                                    onSearchChanged: () => setState(() {}),
+                                    onClearSearch: () {
+                                      setState(() {
+                                        _searchController.clear();
+                                      });
+                                    },
+                                    onSearchPressed: () =>
+                                        _setProjectMapPanelState(
+                                          visible: true,
+                                          searchOpen: !_projectMapSearchOpen,
+                                          expanded: _projectMapSearchOpen
+                                              ? _projectMapPanelExpanded
+                                              : false,
+                                          focusSearch: !_projectMapSearchOpen,
+                                        ),
+                                    onChipSelected: (chip) {
+                                      setState(() {
+                                        _selectedFeatureChip = chip;
+                                      });
+                                    },
+                                    onResetVisibleStatuses:
+                                        _resetVisibleStatuses,
+                                    onToggleVisibleStatus: _toggleVisibleStatus,
+                                    visibleStatusSummaryLabel:
+                                        _visibleStatusSummaryLabel(),
+                                    onBasemapStyleChanged: (style) {
+                                      setState(() {
+                                        _basemapStyle = style;
+                                      });
+                                      _clearTileNotice();
+                                    },
+                                    onOpenOfflineTools: () =>
+                                        _openOfflineToolsSheet(
+                                          offlinePackage: offlinePackage,
+                                          hasCollectionAccess:
+                                              hasCollectionAccess,
+                                        ),
+                                    onToggleExpanded: () =>
+                                        _setProjectMapPanelState(
+                                          visible: true,
+                                          expanded: !_projectMapPanelExpanded,
+                                        ),
+                                    onHidePanel: () =>
+                                        _setProjectMapPanelVisible(false),
+                                  ),
                                 )
                               : const SizedBox.shrink(),
                         ),
@@ -1613,12 +1614,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   ? null
                   : _centerMainMapOnCurrentLocation,
               onFitProject: _isMainMapReady
-                  ? () => _runMainMapAction(
-                      () => _mapController.fitCamera(
-                        _defaultProjectWorkspaceFit(),
-                      ),
-                      queueUntilReady: true,
-                    )
+                  ? () => _focusLebanonWorkspace(queueUntilReady: true)
                   : null,
               onZoomIn: _isMainMapReady
                   ? () => _runMainMapAction(
@@ -1742,6 +1738,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             _tileFailureUsesSavedImagery && canUseSavedOfflineImagery;
         final theme = Theme.of(context);
         return FlutterMap(
+          key: ValueKey<String>(
+            'project_map_${project.id}_$_projectMapViewportVersion',
+          ),
           mapController: _mapController,
           options: _mainMapOptions,
           children: [
@@ -2335,6 +2334,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   void _scheduleProjectAutoFrame({required ProjectSummary project}) {
+    if (widget.lockProjectSelection) {
+      return;
+    }
     final frameKey = project.id;
     if (_lastAutoFrameKey == frameKey) {
       return;
@@ -2344,10 +2346,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       if (!mounted) {
         return;
       }
-      _runMainMapAction(
-        () => _mapController.fitCamera(_defaultProjectWorkspaceFit()),
-        queueUntilReady: true,
-      );
+      _focusLebanonWorkspace(queueUntilReady: true);
     });
   }
 
@@ -2647,11 +2646,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           _showLocationNotice(
             'Current location is outside Lebanon. Staying on the project workspace.',
           );
-          final fit = _defaultProjectWorkspaceFit();
-          _runMainMapAction(
-            () => _mapController.fitCamera(fit),
-            queueUntilReady: true,
-          );
+          _focusLebanonWorkspace(queueUntilReady: true);
         }
         return;
       }
@@ -3329,7 +3324,6 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
     required this.onOpenOfflineTools,
     required this.onToggleExpanded,
     required this.onHidePanel,
-    super.key,
   });
 
   final ProjectSummary project;
@@ -3375,20 +3369,24 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
         elevation: 8,
         color: scheme.surface.withValues(alpha: 0.93),
         borderRadius: BorderRadius.circular(24),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(10, 10, 10, 9),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final metaMaxWidth = constraints.maxWidth >= 420
+                ? 180.0
+                : constraints.maxWidth >= 360
+                ? 148.0
+                : 124.0;
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 9),
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
                           project.name,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
@@ -3397,192 +3395,192 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                             height: 1.15,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: [
-                            _CompactMapMetaPill(
-                              icon: Icons.category_outlined,
-                              label: categoryLabel,
-                              maxWidth: 126,
-                              textStyle: theme.textTheme.labelSmall?.copyWith(
-                                color: scheme.onSurfaceVariant,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            _CompactMapMetaPill(
-                              icon: Icons.location_on_outlined,
-                              label: visibleCountLabel,
-                              maxWidth: 104,
-                              textStyle: theme.textTheme.labelSmall?.copyWith(
-                                color: scheme.onSurfaceVariant,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(width: 8),
+                      _ProjectMapOverflowMenuButton(onHidePanel: onHidePanel),
+                    ],
                   ),
-                  const SizedBox(width: 6),
-                  _MapStyleMenuButton(
-                    basemapStyle: basemapStyle,
-                    onSelected: onBasemapStyleChanged,
-                  ),
-                  const SizedBox(width: 2),
-                  _MapPanelIconButton(
-                    tooltip: 'Offline map',
-                    icon: Icons.download_for_offline_outlined,
-                    onPressed: onOpenOfflineTools,
-                  ),
-                  const SizedBox(width: 2),
-                  _MapPanelIconButton(
-                    tooltip: isSearchOpen ? 'Close search' : 'Search map',
-                    icon: isSearchOpen
-                        ? Icons.search_off_rounded
-                        : Icons.search_rounded,
-                    onPressed: onSearchPressed,
-                  ),
-                  const SizedBox(width: 2),
-                  _MapPanelIconButton(
-                    tooltip: isExpanded
-                        ? 'Hide quick filters'
-                        : 'Show quick filters',
-                    icon: isExpanded
-                        ? Icons.keyboard_arrow_up_rounded
-                        : Icons.tune_rounded,
-                    onPressed: onToggleExpanded,
-                  ),
-                  const SizedBox(width: 2),
-                  _ProjectMapOverflowMenuButton(onHidePanel: onHidePanel),
-                ],
-              ),
-              if (isSearchOpen) ...[
-                const SizedBox(height: 10),
-                TextField(
-                  controller: searchController,
-                  focusNode: searchFocusNode,
-                  textInputAction: TextInputAction.search,
-                  onChanged: (_) => onSearchChanged(),
-                  decoration: InputDecoration(
-                    isDense: true,
-                    hintText: 'Search visible features',
-                    prefixIcon: const Icon(Icons.search, size: 20),
-                    suffixIcon: searchController.text.trim().isEmpty
-                        ? null
-                        : IconButton(
-                            tooltip: 'Clear search',
-                            onPressed: onClearSearch,
-                            icon: const Icon(Icons.clear),
-                          ),
-                  ),
-                ),
-              ],
-              if (!isExpanded) ...[
-                if (searchSummaryLabel != null ||
-                    !_isDefaultStatusSummary(visibleStatusSummaryLabel) ||
-                    selectedFeatureChip != null ||
-                    gpsAccuracyMeters != null) ...[
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      if (searchSummaryLabel != null)
-                        _MapInfoPill(
-                          icon: Icons.search,
-                          label: searchSummaryLabel!,
+                      _CompactMapMetaPill(
+                        icon: Icons.category_outlined,
+                        label: categoryLabel,
+                        maxWidth: metaMaxWidth,
+                        textStyle: theme.textTheme.labelSmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
                         ),
-                      if (!_isDefaultStatusSummary(visibleStatusSummaryLabel))
-                        _MapInfoPill(
-                          icon: Icons.visibility_outlined,
-                          label: visibleStatusSummaryLabel,
-                        ),
-                      if (selectedFeatureChip != null)
-                        _MapInfoPill(
-                          icon: Icons.layers_outlined,
-                          label: activeFilterLabel,
-                        ),
-                      if (gpsAccuracyMeters != null)
-                        _MapInfoPill(
-                          icon: Icons.my_location,
-                          label:
-                              'GPS ${gpsAccuracyMeters!.toStringAsFixed(0)}m',
-                        ),
-                    ],
-                  ),
-                ],
-              ],
-              if (isExpanded) ...[
-                const SizedBox(height: 10),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      FilterChip(
-                        label: const Text('All pins'),
-                        selected:
-                            visibleStatuses.length ==
-                            _MapScreenState._projectMapStatusOrder.length,
-                        onSelected: (_) => onResetVisibleStatuses(),
                       ),
-                      for (final status
-                          in _MapScreenState._projectMapStatusOrder) ...[
-                        const SizedBox(width: 8),
-                        FilterChip(
-                          label: Text(_statusFilterLabel(status)),
-                          selected: visibleStatuses.contains(status),
-                          onSelected: (_) => onToggleVisibleStatus(status),
+                      _CompactMapMetaPill(
+                        icon: Icons.place_outlined,
+                        label: visibleCountLabel,
+                        maxWidth: metaMaxWidth - 18,
+                        textStyle: theme.textTheme.labelSmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
                         ),
-                      ],
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 10),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      ChoiceChip(
-                        label: const Text('All'),
-                        selected: selectedFeatureChip == null,
-                        onSelected: (_) => onChipSelected(null),
                       ),
-                      for (final chip in quickFeatureChips) ...[
-                        const SizedBox(width: 8),
-                        ChoiceChip(
-                          label: Text(chip),
-                          selected: selectedFeatureChip == chip,
-                          onSelected: (selected) =>
-                              onChipSelected(selected ? chip : null),
-                        ),
-                      ],
+                      _MapStyleMenuButton(
+                        basemapStyle: basemapStyle,
+                        onSelected: onBasemapStyleChanged,
+                      ),
+                      _MapPanelIconButton(
+                        tooltip: 'Offline map',
+                        icon: Icons.download_for_offline_outlined,
+                        onPressed: onOpenOfflineTools,
+                      ),
+                      _MapPanelIconButton(
+                        tooltip: isSearchOpen ? 'Close search' : 'Search map',
+                        icon: isSearchOpen
+                            ? Icons.search_off_rounded
+                            : Icons.search_rounded,
+                        onPressed: onSearchPressed,
+                      ),
+                      _MapPanelIconButton(
+                        tooltip: isExpanded
+                            ? 'Hide quick filters'
+                            : 'Show quick filters',
+                        icon: isExpanded
+                            ? Icons.keyboard_arrow_up_rounded
+                            : Icons.tune_rounded,
+                        onPressed: onToggleExpanded,
+                      ),
                     ],
                   ),
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _MapInfoPill(
-                      icon: basemapStyle == LebanonBasemapStyle.satellite
-                          ? Icons.satellite_alt_outlined
-                          : Icons.map_outlined,
-                      label:
-                          '${LebanonMapConfig.basemapLabel(basemapStyle)} view',
+                  if (isSearchOpen) ...[
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: searchController,
+                      focusNode: searchFocusNode,
+                      textInputAction: TextInputAction.search,
+                      onChanged: (_) => onSearchChanged(),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        hintText: 'Search visible features',
+                        prefixIcon: const Icon(Icons.search, size: 20),
+                        suffixIcon: searchController.text.trim().isEmpty
+                            ? null
+                            : IconButton(
+                                tooltip: 'Clear search',
+                                onPressed: onClearSearch,
+                                icon: const Icon(Icons.clear),
+                              ),
+                      ),
                     ),
-                    if (gpsAccuracyMeters != null)
-                      _MapInfoPill(
-                        icon: Icons.my_location,
-                        label: 'GPS ${gpsAccuracyMeters!.toStringAsFixed(0)}m',
-                      ),
                   ],
-                ),
-              ],
-            ],
-          ),
+                  if (!isExpanded) ...[
+                    if (searchSummaryLabel != null ||
+                        !_isDefaultStatusSummary(visibleStatusSummaryLabel) ||
+                        selectedFeatureChip != null ||
+                        gpsAccuracyMeters != null) ...[
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          if (searchSummaryLabel != null)
+                            _MapInfoPill(
+                              icon: Icons.search,
+                              label: searchSummaryLabel!,
+                            ),
+                          if (!_isDefaultStatusSummary(
+                            visibleStatusSummaryLabel,
+                          ))
+                            _MapInfoPill(
+                              icon: Icons.visibility_outlined,
+                              label: visibleStatusSummaryLabel,
+                            ),
+                          if (selectedFeatureChip != null)
+                            _MapInfoPill(
+                              icon: Icons.layers_outlined,
+                              label: activeFilterLabel,
+                            ),
+                          if (gpsAccuracyMeters != null)
+                            _MapInfoPill(
+                              icon: Icons.my_location,
+                              label:
+                                  'GPS ${gpsAccuracyMeters!.toStringAsFixed(0)}m',
+                            ),
+                        ],
+                      ),
+                    ],
+                  ],
+                  if (isExpanded) ...[
+                    const SizedBox(height: 10),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          FilterChip(
+                            label: const Text('All pins'),
+                            selected:
+                                visibleStatuses.length ==
+                                _MapScreenState._projectMapStatusOrder.length,
+                            onSelected: (_) => onResetVisibleStatuses(),
+                          ),
+                          for (final status
+                              in _MapScreenState._projectMapStatusOrder) ...[
+                            const SizedBox(width: 8),
+                            FilterChip(
+                              label: Text(_statusFilterLabel(status)),
+                              selected: visibleStatuses.contains(status),
+                              onSelected: (_) => onToggleVisibleStatus(status),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          ChoiceChip(
+                            label: const Text('All'),
+                            selected: selectedFeatureChip == null,
+                            onSelected: (_) => onChipSelected(null),
+                          ),
+                          for (final chip in quickFeatureChips) ...[
+                            const SizedBox(width: 8),
+                            ChoiceChip(
+                              label: Text(chip),
+                              selected: selectedFeatureChip == chip,
+                              onSelected: (selected) =>
+                                  onChipSelected(selected ? chip : null),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _MapInfoPill(
+                          icon: basemapStyle == LebanonBasemapStyle.satellite
+                              ? Icons.satellite_alt_outlined
+                              : Icons.map_outlined,
+                          label:
+                              '${LebanonMapConfig.basemapLabel(basemapStyle)} view',
+                        ),
+                        if (gpsAccuracyMeters != null)
+                          _MapInfoPill(
+                            icon: Icons.my_location,
+                            label:
+                                'GPS ${gpsAccuracyMeters!.toStringAsFixed(0)}m',
+                          ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            );
+          },
         ),
       ),
     );
@@ -4135,23 +4133,25 @@ class _CompactMapMetaPill extends StatelessWidget {
         color: scheme.surfaceContainerHighest.withValues(alpha: 0.72),
         borderRadius: BorderRadius.circular(999),
       ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 12, color: scheme.primary),
-            const SizedBox(width: 4),
-            ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: maxWidth),
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textStyle,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: maxWidth + 26),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 12, color: scheme.primary),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textStyle,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

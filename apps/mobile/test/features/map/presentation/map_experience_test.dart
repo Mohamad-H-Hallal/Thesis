@@ -349,14 +349,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Project map'), findsOneWidget);
-      expect(
-        find.text('Preview the Lebanon workspace before opening the full map.'),
-        findsOneWidget,
-      );
+      expect(find.text('Quick map'), findsOneWidget);
       expect(find.text('2 features'), findsOneWidget);
       expect(find.text('Lebanon workspace'), findsOneWidget);
-      expect(find.text('Tap to open'), findsOneWidget);
+      expect(find.text('Open full map'), findsOneWidget);
 
       await tester.tap(find.text('Open map'));
       await tester.pump();
@@ -450,7 +446,7 @@ void main() {
 
       expect(find.widgetWithText(FilterChip, 'All pins'), findsOneWidget);
       expect(find.widgetWithText(FilterChip, 'Pending review'), findsOneWidget);
-      expect(find.text('Street view'), findsOneWidget);
+      expect(find.text('Satellite view'), findsOneWidget);
 
       await tester.tap(find.byTooltip('Current location'));
       await tester.pump();
