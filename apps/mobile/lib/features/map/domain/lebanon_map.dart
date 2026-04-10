@@ -9,6 +9,8 @@ class LebanonMapConfig {
 
   static const LatLng southWest = LatLng(33.045, 35.094);
   static const LatLng northEast = LatLng(34.695, 36.645);
+  static const LatLng beirut = LatLng(33.8938, 35.5018);
+  static const LatLng projectWorkspaceCenter = LatLng(33.92, 35.68);
 
   static final LatLngBounds bounds = LatLngBounds(southWest, northEast);
   static final LatLng center = LatLng(
@@ -22,7 +24,8 @@ class LebanonMapConfig {
   static const double fullscreenMinZoom = 7.0;
   static const double fullscreenMaxZoom = 18.5;
   static const double fullscreenInitialZoom = 7.4;
-  static const double projectWorkspaceZoom = 8.2;
+  static const double projectWorkspaceZoom = 8.0;
+  static const double projectStreetDetailZoom = 12.0;
   static const double drawingMinZoom = 8.0;
   static const double drawingMaxZoom = 19.0;
   static const double drawingInitialZoom = 8.5;
@@ -68,6 +71,14 @@ class LebanonMapConfig {
       case LebanonBasemapStyle.street:
         return null;
     }
+  }
+
+  static String streetContextUrlTemplate() {
+    return 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}';
+  }
+
+  static String streetContextReferenceUrlTemplate() {
+    return 'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Reference_Overlay/MapServer/tile/{z}/{y}/{x}';
   }
 
   static String basemapLabel(LebanonBasemapStyle style) {
