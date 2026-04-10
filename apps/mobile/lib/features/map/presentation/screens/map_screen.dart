@@ -150,24 +150,24 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   Color _projectMapSurfaceFallbackColor() {
     switch (_basemapStyle) {
-      case LebanonBasemapStyle.topographic:
-        return const Color(0xFFE8E1D3);
-      case LebanonBasemapStyle.roads:
-        return const Color(0xFFEADFCF);
-      case LebanonBasemapStyle.satellite:
-        return const Color(0xFFB3C2C7);
       case LebanonBasemapStyle.street:
         return const Color(0xFFECE3D3);
+      case LebanonBasemapStyle.voyager:
+        return const Color(0xFFE3EBEF);
+      case LebanonBasemapStyle.satellite:
+        return const Color(0xFFB3C2C7);
+      case LebanonBasemapStyle.imagery:
+        return const Color(0xFFB4C3B9);
     }
   }
 
   Duration _basemapTransitionDuration(LebanonBasemapStyle style) {
     switch (style) {
       case LebanonBasemapStyle.satellite:
+      case LebanonBasemapStyle.imagery:
         return const Duration(milliseconds: 1500);
-      case LebanonBasemapStyle.topographic:
-      case LebanonBasemapStyle.roads:
       case LebanonBasemapStyle.street:
+      case LebanonBasemapStyle.voyager:
         return const Duration(milliseconds: 900);
     }
   }
@@ -4235,12 +4235,12 @@ IconData _basemapStyleIcon(LebanonBasemapStyle style) {
   switch (style) {
     case LebanonBasemapStyle.street:
       return Icons.map_outlined;
-    case LebanonBasemapStyle.topographic:
-      return Icons.terrain_outlined;
-    case LebanonBasemapStyle.roads:
-      return Icons.alt_route_outlined;
+    case LebanonBasemapStyle.voyager:
+      return Icons.travel_explore_outlined;
     case LebanonBasemapStyle.satellite:
       return Icons.satellite_alt_outlined;
+    case LebanonBasemapStyle.imagery:
+      return Icons.photo_outlined;
   }
 }
 

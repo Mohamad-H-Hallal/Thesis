@@ -579,9 +579,9 @@ void main() {
       await tester.tap(find.byTooltip('Map style'));
       await tester.pumpAndSettle();
       expect(find.text('Street'), findsOneWidget);
-      expect(find.text('Topographic'), findsOneWidget);
-      expect(find.text('Roads'), findsOneWidget);
+      expect(find.text('Voyager'), findsOneWidget);
       expect(find.text('Satellite'), findsOneWidget);
+      expect(find.text('Imagery'), findsOneWidget);
       await tester.tap(find.text('Satellite').last);
       await tester.pumpAndSettle();
 
