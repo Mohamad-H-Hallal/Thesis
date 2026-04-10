@@ -100,7 +100,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Timer? _locationNoticeTimer;
   Timer? _tileNoticeTimer;
   late final MapOptions _mainMapOptions;
-  late bool _useProjectStreetContextBasemap;
 
   LatLng get _defaultMapCenter => widget.lockProjectSelection
       ? LebanonMapConfig.projectWorkspaceCenter
@@ -113,9 +112,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   @override
   void initState() {
     super.initState();
-    _useProjectStreetContextBasemap =
-        widget.lockProjectSelection &&
-        _defaultMapZoom < LebanonMapConfig.projectStreetDetailZoom;
     _mainMapOptions = MapOptions(
       initialCenter: _defaultMapCenter,
       initialZoom: _defaultMapZoom,
@@ -142,9 +138,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _lastVisibleTileRecoveryKey = null;
       _projectMapTileFailureCount = 0;
       _projectMapTileFailureBurstKey = null;
-      _useProjectStreetContextBasemap =
-          widget.lockProjectSelection &&
-          _defaultMapZoom < LebanonMapConfig.projectStreetDetailZoom;
       _mapController = MapController();
       _projectMapViewportVersion++;
     });
@@ -326,15 +319,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   void _handleMainMapPositionChanged(MapCamera camera, bool hasGesture) {
     _latestMapCamera = camera;
-    final shouldUseStreetContext =
-        widget.lockProjectSelection &&
-        _basemapStyle == LebanonBasemapStyle.street &&
-        camera.zoom < LebanonMapConfig.projectStreetDetailZoom;
-    if (_useProjectStreetContextBasemap != shouldUseStreetContext && mounted) {
-      setState(() {
-        _useProjectStreetContextBasemap = shouldUseStreetContext;
-      });
-    }
   }
 
   void _scheduleProjectMapTilePrime(OfflineMapPackage? offlinePackage) {
@@ -1597,17 +1581,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                     visibleStatusSummaryLabel:
                                         _visibleStatusSummaryLabel(),
                                     onBasemapStyleChanged: (style) {
-                                      final currentZoom =
-                                          _latestMapCamera?.zoom ??
-                                          _defaultMapZoom;
                                       setState(() {
                                         _basemapStyle = style;
-                                        _useProjectStreetContextBasemap =
-                                            widget.lockProjectSelection &&
-                                            style == LebanonBasemapStyle.street &&
-                                            currentZoom <
-                                                LebanonMapConfig
-                                                    .projectStreetDetailZoom;
                                       });
                                       _clearTileNotice();
                                     },
@@ -1797,16 +1772,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     return FutureBuilder<_OfflineTileAssets?>(
       future: _offlineTileAssetsFuture(offlinePackage),
       builder: (context, snapshot) {
-        final useStreetContextBasemap =
-            widget.lockProjectSelection &&
-            _basemapStyle == LebanonBasemapStyle.street &&
-            _useProjectStreetContextBasemap;
-        final liveBasemapUrl = useStreetContextBasemap
-            ? LebanonMapConfig.streetContextUrlTemplate()
-            : LebanonMapConfig.basemapUrlTemplate(_basemapStyle);
-        final labelOverlayUrl = useStreetContextBasemap
-            ? LebanonMapConfig.streetContextReferenceUrlTemplate()
-            : LebanonMapConfig.referenceLabelUrlTemplate(_basemapStyle);
+        final liveBasemapUrl = LebanonMapConfig.basemapUrlTemplate(
+          _basemapStyle,
+        );
+        final labelOverlayUrl = LebanonMapConfig.referenceLabelUrlTemplate(
+          _basemapStyle,
+        );
         final hasSavedOfflineImagery = _hasSavedOfflineImagery(offlinePackage);
         final canUseSavedOfflineImagery =
             snapshot.data != null && hasSavedOfflineImagery;
@@ -1820,7 +1791,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           mapController: _mapController,
           options: _mainMapOptions,
           children: [
-            if (canUseSavedOfflineImagery)
+            if (preferSavedImagery && canUseSavedOfflineImagery)
               TileLayer(
                 key: ValueKey<String>(
                   'project_map_offline_tiles_${_basemapStyle.name}_${snapshot.data!.templatePath}',
@@ -1833,7 +1804,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             if (!preferSavedImagery)
               TileLayer(
                 key: ValueKey<String>(
-                  'project_map_live_basemap_${_basemapStyle.name}_${useStreetContextBasemap ? 'context' : 'detail'}',
+                  'project_map_live_basemap_${_basemapStyle.name}',
                 ),
                 urlTemplate: liveBasemapUrl,
                 tileProvider: NetworkTileProvider(silenceExceptions: true),
@@ -1849,7 +1820,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             if (labelOverlayUrl != null)
               TileLayer(
                 key: ValueKey<String>(
-                  'project_map_label_overlay_${_basemapStyle.name}_${useStreetContextBasemap ? 'context' : 'detail'}',
+                  'project_map_label_overlay_${_basemapStyle.name}',
                 ),
                 urlTemplate: labelOverlayUrl,
                 tileProvider: NetworkTileProvider(silenceExceptions: true),

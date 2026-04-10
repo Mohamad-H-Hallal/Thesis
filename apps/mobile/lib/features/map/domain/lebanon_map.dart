@@ -25,7 +25,6 @@ class LebanonMapConfig {
   static const double fullscreenMaxZoom = 18.5;
   static const double fullscreenInitialZoom = 7.4;
   static const double projectWorkspaceZoom = 8.0;
-  static const double projectStreetDetailZoom = 12.0;
   static const double drawingMinZoom = 8.0;
   static const double drawingMaxZoom = 19.0;
   static const double drawingInitialZoom = 8.5;
@@ -72,15 +71,6 @@ class LebanonMapConfig {
         return null;
     }
   }
-
-  static String streetContextUrlTemplate() {
-    return 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}';
-  }
-
-  static String streetContextReferenceUrlTemplate() {
-    return 'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Reference_Overlay/MapServer/tile/{z}/{y}/{x}';
-  }
-
   static String basemapLabel(LebanonBasemapStyle style) {
     switch (style) {
       case LebanonBasemapStyle.satellite:
