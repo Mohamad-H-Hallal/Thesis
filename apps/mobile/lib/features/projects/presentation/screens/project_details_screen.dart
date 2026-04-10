@@ -291,7 +291,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
           children: [
             const SectionHeader(
               title: 'Project Details',
-              subtitle: 'Operational summary and field actions',
+              subtitle: 'Field summary, status, and map access',
             ),
             const SizedBox(height: AppSpacing.md),
             AnimatedReveal(
@@ -300,7 +300,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Project overview',
+                      'Project summary',
                       style: Theme.of(context).textTheme.labelLarge?.copyWith(
                         color: Theme.of(context).colorScheme.primary,
                         fontWeight: FontWeight.w700,
@@ -484,9 +484,27 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                 ),
               ),
             ),
+            const SizedBox(height: AppSpacing.lg),
+            AnimatedReveal(
+              delay: const Duration(milliseconds: 150),
+              child: const SectionHeader(
+                title: 'Map Preview',
+                subtitle:
+                    'Check the Lebanon workspace before opening the full project map.',
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            AnimatedReveal(
+              delay: const Duration(milliseconds: 160),
+              child: ProjectQuickMapCard(
+                projectId: project.id,
+                onOpenFullscreen: () =>
+                    context.push(AppRoutes.mapForProject(project.id)),
+              ),
+            ),
             if (role == UserRole.admin)
               AnimatedReveal(
-                delay: const Duration(milliseconds: 160),
+                delay: const Duration(milliseconds: 170),
                 child: Padding(
                   padding: const EdgeInsets.only(top: AppSpacing.sm),
                   child: Wrap(
@@ -527,7 +545,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
               ),
             if (role == UserRole.contributor && !hasContributorAssignment)
               AnimatedReveal(
-                delay: Duration(milliseconds: 190),
+                delay: Duration(milliseconds: 200),
                 child: AppCard(
                   child: ListTile(
                     leading: Icon(
@@ -564,7 +582,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
               ),
             if (isPaused)
               const AnimatedReveal(
-                delay: Duration(milliseconds: 180),
+                delay: Duration(milliseconds: 210),
                 child: AppCard(
                   child: ListTile(
                     leading: Icon(Icons.pause_circle_outline),
@@ -577,7 +595,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
               ),
             if (role == UserRole.viewer)
               const AnimatedReveal(
-                delay: Duration(milliseconds: 190),
+                delay: Duration(milliseconds: 220),
                 child: AppCard(
                   child: ListTile(
                     leading: Icon(Icons.info_outline),
@@ -588,24 +606,6 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                   ),
                 ),
               ),
-            const SizedBox(height: AppSpacing.lg),
-            AnimatedReveal(
-              delay: const Duration(milliseconds: 200),
-              child: const SectionHeader(
-                title: 'Quick Map',
-                subtitle:
-                    'Preview the Lebanon workspace before opening the full map.',
-              ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            AnimatedReveal(
-              delay: const Duration(milliseconds: 210),
-              child: ProjectQuickMapCard(
-                projectId: project.id,
-                onOpenFullscreen: () =>
-                    context.push(AppRoutes.mapForProject(project.id)),
-              ),
-            ),
           ],
         );
       },

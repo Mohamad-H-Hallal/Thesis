@@ -84,7 +84,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool _isProjectMapModalSheetOpen = false;
   bool _hasHandledStartCaptureOnOpen = false;
   int _projectMapViewportVersion = 0;
-  LebanonBasemapStyle _basemapStyle = LebanonBasemapStyle.satellite;
+  LebanonBasemapStyle _basemapStyle = LebanonBasemapStyle.street;
   MapCamera? _latestMapCamera;
   String? _lastAutoFrameKey;
   String? _lastPrimedProjectMapKey;
@@ -97,21 +97,23 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool _tileFailureUsesSavedImagery = false;
   Timer? _locationNoticeTimer;
   Timer? _tileNoticeTimer;
-  late final MapOptions _mainMapOptions = MapOptions(
-    initialCenter: LebanonMapConfig.center,
-    initialZoom: LebanonMapConfig.fullscreenInitialZoom,
-    initialCameraFit: LebanonMapConfig.fullscreenFit,
-    minZoom: LebanonMapConfig.fullscreenMinZoom,
-    maxZoom: LebanonMapConfig.fullscreenMaxZoom,
-    cameraConstraint: LebanonMapConfig.cameraConstraint,
-    onMapReady: _handleMainMapReady,
-    onPositionChanged: _handleMainMapPositionChanged,
-    onTap: _handleMainMapTap,
-  );
+  late final MapOptions _mainMapOptions;
 
   @override
   void initState() {
     super.initState();
+    _mainMapOptions = MapOptions(
+      initialCenter: LebanonMapConfig.center,
+      initialZoom: widget.lockProjectSelection
+          ? LebanonMapConfig.projectWorkspaceZoom
+          : LebanonMapConfig.fullscreenInitialZoom,
+      minZoom: LebanonMapConfig.fullscreenMinZoom,
+      maxZoom: LebanonMapConfig.fullscreenMaxZoom,
+      cameraConstraint: LebanonMapConfig.cameraConstraint,
+      onMapReady: _handleMainMapReady,
+      onPositionChanged: _handleMainMapPositionChanged,
+      onTap: _handleMainMapTap,
+    );
   }
 
   bool get _isProjectMapSecondaryOverlayOpen =>
@@ -507,9 +509,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _visibleStatuses.length == _projectMapStatusOrder.length;
 
   void _focusLebanonWorkspace({bool queueUntilReady = false}) {
+    void focusWorkspace() {
+      if (!mounted) {
+        return;
+      }
+      _resetProjectMapViewport();
+    }
+
     if (!_isMainMapReady) {
       if (queueUntilReady) {
-        _pendingMainMapAction = _resetProjectMapViewport;
+        _pendingMainMapAction = focusWorkspace;
         return;
       }
       AppSnackbar.showError(
@@ -518,7 +527,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       );
       return;
     }
-    _resetProjectMapViewport();
+    focusWorkspace();
   }
 
   String _visibleStatusSummaryLabel() {
@@ -1436,8 +1445,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 : theme.colorScheme.secondary,
           )
         : null;
-    final addFeatureBottom = _isProjectMapCaptureMode ? 102.0 : 14.0;
-    final rightRailBottom = _isProjectMapCaptureMode ? 108.0 : 74.0;
+    final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final suppressFloatingToolsForSearch = _projectMapSearchOpen || keyboardVisible;
+    final addFeatureBottom = _isProjectMapCaptureMode ? 102.0 : 18.0;
+    final rightRailBottom = _isProjectMapCaptureMode
+        ? 116.0
+        : hasCollectionAccess
+        ? addFeatureBottom + 68
+        : 22.0;
 
     return Stack(
       children: [
@@ -1596,7 +1611,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               ),
             ),
           ),
-        if (!_isProjectMapSecondaryOverlayOpen)
+        if (!_isProjectMapSecondaryOverlayOpen && !suppressFloatingToolsForSearch)
           Positioned(
             right: 14,
             bottom: rightRailBottom,
@@ -1677,10 +1692,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           ),
         if (hasCollectionAccess &&
             !_isProjectMapCaptureMode &&
-            !_isProjectMapSecondaryOverlayOpen)
+            !_isProjectMapSecondaryOverlayOpen &&
+            !suppressFloatingToolsForSearch)
           Positioned(
             right: 14,
-            bottom: 14,
+            bottom: addFeatureBottom,
             child: Tooltip(
               message: 'Add Feature',
               child: FloatingActionButton.small(
@@ -3371,13 +3387,18 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
         borderRadius: BorderRadius.circular(24),
         child: LayoutBuilder(
           builder: (context, constraints) {
+            final actionRailWidth = constraints.maxWidth >= 430
+                ? 176.0
+                : constraints.maxWidth >= 370
+                ? 140.0
+                : 104.0;
             final metaMaxWidth = constraints.maxWidth >= 420
-                ? 180.0
+                ? 152.0
                 : constraints.maxWidth >= 360
-                ? 148.0
-                : 124.0;
+                ? 126.0
+                : 104.0;
             return Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 9),
+              padding: const EdgeInsets.fromLTRB(12, 11, 12, 10),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -3386,68 +3407,95 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
-                        child: Text(
-                          project.name,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w700,
-                            height: 1.15,
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 1),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                project.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  height: 1.15,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  _CompactMapMetaPill(
+                                    icon: Icons.category_outlined,
+                                    label: categoryLabel,
+                                    maxWidth: metaMaxWidth,
+                                    textStyle: theme.textTheme.labelSmall
+                                        ?.copyWith(
+                                          color: scheme.onSurfaceVariant,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                  ),
+                                  _CompactMapMetaPill(
+                                    icon: Icons.place_outlined,
+                                    label: visibleCountLabel,
+                                    maxWidth: metaMaxWidth - 12,
+                                    textStyle: theme.textTheme.labelSmall
+                                        ?.copyWith(
+                                          color: scheme.onSurfaceVariant,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
                         ),
                       ),
                       const SizedBox(width: 8),
-                      _ProjectMapOverflowMenuButton(onHidePanel: onHidePanel),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      _CompactMapMetaPill(
-                        icon: Icons.category_outlined,
-                        label: categoryLabel,
-                        maxWidth: metaMaxWidth,
-                        textStyle: theme.textTheme.labelSmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                          fontWeight: FontWeight.w600,
+                      ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: actionRailWidth),
+                        child: Align(
+                          alignment: Alignment.topRight,
+                          child: Wrap(
+                            alignment: WrapAlignment.end,
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              _MapStyleMenuButton(
+                                basemapStyle: basemapStyle,
+                                onSelected: onBasemapStyleChanged,
+                              ),
+                              _MapPanelIconButton(
+                                tooltip: 'Offline map',
+                                icon: Icons.download_for_offline_outlined,
+                                onPressed: onOpenOfflineTools,
+                              ),
+                              _MapPanelIconButton(
+                                tooltip: isSearchOpen
+                                    ? 'Close search'
+                                    : 'Search map',
+                                icon: isSearchOpen
+                                    ? Icons.search_off_rounded
+                                    : Icons.search_rounded,
+                                onPressed: onSearchPressed,
+                              ),
+                              _MapPanelIconButton(
+                                tooltip: isExpanded
+                                    ? 'Hide quick filters'
+                                    : 'Show quick filters',
+                                icon: isExpanded
+                                    ? Icons.keyboard_arrow_up_rounded
+                                    : Icons.tune_rounded,
+                                onPressed: onToggleExpanded,
+                              ),
+                              _ProjectMapOverflowMenuButton(
+                                onHidePanel: onHidePanel,
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      _CompactMapMetaPill(
-                        icon: Icons.place_outlined,
-                        label: visibleCountLabel,
-                        maxWidth: metaMaxWidth - 18,
-                        textStyle: theme.textTheme.labelSmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      _MapStyleMenuButton(
-                        basemapStyle: basemapStyle,
-                        onSelected: onBasemapStyleChanged,
-                      ),
-                      _MapPanelIconButton(
-                        tooltip: 'Offline map',
-                        icon: Icons.download_for_offline_outlined,
-                        onPressed: onOpenOfflineTools,
-                      ),
-                      _MapPanelIconButton(
-                        tooltip: isSearchOpen ? 'Close search' : 'Search map',
-                        icon: isSearchOpen
-                            ? Icons.search_off_rounded
-                            : Icons.search_rounded,
-                        onPressed: onSearchPressed,
-                      ),
-                      _MapPanelIconButton(
-                        tooltip: isExpanded
-                            ? 'Hide quick filters'
-                            : 'Show quick filters',
-                        icon: isExpanded
-                            ? Icons.keyboard_arrow_up_rounded
-                            : Icons.tune_rounded,
-                        onPressed: onToggleExpanded,
                       ),
                     ],
                   ),
@@ -4134,7 +4182,7 @@ class _CompactMapMetaPill extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
       ),
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: maxWidth + 26),
+        constraints: BoxConstraints(maxWidth: maxWidth + 40),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           child: Row(

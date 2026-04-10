@@ -213,6 +213,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
           return _buildPage(
             state,
             Scaffold(
+              resizeToAvoidBottomInset: false,
               appBar: AppBar(title: const Text('Project map')),
               body: SafeArea(
                 child: MapScreen(

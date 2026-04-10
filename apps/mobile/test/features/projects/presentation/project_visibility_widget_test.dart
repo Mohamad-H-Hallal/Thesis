@@ -522,12 +522,14 @@ void main() {
       final summaryTitleTop = tester.getTopLeft(
         find.text('Bekaa Valley Survey'),
       );
-      final quickMapTop = tester.getTopLeft(find.text('Quick map'));
+      final quickMapTop = tester.getTopLeft(find.text('Project map'));
 
       expect(quickMapTop.dy, greaterThan(summaryTitleTop.dy));
-      expect(find.text('Quick Map'), findsOneWidget);
+      expect(find.text('Map Preview'), findsOneWidget);
       expect(
-        find.text('Preview the Lebanon workspace before opening the full map.'),
+        find.text(
+          'Check the Lebanon workspace before opening the full project map.',
+        ),
         findsOneWidget,
       );
       expect(find.text('Open map'), findsOneWidget);

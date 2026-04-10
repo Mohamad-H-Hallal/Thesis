@@ -46,14 +46,14 @@ class ProjectQuickMapCard extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Quick map',
+                      'Project map',
                       style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'A live Lebanon preview before opening the full map.',
+                      'Lebanon workspace preview',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: scheme.onSurfaceVariant,
                       ),
@@ -71,11 +71,6 @@ class ProjectQuickMapCard extends ConsumerWidget {
               ],
             ],
           ),
-          const SizedBox(height: AppSpacing.sm),
-          _QuickMapPill(
-            icon: Icons.place_outlined,
-            label: featureCountLabel,
-          ),
           const SizedBox(height: AppSpacing.md),
           Material(
             color: Colors.transparent,
@@ -88,16 +83,10 @@ class ProjectQuickMapCard extends ConsumerWidget {
                   borderRadius: BorderRadius.circular(22),
                   border: Border.all(color: theme.dividerColor),
                   color: scheme.surfaceContainerLow,
-                  boxShadow: [
-                    BoxShadow(
-                      blurRadius: 18,
-                      offset: const Offset(0, 10),
-                      color: scheme.shadow.withValues(alpha: 0.08),
-                    ),
-                  ],
+                  boxShadow: AppShadows.soft,
                 ),
                 child: SizedBox(
-                  height: 228,
+                  height: 236,
                   child: Stack(
                     children: [
                       Positioned.fill(
@@ -127,23 +116,27 @@ class ProjectQuickMapCard extends ConsumerWidget {
                               TileLayer(
                                 urlTemplate:
                                     LebanonMapConfig.basemapUrlTemplate(
-                                      LebanonBasemapStyle.satellite,
+                                      LebanonBasemapStyle.street,
                                     ),
                                 tileProvider: NetworkTileProvider(
                                   silenceExceptions: true,
                                 ),
                                 userAgentPackageName: 'lb.gov.gis_collector',
                               ),
-                              TileLayer(
-                                urlTemplate:
-                                    LebanonMapConfig.referenceLabelUrlTemplate(
-                                      LebanonBasemapStyle.satellite,
-                                    )!,
-                                tileProvider: NetworkTileProvider(
-                                  silenceExceptions: true,
+                              if (LebanonMapConfig.referenceLabelUrlTemplate(
+                                    LebanonBasemapStyle.street,
+                                  ) !=
+                                  null)
+                                TileLayer(
+                                  urlTemplate:
+                                      LebanonMapConfig.referenceLabelUrlTemplate(
+                                        LebanonBasemapStyle.street,
+                                      )!,
+                                  tileProvider: NetworkTileProvider(
+                                    silenceExceptions: true,
+                                  ),
+                                  userAgentPackageName: 'lb.gov.gis_collector',
                                 ),
-                                userAgentPackageName: 'lb.gov.gis_collector',
-                              ),
                               PolygonLayer(
                                 polygons: _polygonOverlays(features),
                               ),
@@ -155,36 +148,65 @@ class ProjectQuickMapCard extends ConsumerWidget {
                           ),
                         ),
                       ),
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  scheme.surface.withValues(alpha: 0.12),
+                                  Colors.transparent,
+                                  scheme.surface.withValues(alpha: 0.08),
+                                ],
+                                stops: const [0, 0.45, 1],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                       Positioned(
-                        left: 12,
-                        right: 12,
-                        top: 12,
+                        left: 14,
+                        right: 14,
+                        top: 14,
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Expanded(
+                              child: Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  _QuickMapPill(
+                                    icon: Icons.public_outlined,
+                                    label: 'Lebanon-wide view',
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            _QuickMapPill(
+                              icon: Icons.place_outlined,
+                              label: featureCountLabel,
+                            ),
+                          ],
+                        ),
+                      ),
+                      Positioned(
+                        left: 14,
+                        bottom: 14,
                         child: Wrap(
                           spacing: 8,
                           runSpacing: 8,
                           children: [
                             const _QuickMapPill(
-                              icon: Icons.public_outlined,
-                              label: 'Lebanon workspace',
+                              icon: Icons.touch_app_outlined,
+                              label: 'Tap to explore',
                             ),
-                            DecoratedBox(
-                              decoration: BoxDecoration(
-                                color: scheme.surface.withValues(alpha: 0.9),
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 7,
-                                ),
-                                child: Text(
-                                  'Interactive preview',
-                                  style: theme.textTheme.labelMedium?.copyWith(
-                                    color: scheme.onSurfaceVariant,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
+                            const _QuickMapPill(
+                              icon: Icons.map_outlined,
+                              label: 'Street preview',
                             ),
                           ],
                         ),
