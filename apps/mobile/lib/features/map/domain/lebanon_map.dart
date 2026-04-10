@@ -2,7 +2,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
-enum LebanonBasemapStyle { street, voyager, satellite, imagery }
+enum LebanonBasemapStyle { street, satellite }
 
 class LebanonMapConfig {
   const LebanonMapConfig._();
@@ -58,10 +58,7 @@ class LebanonMapConfig {
     switch (style) {
       case LebanonBasemapStyle.street:
         return 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-      case LebanonBasemapStyle.voyager:
-        return 'https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
       case LebanonBasemapStyle.satellite:
-      case LebanonBasemapStyle.imagery:
         return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
     }
   }
@@ -69,8 +66,6 @@ class LebanonMapConfig {
   static String? referenceLabelUrlTemplate(LebanonBasemapStyle style) {
     switch (style) {
       case LebanonBasemapStyle.street:
-      case LebanonBasemapStyle.voyager:
-      case LebanonBasemapStyle.imagery:
         return null;
       case LebanonBasemapStyle.satellite:
         return 'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
@@ -81,12 +76,8 @@ class LebanonMapConfig {
     switch (style) {
       case LebanonBasemapStyle.street:
         return 'Street';
-      case LebanonBasemapStyle.voyager:
-        return 'Voyager';
       case LebanonBasemapStyle.satellite:
         return 'Satellite';
-      case LebanonBasemapStyle.imagery:
-        return 'Imagery';
     }
   }
 
@@ -94,12 +85,8 @@ class LebanonMapConfig {
     switch (style) {
       case LebanonBasemapStyle.street:
         return 'Familiar OSM landmarks and place names';
-      case LebanonBasemapStyle.voyager:
-        return 'Modern OSM-style cartography with softer land cover';
       case LebanonBasemapStyle.satellite:
         return 'Imagery with place labels';
-      case LebanonBasemapStyle.imagery:
-        return 'Clean satellite imagery without labels';
     }
   }
 }
