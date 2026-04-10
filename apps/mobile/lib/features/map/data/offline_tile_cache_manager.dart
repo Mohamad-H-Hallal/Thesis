@@ -101,6 +101,26 @@ class OfflineTileCacheManager {
     return _transparentTile!.path;
   }
 
+  Future<bool> hasCachedTiles({
+    required OfflineMapPackage package,
+    required LebanonBasemapStyle basemapStyle,
+  }) async {
+    await initialize();
+    final dir = Directory(
+      p.join(_rootDir!.path, package.version, basemapStyle.name),
+    );
+    if (!await dir.exists()) {
+      return false;
+    }
+
+    await for (final entity in dir.list(recursive: true, followLinks: false)) {
+      if (entity is File && entity.path.endsWith('.tile')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   Future<OfflineTileDownloadSummary> cacheLebanonOverview({
     required OfflineMapPackage package,
     LebanonBasemapStyle basemapStyle = LebanonBasemapStyle.satellite,

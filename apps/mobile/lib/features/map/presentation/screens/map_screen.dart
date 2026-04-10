@@ -99,7 +99,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   String? _projectMapTileFailureBurstKey;
   Timer? _locationNoticeTimer;
   Timer? _tileNoticeTimer;
+  Timer? _basemapTransitionTimer;
   late final MapOptions _mainMapOptions;
+  bool _isBasemapTransitioning = false;
 
   LatLng get _defaultMapCenter => widget.lockProjectSelection
       ? LebanonMapConfig.projectWorkspaceCenter
@@ -148,11 +150,53 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   Color _projectMapSurfaceFallbackColor() {
     switch (_basemapStyle) {
+      case LebanonBasemapStyle.topographic:
+        return const Color(0xFFE8E1D3);
+      case LebanonBasemapStyle.roads:
+        return const Color(0xFFEADFCF);
       case LebanonBasemapStyle.satellite:
         return const Color(0xFFB3C2C7);
       case LebanonBasemapStyle.street:
         return const Color(0xFFECE3D3);
     }
+  }
+
+  Duration _basemapTransitionDuration(LebanonBasemapStyle style) {
+    switch (style) {
+      case LebanonBasemapStyle.satellite:
+        return const Duration(milliseconds: 1500);
+      case LebanonBasemapStyle.topographic:
+      case LebanonBasemapStyle.roads:
+      case LebanonBasemapStyle.street:
+        return const Duration(milliseconds: 900);
+    }
+  }
+
+  void _setProjectMapBasemapStyle(LebanonBasemapStyle style) {
+    if (_basemapStyle == style && !_isBasemapTransitioning) {
+      return;
+    }
+    _basemapTransitionTimer?.cancel();
+    _projectMapSearchFocusNode.unfocus();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _basemapStyle = style;
+      _isBasemapTransitioning = true;
+      _tileFailureMessage = null;
+      _tileFailureUsesSavedImagery = false;
+      _projectMapTileFailureCount = 0;
+      _projectMapTileFailureBurstKey = null;
+    });
+    _basemapTransitionTimer = Timer(_basemapTransitionDuration(style), () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isBasemapTransitioning = false;
+      });
+    });
   }
 
   String _savedImageryFallbackNotice() {
@@ -167,6 +211,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required OfflineMapPackage? offlinePackage,
     required bool hasSavedOfflineImagery,
   }) {
+    if (_isBasemapTransitioning) {
+      return;
+    }
     if (!hasSavedOfflineImagery) {
       return;
     }
@@ -291,6 +338,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   void dispose() {
     _locationNoticeTimer?.cancel();
     _tileNoticeTimer?.cancel();
+    _basemapTransitionTimer?.cancel();
     _searchController.dispose();
     _projectMapSearchFocusNode.dispose();
     super.dispose();
@@ -953,11 +1001,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   children: [
                     StatusChip(status: project.status),
                     Chip(
-                      avatar: const Icon(
-                        Icons.satellite_alt_outlined,
-                        size: 18,
-                      ),
-                      label: const Text('Hybrid imagery'),
+                      avatar: Icon(_basemapStyleIcon(_basemapStyle), size: 18),
+                      label: Text(LebanonMapConfig.basemapLabel(_basemapStyle)),
                     ),
                     Chip(
                       label: Text(
@@ -1501,6 +1546,31 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ),
           ),
         ),
+        if (_isBasemapTransitioning)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: <Color>[
+                      theme.colorScheme.surface.withValues(alpha: 0.78),
+                      theme.colorScheme.surface.withValues(alpha: 0.48),
+                    ],
+                  ),
+                ),
+                child: Center(
+                  child: _MapWorkspaceCompactNotice(
+                    icon: _basemapStyleIcon(_basemapStyle),
+                    message:
+                        'Loading ${LebanonMapConfig.basemapLabel(_basemapStyle)} view...',
+                    toneColor: theme.colorScheme.primary,
+                  ),
+                ),
+              ),
+            ),
+          ),
         Positioned(
           top: 12,
           left: 12,
@@ -1580,12 +1650,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                     onToggleVisibleStatus: _toggleVisibleStatus,
                                     visibleStatusSummaryLabel:
                                         _visibleStatusSummaryLabel(),
-                                    onBasemapStyleChanged: (style) {
-                                      setState(() {
-                                        _basemapStyle = style;
-                                      });
-                                      _clearTileNotice();
-                                    },
+                                    onBasemapStyleChanged:
+                                        _setProjectMapBasemapStyle,
                                     onOpenOfflineTools: () =>
                                         _openOfflineToolsSheet(
                                           offlinePackage: offlinePackage,
@@ -1778,11 +1844,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         final labelOverlayUrl = LebanonMapConfig.referenceLabelUrlTemplate(
           _basemapStyle,
         );
-        final hasSavedOfflineImagery = _hasSavedOfflineImagery(offlinePackage);
+        final hasSavedOfflineImagery = snapshot.data?.hasCachedTiles ?? false;
         final canUseSavedOfflineImagery =
             snapshot.data != null && hasSavedOfflineImagery;
         final preferSavedImagery =
             _tileFailureUsesSavedImagery && canUseSavedOfflineImagery;
+        final showReferenceLabels =
+            labelOverlayUrl != null && !_isBasemapTransitioning;
         final theme = Theme.of(context);
         return FlutterMap(
           key: ValueKey<String>(
@@ -1808,6 +1876,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 ),
                 urlTemplate: liveBasemapUrl,
                 tileProvider: NetworkTileProvider(silenceExceptions: true),
+                tileDisplay: const TileDisplay.fadeIn(
+                  duration: Duration(milliseconds: 180),
+                  startOpacity: 0,
+                  reloadStartOpacity: 0,
+                ),
+                panBuffer: 2,
+                keepBuffer: 3,
                 userAgentPackageName: 'lb.gov.gis_collector',
                 errorTileCallback: (tile, error, stackTrace) {
                   Object.hash(tile, stackTrace);
@@ -1817,13 +1892,20 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   );
                 },
               ),
-            if (labelOverlayUrl != null)
+            if (showReferenceLabels)
               TileLayer(
                 key: ValueKey<String>(
                   'project_map_label_overlay_${_basemapStyle.name}',
                 ),
                 urlTemplate: labelOverlayUrl,
                 tileProvider: NetworkTileProvider(silenceExceptions: true),
+                tileDisplay: const TileDisplay.fadeIn(
+                  duration: Duration(milliseconds: 220),
+                  startOpacity: 0,
+                  reloadStartOpacity: 0,
+                ),
+                panBuffer: 2,
+                keepBuffer: 3,
                 userAgentPackageName: 'lb.gov.gis_collector',
               ),
             PolygonLayer(polygons: _polygonOverlays(features)),
@@ -1965,20 +2047,20 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             builder: (context, snapshot) {
               final labelOverlayUrl =
                   LebanonMapConfig.referenceLabelUrlTemplate(_basemapStyle);
-              final hasSavedOfflineImagery = _hasSavedOfflineImagery(
-                offlinePackage,
-              );
+              final hasSavedOfflineImagery = snapshot.data?.hasCachedTiles ?? false;
               final canUseSavedOfflineImagery =
                   snapshot.data != null && hasSavedOfflineImagery;
               final preferSavedImagery =
                   _tileFailureUsesSavedImagery && canUseSavedOfflineImagery;
+              final showReferenceLabels =
+                  labelOverlayUrl != null && !_isBasemapTransitioning;
               return ClipRRect(
                 borderRadius: AppRadii.lg,
                 child: FlutterMap(
                   mapController: _mapController,
                   options: _mainMapOptions,
                   children: [
-                    if (canUseSavedOfflineImagery)
+                    if (preferSavedImagery && canUseSavedOfflineImagery)
                       TileLayer(
                         key: ValueKey<String>(
                           'preview_offline_tiles_${_basemapStyle.name}_${snapshot.data!.templatePath}',
@@ -1999,6 +2081,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         tileProvider: NetworkTileProvider(
                           silenceExceptions: true,
                         ),
+                        tileDisplay: const TileDisplay.fadeIn(
+                          duration: Duration(milliseconds: 180),
+                          startOpacity: 0,
+                          reloadStartOpacity: 0,
+                        ),
+                        panBuffer: 2,
+                        keepBuffer: 3,
                         userAgentPackageName: 'lb.gov.gis_collector',
                         errorTileCallback: (tile, error, stackTrace) {
                           Object.hash(tile, stackTrace);
@@ -2008,7 +2097,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           );
                         },
                       ),
-                    if (labelOverlayUrl != null)
+                    if (showReferenceLabels)
                       TileLayer(
                         key: ValueKey<String>(
                           'preview_label_overlay_${_basemapStyle.name}',
@@ -2017,6 +2106,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         tileProvider: NetworkTileProvider(
                           silenceExceptions: true,
                         ),
+                        tileDisplay: const TileDisplay.fadeIn(
+                          duration: Duration(milliseconds: 220),
+                          startOpacity: 0,
+                          reloadStartOpacity: 0,
+                        ),
+                        panBuffer: 2,
+                        keepBuffer: 3,
                         userAgentPackageName: 'lb.gov.gis_collector',
                       ),
                     PolygonLayer(polygons: _polygonOverlays(features)),
@@ -2077,27 +2173,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                             ],
                           ),
                         ),
-                        SegmentedButton<LebanonBasemapStyle>(
-                          segments: const [
-                            ButtonSegment(
-                              value: LebanonBasemapStyle.satellite,
-                              icon: Icon(Icons.satellite_alt_outlined),
-                              label: Text('Hybrid'),
-                            ),
-                            ButtonSegment(
-                              value: LebanonBasemapStyle.street,
-                              icon: Icon(Icons.map_outlined),
-                              label: Text('Street'),
-                            ),
-                          ],
-                          selected: <LebanonBasemapStyle>{_basemapStyle},
-                          showSelectedIcon: false,
-                          onSelectionChanged: (selection) {
-                            setState(() {
-                              _basemapStyle = selection.first;
-                            });
-                            _clearTileNotice();
-                          },
+                        _MapStyleMenuButton(
+                          basemapStyle: _basemapStyle,
+                          onSelected: _setProjectMapBasemapStyle,
                         ),
                       ],
                     ),
@@ -2131,16 +2209,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           label: Text('Lebanon only'),
                         ),
                         Chip(
-                          avatar: Icon(
-                            _basemapStyle == LebanonBasemapStyle.satellite
-                                ? Icons.satellite_alt_outlined
-                                : Icons.map_outlined,
-                            size: 18,
-                          ),
+                          avatar: Icon(_basemapStyleIcon(_basemapStyle), size: 18),
                           label: Text(
-                            _basemapStyle == LebanonBasemapStyle.satellite
-                                ? 'Hybrid imagery'
-                                : 'Street context',
+                            LebanonMapConfig.basemapDescription(_basemapStyle),
                           ),
                         ),
                         if (_currentLocationAccuracyMeters != null)
@@ -2522,11 +2593,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     LebanonBasemapStyle basemapStyle,
   ) async {
     final manager = ref.read(offlineTileCacheManagerProvider);
-    final values = await Future.wait<String>([
+    final values = await Future.wait<Object>([
       manager.localTileTemplate(package: package, basemapStyle: basemapStyle),
       manager.transparentFallbackPath(),
+      manager.hasCachedTiles(package: package, basemapStyle: basemapStyle),
     ]);
-    return _OfflineTileAssets(templatePath: values[0], fallbackPath: values[1]);
+    return _OfflineTileAssets(
+      templatePath: values[0] as String,
+      fallbackPath: values[1] as String,
+      hasCachedTiles: values[2] as bool,
+    );
   }
 
   Future<void> _downloadLebanonOverview(OfflineMapPackage package) async {
@@ -3641,9 +3717,7 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                       runSpacing: 8,
                       children: [
                         _MapInfoPill(
-                          icon: basemapStyle == LebanonBasemapStyle.satellite
-                              ? Icons.satellite_alt_outlined
-                              : Icons.map_outlined,
+                          icon: _basemapStyleIcon(basemapStyle),
                           label:
                               '${LebanonMapConfig.basemapLabel(basemapStyle)} view',
                         ),
@@ -4108,20 +4182,37 @@ class _MapStyleMenuButton extends StatelessWidget {
         for (final style in LebanonBasemapStyle.values)
           PopupMenuItem<LebanonBasemapStyle>(
             value: style,
-            child: Row(
-              children: [
-                Icon(
-                  style == LebanonBasemapStyle.satellite
-                      ? Icons.satellite_alt_outlined
-                      : Icons.map_outlined,
-                  size: 18,
-                ),
-                const SizedBox(width: AppSpacing.sm),
-                Text(LebanonMapConfig.basemapLabel(style)),
-                const Spacer(),
-                if (style == basemapStyle)
-                  Icon(Icons.check_rounded, size: 18, color: scheme.primary),
-              ],
+            child: SizedBox(
+              width: 210,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(_basemapStyleIcon(style), size: 18),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(LebanonMapConfig.basemapLabel(style)),
+                        const SizedBox(height: 2),
+                        Text(
+                          LebanonMapConfig.basemapDescription(style),
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (style == basemapStyle) ...[
+                    const SizedBox(width: AppSpacing.sm),
+                    Icon(
+                      Icons.check_rounded,
+                      size: 18,
+                      color: scheme.primary,
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
       ],
@@ -4133,15 +4224,23 @@ class _MapStyleMenuButton extends StatelessWidget {
         child: SizedBox(
           width: 30,
           height: 30,
-          child: Icon(
-            basemapStyle == LebanonBasemapStyle.satellite
-                ? Icons.satellite_alt_outlined
-                : Icons.map_outlined,
-            size: 16,
-          ),
+          child: Icon(_basemapStyleIcon(basemapStyle), size: 16),
         ),
       ),
     );
+  }
+}
+
+IconData _basemapStyleIcon(LebanonBasemapStyle style) {
+  switch (style) {
+    case LebanonBasemapStyle.street:
+      return Icons.map_outlined;
+    case LebanonBasemapStyle.topographic:
+      return Icons.terrain_outlined;
+    case LebanonBasemapStyle.roads:
+      return Icons.alt_route_outlined;
+    case LebanonBasemapStyle.satellite:
+      return Icons.satellite_alt_outlined;
   }
 }
 
@@ -4899,9 +4998,7 @@ class _OfflineMapStatusCard extends StatelessWidget {
             runSpacing: 8,
             children: [
               _MapInfoPill(
-                icon: basemapStyle == LebanonBasemapStyle.satellite
-                    ? Icons.satellite_alt_outlined
-                    : Icons.map_outlined,
+                icon: _basemapStyleIcon(basemapStyle),
                 label: '${LebanonMapConfig.basemapLabel(basemapStyle)} view',
               ),
               _MapInfoPill(
@@ -5051,10 +5148,12 @@ class _OfflineTileAssets {
   const _OfflineTileAssets({
     required this.templatePath,
     required this.fallbackPath,
+    required this.hasCachedTiles,
   });
 
   final String templatePath;
   final String fallbackPath;
+  final bool hasCachedTiles;
 }
 
 class _MapReviewNoteDialog extends StatefulWidget {

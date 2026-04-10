@@ -2,7 +2,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
-enum LebanonBasemapStyle { satellite, street }
+enum LebanonBasemapStyle { street, topographic, roads, satellite }
 
 class LebanonMapConfig {
   const LebanonMapConfig._();
@@ -56,27 +56,51 @@ class LebanonMapConfig {
 
   static String basemapUrlTemplate(LebanonBasemapStyle style) {
     switch (style) {
-      case LebanonBasemapStyle.satellite:
-        return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
       case LebanonBasemapStyle.street:
         return 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+      case LebanonBasemapStyle.topographic:
+        return 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}';
+      case LebanonBasemapStyle.roads:
+        return 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}';
+      case LebanonBasemapStyle.satellite:
+        return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
     }
   }
 
   static String? referenceLabelUrlTemplate(LebanonBasemapStyle style) {
     switch (style) {
+      case LebanonBasemapStyle.street:
+      case LebanonBasemapStyle.topographic:
+      case LebanonBasemapStyle.roads:
+        return null;
       case LebanonBasemapStyle.satellite:
         return 'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
-      case LebanonBasemapStyle.street:
-        return null;
     }
   }
+
   static String basemapLabel(LebanonBasemapStyle style) {
     switch (style) {
-      case LebanonBasemapStyle.satellite:
-        return 'Satellite';
       case LebanonBasemapStyle.street:
         return 'Street';
+      case LebanonBasemapStyle.topographic:
+        return 'Topographic';
+      case LebanonBasemapStyle.roads:
+        return 'Roads';
+      case LebanonBasemapStyle.satellite:
+        return 'Satellite';
+    }
+  }
+
+  static String basemapDescription(LebanonBasemapStyle style) {
+    switch (style) {
+      case LebanonBasemapStyle.street:
+        return 'Familiar OSM landmarks and place names';
+      case LebanonBasemapStyle.topographic:
+        return 'Terrain, vegetation, and relief context';
+      case LebanonBasemapStyle.roads:
+        return 'Dense roads and settlement network';
+      case LebanonBasemapStyle.satellite:
+        return 'Imagery with place labels';
     }
   }
 }
