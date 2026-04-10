@@ -716,7 +716,7 @@ void main() {
 
     expect(find.text('0 features'), findsWidgets);
     expect(find.byTooltip('Add Feature'), findsOneWidget);
-    expect(find.byTooltip('Fit project workspace'), findsOneWidget);
+    expect(find.byTooltip('Fit Lebanon workspace'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

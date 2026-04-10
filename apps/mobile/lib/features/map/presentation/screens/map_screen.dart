@@ -95,6 +95,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   double? _captureGpsAccuracyMeters;
   List<String> _projectMapGeometryTypeOptions = const <String>[];
   bool _tileFailureUsesSavedImagery = false;
+  int _projectMapTileFailureCount = 0;
+  String? _projectMapTileFailureBurstKey;
   Timer? _locationNoticeTimer;
   Timer? _tileNoticeTimer;
   late final MapOptions _mainMapOptions;
@@ -128,6 +130,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _latestMapCamera = null;
       _lastProjectMapSurfaceWarmupKey = null;
       _lastVisibleTileRecoveryKey = null;
+      _projectMapTileFailureCount = 0;
+      _projectMapTileFailureBurstKey = null;
       _mapController = MapController();
       _projectMapViewportVersion++;
     });
@@ -157,6 +161,24 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required OfflineMapPackage? offlinePackage,
     required bool hasSavedOfflineImagery,
   }) {
+    if (!hasSavedOfflineImagery) {
+      return;
+    }
+    final camera = _latestMapCamera;
+    final burstKey = [
+      _basemapStyle.name,
+      camera?.zoom.floor() ?? -1,
+      camera?.center.latitude.toStringAsFixed(2) ?? 'na',
+      camera?.center.longitude.toStringAsFixed(2) ?? 'na',
+    ].join(':');
+    if (_projectMapTileFailureBurstKey != burstKey) {
+      _projectMapTileFailureBurstKey = burstKey;
+      _projectMapTileFailureCount = 0;
+    }
+    _projectMapTileFailureCount += 1;
+    if (_projectMapTileFailureCount < 12) {
+      return;
+    }
     _scheduleProjectMapVisibleTileRecovery(offlinePackage);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _tileFailureMessage != null) {
@@ -208,6 +230,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   void _clearTileNotice() {
     _tileNoticeTimer?.cancel();
     _tileNoticeTimer = null;
+    _projectMapTileFailureCount = 0;
+    _projectMapTileFailureBurstKey = null;
     if (!mounted ||
         (_tileFailureMessage == null && !_tileFailureUsesSavedImagery)) {
       return;
@@ -3706,7 +3730,7 @@ class _MapControlRail extends StatelessWidget {
               ),
               const _GroupedMapRailDivider(),
               _GroupedMapRailButton(
-                tooltip: 'Fit project workspace',
+                tooltip: 'Fit Lebanon workspace',
                 onPressed: onFitProject,
                 icon: const Icon(Icons.center_focus_strong_outlined),
               ),

@@ -22,7 +22,7 @@ class LebanonMapConfig {
   static const double fullscreenMinZoom = 7.0;
   static const double fullscreenMaxZoom = 18.5;
   static const double fullscreenInitialZoom = 7.4;
-  static const double projectWorkspaceZoom = 7.45;
+  static const double projectWorkspaceZoom = 8.2;
   static const double drawingMinZoom = 8.0;
   static const double drawingMaxZoom = 19.0;
   static const double drawingInitialZoom = 8.5;
@@ -57,7 +57,7 @@ class LebanonMapConfig {
       case LebanonBasemapStyle.satellite:
         return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
       case LebanonBasemapStyle.street:
-        return 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}';
+        return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}';
     }
   }
 
@@ -66,7 +66,7 @@ class LebanonMapConfig {
       case LebanonBasemapStyle.satellite:
         return 'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
       case LebanonBasemapStyle.street:
-        return 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}';
+        return null;
     }
   }
 
