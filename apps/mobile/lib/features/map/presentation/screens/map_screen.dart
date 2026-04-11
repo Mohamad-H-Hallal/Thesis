@@ -53,7 +53,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     'draft',
   ];
 
-  MapController _mapController = MapController();
+  final MapController _mapController = MapController();
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _projectMapSearchFocusNode = FocusNode();
   final Set<String> _visibleStatuses = Set<String>.from(_projectMapStatusOrder);
@@ -83,7 +83,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool _isProjectMapGeometryChooserOpen = false;
   bool _isProjectMapModalSheetOpen = false;
   bool _hasHandledStartCaptureOnOpen = false;
-  int _projectMapViewportVersion = 0;
   LebanonBasemapStyle _basemapStyle = LebanonBasemapStyle.street;
   MapCamera? _latestMapCamera;
   String? _lastAutoFrameKey;
@@ -119,7 +118,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       initialZoom: _defaultMapZoom,
       minZoom: LebanonMapConfig.fullscreenMinZoom,
       maxZoom: LebanonMapConfig.fullscreenMaxZoom,
-      cameraConstraint: LebanonMapConfig.cameraConstraint,
+      cameraConstraint: widget.lockProjectSelection
+          ? CameraConstraint.containCenter(bounds: LebanonMapConfig.bounds)
+          : LebanonMapConfig.cameraConstraint,
       onMapReady: _handleMainMapReady,
       onPositionChanged: _handleMainMapPositionChanged,
       onTap: _handleMainMapTap,
@@ -129,20 +130,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool get _isProjectMapSecondaryOverlayOpen =>
       _isProjectMapGeometryChooserOpen || _isProjectMapModalSheetOpen;
 
-  void _resetProjectMapViewport() {
+  void _moveToProjectWorkspace() {
     if (!mounted) {
       return;
     }
-    setState(() {
-      _isMainMapReady = false;
-      _latestMapCamera = null;
-      _lastProjectMapSurfaceWarmupKey = null;
-      _lastVisibleTileRecoveryKey = null;
-      _projectMapTileFailureCount = 0;
-      _projectMapTileFailureBurstKey = null;
-      _mapController = MapController();
-      _projectMapViewportVersion++;
-    });
+    _clearTileNotice();
+    _lastProjectMapSurfaceWarmupKey = null;
+    _lastVisibleTileRecoveryKey = null;
+    _projectMapTileFailureCount = 0;
+    _projectMapTileFailureBurstKey = null;
+    _mapController.move(_defaultMapCenter, _defaultMapZoom);
   }
 
   bool _hasSavedOfflineImagery(OfflineMapPackage? package) =>
@@ -361,6 +358,21 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   void _handleMainMapPositionChanged(MapCamera camera, bool hasGesture) {
     _latestMapCamera = camera;
+    if (!_isMainMapReady && mounted) {
+      setState(() {
+        _isMainMapReady = true;
+      });
+    }
+    final pendingAction = _pendingMainMapAction;
+    if (pendingAction != null) {
+      _pendingMainMapAction = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        _runMainMapAction(pendingAction, queueUntilReady: true);
+      });
+    }
   }
 
   void _scheduleProjectMapTilePrime(OfflineMapPackage? offlinePackage) {
@@ -581,16 +593,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _visibleStatuses.length == _projectMapStatusOrder.length;
 
   void _focusLebanonWorkspace({bool queueUntilReady = false}) {
-    void focusWorkspace() {
-      if (!mounted) {
-        return;
-      }
-      _resetProjectMapViewport();
-    }
-
     if (!_isMainMapReady) {
       if (queueUntilReady) {
-        _pendingMainMapAction = focusWorkspace;
+        _pendingMainMapAction = _moveToProjectWorkspace;
         return;
       }
       AppSnackbar.showError(
@@ -599,7 +604,22 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       );
       return;
     }
-    focusWorkspace();
+    _runMainMapAction(_moveToProjectWorkspace, queueUntilReady: queueUntilReady);
+  }
+
+  void _zoomProjectWorkspaceBy(double delta) {
+    _runMainMapAction(
+      () => _mapController.move(
+        _latestMapCamera?.center ?? _defaultMapCenter,
+        ((_latestMapCamera?.zoom ?? _defaultMapZoom) + delta)
+            .clamp(
+              LebanonMapConfig.fullscreenMinZoom,
+              LebanonMapConfig.fullscreenMaxZoom,
+            )
+            .toDouble(),
+      ),
+      queueUntilReady: true,
+    );
   }
 
   String _visibleStatusSummaryLabel() {
@@ -871,11 +891,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   void _runMainMapAction(VoidCallback action, {bool queueUntilReady = false}) {
-    if (!_isMainMapReady) {
-      if (queueUntilReady) {
-        _pendingMainMapAction = action;
-        return;
-      }
+    if (!_isMainMapReady && !queueUntilReady) {
       AppSnackbar.showError(
         context,
         'Map is still preparing. Please try again in a moment.',
@@ -885,8 +901,20 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
     try {
       action();
+      if (!_isMainMapReady && mounted) {
+        setState(() {
+          _isMainMapReady = true;
+        });
+      }
     } catch (error) {
       if (_isMapControllerLifecycleError(error)) {
+        if (!queueUntilReady) {
+          AppSnackbar.showError(
+            context,
+            'Map is still preparing. Please try again in a moment.',
+          );
+          return;
+        }
         _pendingMainMapAction = action;
         if (mounted) {
           setState(() {
@@ -1718,39 +1746,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               onCenterCurrentLocation: _isLocating
                   ? null
                   : _centerMainMapOnCurrentLocation,
-              onFitProject: _isMainMapReady
-                  ? () => _focusLebanonWorkspace(queueUntilReady: true)
-                  : null,
-              onZoomIn: _isMainMapReady
-                  ? () => _runMainMapAction(
-                      () => _mapController.move(
-                        _latestMapCamera?.center ?? _defaultMapCenter,
-                        ((_latestMapCamera?.zoom ?? _defaultMapZoom) +
-                                1)
-                            .clamp(
-                              LebanonMapConfig.fullscreenMinZoom,
-                              LebanonMapConfig.fullscreenMaxZoom,
-                            )
-                            .toDouble(),
-                      ),
-                      queueUntilReady: true,
-                    )
-                  : null,
-              onZoomOut: _isMainMapReady
-                  ? () => _runMainMapAction(
-                      () => _mapController.move(
-                        _latestMapCamera?.center ?? _defaultMapCenter,
-                        ((_latestMapCamera?.zoom ?? _defaultMapZoom) -
-                                1)
-                            .clamp(
-                              LebanonMapConfig.fullscreenMinZoom,
-                              LebanonMapConfig.fullscreenMaxZoom,
-                            )
-                            .toDouble(),
-                      ),
-                      queueUntilReady: true,
-                    )
-                  : null,
+              onFitProject: () => _focusLebanonWorkspace(queueUntilReady: true),
+              onZoomIn: () => _zoomProjectWorkspaceBy(1),
+              onZoomOut: () => _zoomProjectWorkspaceBy(-1),
               isLocating: _isLocating,
             ),
           ),
@@ -1848,7 +1846,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         final theme = Theme.of(context);
         return FlutterMap(
           key: ValueKey<String>(
-            'project_map_${project.id}_$_projectMapViewportVersion',
+            'project_map_${project.id}',
           ),
           mapController: _mapController,
           options: _mainMapOptions,
