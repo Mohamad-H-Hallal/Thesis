@@ -461,46 +461,66 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                 delay: const Duration(milliseconds: 170),
                 child: Padding(
                   padding: const EdgeInsets.only(top: AppSpacing.sm),
-                  child: Wrap(
-                    spacing: 16,
-                    runSpacing: 16,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      FilledButton.icon(
-                        onPressed: () =>
-                            context.push(AppRoutes.projectEdit(project.id)),
-                        icon: const Icon(Icons.edit_outlined),
-                        label: const Text('Edit Project'),
+                      const SectionHeader(
+                        title: 'Admin Actions',
+                        subtitle:
+                            'Manage the project first, then move into review and export workflows.',
                       ),
-                      FilledButton.icon(
-                        onPressed: () => context.push(
-                          AppRoutes.projectAssignments(project.id),
-                        ),
-                        icon: const Icon(Icons.assignment_outlined),
-                        label: const Text('Assignments'),
+                      const SizedBox(height: AppSpacing.sm),
+                      _ProjectActionGroupCard(
+                        title: 'Project administration',
+                        subtitle:
+                            'Update the project setup and assignment plan for this workspace.',
+                        actions: [
+                          FilledButton.icon(
+                            onPressed: () =>
+                                context.push(AppRoutes.projectEdit(project.id)),
+                            icon: const Icon(Icons.edit_outlined),
+                            label: const Text('Edit project'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () => context.push(
+                              AppRoutes.projectAssignments(project.id),
+                            ),
+                            icon: const Icon(Icons.assignment_outlined),
+                            label: const Text('Assignments'),
+                          ),
+                        ],
                       ),
-                      FilledButton.icon(
-                        onPressed: () => context.push(
-                          AppRoutes.projectReviewQueue(project.id),
-                          extra: project.name,
-                        ),
-                        icon: const Icon(Icons.rate_review_outlined),
-                        label: const Text('Review Queue'),
-                      ),
-                      FilledButton.tonalIcon(
-                        onPressed: () => context.push(
-                          AppRoutes.projectApprovedReviews(project.id),
-                          extra: project.name,
-                        ),
-                        icon: const Icon(Icons.verified_outlined),
-                        label: const Text('Approved Reviews'),
-                      ),
-                      FilledButton.icon(
-                        onPressed: () => context.push(
-                          AppRoutes.projectExports(project.id),
-                          extra: project.name,
-                        ),
-                        icon: const Icon(Icons.file_download_outlined),
-                        label: const Text('Exports'),
+                      const SizedBox(height: AppSpacing.sm),
+                      _ProjectActionGroupCard(
+                        title: 'Review and export workflows',
+                        subtitle:
+                            'Stay inside this project while reviewing submitted work and preparing exports.',
+                        actions: [
+                          FilledButton.icon(
+                            onPressed: () => context.push(
+                              AppRoutes.projectReviewQueue(project.id),
+                              extra: project.name,
+                            ),
+                            icon: const Icon(Icons.rate_review_outlined),
+                            label: const Text('Pending reviews'),
+                          ),
+                          FilledButton.tonalIcon(
+                            onPressed: () => context.push(
+                              AppRoutes.projectApprovedReviews(project.id),
+                              extra: project.name,
+                            ),
+                            icon: const Icon(Icons.verified_outlined),
+                            label: const Text('Approved reviews'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () => context.push(
+                              AppRoutes.projectExports(project.id),
+                              extra: project.name,
+                            ),
+                            icon: const Icon(Icons.file_download_outlined),
+                            label: const Text('Project exports'),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -618,6 +638,50 @@ class _MetaTile extends StatelessWidget {
                 Text(value, style: Theme.of(context).textTheme.titleMedium),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProjectActionGroupCard extends StatelessWidget {
+  const _ProjectActionGroupCard({
+    required this.title,
+    required this.subtitle,
+    required this.actions,
+  });
+
+  final String title;
+  final String subtitle;
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            subtitle,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: actions,
           ),
         ],
       ),

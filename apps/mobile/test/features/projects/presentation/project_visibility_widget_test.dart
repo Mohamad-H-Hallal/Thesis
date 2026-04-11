@@ -484,6 +484,43 @@ void main() {
   );
 
   testWidgets(
+    'admin project details groups management and workflow actions clearly',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1080, 1600));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final session = _sessionForRole(UserRole.admin, userId: 'admin-1');
+      final repository = _FakeProjectsRepository(<ProjectSummary>[
+        _project(
+          id: 'admin-project',
+          name: 'Mount Lebanon Field Survey',
+          visibleToViewers: false,
+        ),
+      ]);
+
+      await tester.pumpWidget(
+        _wrapWithScope(
+          session: session,
+          projects: const <ProjectSummary>[],
+          repository: repository,
+          child: const ProjectDetailsScreen(projectId: 'admin-project'),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.text('Admin Actions'), findsOneWidget);
+      expect(find.text('Project administration'), findsOneWidget);
+      expect(find.text('Review and export workflows'), findsOneWidget);
+      expect(find.text('Edit project'), findsOneWidget);
+      expect(find.text('Assignments'), findsOneWidget);
+      expect(find.text('Pending reviews'), findsOneWidget);
+      expect(find.text('Approved reviews'), findsOneWidget);
+      expect(find.text('Project exports'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'project details places the quick map below the main project summary',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(1080, 1600));
