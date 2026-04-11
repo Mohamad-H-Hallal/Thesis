@@ -509,14 +509,14 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
 
-      expect(find.text('Admin Actions'), findsOneWidget);
-      expect(find.text('Project administration'), findsOneWidget);
-      expect(find.text('Review and export workflows'), findsOneWidget);
-      expect(find.text('Edit project'), findsOneWidget);
+      expect(find.text('Admin tools'), findsOneWidget);
+      expect(find.text('Project setup'), findsOneWidget);
+      expect(find.text('Review workflows'), findsOneWidget);
+      expect(find.text('Edit details'), findsOneWidget);
       expect(find.text('Assignments'), findsOneWidget);
-      expect(find.text('Pending reviews'), findsOneWidget);
-      expect(find.text('Approved reviews'), findsOneWidget);
-      expect(find.text('Project exports'), findsOneWidget);
+      expect(find.text('Pending review'), findsOneWidget);
+      expect(find.text('Approved'), findsOneWidget);
+      expect(find.text('Exports'), findsOneWidget);
     },
   );
 

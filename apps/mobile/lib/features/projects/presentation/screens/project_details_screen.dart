@@ -465,21 +465,21 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const SectionHeader(
-                        title: 'Admin Actions',
+                        title: 'Admin tools',
                         subtitle:
-                            'Manage the project first, then move into review and export workflows.',
+                            'Manage this project and its workflow from one place.',
                       ),
                       const SizedBox(height: AppSpacing.sm),
                       _ProjectActionGroupCard(
-                        title: 'Project administration',
-                        subtitle:
-                            'Update the project setup and assignment plan for this workspace.',
+                        icon: Icons.settings_suggest_outlined,
+                        title: 'Project setup',
+                        subtitle: 'Update details and assignments.',
                         actions: [
                           FilledButton.icon(
                             onPressed: () =>
                                 context.push(AppRoutes.projectEdit(project.id)),
                             icon: const Icon(Icons.edit_outlined),
-                            label: const Text('Edit project'),
+                            label: const Text('Edit details'),
                           ),
                           OutlinedButton.icon(
                             onPressed: () => context.push(
@@ -492,9 +492,10 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                       ),
                       const SizedBox(height: AppSpacing.sm),
                       _ProjectActionGroupCard(
-                        title: 'Review and export workflows',
+                        icon: Icons.rule_folder_outlined,
+                        title: 'Review workflows',
                         subtitle:
-                            'Stay inside this project while reviewing submitted work and preparing exports.',
+                            'Moderate submissions and prepare exports without leaving this project.',
                         actions: [
                           FilledButton.icon(
                             onPressed: () => context.push(
@@ -502,7 +503,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                               extra: project.name,
                             ),
                             icon: const Icon(Icons.rate_review_outlined),
-                            label: const Text('Pending reviews'),
+                            label: const Text('Pending review'),
                           ),
                           FilledButton.tonalIcon(
                             onPressed: () => context.push(
@@ -510,7 +511,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                               extra: project.name,
                             ),
                             icon: const Icon(Icons.verified_outlined),
-                            label: const Text('Approved reviews'),
+                            label: const Text('Approved'),
                           ),
                           OutlinedButton.icon(
                             onPressed: () => context.push(
@@ -518,7 +519,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                               extra: project.name,
                             ),
                             icon: const Icon(Icons.file_download_outlined),
-                            label: const Text('Project exports'),
+                            label: const Text('Exports'),
                           ),
                         ],
                       ),
@@ -647,11 +648,13 @@ class _MetaTile extends StatelessWidget {
 
 class _ProjectActionGroupCard extends StatelessWidget {
   const _ProjectActionGroupCard({
+    required this.icon,
     required this.title,
     required this.subtitle,
     required this.actions,
   });
 
+  final IconData icon;
   final String title;
   final String subtitle;
   final List<Widget> actions;
@@ -659,29 +662,63 @@ class _ProjectActionGroupCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
 
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+          Row(
+            children: [
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: scheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(10),
+                  child: Icon(icon, size: 18, color: scheme.onPrimaryContainer),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  title,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: AppSpacing.xs),
           Text(
             subtitle,
             style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
+              color: scheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(height: AppSpacing.md),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: actions,
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final canSplit = constraints.maxWidth >= 520;
+              final buttonWidth = canSplit
+                  ? (constraints.maxWidth - 12) / 2
+                  : constraints.maxWidth;
+
+              return Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: actions
+                    .map(
+                      (action) => SizedBox(
+                        width: buttonWidth,
+                        child: action,
+                      ),
+                    )
+                    .toList(growable: false),
+              );
+            },
           ),
         ],
       ),
