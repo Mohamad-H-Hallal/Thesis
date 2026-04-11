@@ -29,8 +29,8 @@ class ProjectQuickMapCard extends ConsumerWidget {
     final featureCountLabel = featureCount == null
         ? 'Loading map'
         : featureCount == 1
-        ? '1 feature'
-        : '$featureCount features';
+        ? '1 mapped feature'
+        : '$featureCount mapped features';
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
@@ -57,6 +57,25 @@ class ProjectQuickMapCard extends ConsumerWidget {
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: scheme.onSurfaceVariant,
                       ),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        const _QuickMapPill(
+                          icon: Icons.public_outlined,
+                          label: 'Lebanon workspace',
+                        ),
+                        _QuickMapPill(
+                          icon: Icons.place_outlined,
+                          label: featureCountLabel,
+                        ),
+                        const _QuickMapPill(
+                          icon: Icons.map_outlined,
+                          label: 'Street preview',
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -85,170 +104,127 @@ class ProjectQuickMapCard extends ConsumerWidget {
                   color: scheme.surfaceContainerLow,
                   boxShadow: AppShadows.soft,
                 ),
-                child: SizedBox(
-                  height: 236,
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: featuresAsync.when(
-                          loading: () =>
-                              const Center(child: CircularProgressIndicator()),
-                          error: (error, _) => AppEmptyState(
-                            icon: Icons.map_outlined,
-                            title: 'Map preview unavailable',
-                            message: userFacingErrorMessage(
-                              error,
-                              fallback:
-                                  'Unable to load the project preview map right now.',
-                            ),
-                          ),
-                          data: (features) => FlutterMap(
-                            options: MapOptions(
-                              initialCenter: LebanonMapConfig.center,
-                              initialZoom: LebanonMapConfig.quickInitialZoom,
-                              initialCameraFit: LebanonMapConfig.quickFit,
-                              minZoom: LebanonMapConfig.quickMinZoom,
-                              maxZoom: LebanonMapConfig.quickMaxZoom,
-                              cameraConstraint:
-                                  LebanonMapConfig.cameraConstraint,
-                            ),
-                            children: [
-                              TileLayer(
-                                urlTemplate:
-                                    LebanonMapConfig.basemapUrlTemplate(
-                                      LebanonBasemapStyle.street,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      height: 208,
+                      child: Stack(
+                        children: [
+                          Positioned.fill(
+                            child: featuresAsync.when(
+                              loading: () =>
+                                  const Center(child: CircularProgressIndicator()),
+                              error: (error, _) => AppEmptyState(
+                                icon: Icons.map_outlined,
+                                title: 'Map preview unavailable',
+                                message: userFacingErrorMessage(
+                                  error,
+                                  fallback:
+                                      'Unable to load the project preview map right now.',
+                                ),
+                              ),
+                              data: (features) => IgnorePointer(
+                                child: FlutterMap(
+                                  options: MapOptions(
+                                    initialCenter: LebanonMapConfig.center,
+                                    initialZoom: LebanonMapConfig.quickInitialZoom,
+                                    initialCameraFit: LebanonMapConfig.quickFit,
+                                    minZoom: LebanonMapConfig.quickMinZoom,
+                                    maxZoom: LebanonMapConfig.quickMaxZoom,
+                                    cameraConstraint:
+                                        LebanonMapConfig.cameraConstraint,
+                                  ),
+                                  children: [
+                                    TileLayer(
+                                      urlTemplate:
+                                          LebanonMapConfig.basemapUrlTemplate(
+                                            LebanonBasemapStyle.street,
+                                          ),
+                                      tileProvider: NetworkTileProvider(
+                                        silenceExceptions: true,
+                                      ),
+                                      userAgentPackageName: 'lb.gov.gis_collector',
                                     ),
-                                tileProvider: NetworkTileProvider(
-                                  silenceExceptions: true,
+                                    if (LebanonMapConfig.referenceLabelUrlTemplate(
+                                          LebanonBasemapStyle.street,
+                                        ) !=
+                                        null)
+                                      TileLayer(
+                                        urlTemplate:
+                                            LebanonMapConfig.referenceLabelUrlTemplate(
+                                              LebanonBasemapStyle.street,
+                                            )!,
+                                        tileProvider: NetworkTileProvider(
+                                          silenceExceptions: true,
+                                        ),
+                                        userAgentPackageName: 'lb.gov.gis_collector',
+                                      ),
+                                    PolygonLayer(
+                                      polygons: _polygonOverlays(features),
+                                    ),
+                                    PolylineLayer(
+                                      polylines: _polylineOverlays(features),
+                                    ),
+                                    MarkerLayer(
+                                      markers: _markerOverlays(features),
+                                    ),
+                                  ],
                                 ),
-                                userAgentPackageName: 'lb.gov.gis_collector',
-                              ),
-                              if (LebanonMapConfig.referenceLabelUrlTemplate(
-                                    LebanonBasemapStyle.street,
-                                  ) !=
-                                  null)
-                                TileLayer(
-                                  urlTemplate:
-                                      LebanonMapConfig.referenceLabelUrlTemplate(
-                                        LebanonBasemapStyle.street,
-                                      )!,
-                                  tileProvider: NetworkTileProvider(
-                                    silenceExceptions: true,
-                                  ),
-                                  userAgentPackageName: 'lb.gov.gis_collector',
-                                ),
-                              PolygonLayer(
-                                polygons: _polygonOverlays(features),
-                              ),
-                              PolylineLayer(
-                                polylines: _polylineOverlays(features),
-                              ),
-                              MarkerLayer(markers: _markerOverlays(features)),
-                            ],
-                          ),
-                        ),
-                      ),
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  scheme.surface.withValues(alpha: 0.12),
-                                  Colors.transparent,
-                                  scheme.surface.withValues(alpha: 0.08),
-                                ],
-                                stops: const [0, 0.45, 1],
                               ),
                             ),
                           ),
-                        ),
-                      ),
-                      Positioned(
-                        left: 14,
-                        right: 14,
-                        top: 14,
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Expanded(
-                              child: Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  _QuickMapPill(
-                                    icon: Icons.public_outlined,
-                                    label: 'Lebanon-wide view',
+                          Positioned.fill(
+                            child: IgnorePointer(
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      scheme.surface.withValues(alpha: 0.06),
+                                      Colors.transparent,
+                                      scheme.surface.withValues(alpha: 0.10),
+                                    ],
+                                    stops: const [0, 0.5, 1],
                                   ),
-                                ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (onOpenFullscreen != null)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.touch_app_outlined,
+                              size: 16,
+                              color: scheme.primary,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Tap the preview to open the full project map.',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: scheme.onSurfaceVariant,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
                             const SizedBox(width: 8),
-                            _QuickMapPill(
-                              icon: Icons.place_outlined,
-                              label: featureCountLabel,
+                            Icon(
+                              Icons.arrow_forward_rounded,
+                              size: 18,
+                              color: scheme.primary,
                             ),
                           ],
                         ),
                       ),
-                      Positioned(
-                        left: 14,
-                        bottom: 14,
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            const _QuickMapPill(
-                              icon: Icons.touch_app_outlined,
-                              label: 'Tap to explore',
-                            ),
-                            const _QuickMapPill(
-                              icon: Icons.map_outlined,
-                              label: 'Street preview',
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (onOpenFullscreen != null)
-                        Positioned(
-                          right: 12,
-                          bottom: 12,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: scheme.surface.withValues(alpha: 0.92),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.touch_app_outlined,
-                                    size: 16,
-                                    color: scheme.primary,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    'Open full map',
-                                    style: theme.textTheme.labelMedium
-                                        ?.copyWith(
-                                          color: scheme.onSurfaceVariant,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
+                  ],
                 ),
               ),
             ),
@@ -360,19 +336,26 @@ class _QuickMapPill extends StatelessWidget {
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 14, color: scheme.primary),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: scheme.onSurfaceVariant,
-                fontWeight: FontWeight.w700,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 180),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14, color: scheme.primary),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

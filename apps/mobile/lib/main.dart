@@ -9,6 +9,19 @@ void main() {
   runApp(const ProviderScope(child: LebanonGisCollectorApp()));
 }
 
+class AppScrollBehavior extends MaterialScrollBehavior {
+  const AppScrollBehavior();
+
+  @override
+  Widget buildOverscrollIndicator(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) {
+    return child;
+  }
+}
+
 class LebanonGisCollectorApp extends ConsumerWidget {
   const LebanonGisCollectorApp({super.key});
 
@@ -22,6 +35,7 @@ class LebanonGisCollectorApp extends ConsumerWidget {
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: ThemeMode.system,
+      scrollBehavior: const AppScrollBehavior(),
       routerConfig: router,
     );
   }
