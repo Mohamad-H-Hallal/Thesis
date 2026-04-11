@@ -31,6 +31,10 @@ class AppRoutes {
   static String projectAssignments(String id) =>
       '/app/projects/$id/assignments';
   static String projectDetails(String id) => '/app/projects/$id';
+  static String projectReviewQueue(String id) => '/app/projects/$id/reviews';
+  static String projectApprovedReviews(String id) =>
+      '/app/projects/$id/approved-reviews';
+  static String projectExports(String id) => '/app/projects/$id/exports';
 
   static String addFeatureForProject(String projectId) {
     final uri = Uri(

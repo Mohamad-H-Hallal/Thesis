@@ -11,12 +11,16 @@ import '../../features/auth/presentation/screens/signup_screen.dart';
 import '../../features/auth/presentation/screens/splash_screen.dart';
 import '../../features/admin/presentation/screens/category_form_screen.dart';
 import '../../features/admin/presentation/screens/project_assignments_screen.dart';
+import '../../features/exports/presentation/screens/exports_dashboard_screen.dart';
 import '../../features/admin/presentation/screens/project_form_screen.dart';
 import '../../features/map/presentation/screens/add_feature_screen.dart';
 import '../../features/map/presentation/screens/map_screen.dart';
 import '../../features/projects/presentation/screens/project_details_screen.dart';
+import '../../features/review/presentation/screens/review_queue_screen.dart';
 import '../../features/shell/presentation/app_shell_screen.dart';
+import '../network/api_error_message.dart';
 import '../providers/providers.dart';
+import '../widgets/app_snackbar.dart';
 import '../widgets/app_scaffold.dart';
 import 'route_paths.dart';
 
@@ -185,6 +189,91 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
               showBackButton: true,
               showOfflineBanner: false,
               body: ProjectAssignmentsScreen(projectId: projectId),
+            ),
+          );
+        },
+      ),
+      GoRoute(
+        path: '/app/projects/:projectId/reviews',
+        pageBuilder: (context, state) {
+          final projectId = state.pathParameters['projectId'] ?? '';
+          final projectName = state.extra is String ? state.extra as String : null;
+          return _buildPage(
+            state,
+            AppScaffold(
+              title: 'Review queue',
+              showBackButton: true,
+              showOfflineBanner: false,
+              body: ReviewQueueScreen(
+                projectId: projectId,
+                projectName: projectName,
+              ),
+            ),
+          );
+        },
+      ),
+      GoRoute(
+        path: '/app/projects/:projectId/approved-reviews',
+        pageBuilder: (context, state) {
+          final projectId = state.pathParameters['projectId'] ?? '';
+          final projectName = state.extra is String ? state.extra as String : 'Project';
+          return _buildPage(
+            state,
+            AppScaffold(
+              title: 'Approved reviews',
+              showBackButton: true,
+              showOfflineBanner: false,
+              body: ProjectApprovedReviewsScreen(
+                projectId: projectId,
+                projectName: projectName,
+                onOpenMap: (item) => context.push(
+                  AppRoutes.mapForProject(item.projectId, featureId: item.id),
+                ),
+                onReject: (item) async {
+                  try {
+                    await ref
+                        .read(reviewRepositoryProvider)
+                        .reviewFeature(featureId: item.id, status: 'rejected');
+                    ref.read(workflowRefreshTickProvider.notifier).state++;
+                    if (context.mounted) {
+                      AppSnackbar.showSuccess(
+                        context,
+                        'Approved review moved to rejected successfully.',
+                      );
+                    }
+                  } catch (error) {
+                    if (context.mounted) {
+                      AppSnackbar.showError(
+                        context,
+                        userFacingErrorMessage(
+                          error,
+                          fallback:
+                              'Unable to update this approved review right now.',
+                        ),
+                      );
+                    }
+                  }
+                },
+              ),
+            ),
+          );
+        },
+      ),
+      GoRoute(
+        path: '/app/projects/:projectId/exports',
+        pageBuilder: (context, state) {
+          final projectId = state.pathParameters['projectId'] ?? '';
+          final projectName = state.extra is String ? state.extra as String : null;
+          return _buildPage(
+            state,
+            AppScaffold(
+              title: 'Project exports',
+              showBackButton: true,
+              showOfflineBanner: false,
+              body: ExportsDashboardScreen(
+                fixedProjectId: projectId,
+                fixedProjectName: projectName,
+              ),
             ),
           );
         },

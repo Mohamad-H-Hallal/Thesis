@@ -14,7 +14,14 @@ import '../../domain/export_job.dart';
 import '../controllers/exports_controller.dart';
 
 class ExportsDashboardScreen extends ConsumerStatefulWidget {
-  const ExportsDashboardScreen({super.key});
+  const ExportsDashboardScreen({
+    this.fixedProjectId,
+    this.fixedProjectName,
+    super.key,
+  });
+
+  final String? fixedProjectId;
+  final String? fixedProjectName;
 
   @override
   ConsumerState<ExportsDashboardScreen> createState() =>
@@ -65,6 +72,9 @@ class _ExportsDashboardScreenState
             ref.invalidate(projectListProvider(ProjectViewScope.all)),
       ),
       data: (projects) {
+        final fixedProjectId = widget.fixedProjectId?.trim();
+        final hasFixedProject =
+            fixedProjectId != null && fixedProjectId.isNotEmpty;
         if (projects.isEmpty) {
           return const AppEmptyState(
             icon: Icons.folder_off_outlined,
@@ -74,18 +84,36 @@ class _ExportsDashboardScreenState
           );
         }
 
+        if (hasFixedProject) {
+          final project = projects.cast<ProjectSummary?>().firstWhere(
+                (item) => item?.id == fixedProjectId,
+                orElse: () => null,
+              );
+          if (project != null) {
+            _selectedProjectId = project.id;
+            _selectedProjectName = widget.fixedProjectName ?? project.name;
+          }
+        }
+
         if (_selectedProjectId == null ||
             projects.every((project) => project.id != _selectedProjectId)) {
           _selectedProjectId = projects.first.id;
           _selectedProjectName = projects.first.name;
         }
 
+        final visibleJobs = hasFixedProject
+            ? exportState.jobs
+                .where((job) => job.projectId == _selectedProjectId)
+                .toList(growable: false)
+            : exportState.jobs;
+
         return ListView(
           children: [
-            const SectionHeader(
-              title: 'Exports',
-              subtitle:
-                  'Request GeoJSON or shapefile exports and track asynchronous processing.',
+            SectionHeader(
+              title: hasFixedProject ? 'Project exports' : 'Exports',
+              subtitle: hasFixedProject
+                  ? 'Request GeoJSON or shapefile exports for ${_selectedProjectName.isEmpty ? 'this project' : _selectedProjectName}.'
+                  : 'Request GeoJSON or shapefile exports and track asynchronous processing.',
             ),
             const SizedBox(height: AppSpacing.md),
             if (exportState.error?.trim().isNotEmpty == true)
@@ -185,32 +213,41 @@ class _ExportsDashboardScreenState
                     },
                   ),
                   const SizedBox(height: AppSpacing.sm),
-                  DropdownButtonFormField<String>(
-                    initialValue: _selectedProjectId,
-                    isExpanded: true,
-                    decoration: const InputDecoration(labelText: 'Project'),
-                    items: projects
-                        .map(
-                          (project) => DropdownMenuItem(
-                            value: project.id,
-                            child: Text(
-                              project.name,
-                              overflow: TextOverflow.ellipsis,
+                  if (hasFixedProject)
+                    InputDecorator(
+                      decoration: const InputDecoration(labelText: 'Project'),
+                      child: Text(
+                        _selectedProjectName,
+                        style: Theme.of(context).textTheme.bodyLarge,
+                      ),
+                    )
+                  else
+                    DropdownButtonFormField<String>(
+                      initialValue: _selectedProjectId,
+                      isExpanded: true,
+                      decoration: const InputDecoration(labelText: 'Project'),
+                      items: projects
+                          .map(
+                            (project) => DropdownMenuItem(
+                              value: project.id,
+                              child: Text(
+                                project.name,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                          ),
-                        )
-                        .toList(growable: false),
-                    onChanged: (value) {
-                      if (value == null) {
-                        return;
-                      }
-                      final project = projects.firstWhere((p) => p.id == value);
-                      setState(() {
-                        _selectedProjectId = project.id;
-                        _selectedProjectName = project.name;
-                      });
-                    },
-                  ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (value) {
+                        if (value == null) {
+                          return;
+                        }
+                        final project = projects.firstWhere((p) => p.id == value);
+                        setState(() {
+                          _selectedProjectId = project.id;
+                          _selectedProjectName = project.name;
+                        });
+                      },
+                    ),
                   const SizedBox(height: AppSpacing.sm),
                   DropdownButtonFormField<ExportFormat>(
                     initialValue: _selectedFormat,
@@ -280,14 +317,18 @@ class _ExportsDashboardScreenState
                 padding: EdgeInsets.symmetric(vertical: 24),
                 child: Center(child: CircularProgressIndicator()),
               )
-            else if (exportState.jobs.isEmpty)
-              const AppEmptyState(
+            else if (visibleJobs.isEmpty)
+              AppEmptyState(
                 icon: Icons.archive_outlined,
-                title: 'No export jobs yet',
-                message: 'Submit an export request to start async processing.',
+                title: hasFixedProject
+                    ? 'No project exports yet'
+                    : 'No export jobs yet',
+                message: hasFixedProject
+                    ? 'Submit an export request to start processing exports for this project.'
+                    : 'Submit an export request to start async processing.',
               )
             else
-              ...exportState.jobs.map(
+              ...visibleJobs.map(
                 (job) => Padding(
                   padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                   child: _ExportJobCard(

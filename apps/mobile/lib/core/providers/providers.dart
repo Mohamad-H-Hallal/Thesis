@@ -570,6 +570,30 @@ final rejectedReviewQueueProvider = FutureProvider<List<ReviewQueueItem>>((
       .fetchReviewItems(status: 'rejected');
 });
 
+final projectReviewQueueProvider =
+    FutureProvider.family<List<ReviewQueueItem>, String>((ref, projectId) async {
+      ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+      ref.watch(workflowRefreshTickProvider);
+      if (projectId.trim().isEmpty) {
+        return const <ReviewQueueItem>[];
+      }
+      return ref
+          .read(reviewRepositoryProvider)
+          .fetchReviewItems(status: 'pending_review', projectId: projectId);
+    });
+
+final projectRejectedReviewQueueProvider =
+    FutureProvider.family<List<ReviewQueueItem>, String>((ref, projectId) async {
+      ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+      ref.watch(workflowRefreshTickProvider);
+      if (projectId.trim().isEmpty) {
+        return const <ReviewQueueItem>[];
+      }
+      return ref
+          .read(reviewRepositoryProvider)
+          .fetchReviewItems(status: 'rejected', projectId: projectId);
+    });
+
 final projectApprovedReviewQueueProvider =
     FutureProvider.family<List<ReviewQueueItem>, String>((
       ref,
