@@ -16,27 +16,9 @@ class AnimatedReveal extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TweenAnimationBuilder<double>(
-      duration: duration + delay,
-      tween: Tween<double>(begin: 0, end: 1),
-      curve: Curves.easeOutCubic,
-      builder: (context, value, _) {
-        final revealProgress = delay == Duration.zero
-            ? value
-            : ((value -
-                      (delay.inMilliseconds /
-                          (duration + delay).inMilliseconds))
-                  .clamp(0.0, 1.0)
-                  .toDouble());
-
-        return Opacity(
-          opacity: revealProgress,
-          child: Transform.translate(
-            offset: Offset(0, (1 - revealProgress) * offsetY),
-            child: child,
-          ),
-        );
-      },
-    );
+    // Scrollable screens build children lazily; fading them on first build
+    // makes content look dull while the user scrolls. Keep the wrapper, but
+    // render immediately so shared screens stay visually stable.
+    return child;
   }
 }
