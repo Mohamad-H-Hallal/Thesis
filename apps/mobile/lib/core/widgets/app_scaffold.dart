@@ -73,21 +73,12 @@ class AppScaffold extends StatelessWidget {
                   alignment: Alignment.topCenter,
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 1280),
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            scheme.surfaceContainerHighest.withValues(
-                              alpha: 0.35,
-                            ),
-                            scheme.surface.withValues(alpha: 0.0),
-                          ],
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: scheme.surface,
+                          borderRadius: AppRadii.lg,
                         ),
-                        borderRadius: AppRadii.lg,
-                      ),
-                      child: Padding(
+                        child: Padding(
                         padding: const EdgeInsets.all(AppSpacing.sm),
                         child: body,
                       ),

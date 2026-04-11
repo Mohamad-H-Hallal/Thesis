@@ -39,45 +39,14 @@ class ProjectQuickMapCard extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Project map',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Lebanon workspace preview',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        const _QuickMapPill(
-                          icon: Icons.public_outlined,
-                          label: 'Lebanon workspace',
-                        ),
-                        _QuickMapPill(
-                          icon: Icons.place_outlined,
-                          label: featureCountLabel,
-                        ),
-                        const _QuickMapPill(
-                          icon: Icons.map_outlined,
-                          label: 'Street preview',
-                        ),
-                      ],
-                    ),
-                  ],
+                child: Text(
+                  'Project map',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
               if (onOpenFullscreen != null) ...[
@@ -89,6 +58,11 @@ class ProjectQuickMapCard extends ConsumerWidget {
                 ),
               ],
             ],
+          ),
+          const SizedBox(height: 10),
+          _QuickMapPill(
+            icon: Icons.place_outlined,
+            label: featureCountLabel,
           ),
           const SizedBox(height: AppSpacing.md),
           Material(
@@ -108,7 +82,7 @@ class ProjectQuickMapCard extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     SizedBox(
-                      height: 208,
+                      height: 236,
                       child: Stack(
                         children: [
                           Positioned.fill(
@@ -128,8 +102,8 @@ class ProjectQuickMapCard extends ConsumerWidget {
                                 child: FlutterMap(
                                   options: MapOptions(
                                     initialCenter: LebanonMapConfig.center,
-                                    initialZoom: LebanonMapConfig.quickInitialZoom,
-                                    initialCameraFit: LebanonMapConfig.quickFit,
+                                    initialZoom:
+                                        LebanonMapConfig.quickInitialZoom - 0.15,
                                     minZoom: LebanonMapConfig.quickMinZoom,
                                     maxZoom: LebanonMapConfig.quickMaxZoom,
                                     cameraConstraint:
@@ -174,61 +148,42 @@ class ProjectQuickMapCard extends ConsumerWidget {
                               ),
                             ),
                           ),
-                          Positioned.fill(
-                            child: IgnorePointer(
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      scheme.surface.withValues(alpha: 0.06),
-                                      Colors.transparent,
-                                      scheme.surface.withValues(alpha: 0.10),
-                                    ],
-                                    stops: const [0, 0.5, 1],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
                         ],
                       ),
                     ),
-                    if (onOpenFullscreen != null)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.touch_app_outlined,
-                              size: 16,
-                              color: scheme.primary,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'Tap the preview to open the full project map.',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: scheme.onSurfaceVariant,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Icon(
-                              Icons.arrow_forward_rounded,
-                              size: 18,
-                              color: scheme.primary,
-                            ),
-                          ],
-                        ),
-                      ),
                   ],
                 ),
               ),
             ),
           ),
+          if (onOpenFullscreen != null) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Icon(
+                  Icons.touch_app_outlined,
+                  size: 16,
+                  color: scheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Tap the preview to open the full project map.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.arrow_forward_rounded,
+                  size: 18,
+                  color: scheme.primary,
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );

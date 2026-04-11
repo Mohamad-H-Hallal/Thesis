@@ -351,8 +351,6 @@ void main() {
 
       expect(find.text('Project map'), findsOneWidget);
       expect(find.text('2 mapped features'), findsOneWidget);
-      expect(find.text('Lebanon workspace'), findsOneWidget);
-      expect(find.text('Street preview'), findsOneWidget);
       expect(
         find.text('Tap the preview to open the full project map.'),
         findsOneWidget,
