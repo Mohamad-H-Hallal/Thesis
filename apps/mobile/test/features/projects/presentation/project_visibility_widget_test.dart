@@ -443,8 +443,8 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
 
-      expect(find.text('Project is now visible to viewers.'), findsOneWidget);
-      expect(find.text('Viewer visible'), findsOneWidget);
+      expect(find.text('Project is now visible to users.'), findsOneWidget);
+      expect(find.text('User visible'), findsOneWidget);
     },
   );
 
@@ -474,12 +474,14 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
 
-      expect(find.text('Viewer access'), findsOneWidget);
+      expect(find.text('User access'), findsOneWidget);
       expect(find.text('Read only'), findsOneWidget);
-      expect(find.text('Open Map'), findsNothing);
+      expect(find.text('Open Map'), findsOneWidget);
       expect(find.text('New Feature'), findsNothing);
       expect(find.text('Drafts'), findsNothing);
-      expect(find.text('Visible to viewers'), findsNothing);
+      expect(find.text('Visible to users'), findsNothing);
+      expect(find.textContaining('Pending reviews:'), findsNothing);
+      expect(find.text('Queue'), findsNothing);
     },
   );
 

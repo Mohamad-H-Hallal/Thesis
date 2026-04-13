@@ -535,9 +535,9 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                     _visibleToViewers = value;
                                   });
                                 },
-                                title: const Text('Visible to viewers'),
+                                title: const Text('Visible to users'),
                                 subtitle: const Text(
-                                  'When enabled and active/completed, this project is visible in the viewer and public project list.',
+                                  'When enabled and active/completed, this project is visible in the user and public project list.',
                                 ),
                               ),
                               SwitchListTile(

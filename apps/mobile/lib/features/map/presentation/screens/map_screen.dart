@@ -604,7 +604,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       );
       return;
     }
-    _runMainMapAction(_moveToProjectWorkspace, queueUntilReady: queueUntilReady);
+    _runMainMapAction(
+      _moveToProjectWorkspace,
+      queueUntilReady: queueUntilReady,
+    );
   }
 
   void _zoomProjectWorkspaceBy(double delta) {
@@ -931,6 +934,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Widget build(BuildContext context) {
     final session = ref.watch(authControllerProvider).session;
     final role = session?.user.role ?? UserRole.viewer;
+    final isUserRole = role == UserRole.viewer;
     final syncState = ref.watch(syncControllerProvider);
     final projectsAsync = ref.watch(mapProjectsProvider);
 
@@ -959,7 +963,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             icon: Icons.map_outlined,
             title: 'No projects available for map viewing',
             message:
-                'Projects appear here once they are viewer-visible or assigned to your account.',
+                'Projects appear here once they are user-visible or assigned to your account.',
           );
         }
 
@@ -1026,13 +1030,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       avatar: Icon(_basemapStyleIcon(_basemapStyle), size: 18),
                       label: Text(LebanonMapConfig.basemapLabel(_basemapStyle)),
                     ),
-                    Chip(
-                      label: Text(
-                        project.visibleToViewers
-                            ? 'Viewer-visible'
-                            : 'Restricted',
+                    if (!isUserRole)
+                      Chip(
+                        label: Text(
+                          project.visibleToViewers
+                              ? 'User-visible'
+                              : 'Restricted',
+                        ),
                       ),
-                    ),
                     Chip(
                       avatar: Icon(
                         canCollectOnMap
@@ -1047,37 +1052,39 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   ],
                 ),
                 const SizedBox(height: AppSpacing.sm),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final status in const [
-                      'approved',
-                      'pending_review',
-                      'rejected',
-                      'draft',
-                    ])
-                      FilterChip(
-                        label: Text(_statusLabel(status)),
-                        avatar: Icon(
-                          Icons.circle,
-                          size: 12,
-                          color: _statusColor(status),
+                if (!isUserRole) ...[
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final status in const [
+                        'approved',
+                        'pending_review',
+                        'rejected',
+                        'draft',
+                      ])
+                        FilterChip(
+                          label: Text(_statusLabel(status)),
+                          avatar: Icon(
+                            Icons.circle,
+                            size: 12,
+                            color: _statusColor(status),
+                          ),
+                          selected: _visibleStatuses.contains(status),
+                          onSelected: (selected) {
+                            setState(() {
+                              if (selected) {
+                                _visibleStatuses.add(status);
+                              } else if (_visibleStatuses.length > 1) {
+                                _visibleStatuses.remove(status);
+                              }
+                            });
+                          },
                         ),
-                        selected: _visibleStatuses.contains(status),
-                        onSelected: (selected) {
-                          setState(() {
-                            if (selected) {
-                              _visibleStatuses.add(status);
-                            } else if (_visibleStatuses.length > 1) {
-                              _visibleStatuses.remove(status);
-                            }
-                          });
-                        },
-                      ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.sm),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                ],
                 Wrap(
                   spacing: 10,
                   runSpacing: 10,
@@ -1111,32 +1118,34 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: AppSpacing.sm),
-                offlineMapPackageAsync.when(
-                  loading: () =>
-                      const Text('Checking offline Lebanon map package...'),
-                  error: (error, _) => Text(
-                    userFacingErrorMessage(
-                      error,
-                      fallback:
-                          'Offline map metadata is unavailable right now.',
+                if (!isUserRole) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  offlineMapPackageAsync.when(
+                    loading: () =>
+                        const Text('Checking offline Lebanon map package...'),
+                    error: (error, _) => Text(
+                      userFacingErrorMessage(
+                        error,
+                        fallback:
+                            'Offline map metadata is unavailable right now.',
+                      ),
+                    ),
+                    data: (offlinePackage) => _OfflineMapStatusCard(
+                      package: offlinePackage,
+                      basemapStyle: _basemapStyle,
+                      isDownloading: _isDownloadingOffline,
+                      progressLabel: _offlineDownloadProgressLabel,
+                      statusLabel: _offlineDownloadResultLabel,
+                      onDownloadOverview: offlinePackage == null
+                          ? null
+                          : () => _downloadLebanonOverview(offlinePackage),
+                      onDownloadVisible:
+                          offlinePackage == null || !_isMainMapReady
+                          ? null
+                          : () => _downloadVisibleRegion(offlinePackage),
                     ),
                   ),
-                  data: (offlinePackage) => _OfflineMapStatusCard(
-                    package: offlinePackage,
-                    basemapStyle: _basemapStyle,
-                    isDownloading: _isDownloadingOffline,
-                    progressLabel: _offlineDownloadProgressLabel,
-                    statusLabel: _offlineDownloadResultLabel,
-                    onDownloadOverview: offlinePackage == null
-                        ? null
-                        : () => _downloadLebanonOverview(offlinePackage),
-                    onDownloadVisible:
-                        offlinePackage == null || !_isMainMapReady
-                        ? null
-                        : () => _downloadVisibleRegion(offlinePackage),
-                  ),
-                ),
+                ],
                 if (role == UserRole.contributor) ...[
                   const SizedBox(height: AppSpacing.sm),
                   _SyncStatusLine(state: syncState),
@@ -1162,9 +1171,20 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   ref.invalidate(projectMapFeaturesProvider(project.id)),
             ),
             data: (features) {
-              final quickFeatureChips = _deriveFeatureChips(project, features);
-              final filteredFeatures = features
-                  .where((feature) => _visibleStatuses.contains(feature.status))
+              final scopedFeatures = isUserRole
+                  ? features
+                        .where((feature) => feature.status == 'approved')
+                        .toList(growable: false)
+                  : features;
+              final quickFeatureChips = _deriveFeatureChips(
+                project,
+                scopedFeatures,
+              );
+              final filteredFeatures = scopedFeatures
+                  .where(
+                    (feature) =>
+                        isUserRole || _visibleStatuses.contains(feature.status),
+                  )
                   .where(
                     (feature) => _matchesSearchAndChip(
                       feature,
@@ -1189,6 +1209,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 hasCollectionAccess: hasContributorAssignment,
                 canCollectOnMap: canCollectOnMap,
                 canReview: canReview,
+                canFilterStatuses: !isUserRole,
                 embeddedControls: embeddedControls,
               );
             },
@@ -1250,6 +1271,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required bool hasCollectionAccess,
     required bool canCollectOnMap,
     required bool canReview,
+    required bool canFilterStatuses,
     Widget? embeddedControls,
   }) {
     return LayoutBuilder(
@@ -1269,7 +1291,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 title: 'No map features match the current filters',
                 message: hasCollectionAccess
                     ? 'Use Add Feature to collect orchard, field, or tree records for this project.'
-                    : 'Approved or submitted features will appear here when they exist.',
+                    : canFilterStatuses
+                    ? 'Approved or submitted features will appear here when they exist.'
+                    : 'Approved features will appear here when they exist.',
                 actionLabel: hasCollectionAccess ? 'Add Feature' : null,
                 onAction: hasCollectionAccess
                     ? () {
@@ -1328,8 +1352,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                     ],
                                   ),
                                 ),
-                                const SizedBox(width: AppSpacing.sm),
-                                StatusChip(status: feature.status),
+                                if (canFilterStatuses) ...[
+                                  const SizedBox(width: AppSpacing.sm),
+                                  StatusChip(status: feature.status),
+                                ],
                               ],
                             ),
                             const SizedBox(height: AppSpacing.xs),
@@ -1375,21 +1401,29 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 ],
               );
 
-        final legendCard = AppCard(
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _LegendChip(label: 'Approved', color: _statusColor('approved')),
-              _LegendChip(
-                label: 'Pending review',
-                color: _statusColor('pending_review'),
-              ),
-              _LegendChip(label: 'Rejected', color: _statusColor('rejected')),
-              _LegendChip(label: 'Draft', color: _statusColor('draft')),
-            ],
-          ),
-        );
+        final legendCard = canFilterStatuses
+            ? AppCard(
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _LegendChip(
+                      label: 'Approved',
+                      color: _statusColor('approved'),
+                    ),
+                    _LegendChip(
+                      label: 'Pending review',
+                      color: _statusColor('pending_review'),
+                    ),
+                    _LegendChip(
+                      label: 'Rejected',
+                      color: _statusColor('rejected'),
+                    ),
+                    _LegendChip(label: 'Draft', color: _statusColor('draft')),
+                  ],
+                ),
+              )
+            : null;
         final useMobileWorkspace =
             constraints.maxWidth < 900 ||
             constraints.maxHeight < 820 ||
@@ -1406,6 +1440,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               hasCollectionAccess: hasCollectionAccess,
               canCollectOnMap: canCollectOnMap,
               canReview: canReview,
+              canFilterStatuses: canFilterStatuses,
             );
           }
           return Stack(
@@ -1471,8 +1506,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           ],
                           null => null,
                         },
-                        legendCard,
-                        const SizedBox(height: AppSpacing.sm),
+                        if (legendCard != null) ...[
+                          legendCard,
+                          const SizedBox(height: AppSpacing.sm),
+                        ],
                         featureListContent,
                       ],
                     ),
@@ -1492,8 +1529,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               flex: 4,
               child: Column(
                 children: [
-                  legendCard,
-                  const SizedBox(height: AppSpacing.sm),
+                  if (legendCard != null) ...[
+                    legendCard,
+                    const SizedBox(height: AppSpacing.sm),
+                  ],
                   Expanded(
                     child: SingleChildScrollView(
                       physics: const AlwaysScrollableScrollPhysics(),
@@ -1518,6 +1557,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required bool hasCollectionAccess,
     required bool canCollectOnMap,
     required bool canReview,
+    required bool canFilterStatuses,
   }) {
     _scheduleProjectAutoFrame(project: project);
     _scheduleProjectMapTilePrime(offlinePackage);
@@ -1543,7 +1583,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           )
         : null;
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
-    final suppressFloatingToolsForSearch = _projectMapSearchOpen || keyboardVisible;
+    final suppressFloatingToolsForSearch =
+        _projectMapSearchOpen || keyboardVisible;
     final addFeatureBottom = _isProjectMapCaptureMode ? 102.0 : 18.0;
     final rightRailBottom = _isProjectMapCaptureMode
         ? 116.0
@@ -1674,12 +1715,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                         _visibleStatusSummaryLabel(),
                                     onBasemapStyleChanged:
                                         _setProjectMapBasemapStyle,
-                                    onOpenOfflineTools: () =>
-                                        _openOfflineToolsSheet(
-                                          offlinePackage: offlinePackage,
-                                          hasCollectionAccess:
-                                              hasCollectionAccess,
-                                        ),
+                                    onOpenOfflineTools: canFilterStatuses
+                                        ? () => _openOfflineToolsSheet(
+                                            offlinePackage: offlinePackage,
+                                            hasCollectionAccess:
+                                                hasCollectionAccess,
+                                          )
+                                        : null,
                                     onToggleExpanded: () =>
                                         _setProjectMapPanelState(
                                           visible: true,
@@ -1687,6 +1729,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                         ),
                                     onHidePanel: () =>
                                         _setProjectMapPanelVisible(false),
+                                    canFilterStatuses: canFilterStatuses,
                                   ),
                                 )
                               : const SizedBox.shrink(),
@@ -1729,7 +1772,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               ),
             ),
           ),
-        if (!_isProjectMapSecondaryOverlayOpen && !suppressFloatingToolsForSearch)
+        if (!_isProjectMapSecondaryOverlayOpen &&
+            !suppressFloatingToolsForSearch)
           Positioned(
             right: 14,
             bottom: rightRailBottom,
@@ -1742,6 +1786,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       features: features,
                       canCollectOnMap: canCollectOnMap,
                       canReview: canReview,
+                      canFilterStatuses: canFilterStatuses,
                     ),
               onCenterCurrentLocation: _isLocating
                   ? null
@@ -1845,9 +1890,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             labelOverlayUrl != null && !_isBasemapTransitioning;
         final theme = Theme.of(context);
         return FlutterMap(
-          key: ValueKey<String>(
-            'project_map_${project.id}',
-          ),
+          key: ValueKey<String>('project_map_${project.id}'),
           mapController: _mapController,
           options: _mainMapOptions,
           children: [
@@ -2039,7 +2082,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             builder: (context, snapshot) {
               final labelOverlayUrl =
                   LebanonMapConfig.referenceLabelUrlTemplate(_basemapStyle);
-              final hasSavedOfflineImagery = snapshot.data?.hasCachedTiles ?? false;
+              final hasSavedOfflineImagery =
+                  snapshot.data?.hasCachedTiles ?? false;
               final canUseSavedOfflineImagery =
                   snapshot.data != null && hasSavedOfflineImagery;
               final preferSavedImagery =
@@ -2201,7 +2245,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           label: Text('Lebanon only'),
                         ),
                         Chip(
-                          avatar: Icon(_basemapStyleIcon(_basemapStyle), size: 18),
+                          avatar: Icon(
+                            _basemapStyleIcon(_basemapStyle),
+                            size: 18,
+                          ),
                           label: Text(
                             LebanonMapConfig.basemapDescription(_basemapStyle),
                           ),
@@ -2465,6 +2512,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required List<MapFeatureSummary> features,
     required bool canCollectOnMap,
     required bool canReview,
+    required bool canFilterStatuses,
   }) async {
     if (mounted) {
       setState(() {
@@ -2484,6 +2532,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           searchBlobBuilder: _featureSearchBlob,
           statusLabelBuilder: _statusLabel,
           statusColorBuilder: _statusColor,
+          canFilterStatuses: canFilterStatuses,
           onAddFeature: canCollectOnMap
               ? () {
                   Navigator.of(sheetContext).pop();
@@ -3439,6 +3488,7 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
     required this.onOpenOfflineTools,
     required this.onToggleExpanded,
     required this.onHidePanel,
+    required this.canFilterStatuses,
   });
 
   final ProjectSummary project;
@@ -3461,14 +3511,16 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
   final ValueChanged<String> onToggleVisibleStatus;
   final String visibleStatusSummaryLabel;
   final ValueChanged<LebanonBasemapStyle> onBasemapStyleChanged;
-  final VoidCallback onOpenOfflineTools;
+  final VoidCallback? onOpenOfflineTools;
   final VoidCallback onToggleExpanded;
   final VoidCallback onHidePanel;
+  final bool canFilterStatuses;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final openOfflineTools = onOpenOfflineTools;
     final activeFilterLabel = selectedFeatureChip ?? 'All features';
     final visibleCountLabel = featureCount == 1
         ? '1 feature'
@@ -3566,11 +3618,12 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                                 basemapStyle: basemapStyle,
                                 onSelected: onBasemapStyleChanged,
                               ),
-                              _MapPanelIconButton(
-                                tooltip: 'Offline map',
-                                icon: Icons.download_for_offline_outlined,
-                                onPressed: onOpenOfflineTools,
-                              ),
+                              if (openOfflineTools != null)
+                                _MapPanelIconButton(
+                                  tooltip: 'Offline map',
+                                  icon: Icons.download_for_offline_outlined,
+                                  onPressed: openOfflineTools,
+                                ),
                               _MapPanelIconButton(
                                 tooltip: isSearchOpen
                                     ? 'Close search'
@@ -3634,9 +3687,10 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                               icon: Icons.search,
                               label: searchSummaryLabel!,
                             ),
-                          if (!_isDefaultStatusSummary(
-                            visibleStatusSummaryLabel,
-                          ))
+                          if (canFilterStatuses &&
+                              !_isDefaultStatusSummary(
+                                visibleStatusSummaryLabel,
+                              ))
                             _MapInfoPill(
                               icon: Icons.visibility_outlined,
                               label: visibleStatusSummaryLabel,
@@ -3658,30 +3712,33 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                   ],
                   if (isExpanded) ...[
                     const SizedBox(height: 10),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          FilterChip(
-                            label: const Text('All pins'),
-                            selected:
-                                visibleStatuses.length ==
-                                _MapScreenState._projectMapStatusOrder.length,
-                            onSelected: (_) => onResetVisibleStatuses(),
-                          ),
-                          for (final status
-                              in _MapScreenState._projectMapStatusOrder) ...[
-                            const SizedBox(width: 8),
+                    if (canFilterStatuses) ...[
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
                             FilterChip(
-                              label: Text(_statusFilterLabel(status)),
-                              selected: visibleStatuses.contains(status),
-                              onSelected: (_) => onToggleVisibleStatus(status),
+                              label: const Text('All pins'),
+                              selected:
+                                  visibleStatuses.length ==
+                                  _MapScreenState._projectMapStatusOrder.length,
+                              onSelected: (_) => onResetVisibleStatuses(),
                             ),
+                            for (final status
+                                in _MapScreenState._projectMapStatusOrder) ...[
+                              const SizedBox(width: 8),
+                              FilterChip(
+                                label: Text(_statusFilterLabel(status)),
+                                selected: visibleStatuses.contains(status),
+                                onSelected: (_) =>
+                                    onToggleVisibleStatus(status),
+                              ),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 10),
+                      const SizedBox(height: 10),
+                    ],
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: Row(
@@ -4197,11 +4254,7 @@ class _MapStyleMenuButton extends StatelessWidget {
                   ),
                   if (style == basemapStyle) ...[
                     const SizedBox(width: AppSpacing.sm),
-                    Icon(
-                      Icons.check_rounded,
-                      size: 18,
-                      color: scheme.primary,
-                    ),
+                    Icon(Icons.check_rounded, size: 18, color: scheme.primary),
                   ],
                 ],
               ),
@@ -4537,6 +4590,7 @@ class _ProjectFeatureBrowserSheet extends StatefulWidget {
     required this.project,
     required this.features,
     required this.canCollectOnMap,
+    required this.canFilterStatuses,
     required this.featureTitleBuilder,
     required this.featureSubtitleBuilder,
     required this.searchBlobBuilder,
@@ -4549,6 +4603,7 @@ class _ProjectFeatureBrowserSheet extends StatefulWidget {
   final ProjectSummary project;
   final List<MapFeatureSummary> features;
   final bool canCollectOnMap;
+  final bool canFilterStatuses;
   final String Function(MapFeatureSummary feature) featureTitleBuilder;
   final String Function(MapFeatureSummary feature) featureSubtitleBuilder;
   final String Function(MapFeatureSummary feature) searchBlobBuilder;
@@ -4585,7 +4640,9 @@ class _ProjectFeatureBrowserSheetState
     final query = _searchController.text.trim().toLowerCase();
     return widget.features
         .where((feature) {
-          if (_statusFilter != null && feature.status != _statusFilter) {
+          if (widget.canFilterStatuses &&
+              _statusFilter != null &&
+              feature.status != _statusFilter) {
             return false;
           }
           if (_geometryTypeFilter != null &&
@@ -4686,34 +4743,35 @@ class _ProjectFeatureBrowserSheetState
                 onChanged: (_) => setState(() {}),
               ),
               const SizedBox(height: AppSpacing.sm),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    ChoiceChip(
-                      label: const Text('All'),
-                      selected: _statusFilter == null,
-                      onSelected: (_) {
-                        setState(() {
-                          _statusFilter = null;
-                        });
-                      },
-                    ),
-                    for (final status in _statusOrder) ...[
-                      const SizedBox(width: 8),
+              if (widget.canFilterStatuses)
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
                       ChoiceChip(
-                        label: Text(widget.statusLabelBuilder(status)),
-                        selected: _statusFilter == status,
-                        onSelected: (selected) {
+                        label: const Text('All'),
+                        selected: _statusFilter == null,
+                        onSelected: (_) {
                           setState(() {
-                            _statusFilter = selected ? status : null;
+                            _statusFilter = null;
                           });
                         },
                       ),
+                      for (final status in _statusOrder) ...[
+                        const SizedBox(width: 8),
+                        ChoiceChip(
+                          label: Text(widget.statusLabelBuilder(status)),
+                          selected: _statusFilter == status,
+                          onSelected: (selected) {
+                            setState(() {
+                              _statusFilter = selected ? status : null;
+                            });
+                          },
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
-              ),
               if (geometryTypes.length > 1) ...[
                 const SizedBox(height: AppSpacing.sm),
                 SingleChildScrollView(
@@ -4752,8 +4810,9 @@ class _ProjectFeatureBrowserSheetState
                 AppEmptyState(
                   icon: Icons.layers_clear_outlined,
                   title: 'No features match these filters',
-                  message:
-                      'Try a different search, status, or geometry filter for this project.',
+                  message: widget.canFilterStatuses
+                      ? 'Try a different search, status, or geometry filter for this project.'
+                      : 'Try a different search or geometry filter for this project.',
                   actionLabel: widget.canCollectOnMap ? 'Add Feature' : null,
                   onAction: widget.onAddFeature,
                 )
@@ -4795,8 +4854,10 @@ class _ProjectFeatureBrowserSheetState
                               ],
                             ),
                           ),
-                          const SizedBox(width: AppSpacing.sm),
-                          StatusChip(status: feature.status),
+                          if (widget.canFilterStatuses) ...[
+                            const SizedBox(width: AppSpacing.sm),
+                            StatusChip(status: feature.status),
+                          ],
                         ],
                       ),
                     ),

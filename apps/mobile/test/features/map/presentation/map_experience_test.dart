@@ -619,6 +619,71 @@ void main() {
     },
   );
 
+  testWidgets(
+    'viewer project map stays read-only and shows only approved features',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(430, 932));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        _wrapWithScope(
+          overrides: <Override>[
+            authControllerProvider.overrideWith(
+              (ref) => _AuthenticatedAuthController(_session(UserRole.viewer)),
+            ),
+            syncControllerProvider.overrideWith(
+              (ref) => _buildSyncController(),
+            ),
+            currentLocationServiceProvider.overrideWithValue(
+              _FakeCurrentLocationService(
+                const CurrentLocationSnapshot(
+                  position: LatLng(33.8938, 35.5018),
+                  accuracyMeters: 6,
+                ),
+              ),
+            ),
+            mapProjectsProvider.overrideWith(
+              (ref) async => <ProjectSummary>[_projectSummary()],
+            ),
+            projectMapFeaturesProvider.overrideWith(
+              (ref, projectId) async => _projectFeatures(),
+            ),
+            offlineMapPackageProvider.overrideWith(
+              (ref) async => _offlinePackage(),
+            ),
+          ],
+          child: const MapScreen(
+            initialProjectId: 'project-1',
+            lockProjectSelection: true,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.byTooltip('Offline map'), findsNothing);
+      expect(find.byTooltip('Add Feature'), findsNothing);
+      expect(find.text('1 feature'), findsWidgets);
+      expect(find.text('User-visible'), findsNothing);
+
+      await tester.tap(find.byTooltip('Show quick filters'));
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(FilterChip, 'All pins'), findsNothing);
+      expect(find.widgetWithText(FilterChip, 'Pending review'), findsNothing);
+      expect(find.text('Street view'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Browse project features'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Project features'), findsOneWidget);
+      expect(find.textContaining('1 of 1 item(s)'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, 'Pending'), findsNothing);
+      expect(find.textContaining('Karim'), findsNothing);
+      expect(find.textContaining('Rana'), findsWidgets);
+    },
+  );
+
   testWidgets('map screen handles out-of-lebanon current location gracefully', (
     tester,
   ) async {

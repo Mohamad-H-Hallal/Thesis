@@ -71,7 +71,8 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
                 title: 'Unable to load projects',
                 message: userFacingErrorMessage(
                   error,
-                  fallback: 'Unable to load projects right now. Please try again.',
+                  fallback:
+                      'Unable to load projects right now. Please try again.',
                 ),
                 actionLabel: 'Retry',
                 onAction: () =>
@@ -185,18 +186,19 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
                                                 ProjectAssignmentStatus.pending
                                             ? 'Access request pending'
                                             : project.currentUserAssignmentStatus ==
-                                                    ProjectAssignmentStatus.rejected
-                                                ? 'Access request rejected'
-                                                : contributorReadOnly
-                                                    ? 'Read-only public view'
-                                                    : 'Also assigned',
+                                                  ProjectAssignmentStatus
+                                                      .rejected
+                                            ? 'Access request rejected'
+                                            : contributorReadOnly
+                                            ? 'Read-only public view'
+                                            : 'Also assigned',
                                       ),
                                     ),
                                   if (role == UserRole.admin)
                                     Chip(
                                       label: Text(
                                         project.visibleToViewers
-                                            ? 'Viewer visible'
+                                            ? 'User visible'
                                             : 'Contributor only',
                                       ),
                                     ),
@@ -245,7 +247,7 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
   String _subtitleForScope(UserRole role, ProjectViewScope scope) {
     switch (scope) {
       case ProjectViewScope.public:
-        return 'Projects published by admins for read-only public and viewer access.';
+        return 'Projects published by admins for read-only public and user access.';
       case ProjectViewScope.assigned:
         return role == UserRole.admin
             ? 'Project operations and assignment-linked workstreams.'

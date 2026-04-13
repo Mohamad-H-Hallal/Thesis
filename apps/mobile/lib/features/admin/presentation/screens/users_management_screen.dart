@@ -214,7 +214,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
             const SectionHeader(
               title: 'Users',
               subtitle:
-                  'Search, filter, block, and manage viewer, contributor, and admin accounts.',
+                  'Search, filter, block, and manage user, contributor, and admin accounts.',
             ),
             const SizedBox(height: AppSpacing.sm),
             AppCard(

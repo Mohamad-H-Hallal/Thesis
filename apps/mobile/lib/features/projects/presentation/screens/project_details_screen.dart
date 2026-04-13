@@ -63,7 +63,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
         AppSnackbar.showSuccess(
           context,
           value
-              ? 'Project is now visible to viewers.'
+              ? 'Project is now visible to users.'
               : 'Project is now restricted to admins and contributors.',
         );
       }
@@ -223,6 +223,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
           );
         }
 
+        final isUserRole = role == UserRole.viewer;
         final hasContributorAssignment =
             role == UserRole.contributor &&
             project.hasApprovedCurrentUserAssignment;
@@ -297,18 +298,20 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                               'Schedule ${_formatDate(project.startDate)} -> ${_formatDate(project.endDate)}',
                             ),
                           ),
-                        Chip(
-                          label: Text(
-                            project.visibleToViewers
-                                ? 'Viewer visible'
-                                : 'Contributor only',
+                        if (!isUserRole)
+                          Chip(
+                            label: Text(
+                              project.visibleToViewers
+                                  ? 'User visible'
+                                  : 'Contributor only',
+                            ),
                           ),
-                        ),
-                        Chip(
-                          label: Text(
-                            'Pending reviews: ${project.pendingReviews}',
+                        if (!isUserRole)
+                          Chip(
+                            label: Text(
+                              'Pending reviews: ${project.pendingReviews}',
+                            ),
                           ),
-                        ),
                         Chip(
                           label: Text(
                             project.requiresPhotos
@@ -333,10 +336,10 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                     onChanged: _updatingVisibility
                         ? null
                         : (value) => _toggleViewerVisibility(value),
-                    title: const Text('Visible to viewers'),
+                    title: const Text('Visible to users'),
                     subtitle: Text(
                       project.visibleToViewers
-                          ? 'Viewers can see this project while it stays active or completed.'
+                          ? 'Users can see this project while it stays active or completed.'
                           : 'Only admins and assigned contributors can access this project.',
                     ),
                   ),
@@ -361,11 +364,12 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                       value: '${project.approvedFeatures}',
                       icon: Icons.check_circle_outline,
                     ),
-                    _MetaTile(
-                      label: 'Queue',
-                      value: '${project.pendingReviews}',
-                      icon: Icons.pending_actions_outlined,
-                    ),
+                    if (!isUserRole)
+                      _MetaTile(
+                        label: 'Queue',
+                        value: '${project.pendingReviews}',
+                        icon: Icons.pending_actions_outlined,
+                      ),
                     if (role == UserRole.viewer ||
                         (role == UserRole.contributor &&
                             !hasContributorAssignment))
@@ -387,13 +391,12 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                   spacing: 16,
                   runSpacing: 16,
                   children: [
-                    if (role != UserRole.viewer)
-                      FilledButton.icon(
-                        onPressed: () =>
-                            context.push(AppRoutes.mapForProject(project.id)),
-                        icon: const Icon(Icons.map_outlined),
-                        label: const Text('Open Map'),
-                      ),
+                    FilledButton.icon(
+                      onPressed: () =>
+                          context.push(AppRoutes.mapForProject(project.id)),
+                      icon: const Icon(Icons.map_outlined),
+                      label: const Text('Open Map'),
+                    ),
                     if (role == UserRole.contributor &&
                         hasContributorAssignment)
                       FilledButton.icon(
@@ -583,7 +586,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                 child: AppCard(
                   child: ListTile(
                     leading: Icon(Icons.info_outline),
-                    title: Text('Viewer access'),
+                    title: Text('User access'),
                     subtitle: Text(
                       'This project is visible in read-only mode. Editing and submission actions are disabled.',
                     ),
@@ -711,10 +714,7 @@ class _ProjectActionGroupCard extends StatelessWidget {
                 runSpacing: 12,
                 children: actions
                     .map(
-                      (action) => SizedBox(
-                        width: buttonWidth,
-                        child: action,
-                      ),
+                      (action) => SizedBox(width: buttonWidth, child: action),
                     )
                     .toList(growable: false),
               );

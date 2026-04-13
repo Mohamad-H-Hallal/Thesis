@@ -49,7 +49,7 @@ class _TestAuthRepository implements AuthRepository {
     }
     return role == UserRole.contributor
         ? 'Your contributor request is pending admin approval.'
-        : 'Viewer account created successfully. You can log in now.';
+        : 'Account created successfully. You can log in now.';
   }
 
   @override

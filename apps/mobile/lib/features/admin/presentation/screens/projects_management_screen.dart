@@ -418,7 +418,7 @@ class _ProjectsManagementScreenState
                                   Chip(
                                     label: Text(
                                       project.visibleToViewers
-                                          ? 'Viewer visible'
+                                          ? 'User visible'
                                           : 'Contributor only',
                                     ),
                                   ),

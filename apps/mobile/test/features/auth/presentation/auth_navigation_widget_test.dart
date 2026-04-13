@@ -546,7 +546,7 @@ void main() {
       final segmented = find.byType(SegmentedButton<UserRole>);
       final viewerSegment = find.descendant(
         of: segmented,
-        matching: find.text('Viewer'),
+        matching: find.text('User'),
       );
       await tester.ensureVisible(viewerSegment);
       await tester.tap(viewerSegment, warnIfMissed: false);
@@ -554,7 +554,7 @@ void main() {
 
       final submitButton = find.widgetWithText(
         FilledButton,
-        'Create viewer account',
+        'Create user account',
       );
       await tester.ensureVisible(submitButton);
       tester.widget<FilledButton>(submitButton).onPressed!.call();

@@ -198,7 +198,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                           ),
                           const SizedBox(height: AppSpacing.xs),
                           Text(
-                            'Choose viewer access for immediate login or request contributor access for field collection.',
+                            'Choose user access for immediate login or request contributor access for field collection.',
                             style: Theme.of(context).textTheme.bodyMedium,
                             textAlign: TextAlign.center,
                           ),
@@ -230,7 +230,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                                 ),
                                 ButtonSegment<UserRole>(
                                   value: UserRole.viewer,
-                                  label: Text('Viewer'),
+                                  label: Text('User'),
                                   icon: Icon(Icons.visibility_outlined),
                                 ),
                               ],
@@ -250,7 +250,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                             Text(
                               _selectedRole == UserRole.contributor
                                   ? 'Contributor accounts require admin approval before first login.'
-                                  : 'Viewer accounts are active immediately with read-only access.',
+                                  : 'User accounts are active immediately with read-only access.',
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                             const SizedBox(height: AppSpacing.sm),
@@ -408,7 +408,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                             AppButton(
                               label: _selectedRole == UserRole.contributor
                                   ? 'Request contributor access'
-                                  : 'Create viewer account',
+                                  : 'Create user account',
                               icon: Icons.person_add,
                               isLoading: isLoading,
                               onPressed: isLoading ? null : _submit,
