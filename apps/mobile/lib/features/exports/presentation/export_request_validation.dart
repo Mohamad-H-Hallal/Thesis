@@ -1,7 +1,5 @@
 const String exportDateHint = 'YYYY-MM-DD';
 const String exportBboxHint = 'minLon,minLat,maxLon,maxLat';
-const String exportDateExample = 'Example: 2026-04-13';
-const String exportBboxExample = 'Example: 35.44,33.84,35.58,33.94';
 
 String? validateExportDateInput(String label, String value) {
   final trimmed = value.trim();

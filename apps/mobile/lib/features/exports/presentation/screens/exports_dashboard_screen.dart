@@ -38,6 +38,7 @@ class _ExportsDashboardScreenState
   String? _selectedProjectId;
   String _selectedProjectName = '';
   ExportFormat _selectedFormat = ExportFormat.geojson;
+  _ExportJobFormatFilter _jobFormatFilter = _ExportJobFormatFilter.all;
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _fromDateController = TextEditingController();
   final TextEditingController _toDateController = TextEditingController();
@@ -112,11 +113,22 @@ class _ExportsDashboardScreenState
           _selectedProjectName = projects.first.name;
         }
 
-        final visibleJobs = hasFixedProject
+        final scopedJobs = hasFixedProject
             ? exportState.jobs
                   .where((job) => job.projectId == _selectedProjectId)
                   .toList(growable: false)
             : exportState.jobs;
+        final visibleJobs = scopedJobs
+            .where(
+              (job) => switch (_jobFormatFilter) {
+                _ExportJobFormatFilter.all => true,
+                _ExportJobFormatFilter.geojson =>
+                  job.format == ExportFormat.geojson,
+                _ExportJobFormatFilter.shapefile =>
+                  job.format == ExportFormat.shapefile,
+              },
+            )
+            .toList(growable: false);
 
         return ListView(
           controller: _scrollController,
@@ -124,8 +136,8 @@ class _ExportsDashboardScreenState
             SectionHeader(
               title: hasFixedProject ? 'Project exports' : 'Exports',
               subtitle: hasFixedProject
-                  ? 'Request approved-feature export packages for ${_selectedProjectName.isEmpty ? 'this project' : _selectedProjectName}.'
-                  : 'Request approved-feature export packages and track their processing.',
+                  ? 'Request export packages for ${_selectedProjectName.isEmpty ? 'this project' : _selectedProjectName}.'
+                  : 'Request export packages and track their processing.',
             ),
             const SizedBox(height: AppSpacing.md),
             if (errorText != null && errorText.isNotEmpty)
@@ -237,13 +249,6 @@ class _ExportsDashboardScreenState
                     },
                   ),
                   const SizedBox(height: AppSpacing.sm),
-                  _ExportHintCard(
-                    icon: Icons.verified_outlined,
-                    title: 'Approved features only',
-                    message:
-                        'Leave all filters blank to export the full approved dataset for the selected project.',
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
                   if (hasFixedProject)
                     InputDecorator(
                       decoration: const InputDecoration(labelText: 'Project'),
@@ -295,11 +300,6 @@ class _ExportsDashboardScreenState
                     'Optional filters',
                     style: Theme.of(context).textTheme.titleSmall,
                   ),
-                  const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    'Leave these blank to export all approved features for the selected project.',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
                   const SizedBox(height: AppSpacing.sm),
                   LayoutBuilder(
                     builder: (context, constraints) {
@@ -325,8 +325,6 @@ class _ExportsDashboardScreenState
                         decoration: InputDecoration(
                           labelText: 'From date',
                           hintText: exportDateHint,
-                          helperText:
-                              '$exportDateExample. Leave blank to include earlier approved features.',
                           errorText: _fromDateError,
                           suffixIcon: IconButton(
                             tooltip: 'Pick from date',
@@ -350,8 +348,6 @@ class _ExportsDashboardScreenState
                         decoration: InputDecoration(
                           labelText: 'To date',
                           hintText: exportDateHint,
-                          helperText:
-                              '$exportDateExample. Leave blank to include the latest approved features.',
                           errorText: _toDateError,
                           suffixIcon: IconButton(
                             tooltip: 'Pick to date',
@@ -389,29 +385,18 @@ class _ExportsDashboardScreenState
                       decimal: true,
                     ),
                     inputFormatters: <TextInputFormatter>[
-                      FilteringTextInputFormatter.allow(RegExp(r'[\d,\-.\s]')),
+                      _BboxTextInputFormatter(),
                     ],
                     onChanged: (_) {
                       if (_bboxError != null) {
                         setState(() => _bboxError = null);
                       }
                     },
-                    minLines: 1,
-                    maxLines: 2,
                     decoration: InputDecoration(
                       labelText: 'BBOX',
                       hintText: exportBboxHint,
-                      helperText:
-                          '$exportBboxExample. Use this only when you need a smaller export area.',
                       errorText: _bboxError,
                     ),
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  _ExportHintCard(
-                    icon: Icons.download_outlined,
-                    title: 'Downloads stay on this device',
-                    message:
-                        'After a job completes, use Download, then Open, Share, or Copy path from the job card.',
                   ),
                   const SizedBox(height: AppSpacing.md),
                   SizedBox(
@@ -432,7 +417,37 @@ class _ExportsDashboardScreenState
               ),
             ),
             const SizedBox(height: AppSpacing.md),
-            Text('Export jobs', style: Theme.of(context).textTheme.titleMedium),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final title = Text(
+                  'Export jobs',
+                  style: Theme.of(context).textTheme.titleMedium,
+                );
+                final filter = _ExportListFilter(
+                  selected: _jobFormatFilter,
+                  onChanged: (value) {
+                    setState(() => _jobFormatFilter = value);
+                  },
+                );
+                if (constraints.maxWidth < 520) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      title,
+                      const SizedBox(height: AppSpacing.sm),
+                      filter,
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(child: title),
+                    const SizedBox(width: AppSpacing.sm),
+                    Flexible(child: filter),
+                  ],
+                );
+              },
+            ),
             const SizedBox(height: AppSpacing.sm),
             if (exportState.isLoading)
               const Padding(
@@ -609,7 +624,7 @@ class _ExportsDashboardScreenState
       context,
       savedPath == null || savedPath.isEmpty
           ? 'Export downloaded.'
-          : 'Export saved to $savedPath. Use Open, Share, or Copy path below.',
+          : 'Export downloaded. Use Open, Share, or Copy path.',
     );
   }
 
@@ -781,13 +796,6 @@ class _ExportJobCard extends StatelessWidget {
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ],
-          if (job.localFilePath?.trim().isNotEmpty == true) ...[
-            const SizedBox(height: AppSpacing.sm),
-            SelectableText(
-              'Saved on device: ${job.localFilePath!}',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
           const SizedBox(height: AppSpacing.sm),
           Wrap(
             spacing: 8,
@@ -860,49 +868,6 @@ class _ExportJobCard extends StatelessWidget {
   }
 }
 
-class _ExportHintCard extends StatelessWidget {
-  const _ExportHintCard({
-    required this.icon,
-    required this.title,
-    required this.message,
-  });
-
-  final IconData icon;
-  final String title;
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: colorScheme.primary),
-            const SizedBox(width: AppSpacing.sm),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 2),
-                  Text(message, style: Theme.of(context).textTheme.bodySmall),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _ExportFormatPicker extends StatelessWidget {
   const _ExportFormatPicker({
     required this.selectedFormat,
@@ -971,17 +936,9 @@ class _ExportFormatOption extends StatelessWidget {
         ? colorScheme.primaryContainer
         : colorScheme.surface;
 
-    final (icon, title, description) = switch (format) {
-      ExportFormat.geojson => (
-        Icons.public,
-        'GeoJSON',
-        'Best for QGIS, geojson.io, and web map checks.',
-      ),
-      ExportFormat.shapefile => (
-        Icons.folder_zip_outlined,
-        'Shapefile',
-        'Best for desktop GIS tools that expect zipped shapefiles.',
-      ),
+    final (icon, title) = switch (format) {
+      ExportFormat.geojson => (Icons.public, 'GeoJSON'),
+      ExportFormat.shapefile => (Icons.folder_zip_outlined, 'Shapefile'),
     };
 
     return Material(
@@ -1003,19 +960,9 @@ class _ExportFormatOption extends StatelessWidget {
                 Icon(icon, color: selected ? colorScheme.primary : null),
                 const SizedBox(width: AppSpacing.sm),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: Theme.of(context).textTheme.titleSmall,
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        description,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleSmall,
                   ),
                 ),
                 if (selected)
@@ -1027,6 +974,73 @@ class _ExportFormatOption extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ExportListFilter extends StatelessWidget {
+  const _ExportListFilter({required this.selected, required this.onChanged});
+
+  final _ExportJobFormatFilter selected;
+  final ValueChanged<_ExportJobFormatFilter> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: _ExportJobFormatFilter.values
+          .map(
+            (filter) => ChoiceChip(
+              label: Text(filter.label),
+              selected: filter == selected,
+              onSelected: (_) => onChanged(filter),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+}
+
+class _BboxTextInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final text = newValue.text;
+    if (text.isEmpty) {
+      return newValue;
+    }
+
+    if (text.length > 48 || RegExp(r'[^0-9,.\-]').hasMatch(text)) {
+      return oldValue;
+    }
+
+    final parts = text.split(',');
+    if (parts.length > 4) {
+      return oldValue;
+    }
+
+    for (final part in parts) {
+      if (part.isEmpty) {
+        continue;
+      }
+      if (!RegExp(r'^-?\d{0,3}(\.\d{0,8})?$').hasMatch(part)) {
+        return oldValue;
+      }
+    }
+
+    return newValue;
+  }
+}
+
+enum _ExportJobFormatFilter {
+  all('Both'),
+  geojson('GeoJSON'),
+  shapefile('Shapefile');
+
+  const _ExportJobFormatFilter(this.label);
+
+  final String label;
 }
 
 class _MetricCard extends StatelessWidget {
