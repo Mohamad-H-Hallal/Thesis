@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -37,6 +38,27 @@ class AddFeatureCaptureSeed {
   final String geometryType;
   final List<LatLng> vertices;
   final double? gpsAccuracyMeters;
+}
+
+bool shouldPersistFeatureDraftLocally(Object error) {
+  if (error is DioException) {
+    if (error.type == DioExceptionType.connectionTimeout ||
+        error.type == DioExceptionType.receiveTimeout ||
+        error.type == DioExceptionType.sendTimeout ||
+        error.type == DioExceptionType.connectionError) {
+      return true;
+    }
+  }
+
+  final message = userFacingErrorMessage(error, fallback: '').toLowerCase();
+  return message.contains('network') ||
+      message.contains('offline') ||
+      message.contains('connection') ||
+      message.contains('unable to reach the server') ||
+      message.contains('socket') ||
+      message.contains('timed out') ||
+      message.contains('host lookup') ||
+      message.contains('temporarily unavailable');
 }
 
 class AddFeatureFlowResult {
@@ -832,14 +854,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
   }
 
   bool _shouldPersistLocally(Object error) {
-    final message = userFacingErrorMessage(error, fallback: '').toLowerCase();
-    return message.contains('network') ||
-        message.contains('offline') ||
-        message.contains('connection') ||
-        message.contains('socket') ||
-        message.contains('timed out') ||
-        message.contains('host lookup') ||
-        message.contains('temporarily unavailable');
+    return shouldPersistFeatureDraftLocally(error);
   }
 
   Map<String, dynamic> _buildGeometryPayload() {
