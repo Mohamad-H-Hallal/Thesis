@@ -124,8 +124,8 @@ class _ExportsDashboardScreenState
             SectionHeader(
               title: hasFixedProject ? 'Project exports' : 'Exports',
               subtitle: hasFixedProject
-                  ? 'Export approved features from ${_selectedProjectName.isEmpty ? 'this project' : _selectedProjectName}.'
-                  : 'Export approved features as GeoJSON or shapefile and track processing.',
+                  ? 'Request approved-feature export packages for ${_selectedProjectName.isEmpty ? 'this project' : _selectedProjectName}.'
+                  : 'Request approved-feature export packages and track their processing.',
             ),
             const SizedBox(height: AppSpacing.md),
             if (errorText != null && errorText.isNotEmpty)
@@ -237,6 +237,13 @@ class _ExportsDashboardScreenState
                     },
                   ),
                   const SizedBox(height: AppSpacing.sm),
+                  _ExportHintCard(
+                    icon: Icons.verified_outlined,
+                    title: 'Approved features only',
+                    message:
+                        'Leave all filters blank to export the full approved dataset for the selected project.',
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
                   if (hasFixedProject)
                     InputDecorator(
                       decoration: const InputDecoration(labelText: 'Project'),
@@ -275,25 +282,15 @@ class _ExportsDashboardScreenState
                       },
                     ),
                   const SizedBox(height: AppSpacing.sm),
-                  DropdownButtonFormField<ExportFormat>(
-                    initialValue: _selectedFormat,
-                    isExpanded: true,
-                    decoration: const InputDecoration(labelText: 'Format'),
-                    items: ExportFormat.values
-                        .map(
-                          (format) => DropdownMenuItem(
-                            value: format,
-                            child: Text(format.name.toUpperCase()),
-                          ),
-                        )
-                        .toList(growable: false),
+                  Text('Format', style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: AppSpacing.sm),
+                  _ExportFormatPicker(
+                    selectedFormat: _selectedFormat,
                     onChanged: (value) {
-                      if (value != null) {
-                        setState(() => _selectedFormat = value);
-                      }
+                      setState(() => _selectedFormat = value);
                     },
                   ),
-                  const SizedBox(height: AppSpacing.sm),
+                  const SizedBox(height: AppSpacing.md),
                   Text(
                     'Optional filters',
                     style: Theme.of(context).textTheme.titleSmall,
@@ -304,62 +301,85 @@ class _ExportsDashboardScreenState
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: AppSpacing.sm),
-                  TextFormField(
-                    controller: _fromDateController,
-                    keyboardType: TextInputType.datetime,
-                    inputFormatters: <TextInputFormatter>[
-                      FilteringTextInputFormatter.allow(RegExp(r'[\d-]')),
-                      LengthLimitingTextInputFormatter(10),
-                    ],
-                    onChanged: (_) {
-                      if (_fromDateError != null || _toDateError != null) {
-                        setState(() {
-                          _fromDateError = null;
-                          if (_toDateError ==
-                              'To date must be the same day or later than From date.') {
-                            _toDateError = null;
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final useSplitLayout = constraints.maxWidth >= 540;
+                      final fromDateField = TextFormField(
+                        controller: _fromDateController,
+                        keyboardType: TextInputType.datetime,
+                        inputFormatters: <TextInputFormatter>[
+                          FilteringTextInputFormatter.allow(RegExp(r'[\d-]')),
+                          LengthLimitingTextInputFormatter(10),
+                        ],
+                        onChanged: (_) {
+                          if (_fromDateError != null || _toDateError != null) {
+                            setState(() {
+                              _fromDateError = null;
+                              if (_toDateError ==
+                                  'To date must be the same day or later than From date.') {
+                                _toDateError = null;
+                              }
+                            });
                           }
-                        });
+                        },
+                        decoration: InputDecoration(
+                          labelText: 'From date',
+                          hintText: exportDateHint,
+                          helperText:
+                              '$exportDateExample. Leave blank to include earlier approved features.',
+                          errorText: _fromDateError,
+                          suffixIcon: IconButton(
+                            tooltip: 'Pick from date',
+                            onPressed: () => _pickDate(_fromDateController),
+                            icon: const Icon(Icons.calendar_today_outlined),
+                          ),
+                        ),
+                      );
+                      final toDateField = TextFormField(
+                        controller: _toDateController,
+                        keyboardType: TextInputType.datetime,
+                        inputFormatters: <TextInputFormatter>[
+                          FilteringTextInputFormatter.allow(RegExp(r'[\d-]')),
+                          LengthLimitingTextInputFormatter(10),
+                        ],
+                        onChanged: (_) {
+                          if (_toDateError != null) {
+                            setState(() => _toDateError = null);
+                          }
+                        },
+                        decoration: InputDecoration(
+                          labelText: 'To date',
+                          hintText: exportDateHint,
+                          helperText:
+                              '$exportDateExample. Leave blank to include the latest approved features.',
+                          errorText: _toDateError,
+                          suffixIcon: IconButton(
+                            tooltip: 'Pick to date',
+                            onPressed: () => _pickDate(_toDateController),
+                            icon: const Icon(Icons.calendar_today_outlined),
+                          ),
+                        ),
+                      );
+
+                      if (!useSplitLayout) {
+                        return Column(
+                          children: [
+                            fromDateField,
+                            const SizedBox(height: AppSpacing.sm),
+                            toDateField,
+                          ],
+                        );
                       }
+
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: fromDateField),
+                          const SizedBox(width: AppSpacing.sm),
+                          Expanded(child: toDateField),
+                        ],
+                      );
                     },
-                    decoration: InputDecoration(
-                      labelText: 'From date',
-                      hintText: exportDateHint,
-                      helperText:
-                          '$exportDateExample. Leave blank to include earlier approved features.',
-                      errorText: _fromDateError,
-                      suffixIcon: IconButton(
-                        tooltip: 'Pick from date',
-                        onPressed: () => _pickDate(_fromDateController),
-                        icon: const Icon(Icons.calendar_today_outlined),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  TextFormField(
-                    controller: _toDateController,
-                    keyboardType: TextInputType.datetime,
-                    inputFormatters: <TextInputFormatter>[
-                      FilteringTextInputFormatter.allow(RegExp(r'[\d-]')),
-                      LengthLimitingTextInputFormatter(10),
-                    ],
-                    onChanged: (_) {
-                      if (_toDateError != null) {
-                        setState(() => _toDateError = null);
-                      }
-                    },
-                    decoration: InputDecoration(
-                      labelText: 'To date',
-                      hintText: exportDateHint,
-                      helperText:
-                          '$exportDateExample. Leave blank to include the latest approved features.',
-                      errorText: _toDateError,
-                      suffixIcon: IconButton(
-                        tooltip: 'Pick to date',
-                        onPressed: () => _pickDate(_toDateController),
-                        icon: const Icon(Icons.calendar_today_outlined),
-                      ),
-                    ),
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   TextFormField(
@@ -385,6 +405,13 @@ class _ExportsDashboardScreenState
                           '$exportBboxExample. Use this only when you need a smaller export area.',
                       errorText: _bboxError,
                     ),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  _ExportHintCard(
+                    icon: Icons.download_outlined,
+                    title: 'Downloads stay on this device',
+                    message:
+                        'After a job completes, use Download, then Open, Share, or Copy path from the job card.',
                   ),
                   const SizedBox(height: AppSpacing.md),
                   SizedBox(
@@ -693,6 +720,7 @@ class _ExportJobCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final summaryChips = _buildSummaryChips();
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -726,10 +754,17 @@ class _ExportJobCard extends StatelessWidget {
             runSpacing: 8,
             children: [
               StatusChip(status: job.status.name),
+              const Chip(label: Text('Approved only')),
+              ...summaryChips,
               if (job.recordCount != null)
                 Chip(label: Text('Records ${job.recordCount}')),
               if (job.fileSizeBytes != null)
                 Chip(label: Text('Size ${_formatBytes(job.fileSizeBytes!)}')),
+              if (job.completedAt != null)
+                Chip(
+                  avatar: const Icon(Icons.task_alt, size: 16),
+                  label: Text('Ready ${_formatDateTime(job.completedAt!)}'),
+                ),
               if (job.downloadedAt != null)
                 Chip(
                   avatar: const Icon(Icons.download_done, size: 16),
@@ -761,7 +796,7 @@ class _ExportJobCard extends StatelessWidget {
               OutlinedButton.icon(
                 onPressed: onRefresh,
                 icon: const Icon(Icons.refresh, size: 18),
-                label: const Text('Refresh'),
+                label: const Text('Check status'),
               ),
               if (job.status == ExportJobStatus.failed)
                 FilledButton.tonalIcon(
@@ -796,6 +831,199 @@ class _ExportJobCard extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  List<Widget> _buildSummaryChips() {
+    final chips = <Widget>[];
+    final fromDate = job.exportParameters['date_from']?.toString().trim();
+    final toDate = job.exportParameters['date_to']?.toString().trim();
+    final bbox = job.exportParameters['bbox']?.toString().trim();
+
+    if (fromDate != null && fromDate.isNotEmpty) {
+      chips.add(Chip(label: Text('From $fromDate')));
+    }
+    if (toDate != null && toDate.isNotEmpty) {
+      chips.add(Chip(label: Text('To $toDate')));
+    }
+    if (bbox != null && bbox.isNotEmpty) {
+      chips.add(
+        const Chip(
+          avatar: Icon(Icons.crop_free_outlined, size: 16),
+          label: Text('Area filter'),
+        ),
+      );
+    }
+
+    return chips;
+  }
+}
+
+class _ExportHintCard extends StatelessWidget {
+  const _ExportHintCard({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: colorScheme.primary),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 2),
+                  Text(message, style: Theme.of(context).textTheme.bodySmall),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ExportFormatPicker extends StatelessWidget {
+  const _ExportFormatPicker({
+    required this.selectedFormat,
+    required this.onChanged,
+  });
+
+  final ExportFormat selectedFormat;
+  final ValueChanged<ExportFormat> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cards = ExportFormat.values
+            .map(
+              (format) => _ExportFormatOption(
+                format: format,
+                selected: format == selectedFormat,
+                onTap: () => onChanged(format),
+              ),
+            )
+            .toList(growable: false);
+
+        if (constraints.maxWidth < 520) {
+          return Column(
+            children: [
+              for (var index = 0; index < cards.length; index++) ...[
+                cards[index],
+                if (index != cards.length - 1)
+                  const SizedBox(height: AppSpacing.sm),
+              ],
+            ],
+          );
+        }
+
+        return Row(
+          children: [
+            Expanded(child: cards[0]),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(child: cards[1]),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ExportFormatOption extends StatelessWidget {
+  const _ExportFormatOption({
+    required this.format,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final ExportFormat format;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final borderColor = selected
+        ? colorScheme.primary
+        : colorScheme.outlineVariant;
+    final background = selected
+        ? colorScheme.primaryContainer
+        : colorScheme.surface;
+
+    final (icon, title, description) = switch (format) {
+      ExportFormat.geojson => (
+        Icons.public,
+        'GeoJSON',
+        'Best for QGIS, geojson.io, and web map checks.',
+      ),
+      ExportFormat.shapefile => (
+        Icons.folder_zip_outlined,
+        'Shapefile',
+        'Best for desktop GIS tools that expect zipped shapefiles.',
+      ),
+    };
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Ink(
+          decoration: BoxDecoration(
+            color: background,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: borderColor),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(icon, color: selected ? colorScheme.primary : null),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        description,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                if (selected)
+                  Icon(Icons.check_circle, color: colorScheme.primary),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

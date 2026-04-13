@@ -39,6 +39,12 @@
 - [ ] Export status transitions pending -> processing -> completed.
 - [ ] Failed export reports error message.
 - [ ] Download endpoint works for completed exports.
+- [ ] Leaving `From date`, `To date`, and `BBOX` blank exports all approved features.
+- [ ] Invalid `YYYY-MM-DD` or `BBOX` input is blocked before submission.
+- [ ] GeoJSON ZIP contains `.geojson`, `metadata.json`, and `README.txt`.
+- [ ] Shapefile ZIP contains `.shp`, `.shx`, `.dbf`, `.prj`, `metadata.json`, and `README.txt`.
+- [ ] Downloaded export can be opened from the job card or pulled from device storage.
+- [ ] Exported geometry count matches the approved-review count for the selected project.
 
 ## Notifications / Profile
 - [ ] Notifications list loads and unread state updates.
