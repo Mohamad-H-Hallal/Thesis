@@ -44,6 +44,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
   bool _isSaving = false;
   bool _requiresPhotos = false;
   bool _visibleToViewers = false;
+  bool _visibleToContributors = true;
   String? _categoryId;
   String _status = 'draft';
   DateTime? _startDate;
@@ -92,6 +93,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
           .toStringAsFixed(0);
       _requiresPhotos = project.requiresPhotos;
       _visibleToViewers = project.visibleToViewers;
+      _visibleToContributors = project.visibleToContributors;
       _categoryId = project.categoryId;
       _status = project.status;
       _startDate = project.startDate;
@@ -231,6 +233,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
       minPhotos: minPhotos,
       maxPhotos: maxPhotos,
       visibleToViewers: _visibleToViewers,
+      visibleToContributors: _visibleToContributors,
       collectionFormSchema: <String, dynamic>{
         'version': AuthFormValidators.normalize(_schemaVersionController.text),
         'allowedGeometryTypes': _allowedGeometryTypes.toList(growable: false),
@@ -527,6 +530,19 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                 ],
                               ),
                               const SizedBox(height: AppSpacing.sm),
+                              SwitchListTile(
+                                contentPadding: EdgeInsets.zero,
+                                value: _visibleToContributors,
+                                onChanged: (value) {
+                                  setState(() {
+                                    _visibleToContributors = value;
+                                  });
+                                },
+                                title: const Text('Visible to contributors'),
+                                subtitle: const Text(
+                                  'When enabled and active/completed, contributors can discover this project in their public project list.',
+                                ),
+                              ),
                               SwitchListTile(
                                 contentPadding: EdgeInsets.zero,
                                 value: _visibleToViewers,

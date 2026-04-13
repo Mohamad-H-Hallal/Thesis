@@ -159,6 +159,7 @@ const projectValidation = {
     body('min_photos').optional().isInt({ min: 0 }),
     body('max_photos').optional().isInt({ min: 0 }),
     body('visible_to_viewers').optional().isBoolean(),
+    body('visible_to_contributors').optional().isBoolean(),
     body('start_date')
       .optional({ nullable: true })
       .isISO8601()
@@ -179,6 +180,7 @@ const projectValidation = {
     body('min_photos').optional().isInt({ min: 0 }),
     body('max_photos').optional().isInt({ min: 0 }),
     body('visible_to_viewers').optional().isBoolean(),
+    body('visible_to_contributors').optional().isBoolean(),
     body('start_date')
       .optional({ nullable: true })
       .isISO8601()

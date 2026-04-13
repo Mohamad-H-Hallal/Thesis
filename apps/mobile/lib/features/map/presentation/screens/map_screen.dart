@@ -1031,13 +1031,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       label: Text(LebanonMapConfig.basemapLabel(_basemapStyle)),
                     ),
                     if (!isUserRole)
-                      Chip(
-                        label: Text(
-                          project.visibleToViewers
-                              ? 'Viewer-visible'
-                              : 'Restricted',
-                        ),
-                      ),
+                      Chip(label: Text(project.visibilitySummaryLabel)),
                     Chip(
                       avatar: Icon(
                         canCollectOnMap

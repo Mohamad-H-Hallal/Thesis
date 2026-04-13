@@ -45,6 +45,11 @@ const uniqueEmail = (prefix = 'phase10-user') =>
 
 const resetDb = async () => {
   await pool.query(`
+    ALTER TABLE project
+    ADD COLUMN IF NOT EXISTS visible_to_contributors BOOLEAN NOT NULL DEFAULT TRUE
+  `);
+
+  await pool.query(`
     TRUNCATE TABLE
       notification,
       audit_log,
@@ -199,6 +204,7 @@ const createProject = async ({
   categoryId,
   name,
   visibleToViewers = false,
+  visibleToContributors = true,
   status = 'draft',
 }) => {
   const response = await request(app)
@@ -220,6 +226,7 @@ const createProject = async ({
       min_photos: 0,
       max_photos: 3,
       visible_to_viewers: visibleToViewers,
+      visible_to_contributors: visibleToContributors,
     });
 
   if (response.status !== 201) {

@@ -229,6 +229,7 @@ describe('Project workflow access and feature visibility', () => {
     const rejectedOwnId = '33333333-3333-4333-8333-333333333333';
     const rejectedOtherId = '44444444-4444-4444-8444-444444444444';
     const draftOtherId = '55555555-5555-4555-8555-555555555555';
+    const pendingOtherId = '66666666-6666-4666-8666-666666666666';
 
     await insertFeature({
       featureId: approvedId,
@@ -255,6 +256,11 @@ describe('Project workflow access and feature visibility', () => {
       collectedBy: contributorB.user.id,
       reviewedBy: admin.user.id,
       reviewNotes: 'Rejected from contributor B',
+    });
+    await insertFeature({
+      featureId: pendingOtherId,
+      status: 'pending_review',
+      collectedBy: contributorB.user.id,
     });
     await insertFeature({
       featureId: draftOtherId,
@@ -289,10 +295,10 @@ describe('Project workflow access and feature visibility', () => {
       expect.arrayContaining([approvedId, pendingId, rejectedOwnId]),
     );
     expect(contributorResponse.body.data.map((item) => item.id)).not.toEqual(
-      expect.arrayContaining([rejectedOtherId, draftOtherId]),
+      expect.arrayContaining([pendingOtherId, rejectedOtherId, draftOtherId]),
     );
 
     expect(adminResponse.status).toBe(200);
-    expect(adminResponse.body.data).toHaveLength(5);
+    expect(adminResponse.body.data).toHaveLength(6);
   });
 });

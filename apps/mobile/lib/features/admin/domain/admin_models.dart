@@ -112,6 +112,7 @@ class ProjectProvisioningInput {
     required this.minPhotos,
     required this.maxPhotos,
     required this.visibleToViewers,
+    required this.visibleToContributors,
     required this.collectionFormSchema,
   });
 
@@ -126,6 +127,7 @@ class ProjectProvisioningInput {
   final int minPhotos;
   final int maxPhotos;
   final bool visibleToViewers;
+  final bool visibleToContributors;
   final Map<String, dynamic> collectionFormSchema;
 }
 

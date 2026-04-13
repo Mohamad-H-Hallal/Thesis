@@ -162,6 +162,7 @@ class ProjectSummary {
     this.allowedGeometryTypes = const <String>['Point'],
     this.maxGpsAccuracyMeters = 25,
     this.visibleToViewers = false,
+    this.visibleToContributors = true,
     this.currentUserAssignmentRole,
     this.currentUserAssignmentStatus,
   });
@@ -186,11 +187,22 @@ class ProjectSummary {
   final List<String> allowedGeometryTypes;
   final double maxGpsAccuracyMeters;
   final bool visibleToViewers;
+  final bool visibleToContributors;
   final ProjectAssignmentRole? currentUserAssignmentRole;
   final ProjectAssignmentStatus? currentUserAssignmentStatus;
 
   bool get hasApprovedCurrentUserAssignment =>
       currentUserAssignmentStatus == ProjectAssignmentStatus.approved;
+
+  String get visibilitySummaryLabel {
+    if (visibleToViewers) {
+      return 'Viewer visible';
+    }
+    if (visibleToContributors) {
+      return 'Contributor visible';
+    }
+    return 'Restricted';
+  }
 
   bool isAssignedTo(String userId, {bool approvedOnly = true}) {
     if (hasApprovedCurrentUserAssignment && approvedOnly) {

@@ -56,11 +56,33 @@ describe('Project visibility by role', () => {
       categoryId: category.id,
       name: `Public Project ${Date.now()}`,
       visibleToViewers: true,
+      visibleToContributors: true,
     });
     await request(app)
       .put(`${API_PREFIX}/projects/${publicProject.id}`)
       .set(authHeader(admin.token))
-      .send({ status: 'active', visible_to_viewers: true })
+      .send({
+        status: 'active',
+        visible_to_viewers: true,
+        visible_to_contributors: true,
+      })
+      .expect(200);
+
+    const contributorVisibleProject = await createProject({
+      token: admin.token,
+      categoryId: category.id,
+      name: `Contributor Visible Project ${Date.now()}`,
+      visibleToViewers: false,
+      visibleToContributors: true,
+    });
+    await request(app)
+      .put(`${API_PREFIX}/projects/${contributorVisibleProject.id}`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'active',
+        visible_to_viewers: false,
+        visible_to_contributors: true,
+      })
       .expect(200);
 
     const privateProject = await createProject({
@@ -68,11 +90,16 @@ describe('Project visibility by role', () => {
       categoryId: category.id,
       name: `Private Project ${Date.now()}`,
       visibleToViewers: false,
+      visibleToContributors: false,
     });
     await request(app)
       .put(`${API_PREFIX}/projects/${privateProject.id}`)
       .set(authHeader(admin.token))
-      .send({ status: 'active', visible_to_viewers: false })
+      .send({
+        status: 'active',
+        visible_to_viewers: false,
+        visible_to_contributors: false,
+      })
       .expect(200);
 
     const hiddenDraftProject = await createProject({
@@ -80,6 +107,7 @@ describe('Project visibility by role', () => {
       categoryId: category.id,
       name: `Draft Viewer Project ${Date.now()}`,
       visibleToViewers: true,
+      visibleToContributors: true,
       status: 'draft',
     });
     expect(hiddenDraftProject.status).toBe('draft');
@@ -126,11 +154,18 @@ describe('Project visibility by role', () => {
       .set(authHeader(contributorLogin.token));
     expect(contributorPublicProjects.status).toBe(200);
     expect(contributorPublicProjects.body.access_scope).toBe('public');
-    expect(contributorPublicProjects.body.data).toHaveLength(1);
-    expect(contributorPublicProjects.body.data[0].id).toBe(publicProject.id);
+    expect(contributorPublicProjects.body.data).toHaveLength(2);
+    expect(contributorPublicProjects.body.data.map((item) => item.id)).toEqual(
+      expect.arrayContaining([publicProject.id, contributorVisibleProject.id])
+    );
 
     await request(app)
       .get(`${API_PREFIX}/projects/${publicProject.id}`)
+      .set(authHeader(contributorLogin.token))
+      .expect(200);
+
+    await request(app)
+      .get(`${API_PREFIX}/projects/${contributorVisibleProject.id}`)
       .set(authHeader(contributorLogin.token))
       .expect(200);
 
@@ -140,9 +175,14 @@ describe('Project visibility by role', () => {
       .expect(403);
 
     await request(app)
+      .get(`${API_PREFIX}/projects/${contributorVisibleProject.id}`)
+      .set(authHeader(viewerLogin.token))
+      .expect(403);
+
+    await request(app)
       .put(`${API_PREFIX}/projects/${privateProject.id}`)
       .set(authHeader(admin.token))
-      .send({ visible_to_viewers: true })
+      .send({ visible_to_viewers: true, visible_to_contributors: true })
       .expect(200);
 
     const viewerProjectsAfterToggle = await request(app)
@@ -156,6 +196,6 @@ describe('Project visibility by role', () => {
       .query({ access_scope: 'public' })
       .set(authHeader(contributorLogin.token));
     expect(contributorPublicProjectsAfterToggle.status).toBe(200);
-    expect(contributorPublicProjectsAfterToggle.body.data).toHaveLength(2);
+    expect(contributorPublicProjectsAfterToggle.body.data).toHaveLength(3);
   });
 });

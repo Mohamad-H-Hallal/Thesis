@@ -299,13 +299,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                             ),
                           ),
                         if (!isUserRole)
-                          Chip(
-                            label: Text(
-                              project.visibleToViewers
-                                  ? 'Viewer visible'
-                                  : 'Contributor only',
-                            ),
-                          ),
+                          Chip(label: Text(project.visibilitySummaryLabel)),
                         if (!isUserRole)
                           Chip(
                             label: Text(
@@ -340,7 +334,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                     subtitle: Text(
                       project.visibleToViewers
                           ? 'Viewers can see this project while it stays active or completed.'
-                          : 'Only admins and assigned contributors can access this project.',
+                          : 'Viewers cannot see this project. Contributor discovery is managed in Edit details.',
                     ),
                   ),
                 ),

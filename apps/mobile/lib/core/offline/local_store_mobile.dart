@@ -12,7 +12,7 @@ import 'local_store.dart';
 class SqliteLocalStore implements LocalStore {
   Database? _db;
   final Uuid _uuid = const Uuid();
-  static const _dbVersion = 2;
+  static const _dbVersion = 3;
 
   @override
   Future<void> initialize() async {
@@ -48,6 +48,11 @@ class SqliteLocalStore implements LocalStore {
             );
           ''');
         }
+        if (oldVersion < 3) {
+          await db.execute(
+            "ALTER TABLE draft_features ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT ''",
+          );
+        }
       },
     );
   }
@@ -64,6 +69,7 @@ class SqliteLocalStore implements LocalStore {
     await db.execute('''
       CREATE TABLE draft_features (
         id TEXT PRIMARY KEY,
+        owner_user_id TEXT NOT NULL,
         project_id TEXT NOT NULL,
         project_name TEXT NOT NULL,
         geometry_type TEXT NOT NULL,
@@ -358,10 +364,7 @@ class SqliteLocalStore implements LocalStore {
     final db = await _database;
     await db.transaction((txn) async {
       if (package.isCurrent) {
-        await txn.update(
-          'offline_map_packages',
-          {'is_current': 0},
-        );
+        await txn.update('offline_map_packages', {'is_current': 0});
       }
 
       await txn.insert(

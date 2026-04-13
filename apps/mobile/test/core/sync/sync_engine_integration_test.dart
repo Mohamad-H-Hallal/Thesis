@@ -134,6 +134,7 @@ LocalDraftFeature _buildDraft({
 }) {
   return LocalDraftFeature(
     id: draftId,
+    ownerUserId: 'user-1',
     projectId: 'project-1',
     projectName: 'Bekaa Orchard Census 2026',
     geometryType: 'Point',
@@ -196,12 +197,17 @@ void main() {
       dio.interceptors.add(
         InterceptorsWrapper(
           onRequest: (options, handler) {
-            sentIdempotencyKeys.add(options.headers['Idempotency-Key'] as String?);
+            sentIdempotencyKeys.add(
+              options.headers['Idempotency-Key'] as String?,
+            );
             final payload = options.data is Map<String, dynamic>
-                ? Map<String, dynamic>.from(options.data as Map<String, dynamic>)
+                ? Map<String, dynamic>.from(
+                    options.data as Map<String, dynamic>,
+                  )
                 : const <String, dynamic>{};
 
-            if (options.method == 'POST' && options.path.endsWith('/features')) {
+            if (options.method == 'POST' &&
+                options.path.endsWith('/features')) {
               final featureId = (payload['id'] ?? payload['draft_id'] ?? '')
                   .toString();
               if (featureId.contains('failed') ||
@@ -257,7 +263,8 @@ void main() {
               return;
             }
 
-            if (options.method == 'PUT' && options.path.contains('/features/')) {
+            if (options.method == 'PUT' &&
+                options.path.contains('/features/')) {
               handler.resolve(
                 Response<Map<String, dynamic>>(
                   requestOptions: options,
@@ -301,7 +308,9 @@ void main() {
                 response: Response<Map<String, dynamic>>(
                   requestOptions: options,
                   statusCode: 404,
-                  data: const <String, dynamic>{'message': 'Unexpected test route'},
+                  data: const <String, dynamic>{
+                    'message': 'Unexpected test route',
+                  },
                 ),
                 type: DioExceptionType.badResponse,
               ),

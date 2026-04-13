@@ -12,6 +12,9 @@ import {
 const projectAccessScopes = ['public', 'assigned', 'all'] as const;
 type ProjectAccessScope = (typeof projectAccessScopes)[number];
 
+const publicVisibilityColumnForRole = (role: string): 'visible_to_viewers' | 'visible_to_contributors' =>
+  role === 'viewer' ? 'visible_to_viewers' : 'visible_to_contributors';
+
 const ensureCategoryExists = async (categoryId: string): Promise<void> => {
   const categoryCheck = await query('SELECT id FROM project_category WHERE id = $1', [categoryId]);
   if (categoryCheck.rows.length === 0) {
@@ -35,6 +38,7 @@ const getAllProjects = async (req, res) => {
   const userId = req.user.id;
   const isAdmin = req.user.role === 'admin';
   const isViewer = req.user.role === 'viewer';
+  const publicVisibilityColumn = publicVisibilityColumnForRole(req.user.role);
   const scope: ProjectAccessScope = (() => {
     if (requestedScope && projectAccessScopes.includes(requestedScope as ProjectAccessScope)) {
       return requestedScope as ProjectAccessScope;
@@ -82,7 +86,7 @@ const getAllProjects = async (req, res) => {
   if (isAdmin && scope === 'all') {
     // No additional access filter.
   } else if (scope === 'public') {
-    queryText += ` AND p.visible_to_viewers = TRUE AND p.status = ANY($${paramIndex}::project_status[])`;
+    queryText += ` AND p.${publicVisibilityColumn} = TRUE AND p.status = ANY($${paramIndex}::project_status[])`;
     params.push(viewerVisibleStatuses);
     paramIndex++;
   } else if (scope === 'assigned') {
@@ -134,7 +138,7 @@ const getAllProjects = async (req, res) => {
   if (isAdmin && scope === 'all') {
     // No additional access filter.
   } else if (scope === 'public') {
-    countQuery += ` AND p.visible_to_viewers = TRUE AND p.status = ANY($${countParamIndex}::project_status[])`;
+    countQuery += ` AND p.${publicVisibilityColumn} = TRUE AND p.status = ANY($${countParamIndex}::project_status[])`;
     countParams.push(viewerVisibleStatuses);
     countParamIndex++;
   } else if (scope === 'assigned') {
@@ -225,6 +229,7 @@ const createProject = async (req, res) => {
     min_photos = 0,
     max_photos = 10,
     visible_to_viewers = false,
+    visible_to_contributors = true,
   } = req.body;
 
   if (status !== 'draft') {
@@ -247,8 +252,8 @@ const createProject = async (req, res) => {
       `INSERT INTO project (
         created_by_user_id, category_id, name, description, objectives,
         status, start_date, end_date, collection_form_schema,
-        requires_photos, min_photos, max_photos, visible_to_viewers
-      ) VALUES ($1, $2, $3, $4, $5, 'draft', $6, $7, $8, $9, $10, $11, $12)
+        requires_photos, min_photos, max_photos, visible_to_viewers, visible_to_contributors
+      ) VALUES ($1, $2, $3, $4, $5, 'draft', $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *`,
       [
         req.user.id,
@@ -263,6 +268,7 @@ const createProject = async (req, res) => {
         min_photos,
         max_photos,
         visible_to_viewers,
+        visible_to_contributors,
       ],
     );
   const createdProject = createdProjectResult.rows[0];
@@ -295,6 +301,7 @@ const updateProject = async (req, res) => {
     min_photos,
     max_photos,
     visible_to_viewers,
+    visible_to_contributors,
   } = req.body;
 
   await synchronizeProjectStatuses(projectId);
@@ -397,6 +404,11 @@ const updateProject = async (req, res) => {
   if (visible_to_viewers !== undefined) {
     updates.push(`visible_to_viewers = $${paramIndex}`);
     params.push(visible_to_viewers);
+    paramIndex++;
+  }
+  if (visible_to_contributors !== undefined) {
+    updates.push(`visible_to_contributors = $${paramIndex}`);
+    params.push(visible_to_contributors);
     paramIndex++;
   }
 
@@ -549,7 +561,7 @@ const getProjectFeatures = async (req, res) => {
       // Project admins can see every feature lifecycle state for this project.
     } else {
       queryText += ` AND (
-        sf.status IN ('approved', 'pending_review')
+        sf.status = 'approved'
         OR sf.collected_by_user_id = $${paramIndex}
       )`;
       params.push(req.user?.id);

@@ -135,6 +135,7 @@ class OfflineMapPackage {
 class LocalDraftFeature {
   const LocalDraftFeature({
     required this.id,
+    required this.ownerUserId,
     required this.projectId,
     required this.projectName,
     required this.geometryType,
@@ -149,6 +150,7 @@ class LocalDraftFeature {
   });
 
   final String id;
+  final String ownerUserId;
   final String projectId;
   final String projectName;
   final String geometryType;
@@ -174,6 +176,7 @@ class LocalDraftFeature {
   Map<String, dynamic> toRowMap() {
     return {
       'id': id,
+      'owner_user_id': ownerUserId,
       'project_id': projectId,
       'project_name': projectName,
       'geometry_type': geometryType,
@@ -188,6 +191,7 @@ class LocalDraftFeature {
   }
 
   LocalDraftFeature copyWith({
+    String? ownerUserId,
     String? projectName,
     String? geometryType,
     String? geometryJson,
@@ -200,6 +204,7 @@ class LocalDraftFeature {
   }) {
     return LocalDraftFeature(
       id: id,
+      ownerUserId: ownerUserId ?? this.ownerUserId,
       projectId: projectId,
       projectName: projectName ?? this.projectName,
       geometryType: geometryType ?? this.geometryType,
@@ -220,10 +225,13 @@ class LocalDraftFeature {
   ) {
     return LocalDraftFeature(
       id: row['id'] as String,
+      ownerUserId: row['owner_user_id'] as String? ?? '',
       projectId: row['project_id'] as String,
       projectName: row['project_name'] as String,
       geometryType: row['geometry_type'] as String,
-      geometryJson: row['geometry_json'] as String? ?? '{"type":"Point","coordinates":[]}',
+      geometryJson:
+          row['geometry_json'] as String? ??
+          '{"type":"Point","coordinates":[]}',
       attributesJson: row['attributes_json'] as String,
       photos: photos,
       status: row['status'] as String,
@@ -370,6 +378,7 @@ extension ProjectSummaryLocalMapper on ProjectSummary {
       'allowedGeometryTypes': allowedGeometryTypes,
       'maxGpsAccuracyMeters': maxGpsAccuracyMeters,
       'visibleToViewers': visibleToViewers,
+      'visibleToContributors': visibleToContributors,
       'currentUserAssignmentRole': currentUserAssignmentRole?.name,
       'currentUserAssignmentStatus': currentUserAssignmentStatus?.name,
     };
@@ -411,6 +420,7 @@ ProjectSummary projectSummaryFromPayload(Map<String, dynamic> payload) {
     maxGpsAccuracyMeters: ((payload['maxGpsAccuracyMeters'] as num?) ?? 25)
         .toDouble(),
     visibleToViewers: (payload['visibleToViewers'] as bool?) ?? false,
+    visibleToContributors: (payload['visibleToContributors'] as bool?) ?? true,
     currentUserAssignmentRole: (payload['currentUserAssignmentRole'] as String?)
         ?.let(ProjectAssignmentRole.values.byName),
     currentUserAssignmentStatus:

@@ -149,7 +149,9 @@ class _FakeProjectsRepository implements ProjectsRepository {
       case ProjectViewScope.public:
         filtered = filtered.where(
           (project) =>
-              project.visibleToViewers &&
+              (role == UserRole.viewer
+                  ? project.visibleToViewers
+                  : project.visibleToContributors) &&
               (project.status == 'active' || project.status == 'completed'),
         );
         break;
@@ -192,6 +194,7 @@ class _FakeProjectsRepository implements ProjectsRepository {
       allowedGeometryTypes: project.allowedGeometryTypes,
       maxGpsAccuracyMeters: project.maxGpsAccuracyMeters,
       visibleToViewers: project.visibleToViewers,
+      visibleToContributors: project.visibleToContributors,
       currentUserAssignmentRole: assignment?.role,
       currentUserAssignmentStatus: assignment?.status,
     );
@@ -223,6 +226,7 @@ class _FakeProjectsRepository implements ProjectsRepository {
             allowedGeometryTypes: project.allowedGeometryTypes,
             maxGpsAccuracyMeters: project.maxGpsAccuracyMeters,
             visibleToViewers: visibleToViewers,
+            visibleToContributors: project.visibleToContributors,
           );
         })
         .toList(growable: false);
@@ -254,6 +258,7 @@ ProjectSummary _project({
   required String id,
   required String name,
   bool visibleToViewers = false,
+  bool visibleToContributors = true,
   List<ProjectAssignment> assignments = const <ProjectAssignment>[],
 }) {
   return ProjectSummary(
@@ -266,6 +271,7 @@ ProjectSummary _project({
     description: '$name description',
     assignments: assignments,
     visibleToViewers: visibleToViewers,
+    visibleToContributors: visibleToContributors,
   );
 }
 
@@ -388,9 +394,10 @@ void main() {
       );
       final projects = <ProjectSummary>[
         _project(
-          id: 'viewer-project',
-          name: 'Published Orchard Survey',
-          visibleToViewers: true,
+          id: 'contributor-visible-project',
+          name: 'Contributor Discovery Survey',
+          visibleToViewers: false,
+          visibleToContributors: true,
         ),
       ];
 
@@ -407,6 +414,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Projects'), findsOneWidget);
+      expect(find.text('Contributor Discovery Survey'), findsOneWidget);
       expect(find.text('Read-only public view'), findsOneWidget);
     },
   );
@@ -437,7 +445,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
 
-      expect(find.text('Contributor only'), findsOneWidget);
+      expect(find.text('Contributor visible'), findsOneWidget);
 
       await tester.tap(find.byType(Switch));
       await tester.pump();

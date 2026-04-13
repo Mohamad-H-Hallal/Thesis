@@ -17,11 +17,17 @@ class MockProjectsRepository implements ProjectsRepository {
     if (role == UserRole.admin && scope == ProjectViewScope.all) {
       filtered = all;
     } else if (scope == ProjectViewScope.public || role == UserRole.viewer) {
-      filtered = all.where(
-        (project) =>
-            project.visibleToViewers &&
-            (project.status == 'active' || project.status == 'completed'),
-      );
+      filtered = all.where((project) {
+        final isPublished =
+            project.status == 'active' || project.status == 'completed';
+        if (!isPublished) {
+          return false;
+        }
+        if (role == UserRole.viewer) {
+          return project.visibleToViewers;
+        }
+        return project.visibleToContributors;
+      });
     } else {
       filtered = all.where((project) => project.isAssignedTo(userId));
     }
@@ -93,6 +99,7 @@ class MockProjectsRepository implements ProjectsRepository {
       allowedGeometryTypes: project.allowedGeometryTypes,
       maxGpsAccuracyMeters: project.maxGpsAccuracyMeters,
       visibleToViewers: project.visibleToViewers,
+      visibleToContributors: project.visibleToContributors,
       currentUserAssignmentRole: currentAssignment?.role,
       currentUserAssignmentStatus: currentAssignment?.status,
     );
@@ -120,6 +127,7 @@ class MockProjectsRepository implements ProjectsRepository {
       allowedGeometryTypes: project.allowedGeometryTypes,
       maxGpsAccuracyMeters: project.maxGpsAccuracyMeters,
       visibleToViewers: visibleToViewers,
+      visibleToContributors: project.visibleToContributors,
       currentUserAssignmentRole: project.currentUserAssignmentRole,
       currentUserAssignmentStatus: project.currentUserAssignmentStatus,
     );
@@ -148,6 +156,7 @@ class MockProjectsRepository implements ProjectsRepository {
         allowedGeometryTypes: const <String>['Point', 'Polygon'],
         maxGpsAccuracyMeters: 12,
         visibleToViewers: true,
+        visibleToContributors: true,
         assignments: <ProjectAssignment>[
           ProjectAssignment(
             userId: 'user-1',
@@ -216,6 +225,7 @@ class MockProjectsRepository implements ProjectsRepository {
         allowedGeometryTypes: const <String>['Point'],
         maxGpsAccuracyMeters: 15,
         visibleToViewers: false,
+        visibleToContributors: false,
         assignments: <ProjectAssignment>[
           ProjectAssignment(
             userId: 'user-1',
@@ -265,6 +275,7 @@ class MockProjectsRepository implements ProjectsRepository {
         allowedGeometryTypes: const <String>['Polygon'],
         maxGpsAccuracyMeters: 20,
         visibleToViewers: false,
+        visibleToContributors: true,
         assignments: <ProjectAssignment>[
           ProjectAssignment(
             userId: 'user-2',

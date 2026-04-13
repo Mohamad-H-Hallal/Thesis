@@ -5,12 +5,10 @@ import 'package:lebanese_gis_mobile/core/offline/local_models.dart';
 import 'package:lebanese_gis_mobile/core/offline/local_store_web.dart';
 import 'package:lebanese_gis_mobile/core/sync/sync_engine.dart';
 
-LocalDraftFeature _buildDraft({
-  required String id,
-  required int version,
-}) {
+LocalDraftFeature _buildDraft({required String id, required int version}) {
   return LocalDraftFeature(
     id: id,
+    ownerUserId: 'user-1',
     projectId: 'project-perf',
     projectName: 'Perf Project',
     geometryType: 'Point',
@@ -56,39 +54,54 @@ SyncQueueItem _queueItem({
 }
 
 void main() {
-  test('sync engine processes small pending batch within baseline window', () async {
-    final store = MemoryLocalStore();
-    await store.initialize();
+  test(
+    'sync engine processes small pending batch within baseline window',
+    () async {
+      final store = MemoryLocalStore();
+      await store.initialize();
 
-    addTearDown(() async {
-      await store.dispose();
-    });
+      addTearDown(() async {
+        await store.dispose();
+      });
 
-    final dio = Dio();
-    dio.interceptors.add(
-      InterceptorsWrapper(
-        onRequest: (options, handler) {
-          final payload = options.data is Map<String, dynamic>
-              ? Map<String, dynamic>.from(options.data as Map<String, dynamic>)
-              : const <String, dynamic>{};
+      final dio = Dio();
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            final payload = options.data is Map<String, dynamic>
+                ? Map<String, dynamic>.from(
+                    options.data as Map<String, dynamic>,
+                  )
+                : const <String, dynamic>{};
 
-          if (options.method == 'POST' && options.path.endsWith('/features')) {
-            handler.resolve(
-              Response<Map<String, dynamic>>(
-                requestOptions: options,
-                statusCode: 201,
-                data: <String, dynamic>{
-                  'data': <String, dynamic>{
-                    'id': payload['id'] ?? payload['draft_id'],
-                    'version': payload['local_version'] ?? 1,
+            if (options.method == 'POST' &&
+                options.path.endsWith('/features')) {
+              handler.resolve(
+                Response<Map<String, dynamic>>(
+                  requestOptions: options,
+                  statusCode: 201,
+                  data: <String, dynamic>{
+                    'data': <String, dynamic>{
+                      'id': payload['id'] ?? payload['draft_id'],
+                      'version': payload['local_version'] ?? 1,
+                    },
                   },
-                },
-              ),
-            );
-            return;
-          }
+                ),
+              );
+              return;
+            }
 
-          if (options.method == 'POST' && options.path.endsWith('/submit')) {
+            if (options.method == 'POST' && options.path.endsWith('/submit')) {
+              handler.resolve(
+                Response<Map<String, dynamic>>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: const <String, dynamic>{'success': true},
+                ),
+              );
+              return;
+            }
+
             handler.resolve(
               Response<Map<String, dynamic>>(
                 requestOptions: options,
@@ -96,42 +109,38 @@ void main() {
                 data: const <String, dynamic>{'success': true},
               ),
             );
-            return;
-          }
+          },
+        ),
+      );
 
-          handler.resolve(
-            Response<Map<String, dynamic>>(
-              requestOptions: options,
-              statusCode: 200,
-              data: const <String, dynamic>{'success': true},
-            ),
-          );
-        },
-      ),
-    );
+      final engine = SyncEngine(
+        localStore: store,
+        apiClient: ApiClient(dio: dio),
+      );
 
-    final engine = SyncEngine(
-      localStore: store,
-      apiClient: ApiClient(dio: dio),
-    );
+      const count = 8;
+      for (var i = 1; i <= count; i++) {
+        final draftId = 'perf-draft-$i';
+        final queueId = 'perf-queue-$i';
+        await store.upsertDraft(
+          _buildDraft(id: draftId, version: i),
+          enqueueSync: false,
+        );
+        await store.enqueueSyncItem(
+          _queueItem(id: queueId, draftId: draftId, version: i),
+        );
+      }
 
-    const count = 8;
-    for (var i = 1; i <= count; i++) {
-      final draftId = 'perf-draft-$i';
-      final queueId = 'perf-queue-$i';
-      await store.upsertDraft(_buildDraft(id: draftId, version: i), enqueueSync: false);
-      await store.enqueueSyncItem(_queueItem(id: queueId, draftId: draftId, version: i));
-    }
+      final stopwatch = Stopwatch()..start();
+      final summary = await engine.syncPending(limit: 20);
+      stopwatch.stop();
 
-    final stopwatch = Stopwatch()..start();
-    final summary = await engine.syncPending(limit: 20);
-    stopwatch.stop();
-
-    expect(summary.processed, count);
-    expect(summary.succeeded, count);
-    expect(summary.failed, 0);
-    expect(summary.conflicts, 0);
-    expect(summary.deadLettered, 0);
-    expect(stopwatch.elapsedMilliseconds, lessThan(4500));
-  });
+      expect(summary.processed, count);
+      expect(summary.succeeded, count);
+      expect(summary.failed, 0);
+      expect(summary.conflicts, 0);
+      expect(summary.deadLettered, 0);
+      expect(stopwatch.elapsedMilliseconds, lessThan(4500));
+    },
+  );
 }

@@ -12,6 +12,7 @@ void main() {
   LocalDraftFeature seedDraft() {
     return LocalDraftFeature(
       id: 'draft-wf-1',
+      ownerUserId: 'contributor-1',
       projectId: 'proj-1',
       projectName: 'Bekaa Orchard Census 2026',
       geometryType: 'Point',

@@ -159,6 +159,7 @@ class ApiProjectsRepository implements ProjectsRepository {
       minPhotos: _toInt(row['min_photos']) ?? 0,
       maxPhotos: _toInt(row['max_photos']) ?? 5,
       visibleToViewers: (row['visible_to_viewers'] as bool?) ?? false,
+      visibleToContributors: (row['visible_to_contributors'] as bool?) ?? true,
       currentUserAssignmentRole: _toAssignmentRole(
         row['current_user_assignment_role'] as String?,
       ),

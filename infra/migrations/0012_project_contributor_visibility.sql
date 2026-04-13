@@ -1,0 +1,2 @@
+ALTER TABLE project
+ADD COLUMN IF NOT EXISTS visible_to_contributors BOOLEAN NOT NULL DEFAULT TRUE;

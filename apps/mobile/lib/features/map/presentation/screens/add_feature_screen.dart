@@ -787,10 +787,12 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     }
 
     final localStore = ref.read(localStoreProvider);
+    final session = ref.read(authControllerProvider).session;
     final now = DateTime.now();
     final existingDraft = await localStore.getDraftById(draftId);
     final offlineDraft = LocalDraftFeature(
       id: draftId,
+      ownerUserId: session?.user.id ?? '',
       projectId: project.id,
       projectName: project.name,
       geometryType: _selectedGeometryType ?? 'Point',

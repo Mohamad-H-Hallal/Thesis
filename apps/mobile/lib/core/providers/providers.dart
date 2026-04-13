@@ -169,6 +169,7 @@ final offlineBootstrapProvider = FutureProvider<void>((ref) async {
       .map(
         (item) => LocalDraftFeature(
           id: item.id,
+          ownerUserId: session.user.id,
           projectId: 'seed-project',
           projectName: item.projectName,
           geometryType: item.geometryType,
@@ -371,7 +372,14 @@ final localDraftFeaturesProvider = FutureProvider<List<LocalDraftFeature>>((
 ) async {
   await ref.watch(offlineBootstrapProvider.future);
   final localStore = ref.watch(localStoreProvider);
-  return localStore.getDrafts();
+  final drafts = await localStore.getDrafts();
+  final session = ref.watch(authControllerProvider).session;
+  if (session == null) {
+    return const <LocalDraftFeature>[];
+  }
+  return drafts
+      .where((draft) => draft.ownerUserId == session.user.id)
+      .toList(growable: false);
 });
 
 final reviewQueueDraftsProvider = FutureProvider<List<LocalDraftFeature>>((
@@ -571,8 +579,13 @@ final rejectedReviewQueueProvider = FutureProvider<List<ReviewQueueItem>>((
 });
 
 final projectReviewQueueProvider =
-    FutureProvider.family<List<ReviewQueueItem>, String>((ref, projectId) async {
-      ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+    FutureProvider.family<List<ReviewQueueItem>, String>((
+      ref,
+      projectId,
+    ) async {
+      ref.watch(
+        authControllerProvider.select((state) => state.session?.user.id),
+      );
       ref.watch(workflowRefreshTickProvider);
       if (projectId.trim().isEmpty) {
         return const <ReviewQueueItem>[];
@@ -583,8 +596,13 @@ final projectReviewQueueProvider =
     });
 
 final projectRejectedReviewQueueProvider =
-    FutureProvider.family<List<ReviewQueueItem>, String>((ref, projectId) async {
-      ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+    FutureProvider.family<List<ReviewQueueItem>, String>((
+      ref,
+      projectId,
+    ) async {
+      ref.watch(
+        authControllerProvider.select((state) => state.session?.user.id),
+      );
       ref.watch(workflowRefreshTickProvider);
       if (projectId.trim().isEmpty) {
         return const <ReviewQueueItem>[];

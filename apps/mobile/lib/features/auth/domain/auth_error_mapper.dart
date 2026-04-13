@@ -20,7 +20,7 @@ AuthFailure mapAuthDioException(
 
   if (error.type == DioExceptionType.connectionError) {
     return const AuthFailure(
-      'Network connection failed. Verify internet access and API URL.',
+      'Network connection failed. New sign-in requires internet access. Reconnect and try again.',
       code: 'network_error',
     );
   }
@@ -124,7 +124,8 @@ String? _extractMessage(Object? data) {
     final message = data['message'] ?? data['error'];
     if (message is String && message.trim().isNotEmpty) {
       final trimmed = message.trim();
-      if (trimmed.toLowerCase() == 'validation failed' && fieldMessage != null) {
+      if (trimmed.toLowerCase() == 'validation failed' &&
+          fieldMessage != null) {
         return fieldMessage;
       }
       return trimmed;

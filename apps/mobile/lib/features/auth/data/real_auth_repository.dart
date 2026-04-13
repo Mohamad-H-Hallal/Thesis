@@ -50,9 +50,28 @@ class RealAuthRepository implements AuthRepository {
       );
     } on DioException catch (error) {
       if (error.response?.statusCode == 401) {
-        await _clearStoredSession();
-        _apiClient.setAccessToken(null);
-        return null;
+        try {
+          return await _refreshRememberedSession(refresh);
+        } on DioException catch (refreshError) {
+          if (_isNetworkError(refreshError)) {
+            final fallbackUser = await _readStoredUser();
+            if (fallbackUser == null) {
+              await _clearStoredSession();
+              _apiClient.setAccessToken(null);
+              return null;
+            }
+
+            return AuthSession(
+              accessToken: access,
+              refreshToken: refresh,
+              user: fallbackUser,
+            );
+          }
+
+          await _clearStoredSession();
+          _apiClient.setAccessToken(null);
+          return null;
+        }
       }
 
       final fallbackUser = await _readStoredUser();
@@ -368,6 +387,24 @@ class RealAuthRepository implements AuthRepository {
     await _storage.delete(key: _phoneKey);
     await _storage.delete(key: _userIdKey);
     await _storage.delete(key: _superAdminKey);
+  }
+
+  Future<AuthSession> _refreshRememberedSession(String refreshToken) async {
+    final response = await _apiClient.dio.post<Map<String, dynamic>>(
+      '$_authBasePath/refresh-token',
+      data: <String, dynamic>{'refresh_token': refreshToken},
+    );
+    return _sessionFromAuthResponse(
+      response.data ?? const <String, dynamic>{},
+      rememberMe: true,
+    );
+  }
+
+  bool _isNetworkError(DioException error) {
+    return error.type == DioExceptionType.connectionError ||
+        error.type == DioExceptionType.connectionTimeout ||
+        error.type == DioExceptionType.receiveTimeout ||
+        error.type == DioExceptionType.sendTimeout;
   }
 
   AppUser _parseUserFromMeResponse(Map<String, dynamic> payload) {

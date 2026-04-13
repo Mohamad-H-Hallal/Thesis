@@ -6,6 +6,7 @@ void main() {
   LocalDraftFeature seedDraft() {
     return LocalDraftFeature(
       id: 'draft-1',
+      ownerUserId: 'contributor-1',
       projectId: 'proj-1',
       projectName: 'Bekaa',
       geometryType: 'Point',

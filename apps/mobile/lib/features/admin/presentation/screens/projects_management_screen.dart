@@ -416,11 +416,7 @@ class _ProjectsManagementScreenState
                                   StatusChip(status: project.status),
                                   Chip(label: Text(project.category)),
                                   Chip(
-                                    label: Text(
-                                      project.visibleToViewers
-                                          ? 'Viewer visible'
-                                          : 'Contributor only',
-                                    ),
+                                    label: Text(project.visibilitySummaryLabel),
                                   ),
                                   Chip(
                                     label: Text(
