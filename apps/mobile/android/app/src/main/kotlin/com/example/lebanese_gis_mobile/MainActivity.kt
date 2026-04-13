@@ -3,6 +3,7 @@ package com.example.lebanese_gis_mobile
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
@@ -12,12 +13,16 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
+import java.net.URLConnection
 
 class MainActivity : FlutterActivity() {
     private val locationChannelName = "lb.gov.gis_collector/location"
+    private val exportFilesChannelName = "lb.gov.gis_collector/export_files"
     private val locationPermissionRequestCode = 8124
     private var pendingLocationResult: MethodChannel.Result? = null
     private var pendingLocationListener: LocationListener? = null
@@ -32,6 +37,17 @@ class MainActivity : FlutterActivity() {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "getCurrentLocation" -> handleGetCurrentLocation(result)
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            exportFilesChannelName
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "openFile" -> handleOpenFile(call.arguments as? Map<*, *>, result)
+                "shareFile" -> handleShareFile(call.arguments as? Map<*, *>, result)
                 else -> result.notImplemented()
             }
         }
@@ -230,6 +246,81 @@ class MainActivity : FlutterActivity() {
         }
         pendingLocationListener = null
     }
+
+    private fun handleOpenFile(arguments: Map<*, *>?, result: MethodChannel.Result) {
+        val file = resolveExportFile(arguments, result) ?: return
+        val uri = exportFileUri(file)
+        val mimeType = URLConnection.guessContentTypeFromName(file.name) ?: "application/zip"
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mimeType)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+        if (intent.resolveActivity(packageManager) == null) {
+            result.error(
+                "NO_APP_AVAILABLE",
+                "No app on this device can open the exported file.",
+                null
+            )
+            return
+        }
+
+        startActivity(intent)
+        result.success(null)
+    }
+
+    private fun handleShareFile(arguments: Map<*, *>?, result: MethodChannel.Result) {
+        val file = resolveExportFile(arguments, result) ?: return
+        val uri = exportFileUri(file)
+        val mimeType = URLConnection.guessContentTypeFromName(file.name) ?: "application/zip"
+        val subject = arguments?.get("subject") as? String
+        val text = arguments?.get("text") as? String
+
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            putExtra(Intent.EXTRA_STREAM, uri)
+            if (!subject.isNullOrBlank()) {
+                putExtra(Intent.EXTRA_SUBJECT, subject)
+            }
+            if (!text.isNullOrBlank()) {
+                putExtra(Intent.EXTRA_TEXT, text)
+            }
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
+        val chooser = Intent.createChooser(shareIntent, "Share export").apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(chooser)
+        result.success(null)
+    }
+
+    private fun resolveExportFile(
+        arguments: Map<*, *>?,
+        result: MethodChannel.Result
+    ): File? {
+        val path = (arguments?.get("path") as? String)?.trim()
+        if (path.isNullOrEmpty()) {
+            result.error("MISSING_PATH", "Export file path is missing.", null)
+            return null
+        }
+
+        val file = File(path)
+        if (!file.exists()) {
+            result.error(
+                "FILE_NOT_FOUND",
+                "The downloaded export is no longer available on this device.",
+                null
+            )
+            return null
+        }
+
+        return file
+    }
+
+    private fun exportFileUri(file: File) =
+        FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
 
     private fun locationPayload(location: Location): Map<String, Any?> {
         return mapOf(

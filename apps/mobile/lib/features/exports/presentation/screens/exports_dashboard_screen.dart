@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/constants/design_tokens.dart';
@@ -11,6 +14,8 @@ import '../../../../core/widgets/status_chip.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/export_job.dart';
+import '../export_file_actions.dart';
+import '../export_request_validation.dart';
 import '../controllers/exports_controller.dart';
 
 class ExportsDashboardScreen extends ConsumerStatefulWidget {
@@ -37,6 +42,9 @@ class _ExportsDashboardScreenState
   final TextEditingController _fromDateController = TextEditingController();
   final TextEditingController _toDateController = TextEditingController();
   final TextEditingController _bboxController = TextEditingController();
+  String? _fromDateError;
+  String? _toDateError;
+  String? _bboxError;
 
   @override
   void dispose() {
@@ -286,33 +294,97 @@ class _ExportsDashboardScreenState
                     },
                   ),
                   const SizedBox(height: AppSpacing.sm),
+                  Text(
+                    'Optional filters',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    'Leave these blank to export all approved features for the selected project.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
                   TextFormField(
                     controller: _fromDateController,
-                    decoration: const InputDecoration(
-                      labelText: 'From date (YYYY-MM-DD)',
+                    keyboardType: TextInputType.datetime,
+                    inputFormatters: <TextInputFormatter>[
+                      FilteringTextInputFormatter.allow(RegExp(r'[\d-]')),
+                      LengthLimitingTextInputFormatter(10),
+                    ],
+                    onChanged: (_) {
+                      if (_fromDateError != null || _toDateError != null) {
+                        setState(() {
+                          _fromDateError = null;
+                          if (_toDateError ==
+                              'To date must be the same day or later than From date.') {
+                            _toDateError = null;
+                          }
+                        });
+                      }
+                    },
+                    decoration: InputDecoration(
+                      labelText: 'From date',
+                      hintText: exportDateHint,
+                      helperText:
+                          '$exportDateExample. Leave blank to include earlier approved features.',
+                      errorText: _fromDateError,
+                      suffixIcon: IconButton(
+                        tooltip: 'Pick from date',
+                        onPressed: () => _pickDate(_fromDateController),
+                        icon: const Icon(Icons.calendar_today_outlined),
+                      ),
                     ),
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   TextFormField(
                     controller: _toDateController,
-                    decoration: const InputDecoration(
-                      labelText: 'To date (YYYY-MM-DD)',
+                    keyboardType: TextInputType.datetime,
+                    inputFormatters: <TextInputFormatter>[
+                      FilteringTextInputFormatter.allow(RegExp(r'[\d-]')),
+                      LengthLimitingTextInputFormatter(10),
+                    ],
+                    onChanged: (_) {
+                      if (_toDateError != null) {
+                        setState(() => _toDateError = null);
+                      }
+                    },
+                    decoration: InputDecoration(
+                      labelText: 'To date',
+                      hintText: exportDateHint,
+                      helperText:
+                          '$exportDateExample. Leave blank to include the latest approved features.',
+                      errorText: _toDateError,
+                      suffixIcon: IconButton(
+                        tooltip: 'Pick to date',
+                        onPressed: () => _pickDate(_toDateController),
+                        icon: const Icon(Icons.calendar_today_outlined),
+                      ),
                     ),
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   TextFormField(
                     controller: _bboxController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      signed: true,
+                      decimal: true,
+                    ),
+                    inputFormatters: <TextInputFormatter>[
+                      FilteringTextInputFormatter.allow(RegExp(r'[\d,\-.\s]')),
+                    ],
+                    onChanged: (_) {
+                      if (_bboxError != null) {
+                        setState(() => _bboxError = null);
+                      }
+                    },
                     minLines: 1,
                     maxLines: 2,
-                    decoration: const InputDecoration(
-                      labelText: 'BBOX (minLon,minLat,maxLon,maxLat)',
-                      hintText: '35.1,33.1,36.0,34.6',
+                    decoration: InputDecoration(
+                      labelText: 'BBOX',
+                      hintText: exportBboxHint,
+                      helperText:
+                          '$exportBboxExample. Use this only when you need a smaller export area.',
+                      errorText: _bboxError,
                     ),
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    'Default export includes approved features only. Optional dates or BBOX narrow the package.',
-                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: AppSpacing.md),
                   SizedBox(
@@ -367,35 +439,17 @@ class _ExportsDashboardScreenState
                       }
                     },
                     onDownload: () async {
-                      final downloaded = await controller.downloadExport(
-                        job.id,
-                      );
-                      final latestError = ref
-                          .read(exportsControllerProvider)
-                          .error
-                          ?.trim();
-                      if (!context.mounted) {
-                        return;
-                      }
-                      if (downloaded == null) {
-                        AppSnackbar.showError(
-                          context,
-                          latestError?.isNotEmpty == true
-                              ? latestError!
-                              : 'Export download failed.',
-                        );
-                        return;
-                      }
-                      final savedPath = downloaded.localFilePath;
-                      if (context.mounted) {
-                        AppSnackbar.showSuccess(
-                          context,
-                          savedPath == null || savedPath.isEmpty
-                              ? 'Export downloaded.'
-                              : 'Export saved to $savedPath',
-                        );
-                      }
+                      await _handleDownload(controller, job.id);
                     },
+                    onOpen: job.localFilePath?.trim().isNotEmpty == true
+                        ? () => _openDownloadedFile(job.localFilePath!)
+                        : null,
+                    onShare: job.localFilePath?.trim().isNotEmpty == true
+                        ? () => _shareDownloadedFile(job)
+                        : null,
+                    onCopyPath: job.localFilePath?.trim().isNotEmpty == true
+                        ? () => _copyDownloadPath(job.localFilePath!)
+                        : null,
                   ),
                 ),
               ),
@@ -411,25 +465,13 @@ class _ExportsDashboardScreenState
       AppSnackbar.showError(context, 'Select a project first.');
       return;
     }
+    if (!_validateRequestFilters(showAlert: true)) {
+      return;
+    }
+
     final fromDate = _fromDateController.text.trim();
     final toDate = _toDateController.text.trim();
     final bbox = _bboxController.text.trim();
-
-    if (fromDate.isNotEmpty && !_isIsoDate(fromDate)) {
-      AppSnackbar.showError(context, 'From date must use YYYY-MM-DD.');
-      return;
-    }
-    if (toDate.isNotEmpty && !_isIsoDate(toDate)) {
-      AppSnackbar.showError(context, 'To date must use YYYY-MM-DD.');
-      return;
-    }
-    if (bbox.isNotEmpty && !_isBbox(bbox)) {
-      AppSnackbar.showError(
-        context,
-        'BBOX must use minLon,minLat,maxLon,maxLat.',
-      );
-      return;
-    }
 
     final success = await controller.requestExport(
       projectId: projectId,
@@ -461,6 +503,173 @@ class _ExportsDashboardScreenState
       );
     }
   }
+
+  Future<void> _pickDate(TextEditingController controller) async {
+    final initialDate =
+        DateTime.tryParse(controller.text.trim()) ?? DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime(2000, 1, 1),
+      lastDate: DateTime(2100, 12, 31),
+    );
+    if (picked == null) {
+      return;
+    }
+
+    final month = picked.month.toString().padLeft(2, '0');
+    final day = picked.day.toString().padLeft(2, '0');
+    controller.text = '${picked.year}-$month-$day';
+    if (mounted) {
+      setState(() {
+        _fromDateError = null;
+        _toDateError = null;
+      });
+    }
+  }
+
+  bool _validateRequestFilters({required bool showAlert}) {
+    final fromDate = _fromDateController.text.trim();
+    final toDate = _toDateController.text.trim();
+    final bbox = _bboxController.text.trim();
+
+    final fromDateError = validateExportDateInput('From date', fromDate);
+    String? toDateError = validateExportDateInput('To date', toDate);
+    final bboxError = validateExportBboxInput(bbox);
+    final rangeError = validateExportDateRange(fromDate, toDate);
+    if (toDateError == null && rangeError != null) {
+      toDateError = rangeError;
+    }
+
+    setState(() {
+      _fromDateError = fromDateError;
+      _toDateError = toDateError;
+      _bboxError = bboxError;
+    });
+
+    final firstError = fromDateError ?? toDateError ?? bboxError;
+    if (firstError == null) {
+      return true;
+    }
+
+    if (showAlert) {
+      AppSnackbar.showError(context, firstError);
+      _scrollToTop();
+    }
+    return false;
+  }
+
+  Future<void> _handleDownload(
+    ExportsController controller,
+    String exportId,
+  ) async {
+    final downloaded = await controller.downloadExport(exportId);
+    final latestError = ref.read(exportsControllerProvider).error?.trim();
+    if (!mounted) {
+      return;
+    }
+    if (downloaded == null) {
+      AppSnackbar.showError(
+        context,
+        latestError?.isNotEmpty == true
+            ? latestError!
+            : 'Export download failed.',
+      );
+      return;
+    }
+    final savedPath = downloaded.localFilePath;
+    AppSnackbar.showSuccess(
+      context,
+      savedPath == null || savedPath.isEmpty
+          ? 'Export downloaded.'
+          : 'Export saved to $savedPath. Use Open, Share, or Copy path below.',
+    );
+  }
+
+  Future<void> _openDownloadedFile(String path) async {
+    final file = File(path);
+    if (!await file.exists()) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        'The downloaded export is no longer available at that path.',
+      );
+      return;
+    }
+
+    try {
+      await ExportFileActions.openFile(path);
+    } on PlatformException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        error.message?.trim().isNotEmpty == true
+            ? error.message!
+            : 'This device could not open the exported file.',
+      );
+      return;
+    }
+  }
+
+  Future<void> _shareDownloadedFile(ExportJob job) async {
+    final path = job.localFilePath;
+    if (path == null || path.trim().isEmpty) {
+      return;
+    }
+    final file = File(path);
+    if (!await file.exists()) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        'The downloaded export is no longer available at that path.',
+      );
+      return;
+    }
+
+    try {
+      await ExportFileActions.shareFile(
+        path: path,
+        subject:
+            '${job.projectName} ${job.format.name.toUpperCase()} export package',
+        text: 'Export package for ${job.projectName}.',
+      );
+    } on PlatformException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        error.message?.trim().isNotEmpty == true
+            ? error.message!
+            : 'This device could not open the share sheet for the exported file.',
+      );
+    }
+  }
+
+  Future<void> _copyDownloadPath(String path) async {
+    await Clipboard.setData(ClipboardData(text: path));
+    if (!mounted) {
+      return;
+    }
+    AppSnackbar.showInfo(context, 'Export path copied.');
+  }
+
+  void _scrollToTop() {
+    if (!_scrollController.hasClients) {
+      return;
+    }
+    _scrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+    );
+  }
 }
 
 class _ExportJobCard extends StatelessWidget {
@@ -469,12 +678,18 @@ class _ExportJobCard extends StatelessWidget {
     required this.onRefresh,
     required this.onRetry,
     required this.onDownload,
+    required this.onOpen,
+    required this.onShare,
+    required this.onCopyPath,
   });
 
   final ExportJob job;
   final Future<void> Function() onRefresh;
   final Future<void> Function() onRetry;
   final Future<void> Function() onDownload;
+  final Future<void> Function()? onOpen;
+  final Future<void> Function()? onShare;
+  final Future<void> Function()? onCopyPath;
 
   @override
   Widget build(BuildContext context) {
@@ -560,6 +775,24 @@ class _ExportJobCard extends StatelessWidget {
                   icon: const Icon(Icons.download, size: 18),
                   label: const Text('Download'),
                 ),
+              if (onOpen != null)
+                OutlinedButton.icon(
+                  onPressed: onOpen,
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  label: const Text('Open'),
+                ),
+              if (onShare != null)
+                OutlinedButton.icon(
+                  onPressed: onShare,
+                  icon: const Icon(Icons.share_outlined, size: 18),
+                  label: const Text('Share'),
+                ),
+              if (onCopyPath != null)
+                OutlinedButton.icon(
+                  onPressed: onCopyPath,
+                  icon: const Icon(Icons.copy_all_outlined, size: 18),
+                  label: const Text('Copy path'),
+                ),
             ],
           ),
         ],
@@ -623,16 +856,4 @@ String _formatBytes(int bytes) {
     return '${(bytes / 1024).toStringAsFixed(1)} KB';
   }
   return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-}
-
-bool _isIsoDate(String value) {
-  return RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value);
-}
-
-bool _isBbox(String value) {
-  final parts = value.split(',');
-  if (parts.length != 4) {
-    return false;
-  }
-  return parts.every((part) => double.tryParse(part.trim()) != null);
 }
