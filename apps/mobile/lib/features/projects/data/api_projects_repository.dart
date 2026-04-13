@@ -85,6 +85,22 @@ class ApiProjectsRepository implements ProjectsRepository {
   }
 
   @override
+  Future<ProjectSummary> updateContributorVisibility({
+    required String projectId,
+    required bool visibleToContributors,
+  }) async {
+    final response = await _apiClient.dio.put<Map<String, dynamic>>(
+      '$_projectsBasePath/$projectId',
+      data: <String, dynamic>{'visible_to_contributors': visibleToContributors},
+    );
+    final payload = response.data ?? const <String, dynamic>{};
+    final row = Map<String, dynamic>.from(
+      payload['data'] as Map? ?? const <String, dynamic>{},
+    );
+    return _toProjectSummary(row);
+  }
+
+  @override
   Future<void> requestProjectAccess({required String projectId}) async {
     try {
       await _apiClient.dio.post<Map<String, dynamic>>(

@@ -235,6 +235,40 @@ class _FakeProjectsRepository implements ProjectsRepository {
   }
 
   @override
+  Future<ProjectSummary> updateContributorVisibility({
+    required String projectId,
+    required bool visibleToContributors,
+  }) async {
+    _projects = _projects
+        .map((project) {
+          if (project.id != projectId) {
+            return project;
+          }
+          return ProjectSummary(
+            id: project.id,
+            name: project.name,
+            category: project.category,
+            status: project.status,
+            assignedCollectors: project.assignedCollectors,
+            pendingReviews: project.pendingReviews,
+            description: project.description,
+            assignments: project.assignments,
+            collectionFormSchema: project.collectionFormSchema,
+            requiresPhotos: project.requiresPhotos,
+            minPhotos: project.minPhotos,
+            maxPhotos: project.maxPhotos,
+            allowedGeometryTypes: project.allowedGeometryTypes,
+            maxGpsAccuracyMeters: project.maxGpsAccuracyMeters,
+            visibleToViewers: project.visibleToViewers,
+            visibleToContributors: visibleToContributors,
+          );
+        })
+        .toList(growable: false);
+
+    return _projects.firstWhere((project) => project.id == projectId);
+  }
+
+  @override
   Future<void> requestProjectAccess({required String projectId}) async {}
 
   @override
@@ -446,13 +480,57 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
 
       expect(find.text('Contributor visible'), findsOneWidget);
+      expect(find.text('Visible to contributors'), findsOneWidget);
 
-      await tester.tap(find.byType(Switch));
+      await tester.tap(
+        find.widgetWithText(SwitchListTile, 'Visible to viewers'),
+      );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
 
       expect(find.text('Project is now visible to viewers.'), findsOneWidget);
       expect(find.text('Viewer visible'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'admin contributor visibility toggle updates project details state after refresh',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1080, 1600));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final session = _sessionForRole(UserRole.admin, userId: 'admin-1');
+      final repository = _FakeProjectsRepository(<ProjectSummary>[
+        _project(
+          id: 'admin-project',
+          name: 'Mount Lebanon Field Survey',
+          visibleToViewers: false,
+          visibleToContributors: true,
+        ),
+      ]);
+
+      await tester.pumpWidget(
+        _wrapWithScope(
+          session: session,
+          projects: const <ProjectSummary>[],
+          repository: repository,
+          child: const ProjectDetailsScreen(projectId: 'admin-project'),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      await tester.tap(
+        find.widgetWithText(SwitchListTile, 'Visible to contributors'),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(
+        find.text('Project is now hidden from contributor discovery.'),
+        findsOneWidget,
+      );
+      expect(find.text('Restricted'), findsOneWidget);
     },
   );
 

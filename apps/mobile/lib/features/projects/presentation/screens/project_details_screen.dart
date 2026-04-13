@@ -86,6 +86,46 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
     }
   }
 
+  Future<void> _toggleContributorVisibility(bool value) async {
+    setState(() {
+      _updatingVisibility = true;
+    });
+
+    try {
+      await ref
+          .read(projectsRepositoryProvider)
+          .updateContributorVisibility(
+            projectId: widget.projectId,
+            visibleToContributors: value,
+          );
+      bumpWorkflowRefresh(ref);
+      if (mounted) {
+        AppSnackbar.showSuccess(
+          context,
+          value
+              ? 'Project is now visible to contributors.'
+              : 'Project is now hidden from contributor discovery.',
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to update contributor visibility right now.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _updatingVisibility = false;
+        });
+      }
+    }
+  }
+
   Future<void> _requestProjectAccess() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -324,18 +364,36 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
               AnimatedReveal(
                 delay: const Duration(milliseconds: 100),
                 child: AppCard(
-                  child: SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: project.visibleToViewers,
-                    onChanged: _updatingVisibility
-                        ? null
-                        : (value) => _toggleViewerVisibility(value),
-                    title: const Text('Visible to viewers'),
-                    subtitle: Text(
-                      project.visibleToViewers
-                          ? 'Viewers can see this project while it stays active or completed.'
-                          : 'Viewers cannot see this project. Contributor discovery is managed in Edit details.',
-                    ),
+                  child: Column(
+                    children: [
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: project.visibleToViewers,
+                        onChanged: _updatingVisibility
+                            ? null
+                            : (value) => _toggleViewerVisibility(value),
+                        title: const Text('Visible to viewers'),
+                        subtitle: Text(
+                          project.visibleToViewers
+                              ? 'Viewers can see this project while it stays active or completed.'
+                              : 'Viewers cannot see this project.',
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: project.visibleToContributors,
+                        onChanged: _updatingVisibility
+                            ? null
+                            : (value) => _toggleContributorVisibility(value),
+                        title: const Text('Visible to contributors'),
+                        subtitle: Text(
+                          project.visibleToContributors
+                              ? 'Contributors can discover this project in the Projects tab while it stays active or completed.'
+                              : 'Contributors only reach this project through an approved assignment.',
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),

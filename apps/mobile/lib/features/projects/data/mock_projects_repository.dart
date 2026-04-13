@@ -134,6 +134,34 @@ class MockProjectsRepository implements ProjectsRepository {
   }
 
   @override
+  Future<ProjectSummary> updateContributorVisibility({
+    required String projectId,
+    required bool visibleToContributors,
+  }) async {
+    final project = _allProjects().firstWhere((item) => item.id == projectId);
+    return ProjectSummary(
+      id: project.id,
+      name: project.name,
+      category: project.category,
+      status: project.status,
+      assignedCollectors: project.assignedCollectors,
+      pendingReviews: project.pendingReviews,
+      description: project.description,
+      assignments: project.assignments,
+      collectionFormSchema: project.collectionFormSchema,
+      requiresPhotos: project.requiresPhotos,
+      minPhotos: project.minPhotos,
+      maxPhotos: project.maxPhotos,
+      allowedGeometryTypes: project.allowedGeometryTypes,
+      maxGpsAccuracyMeters: project.maxGpsAccuracyMeters,
+      visibleToViewers: project.visibleToViewers,
+      visibleToContributors: visibleToContributors,
+      currentUserAssignmentRole: project.currentUserAssignmentRole,
+      currentUserAssignmentStatus: project.currentUserAssignmentStatus,
+    );
+  }
+
+  @override
   Future<void> requestProjectAccess({required String projectId}) async {}
 
   @override

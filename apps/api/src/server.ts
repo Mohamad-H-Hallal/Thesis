@@ -3,7 +3,7 @@ require('dotenv').config();
 const logger = require('./utils/logger');
 const { testConnection, closePool } = require('./config/database');
 const { validateEnv } = require('./config/env');
-const { getPendingMigrations } = require('./db/migrationRunner');
+const { applyPendingMigrations, getPendingMigrations } = require('./db/migrationRunner');
 const { ensureExportDir, cleanupOldExports } = require('./controllers/export.controller');
 const { buildApp } = require('./app');
 import { ensureSuperAdminExists } from './lib/userWorkflow';
@@ -25,6 +25,11 @@ const startServer = async () => {
         logger.error('Refusing to start in production with pending migrations');
         process.exit(1);
       }
+
+      const appliedMigrations = await applyPendingMigrations();
+      logger.info('Applied pending migrations before server start', {
+        appliedMigrations,
+      });
     }
 
     const dbConnected = await testConnection();

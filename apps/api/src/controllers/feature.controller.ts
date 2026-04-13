@@ -142,6 +142,36 @@ const hasProjectAdminAccess = async (projectId: string, user: Express.UserContex
   return accessCheck.rows.length > 0;
 };
 
+const canAccessFeatureForUser = ({
+  featureStatus,
+  collectedByUserId,
+  projectId,
+  user,
+}: {
+  featureStatus: string;
+  collectedByUserId: string;
+  projectId: string;
+  user: Express.UserContext;
+}): Promise<boolean> | boolean => {
+  if (user.role === 'admin') {
+    return true;
+  }
+
+  if (user.role === 'viewer') {
+    return featureStatus === 'approved';
+  }
+
+  if (featureStatus === 'approved') {
+    return true;
+  }
+
+  if (collectedByUserId === user.id) {
+    return true;
+  }
+
+  return hasProjectAdminAccess(projectId, user);
+};
+
 const ensureAttributesObject = (attributes: unknown): Record<string, unknown> => {
   if (!attributes || typeof attributes !== 'object' || Array.isArray(attributes)) {
     throw new AppError('attributes must be a JSON object', 422);
@@ -326,7 +356,7 @@ const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
           AND pa.user_id = $${paramIndex}
           AND pa.status = 'approved'
       )
-      AND (sf.status IN ('approved', 'pending_review') OR sf.collected_by_user_id = $${paramIndex})
+      AND (sf.status = 'approved' OR sf.collected_by_user_id = $${paramIndex})
     `;
     params.push(req.user?.id);
     paramIndex += 1;
@@ -375,6 +405,16 @@ const getFeature = async (req: Request, res: Response): Promise<void> => {
 
   const canAccessProject = await hasProjectAccess(result.rows[0].project_id, req.user as Express.UserContext);
   if (!canAccessProject) {
+    throw new AppError('You do not have access to this feature', 403);
+  }
+
+  const canAccessFeature = await canAccessFeatureForUser({
+    featureStatus: result.rows[0].status,
+    collectedByUserId: result.rows[0].collected_by_user_id,
+    projectId: result.rows[0].project_id,
+    user: req.user as Express.UserContext,
+  });
+  if (!canAccessFeature) {
     throw new AppError('You do not have access to this feature', 403);
   }
 

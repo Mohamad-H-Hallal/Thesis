@@ -19,6 +19,11 @@ abstract class ProjectsRepository {
     required bool visibleToViewers,
   });
 
+  Future<ProjectSummary> updateContributorVisibility({
+    required String projectId,
+    required bool visibleToContributors,
+  });
+
   Future<void> requestProjectAccess({required String projectId});
 
   Future<void> cancelProjectAccessRequest({required String projectId});

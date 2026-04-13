@@ -283,9 +283,25 @@ describe('Project workflow access and feature visibility', () => {
     const contributorResponse = await request(app)
       .get(`${API_PREFIX}/projects/${project.id}/features`)
       .set(authHeader(contributorALogin.token));
+    const contributorGlobalResponse = await request(app)
+      .get(`${API_PREFIX}/features`)
+      .query({ project_id: project.id })
+      .set(authHeader(contributorALogin.token));
     const adminResponse = await request(app)
       .get(`${API_PREFIX}/projects/${project.id}/features`)
       .set(authHeader(admin.token));
+    const contributorApprovedFeature = await request(app)
+      .get(`${API_PREFIX}/features/${approvedId}`)
+      .set(authHeader(contributorALogin.token));
+    const contributorOwnRejectedFeature = await request(app)
+      .get(`${API_PREFIX}/features/${rejectedOwnId}`)
+      .set(authHeader(contributorALogin.token));
+    const contributorOtherPendingFeature = await request(app)
+      .get(`${API_PREFIX}/features/${pendingOtherId}`)
+      .set(authHeader(contributorALogin.token));
+    const contributorOtherRejectedFeature = await request(app)
+      .get(`${API_PREFIX}/features/${rejectedOtherId}`)
+      .set(authHeader(contributorALogin.token));
 
     expect(viewerResponse.status).toBe(200);
     expect(viewerResponse.body.data.map((item) => item.id)).toEqual([approvedId]);
@@ -297,6 +313,19 @@ describe('Project workflow access and feature visibility', () => {
     expect(contributorResponse.body.data.map((item) => item.id)).not.toEqual(
       expect.arrayContaining([pendingOtherId, rejectedOtherId, draftOtherId]),
     );
+    expect(contributorGlobalResponse.status).toBe(200);
+    expect(contributorGlobalResponse.body.data.map((item) => item.id)).toEqual(
+      expect.arrayContaining([approvedId, pendingId, rejectedOwnId]),
+    );
+    expect(
+      contributorGlobalResponse.body.data.map((item) => item.id),
+    ).not.toEqual(
+      expect.arrayContaining([pendingOtherId, rejectedOtherId, draftOtherId]),
+    );
+    expect(contributorApprovedFeature.status).toBe(200);
+    expect(contributorOwnRejectedFeature.status).toBe(200);
+    expect(contributorOtherPendingFeature.status).toBe(403);
+    expect(contributorOtherRejectedFeature.status).toBe(403);
 
     expect(adminResponse.status).toBe(200);
     expect(adminResponse.body.data).toHaveLength(6);
