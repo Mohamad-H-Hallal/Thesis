@@ -63,7 +63,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
         AppSnackbar.showSuccess(
           context,
           value
-              ? 'Project is now visible to users.'
+              ? 'Project is now visible to viewers.'
               : 'Project is now restricted to admins and contributors.',
         );
       }
@@ -302,7 +302,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                           Chip(
                             label: Text(
                               project.visibleToViewers
-                                  ? 'User visible'
+                                  ? 'Viewer visible'
                                   : 'Contributor only',
                             ),
                           ),
@@ -336,10 +336,10 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                     onChanged: _updatingVisibility
                         ? null
                         : (value) => _toggleViewerVisibility(value),
-                    title: const Text('Visible to users'),
+                    title: const Text('Visible to viewers'),
                     subtitle: Text(
                       project.visibleToViewers
-                          ? 'Users can see this project while it stays active or completed.'
+                          ? 'Viewers can see this project while it stays active or completed.'
                           : 'Only admins and assigned contributors can access this project.',
                     ),
                   ),
@@ -586,7 +586,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                 child: AppCard(
                   child: ListTile(
                     leading: Icon(Icons.info_outline),
-                    title: Text('User access'),
+                    title: Text('Viewer access'),
                     subtitle: Text(
                       'This project is visible in read-only mode. Editing and submission actions are disabled.',
                     ),

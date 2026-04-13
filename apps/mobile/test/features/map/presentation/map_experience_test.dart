@@ -664,7 +664,7 @@ void main() {
       expect(find.byTooltip('Offline map'), findsNothing);
       expect(find.byTooltip('Add Feature'), findsNothing);
       expect(find.text('1 feature'), findsWidgets);
-      expect(find.text('User-visible'), findsNothing);
+      expect(find.text('Viewer-visible'), findsNothing);
 
       await tester.tap(find.byTooltip('Show quick filters'));
       await tester.pumpAndSettle();

@@ -198,7 +198,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                           ),
                           const SizedBox(height: AppSpacing.xs),
                           Text(
-                            'Choose user access for immediate login or request contributor access for field collection.',
+                            'Choose viewer access for immediate login or request contributor access for field collection.',
                             style: Theme.of(context).textTheme.bodyMedium,
                             textAlign: TextAlign.center,
                           ),
@@ -230,7 +230,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                                 ),
                                 ButtonSegment<UserRole>(
                                   value: UserRole.viewer,
-                                  label: Text('User'),
+                                  label: Text('Viewer'),
                                   icon: Icon(Icons.visibility_outlined),
                                 ),
                               ],
@@ -408,7 +408,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                             AppButton(
                               label: _selectedRole == UserRole.contributor
                                   ? 'Request contributor access'
-                                  : 'Create user account',
+                                  : 'Create viewer account',
                               icon: Icons.person_add,
                               isLoading: isLoading,
                               onPressed: isLoading ? null : _submit,

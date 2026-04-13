@@ -8,7 +8,7 @@ extension UserRoleX on UserRole {
       case UserRole.contributor:
         return 'Contributor';
       case UserRole.viewer:
-        return 'User';
+        return 'Viewer';
     }
   }
 }

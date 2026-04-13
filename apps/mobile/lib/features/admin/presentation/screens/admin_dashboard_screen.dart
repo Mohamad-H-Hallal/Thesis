@@ -52,7 +52,7 @@ class AdminDashboardScreen extends ConsumerWidget {
                   icon: Icons.admin_panel_settings_outlined,
                 ),
                 _MetricCard(
-                  label: 'Users',
+                  label: 'Viewers',
                   value: '${summary.viewerCount}',
                   icon: Icons.visibility_outlined,
                 ),

@@ -1034,7 +1034,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       Chip(
                         label: Text(
                           project.visibleToViewers
-                              ? 'User-visible'
+                              ? 'Viewer-visible'
                               : 'Restricted',
                         ),
                       ),

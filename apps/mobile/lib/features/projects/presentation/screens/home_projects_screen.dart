@@ -198,7 +198,7 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
                                     Chip(
                                       label: Text(
                                         project.visibleToViewers
-                                            ? 'User visible'
+                                            ? 'Viewer visible'
                                             : 'Contributor only',
                                       ),
                                     ),
@@ -247,7 +247,7 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
   String _subtitleForScope(UserRole role, ProjectViewScope scope) {
     switch (scope) {
       case ProjectViewScope.public:
-        return 'Projects published by admins for read-only public and user access.';
+        return 'Projects published by admins for read-only public and viewer access.';
       case ProjectViewScope.assigned:
         return role == UserRole.admin
             ? 'Project operations and assignment-linked workstreams.'
