@@ -33,12 +33,14 @@ class _ExportsDashboardScreenState
   String? _selectedProjectId;
   String _selectedProjectName = '';
   ExportFormat _selectedFormat = ExportFormat.geojson;
+  final ScrollController _scrollController = ScrollController();
   final TextEditingController _fromDateController = TextEditingController();
   final TextEditingController _toDateController = TextEditingController();
   final TextEditingController _bboxController = TextEditingController();
 
   @override
   void dispose() {
+    _scrollController.dispose();
     _fromDateController.dispose();
     _toDateController.dispose();
     _bboxController.dispose();
@@ -60,6 +62,7 @@ class _ExportsDashboardScreenState
     final exportState = ref.watch(exportsControllerProvider);
     final controller = ref.read(exportsControllerProvider.notifier);
     final metrics = exportState.metrics;
+    final errorText = exportState.error?.trim();
 
     return projectsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -86,9 +89,9 @@ class _ExportsDashboardScreenState
 
         if (hasFixedProject) {
           final project = projects.cast<ProjectSummary?>().firstWhere(
-                (item) => item?.id == fixedProjectId,
-                orElse: () => null,
-              );
+            (item) => item?.id == fixedProjectId,
+            orElse: () => null,
+          );
           if (project != null) {
             _selectedProjectId = project.id;
             _selectedProjectName = widget.fixedProjectName ?? project.name;
@@ -103,32 +106,45 @@ class _ExportsDashboardScreenState
 
         final visibleJobs = hasFixedProject
             ? exportState.jobs
-                .where((job) => job.projectId == _selectedProjectId)
-                .toList(growable: false)
+                  .where((job) => job.projectId == _selectedProjectId)
+                  .toList(growable: false)
             : exportState.jobs;
 
         return ListView(
+          controller: _scrollController,
           children: [
             SectionHeader(
               title: hasFixedProject ? 'Project exports' : 'Exports',
               subtitle: hasFixedProject
-                  ? 'Request GeoJSON or shapefile exports for ${_selectedProjectName.isEmpty ? 'this project' : _selectedProjectName}.'
-                  : 'Request GeoJSON or shapefile exports and track asynchronous processing.',
+                  ? 'Export approved features from ${_selectedProjectName.isEmpty ? 'this project' : _selectedProjectName}.'
+                  : 'Export approved features as GeoJSON or shapefile and track processing.',
             ),
             const SizedBox(height: AppSpacing.md),
-            if (exportState.error?.trim().isNotEmpty == true)
+            if (errorText != null && errorText.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(bottom: AppSpacing.md),
                 child: AppCard(
-                  child: Row(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(
-                        Icons.error_outline,
-                        color: Theme.of(context).colorScheme.error,
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.error_outline,
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                          const SizedBox(width: AppSpacing.sm),
+                          Expanded(
+                            child: Text(
+                              'Export action needs attention',
+                              style: Theme.of(context).textTheme.titleSmall,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: AppSpacing.sm),
-                      Expanded(child: Text(exportState.error!)),
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(errorText),
                     ],
                   ),
                 ),
@@ -241,7 +257,9 @@ class _ExportsDashboardScreenState
                         if (value == null) {
                           return;
                         }
-                        final project = projects.firstWhere((p) => p.id == value);
+                        final project = projects.firstWhere(
+                          (p) => p.id == value,
+                        );
                         setState(() {
                           _selectedProjectId = project.id;
                           _selectedProjectName = project.name;
@@ -290,6 +308,11 @@ class _ExportsDashboardScreenState
                       labelText: 'BBOX (minLon,minLat,maxLon,maxLat)',
                       hintText: '35.1,33.1,36.0,34.6',
                     ),
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    'Default export includes approved features only. Optional dates or BBOX narrow the package.',
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: AppSpacing.md),
                   SizedBox(
@@ -344,11 +367,32 @@ class _ExportsDashboardScreenState
                       }
                     },
                     onDownload: () async {
-                      await controller.downloadExport(job.id);
+                      final downloaded = await controller.downloadExport(
+                        job.id,
+                      );
+                      final latestError = ref
+                          .read(exportsControllerProvider)
+                          .error
+                          ?.trim();
+                      if (!context.mounted) {
+                        return;
+                      }
+                      if (downloaded == null) {
+                        AppSnackbar.showError(
+                          context,
+                          latestError?.isNotEmpty == true
+                              ? latestError!
+                              : 'Export download failed.',
+                        );
+                        return;
+                      }
+                      final savedPath = downloaded.localFilePath;
                       if (context.mounted) {
                         AppSnackbar.showSuccess(
                           context,
-                          'Download started from ${job.filePath}.',
+                          savedPath == null || savedPath.isEmpty
+                              ? 'Export downloaded.'
+                              : 'Export saved to $savedPath',
                         );
                       }
                     },
@@ -361,9 +405,7 @@ class _ExportsDashboardScreenState
     );
   }
 
-  Future<void> _submit(
-    ExportsController controller,
-  ) async {
+  Future<void> _submit(ExportsController controller) async {
     final projectId = _selectedProjectId;
     if (projectId == null || projectId.isEmpty) {
       AppSnackbar.showError(context, 'Select a project first.');
@@ -401,6 +443,22 @@ class _ExportsDashboardScreenState
     );
     if (mounted && success) {
       AppSnackbar.showSuccess(context, 'Export request added to queue.');
+      return;
+    }
+
+    if (mounted) {
+      final latestError = ref.read(exportsControllerProvider).error?.trim();
+      AppSnackbar.showError(
+        context,
+        latestError?.isNotEmpty == true
+            ? latestError!
+            : 'Export request could not be created.',
+      );
+      _scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+      );
     }
   }
 }
@@ -471,6 +529,13 @@ class _ExportJobCard extends StatelessWidget {
             Text(
               job.errorMessage!,
               style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
+          if (job.localFilePath?.trim().isNotEmpty == true) ...[
+            const SizedBox(height: AppSpacing.sm),
+            SelectableText(
+              'Saved on device: ${job.localFilePath!}',
+              style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
           const SizedBox(height: AppSpacing.sm),

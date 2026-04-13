@@ -1,8 +1,13 @@
-import { body, param, query as queryParam, validationResult, type ValidationChain } from 'express-validator';
+import {
+  body,
+  param,
+  query as queryParam,
+  validationResult,
+  type ValidationChain,
+} from 'express-validator';
 import type { NextFunction, Request, Response } from 'express';
 
-const strongPasswordPattern =
-  /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
+const strongPasswordPattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
 const phonePattern = /^\d{8}$/;
 const digitsOnly = (value: unknown): string => String(value ?? '').replace(/\D/g, '');
 
@@ -22,24 +27,15 @@ const validate = (req: Request, res: Response, next: NextFunction): Response | v
 // User validation rules
 const userValidation = {
   register: [
-    body('email')
-      .trim()
-      .isEmail()
-      .normalizeEmail()
-      .withMessage('Valid email is required'),
+    body('email').trim().isEmail().normalizeEmail().withMessage('Valid email is required'),
     body('password')
       .isString()
       .withMessage('Password must be a string')
       .isLength({ min: 8 })
       .withMessage('Password must be at least 8 characters')
       .matches(strongPasswordPattern)
-      .withMessage(
-        'Password must include uppercase, lowercase, number, and special character'
-      ),
-    body('full_name')
-      .trim()
-      .notEmpty()
-      .withMessage('Full name is required'),
+      .withMessage('Password must include uppercase, lowercase, number, and special character'),
+    body('full_name').trim().notEmpty().withMessage('Full name is required'),
     body('phone')
       .customSanitizer(digitsOnly)
       .trim()
@@ -47,16 +43,10 @@ const userValidation = {
       .withMessage('Enter a valid phone number.')
       .matches(phonePattern)
       .withMessage('Enter a valid phone number.'),
-    body('role')
-      .isIn(['contributor', 'viewer'])
-      .withMessage('Role must be contributor or viewer'),
+    body('role').isIn(['contributor', 'viewer']).withMessage('Role must be contributor or viewer'),
   ] as ValidationChain[],
   login: [
-    body('email')
-      .trim()
-      .isEmail()
-      .normalizeEmail()
-      .withMessage('Valid email is required'),
+    body('email').trim().isEmail().normalizeEmail().withMessage('Valid email is required'),
     body('password')
       .isString()
       .withMessage('Password is required')
@@ -84,31 +74,20 @@ const userValidation = {
       .isLength({ min: 8 })
       .withMessage('New password must be at least 8 characters')
       .matches(strongPasswordPattern)
-      .withMessage(
-        'New password must include uppercase, lowercase, number, and special character'
-      )
+      .withMessage('New password must include uppercase, lowercase, number, and special character')
       .custom((value, { req }) => value !== req.body.current_password)
       .withMessage('New password must be different from current password'),
   ] as ValidationChain[],
   createAdmin: [
-    body('email')
-      .trim()
-      .isEmail()
-      .normalizeEmail()
-      .withMessage('Valid email is required'),
+    body('email').trim().isEmail().normalizeEmail().withMessage('Valid email is required'),
     body('password')
       .isString()
       .withMessage('Password must be a string')
       .isLength({ min: 8 })
       .withMessage('Password must be at least 8 characters')
       .matches(strongPasswordPattern)
-      .withMessage(
-        'Password must include uppercase, lowercase, number, and special character'
-      ),
-    body('full_name')
-      .trim()
-      .notEmpty()
-      .withMessage('Full name is required'),
+      .withMessage('Password must include uppercase, lowercase, number, and special character'),
+    body('full_name').trim().notEmpty().withMessage('Full name is required'),
     body('phone')
       .optional()
       .customSanitizer(digitsOnly)
@@ -126,16 +105,10 @@ const userValidation = {
       .optional()
       .isIn(['admin', 'contributor', 'viewer'])
       .withMessage('Role must be admin, contributor, or viewer'),
-    body('is_active')
-      .optional()
-      .isBoolean()
-      .withMessage('is_active must be a boolean'),
+    body('is_active').optional().isBoolean().withMessage('is_active must be a boolean'),
   ] as ValidationChain[],
   toggleAdminRole: [
-    body('force_unassign')
-      .optional()
-      .isBoolean()
-      .withMessage('force_unassign must be a boolean'),
+    body('force_unassign').optional().isBoolean().withMessage('force_unassign must be a boolean'),
   ] as ValidationChain[],
   refreshToken: [
     body('refresh_token')
@@ -147,18 +120,10 @@ const userValidation = {
       .withMessage('Refresh token format is invalid'),
   ] as ValidationChain[],
   forgotPassword: [
-    body('email')
-      .trim()
-      .isEmail()
-      .normalizeEmail()
-      .withMessage('Valid email is required'),
+    body('email').trim().isEmail().normalizeEmail().withMessage('Valid email is required'),
   ] as ValidationChain[],
   verifyResetOtp: [
-    body('email')
-      .trim()
-      .isEmail()
-      .normalizeEmail()
-      .withMessage('Valid email is required'),
+    body('email').trim().isEmail().normalizeEmail().withMessage('Valid email is required'),
     body('otp')
       .trim()
       .matches(/^\d{6}$/)
@@ -176,9 +141,7 @@ const userValidation = {
       .isLength({ min: 8 })
       .withMessage('New password must be at least 8 characters')
       .matches(strongPasswordPattern)
-      .withMessage(
-        'New password must include uppercase, lowercase, number, and special character'
-      ),
+      .withMessage('New password must include uppercase, lowercase, number, and special character'),
   ] as ValidationChain[],
 };
 
@@ -188,9 +151,7 @@ const projectValidation = {
     body('name').trim().notEmpty().withMessage('Project name is required'),
     body('description').optional().trim(),
     body('category_id').isUUID().withMessage('Valid category ID is required'),
-    body('status')
-      .optional()
-      .isIn(['draft', 'active', 'paused', 'completed', 'archived']),
+    body('status').optional().isIn(['draft', 'active', 'paused', 'completed', 'archived']),
     body('collection_form_schema')
       .isObject()
       .withMessage('Form schema must be a valid JSON object'),
@@ -235,9 +196,7 @@ const featureValidation = {
     body('id').optional().isUUID().withMessage('Valid feature ID is required'),
     body('project_id').isUUID().withMessage('Valid project ID is required'),
     body('geom').notEmpty().withMessage('Geometry is required'),
-    body('geom.type')
-      .isIn(['Point', 'LineString', 'Polygon'])
-      .withMessage('Invalid geometry type'),
+    body('geom.type').isIn(['Point', 'LineString', 'Polygon']).withMessage('Invalid geometry type'),
     body('geom.coordinates').isArray().withMessage('Coordinates must be an array'),
     body('attributes').isObject().withMessage('Attributes must be a JSON object'),
     body('accuracy_meters')
@@ -261,9 +220,7 @@ const featureValidation = {
       .isIn(['Point', 'LineString', 'Polygon'])
       .withMessage('Invalid geometry type'),
     body('geom.coordinates').optional().isArray().withMessage('Coordinates must be an array'),
-    body('status')
-      .optional()
-      .isIn(['draft', 'pending_review', 'approved', 'rejected']),
+    body('status').optional().isIn(['draft', 'pending_review', 'approved', 'rejected']),
   ] as ValidationChain[],
   review: [
     param('featureId').isUUID().withMessage('Valid feature ID is required'),
@@ -330,12 +287,8 @@ const settingsValidation = {
       })
       .matches(phonePattern)
       .withMessage('Enter a valid phone number.'),
-    body('office_hours')
-      .optional({ nullable: true })
-      .trim(),
-    body('help_text')
-      .optional({ nullable: true })
-      .trim(),
+    body('office_hours').optional({ nullable: true }).trim(),
+    body('help_text').optional({ nullable: true }).trim(),
   ] as ValidationChain[],
 };
 
@@ -347,8 +300,14 @@ const exportValidation = {
       .optional()
       .isIn(['draft', 'pending_review', 'approved', 'rejected'])
       .withMessage('status_filter contains invalid status'),
-    body('date_from').optional().isISO8601().withMessage('date_from must be a valid date'),
-    body('date_to').optional().isISO8601().withMessage('date_to must be a valid date'),
+    body('date_from')
+      .optional({ values: 'falsy' })
+      .isISO8601()
+      .withMessage('date_from must be a valid date'),
+    body('date_to')
+      .optional({ values: 'falsy' })
+      .isISO8601()
+      .withMessage('date_to must be a valid date'),
     body('geometry_types').optional().isArray().withMessage('geometry_types must be an array'),
     body('geometry_types.*')
       .optional()
@@ -357,6 +316,23 @@ const exportValidation = {
     body('include_photos').optional().isBoolean(),
     body('coordinate_system').optional().isString(),
     body('format').optional().isIn(['geojson', 'shapefile']),
+    body('bbox')
+      .optional({ values: 'falsy' })
+      .custom((value) => {
+        const raw = Array.isArray(value)
+          ? value.map((item) => String(item))
+          : String(value).split(',');
+        if (raw.length !== 4) {
+          return false;
+        }
+        const numbers = raw.map((item) => Number.parseFloat(String(item).trim()));
+        if (numbers.some((item) => Number.isNaN(item))) {
+          return false;
+        }
+        const [minLon, minLat, maxLon, maxLat] = numbers;
+        return minLon < maxLon && minLat < maxLat;
+      })
+      .withMessage('bbox must use minLon,minLat,maxLon,maxLat'),
   ] as ValidationChain[],
 };
 
@@ -398,10 +374,7 @@ const bboxValidation: ValidationChain[] = [
     .optional()
     .isIn(['draft', 'pending_review', 'approved', 'rejected'])
     .withMessage('Invalid status value'),
-  queryParam('project_id')
-    .optional()
-    .isUUID()
-    .withMessage('project_id must be a valid UUID'),
+  queryParam('project_id').optional().isUUID().withMessage('project_id must be a valid UUID'),
   queryParam('maxLon')
     .custom((value, { req }) => parseFloat(value) > parseFloat(String(req.query?.minLon ?? 'NaN')))
     .withMessage('maxLon must be greater than minLon'),

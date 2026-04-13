@@ -1,10 +1,22 @@
 const express = require('express');
 const router = express.Router();
+const rateLimit = require('express-rate-limit');
 const exportController = require('../controllers/export.controller');
 const { authenticate, checkProjectAccess } = require('../middleware/auth');
 const { exportValidation, validate, uuidValidation } = require('../middleware/validation');
 const { asyncHandler } = require('../middleware/error');
 import { auditAction } from '../middleware/audit';
+import { validateEnv } from '../config/env';
+
+const env = validateEnv();
+
+const exportCreateLimiter = rateLimit({
+  windowMs: env.RATE_LIMIT_WINDOW_MS,
+  max: env.RATE_LIMIT_EXPORT_MAX_REQUESTS,
+  message: 'Too many export requests, please slow down',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // All routes require authentication
 router.use(authenticate);
@@ -12,6 +24,7 @@ router.use(authenticate);
 // Request new export for a project
 router.post(
   '/project/:projectId',
+  exportCreateLimiter,
   uuidValidation('projectId'),
   checkProjectAccess,
   auditAction({

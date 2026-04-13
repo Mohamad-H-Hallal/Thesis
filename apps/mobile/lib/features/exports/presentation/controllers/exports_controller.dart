@@ -56,6 +56,8 @@ class ExportsState {
 }
 
 class ExportsController extends StateNotifier<ExportsState> {
+  static const Duration _pollInterval = Duration(seconds: 30);
+
   ExportsController({
     required ExportsRepository repository,
     required AuthSession session,
@@ -70,10 +72,19 @@ class ExportsController extends StateNotifier<ExportsState> {
   final ExportNotificationEmitter _emitNotification;
 
   Timer? _queueTimer;
+  bool _isInitialized = false;
+  bool _tickInFlight = false;
 
   Future<void> initialize() async {
+    if (_isInitialized) {
+      return;
+    }
+    _isInitialized = true;
     await refresh();
-    _queueTimer ??= Timer.periodic(const Duration(seconds: 10), (_) {
+    _queueTimer ??= Timer.periodic(_pollInterval, (_) {
+      if (!_hasActiveQueueWork) {
+        return;
+      }
       unawaited(runQueueTick(background: true));
     });
     state = state.copyWith(workerRunning: true);
@@ -123,6 +134,10 @@ class ExportsController extends StateNotifier<ExportsState> {
   }
 
   Future<void> runQueueTick({bool background = false}) async {
+    if (_tickInFlight) {
+      return;
+    }
+    _tickInFlight = true;
     final beforeStatuses = <String, ExportJobStatus>{
       for (final job in state.jobs) job.id: job.status,
     };
@@ -142,10 +157,12 @@ class ExportsController extends StateNotifier<ExportsState> {
       if (!background) {
         state = state.copyWith(error: error.toString());
       }
+    } finally {
+      _tickInFlight = false;
     }
   }
 
-  Future<void> downloadExport(String exportId) async {
+  Future<ExportJob?> downloadExport(String exportId) async {
     try {
       final updated = await _repository.markDownloaded(
         requestedByUserId: _session.user.id,
@@ -162,8 +179,10 @@ class ExportsController extends StateNotifier<ExportsState> {
         title: 'Download prepared',
         message: 'Download started for ${updated.projectName}.',
       );
+      return updated;
     } catch (error) {
       state = state.copyWith(error: error.toString());
+      return null;
     }
   }
 
@@ -217,4 +236,10 @@ class ExportsController extends StateNotifier<ExportsState> {
     _queueTimer?.cancel();
     super.dispose();
   }
+
+  bool get _hasActiveQueueWork => state.jobs.any(
+    (job) =>
+        job.status == ExportJobStatus.pending ||
+        job.status == ExportJobStatus.processing,
+  );
 }

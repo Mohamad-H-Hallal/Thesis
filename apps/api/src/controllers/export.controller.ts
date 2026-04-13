@@ -21,6 +21,42 @@ const ensureExportDir = async () => {
   }
 };
 
+const normalizeOptionalString = (value: unknown) => {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  const normalized = String(value).trim();
+  return normalized.length === 0 ? undefined : normalized;
+};
+
+const parseBbox = (value: unknown) => {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  const parts = Array.isArray(value) ? value : String(value).split(',');
+  if (parts.length !== 4) {
+    return undefined;
+  }
+
+  const numbers = parts.map((item) => Number.parseFloat(String(item).trim()));
+  if (numbers.some((item) => Number.isNaN(item))) {
+    return undefined;
+  }
+
+  const [minLon, minLat, maxLon, maxLat] = numbers;
+  if (!(minLon < maxLon && minLat < maxLat)) {
+    return undefined;
+  }
+
+  return {
+    minLon,
+    minLat,
+    maxLon,
+    maxLat,
+  };
+};
+
 // Request export for a project
 const requestExport = async (req, res) => {
   const { projectId } = req.params;
@@ -28,6 +64,7 @@ const requestExport = async (req, res) => {
     status_filter = ['approved'],
     date_from,
     date_to,
+    bbox,
     geometry_types,
     include_photos = false,
     coordinate_system = 'EPSG:4326',
@@ -41,10 +78,7 @@ const requestExport = async (req, res) => {
   }
 
   // Validate project exists and user has access
-  const projectCheck = await query(
-    'SELECT id, name FROM project WHERE id = $1',
-    [projectId]
-  );
+  const projectCheck = await query('SELECT id, name FROM project WHERE id = $1', [projectId]);
 
   if (projectCheck.rows.length === 0) {
     throw new AppError('Project not found', 404);
@@ -52,11 +86,16 @@ const requestExport = async (req, res) => {
 
   const project = projectCheck.rows[0];
 
+  const normalizedDateFrom = normalizeOptionalString(date_from);
+  const normalizedDateTo = normalizeOptionalString(date_to);
+  const normalizedBbox = parseBbox(bbox);
+
   // Build export parameters
   const exportParams = {
     status_filter: Array.isArray(status_filter) ? status_filter : [status_filter],
-    date_from,
-    date_to,
+    date_from: normalizedDateFrom,
+    date_to: normalizedDateTo,
+    bbox: normalizedBbox,
     geometry_types,
     include_photos,
     coordinate_system,
@@ -69,7 +108,7 @@ const requestExport = async (req, res) => {
       project_id, requested_by_user_id, export_parameters, status
     ) VALUES ($1, $2, $3, 'pending')
     RETURNING id, requested_at`,
-    [projectId, req.user.id, JSON.stringify(exportParams)]
+    [projectId, req.user.id, JSON.stringify(exportParams)],
   );
 
   const exportId = result.rows[0].id;
@@ -102,10 +141,7 @@ const requestExport = async (req, res) => {
 const processExport = async (exportId, projectName) => {
   try {
     // Update status to processing
-    await query(
-      `UPDATE shapefile_export SET status = 'processing' WHERE id = $1`,
-      [exportId]
-    );
+    await query(`UPDATE shapefile_export SET status = 'processing' WHERE id = $1`, [exportId]);
 
     logger.info('Starting export processing:', { exportId });
 
@@ -115,7 +151,7 @@ const processExport = async (exportId, projectName) => {
        FROM shapefile_export se
        JOIN project p ON se.project_id = p.id
        WHERE se.id = $1`,
-      [exportId]
+      [exportId],
     );
 
     if (exportDetails.rows.length === 0) {
@@ -154,15 +190,30 @@ const processExport = async (exportId, projectName) => {
 
     // Filter by date range
     if (params.date_from) {
-      featureQuery += ` AND sf.collected_at >= $${paramIndex}`;
+      featureQuery += ` AND sf.collected_at >= ($${paramIndex}::date)`;
       queryParams.push(params.date_from);
       paramIndex++;
     }
 
     if (params.date_to) {
-      featureQuery += ` AND sf.collected_at <= $${paramIndex}`;
+      featureQuery += ` AND sf.collected_at < (($${paramIndex}::date) + INTERVAL '1 day')`;
       queryParams.push(params.date_to);
       paramIndex++;
+    }
+
+    if (params.bbox) {
+      featureQuery += `
+        AND ST_Intersects(
+          sf.geom,
+          ST_MakeEnvelope($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, 4326)
+        )`;
+      queryParams.push(
+        params.bbox.minLon,
+        params.bbox.minLat,
+        params.bbox.maxLon,
+        params.bbox.maxLat,
+      );
+      paramIndex += 4;
     }
 
     // Filter by geometry types
@@ -214,17 +265,12 @@ const processExport = async (exportId, projectName) => {
       // Generate shapefiles
       for (const [geomType, typeFeatures] of Object.entries(featuresByType)) {
         const fileName = `${exportName}_${geomType}`;
-        
+
         try {
-          await createShapefile(
-            exportPath,
-            fileName,
-            typeFeatures,
-            geomType
-          );
-          
+          await createShapefile(exportPath, fileName, typeFeatures, geomType);
+
           logger.info('Created shapefile:', { exportId, file: fileName });
-          
+
           generatedFiles.push({
             name: `${fileName}.shp`,
             type: geomType,
@@ -242,11 +288,11 @@ const processExport = async (exportId, projectName) => {
         const fileName = `${exportName}_${geomType}`;
         const geojsonPath = path.join(exportPath, `${fileName}.geojson`);
         const geojson = createGeoJSON(typeFeatures, projectName, geomType);
-        
+
         await fs.writeFile(geojsonPath, JSON.stringify(geojson, null, 2));
-        
+
         logger.info('Created GeoJSON:', { exportId, file: `${fileName}.geojson` });
-        
+
         generatedFiles.push({
           name: `${fileName}.geojson`,
           type: geomType,
@@ -268,17 +314,16 @@ const processExport = async (exportId, projectName) => {
         status: params.status_filter,
         date_from: params.date_from,
         date_to: params.date_to,
+        bbox: params.bbox,
       },
       files: generatedFiles,
-      notes: format === 'shapefile' 
-        ? 'Shapefile format: Field names limited to 10 characters, strings to 254 characters (DBF limitations)'
-        : 'GeoJSON format: Modern, web-friendly format compatible with all GIS software',
+      notes:
+        format === 'shapefile'
+          ? 'Shapefile format: Field names limited to 10 characters, strings to 254 characters (DBF limitations)'
+          : 'GeoJSON format: Modern, web-friendly format compatible with all GIS software',
     };
 
-    await fs.writeFile(
-      path.join(exportPath, 'metadata.json'),
-      JSON.stringify(metadata, null, 2)
-    );
+    await fs.writeFile(path.join(exportPath, 'metadata.json'), JSON.stringify(metadata, null, 2));
 
     logger.info('Created metadata:', { exportId });
 
@@ -307,7 +352,7 @@ const processExport = async (exportId, projectName) => {
              feature_count = $2,
              file_size_bytes = $3
          WHERE id = $4`,
-        [zipPath, features.rows.length, fileSizeBytes, exportId]
+        [zipPath, features.rows.length, fileSizeBytes, exportId],
       );
 
       await client.query(
@@ -324,7 +369,7 @@ const processExport = async (exportId, projectName) => {
             format: format,
             status: 'completed',
           }),
-        ]
+        ],
       );
     });
 
@@ -341,7 +386,7 @@ const processExport = async (exportId, projectName) => {
     logger.error('Export processing failed:', {
       exportId,
       error: error.message,
-      stack: error.stack
+      stack: error.stack,
     });
 
     await transaction(async (client) => {
@@ -351,7 +396,7 @@ const processExport = async (exportId, projectName) => {
              completed_at = CURRENT_TIMESTAMP,
              error_message = $1
          WHERE id = $2`,
-        [error.message, exportId]
+        [error.message, exportId],
       );
 
       const exportDetails = await client.query(
@@ -359,7 +404,7 @@ const processExport = async (exportId, projectName) => {
          FROM shapefile_export se
          JOIN project p ON p.id = se.project_id
          WHERE se.id = $1`,
-        [exportId]
+        [exportId],
       );
 
       if (exportDetails.rows.length > 0) {
@@ -377,7 +422,7 @@ const processExport = async (exportId, projectName) => {
               status: 'failed',
               error: error.message,
             }),
-          ]
+          ],
         );
       }
     });
@@ -426,28 +471,27 @@ const createShapefile = async (outputDir, fileName, features, _geometryType) => 
   };
 
   try {
-    // CRITICAL: Await the Promise!
-    const zipBuffer = await shpwrite.zip(geojson);
-    
+    const zipBuffer = await shpwrite.zip(geojson, {
+      outputType: 'nodebuffer',
+    });
+
     // Write temp ZIP
     const tempZip = path.join(outputDir, `${fileName}_temp.zip`);
     await fs.writeFile(tempZip, zipBuffer);
-    
+
     // Extract shapefile components
     const zip = new AdmZip(tempZip);
     zip.extractAllTo(outputDir, true);
-    
+
     // Clean up
     await fs.unlink(tempZip);
-    
+
     logger.info('Shapefile created:', { fileName, size: zipBuffer.length });
-    
   } catch (error: any) {
     logger.error('Shapefile error:', error);
     throw new Error(`Shapefile creation failed: ${error.message}`);
   }
 };
-
 
 // Create GeoJSON from features
 const createGeoJSON = (features, projectName, geometryType) => {
@@ -479,8 +523,9 @@ const createGeoJSON = (features, projectName, geometryType) => {
 
 // Generate README for export
 const generateReadme = (metadata, projectName, format) => {
-  const formatSpecificInfo = format === 'shapefile' 
-    ? `
+  const formatSpecificInfo =
+    format === 'shapefile'
+      ? `
 Shapefile Components:
 =====================
 For each geometry type, you'll find 4 files:
@@ -504,7 +549,7 @@ How to Use Shapefiles:
 3. All 4 files must be in the same folder
 4. Features will display on the map
 `
-    : `
+      : `
 GeoJSON Format:
 ===============
 Modern, web-friendly geospatial format.
@@ -555,6 +600,11 @@ Filters Applied:
   - Status: ${metadata.filters.status.join(', ')}
   - Date From: ${metadata.filters.date_from || 'Not specified'}
   - Date To: ${metadata.filters.date_to || 'Not specified'}
+  - BBOX: ${
+    metadata.filters.bbox
+      ? `${metadata.filters.bbox.minLon}, ${metadata.filters.bbox.minLat}, ${metadata.filters.bbox.maxLon}, ${metadata.filters.bbox.maxLat}`
+      : 'Not specified'
+  }
 
 Files Included:
 ${metadata.files.map((f) => `  - ${f.name} (${f.count} features)`).join('\n')}
@@ -565,25 +615,31 @@ Format Information:
 ===================
 You requested: ${format.toUpperCase()}
 
-${format === 'shapefile' ? `
+${
+  format === 'shapefile'
+    ? `
 Shapefile is the traditional GIS format (1990s):
 ✓ Widely supported in all GIS software
 ✓ Industry standard
 ✗ Multiple files required
 ✗ Field name limitations (10 chars)
 ✗ String length limitations (254 chars)
-` : `
+`
+    : `
 GeoJSON is the modern web format (2016):
 ✓ Single file
 ✓ No field limitations
 ✓ Human-readable JSON
 ✓ Web-friendly
 ✓ Works in all modern GIS software
-`}
+`
+}
 
 Attribute Information:
 ======================
-${format === 'shapefile' ? `
+${
+  format === 'shapefile'
+    ? `
 DBF file contains feature attributes:
 - feat_id: Feature identifier (truncated)
 - collect_at: Collection date
@@ -592,14 +648,16 @@ DBF file contains feature attributes:
 - Plus all custom fields from your survey form (names truncated to 10 chars)
 
 ⚠️  Check metadata.json for full field names
-` : `
+`
+    : `
 GeoJSON contains all feature attributes:
 - feature_id: Complete feature identifier
 - collected_at: Full ISO timestamp
 - collected_by: Complete collector name
 - accuracy_meters: GPS accuracy
 - Plus all custom fields with full names (no truncation)
-`}
+`
+}
 
 Technical Details:
 ==================
@@ -620,19 +678,23 @@ Common GIS Software:
 
 Web Mapping Libraries:
 =======================
-${format === 'geojson' ? `
+${
+  format === 'geojson'
+    ? `
 ✓ Leaflet
 ✓ Mapbox GL JS
 ✓ OpenLayers
 ✓ Google Maps API
 ✓ deck.gl
 ✓ Turf.js (for analysis)
-` : `
+`
+    : `
 For web use, convert to GeoJSON:
 1. Open in QGIS
 2. Export as GeoJSON
 3. Use in web applications
-`}
+`
+}
 
 Need Help?
 ==========
@@ -641,7 +703,9 @@ For questions or issues:
 - Contact: Lebanese GIS Application Support
 - Documentation: See project README
 
-${format === 'shapefile' ? `
+${
+  format === 'shapefile'
+    ? `
 Common Shapefile Issues:
 ========================
 Q: Why multiple .shp files?
@@ -657,7 +721,8 @@ A: DBF format limits field names to 10 characters. Check metadata.json
 
 Q: How do I convert to GeoJSON?
 A: Use QGIS: Right-click layer > Save As > GeoJSON
-` : `
+`
+    : `
 Common GeoJSON Questions:
 =========================
 Q: Can I open this in older GIS software?
@@ -671,13 +736,19 @@ A: Yes! It's human-readable JSON. But use GIS software for complex edits.
 
 Q: Is this compatible with web maps?
 A: Absolutely! GeoJSON is the standard format for Leaflet, Mapbox, etc.
-`}
+`
+}
 
 Export Configuration:
 =====================
 This export was generated with these settings:
 - Status filter: ${metadata.filters.status.join(', ')}
 - Date range: ${metadata.filters.date_from || 'All'} to ${metadata.filters.date_to || 'All'}
+- BBOX: ${
+    metadata.filters.bbox
+      ? `${metadata.filters.bbox.minLon}, ${metadata.filters.bbox.minLat}, ${metadata.filters.bbox.maxLon}, ${metadata.filters.bbox.maxLat}`
+      : 'All approved project features'
+  }
 - Format: ${format}
 - Coordinate system: ${metadata.coordinate_system}
 
@@ -750,7 +821,7 @@ const getExportStatus = async (req, res) => {
      FROM shapefile_export se
      JOIN project p ON se.project_id = p.id
      WHERE se.id = $1 AND se.requested_by_user_id = $2`,
-    [exportId, req.user.id]
+    [exportId, req.user.id],
   );
 
   if (result.rows.length === 0) {
@@ -771,7 +842,7 @@ const downloadExport = async (req, res) => {
     `SELECT file_path, status, project_id, export_parameters
      FROM shapefile_export
      WHERE id = $1 AND requested_by_user_id = $2`,
-    [exportId, req.user.id]
+    [exportId, req.user.id],
   );
 
   if (result.rows.length === 0) {
@@ -781,10 +852,7 @@ const downloadExport = async (req, res) => {
   const exportData = result.rows[0];
 
   if (exportData.status !== 'completed') {
-    throw new AppError(
-      `Export is not ready. Current status: ${exportData.status}`,
-      400
-    );
+    throw new AppError(`Export is not ready. Current status: ${exportData.status}`, 400);
   }
 
   if (!exportData.file_path) {
@@ -825,7 +893,7 @@ const cleanupOldExports = async () => {
     const oldExports = await query(
       `SELECT id, file_path FROM shapefile_export 
        WHERE completed_at < $1 AND status = 'completed'`,
-      [cutoffDate]
+      [cutoffDate],
     );
 
     for (const exp of oldExports.rows) {
@@ -841,7 +909,7 @@ const cleanupOldExports = async () => {
              file_path = NULL, 
              error_message = 'File deleted after retention period'
          WHERE id = $1`,
-        [exp.id]
+        [exp.id],
       );
     }
 

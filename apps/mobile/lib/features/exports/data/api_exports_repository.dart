@@ -1,7 +1,12 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import '../../../core/config/app_env.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/network/api_error_message.dart';
 import '../domain/export_job.dart';
 import '../domain/exports_repository.dart';
 
@@ -10,21 +15,35 @@ class ApiExportsRepository implements ExportsRepository {
 
   final ApiClient _apiClient;
   final Map<String, DateTime> _downloadedAtById = <String, DateTime>{};
+  final Map<String, String> _downloadPathById = <String, String>{};
 
   String get _exportsBasePath => '${AppEnv.apiVersionPrefix}/exports';
 
   @override
   Future<List<ExportJob>> fetchJobs({required String requestedByUserId}) async {
-    final response = await _apiClient.dio.get<Map<String, dynamic>>(_exportsBasePath);
-    final payload = response.data ?? const <String, dynamic>{};
-    final rows = (payload['data'] as List? ?? const <dynamic>[]);
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        _exportsBasePath,
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      final rows = (payload['data'] as List? ?? const <dynamic>[]);
 
-    return rows.map((row) {
-      final map = Map<String, dynamic>.from(row as Map);
-      final id = (map['id'] as String?) ?? '';
-      final downloadedAt = _downloadedAtById[id];
-      return _mapExportJob(map).copyWith(downloadedAt: downloadedAt);
-    }).toList(growable: false);
+      return rows
+          .map((row) {
+            final map = Map<String, dynamic>.from(row as Map);
+            final id = (map['id'] as String?) ?? '';
+            return _mapExportJob(map).copyWith(
+              downloadedAt: _downloadedAtById[id],
+              localFilePath: _downloadPathById[id],
+            );
+          })
+          .toList(growable: false);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load export jobs right now.',
+      );
+    }
   }
 
   @override
@@ -35,29 +54,39 @@ class ApiExportsRepository implements ExportsRepository {
     required ExportFormat format,
     required Map<String, dynamic> exportParameters,
   }) async {
-    final payload = <String, dynamic>{...exportParameters, 'format': format.name};
-    final response = await _apiClient.dio.post<Map<String, dynamic>>(
-      '$_exportsBasePath/project/$projectId',
-      data: payload,
-    );
+    final payload = <String, dynamic>{
+      ..._sanitizeExportParameters(exportParameters),
+      'format': format.name,
+    };
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_exportsBasePath/project/$projectId',
+        data: payload,
+      );
 
-    final data = Map<String, dynamic>.from(
-      (response.data ?? const <String, dynamic>{})['data'] as Map? ??
-          const <String, dynamic>{},
-    );
-    final exportId = data['export_id'] as String?;
-    if (exportId == null || exportId.isEmpty) {
-      throw StateError('Export ID missing in response.');
+      final data = Map<String, dynamic>.from(
+        (response.data ?? const <String, dynamic>{})['data'] as Map? ??
+            const <String, dynamic>{},
+      );
+      final exportId = data['export_id'] as String?;
+      if (exportId == null || exportId.isEmpty) {
+        throw StateError('Export ID missing in response.');
+      }
+
+      final statusResponse = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_exportsBasePath/$exportId',
+      );
+      final statusData = Map<String, dynamic>.from(
+        (statusResponse.data ?? const <String, dynamic>{})['data'] as Map? ??
+            const <String, dynamic>{},
+      );
+      return _mapExportJob(statusData);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Export request could not be created.',
+      );
     }
-
-    final statusResponse = await _apiClient.dio.get<Map<String, dynamic>>(
-      '$_exportsBasePath/$exportId',
-    );
-    final statusData = Map<String, dynamic>.from(
-      (statusResponse.data ?? const <String, dynamic>{})['data'] as Map? ??
-          const <String, dynamic>{},
-    );
-    return _mapExportJob(statusData);
   }
 
   @override
@@ -72,20 +101,39 @@ class ApiExportsRepository implements ExportsRepository {
     required String requestedByUserId,
     required String exportId,
   }) async {
-    await _apiClient.dio.get(
-      '$_exportsBasePath/$exportId/download',
-      options: Options(responseType: ResponseType.bytes),
-    );
-    final statusResponse = await _apiClient.dio.get<Map<String, dynamic>>(
-      '$_exportsBasePath/$exportId',
-    );
-    final statusData = Map<String, dynamic>.from(
-      (statusResponse.data ?? const <String, dynamic>{})['data'] as Map? ??
-          const <String, dynamic>{},
-    );
-    final downloadedAt = DateTime.now();
-    _downloadedAtById[exportId] = downloadedAt;
-    return _mapExportJob(statusData).copyWith(downloadedAt: downloadedAt);
+    try {
+      final downloadResponse = await _apiClient.dio.get<List<int>>(
+        '$_exportsBasePath/$exportId/download',
+        options: Options(responseType: ResponseType.bytes),
+      );
+
+      final fileBytes = _normalizeBytes(downloadResponse.data);
+      if (fileBytes == null || fileBytes.isEmpty) {
+        throw StateError('The export download returned an empty file.');
+      }
+
+      final savedPath = await _saveExportFile(
+        exportId: exportId,
+        bytes: fileBytes,
+        headers: downloadResponse.headers,
+      );
+
+      final statusResponse = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_exportsBasePath/$exportId',
+      );
+      final statusData = Map<String, dynamic>.from(
+        (statusResponse.data ?? const <String, dynamic>{})['data'] as Map? ??
+            const <String, dynamic>{},
+      );
+      final downloadedAt = DateTime.now();
+      _downloadedAtById[exportId] = downloadedAt;
+      _downloadPathById[exportId] = savedPath;
+      return _mapExportJob(
+        statusData,
+      ).copyWith(downloadedAt: downloadedAt, localFilePath: savedPath);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(error, fallback: 'Export download failed.');
+    }
   }
 
   @override
@@ -115,10 +163,31 @@ class ApiExportsRepository implements ExportsRepository {
     );
   }
 
+  Map<String, dynamic> _sanitizeExportParameters(Map<String, dynamic> raw) {
+    final sanitized = <String, dynamic>{};
+    raw.forEach((key, value) {
+      if (value == null) {
+        return;
+      }
+      if (value is String) {
+        final trimmed = value.trim();
+        if (trimmed.isEmpty) {
+          return;
+        }
+        sanitized[key] = trimmed;
+        return;
+      }
+      sanitized[key] = value;
+    });
+    return sanitized;
+  }
+
   ExportJob _mapExportJob(Map<String, dynamic> row) {
     final status = _toStatus(row['status'] as String?);
     final formatRaw = _toMap(row['export_parameters'])['format'] as String?;
-    final format = formatRaw == 'shapefile' ? ExportFormat.shapefile : ExportFormat.geojson;
+    final format = formatRaw == 'shapefile'
+        ? ExportFormat.shapefile
+        : ExportFormat.geojson;
     final requestedAtRaw = row['requested_at'] as String?;
     final completedAtRaw = row['completed_at'] as String?;
 
@@ -137,6 +206,7 @@ class ApiExportsRepository implements ExportsRepository {
       errorMessage: row['error_message'] as String?,
       completedAt: DateTime.tryParse(completedAtRaw ?? ''),
       downloadedAt: null,
+      localFilePath: null,
     );
   }
 
@@ -174,5 +244,65 @@ class ApiExportsRepository implements ExportsRepository {
       return Map<String, dynamic>.from(raw);
     }
     return const <String, dynamic>{};
+  }
+
+  List<int>? _normalizeBytes(Object? raw) {
+    if (raw is List<int>) {
+      return raw;
+    }
+    if (raw is List) {
+      return raw.whereType<num>().map((value) => value.toInt()).toList();
+    }
+    return null;
+  }
+
+  Future<String> _saveExportFile({
+    required String exportId,
+    required List<int> bytes,
+    required Headers headers,
+  }) async {
+    final baseDir = await _resolveExportDirectory();
+    await baseDir.create(recursive: true);
+
+    final fileName = _fileNameFromHeaders(headers) ?? 'export_$exportId.zip';
+    final safeFileName = fileName.replaceAll(RegExp(r'[<>:"/\\|?*]+'), '_');
+    final target = File(p.join(baseDir.path, safeFileName));
+    await target.writeAsBytes(bytes, flush: true);
+    return target.path;
+  }
+
+  Future<Directory> _resolveExportDirectory() async {
+    final externalDir = await getExternalStorageDirectory();
+    if (externalDir != null) {
+      return Directory(p.join(externalDir.path, 'exports'));
+    }
+
+    final documentsDir = await getApplicationDocumentsDirectory();
+    return Directory(p.join(documentsDir.path, 'exports'));
+  }
+
+  String? _fileNameFromHeaders(Headers headers) {
+    final raw = headers.value('content-disposition');
+    if (raw == null || raw.trim().isEmpty) {
+      return null;
+    }
+
+    final utfMatch = RegExp(
+      r"filename\*=UTF-8''([^;]+)",
+      caseSensitive: false,
+    ).firstMatch(raw);
+    if (utfMatch != null) {
+      return Uri.decodeFull(utfMatch.group(1)!);
+    }
+
+    final basicMatch = RegExp(
+      r'filename="?([^";]+)"?',
+      caseSensitive: false,
+    ).firstMatch(raw);
+    if (basicMatch != null) {
+      return basicMatch.group(1);
+    }
+
+    return null;
   }
 }

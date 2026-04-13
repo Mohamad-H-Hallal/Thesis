@@ -2,11 +2,13 @@ const fs = require('fs').promises;
 const bcrypt = require('bcryptjs');
 const request = require('supertest');
 const { Pool } = require('pg');
+const { applyTestEnvDefaults } = require('../../src/config/testEnv');
 const { buildApp } = require('../../src/app');
 const { closePool } = require('../../src/config/database');
 const { validateEnv } = require('../../src/config/env');
 
 const API_PREFIX = process.env.API_PREFIX || '/api/v1';
+applyTestEnvDefaults();
 
 const testEnv = {
   ...validateEnv(),

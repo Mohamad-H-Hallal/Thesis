@@ -18,6 +18,7 @@ class ExportJob {
     this.errorMessage,
     this.completedAt,
     this.downloadedAt,
+    this.localFilePath,
   });
 
   final String id;
@@ -34,6 +35,7 @@ class ExportJob {
   final String? errorMessage;
   final DateTime? completedAt;
   final DateTime? downloadedAt;
+  final String? localFilePath;
 
   bool get canDownload =>
       status == ExportJobStatus.completed && filePath != null;
@@ -47,6 +49,7 @@ class ExportJob {
     String? errorMessage,
     DateTime? completedAt,
     DateTime? downloadedAt,
+    String? localFilePath,
   }) {
     return ExportJob(
       id: id,
@@ -63,6 +66,7 @@ class ExportJob {
       errorMessage: errorMessage ?? this.errorMessage,
       completedAt: completedAt ?? this.completedAt,
       downloadedAt: downloadedAt ?? this.downloadedAt,
+      localFilePath: localFilePath ?? this.localFilePath,
     );
   }
 }

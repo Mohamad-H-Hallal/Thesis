@@ -154,17 +154,6 @@ const buildApp = (env) => {
     app.use(`${prefix}/auth`, authLimiter);
   }
 
-  const exportLimiter = rateLimit({
-    windowMs: env.RATE_LIMIT_WINDOW_MS,
-    max: env.RATE_LIMIT_EXPORT_MAX_REQUESTS,
-    message: 'Too many export requests, please slow down',
-    standardHeaders: true,
-    legacyHeaders: false,
-  });
-  for (const prefix of apiPrefixes) {
-    app.use(`${prefix}/exports`, exportLimiter);
-  }
-
   app.get('/health', (req, res) => {
     res.json({
       success: true,

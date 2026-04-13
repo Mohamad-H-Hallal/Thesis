@@ -108,5 +108,6 @@ void main() {
       (j) => j.id == completed.id,
     );
     expect(downloaded.downloadedAt, isNotNull);
+    expect(downloaded.localFilePath, isNotNull);
   });
 }

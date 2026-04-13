@@ -107,7 +107,11 @@ class MockExportsRepository implements ExportsRepository {
         if (!job.canDownload) {
           return null;
         }
-        final updated = job.copyWith(downloadedAt: DateTime.now());
+        final updated = job.copyWith(
+          downloadedAt: DateTime.now(),
+          localFilePath:
+              '/storage/emulated/0/Android/data/com.example.lebanese_gis_mobile/files/exports/${job.projectName.replaceAll(' ', '_')}_${job.format.name}.zip',
+        );
         _replace(updated);
         return updated;
       }

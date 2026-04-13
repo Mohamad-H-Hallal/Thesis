@@ -428,7 +428,7 @@ final notificationsControllerProvider =
     });
 
 final exportsControllerProvider =
-    StateNotifierProvider<ExportsController, ExportsState>((ref) {
+    StateNotifierProvider.autoDispose<ExportsController, ExportsState>((ref) {
       final session = ref.watch(authControllerProvider).session;
       if (session == null) {
         throw StateError(
