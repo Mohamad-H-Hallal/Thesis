@@ -38,17 +38,17 @@ class OfflineBanner extends ConsumerWidget {
           ),
           if (syncState.isReady && syncState.lastSyncAt != null)
             _SyncMetaChip(
-              label: 'Updated ${_formatTime(syncState.lastSyncAt!)}',
+              label: 'Last sync ${_formatTime(syncState.lastSyncAt!)}',
               background: scheme.surface.withValues(alpha: 0.7),
             ),
           if (syncState.isReady && syncState.pendingCount > 0)
             _SyncMetaChip(
-              label: '${syncState.pendingCount} queued',
+              label: '${syncState.pendingCount} to sync',
               background: scheme.surface.withValues(alpha: 0.7),
             ),
           if (syncState.isReady && syncState.conflictCount > 0)
             _SyncMetaChip(
-              label: '${syncState.conflictCount} conflicts',
+              label: '${syncState.conflictCount} to review',
               background: scheme.errorContainer,
             ),
           if (syncState.isReady && syncState.deadLetterCount > 0)
@@ -65,8 +65,8 @@ class OfflineBanner extends ConsumerWidget {
     if (state.isInitializing) {
       return const _BannerAppearance(
         icon: Icons.sync,
-        title: 'Preparing sync',
-        message: 'Local sync storage is starting.',
+        title: 'Preparing offline access',
+        message: 'Checking saved projects and queued changes.',
         backgroundSeed: _BannerSeed.info,
       );
     }
@@ -74,10 +74,10 @@ class OfflineBanner extends ConsumerWidget {
     if (!state.isReady) {
       return _BannerAppearance(
         icon: Icons.cloud_off_outlined,
-        title: 'Sync unavailable',
+        title: 'Offline access unavailable',
         message: state.lastError?.trim().isNotEmpty == true
-            ? state.lastError!
-            : 'Offline sync is unavailable right now.',
+            ? state.lastError!.trim()
+            : 'Saved projects and queued changes are not ready on this device.',
         backgroundSeed: _BannerSeed.warning,
       );
     }
@@ -85,8 +85,8 @@ class OfflineBanner extends ConsumerWidget {
     if (state.isSyncing) {
       return const _BannerAppearance(
         icon: Icons.sync,
-        title: 'Syncing',
-        message: 'Queued updates are syncing now.',
+        title: 'Syncing saved changes',
+        message: 'Sending saved field changes now.',
         backgroundSeed: _BannerSeed.info,
       );
     }
@@ -94,8 +94,8 @@ class OfflineBanner extends ConsumerWidget {
     if (state.conflictCount > 0 || state.deadLetterCount > 0) {
       return const _BannerAppearance(
         icon: Icons.error_outline,
-        title: 'Sync needs attention',
-        message: 'Some queued items need review before they can sync.',
+        title: 'Sync needs review',
+        message: 'Some saved changes need review before they can sync.',
         backgroundSeed: _BannerSeed.error,
       );
     }
@@ -103,16 +103,16 @@ class OfflineBanner extends ConsumerWidget {
     if (state.pendingCount > 0) {
       return const _BannerAppearance(
         icon: Icons.cloud_upload_outlined,
-        title: 'Sync needed',
-        message: 'Queued offline work is waiting for the next sync run.',
+        title: 'Saved offline',
+        message: 'Your changes will sync when you are back online.',
         backgroundSeed: _BannerSeed.warning,
       );
     }
 
     return const _BannerAppearance(
       icon: Icons.cloud_done_outlined,
-      title: 'Sync up to date',
-      message: 'No queued collection changes need syncing.',
+      title: 'All changes synced',
+      message: 'No saved changes are waiting to sync.',
       backgroundSeed: _BannerSeed.success,
     );
   }
@@ -139,10 +139,7 @@ class _SyncMetaChip extends StatelessWidget {
         color: background,
         borderRadius: BorderRadius.circular(999),
       ),
-      child: Text(
-        label,
-        style: Theme.of(context).textTheme.bodySmall,
-      ),
+      child: Text(label, style: Theme.of(context).textTheme.bodySmall),
     );
   }
 }

@@ -118,7 +118,10 @@ void main() {
         data: <String, dynamic>{
           'message': 'Validation failed',
           'errors': <Map<String, dynamic>>[
-            <String, dynamic>{'msg': 'Enter a valid phone number.', 'path': 'phone'},
+            <String, dynamic>{
+              'msg': 'Enter a valid phone number.',
+              'path': 'phone',
+            },
           ],
         },
       ),
@@ -136,7 +139,19 @@ void main() {
     );
     expect(
       failure.message,
-      'Request timed out. Please check your connection and try again.',
+      'Sign-in timed out. Check your connection and try again.',
+    );
+  });
+
+  test('maps offline sign-in attempts to a direct reconnect message', () {
+    final failure = mapAuthDioException(
+      dioError(type: DioExceptionType.connectionError),
+      fallbackMessage: 'fallback',
+    );
+
+    expect(
+      failure.message,
+      'You are offline. New sign-in requires internet access. Reconnect and try again.',
     );
   });
 
@@ -145,16 +160,11 @@ void main() {
       dioError(
         type: DioExceptionType.badResponse,
         statusCode: 503,
-        data: <String, dynamic>{
-          'message': 'SMTP relay rejected recipient.',
-        },
+        data: <String, dynamic>{'message': 'SMTP relay rejected recipient.'},
       ),
       fallbackMessage: 'fallback',
     );
-    expect(
-      failure.message,
-      'SMTP relay rejected recipient.',
-    );
+    expect(failure.message, 'SMTP relay rejected recipient.');
   });
 
   test('maps 503 reset mode failures using backend copy', () {

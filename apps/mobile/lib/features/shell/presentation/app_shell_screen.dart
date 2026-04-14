@@ -222,12 +222,12 @@ class AppShellScreen extends ConsumerWidget {
     final isDisabled =
         syncState.isInitializing || !syncState.isReady || syncState.isSyncing;
     final tooltip = syncState.isInitializing
-        ? 'Preparing local sync storage'
+        ? 'Preparing offline access'
         : !syncState.isReady
-        ? 'Sync unavailable until local storage is ready'
+        ? 'Offline access is not ready yet'
         : syncState.isSyncing
-        ? 'Sync in progress'
-        : 'Sync now';
+        ? 'Syncing saved changes'
+        : 'Sync saved changes';
     return Stack(
       alignment: Alignment.center,
       children: [

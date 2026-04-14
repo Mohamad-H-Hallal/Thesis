@@ -4531,36 +4531,36 @@ class _SyncStatusLine extends StatelessWidget {
     if (state.isInitializing) {
       icon = Icons.sync;
       color = scheme.primary;
-      text = 'Preparing offline sync';
+      text = 'Preparing offline access';
     } else if (!state.isReady) {
       icon = Icons.cloud_off_outlined;
       color = scheme.error;
-      text = 'Sync unavailable';
+      text = 'Offline access unavailable';
     } else if (state.isSyncing) {
       icon = Icons.sync;
       color = scheme.primary;
-      text = 'Sync in progress';
+      text = 'Syncing saved changes';
     } else if (state.conflictCount > 0 || state.deadLetterCount > 0) {
       icon = Icons.error_outline;
       color = scheme.error;
       text =
-          'Sync needs attention (${state.conflictCount + state.deadLetterCount} issue${state.conflictCount + state.deadLetterCount == 1 ? '' : 's'})';
+          '${state.conflictCount + state.deadLetterCount} change${state.conflictCount + state.deadLetterCount == 1 ? '' : 's'} need review';
     } else if (state.pendingCount > 0) {
       icon = Icons.cloud_upload_outlined;
       color = scheme.tertiary;
       text =
-          '${state.pendingCount} update${state.pendingCount == 1 ? '' : 's'} queued for sync';
+          '${state.pendingCount} change${state.pendingCount == 1 ? '' : 's'} waiting to sync';
     } else if (state.lastSyncAt != null) {
       icon = Icons.cloud_done_outlined;
       color = scheme.primary;
       final local = state.lastSyncAt!.toLocal();
       final hour = local.hour.toString().padLeft(2, '0');
       final minute = local.minute.toString().padLeft(2, '0');
-      text = 'Last refreshed at $hour:$minute';
+      text = 'Last sync $hour:$minute';
     } else {
       icon = Icons.cloud_done_outlined;
       color = scheme.primary;
-      text = 'Sync ready';
+      text = 'All changes synced';
     }
 
     return Row(

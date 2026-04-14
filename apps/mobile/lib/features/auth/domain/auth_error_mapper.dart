@@ -13,14 +13,14 @@ AuthFailure mapAuthDioException(
       error.type == DioExceptionType.receiveTimeout ||
       error.type == DioExceptionType.sendTimeout) {
     return const AuthFailure(
-      'Request timed out. Please check your connection and try again.',
+      'Sign-in timed out. Check your connection and try again.',
       code: 'timeout',
     );
   }
 
   if (error.type == DioExceptionType.connectionError) {
     return const AuthFailure(
-      'Network connection failed. New sign-in requires internet access. Reconnect and try again.',
+      'You are offline. New sign-in requires internet access. Reconnect and try again.',
       code: 'network_error',
     );
   }

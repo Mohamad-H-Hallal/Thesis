@@ -102,7 +102,7 @@ class SyncController extends StateNotifier<SyncState> {
       state = state.copyWith(lastError: state.lastError);
     } catch (error) {
       state = state.copyWith(
-        lastError: 'Offline sync storage is not ready yet. ',
+        lastError: 'Saved offline changes are not available yet.',
       );
     }
   }
@@ -182,7 +182,7 @@ class SyncController extends StateNotifier<SyncState> {
         isReady: false,
         isInitializing: false,
         autoSyncRunning: false,
-        lastError: 'Offline sync storage is not ready yet. ${error.toString()}',
+        lastError: 'Saved offline changes are not available yet.',
       );
     }
   }

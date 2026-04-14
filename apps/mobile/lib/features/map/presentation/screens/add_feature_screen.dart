@@ -846,8 +846,8 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
         result: AddFeatureFlowResult.completed(
           featureId: draftId,
           successMessage: submit
-              ? 'Feature saved offline and queued for submission when the connection returns.'
-              : 'Feature draft saved offline and queued for sync.',
+              ? 'Saved offline. It will be submitted for review when you are back online.'
+              : 'Draft saved offline. It will sync when you are back online.',
         ),
       );
     }
