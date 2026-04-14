@@ -95,6 +95,18 @@ class SyncController extends StateNotifier<SyncState> {
     }
   }
 
+  Future<void> refreshStatus() async {
+    try {
+      await _localStore.initialize();
+      await _refreshPendingCount();
+      state = state.copyWith(lastError: state.lastError);
+    } catch (error) {
+      state = state.copyWith(
+        lastError: 'Offline sync storage is not ready yet. ',
+      );
+    }
+  }
+
   Future<void> syncNow({bool background = false}) async {
     try {
       await _localStore.initialize();

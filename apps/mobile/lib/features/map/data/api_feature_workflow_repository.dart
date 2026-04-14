@@ -3,6 +3,7 @@ import 'package:path/path.dart' as p;
 
 import '../../../core/config/app_env.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/network/api_error_message.dart';
 import '../domain/feature_workflow.dart';
 import '../domain/feature_workflow_repository.dart';
 
@@ -111,44 +112,6 @@ class ApiFeatureWorkflowRepository implements FeatureWorkflowRepository {
   }
 
   String _messageFrom(DioException error, String fallback) {
-    final data = error.response?.data;
-    if (data is Map<String, dynamic>) {
-      final fieldMessage = _extractFirstFieldError(data['errors']);
-      final message = data['message'] ?? data['error'];
-      if (message is String && message.trim().isNotEmpty) {
-        final trimmed = message.trim();
-        if (trimmed.toLowerCase() == 'validation failed' &&
-            fieldMessage != null) {
-          return fieldMessage;
-        }
-        return trimmed;
-      }
-      if (fieldMessage != null) {
-        return fieldMessage;
-      }
-    }
-    if (data is String && data.trim().isNotEmpty) {
-      return data.trim();
-    }
-    return fallback;
-  }
-
-  String? _extractFirstFieldError(Object? errors) {
-    if (errors is! List) {
-      return null;
-    }
-
-    for (final item in errors) {
-      if (item is! Map) {
-        continue;
-      }
-      final raw = Map<String, dynamic>.from(item);
-      final message = raw['message'] ?? raw['msg'];
-      if (message is String && message.trim().isNotEmpty) {
-        return message.trim();
-      }
-    }
-
-    return null;
+    return userFacingErrorMessage(error, fallback: fallback);
   }
 }

@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:flutter/foundation.dart';
 
 import '../config/app_env.dart';
+import '../network/api_error_message.dart';
 import '../../features/admin/data/api_admin_repository.dart';
 import '../../features/admin/domain/admin_models.dart';
 import '../../features/admin/domain/admin_repository.dart';
@@ -142,6 +143,76 @@ final localStoreProvider = Provider<LocalStore>((ref) {
   return store;
 });
 
+List<ProjectSummary> _filterCachedProjectsForScope(
+  List<ProjectSummary> cachedProjects, {
+  required AuthSession session,
+  required ProjectViewScope scope,
+}) {
+  final user = session.user;
+
+  if (user.role == UserRole.admin) {
+    return cachedProjects;
+  }
+
+  if (user.role == UserRole.viewer) {
+    return cachedProjects
+        .where((project) => project.visibleToViewers)
+        .toList(growable: false);
+  }
+
+  final filtered = switch (scope) {
+    ProjectViewScope.public => cachedProjects.where(
+      (project) => project.visibleToContributors,
+    ),
+    ProjectViewScope.assigned => cachedProjects.where(
+      (project) => project.isAssignedTo(user.id),
+    ),
+    ProjectViewScope.all => cachedProjects.where(
+      (project) =>
+          project.visibleToContributors || project.isAssignedTo(user.id),
+    ),
+  };
+
+  return filtered.toList(growable: false);
+}
+
+Future<List<ProjectSummary>> _cachedProjectsForScope(
+  Ref ref, {
+  required AuthSession session,
+  required ProjectViewScope scope,
+}) async {
+  final localStore = ref.read(localStoreProvider);
+  final cachedProjects = await localStore.getCachedProjects();
+  return _filterCachedProjectsForScope(
+    cachedProjects,
+    session: session,
+    scope: scope,
+  );
+}
+
+Future<void> _mergeProjectsIntoCache(
+  Ref ref,
+  List<ProjectSummary> projects,
+) async {
+  final localStore = ref.read(localStoreProvider);
+  final cachedProjects = await localStore.getCachedProjects();
+  final merged = <String, ProjectSummary>{
+    for (final project in cachedProjects) project.id: project,
+  };
+  for (final project in projects) {
+    merged[project.id] = project;
+  }
+  await localStore.cacheProjects(merged.values.toList(growable: false));
+}
+
+bool _isOfflineFeatureFetchError(Object error) {
+  final message = userFacingErrorMessage(error, fallback: '').toLowerCase();
+  return message.contains('unable to reach the server right now') ||
+      message.contains('connection') ||
+      message.contains('timed out') ||
+      message.contains('offline');
+}
+
 final offlineBootstrapProvider = FutureProvider<void>((ref) async {
   final localStore = ref.watch(localStoreProvider);
   await localStore.initialize();
@@ -215,6 +286,7 @@ final projectListProvider =
       ref,
       scope,
     ) async {
+      await ref.watch(offlineBootstrapProvider.future);
       ref.watch(workflowRefreshTickProvider);
       final authState = ref.watch(authControllerProvider);
       final session = authState.session;
@@ -227,67 +299,94 @@ final projectListProvider =
         requestedScope: scope,
       );
 
-      return ref
-          .read(projectsRepositoryProvider)
-          .fetchProjects(
-            userId: session.user.id,
-            role: session.user.role,
-            scope: effectiveScope,
-          );
+      try {
+        final projects = await ref
+            .read(projectsRepositoryProvider)
+            .fetchProjects(
+              userId: session.user.id,
+              role: session.user.role,
+              scope: effectiveScope,
+            );
+        await _mergeProjectsIntoCache(ref, projects);
+        return projects;
+      } catch (_) {
+        return _cachedProjectsForScope(
+          ref,
+          session: session,
+          scope: effectiveScope,
+        );
+      }
     });
 
 final mapProjectsProvider = FutureProvider<List<ProjectSummary>>((ref) async {
+  await ref.watch(offlineBootstrapProvider.future);
   ref.watch(workflowRefreshTickProvider);
+  final localStore = ref.watch(localStoreProvider);
   final authState = ref.watch(authControllerProvider);
   final session = authState.session;
   if (session == null) {
     return const <ProjectSummary>[];
   }
 
-  if (session.user.role == UserRole.admin) {
-    return ref
-        .read(projectsRepositoryProvider)
-        .fetchProjects(
-          userId: session.user.id,
-          role: session.user.role,
-          scope: ProjectViewScope.all,
-        );
-  }
-
-  if (session.user.role == UserRole.viewer) {
-    return ref
-        .read(projectsRepositoryProvider)
-        .fetchProjects(
-          userId: session.user.id,
-          role: session.user.role,
-          scope: ProjectViewScope.public,
-        );
-  }
-
-  final lists = await Future.wait(<Future<List<ProjectSummary>>>[
-    ref
-        .read(projectsRepositoryProvider)
-        .fetchProjects(
-          userId: session.user.id,
-          role: session.user.role,
-          scope: ProjectViewScope.public,
-        ),
-    ref
-        .read(projectsRepositoryProvider)
-        .fetchProjects(
-          userId: session.user.id,
-          role: session.user.role,
-          scope: ProjectViewScope.assigned,
-        ),
-  ]);
-
-  final merged = <String, ProjectSummary>{};
-  for (final list in lists) {
-    for (final project in list) {
-      merged[project.id] = project;
+  try {
+    if (session.user.role == UserRole.admin) {
+      final projects = await ref
+          .read(projectsRepositoryProvider)
+          .fetchProjects(
+            userId: session.user.id,
+            role: session.user.role,
+            scope: ProjectViewScope.all,
+          );
+      await localStore.cacheProjects(projects);
+      return projects;
     }
+
+    if (session.user.role == UserRole.viewer) {
+      final projects = await ref
+          .read(projectsRepositoryProvider)
+          .fetchProjects(
+            userId: session.user.id,
+            role: session.user.role,
+            scope: ProjectViewScope.public,
+          );
+      await localStore.cacheProjects(projects);
+      return projects;
+    }
+
+    final lists = await Future.wait(<Future<List<ProjectSummary>>>[
+      ref
+          .read(projectsRepositoryProvider)
+          .fetchProjects(
+            userId: session.user.id,
+            role: session.user.role,
+            scope: ProjectViewScope.public,
+          ),
+      ref
+          .read(projectsRepositoryProvider)
+          .fetchProjects(
+            userId: session.user.id,
+            role: session.user.role,
+            scope: ProjectViewScope.assigned,
+          ),
+    ]);
+
+    final merged = <String, ProjectSummary>{};
+    for (final list in lists) {
+      for (final project in list) {
+        merged[project.id] = project;
+      }
+    }
+
+    final projects = merged.values.toList(growable: false);
+    await localStore.cacheProjects(projects);
+    return projects;
+  } catch (_) {
+    return _cachedProjectsForScope(
+      ref,
+      session: session,
+      scope: ProjectViewScope.all,
+    );
   }
-  return merged.values.toList(growable: false);
 });
 
 final projectMapFeaturesProvider =
@@ -312,8 +411,8 @@ final projectMapFeaturesProvider =
             .read(mapRepositoryProvider)
             .fetchProjectFeatures(projectId);
         return _mergeProjectFeatures(remoteFeatures, projectDrafts);
-      } catch (_) {
-        if (localFeatures.isNotEmpty) {
+      } catch (error) {
+        if (localFeatures.isNotEmpty || _isOfflineFeatureFetchError(error)) {
           return localFeatures;
         }
         rethrow;
@@ -349,15 +448,35 @@ final projectByIdProvider = FutureProvider.family<ProjectSummary?, String>((
   ref,
   id,
 ) async {
+  await ref.watch(offlineBootstrapProvider.future);
   ref.watch(workflowRefreshTickProvider);
   final authState = ref.watch(authControllerProvider);
   final session = authState.session;
   if (session == null) {
     return null;
   }
-  return ref
-      .read(projectsRepositoryProvider)
-      .byId(id: id, userId: session.user.id, role: session.user.role);
+
+  try {
+    final project = await ref
+        .read(projectsRepositoryProvider)
+        .byId(id: id, userId: session.user.id, role: session.user.role);
+    if (project != null) {
+      await _mergeProjectsIntoCache(ref, <ProjectSummary>[project]);
+    }
+    return project;
+  } catch (_) {
+    final cachedProjects = await _cachedProjectsForScope(
+      ref,
+      session: session,
+      scope: ProjectViewScope.all,
+    );
+    for (final project in cachedProjects) {
+      if (project.id == id) {
+        return project;
+      }
+    }
+    return null;
+  }
 });
 
 final draftsProvider = FutureProvider<List<DraftItem>>((ref) async {

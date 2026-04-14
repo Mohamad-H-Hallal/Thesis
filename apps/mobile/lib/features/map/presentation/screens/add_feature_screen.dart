@@ -837,6 +837,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     );
 
     await localStore.upsertDraft(offlineDraft);
+    await ref.read(syncControllerProvider.notifier).refreshStatus();
     bumpWorkflowRefresh(ref);
 
     if (mounted) {
