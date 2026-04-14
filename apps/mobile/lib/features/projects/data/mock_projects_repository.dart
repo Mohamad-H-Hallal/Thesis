@@ -18,8 +18,8 @@ class MockProjectsRepository implements ProjectsRepository {
       filtered = all;
     } else if (scope == ProjectViewScope.public || role == UserRole.viewer) {
       filtered = all.where((project) {
-        final isPublished =
-            project.status == 'active' || project.status == 'completed';
+        final isPublished = const <String>['draft', 'active', 'paused', 'completed']
+            .contains(project.status);
         if (!isPublished) {
           return false;
         }
@@ -181,7 +181,7 @@ class MockProjectsRepository implements ProjectsRepository {
         requiresPhotos: true,
         minPhotos: 2,
         maxPhotos: 6,
-        allowedGeometryTypes: const <String>['Point', 'Polygon'],
+        allowedGeometryTypes: defaultProjectGeometryTypes,
         maxGpsAccuracyMeters: 12,
         visibleToViewers: true,
         visibleToContributors: true,
@@ -250,7 +250,7 @@ class MockProjectsRepository implements ProjectsRepository {
         requiresPhotos: true,
         minPhotos: 1,
         maxPhotos: 4,
-        allowedGeometryTypes: const <String>['Point'],
+        allowedGeometryTypes: defaultProjectGeometryTypes,
         maxGpsAccuracyMeters: 15,
         visibleToViewers: false,
         visibleToContributors: false,
@@ -300,7 +300,7 @@ class MockProjectsRepository implements ProjectsRepository {
         requiresPhotos: false,
         minPhotos: 0,
         maxPhotos: 3,
-        allowedGeometryTypes: const <String>['Polygon'],
+        allowedGeometryTypes: defaultProjectGeometryTypes,
         maxGpsAccuracyMeters: 20,
         visibleToViewers: false,
         visibleToContributors: true,

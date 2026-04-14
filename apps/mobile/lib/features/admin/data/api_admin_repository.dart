@@ -596,11 +596,7 @@ class ApiAdminRepository implements AdminRepository {
       maxPhotos: _toInt(row['max_photos']) ?? 5,
       visibleToViewers: (row['visible_to_viewers'] as bool?) ?? false,
       visibleToContributors: (row['visible_to_contributors'] as bool?) ?? true,
-      allowedGeometryTypes:
-          (schemaMap['allowedGeometryTypes'] as List?)?.cast<String>().toList(
-            growable: false,
-          ) ??
-          const <String>['Point'],
+      allowedGeometryTypes: defaultProjectGeometryTypes,
       maxGpsAccuracyMeters: _toDouble(schemaMap['maxGpsAccuracyMeters']) ?? 25,
     );
   }

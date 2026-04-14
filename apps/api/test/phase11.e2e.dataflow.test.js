@@ -113,7 +113,11 @@ describe('Phase 11 data-flow E2E', () => {
       .send({
         project_id: project.id,
         geom: { type: 'Point', coordinates: [35.49, 33.91] },
-        attributes: { tree_type: 'olive', condition: 'good' },
+        attributes: {
+          feature_type: 'olive',
+          tree_type: 'olive',
+          condition: 'good',
+        },
         accuracy_meters: 5.3,
         collected_offline: true,
       });
@@ -126,7 +130,11 @@ describe('Phase 11 data-flow E2E', () => {
       .send({
         project_id: project.id,
         geom: { type: 'Point', coordinates: [35.5, 33.9] },
-        attributes: { tree_type: 'apple', condition: 'good' },
+        attributes: {
+          feature_type: 'apple',
+          tree_type: 'apple',
+          condition: 'good',
+        },
         accuracy_meters: 3.8,
         collected_offline: false,
       });

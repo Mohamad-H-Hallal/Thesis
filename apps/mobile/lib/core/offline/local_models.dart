@@ -387,9 +387,6 @@ extension ProjectSummaryLocalMapper on ProjectSummary {
 
 ProjectSummary projectSummaryFromPayload(Map<String, dynamic> payload) {
   final rawAssignments = (payload['assignments'] as List?) ?? const <dynamic>[];
-  final rawAllowedGeometry =
-      (payload['allowedGeometryTypes'] as List?) ?? const <dynamic>[];
-
   return ProjectSummary(
     id: payload['id'] as String,
     name: payload['name'] as String,
@@ -414,9 +411,7 @@ ProjectSummary projectSummaryFromPayload(Map<String, dynamic> payload) {
     requiresPhotos: (payload['requiresPhotos'] as bool?) ?? false,
     minPhotos: ((payload['minPhotos'] as num?) ?? 0).toInt(),
     maxPhotos: ((payload['maxPhotos'] as num?) ?? 5).toInt(),
-    allowedGeometryTypes: rawAllowedGeometry.cast<String>().toList(
-      growable: false,
-    ),
+    allowedGeometryTypes: defaultProjectGeometryTypes,
     maxGpsAccuracyMeters: ((payload['maxGpsAccuracyMeters'] as num?) ?? 25)
         .toDouble(),
     visibleToViewers: (payload['visibleToViewers'] as bool?) ?? false,

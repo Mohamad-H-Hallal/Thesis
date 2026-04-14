@@ -375,8 +375,8 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                         title: const Text('Visible to viewers'),
                         subtitle: Text(
                           project.visibleToViewers
-                              ? 'Viewers can see this project while it stays active or completed.'
-                              : 'Viewers cannot see this project.',
+                              ? 'Shows in the viewer project list.'
+                              : 'Hidden from viewers.',
                         ),
                       ),
                       const Divider(height: 1),
@@ -389,8 +389,8 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                         title: const Text('Visible to contributors'),
                         subtitle: Text(
                           project.visibleToContributors
-                              ? 'Contributors can discover this project in the Projects tab while it stays active or completed.'
-                              : 'Contributors only reach this project through an approved assignment.',
+                              ? 'Shows in the contributor project list.'
+                              : 'Only assigned contributors can reach this project.',
                         ),
                       ),
                     ],

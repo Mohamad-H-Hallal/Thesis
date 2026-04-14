@@ -92,6 +92,7 @@ describe('Phase 10 E2E workflow', () => {
           coordinates: [35.5018, 33.8938],
         },
         attributes: {
+          feature_type: 'olive',
           tree_type: 'olive',
           condition: 'good',
         },
@@ -207,7 +208,11 @@ describe('Phase 10 E2E workflow', () => {
       .send({
         project_id: project.id,
         geom: { type: 'Point', coordinates: [35.5018, 33.8938] },
-        attributes: { tree_type: 'olive', site_name: 'Inside bbox' },
+        attributes: {
+          feature_type: 'olive',
+          tree_type: 'olive',
+          site_name: 'Inside bbox',
+        },
         accuracy_meters: 3.1,
       })
       .expect(201);
@@ -218,7 +223,11 @@ describe('Phase 10 E2E workflow', () => {
       .send({
         project_id: project.id,
         geom: { type: 'Point', coordinates: [36.05, 34.55] },
-        attributes: { tree_type: 'cedar', site_name: 'Outside bbox' },
+        attributes: {
+          feature_type: 'cedar',
+          tree_type: 'cedar',
+          site_name: 'Outside bbox',
+        },
         accuracy_meters: 4.4,
       })
       .expect(201);
@@ -229,7 +238,11 @@ describe('Phase 10 E2E workflow', () => {
       .send({
         project_id: project.id,
         geom: { type: 'Point', coordinates: [35.52, 33.91] },
-        attributes: { tree_type: 'pine', site_name: 'Draft only' },
+        attributes: {
+          feature_type: 'pine',
+          tree_type: 'pine',
+          site_name: 'Draft only',
+        },
         accuracy_meters: 2.5,
       })
       .expect(201);
@@ -361,7 +374,11 @@ describe('Phase 10 E2E workflow', () => {
       .send({
         project_id: project.id,
         geom: { type: 'Point', coordinates: [35.5018, 33.8938] },
-        attributes: { tree_type: 'olive', site_name: 'Shapefile point' },
+        attributes: {
+          feature_type: 'olive',
+          tree_type: 'olive',
+          site_name: 'Shapefile point',
+        },
         accuracy_meters: 3.4,
       })
       .expect(201);
@@ -372,7 +389,11 @@ describe('Phase 10 E2E workflow', () => {
       .send({
         project_id: project.id,
         geom: { type: 'Point', coordinates: [35.53, 33.9] },
-        attributes: { tree_type: 'apple', site_name: 'Pending point' },
+        attributes: {
+          feature_type: 'apple',
+          tree_type: 'apple',
+          site_name: 'Pending point',
+        },
         accuracy_meters: 5.1,
       })
       .expect(201);

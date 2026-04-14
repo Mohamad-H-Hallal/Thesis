@@ -489,7 +489,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
 
       expect(find.text('Project is now visible to viewers.'), findsOneWidget);
-      expect(find.text('Viewer visible'), findsOneWidget);
+      expect(find.text('Visible to all'), findsOneWidget);
     },
   );
 

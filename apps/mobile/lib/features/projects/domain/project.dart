@@ -53,6 +53,12 @@ class ProjectAssignment {
 
 enum CollectionFieldType { text, multiline, number, select, boolean, date }
 
+const List<String> defaultProjectGeometryTypes = <String>[
+  'Point',
+  'LineString',
+  'Polygon',
+];
+
 class CollectionFormFieldSchema {
   const CollectionFormFieldSchema({
     required this.key,
@@ -159,7 +165,7 @@ class ProjectSummary {
     this.requiresPhotos = false,
     this.minPhotos = 0,
     this.maxPhotos = 5,
-    this.allowedGeometryTypes = const <String>['Point'],
+    this.allowedGeometryTypes = defaultProjectGeometryTypes,
     this.maxGpsAccuracyMeters = 25,
     this.visibleToViewers = false,
     this.visibleToContributors = true,
@@ -195,6 +201,9 @@ class ProjectSummary {
       currentUserAssignmentStatus == ProjectAssignmentStatus.approved;
 
   String get visibilitySummaryLabel {
+    if (visibleToViewers && visibleToContributors) {
+      return 'Visible to all';
+    }
     if (visibleToViewers) {
       return 'Viewer visible';
     }

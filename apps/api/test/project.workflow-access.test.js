@@ -55,13 +55,18 @@ describe('Project workflow access and feature visibility', () => {
       token: admin.token,
       categoryId: category.id,
       name: `Workflow Project ${Date.now()}`,
-      visibleToViewers: true,
+      visibleToViewers: false,
+      visibleToContributors: true,
     });
 
     await request(app)
       .put(`${API_PREFIX}/projects/${project.id}`)
       .set(authHeader(admin.token))
-      .send({ status: 'active', visible_to_viewers: true })
+      .send({
+        status: 'draft',
+        visible_to_viewers: false,
+        visible_to_contributors: true,
+      })
       .expect(200);
 
     const viewerLogin = await loginUser({

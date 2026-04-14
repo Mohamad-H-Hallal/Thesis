@@ -196,7 +196,7 @@ describe('Phase 3 geospatial integration', () => {
       .send({
         project_id: projectId,
         geom: invalidPolygon,
-        attributes: { tree_type: 'apple' },
+        attributes: { feature_type: 'apple', tree_type: 'apple' },
       });
 
     expect(response.status).toBe(400);

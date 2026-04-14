@@ -4,10 +4,11 @@ const logger = require('../utils/logger');
 import {
   assertProjectStatusTransition,
   normalizeProjectDateInput,
+  publicVisibleStatuses,
   resolveProjectScheduleForMutation,
   synchronizeProjectStatuses,
-  viewerVisibleStatuses,
 } from '../lib/projectLifecycle';
+import { normalizeCollectionFormSchema } from '../lib/projectSchema';
 
 const projectAccessScopes = ['public', 'assigned', 'all'] as const;
 type ProjectAccessScope = (typeof projectAccessScopes)[number];
@@ -19,12 +20,6 @@ const ensureCategoryExists = async (categoryId: string): Promise<void> => {
   const categoryCheck = await query('SELECT id FROM project_category WHERE id = $1', [categoryId]);
   if (categoryCheck.rows.length === 0) {
     throw new AppError('Project category not found', 404);
-  }
-};
-
-const ensureSchemaObject = (schema: unknown): void => {
-  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
-    throw new AppError('collection_form_schema must be a JSON object', 422);
   }
 };
 
@@ -87,7 +82,7 @@ const getAllProjects = async (req, res) => {
     // No additional access filter.
   } else if (scope === 'public') {
     queryText += ` AND p.${publicVisibilityColumn} = TRUE AND p.status = ANY($${paramIndex}::project_status[])`;
-    params.push(viewerVisibleStatuses);
+    params.push(publicVisibleStatuses);
     paramIndex++;
   } else if (scope === 'assigned') {
     queryText += ` AND (
@@ -139,7 +134,7 @@ const getAllProjects = async (req, res) => {
     // No additional access filter.
   } else if (scope === 'public') {
     countQuery += ` AND p.${publicVisibilityColumn} = TRUE AND p.status = ANY($${countParamIndex}::project_status[])`;
-    countParams.push(viewerVisibleStatuses);
+    countParams.push(publicVisibleStatuses);
     countParamIndex++;
   } else if (scope === 'assigned') {
     countQuery += ` AND (
@@ -235,7 +230,8 @@ const createProject = async (req, res) => {
   if (status !== 'draft') {
     throw new AppError('Project status must start as draft', 400);
   }
-  ensureSchemaObject(collection_form_schema);
+  const normalizedCollectionFormSchema =
+    normalizeCollectionFormSchema(collection_form_schema);
   await ensureCategoryExists(category_id);
   const normalizedSchedule = resolveProjectScheduleForMutation({
     currentStatus: 'draft',
@@ -263,7 +259,7 @@ const createProject = async (req, res) => {
         objectives,
         normalizedSchedule.startDate,
         normalizedSchedule.endDate,
-        JSON.stringify(collection_form_schema),
+        JSON.stringify(normalizedCollectionFormSchema),
         requires_photos,
         min_photos,
         max_photos,
@@ -272,16 +268,23 @@ const createProject = async (req, res) => {
       ],
     );
   const createdProject = createdProjectResult.rows[0];
+  await synchronizeProjectStatuses(createdProject.id);
+  const synchronizedProjectResult = await query(
+    'SELECT * FROM project WHERE id = $1',
+    [createdProject.id],
+  );
+  const synchronizedProject =
+    synchronizedProjectResult.rows[0] ?? createdProject;
 
   logger.info('Project created:', {
-    projectId: createdProject.id,
+    projectId: synchronizedProject.id,
     userId: req.user.id,
   });
 
   res.status(201).json({
     success: true,
     message: 'Project created successfully',
-    data: createdProject,
+    data: synchronizedProject,
   });
 };
 
@@ -381,9 +384,10 @@ const updateProject = async (req, res) => {
     paramIndex++;
   }
   if (collection_form_schema !== undefined) {
-    ensureSchemaObject(collection_form_schema);
+    const normalizedCollectionFormSchema =
+      normalizeCollectionFormSchema(collection_form_schema);
     updates.push(`collection_form_schema = $${paramIndex}`);
-    params.push(JSON.stringify(collection_form_schema));
+    params.push(JSON.stringify(normalizedCollectionFormSchema));
     paramIndex++;
   }
   if (requires_photos !== undefined) {
@@ -425,13 +429,20 @@ const updateProject = async (req, res) => {
   `;
 
   const result = await query(queryText, params);
+  await synchronizeProjectStatuses(projectId);
+  const synchronizedProjectResult = await query(
+    'SELECT * FROM project WHERE id = $1',
+    [projectId],
+  );
+  const synchronizedProject =
+    synchronizedProjectResult.rows[0] ?? result.rows[0];
 
   logger.info('Project updated:', { projectId, userId: req.user.id });
 
   res.json({
     success: true,
     message: 'Project updated successfully',
-    data: result.rows[0],
+    data: synchronizedProject,
   });
 };
 
@@ -482,6 +493,7 @@ const deleteProject = async (req, res) => {
   });
 
   logger.info('Project archived:', { projectId, userId: req.user.id });
+  await synchronizeProjectStatuses(projectId);
 
   res.json({
     success: true,

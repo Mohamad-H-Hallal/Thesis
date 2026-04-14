@@ -182,11 +182,7 @@ class ApiProjectsRepository implements ProjectsRepository {
       currentUserAssignmentStatus: _toAssignmentStatus(
         row['current_user_assignment_status'] as String?,
       ),
-      allowedGeometryTypes:
-          (schemaMap['allowedGeometryTypes'] as List?)?.cast<String>().toList(
-            growable: false,
-          ) ??
-          const <String>['Point'],
+      allowedGeometryTypes: defaultProjectGeometryTypes,
       maxGpsAccuracyMeters: _toDouble(schemaMap['maxGpsAccuracyMeters']) ?? 25,
     );
   }

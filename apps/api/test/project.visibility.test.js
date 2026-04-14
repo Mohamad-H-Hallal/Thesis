@@ -25,7 +25,7 @@ describe('Project visibility by role', () => {
     await shutdown();
   });
 
-  test('viewer sees only admin-published active/completed projects and contributor can query public and assigned scopes separately', async () => {
+  test('viewer and contributor public lists honor role visibility, including visible draft projects', async () => {
     const admin = await createAdminUser({
       fullName: 'Visibility Admin',
       emailPrefix: 'visibility-admin',
@@ -137,8 +137,10 @@ describe('Project visibility by role', () => {
       .get(`${API_PREFIX}/projects`)
       .set(authHeader(viewerLogin.token));
     expect(viewerProjects.status).toBe(200);
-    expect(viewerProjects.body.data).toHaveLength(1);
-    expect(viewerProjects.body.data[0].id).toBe(publicProject.id);
+    expect(viewerProjects.body.data).toHaveLength(2);
+    expect(viewerProjects.body.data.map((item) => item.id)).toEqual(
+      expect.arrayContaining([publicProject.id, hiddenDraftProject.id])
+    );
 
     const contributorAssignedProjects = await request(app)
       .get(`${API_PREFIX}/projects`)
@@ -154,9 +156,13 @@ describe('Project visibility by role', () => {
       .set(authHeader(contributorLogin.token));
     expect(contributorPublicProjects.status).toBe(200);
     expect(contributorPublicProjects.body.access_scope).toBe('public');
-    expect(contributorPublicProjects.body.data).toHaveLength(2);
+    expect(contributorPublicProjects.body.data).toHaveLength(3);
     expect(contributorPublicProjects.body.data.map((item) => item.id)).toEqual(
-      expect.arrayContaining([publicProject.id, contributorVisibleProject.id])
+      expect.arrayContaining([
+        publicProject.id,
+        contributorVisibleProject.id,
+        hiddenDraftProject.id,
+      ])
     );
 
     await request(app)
@@ -189,13 +195,13 @@ describe('Project visibility by role', () => {
       .get(`${API_PREFIX}/projects`)
       .set(authHeader(viewerLogin.token));
     expect(viewerProjectsAfterToggle.status).toBe(200);
-    expect(viewerProjectsAfterToggle.body.data).toHaveLength(2);
+    expect(viewerProjectsAfterToggle.body.data).toHaveLength(3);
 
     const contributorPublicProjectsAfterToggle = await request(app)
       .get(`${API_PREFIX}/projects`)
       .query({ access_scope: 'public' })
       .set(authHeader(contributorLogin.token));
     expect(contributorPublicProjectsAfterToggle.status).toBe(200);
-    expect(contributorPublicProjectsAfterToggle.body.data).toHaveLength(3);
+    expect(contributorPublicProjectsAfterToggle.body.data).toHaveLength(4);
   });
 });

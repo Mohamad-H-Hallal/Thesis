@@ -3,7 +3,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { query } from '../config/database';
 const logger = require('../utils/logger');
 import type { user_role } from '../types/roles';
-import { synchronizeProjectStatuses } from '../lib/projectLifecycle';
+import { publicVisibleStatuses, synchronizeProjectStatuses } from '../lib/projectLifecycle';
 
 interface TokenPayload extends JwtPayload {
   userId: string;
@@ -165,12 +165,13 @@ const checkProjectAccess = async (req: Request, res: Response, next: NextFunctio
     }
 
     if (req.user.role === 'viewer') {
+      const visibleStatuses = publicVisibleStatuses.map((status) => `'${status}'`).join(', ');
       const visibleProject = await query(
         `SELECT id
          FROM project
          WHERE id = $1
            AND visible_to_viewers = TRUE
-           AND status IN ('active', 'paused', 'completed')`,
+           AND status IN (${visibleStatuses})`,
         [projectId]
       );
 
@@ -184,6 +185,7 @@ const checkProjectAccess = async (req: Request, res: Response, next: NextFunctio
       return next();
     }
 
+    const visibleStatuses = publicVisibleStatuses.map((status) => `'${status}'`).join(', ');
     const contributorAccess = await query(
       `SELECT
           EXISTS (
@@ -206,7 +208,7 @@ const checkProjectAccess = async (req: Request, res: Response, next: NextFunctio
             FROM project
             WHERE id = $1
               AND visible_to_contributors = TRUE
-              AND status IN ('active', 'paused', 'completed')
+              AND status IN (${visibleStatuses})
           ) AS is_public_project`,
       [projectId, userId]
     );

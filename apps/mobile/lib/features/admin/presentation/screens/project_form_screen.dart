@@ -34,11 +34,9 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
   final _objectivesController = TextEditingController();
   final _minPhotosController = TextEditingController(text: '0');
   final _maxPhotosController = TextEditingController(text: '5');
-  final _schemaVersionController = TextEditingController(text: 'v1.0');
-  final _maxGpsAccuracyController = TextEditingController(text: '25');
+  final _featureTypeField = _EditableFormField.featureType();
 
   final List<_EditableFormField> _fields = <_EditableFormField>[];
-  final Set<String> _allowedGeometryTypes = <String>{'Point'};
 
   bool _initialized = false;
   bool _isSaving = false;
@@ -65,8 +63,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
     _objectivesController.dispose();
     _minPhotosController.dispose();
     _maxPhotosController.dispose();
-    _schemaVersionController.dispose();
-    _maxGpsAccuracyController.dispose();
+    _featureTypeField.dispose();
     for (final field in _fields) {
       field.dispose();
     }
@@ -88,9 +85,6 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
       _objectivesController.text = project.objectives ?? '';
       _minPhotosController.text = '${project.minPhotos}';
       _maxPhotosController.text = '${project.maxPhotos}';
-      _schemaVersionController.text = project.collectionFormSchema.version;
-      _maxGpsAccuracyController.text = project.maxGpsAccuracyMeters
-          .toStringAsFixed(0);
       _requiresPhotos = project.requiresPhotos;
       _visibleToViewers = project.visibleToViewers;
       _visibleToContributors = project.visibleToContributors;
@@ -98,13 +92,19 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
       _status = project.status;
       _startDate = project.startDate;
       _endDate = project.endDate;
-      _allowedGeometryTypes
-        ..clear()
-        ..addAll(project.allowedGeometryTypes);
+      final schemaFields = List<CollectionFormFieldSchema>.from(
+        project.collectionFormSchema.fields,
+      );
+      final primaryFieldIndex = schemaFields.indexWhere(_looksLikeFeatureTypeField);
+      if (primaryFieldIndex >= 0) {
+        _featureTypeField.applySchema(schemaFields.removeAt(primaryFieldIndex));
+      } else {
+        _featureTypeField.resetAsFeatureType();
+      }
       _fields
         ..clear()
         ..addAll(
-          project.collectionFormSchema.fields
+          schemaFields
               .map(_EditableFormField.fromSchema)
               .toList(growable: false),
         );
@@ -185,14 +185,6 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
       AppSnackbar.showError(context, scheduleError);
       return;
     }
-    if (_allowedGeometryTypes.isEmpty) {
-      AppSnackbar.showError(
-        context,
-        'Select at least one allowed geometry type.',
-      );
-      return;
-    }
-
     final minPhotos = int.tryParse(_minPhotosController.text.trim()) ?? 0;
     final maxPhotos = int.tryParse(_maxPhotosController.text.trim()) ?? 0;
     if (minPhotos < 0 || maxPhotos < 0 || minPhotos > maxPhotos) {
@@ -203,14 +195,15 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
       return;
     }
 
+    final schemaFields = <_EditableFormField>[_featureTypeField, ..._fields];
     final keys = <String>{};
-    for (final field in _fields) {
+    for (final field in schemaFields) {
       final error = field.validate();
       if (error != null) {
         AppSnackbar.showError(context, error);
         return;
       }
-      final key = AuthFormValidators.normalize(field.keyController.text);
+      final key = field.resolvedKey;
       if (!keys.add(key)) {
         AppSnackbar.showError(context, 'Collection field keys must be unique.');
         return;
@@ -235,11 +228,10 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
       visibleToViewers: _visibleToViewers,
       visibleToContributors: _visibleToContributors,
       collectionFormSchema: <String, dynamic>{
-        'version': AuthFormValidators.normalize(_schemaVersionController.text),
-        'allowedGeometryTypes': _allowedGeometryTypes.toList(growable: false),
-        'maxGpsAccuracyMeters':
-            double.tryParse(_maxGpsAccuracyController.text.trim()) ?? 25,
-        'fields': _fields
+        'version': 'v1.0',
+        'allowedGeometryTypes': defaultProjectGeometryTypes,
+        'maxGpsAccuracyMeters': 25,
+        'fields': schemaFields
             .map((field) => field.toSchemaMap())
             .toList(growable: false),
       },
@@ -321,6 +313,18 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
       return 'Completed projects cannot use a future end date.';
     }
     return null;
+  }
+
+  bool _looksLikeFeatureTypeField(CollectionFormFieldSchema field) {
+    final haystack = '${field.key} ${field.label}'.toLowerCase();
+    return haystack.contains('feature_type') ||
+        haystack.contains('feature type') ||
+        haystack.contains('feature name') ||
+        haystack.contains('tree') ||
+        haystack.contains('species') ||
+        haystack.contains('crop') ||
+        haystack.contains('orchard') ||
+        haystack.contains('variety');
   }
 
   @override
@@ -462,47 +466,6 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                   });
                                 },
                               ),
-                              if (!widget.isEditing)
-                                Padding(
-                                  padding: const EdgeInsets.only(
-                                    top: AppSpacing.xs,
-                                  ),
-                                  child: Text(
-                                    'New projects are created as draft first. Choosing active here promotes the project immediately after creation.',
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodySmall,
-                                  ),
-                                ),
-                              if (_status == 'paused')
-                                Padding(
-                                  padding: const EdgeInsets.only(
-                                    top: AppSpacing.xs,
-                                  ),
-                                  child: Text(
-                                    'Paused projects remain viewable, but feature collection and submission stay disabled until the project returns to active status.',
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodySmall,
-                                  ),
-                                ),
-                              Padding(
-                                padding: const EdgeInsets.only(
-                                  top: AppSpacing.xs,
-                                ),
-                                child: Text(switch (_status) {
-                                  'draft' =>
-                                    'Draft projects should use a start date that is today or later.',
-                                  'active' =>
-                                    'Active projects should be underway now. Future start dates are not allowed.',
-                                  'completed' =>
-                                    'Completed projects should use an end date on or before today.',
-                                  'archived' =>
-                                    'Archived projects stay closed until they are restored to completed status.',
-                                  _ =>
-                                    'Paused projects keep their schedule but remain unavailable for collection until reactivated.',
-                                }, style: Theme.of(context).textTheme.bodySmall),
-                              ),
                               const SizedBox(height: AppSpacing.sm),
                               Wrap(
                                 spacing: AppSpacing.sm,
@@ -539,9 +502,6 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                   });
                                 },
                                 title: const Text('Visible to contributors'),
-                                subtitle: const Text(
-                                  'When enabled and active/completed, contributors can discover this project in their public project list.',
-                                ),
                               ),
                               SwitchListTile(
                                 contentPadding: EdgeInsets.zero,
@@ -552,9 +512,6 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                   });
                                 },
                                 title: const Text('Visible to viewers'),
-                                subtitle: const Text(
-                                  'When enabled and active/completed, this project is visible in the viewer and public project list.',
-                                ),
                               ),
                               SwitchListTile(
                                 contentPadding: EdgeInsets.zero,
@@ -565,9 +522,6 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                   });
                                 },
                                 title: const Text('Require photos'),
-                                subtitle: const Text(
-                                  'Use the schema-backed project policy for required field photos.',
-                                ),
                               ),
                               Wrap(
                                 spacing: AppSpacing.sm,
@@ -618,68 +572,34 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Collection schema',
+                                'Collection form',
                                 style: Theme.of(context).textTheme.titleLarge,
                               ),
                               const SizedBox(height: AppSpacing.sm),
-                              AppTextField(
-                                label: 'Schema version',
-                                controller: _schemaVersionController,
-                                validator: (value) =>
-                                    AuthFormValidators.requiredField(
-                                      value,
-                                      fieldLabel: 'Schema version',
-                                      minLength: 2,
-                                    ),
-                              ),
-                              const SizedBox(height: AppSpacing.sm),
-                              AppTextField(
-                                label: 'Max GPS accuracy (meters)',
-                                controller: _maxGpsAccuracyController,
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(
-                                      decimal: true,
-                                    ),
-                                validator: (value) {
-                                  final parsed = double.tryParse(
-                                    value?.trim() ?? '',
-                                  );
-                                  if (parsed == null || parsed <= 0) {
-                                    return 'Enter a valid GPS accuracy target';
-                                  }
-                                  return null;
-                                },
-                              ),
-                              const SizedBox(height: AppSpacing.sm),
                               Text(
-                                'Allowed geometry types',
+                                'Feature type',
                                 style: Theme.of(context).textTheme.titleMedium,
                               ),
                               const SizedBox(height: AppSpacing.xs),
-                              Wrap(
-                                spacing: AppSpacing.xs,
-                                children: [
-                                  for (final type in const [
-                                    'Point',
-                                    'LineString',
-                                    'Polygon',
-                                  ])
-                                    FilterChip(
-                                      label: Text(type),
-                                      selected: _allowedGeometryTypes.contains(
-                                        type,
-                                      ),
-                                      onSelected: (selected) {
-                                        setState(() {
-                                          if (selected) {
-                                            _allowedGeometryTypes.add(type);
-                                          } else {
-                                            _allowedGeometryTypes.remove(type);
-                                          }
-                                        });
-                                      },
-                                    ),
-                                ],
+                              Text(
+                                'Required for feature names and map filtering.',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                              const SizedBox(height: AppSpacing.sm),
+                              AppTextField(
+                                label: 'Field label',
+                                hint: 'Tree type',
+                                controller: _featureTypeField.labelController,
+                                onChanged: (_) => setState(() {}),
+                              ),
+                              const SizedBox(height: AppSpacing.sm),
+                              AppTextField(
+                                label: 'Choices',
+                                hint: 'Olive\nLemon\nOrange',
+                                controller: _featureTypeField.optionsController,
+                                minLines: 3,
+                                maxLines: 6,
+                                onChanged: (_) => setState(() {}),
                               ),
                               const SizedBox(height: AppSpacing.md),
                               LayoutBuilder(
@@ -695,7 +615,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                           CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          'Dynamic collection fields',
+                                          'Additional fields',
                                           style: Theme.of(
                                             context,
                                           ).textTheme.titleMedium,
@@ -709,7 +629,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                     children: [
                                       Expanded(
                                         child: Text(
-                                          'Dynamic collection fields',
+                                          'Additional fields',
                                           style: Theme.of(
                                             context,
                                           ).textTheme.titleMedium,
@@ -723,7 +643,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                               const SizedBox(height: AppSpacing.sm),
                               if (_fields.isEmpty)
                                 const Text(
-                                  'No dynamic fields configured. The project will collect geometry-only submissions until fields are added.',
+                                  'No additional fields yet.',
                                 )
                               else
                                 ...List<Widget>.generate(_fields.length, (
@@ -857,6 +777,9 @@ class _FieldEditorCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isNumber = field.type == CollectionFieldType.number;
+    final isSelect = field.type == CollectionFieldType.select;
+
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -877,13 +800,6 @@ class _FieldEditorCard extends StatelessWidget {
             ],
           ),
           AppTextField(
-            label: 'Field key',
-            hint: 'tree_species',
-            controller: field.keyController,
-            onChanged: (_) => onChanged(),
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          AppTextField(
             label: 'Label',
             hint: 'Tree species',
             controller: field.labelController,
@@ -896,8 +812,10 @@ class _FieldEditorCard extends StatelessWidget {
             decoration: const InputDecoration(labelText: 'Field type'),
             items: CollectionFieldType.values
                 .map(
-                  (type) =>
-                      DropdownMenuItem(value: type, child: Text(type.name)),
+                  (type) => DropdownMenuItem(
+                    value: type,
+                    child: Text(_fieldTypeLabel(type)),
+                  ),
                 )
                 .toList(growable: false),
             onChanged: (value) {
@@ -910,57 +828,63 @@ class _FieldEditorCard extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.sm),
           AppTextField(
-            label: 'Hint',
-            hint: 'Optional helper text',
+            label: 'Helper text',
+            hint: 'Optional guidance for contributors',
             controller: field.hintController,
             minLines: 2,
             maxLines: 4,
             onChanged: (_) => onChanged(),
           ),
-          const SizedBox(height: AppSpacing.sm),
-          Wrap(
-            spacing: AppSpacing.sm,
-            runSpacing: AppSpacing.sm,
-            children: [
-              SizedBox(
-                width: 160,
-                child: AppTextField(
-                  label: 'Min',
-                  controller: field.minController,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
+          if (isNumber) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Wrap(
+              spacing: AppSpacing.sm,
+              runSpacing: AppSpacing.sm,
+              children: [
+                SizedBox(
+                  width: 160,
+                  child: AppTextField(
+                    label: 'Minimum',
+                    controller: field.minController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    onChanged: (_) => onChanged(),
                   ),
-                  onChanged: (_) => onChanged(),
                 ),
-              ),
-              SizedBox(
-                width: 160,
-                child: AppTextField(
-                  label: 'Max',
-                  controller: field.maxController,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
+                SizedBox(
+                  width: 160,
+                  child: AppTextField(
+                    label: 'Maximum',
+                    controller: field.maxController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    onChanged: (_) => onChanged(),
                   ),
-                  onChanged: (_) => onChanged(),
                 ),
-              ),
-              SizedBox(
-                width: 160,
-                child: AppTextField(
-                  label: 'Unit',
-                  controller: field.unitController,
-                  onChanged: (_) => onChanged(),
+                SizedBox(
+                  width: 160,
+                  child: AppTextField(
+                    label: 'Unit',
+                    controller: field.unitController,
+                    onChanged: (_) => onChanged(),
+                  ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          AppTextField(
-            label: 'Options (comma-separated)',
-            hint: 'Olive, Citrus, Apple',
-            controller: field.optionsController,
-            onChanged: (_) => onChanged(),
-          ),
+              ],
+            ),
+          ],
+          if (isSelect) ...[
+            const SizedBox(height: AppSpacing.sm),
+            AppTextField(
+              label: 'Choices',
+              hint: 'Olive\nLemon\nOrange',
+              controller: field.optionsController,
+              minLines: 3,
+              maxLines: 6,
+              onChanged: (_) => onChanged(),
+            ),
+          ],
           const SizedBox(height: AppSpacing.xs),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
@@ -974,6 +898,23 @@ class _FieldEditorCard extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+String _fieldTypeLabel(CollectionFieldType type) {
+  switch (type) {
+    case CollectionFieldType.text:
+      return 'Short text';
+    case CollectionFieldType.multiline:
+      return 'Long text';
+    case CollectionFieldType.number:
+      return 'Number';
+    case CollectionFieldType.select:
+      return 'Dropdown list';
+    case CollectionFieldType.boolean:
+      return 'Yes / No';
+    case CollectionFieldType.date:
+      return 'Date';
   }
 }
 
@@ -996,13 +937,24 @@ class _EditableFormField {
        minController = TextEditingController(text: min),
        maxController = TextEditingController(text: max);
 
+  _EditableFormField.featureType()
+    : keyController = TextEditingController(text: 'feature_type'),
+      labelController = TextEditingController(text: 'Feature type'),
+      hintController = TextEditingController(),
+      optionsController = TextEditingController(),
+      unitController = TextEditingController(),
+      minController = TextEditingController(),
+      maxController = TextEditingController(),
+      type = CollectionFieldType.select,
+      required = true;
+
   factory _EditableFormField.fromSchema(CollectionFormFieldSchema field) {
     return _EditableFormField(
       key: field.key,
       label: field.label,
       type: field.type,
       hint: field.hint ?? '',
-      options: field.options.join(', '),
+      options: field.options.join('\n'),
       unit: field.unit ?? '',
       min: field.min?.toString() ?? '',
       max: field.max?.toString() ?? '',
@@ -1020,18 +972,46 @@ class _EditableFormField {
   CollectionFieldType type;
   bool required;
 
-  String? validate() {
-    final key = AuthFormValidators.normalize(keyController.text);
-    final label = AuthFormValidators.normalize(labelController.text);
-    if (key.isEmpty) {
-      return 'Every collection field needs a key.';
+  String get resolvedKey {
+    final explicitKey = _slugifyKey(keyController.text);
+    if (explicitKey.isNotEmpty) {
+      return explicitKey;
     }
+    return _slugifyKey(labelController.text);
+  }
+
+  void applySchema(CollectionFormFieldSchema field) {
+    keyController.text = field.key;
+    labelController.text = field.label;
+    hintController.text = field.hint ?? '';
+    optionsController.text = field.options.join('\n');
+    unitController.text = field.unit ?? '';
+    minController.text = field.min?.toString() ?? '';
+    maxController.text = field.max?.toString() ?? '';
+    type = CollectionFieldType.select;
+    required = true;
+  }
+
+  void resetAsFeatureType() {
+    keyController.text = 'feature_type';
+    labelController.text = 'Feature type';
+    hintController.clear();
+    optionsController.clear();
+    unitController.clear();
+    minController.clear();
+    maxController.clear();
+    type = CollectionFieldType.select;
+    required = true;
+  }
+
+  String? validate() {
+    final label = AuthFormValidators.normalize(labelController.text);
     if (label.isEmpty) {
       return 'Every collection field needs a label.';
     }
     if (type == CollectionFieldType.select &&
-        optionsController.text.trim().isEmpty) {
-      return 'Select fields require at least one option.';
+        _normalizedOptions().isEmpty) {
+      return 'Dropdown fields require at least one choice.';
     }
     return null;
   }
@@ -1040,20 +1020,33 @@ class _EditableFormField {
     final min = double.tryParse(minController.text.trim());
     final max = double.tryParse(maxController.text.trim());
     return <String, dynamic>{
-      'key': AuthFormValidators.normalize(keyController.text),
+      'key': resolvedKey,
       'label': AuthFormValidators.normalize(labelController.text),
       'type': type == CollectionFieldType.multiline ? 'textarea' : type.name,
       'required': required,
       'hint': AuthFormValidators.normalize(hintController.text),
-      'options': optionsController.text
-          .split(',')
-          .map(AuthFormValidators.normalize)
-          .where((value) => value.isNotEmpty)
-          .toList(growable: false),
+      'options': _normalizedOptions(),
       'unit': AuthFormValidators.normalize(unitController.text),
       'min': min,
       'max': max,
     };
+  }
+
+  List<String> _normalizedOptions() {
+    return optionsController.text
+        .split(RegExp(r'\r?\n|,'))
+        .map(AuthFormValidators.normalize)
+        .where((value) => value.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  static String _slugifyKey(String raw) {
+    return raw
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '')
+        .replaceAll(RegExp(r'_+'), '_');
   }
 
   void dispose() {

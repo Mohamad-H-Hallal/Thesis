@@ -7,7 +7,7 @@ import { synchronizeProjectStatuses } from '../lib/projectLifecycle';
 const getProjectOrFail = async (projectId: string) => {
   await synchronizeProjectStatuses(projectId);
   const projectResult = await query(
-    `SELECT id, name, status, visible_to_viewers
+    `SELECT id, name, status, visible_to_viewers, visible_to_contributors
      FROM project
      WHERE id = $1`,
     [projectId],
@@ -290,17 +290,14 @@ const requestJoinProject = async (req, res) => {
   }
 
   const project = await getProjectOrFail(projectId);
-  if (project.status === 'draft' || project.status === 'archived') {
+  if (project.status === 'completed' || project.status === 'archived') {
     throw new AppError('This project is not accepting assignment requests', 409);
   }
-  if (project.status !== 'active') {
+  if (!project.visible_to_contributors) {
     throw new AppError(
-      'Only active projects accept contributor access requests.',
+      'Only contributor-visible projects accept self-service assignment requests',
       409,
     );
-  }
-  if (!project.visible_to_viewers) {
-    throw new AppError('Only viewer-visible projects accept self-service assignment requests', 409);
   }
 
   const existingAssignment = await query(

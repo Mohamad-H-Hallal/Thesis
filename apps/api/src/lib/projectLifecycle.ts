@@ -1,7 +1,8 @@
 const { query } = require('../config/database');
 const { AppError } = require('../middleware/error');
 
-const viewerVisibleStatuses = ['active', 'paused', 'completed'] as const;
+const publicVisibleStatuses = ['draft', 'active', 'paused', 'completed'] as const;
+const projectScheduleReminderKinds = ['starts_tomorrow', 'ends_tomorrow'] as const;
 
 const projectStatusTransitions: Record<string, string[]> = {
   draft: ['active'],
@@ -177,14 +178,117 @@ const synchronizeProjectStatuses = async (projectId?: string): Promise<void> => 
     `,
     params,
   );
+
+  await synchronizeProjectScheduleNotifications(projectId);
+};
+
+const synchronizeProjectScheduleNotifications = async (
+  projectId?: string,
+): Promise<void> => {
+  const params: unknown[] = [];
+  const projectFilter = projectId ? 'WHERE p.id = $1' : '';
+  if (projectId) {
+    params.push(projectId);
+  }
+
+  const [tomorrowResult, adminsResult, projectsResult] = await Promise.all([
+    query(
+      `SELECT TO_CHAR(CURRENT_DATE + INTERVAL '1 day', 'YYYY-MM-DD') AS tomorrow`,
+    ),
+    query(
+      `SELECT id
+       FROM "user"
+       WHERE role = 'admin'
+         AND is_active = TRUE`,
+    ),
+    query(
+      `SELECT
+          p.id,
+          p.name,
+          p.status,
+          TO_CHAR(p.start_date, 'YYYY-MM-DD') AS start_date,
+          TO_CHAR(p.end_date, 'YYYY-MM-DD') AS end_date
+       FROM project p
+       ${projectFilter}`,
+      params,
+    ),
+  ]);
+
+  const tomorrow = (tomorrowResult.rows[0] as { tomorrow?: string } | undefined)
+    ?.tomorrow;
+  if (!tomorrow || adminsResult.rows.length === 0) {
+    return;
+  }
+
+  for (const project of projectsResult.rows as Array<{
+    id: string;
+    name: string;
+    status: string;
+    start_date: string | null;
+    end_date: string | null;
+  }>) {
+    const desiredKinds = new Set<string>();
+    if (project.status === 'draft' && project.start_date === tomorrow) {
+      desiredKinds.add('starts_tomorrow');
+    }
+    if (project.status === 'active' && project.end_date === tomorrow) {
+      desiredKinds.add('ends_tomorrow');
+    }
+
+    const staleKinds = projectScheduleReminderKinds.filter(
+      (kind) => !desiredKinds.has(kind),
+    );
+    if (staleKinds.length > 0) {
+      await query(
+        `DELETE FROM notification
+         WHERE type = 'assignment'
+           AND metadata->>'project_id' = $1
+           AND metadata->>'schedule_reminder_kind' = ANY($2::text[])`,
+        [project.id, staleKinds],
+      );
+    }
+
+    for (const kind of desiredKinds) {
+      const title =
+        kind === 'starts_tomorrow'
+          ? 'Project starts tomorrow'
+          : 'Project completes tomorrow';
+      const message =
+        kind === 'starts_tomorrow'
+          ? `${project.name} starts tomorrow and will move into active collection.`
+          : `${project.name} reaches its end date tomorrow and will move into completed status.`;
+      const metadata = JSON.stringify({
+        project_id: project.id,
+        project_name: project.name,
+        schedule_reminder_kind: kind,
+      });
+
+      for (const admin of adminsResult.rows as Array<{ id: string }>) {
+        await query(
+          `INSERT INTO notification (user_id, type, title, message, metadata)
+           SELECT $1, 'assignment'::notification_type, $2, $3, $4::jsonb
+           WHERE NOT EXISTS (
+             SELECT 1
+             FROM notification
+             WHERE user_id = $1
+               AND type = 'assignment'
+               AND metadata->>'project_id' = $5
+               AND metadata->>'schedule_reminder_kind' = $6
+           )`,
+          [admin.id, title, message, metadata, project.id, kind],
+        );
+      }
+    }
+  }
 };
 
 export {
   assertProjectStatusTransition,
   normalizeProjectDateInput,
+  publicVisibleStatuses,
   projectStatusTransitions,
   resolveProjectScheduleForMutation,
   synchronizeProjectStatuses,
+  synchronizeProjectScheduleNotifications,
   todayIsoDate,
-  viewerVisibleStatuses,
 };

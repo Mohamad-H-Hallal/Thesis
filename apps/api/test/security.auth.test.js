@@ -268,6 +268,7 @@ describe('Security: registration, contributor approval, and protected super admi
           coordinates: [35.5, 33.9],
         },
         attributes: {
+          feature_type: 'oak',
           tree_type: 'oak',
           condition: 'healthy',
         },

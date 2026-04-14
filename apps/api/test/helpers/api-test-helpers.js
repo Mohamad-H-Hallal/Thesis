@@ -217,8 +217,20 @@ const createProject = async ({
       collection_form_schema: {
         schemaVersion: '0.1.0',
         fields: [
-          { key: 'tree_type', type: 'select', required: true },
-          { key: 'condition', type: 'select', required: false },
+          {
+            key: 'feature_type',
+            label: 'Feature type',
+            type: 'select',
+            required: true,
+            options: ['olive', 'citrus', 'cedar', 'pine', 'apple', 'oak'],
+          },
+          {
+            key: 'condition',
+            label: 'Condition',
+            type: 'select',
+            required: false,
+            options: ['good', 'fair', 'healthy'],
+          },
         ],
       },
       status,
