@@ -60,10 +60,7 @@ class ProjectQuickMapCard extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 10),
-          _QuickMapPill(
-            icon: Icons.place_outlined,
-            label: featureCountLabel,
-          ),
+          _QuickMapPill(icon: Icons.place_outlined, label: featureCountLabel),
           const SizedBox(height: AppSpacing.md),
           Material(
             color: Colors.transparent,
@@ -87,8 +84,9 @@ class ProjectQuickMapCard extends ConsumerWidget {
                         children: [
                           Positioned.fill(
                             child: featuresAsync.when(
-                              loading: () =>
-                                  const Center(child: CircularProgressIndicator()),
+                              loading: () => const Center(
+                                child: CircularProgressIndicator(),
+                              ),
                               error: (error, _) => AppEmptyState(
                                 icon: Icons.map_outlined,
                                 title: 'Map preview unavailable',
@@ -103,27 +101,32 @@ class ProjectQuickMapCard extends ConsumerWidget {
                                   options: MapOptions(
                                     initialCenter: LebanonMapConfig.center,
                                     initialZoom:
-                                        LebanonMapConfig.quickInitialZoom - 0.15,
+                                        LebanonMapConfig.quickInitialZoom -
+                                        0.15,
                                     minZoom: LebanonMapConfig.quickMinZoom,
                                     maxZoom: LebanonMapConfig.quickMaxZoom,
                                     cameraConstraint:
                                         LebanonMapConfig.cameraConstraint,
                                   ),
                                   children: [
-                                    TileLayer(
-                                      urlTemplate:
-                                          LebanonMapConfig.basemapUrlTemplate(
-                                            LebanonBasemapStyle.street,
-                                          ),
-                                      tileProvider: NetworkTileProvider(
-                                        silenceExceptions: true,
+                                    if (LebanonMapConfig.shouldRenderTileLayers)
+                                      TileLayer(
+                                        urlTemplate:
+                                            LebanonMapConfig.basemapUrlTemplate(
+                                              LebanonBasemapStyle.street,
+                                            ),
+                                        tileProvider: NetworkTileProvider(
+                                          silenceExceptions: true,
+                                        ),
+                                        userAgentPackageName:
+                                            'lb.gov.gis_collector',
                                       ),
-                                      userAgentPackageName: 'lb.gov.gis_collector',
-                                    ),
-                                    if (LebanonMapConfig.referenceLabelUrlTemplate(
-                                          LebanonBasemapStyle.street,
-                                        ) !=
-                                        null)
+                                    if (LebanonMapConfig
+                                            .shouldRenderTileLayers &&
+                                        LebanonMapConfig.referenceLabelUrlTemplate(
+                                              LebanonBasemapStyle.street,
+                                            ) !=
+                                            null)
                                       TileLayer(
                                         urlTemplate:
                                             LebanonMapConfig.referenceLabelUrlTemplate(
@@ -132,7 +135,8 @@ class ProjectQuickMapCard extends ConsumerWidget {
                                         tileProvider: NetworkTileProvider(
                                           silenceExceptions: true,
                                         ),
-                                        userAgentPackageName: 'lb.gov.gis_collector',
+                                        userAgentPackageName:
+                                            'lb.gov.gis_collector',
                                       ),
                                     PolygonLayer(
                                       polygons: _polygonOverlays(features),
@@ -160,11 +164,7 @@ class ProjectQuickMapCard extends ConsumerWidget {
             const SizedBox(height: 10),
             Row(
               children: [
-                Icon(
-                  Icons.touch_app_outlined,
-                  size: 16,
-                  color: scheme.primary,
-                ),
+                Icon(Icons.touch_app_outlined, size: 16, color: scheme.primary),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(

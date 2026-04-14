@@ -1704,16 +1704,18 @@ class _GeometryCaptureMapCard extends StatelessWidget {
                   mapController: mapController,
                   options: mapOptions,
                   children: [
-                    TileLayer(
-                      urlTemplate: LebanonMapConfig.basemapUrlTemplate(
-                        basemapStyle,
-                      ),
-                      userAgentPackageName: 'lb.gov.gis_collector',
-                    ),
-                    if (LebanonMapConfig.referenceLabelUrlTemplate(
+                    if (LebanonMapConfig.shouldRenderTileLayers)
+                      TileLayer(
+                        urlTemplate: LebanonMapConfig.basemapUrlTemplate(
                           basemapStyle,
-                        ) !=
-                        null)
+                        ),
+                        userAgentPackageName: 'lb.gov.gis_collector',
+                      ),
+                    if (LebanonMapConfig.shouldRenderTileLayers &&
+                        LebanonMapConfig.referenceLabelUrlTemplate(
+                              basemapStyle,
+                            ) !=
+                            null)
                       TileLayer(
                         urlTemplate: LebanonMapConfig.referenceLabelUrlTemplate(
                           basemapStyle,

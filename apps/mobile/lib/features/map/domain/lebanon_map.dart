@@ -52,6 +52,13 @@ class LebanonMapConfig {
     return CameraFit.bounds(bounds: bounds, padding: padding);
   }
 
+  static bool get shouldRenderTileLayers {
+    final bindingName = WidgetsBinding.instance.runtimeType.toString();
+    return !bindingName.contains('TestWidgetsFlutterBinding') &&
+        !bindingName.contains('AutomatedTestWidgetsFlutterBinding') &&
+        !bindingName.contains('LiveTestWidgetsFlutterBinding');
+  }
+
   static bool contains(LatLng point) => bounds.contains(point);
 
   static String basemapUrlTemplate(LebanonBasemapStyle style) {

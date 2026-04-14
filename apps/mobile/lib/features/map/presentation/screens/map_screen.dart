@@ -1875,6 +1875,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         final labelOverlayUrl = LebanonMapConfig.referenceLabelUrlTemplate(
           _basemapStyle,
         );
+        final shouldRenderTileLayers = LebanonMapConfig.shouldRenderTileLayers;
         final hasSavedOfflineImagery = snapshot.data?.hasCachedTiles ?? false;
         final canUseSavedOfflineImagery =
             snapshot.data != null && hasSavedOfflineImagery;
@@ -1888,7 +1889,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           mapController: _mapController,
           options: _mainMapOptions,
           children: [
-            if (preferSavedImagery && canUseSavedOfflineImagery)
+            if (shouldRenderTileLayers &&
+                preferSavedImagery &&
+                canUseSavedOfflineImagery)
               TileLayer(
                 key: ValueKey<String>(
                   'project_map_offline_tiles_${_basemapStyle.name}_${snapshot.data!.templatePath}',
@@ -1898,7 +1901,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 fallbackUrl: snapshot.data!.fallbackPath,
                 userAgentPackageName: 'lb.gov.gis_collector',
               ),
-            if (!preferSavedImagery)
+            if (shouldRenderTileLayers && !preferSavedImagery)
               TileLayer(
                 key: ValueKey<String>(
                   'project_map_live_basemap_${_basemapStyle.name}',
@@ -1921,7 +1924,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   );
                 },
               ),
-            if (showReferenceLabels)
+            if (shouldRenderTileLayers && showReferenceLabels)
               TileLayer(
                 key: ValueKey<String>(
                   'project_map_label_overlay_${_basemapStyle.name}',
@@ -2076,6 +2079,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             builder: (context, snapshot) {
               final labelOverlayUrl =
                   LebanonMapConfig.referenceLabelUrlTemplate(_basemapStyle);
+              final shouldRenderTileLayers =
+                  LebanonMapConfig.shouldRenderTileLayers;
               final hasSavedOfflineImagery =
                   snapshot.data?.hasCachedTiles ?? false;
               final canUseSavedOfflineImagery =
@@ -2090,7 +2095,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   mapController: _mapController,
                   options: _mainMapOptions,
                   children: [
-                    if (preferSavedImagery && canUseSavedOfflineImagery)
+                    if (shouldRenderTileLayers &&
+                        preferSavedImagery &&
+                        canUseSavedOfflineImagery)
                       TileLayer(
                         key: ValueKey<String>(
                           'preview_offline_tiles_${_basemapStyle.name}_${snapshot.data!.templatePath}',
@@ -2100,7 +2107,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         fallbackUrl: snapshot.data!.fallbackPath,
                         userAgentPackageName: 'lb.gov.gis_collector',
                       ),
-                    if (!preferSavedImagery)
+                    if (shouldRenderTileLayers && !preferSavedImagery)
                       TileLayer(
                         key: ValueKey<String>(
                           'preview_live_basemap_${_basemapStyle.name}',
@@ -2127,7 +2134,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           );
                         },
                       ),
-                    if (showReferenceLabels)
+                    if (shouldRenderTileLayers && showReferenceLabels)
                       TileLayer(
                         key: ValueKey<String>(
                           'preview_label_overlay_${_basemapStyle.name}',
