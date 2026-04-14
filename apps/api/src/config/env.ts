@@ -39,6 +39,9 @@ export interface EnvConfig {
   EXPORT_DIR: string;
   EXPORT_RETENTION_DAYS: number;
   EXPORT_CLEANUP_INTERVAL_HOURS: number;
+  NOTIFICATION_MAINTENANCE_INTERVAL_MINUTES: number;
+  NOTIFICATION_EMAIL_BATCH_SIZE: number;
+  NOTIFICATION_EMAIL_MAX_ATTEMPTS: number;
   PASSWORD_RESET_TOKEN_EXPIRY_MINUTES: number;
   PASSWORD_RESET_REQUIRE_REAL_DELIVERY: boolean;
   SMTP_HOST: string;
@@ -98,6 +101,9 @@ const envSchema = Joi.object({
   EXPORT_DIR: Joi.string().default('./exports'),
   EXPORT_RETENTION_DAYS: Joi.number().integer().min(1).default(7),
   EXPORT_CLEANUP_INTERVAL_HOURS: Joi.number().integer().min(1).default(24),
+  NOTIFICATION_MAINTENANCE_INTERVAL_MINUTES: Joi.number().integer().min(1).default(60),
+  NOTIFICATION_EMAIL_BATCH_SIZE: Joi.number().integer().min(1).max(500).default(50),
+  NOTIFICATION_EMAIL_MAX_ATTEMPTS: Joi.number().integer().min(1).max(20).default(5),
   PASSWORD_RESET_TOKEN_EXPIRY_MINUTES: Joi.number().integer().min(5).max(60).default(15),
   PASSWORD_RESET_REQUIRE_REAL_DELIVERY: Joi.boolean()
     .truthy('true')

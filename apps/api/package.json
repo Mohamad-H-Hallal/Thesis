@@ -35,6 +35,7 @@
     "seed": "tsx src/db/seed.ts",
     "seed:staging": "tsx src/db/seedStaging.ts",
     "staging:verify": "tsx src/db/stagingVerify.ts",
+    "notifications:run": "tsx src/jobs/runNotificationMaintenance.ts",
     "phase11:staging": "npm run migrate && npm run seed:staging && npm run staging:verify",
     "release:gate": "npm run openapi:check && npm run lint && npm run typecheck && npm run test:ci && npm run test:perf && npm run audit:prod",
     "migrate:prod": "node dist/db/migrate.js"

@@ -11,32 +11,55 @@ class ApiNotificationsRepository implements NotificationsRepository {
 
   final ApiClient _apiClient;
 
-  String get _notificationsBasePath => '${AppEnv.apiVersionPrefix}/notifications';
+  String get _notificationsBasePath =>
+      '${AppEnv.apiVersionPrefix}/notifications';
 
   @override
-  Future<List<AppNotification>> fetchNotifications() async {
+  Future<NotificationPage> fetchNotifications({
+    int page = 1,
+    int limit = 20,
+  }) async {
     try {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         _notificationsBasePath,
+        queryParameters: <String, dynamic>{'page': page, 'limit': limit},
       );
       final payload = response.data ?? const <String, dynamic>{};
       final rows = (payload['data'] as List? ?? const <dynamic>[]);
+      final pagination = Map<String, dynamic>.from(
+        payload['pagination'] as Map? ?? const <String, dynamic>{},
+      );
 
-      return rows.map((row) {
-        final map = Map<String, dynamic>.from(row as Map);
-        final createdAtRaw = map['created_at'] as String?;
-        final timestamp = createdAtRaw == null
-            ? 'just now'
-            : _relativeTimestamp(DateTime.tryParse(createdAtRaw));
+      final items = rows
+          .map((row) {
+            final map = Map<String, dynamic>.from(row as Map);
+            final createdAtRaw = map['created_at'] as String?;
+            final timestamp = createdAtRaw == null
+                ? 'just now'
+                : _relativeTimestamp(DateTime.tryParse(createdAtRaw));
 
-        return AppNotification(
-          id: (map['id'] as String?) ?? '',
-          title: (map['title'] as String?) ?? 'Notification',
-          message: (map['message'] as String?) ?? '',
-          timestamp: timestamp,
-          isRead: (map['is_read'] as bool?) ?? false,
-        );
-      }).toList(growable: false);
+            return AppNotification(
+              id: (map['id'] as String?) ?? '',
+              title: (map['title'] as String?) ?? 'Notification',
+              message: (map['message'] as String?) ?? '',
+              timestamp: timestamp,
+              isRead: (map['is_read'] as bool?) ?? false,
+            );
+          })
+          .toList(growable: false);
+
+      final total = (pagination['total'] as num?)?.toInt() ?? items.length;
+      final hasMore =
+          (pagination['has_more'] as bool?) ??
+          ((page * limit) < total && items.isNotEmpty);
+
+      return NotificationPage(
+        items: items,
+        page: (pagination['page'] as num?)?.toInt() ?? page,
+        limit: (pagination['limit'] as num?)?.toInt() ?? limit,
+        total: total,
+        hasMore: hasMore,
+      );
     } on DioException catch (error) {
       throw userFacingDioMessage(
         error,

@@ -30,7 +30,6 @@ import '../../features/map/domain/feature_workflow_repository.dart';
 import '../../features/map/domain/map_feature.dart';
 import '../../features/notifications/data/api_notifications_repository.dart';
 import '../../features/notifications/data/mock_notifications_repository.dart';
-import '../../features/notifications/domain/app_notification.dart';
 import '../../features/notifications/domain/notifications_repository.dart';
 import '../../features/notifications/presentation/controllers/notifications_controller.dart';
 import '../../features/projects/data/api_projects_repository.dart';
@@ -542,7 +541,7 @@ final pendingSyncCountProvider = Provider<int>((ref) {
 final notificationsControllerProvider =
     StateNotifierProvider<
       NotificationsController,
-      AsyncValue<List<AppNotification>>
+      AsyncValue<NotificationsViewState>
     >((ref) {
       final sessionUserId = ref.watch(
         authControllerProvider.select((state) => state.session?.user.id),

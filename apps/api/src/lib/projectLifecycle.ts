@@ -2,7 +2,11 @@ const { query } = require('../config/database');
 const { AppError } = require('../middleware/error');
 
 const publicVisibleStatuses = ['draft', 'active', 'paused', 'completed'] as const;
-const projectScheduleReminderKinds = ['starts_tomorrow', 'ends_tomorrow'] as const;
+const projectScheduleReminderKinds = [
+  'starts_tomorrow',
+  'ends_tomorrow',
+  'paused_ends_tomorrow',
+] as const;
 
 const projectStatusTransitions: Record<string, string[]> = {
   draft: ['active'],
@@ -234,6 +238,9 @@ const synchronizeProjectScheduleNotifications = async (
     if (project.status === 'active' && project.end_date === tomorrow) {
       desiredKinds.add('ends_tomorrow');
     }
+    if (project.status === 'paused' && project.end_date === tomorrow) {
+      desiredKinds.add('paused_ends_tomorrow');
+    }
 
     const staleKinds = projectScheduleReminderKinds.filter(
       (kind) => !desiredKinds.has(kind),
@@ -252,15 +259,21 @@ const synchronizeProjectScheduleNotifications = async (
       const title =
         kind === 'starts_tomorrow'
           ? 'Project starts tomorrow'
-          : 'Project completes tomorrow';
+          : kind === 'paused_ends_tomorrow'
+            ? 'Paused project reaches its end date tomorrow'
+            : 'Project completes tomorrow';
       const message =
         kind === 'starts_tomorrow'
           ? `${project.name} starts tomorrow and will move into active collection.`
-          : `${project.name} reaches its end date tomorrow and will move into completed status.`;
+          : kind === 'paused_ends_tomorrow'
+            ? `${project.name} is paused and reaches its end date tomorrow. Review the schedule if it should stay paused longer.`
+            : `${project.name} reaches its end date tomorrow and will move into completed status.`;
       const metadata = JSON.stringify({
         project_id: project.id,
         project_name: project.name,
         schedule_reminder_kind: kind,
+        target_date:
+          kind === 'starts_tomorrow' ? project.start_date : project.end_date,
       });
 
       for (const admin of adminsResult.rows as Array<{ id: string }>) {
@@ -274,8 +287,17 @@ const synchronizeProjectScheduleNotifications = async (
                AND type = 'assignment'
                AND metadata->>'project_id' = $5
                AND metadata->>'schedule_reminder_kind' = $6
+               AND metadata->>'target_date' = $7
            )`,
-          [admin.id, title, message, metadata, project.id, kind],
+          [
+            admin.id,
+            title,
+            message,
+            metadata,
+            project.id,
+            kind,
+            kind === 'starts_tomorrow' ? project.start_date : project.end_date,
+          ],
         );
       }
     }

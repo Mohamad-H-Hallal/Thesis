@@ -271,6 +271,7 @@ const settingsController = {
       data: settings,
       meta: {
         push_notifications: false,
+        email_notifications: true,
         persisted_in_app_notifications: true,
       },
     });
@@ -335,34 +336,58 @@ const offlineMapController = {
 const notificationController = {
   // Get user notifications
   getAll: async (req, res) => {
-    const { is_read, page = 1, limit = 20 } = req.query;
+    const isReadFilter = req.query.is_read;
+    const requestedPage = Number.parseInt(String(req.query.page ?? '1'), 10);
+    const requestedLimit = Number.parseInt(String(req.query.limit ?? '20'), 10);
+    const page = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+    const limit =
+      Number.isFinite(requestedLimit) && requestedLimit > 0
+        ? Math.min(requestedLimit, 100)
+        : 20;
     const offset = (page - 1) * limit;
 
-    let queryText = `
-      SELECT * FROM notification
+    let whereClause = `
       WHERE user_id = $1
     `;
 
     const params = [req.user.id];
     let paramIndex = 2;
 
-    if (is_read !== undefined) {
-      queryText += ` AND is_read = $${paramIndex}`;
-      params.push(is_read === 'true');
+    if (isReadFilter !== undefined) {
+      whereClause += ` AND is_read = $${paramIndex}`;
+      params.push(isReadFilter === 'true');
       paramIndex++;
     }
 
-    queryText += ` ORDER BY created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-    params.push(limit, offset);
+    const notificationsQuery = `
+      SELECT *
+      FROM notification
+      ${whereClause}
+      ORDER BY created_at DESC
+      LIMIT $${paramIndex}
+      OFFSET $${paramIndex + 1}
+    `;
+    const countQuery = `
+      SELECT COUNT(*)::int AS total
+      FROM notification
+      ${whereClause}
+    `;
 
-    const result = await query(queryText, params);
+    const [result, countResultRaw] = await Promise.all([
+      query(notificationsQuery, [...params, limit, offset]),
+      query(countQuery, params),
+    ]);
+    const countResult = countResultRaw as { rows: Array<{ total?: number }> };
+    const total = countResult.rows[0]?.total ?? 0;
 
     res.json({
       success: true,
       data: result.rows,
       pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
+        page,
+        limit,
+        total,
+        has_more: offset + result.rows.length < total,
       },
     });
   },

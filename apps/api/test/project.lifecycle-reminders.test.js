@@ -9,6 +9,7 @@ const {
   createCategory,
   pool,
 } = require('./helpers/api-test-helpers');
+const { deliverPendingNotificationEmails } = require('../src/lib/notificationDelivery');
 
 describe('Project provisioning and lifecycle reminders', () => {
   beforeEach(async () => {
@@ -75,7 +76,7 @@ describe('Project provisioning and lifecycle reminders', () => {
     expect(validResponse.body.data.collection_form_schema.maxGpsAccuracyMeters).toBe(25);
   });
 
-  test('project start and end reminders are created and removed when the schedule changes', async () => {
+  test('project start, active end, and paused end reminders are created, queued, and cleaned up', async () => {
     const admin = await createAdminUser({
       fullName: 'Schedule Admin',
       emailPrefix: 'schedule-admin',
@@ -129,6 +130,24 @@ describe('Project provisioning and lifecycle reminders', () => {
     expect(startsReminder.rows).toHaveLength(1);
     expect(startsReminder.rows[0].title).toBe('Project starts tomorrow');
 
+    const startReminderDelivery = await pool.query(
+      `SELECT status, recipient_email
+       FROM notification_delivery nd
+       JOIN notification n
+         ON n.id = nd.notification_id
+       WHERE n.user_id = $1
+         AND n.metadata->>'project_id' = $2
+         AND n.metadata->>'schedule_reminder_kind' = 'starts_tomorrow'`,
+      [admin.user.id, projectId],
+    );
+    expect(startReminderDelivery.rows).toHaveLength(1);
+    expect(startReminderDelivery.rows[0].status).toBe('pending');
+    expect(startReminderDelivery.rows[0].recipient_email).toBe(admin.email);
+
+    const startDeliveryRun = await deliverPendingNotificationEmails();
+    expect(startDeliveryRun.attempted).toBeGreaterThanOrEqual(1);
+    expect(startDeliveryRun.delivered).toBeGreaterThanOrEqual(1);
+
     await request(app)
       .put(`${API_PREFIX}/projects/${projectId}`)
       .set(authHeader(admin.token))
@@ -156,7 +175,7 @@ describe('Project provisioning and lifecycle reminders', () => {
       .expect(200);
 
     const endReminder = await pool.query(
-      `SELECT title
+      `SELECT title, metadata->>'target_date' AS target_date
        FROM notification
        WHERE user_id = $1
          AND metadata->>'project_id' = $2
@@ -165,5 +184,39 @@ describe('Project provisioning and lifecycle reminders', () => {
     );
     expect(endReminder.rows).toHaveLength(1);
     expect(endReminder.rows[0].title).toBe('Project completes tomorrow');
+    expect(endReminder.rows[0].target_date).toBe(tomorrow);
+
+    await request(app)
+      .put(`${API_PREFIX}/projects/${projectId}`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'paused',
+        end_date: tomorrow,
+      })
+      .expect(200);
+
+    const pausedReminder = await pool.query(
+      `SELECT title, message
+       FROM notification
+       WHERE user_id = $1
+         AND metadata->>'project_id' = $2
+         AND metadata->>'schedule_reminder_kind' = 'paused_ends_tomorrow'`,
+      [admin.user.id, projectId],
+    );
+    expect(pausedReminder.rows).toHaveLength(1);
+    expect(pausedReminder.rows[0].title).toBe(
+      'Paused project reaches its end date tomorrow',
+    );
+    expect(pausedReminder.rows[0].message).toContain('is paused');
+
+    const activeReminderAfterPause = await pool.query(
+      `SELECT COUNT(*)::int AS value
+       FROM notification
+       WHERE user_id = $1
+         AND metadata->>'project_id' = $2
+         AND metadata->>'schedule_reminder_kind' = 'ends_tomorrow'`,
+      [admin.user.id, projectId],
+    );
+    expect(activeReminderAfterPause.rows[0].value).toBe(0);
   });
 });

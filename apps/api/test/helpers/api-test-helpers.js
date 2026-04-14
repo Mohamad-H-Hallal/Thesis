@@ -51,6 +51,7 @@ const resetDb = async () => {
 
   await pool.query(`
     TRUNCATE TABLE
+      notification_delivery,
       notification,
       audit_log,
       password_reset_request,

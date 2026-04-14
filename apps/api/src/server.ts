@@ -5,6 +5,7 @@ const { testConnection, closePool } = require('./config/database');
 const { validateEnv } = require('./config/env');
 const { applyPendingMigrations, getPendingMigrations } = require('./db/migrationRunner');
 const { ensureExportDir, cleanupOldExports } = require('./controllers/export.controller');
+const { runNotificationMaintenance } = require('./jobs/notificationMaintenance');
 const { buildApp } = require('./app');
 import { ensureSuperAdminExists } from './lib/userWorkflow';
 
@@ -14,6 +15,7 @@ const apiPrefix = String(env.API_VERSION_PREFIX || '/api/v1').replace(/\/+$/, ''
 
 let server;
 let exportCleanupInterval;
+let notificationMaintenanceInterval;
 let isShuttingDown = false;
 
 const startServer = async () => {
@@ -46,6 +48,14 @@ const startServer = async () => {
       () => cleanupOldExports().catch((error) => logger.error('Scheduled export cleanup failed:', error)),
       env.EXPORT_CLEANUP_INTERVAL_HOURS * 60 * 60 * 1000
     );
+    await runNotificationMaintenance();
+    notificationMaintenanceInterval = setInterval(
+      () =>
+        runNotificationMaintenance().catch((error) =>
+          logger.error('Scheduled notification maintenance failed:', error),
+        ),
+      env.NOTIFICATION_MAINTENANCE_INTERVAL_MINUTES * 60 * 1000,
+    );
 
     server = app.listen(env.PORT, env.HOST, () => {
       logger.info(`Server running in ${env.NODE_ENV} mode`);
@@ -70,6 +80,9 @@ const shutdown = async (signal) => {
 
   if (exportCleanupInterval) {
     clearInterval(exportCleanupInterval);
+  }
+  if (notificationMaintenanceInterval) {
+    clearInterval(notificationMaintenanceInterval);
   }
 
   await new Promise<void>((resolve) => {

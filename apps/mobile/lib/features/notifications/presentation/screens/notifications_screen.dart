@@ -16,11 +16,40 @@ class NotificationsScreen extends ConsumerStatefulWidget {
   const NotificationsScreen({super.key});
 
   @override
-  ConsumerState<NotificationsScreen> createState() => _NotificationsScreenState();
+  ConsumerState<NotificationsScreen> createState() =>
+      _NotificationsScreenState();
 }
 
 class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   _NotificationFilter _filter = _NotificationFilter.all;
+  late final ScrollController _scrollController;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController = ScrollController()..addListener(_handleScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController
+      ..removeListener(_handleScroll)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _handleScroll() {
+    if (!_scrollController.hasClients) {
+      return;
+    }
+
+    final position = _scrollController.position;
+    if (position.pixels < position.maxScrollExtent - 240) {
+      return;
+    }
+
+    ref.read(notificationsControllerProvider.notifier).loadMore();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -33,20 +62,22 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
         title: 'Notifications unavailable',
         message: userFacingErrorMessage(
           error,
-          fallback:
-              'Unable to load notifications right now. Please try again.',
+          fallback: 'Unable to load notifications right now. Please try again.',
         ),
         actionLabel: 'Retry',
         onAction: () =>
             ref.read(notificationsControllerProvider.notifier).load(),
       ),
       data: (notifications) {
-        final unreadCount = notifications.where((n) => !n.isRead).length;
+        final unreadCount = notifications.items.where((n) => !n.isRead).length;
         final filtered = _filter == _NotificationFilter.unread
-            ? notifications.where((item) => !item.isRead).toList(growable: false)
-            : notifications;
+            ? notifications.items
+                  .where((item) => !item.isRead)
+                  .toList(growable: false)
+            : notifications.items;
 
         return ListView(
+          controller: _scrollController,
           children: [
             SectionHeader(
               title: 'Notifications',
@@ -71,8 +102,9 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                       ChoiceChip(
                         label: const Text('Unread'),
                         selected: _filter == _NotificationFilter.unread,
-                        onSelected: (_) =>
-                            setState(() => _filter = _NotificationFilter.unread),
+                        onSelected: (_) => setState(
+                          () => _filter = _NotificationFilter.unread,
+                        ),
                       ),
                     ],
                   );
@@ -136,6 +168,19 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                   ),
                 );
               }),
+            if (notifications.isLoadingMore) ...[
+              const SizedBox(height: AppSpacing.sm),
+              const Center(child: CircularProgressIndicator()),
+            ] else if (notifications.hasMore && filtered.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.sm),
+              const Center(
+                child: Text(
+                  'Scroll for more notifications',
+                  style: TextStyle(color: Colors.black54),
+                ),
+              ),
+            ],
+            const SizedBox(height: AppSpacing.md),
           ],
         );
       },
@@ -154,8 +199,8 @@ class _NotificationCard extends ConsumerWidget {
       onTap: item.isRead
           ? null
           : () => ref
-              .read(notificationsControllerProvider.notifier)
-              .markAsRead(item.id),
+                .read(notificationsControllerProvider.notifier)
+                .markAsRead(item.id),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -179,8 +224,9 @@ class _NotificationCard extends ConsumerWidget {
                     Text(
                       item.title,
                       style: TextStyle(
-                        fontWeight:
-                            item.isRead ? FontWeight.w600 : FontWeight.w700,
+                        fontWeight: item.isRead
+                            ? FontWeight.w600
+                            : FontWeight.w700,
                       ),
                       softWrap: true,
                     ),

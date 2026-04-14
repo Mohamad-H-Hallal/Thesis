@@ -6,6 +6,7 @@ const logger = require('../utils/logger');
 
 const RUNTIME_TABLES = [
   'password_reset_request',
+  'notification_delivery',
   'photo',
   'spatial_feature',
   'shapefile_export',

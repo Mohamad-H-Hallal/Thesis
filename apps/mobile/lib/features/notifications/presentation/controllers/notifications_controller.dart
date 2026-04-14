@@ -4,31 +4,115 @@ import 'package:uuid/uuid.dart';
 import '../../domain/app_notification.dart';
 import '../../domain/notifications_repository.dart';
 
+class NotificationsViewState {
+  const NotificationsViewState({
+    required this.items,
+    required this.page,
+    required this.pageSize,
+    required this.total,
+    required this.hasMore,
+    required this.isLoadingMore,
+  });
+
+  const NotificationsViewState.initial()
+    : items = const <AppNotification>[],
+      page = 0,
+      pageSize = 20,
+      total = 0,
+      hasMore = true,
+      isLoadingMore = false;
+
+  final List<AppNotification> items;
+  final int page;
+  final int pageSize;
+  final int total;
+  final bool hasMore;
+  final bool isLoadingMore;
+
+  NotificationsViewState copyWith({
+    List<AppNotification>? items,
+    int? page,
+    int? pageSize,
+    int? total,
+    bool? hasMore,
+    bool? isLoadingMore,
+  }) {
+    return NotificationsViewState(
+      items: items ?? this.items,
+      page: page ?? this.page,
+      pageSize: pageSize ?? this.pageSize,
+      total: total ?? this.total,
+      hasMore: hasMore ?? this.hasMore,
+      isLoadingMore: isLoadingMore ?? this.isLoadingMore,
+    );
+  }
+}
+
 class NotificationsController
-    extends StateNotifier<AsyncValue<List<AppNotification>>> {
+    extends StateNotifier<AsyncValue<NotificationsViewState>> {
   NotificationsController(this._repository) : super(const AsyncLoading()) {
     load();
   }
 
   NotificationsController.empty(this._repository)
-    : super(const AsyncData(<AppNotification>[]));
+    : super(const AsyncData(NotificationsViewState.initial()));
 
   final NotificationsRepository _repository;
   final Uuid _uuid = const Uuid();
+  static const int _pageSize = 20;
 
   Future<void> load() async {
     state = const AsyncLoading();
-    state = await AsyncValue.guard(_repository.fetchNotifications);
+    state = await AsyncValue.guard(() async {
+      final page = await _repository.fetchNotifications(limit: _pageSize);
+      return NotificationsViewState(
+        items: page.items,
+        page: page.page,
+        pageSize: page.limit,
+        total: page.total,
+        hasMore: page.hasMore,
+        isLoadingMore: false,
+      );
+    });
+  }
+
+  Future<void> loadMore() async {
+    final current = state.valueOrNull;
+    if (current == null || current.isLoadingMore || !current.hasMore) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(isLoadingMore: true));
+
+    try {
+      final nextPage = current.page + 1;
+      final page = await _repository.fetchNotifications(
+        page: nextPage,
+        limit: current.pageSize,
+      );
+      state = AsyncData(
+        current.copyWith(
+          items: <AppNotification>[...current.items, ...page.items],
+          page: page.page,
+          pageSize: page.limit,
+          total: page.total,
+          hasMore: page.hasMore,
+          isLoadingMore: false,
+        ),
+      );
+    } catch (_) {
+      state = AsyncData(current.copyWith(isLoadingMore: false));
+    }
   }
 
   Future<void> markAsRead(String id) async {
-    final currentItems = state.valueOrNull;
-    if (currentItems == null) {
+    final current = state.valueOrNull;
+    if (current == null) {
       await load();
       return;
     }
 
-    final alreadyRead = currentItems.any(
+    final alreadyRead = current.items.any(
       (item) => item.id == id && item.isRead,
     );
     if (alreadyRead) {
@@ -36,11 +120,11 @@ class NotificationsController
     }
 
     state = AsyncData(
-      currentItems
-          .map(
-            (item) => item.id == id ? item.copyWith(isRead: true) : item,
-          )
-          .toList(growable: false),
+      current.copyWith(
+        items: current.items
+            .map((item) => item.id == id ? item.copyWith(isRead: true) : item)
+            .toList(growable: false),
+      ),
     );
 
     try {
@@ -51,13 +135,13 @@ class NotificationsController
   }
 
   Future<void> markAsUnread(String id) async {
-    final currentItems = state.valueOrNull;
-    if (currentItems == null) {
+    final current = state.valueOrNull;
+    if (current == null) {
       await load();
       return;
     }
 
-    final alreadyUnread = currentItems.any(
+    final alreadyUnread = current.items.any(
       (item) => item.id == id && !item.isRead,
     );
     if (alreadyUnread) {
@@ -65,11 +149,11 @@ class NotificationsController
     }
 
     state = AsyncData(
-      currentItems
-          .map(
-            (item) => item.id == id ? item.copyWith(isRead: false) : item,
-          )
-          .toList(growable: false),
+      current.copyWith(
+        items: current.items
+            .map((item) => item.id == id ? item.copyWith(isRead: false) : item)
+            .toList(growable: false),
+      ),
     );
 
     try {
@@ -80,15 +164,17 @@ class NotificationsController
   }
 
   Future<void> markAllAsRead() async {
-    final currentItems = state.valueOrNull;
-    if (currentItems == null || currentItems.every((item) => item.isRead)) {
+    final current = state.valueOrNull;
+    if (current == null || current.items.every((item) => item.isRead)) {
       return;
     }
 
     state = AsyncData(
-      currentItems
-          .map((item) => item.copyWith(isRead: true))
-          .toList(growable: false),
+      current.copyWith(
+        items: current.items
+            .map((item) => item.copyWith(isRead: true))
+            .toList(growable: false),
+      ),
     );
 
     try {
@@ -108,9 +194,30 @@ class NotificationsController
     );
 
     state = state.when(
-      data: (items) => AsyncData(<AppNotification>[notification, ...items]),
-      loading: () => AsyncData(<AppNotification>[notification]),
-      error: (_, stackTrace) => AsyncData(<AppNotification>[notification]),
+      data: (value) => AsyncData(
+        value.copyWith(
+          items: <AppNotification>[notification, ...value.items],
+          total: value.total + 1,
+        ),
+      ),
+      loading: () => AsyncData(
+        const NotificationsViewState.initial().copyWith(
+          items: <AppNotification>[notification],
+          page: 1,
+          pageSize: _pageSize,
+          total: 1,
+          hasMore: false,
+        ),
+      ),
+      error: (_, stackTrace) => AsyncData(
+        const NotificationsViewState.initial().copyWith(
+          items: <AppNotification>[notification],
+          page: 1,
+          pageSize: _pageSize,
+          total: 1,
+          hasMore: false,
+        ),
+      ),
     );
   }
 }

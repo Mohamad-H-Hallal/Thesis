@@ -11,6 +11,8 @@ const deliveryUnavailableMessage =
   'We could not send the verification code right now. Please try again later.';
 const realDeliveryRequiredMessage =
   'Email delivery is not configured for real password reset yet. Please contact support.';
+const notificationDeliveryUnavailableMessage =
+  'We could not send the notification email right now. Please try again later.';
 
 const isMailpitHost = (value: string): boolean =>
   value.trim().toLowerCase() === 'mailpit';
@@ -20,6 +22,30 @@ const isLocalMailCaptureMode = (
 ): boolean =>
   env.MAIL_TRANSPORT === 'mailpit' ||
   (env.MAIL_TRANSPORT === 'smtp' && isMailpitHost(env.SMTP_HOST));
+
+const localCaptureHostCandidates = (
+  env: ReturnType<typeof validateEnv>,
+): string[] => {
+  const configuredHost = env.SMTP_HOST.trim();
+  return Array.from(
+    new Set(
+      [configuredHost, 'mailpit', 'localhost', '127.0.0.1'].filter(
+        (value): value is string => value.trim().length > 0,
+      ),
+    ),
+  );
+};
+
+const localCapturePortCandidates = (
+  env: ReturnType<typeof validateEnv>,
+): number[] =>
+  Array.from(
+    new Set(
+      [env.SMTP_PORT, 1025].filter(
+        (value): value is number => Number.isFinite(value) && value > 0,
+      ),
+    ),
+  );
 
 const getMailEnv = () => {
   try {
@@ -58,7 +84,10 @@ const normalizeEnvelopeAddress = (value: unknown): string | null => {
   return null;
 };
 
-const buildTransport = (): nodemailer.Transporter => {
+const buildTransport = (
+  hostOverride?: string,
+  portOverride?: number,
+): nodemailer.Transporter => {
   const env = getMailEnv();
 
   if (env.NODE_ENV === 'test') {
@@ -70,7 +99,7 @@ const buildTransport = (): nodemailer.Transporter => {
   if (isLocalMailCaptureMode(env)) {
     if (env.PASSWORD_RESET_REQUIRE_REAL_DELIVERY) {
       logger.error(
-        'Password reset email blocked because real delivery is required but local mail capture is active',
+        'Notification mail blocked because real delivery is required but local mail capture is active',
         {
           mailTransport: env.MAIL_TRANSPORT,
           smtpHost: env.SMTP_HOST.trim().length > 0 ? env.SMTP_HOST : 'mailpit',
@@ -83,14 +112,16 @@ const buildTransport = (): nodemailer.Transporter => {
     }
 
     return nodemailer.createTransport({
-      host: env.SMTP_HOST.trim().length > 0 ? env.SMTP_HOST : 'mailpit',
-      port: env.SMTP_PORT,
+      host:
+        hostOverride ??
+        (env.SMTP_HOST.trim().length > 0 ? env.SMTP_HOST : 'mailpit'),
+      port: portOverride ?? env.SMTP_PORT,
       secure: false,
     });
   }
 
   if (!env.SMTP_HOST.trim() || !env.SMTP_FROM_EMAIL.trim()) {
-    logger.error('Password reset SMTP configuration is incomplete', {
+    logger.error('Notification SMTP configuration is incomplete', {
       mailTransport: env.MAIL_TRANSPORT,
       smtpHostConfigured: env.SMTP_HOST.trim().length > 0,
       smtpFromConfigured: env.SMTP_FROM_EMAIL.trim().length > 0,
@@ -127,7 +158,7 @@ const getTransporter = (): nodemailer.Transporter => {
     const effectiveDeliveryMode = isLocalMailCaptureMode(env)
       ? 'local_capture'
       : 'transactional_smtp';
-    logger.info('Password reset mail transport initialized', {
+    logger.info('Notification mail transport initialized', {
       mailTransport: env.MAIL_TRANSPORT,
       smtpHost:
         env.MAIL_TRANSPORT === 'mailpit'
@@ -145,7 +176,7 @@ const getTransporter = (): nodemailer.Transporter => {
             : env.SMTP_FROM_EMAIL,
     });
     if (isLocalMailCaptureMode(env)) {
-      logger.warn('Password reset email is using local mail capture; real inbox delivery is disabled for this runtime', {
+      logger.warn('Notification email is using local mail capture; real inbox delivery is disabled for this runtime', {
         mailTransport: env.MAIL_TRANSPORT,
         smtpHost:
           env.SMTP_HOST.trim().length > 0 ? env.SMTP_HOST : 'mailpit',
@@ -171,6 +202,38 @@ const formatFromHeader = (): string => {
   return `"${env.SMTP_FROM_NAME.replaceAll('"', '\\"')}" <${fromEmail}>`;
 };
 
+const sendMail = async (
+  env: ReturnType<typeof validateEnv>,
+  options: nodemailer.SendMailOptions,
+) => {
+  if (!isLocalMailCaptureMode(env)) {
+    return getTransporter().sendMail(options);
+  }
+
+  let lastError: unknown;
+  for (const host of localCaptureHostCandidates(env)) {
+    for (const port of localCapturePortCandidates(env)) {
+      try {
+        const transporter = buildTransport(host, port);
+        const info = await transporter.sendMail(options);
+        if (host !== env.SMTP_HOST || port !== env.SMTP_PORT) {
+          logger.warn('Notification mail capture fallback used', {
+            preferredHost: env.SMTP_HOST,
+            preferredPort: env.SMTP_PORT,
+            fallbackHost: host,
+            fallbackPort: port,
+          });
+        }
+        return info;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+  }
+
+  throw lastError ?? new Error('Unable to deliver local-capture email');
+};
+
 const sendPasswordResetOtpEmail = async ({
   toEmail,
   recipientName,
@@ -183,14 +246,13 @@ const sendPasswordResetOtpEmail = async ({
   expiresInMinutes: number;
 }): Promise<void> => {
   const env = getMailEnv();
-  const transporter = getTransporter();
   const appName = 'Lebanese GIS Collector';
   const trimmedName = recipientName.trim();
   const safeName = trimmedName.length === 0 ? 'User' : trimmedName;
   const normalizedRecipient = toEmail.trim().toLowerCase();
 
   try {
-    const info = await transporter.sendMail({
+    const info = await sendMail(env, {
       from: formatFromHeader(),
       to: toEmail,
       subject: `${appName} password reset code`,
@@ -273,4 +335,86 @@ const sendPasswordResetOtpEmail = async ({
   }
 };
 
-export { sendPasswordResetOtpEmail };
+const sendNotificationEmail = async ({
+  toEmail,
+  recipientName,
+  title,
+  message,
+}: {
+  toEmail: string;
+  recipientName: string;
+  title: string;
+  message: string;
+}): Promise<void> => {
+  const env = getMailEnv();
+  const appName = 'Lebanese GIS Collector';
+  const trimmedName = recipientName.trim();
+  const safeName = trimmedName.length === 0 ? 'User' : trimmedName;
+  const normalizedRecipient = toEmail.trim().toLowerCase();
+
+  try {
+    const info = await sendMail(env, {
+      from: formatFromHeader(),
+      to: toEmail,
+      subject: `${appName}: ${title}`,
+      text: [
+        `Hello ${safeName},`,
+        '',
+        title,
+        '',
+        message,
+        '',
+        `This notification was sent by ${appName}.`,
+      ].join('\n'),
+      html: `
+        <p>Hello ${safeName},</p>
+        <p><strong>${title}</strong></p>
+        <p>${message}</p>
+        <p>This notification was sent by <strong>${appName}</strong>.</p>
+      `,
+    });
+
+    if (env.NODE_ENV !== 'test') {
+      const acceptedRecipients = (info.accepted ?? [])
+        .map(normalizeEnvelopeAddress)
+        .filter((value): value is string => value != null);
+      const rejectedRecipients = (info.rejected ?? [])
+        .map(normalizeEnvelopeAddress)
+        .filter((value): value is string => value != null);
+
+      if (
+        !acceptedRecipients.includes(normalizedRecipient) ||
+        rejectedRecipients.includes(normalizedRecipient)
+      ) {
+        logger.error('Notification email rejected by SMTP transport', {
+          mailTransport: env.MAIL_TRANSPORT,
+          toEmail,
+          acceptedRecipients,
+          rejectedRecipients,
+        });
+        throw new AppError(notificationDeliveryUnavailableMessage, 503);
+      }
+    }
+  } catch (error) {
+    logger.error('Notification email delivery failed', {
+      mailTransport: env.MAIL_TRANSPORT,
+      toEmail,
+      smtpHost:
+        env.MAIL_TRANSPORT === 'mailpit'
+          ? env.SMTP_HOST.trim().length > 0
+              ? env.SMTP_HOST
+              : 'mailpit'
+          : env.SMTP_HOST,
+      smtpPort: env.SMTP_PORT,
+      error:
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : 'unknown',
+    });
+    throw new AppError(notificationDeliveryUnavailableMessage, 503);
+  }
+};
+
+export { sendNotificationEmail, sendPasswordResetOtpEmail };
