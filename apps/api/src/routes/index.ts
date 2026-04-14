@@ -12,6 +12,7 @@ const { authenticate, authorize, checkProjectAdmin } = require('../middleware/au
 const {
   assignmentValidation,
   categoryValidation,
+  notificationValidation,
   settingsValidation,
   userValidation,
   validate,
@@ -273,6 +274,18 @@ notificationRouter.put(
 
 // Mark all as read
 notificationRouter.put('/read-all', asyncHandler(notificationController.markAllAsRead));
+notificationRouter.post(
+  '/devices/register',
+  notificationValidation.registerDevice,
+  validate,
+  asyncHandler(notificationController.registerDevice),
+);
+notificationRouter.post(
+  '/devices/unregister',
+  notificationValidation.unregisterDevice,
+  validate,
+  asyncHandler(notificationController.unregisterDevice),
+);
 
 // Delete notification
 notificationRouter.delete(

@@ -45,6 +45,17 @@ class _FakeNotificationsRepository implements NotificationsRepository {
   Future<void> markAsUnread(String notificationId) async {
     unreadIds.add(notificationId);
   }
+
+  @override
+  Future<void> registerDeviceToken({
+    required String token,
+    required String platform,
+    String? deviceLabel,
+    String? appVersion,
+  }) async {}
+
+  @override
+  Future<void> unregisterDeviceToken(String token) async {}
 }
 
 List<AppNotification> _buildNotifications(int count) {

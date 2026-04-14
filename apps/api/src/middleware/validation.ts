@@ -294,6 +294,31 @@ const settingsValidation = {
   ] as ValidationChain[],
 };
 
+const notificationValidation = {
+  registerDevice: [
+    body('token')
+      .trim()
+      .notEmpty()
+      .withMessage('Device token is required')
+      .isLength({ min: 16, max: 4096 })
+      .withMessage('Device token format is invalid'),
+    body('platform')
+      .trim()
+      .isIn(['android', 'ios'])
+      .withMessage('platform must be android or ios'),
+    body('device_label').optional().trim().isLength({ max: 120 }),
+    body('app_version').optional().trim().isLength({ max: 60 }),
+  ] as ValidationChain[],
+  unregisterDevice: [
+    body('token')
+      .trim()
+      .notEmpty()
+      .withMessage('Device token is required')
+      .isLength({ min: 16, max: 4096 })
+      .withMessage('Device token format is invalid'),
+  ] as ValidationChain[],
+};
+
 // Export validation rules
 const exportValidation = {
   create: [
@@ -398,6 +423,7 @@ export {
   assignmentValidation,
   categoryValidation,
   settingsValidation,
+  notificationValidation,
   exportValidation,
   paginationValidation,
   bboxValidation,

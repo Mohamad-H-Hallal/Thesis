@@ -122,6 +122,7 @@ const sampleUnique = <T>(items: T[], count: number): T[] => {
 const resetDatabase = async (client: PoolClient): Promise<void> => {
   await client.query(`
     TRUNCATE TABLE
+      notification_push_delivery,
       notification_delivery,
       notification,
       audit_log,
@@ -130,6 +131,7 @@ const resetDatabase = async (client: PoolClient): Promise<void> => {
       shapefile_export,
       password_reset_request,
       app_support_settings,
+      push_device_registration,
       project_assignment,
       project,
       project_category,

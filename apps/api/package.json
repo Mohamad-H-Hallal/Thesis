@@ -59,6 +59,7 @@
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
     "express-validator": "^7.0.1",
+    "firebase-admin": "^13.8.0",
     "helmet": "^7.1.0",
     "joi": "^17.11.0",
     "jsonwebtoken": "^9.0.3",
@@ -72,7 +73,8 @@
   },
   "overrides": {
     "path-to-regexp": "0.1.13",
-    "lodash": "4.18.1"
+    "lodash": "4.18.1",
+    "@tootallnate/once": "3.0.1"
   },
   "devDependencies": {
     "@swc/core": "^1.13.6",

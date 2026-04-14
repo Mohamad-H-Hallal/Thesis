@@ -30,6 +30,7 @@ import '../../features/map/domain/feature_workflow_repository.dart';
 import '../../features/map/domain/map_feature.dart';
 import '../../features/notifications/data/api_notifications_repository.dart';
 import '../../features/notifications/data/mock_notifications_repository.dart';
+import '../../features/notifications/data/push_notification_service.dart';
 import '../../features/notifications/domain/notifications_repository.dart';
 import '../../features/notifications/presentation/controllers/notifications_controller.dart';
 import '../../features/projects/data/api_projects_repository.dart';
@@ -116,6 +117,17 @@ final notificationsRepositoryProvider = Provider<NotificationsRepository>((
     return MockNotificationsRepository();
   }
   return ApiNotificationsRepository(ref.watch(apiClientProvider));
+});
+
+final pushNotificationServiceProvider = Provider<PushNotificationService>((ref) {
+  final service = PushNotificationService(
+    repository: ref.watch(notificationsRepositoryProvider),
+    storage: ref.watch(secureStorageProvider),
+  );
+  ref.onDispose(() {
+    service.dispose();
+  });
+  return service;
 });
 
 final authControllerProvider = StateNotifierProvider<AuthController, AuthState>(

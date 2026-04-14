@@ -3,6 +3,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../../core/config/app_env.dart';
 import '../../../core/network/api_client.dart';
+import '../../notifications/domain/push_notification_constants.dart';
 import '../domain/auth_error_mapper.dart';
 import '../domain/auth_failure.dart';
 import '../domain/auth_models.dart';
@@ -309,6 +310,7 @@ class RealAuthRepository implements AuthRepository {
   @override
   Future<void> logout() async {
     try {
+      await _bestEffortUnregisterPushDevice();
       await _apiClient.dio.post<Map<String, dynamic>>('$_authBasePath/logout');
     } catch (_) {
       // Best-effort call; local token clear is mandatory.
@@ -321,6 +323,7 @@ class RealAuthRepository implements AuthRepository {
   @override
   Future<void> selfDeactivate() async {
     try {
+      await _bestEffortUnregisterPushDevice();
       await _apiClient.dio.post<Map<String, dynamic>>(
         '$_authBasePath/self-deactivate',
       );
@@ -387,6 +390,23 @@ class RealAuthRepository implements AuthRepository {
     await _storage.delete(key: _phoneKey);
     await _storage.delete(key: _userIdKey);
     await _storage.delete(key: _superAdminKey);
+  }
+
+  Future<void> _bestEffortUnregisterPushDevice() async {
+    final token = await _storage.read(key: storedPushDeviceTokenKey);
+    if (token == null || token.trim().isEmpty) {
+      return;
+    }
+
+    try {
+      await _apiClient.dio.post<Map<String, dynamic>>(
+        '${AppEnv.apiVersionPrefix}/notifications/devices/unregister',
+        data: <String, dynamic>{'token': token.trim()},
+      );
+      await _storage.delete(key: storedPushDeviceTokenKey);
+    } catch (_) {
+      // Best effort. A future authenticated session can overwrite this mapping.
+    }
   }
 
   Future<AuthSession> _refreshRememberedSession(String refreshToken) async {

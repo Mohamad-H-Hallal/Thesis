@@ -42,6 +42,12 @@ export interface EnvConfig {
   NOTIFICATION_MAINTENANCE_INTERVAL_MINUTES: number;
   NOTIFICATION_EMAIL_BATCH_SIZE: number;
   NOTIFICATION_EMAIL_MAX_ATTEMPTS: number;
+  PUSH_NOTIFICATIONS_ENABLED: boolean;
+  NOTIFICATION_PUSH_BATCH_SIZE: number;
+  NOTIFICATION_PUSH_MAX_ATTEMPTS: number;
+  FIREBASE_SERVICE_ACCOUNT_JSON: string;
+  FIREBASE_SERVICE_ACCOUNT_BASE64: string;
+  FIREBASE_SERVICE_ACCOUNT_PATH: string;
   PASSWORD_RESET_TOKEN_EXPIRY_MINUTES: number;
   PASSWORD_RESET_REQUIRE_REAL_DELIVERY: boolean;
   SMTP_HOST: string;
@@ -104,6 +110,17 @@ const envSchema = Joi.object({
   NOTIFICATION_MAINTENANCE_INTERVAL_MINUTES: Joi.number().integer().min(1).default(60),
   NOTIFICATION_EMAIL_BATCH_SIZE: Joi.number().integer().min(1).max(500).default(50),
   NOTIFICATION_EMAIL_MAX_ATTEMPTS: Joi.number().integer().min(1).max(20).default(5),
+  PUSH_NOTIFICATIONS_ENABLED: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(false),
+  NOTIFICATION_PUSH_BATCH_SIZE: Joi.number().integer().min(1).max(500).default(100),
+  NOTIFICATION_PUSH_MAX_ATTEMPTS: Joi.number().integer().min(1).max(20).default(5),
+  FIREBASE_SERVICE_ACCOUNT_JSON: Joi.string().allow('').default(''),
+  FIREBASE_SERVICE_ACCOUNT_BASE64: Joi.string().allow('').default(''),
+  FIREBASE_SERVICE_ACCOUNT_PATH: Joi.string().allow('').default(''),
   PASSWORD_RESET_TOKEN_EXPIRY_MINUTES: Joi.number().integer().min(5).max(60).default(15),
   PASSWORD_RESET_REQUIRE_REAL_DELIVERY: Joi.boolean()
     .truthy('true')
@@ -189,6 +206,20 @@ const validateEnv = (): EnvConfig => {
     throw new Error(
       'Environment validation failed: production requires SMTP_HOST and SMTP_FROM_EMAIL'
     );
+  }
+
+  if (value.PUSH_NOTIFICATIONS_ENABLED) {
+    const hasInlineFirebaseConfig =
+      String(value.FIREBASE_SERVICE_ACCOUNT_JSON ?? '').trim().length > 0 ||
+      String(value.FIREBASE_SERVICE_ACCOUNT_BASE64 ?? '').trim().length > 0 ||
+      String(value.FIREBASE_SERVICE_ACCOUNT_PATH ?? '').trim().length > 0 ||
+      String(process.env.GOOGLE_APPLICATION_CREDENTIALS ?? '').trim().length > 0;
+
+    if (!hasInlineFirebaseConfig) {
+      throw new Error(
+        'Environment validation failed: PUSH_NOTIFICATIONS_ENABLED=true requires Firebase service account configuration'
+      );
+    }
   }
 
   return value as EnvConfig;

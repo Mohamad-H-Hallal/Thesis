@@ -108,6 +108,50 @@ class ApiNotificationsRepository implements NotificationsRepository {
     }
   }
 
+  @override
+  Future<void> registerDeviceToken({
+    required String token,
+    required String platform,
+    String? deviceLabel,
+    String? appVersion,
+  }) async {
+    try {
+      await _apiClient.dio.post<void>(
+        '$_notificationsBasePath/devices/register',
+        data: <String, dynamic>{
+          'token': token,
+          'platform': platform,
+          if (deviceLabel != null && deviceLabel.trim().isNotEmpty)
+            'device_label': deviceLabel.trim(),
+          if (appVersion != null && appVersion.trim().isNotEmpty)
+            'app_version': appVersion.trim(),
+        },
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback:
+            'Unable to enable push notifications on this device right now.',
+      );
+    }
+  }
+
+  @override
+  Future<void> unregisterDeviceToken(String token) async {
+    try {
+      await _apiClient.dio.post<void>(
+        '$_notificationsBasePath/devices/unregister',
+        data: <String, dynamic>{'token': token},
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback:
+            'Unable to disable push notifications on this device right now.',
+      );
+    }
+  }
+
   String _relativeTimestamp(DateTime? value) {
     if (value == null) {
       return 'just now';

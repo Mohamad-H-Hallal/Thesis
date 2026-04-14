@@ -1,4 +1,4 @@
-import jwt, { type JwtPayload } from 'jsonwebtoken';
+import jwt, { type JwtPayload, type SignOptions } from 'jsonwebtoken';
 import type { NextFunction, Request, Response } from 'express';
 import { query } from '../config/database';
 const logger = require('../utils/logger');
@@ -33,20 +33,22 @@ const verifyWithSecrets = (token: string, secrets: string[]): TokenPayload => {
 // Generate JWT token
 const generateToken = (userId: string, role: user_role): string => {
   const signingSecret = process.env.JWT_SECRET_CURRENT || process.env.JWT_SECRET;
+  const expiresIn = (process.env.JWT_EXPIRE || '7d') as SignOptions['expiresIn'];
   return jwt.sign(
     { userId, role },
     signingSecret as string,
-    { expiresIn: process.env.JWT_EXPIRE || '7d' }
+    { expiresIn }
   );
 };
 
 // Generate refresh token
 const generateRefreshToken = (userId: string): string => {
   const signingSecret = process.env.JWT_REFRESH_SECRET_CURRENT || process.env.JWT_REFRESH_SECRET;
+  const expiresIn = (process.env.JWT_REFRESH_EXPIRE || '30d') as SignOptions['expiresIn'];
   return jwt.sign(
     { userId },
     signingSecret as string,
-    { expiresIn: process.env.JWT_REFRESH_EXPIRE || '30d' }
+    { expiresIn }
   );
 };
 

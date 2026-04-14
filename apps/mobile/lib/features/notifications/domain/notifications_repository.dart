@@ -24,4 +24,13 @@ abstract class NotificationsRepository {
   Future<void> markAsUnread(String notificationId);
 
   Future<void> markAllAsRead();
+
+  Future<void> registerDeviceToken({
+    required String token,
+    required String platform,
+    String? deviceLabel,
+    String? appVersion,
+  });
+
+  Future<void> unregisterDeviceToken(String token);
 }

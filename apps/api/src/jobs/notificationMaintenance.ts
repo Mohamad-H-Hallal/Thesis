@@ -1,5 +1,6 @@
 import { synchronizeProjectStatuses } from '../lib/projectLifecycle';
 import { deliverPendingNotificationEmails } from '../lib/notificationDelivery';
+import { deliverPendingPushNotifications } from '../lib/pushNotificationDelivery';
 const logger = require('../utils/logger');
 
 const runNotificationMaintenance = async (): Promise<{
@@ -7,22 +8,37 @@ const runNotificationMaintenance = async (): Promise<{
   emailDelivered: number;
   emailFailed: number;
   emailSkipped: number;
+  pushAttempted: number;
+  pushDelivered: number;
+  pushFailed: number;
+  pushSkipped: number;
 }> => {
   await synchronizeProjectStatuses();
-  const deliverySummary = await deliverPendingNotificationEmails();
+  const [emailSummary, pushSummary] = await Promise.all([
+    deliverPendingNotificationEmails(),
+    deliverPendingPushNotifications(),
+  ]);
 
   logger.info('Notification maintenance completed', {
-    emailAttempted: deliverySummary.attempted,
-    emailDelivered: deliverySummary.delivered,
-    emailFailed: deliverySummary.failed,
-    emailSkipped: deliverySummary.skipped,
+    emailAttempted: emailSummary.attempted,
+    emailDelivered: emailSummary.delivered,
+    emailFailed: emailSummary.failed,
+    emailSkipped: emailSummary.skipped,
+    pushAttempted: pushSummary.attempted,
+    pushDelivered: pushSummary.delivered,
+    pushFailed: pushSummary.failed,
+    pushSkipped: pushSummary.skipped,
   });
 
   return {
-    emailAttempted: deliverySummary.attempted,
-    emailDelivered: deliverySummary.delivered,
-    emailFailed: deliverySummary.failed,
-    emailSkipped: deliverySummary.skipped,
+    emailAttempted: emailSummary.attempted,
+    emailDelivered: emailSummary.delivered,
+    emailFailed: emailSummary.failed,
+    emailSkipped: emailSummary.skipped,
+    pushAttempted: pushSummary.attempted,
+    pushDelivered: pushSummary.delivered,
+    pushFailed: pushSummary.failed,
+    pushSkipped: pushSummary.skipped,
   };
 };
 

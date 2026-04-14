@@ -76,4 +76,19 @@ class MockNotificationsRepository implements NotificationsRepository {
   Future<void> markAllAsRead() async {
     await Future<void>.delayed(const Duration(milliseconds: 120));
   }
+
+  @override
+  Future<void> registerDeviceToken({
+    required String token,
+    required String platform,
+    String? deviceLabel,
+    String? appVersion,
+  }) async {
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+  }
+
+  @override
+  Future<void> unregisterDeviceToken(String token) async {
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+  }
 }

@@ -10,6 +10,7 @@ import {
   normalizeEmail,
   getUserAccessState,
 } from '../lib/userWorkflow';
+import { isPushDeliveryConfigured } from '../lib/firebasePush';
 
 const getSupportSettingsRow = async () => {
   await query(`
@@ -270,7 +271,7 @@ const settingsController = {
       success: true,
       data: settings,
       meta: {
-        push_notifications: false,
+        push_notifications: isPushDeliveryConfigured(),
         email_notifications: true,
         persisted_in_app_notifications: true,
       },
@@ -479,6 +480,75 @@ const notificationController = {
       data: {
         unread_count: parseInt(result.rows[0].count),
       },
+    });
+  },
+
+  registerDevice: async (req, res) => {
+    const token = String(req.body?.token ?? '').trim();
+    const platform = String(req.body?.platform ?? '').trim().toLowerCase();
+    const deviceLabel = String(req.body?.device_label ?? '').trim();
+    const appVersion = String(req.body?.app_version ?? '').trim();
+
+    const result = await query(
+      `INSERT INTO push_device_registration (
+         user_id,
+         token,
+         platform,
+         device_label,
+         app_version,
+         notifications_enabled,
+         invalidated_at,
+         last_seen_at,
+         updated_at
+       )
+       VALUES ($1, $2, $3::push_notification_platform, $4, $5, TRUE, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       ON CONFLICT (token) DO UPDATE
+       SET user_id = EXCLUDED.user_id,
+           platform = EXCLUDED.platform,
+           device_label = EXCLUDED.device_label,
+           app_version = EXCLUDED.app_version,
+           notifications_enabled = TRUE,
+           invalidated_at = NULL,
+           last_seen_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
+       RETURNING id, token, platform, device_label, app_version, notifications_enabled, last_seen_at`,
+      [
+        req.user.id,
+        token,
+        platform,
+        deviceLabel.length > 0 ? deviceLabel : null,
+        appVersion.length > 0 ? appVersion : null,
+      ],
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Push notifications enabled on this device.',
+      data: result.rows[0],
+    });
+  },
+
+  unregisterDevice: async (req, res) => {
+    const token = String(req.body?.token ?? '').trim();
+
+    const result = await query(
+      `UPDATE push_device_registration
+       SET notifications_enabled = FALSE,
+           invalidated_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE user_id = $1
+         AND token = $2
+         AND notifications_enabled = TRUE
+       RETURNING id`,
+      [req.user.id, token],
+    );
+
+    res.json({
+      success: true,
+      message:
+        result.rows.length > 0
+          ? 'Push notifications disabled on this device.'
+          : 'This device was already disconnected from push notifications.',
     });
   },
 };

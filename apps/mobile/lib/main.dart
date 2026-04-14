@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/config/app_branding.dart';
 import 'core/providers/providers.dart';
 import 'core/theme/theme.dart';
+import 'features/notifications/presentation/widgets/push_notification_coordinator.dart';
 
 void main() {
   runApp(const ProviderScope(child: LebanonGisCollectorApp()));
@@ -37,6 +38,9 @@ class LebanonGisCollectorApp extends ConsumerWidget {
       themeMode: ThemeMode.system,
       scrollBehavior: const AppScrollBehavior(),
       routerConfig: router,
+      builder: (context, child) => PushNotificationCoordinator(
+        child: child ?? const SizedBox.shrink(),
+      ),
     );
   }
 }
