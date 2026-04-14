@@ -67,6 +67,8 @@ void main() {
   testWidgets('shows concise synced copy with the last sync time', (
     tester,
   ) async {
+    final localSyncTime = DateTime(2026, 4, 14, 13, 5);
+
     await pumpBanner(
       tester,
       SyncState(
@@ -77,7 +79,7 @@ void main() {
         isReady: true,
         isInitializing: false,
         autoSyncRunning: true,
-        lastSyncAt: DateTime.utc(2026, 4, 14, 10, 5),
+        lastSyncAt: localSyncTime,
       ),
     );
 
