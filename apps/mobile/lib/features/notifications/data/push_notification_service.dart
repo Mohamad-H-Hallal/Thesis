@@ -35,13 +35,12 @@ class PushNotificationEvent {
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  final options = FirebasePushOptions.currentPlatform;
-  if (options == null) {
+  if (!FirebasePushOptions.isConfigured) {
     return;
   }
 
   if (Firebase.apps.isEmpty) {
-    await Firebase.initializeApp(options: options);
+    await Firebase.initializeApp();
   }
 }
 
@@ -75,13 +74,8 @@ class PushNotificationService {
       return;
     }
 
-    final options = FirebasePushOptions.currentPlatform;
-    if (options == null) {
-      return;
-    }
-
     if (Firebase.apps.isEmpty) {
-      await Firebase.initializeApp(options: options);
+      await Firebase.initializeApp();
     }
 
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
@@ -138,6 +132,11 @@ class PushNotificationService {
     final settings = await FirebaseMessaging.instance.getNotificationSettings();
     if (!_isPermissionGranted(settings)) {
       await _unregisterStoredToken();
+      return;
+    }
+
+    final transportReady = await _ensurePlatformPushTransportReady();
+    if (!transportReady) {
       return;
     }
 
@@ -280,6 +279,22 @@ class PushNotificationService {
       ),
       payload: message.data['notificationId'] as String?,
     );
+  }
+
+  Future<bool> _ensurePlatformPushTransportReady() async {
+    if (defaultTargetPlatform != TargetPlatform.iOS) {
+      return true;
+    }
+
+    for (var attempt = 0; attempt < 10; attempt++) {
+      final apnsToken = await FirebaseMessaging.instance.getAPNSToken();
+      if (apnsToken != null && apnsToken.trim().isNotEmpty) {
+        return true;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+
+    return false;
   }
 
   String get _platformName {
