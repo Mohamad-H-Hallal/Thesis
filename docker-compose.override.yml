@@ -16,7 +16,12 @@ services:
     working_dir: /workspace/apps/api
     environment:
       MIGRATIONS_DIR: /workspace/infra/migrations
-    command: ["npm", "run", "migrate"]
+    command:
+      [
+        "sh",
+        "-lc",
+        "sh /workspace/apps/api/docker/dev-entrypoint.sh npm run migrate",
+      ]
     volumes:
       - .:/workspace
       - api_node_modules:/workspace/apps/api/node_modules
@@ -30,7 +35,12 @@ services:
       MIGRATIONS_DIR: /workspace/infra/migrations
       MAIL_TRANSPORT: ${MAIL_TRANSPORT:-mailpit}
       PASSWORD_RESET_TOKEN_EXPIRY_MINUTES: ${PASSWORD_RESET_TOKEN_EXPIRY_MINUTES:-15}
-    command: ["npm", "run", "dev:docker"]
+    command:
+      [
+        "sh",
+        "-lc",
+        "sh /workspace/apps/api/docker/dev-entrypoint.sh npm run dev:docker",
+      ]
     env_file:
       - .env
     depends_on:
@@ -44,6 +54,7 @@ services:
       - "3000:3000"
     volumes:
       - .:/workspace
+      - ./secrets:/run/app-secrets:ro
       - api_node_modules:/workspace/apps/api/node_modules
       - api_uploads:/workspace/apps/api/uploads
       - api_exports:/workspace/apps/api/exports

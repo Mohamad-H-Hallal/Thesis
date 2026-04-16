@@ -8,6 +8,8 @@
 *.log
 !docs/handover/evidence/*.log
 secrets/*.txt
+secrets/*.json
+secrets/**/*.json
 !secrets/README.md
 backups/
 
@@ -20,6 +22,8 @@ backups/
 **/.dart_tool/
 **/build/
 **/.packages
+apps/mobile/android/app/google-services.json
+apps/mobile/ios/Runner/GoogleService-Info.plist
 
 # IDE
 .vscode/

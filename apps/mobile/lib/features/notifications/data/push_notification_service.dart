@@ -39,8 +39,12 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     return;
   }
 
-  if (Firebase.apps.isEmpty) {
-    await Firebase.initializeApp();
+  try {
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp();
+    }
+  } catch (_) {
+    return;
   }
 }
 
@@ -63,19 +67,27 @@ class PushNotificationService {
   StreamSubscription<RemoteMessage>? _openSubscription;
   AuthSession? _session;
   bool _initialized = false;
+  bool _runtimeUnavailable = false;
 
   Stream<PushNotificationEvent> get events => _events.stream;
 
   bool get isAvailable =>
-      AppEnv.pushNotificationsRequested && FirebasePushOptions.isConfigured;
+      !_runtimeUnavailable &&
+      AppEnv.pushNotificationsRequested &&
+      FirebasePushOptions.isConfigured;
 
   Future<void> initialize() async {
     if (_initialized || !isAvailable) {
       return;
     }
 
-    if (Firebase.apps.isEmpty) {
-      await Firebase.initializeApp();
+    try {
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp();
+      }
+    } catch (_) {
+      _runtimeUnavailable = true;
+      return;
     }
 
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);

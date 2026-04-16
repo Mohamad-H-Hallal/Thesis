@@ -40,6 +40,7 @@ services:
     expose:
       - "3000"
     volumes:
+      - ./secrets:/run/app-secrets:ro
       - api_uploads:/app/apps/api/uploads
       - api_exports:/app/apps/api/exports
     healthcheck:
