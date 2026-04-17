@@ -43,6 +43,8 @@ export interface EnvConfig {
   NOTIFICATION_EMAIL_BATCH_SIZE: number;
   NOTIFICATION_EMAIL_MAX_ATTEMPTS: number;
   PUSH_NOTIFICATIONS_ENABLED: boolean;
+  ANDROID_PUSH_NOTIFICATIONS_ENABLED: boolean;
+  IOS_PUSH_NOTIFICATIONS_ENABLED: boolean;
   NOTIFICATION_PUSH_BATCH_SIZE: number;
   NOTIFICATION_PUSH_MAX_ATTEMPTS: number;
   FIREBASE_SERVICE_ACCOUNT_JSON: string;
@@ -111,6 +113,18 @@ const envSchema = Joi.object({
   NOTIFICATION_EMAIL_BATCH_SIZE: Joi.number().integer().min(1).max(500).default(50),
   NOTIFICATION_EMAIL_MAX_ATTEMPTS: Joi.number().integer().min(1).max(20).default(5),
   PUSH_NOTIFICATIONS_ENABLED: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(false),
+  ANDROID_PUSH_NOTIFICATIONS_ENABLED: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(Joi.ref('PUSH_NOTIFICATIONS_ENABLED')),
+  IOS_PUSH_NOTIFICATIONS_ENABLED: Joi.boolean()
     .truthy('true')
     .truthy('1')
     .falsy('false')

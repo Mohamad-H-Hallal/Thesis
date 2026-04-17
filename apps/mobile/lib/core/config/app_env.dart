@@ -79,5 +79,21 @@ class AppEnv {
     return _parseBool(raw, fallback: true);
   }
 
+  static bool get androidPushNotificationsRequested {
+    const raw = String.fromEnvironment(
+      'ANDROID_PUSH_NOTIFICATIONS_ENABLED',
+      defaultValue: '',
+    );
+    return _parseBool(raw, fallback: pushNotificationsRequested);
+  }
+
+  static bool get iosPushNotificationsRequested {
+    const raw = String.fromEnvironment(
+      'IOS_PUSH_NOTIFICATIONS_ENABLED',
+      defaultValue: '',
+    );
+    return _parseBool(raw, fallback: false);
+  }
+
   static String get flavorName => flavor.name;
 }

@@ -1,5 +1,9 @@
 import { query, transaction } from '../config/database';
-import { getPushMessaging, isPushDeliveryConfigured } from './firebasePush';
+import {
+  getPushMessaging,
+  isPlatformPushEnabled,
+  isPushDeliveryConfigured,
+} from './firebasePush';
 import { validateEnv } from '../config/env';
 const logger = require('../utils/logger');
 
@@ -154,6 +158,18 @@ const deliverPendingPushNotifications = async (): Promise<{
   }
 
   for (const delivery of deliveries) {
+    if (!isPlatformPushEnabled(delivery.platform)) {
+      skipped += 1;
+      await markPushDeliveryStatus(
+        delivery.id,
+        'skipped',
+        delivery.platform === 'ios'
+          ? 'iOS push delivery is disabled until APNs is configured for this environment.'
+          : 'Android push delivery is disabled for this environment.',
+      );
+      continue;
+    }
+
     try {
       await messaging.send({
         token: delivery.token_snapshot,

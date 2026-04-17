@@ -10,7 +10,10 @@ import {
   normalizeEmail,
   getUserAccessState,
 } from '../lib/userWorkflow';
-import { isPushDeliveryConfigured } from '../lib/firebasePush';
+import {
+  isPlatformPushEnabled,
+  isPushDeliveryConfigured,
+} from '../lib/firebasePush';
 
 const getSupportSettingsRow = async () => {
   await query(`
@@ -272,6 +275,8 @@ const settingsController = {
       data: settings,
       meta: {
         push_notifications: isPushDeliveryConfigured(),
+        push_notifications_android: isPlatformPushEnabled('android'),
+        push_notifications_ios: isPlatformPushEnabled('ios'),
         email_notifications: true,
         persisted_in_app_notifications: true,
       },

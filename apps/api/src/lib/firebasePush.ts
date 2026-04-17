@@ -40,6 +40,17 @@ const isPushDeliveryConfigured = (): boolean => {
   );
 };
 
+const isPlatformPushEnabled = (platform: 'android' | 'ios'): boolean => {
+  const env = validateEnv();
+  if (!env.PUSH_NOTIFICATIONS_ENABLED) {
+    return false;
+  }
+
+  return platform === 'ios'
+    ? env.IOS_PUSH_NOTIFICATIONS_ENABLED
+    : env.ANDROID_PUSH_NOTIFICATIONS_ENABLED;
+};
+
 const getPushMessaging = (): Messaging | null => {
   if (!isPushDeliveryConfigured()) {
     return null;
@@ -73,4 +84,9 @@ const getPushMessaging = (): Messaging | null => {
 
 const getFirebaseApp = () => getApp(firebaseAppName);
 
-export { getFirebaseApp, getPushMessaging, isPushDeliveryConfigured };
+export {
+  getFirebaseApp,
+  getPushMessaging,
+  isPlatformPushEnabled,
+  isPushDeliveryConfigured,
+};

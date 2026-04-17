@@ -73,7 +73,7 @@ class PushNotificationService {
 
   bool get isAvailable =>
       !_runtimeUnavailable &&
-      AppEnv.pushNotificationsRequested &&
+      _platformPushRequested &&
       FirebasePushOptions.isConfigured;
 
   Future<void> initialize() async {
@@ -315,6 +315,15 @@ class PushNotificationService {
         return 'ios';
       default:
         return 'android';
+    }
+  }
+
+  bool get _platformPushRequested {
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.iOS:
+        return AppEnv.iosPushNotificationsRequested;
+      default:
+        return AppEnv.androidPushNotificationsRequested;
     }
   }
 }
