@@ -1034,7 +1034,7 @@ class _BboxTextInputFormatter extends TextInputFormatter {
 }
 
 enum _ExportJobFormatFilter {
-  all('Both'),
+  all('All'),
   geojson('GeoJSON'),
   shapefile('Shapefile');
 

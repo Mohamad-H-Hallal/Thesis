@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -110,14 +111,20 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       ? LebanonMapConfig.projectWorkspaceZoom
       : LebanonMapConfig.fullscreenInitialZoom;
 
+  double get _mapMinZoom => widget.lockProjectSelection
+      ? LebanonMapConfig.projectWorkspaceZoom
+      : LebanonMapConfig.fullscreenMinZoom;
+
+  double get _mapMaxZoom => LebanonMapConfig.fullscreenMaxZoom;
+
   @override
   void initState() {
     super.initState();
     _mainMapOptions = MapOptions(
       initialCenter: _defaultMapCenter,
       initialZoom: _defaultMapZoom,
-      minZoom: LebanonMapConfig.fullscreenMinZoom,
-      maxZoom: LebanonMapConfig.fullscreenMaxZoom,
+      minZoom: _mapMinZoom,
+      maxZoom: _mapMaxZoom,
       cameraConstraint: widget.lockProjectSelection
           ? CameraConstraint.containCenter(bounds: LebanonMapConfig.bounds)
           : LebanonMapConfig.cameraConstraint,
@@ -616,8 +623,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         _latestMapCamera?.center ?? _defaultMapCenter,
         ((_latestMapCamera?.zoom ?? _defaultMapZoom) + delta)
             .clamp(
-              LebanonMapConfig.fullscreenMinZoom,
-              LebanonMapConfig.fullscreenMaxZoom,
+              _mapMinZoom,
+              _mapMaxZoom,
             )
             .toDouble(),
       ),
@@ -2334,8 +2341,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                             currentCenter,
                             (currentZoom + 1)
                                 .clamp(
-                                  LebanonMapConfig.fullscreenMinZoom,
-                                  LebanonMapConfig.fullscreenMaxZoom,
+                                  _mapMinZoom,
+                                  _mapMaxZoom,
                                 )
                                 .toDouble(),
                           ),
@@ -2353,8 +2360,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                             currentCenter,
                             (currentZoom - 1)
                                 .clamp(
-                                  LebanonMapConfig.fullscreenMinZoom,
-                                  LebanonMapConfig.fullscreenMaxZoom,
+                                  _mapMinZoom,
+                                  _mapMaxZoom,
                                 )
                                 .toDouble(),
                           ),
@@ -3325,15 +3332,37 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     bool canReview, {
     bool interactive = true,
   }) {
-    return features
-        .map((feature) {
-          final point = _pointFromGeometry(feature.geometry);
-          if (point == null) {
-            return null;
-          }
-          final color = _statusColor(feature.status);
-          return Marker(
-            point: point,
+    final grouped = <String, List<(MapFeatureSummary, LatLng)>>{};
+    for (final feature in features) {
+      final point = _pointFromGeometry(feature.geometry);
+      if (point == null) {
+        continue;
+      }
+      final key =
+          '${point.latitude.toStringAsFixed(7)}:${point.longitude.toStringAsFixed(7)}';
+      grouped.putIfAbsent(key, () => <(MapFeatureSummary, LatLng)>[]).add((
+        feature,
+        point,
+      ));
+    }
+
+    final markers = <Marker>[];
+    for (final entries in grouped.values) {
+      for (var index = 0; index < entries.length; index++) {
+        final entry = entries[index];
+        final feature = entry.$1;
+        final basePoint = entry.$2;
+        final markerPoint = entries.length == 1
+            ? basePoint
+            : _spreadDuplicateMarkerPoint(
+                basePoint,
+                duplicateIndex: index,
+                duplicateCount: entries.length,
+              );
+        final color = _statusColor(feature.status);
+        markers.add(
+          Marker(
+            point: markerPoint,
             width: 34,
             height: 34,
             child: GestureDetector(
@@ -3377,10 +3406,30 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 ),
               ),
             ),
-          );
-        })
-        .whereType<Marker>()
-        .toList(growable: false);
+          ),
+        );
+      }
+    }
+
+    return markers;
+  }
+
+  LatLng _spreadDuplicateMarkerPoint(
+    LatLng origin, {
+    required int duplicateIndex,
+    required int duplicateCount,
+  }) {
+    final ringCapacity = duplicateCount <= 6 ? duplicateCount : 6;
+    final ring = duplicateIndex ~/ 6;
+    final ringIndex = duplicateIndex % 6;
+    final pointsInRing = math.min(duplicateCount - (ring * 6), ringCapacity);
+    final angle = (-math.pi / 2) + ((2 * math.pi * ringIndex) / pointsInRing);
+    final radiusMeters = 16.0 + (ring * 12.0);
+    final latOffset = (radiusMeters / 111320.0) * math.sin(angle);
+    final longitudeScale = math.cos(origin.latitude * math.pi / 180).abs();
+    final lngMetersDivisor = 111320.0 * (longitudeScale < 0.1 ? 0.1 : longitudeScale);
+    final lngOffset = (radiusMeters / lngMetersDivisor) * math.cos(angle);
+    return LatLng(origin.latitude + latOffset, origin.longitude + lngOffset);
   }
 
   LatLng? _pointFromGeometry(Map<String, dynamic> geometry) {
