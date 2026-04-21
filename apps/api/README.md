@@ -123,6 +123,52 @@ npm run test:ci
   - optional `SMTP_FROM_NAME`
   - optional `PASSWORD_RESET_TOKEN_EXPIRY_MINUTES`
 
+### Gmail SMTP runtime
+- For Gmail SMTP use:
+  - `MAIL_TRANSPORT=smtp`
+  - `PASSWORD_RESET_REQUIRE_REAL_DELIVERY=true`
+  - `SMTP_HOST=smtp.gmail.com`
+  - `SMTP_PORT=587`
+  - `SMTP_SECURE=false`
+  - `SMTP_USER=<your Gmail address>`
+  - `SMTP_PASS=<your Gmail app password>`
+  - `SMTP_FROM_EMAIL=<same Gmail sender>`
+  - optional `SMTP_FROM_NAME=Lebanese GIS Collector`
+- Gmail app passwords are displayed in grouped blocks in Google UI. Store the value in `.env` without display-spacing changes elsewhere in the repo.
+- For the Docker app runtime, the repo-root `.env` controls the API container.
+- For host-side `npm --prefix apps/api ...` commands, `apps/api/.env` controls the host API process.
+
+## Notification delivery runtime
+- Android push is supported when all of these are true:
+  - `PUSH_NOTIFICATIONS_ENABLED=true`
+  - `ANDROID_PUSH_NOTIFICATIONS_ENABLED=true`
+  - Firebase Admin SDK secret is mounted and readable by the API
+  - the Android app registers a real FCM device token
+- iOS push remains intentionally disabled until APNs is configured:
+  - `IOS_PUSH_NOTIFICATIONS_ENABLED=false`
+  - the API reports this through `GET /api/v1/settings/support`
+- When iOS push is disabled or unavailable, the fallback is:
+  - persisted in-app notifications
+  - notification email delivery through SMTP
+
+## Remaining manual configuration
+- Android real-device push:
+  - connect a physical Android phone
+  - grant notification permission
+  - log in once so the device token registers
+  - trigger a notification and verify foreground, background, closed-app, and tap-open behavior
+- iOS push:
+  - blocked until Apple Developer membership and APNs configuration are available
+  - keep `IOS_PUSH_NOTIFICATIONS_ENABLED=false` until then
+- Security:
+  - Firebase mobile app config files are no longer tracked in Git
+  - the Firebase Admin SDK JSON is not committed
+  - the earlier Firebase mobile config exposure still exists in Git history from older commits, so you still need to restrict or rotate the Firebase app API keys in Google Cloud
+  - recommended restrictions:
+    - Android key: restrict to the app package name and signing SHA-1/SHA-256
+    - iOS key: restrict to the bundle ID
+    - allow only the Firebase APIs actually required by the app
+
 ## Quality Gate
 - Lint: `npm run lint`
 - Typecheck: `npm run typecheck`

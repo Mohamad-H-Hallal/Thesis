@@ -39,7 +39,16 @@ Important security behavior:
    - valid `SMTP_PORT`
    - valid `SMTP_FROM_EMAIL`
    - `SMTP_USER` / `SMTP_PASS` if required by the provider
+   - for Gmail SMTP:
+     - `SMTP_HOST=smtp.gmail.com`
+     - `SMTP_PORT=587`
+     - `SMTP_SECURE=false`
+     - use a Gmail app password, not the account login password
 8. If real delivery is required but the backend is still on Mailpit or missing SMTP configuration, the app stays on the email step and shows a delivery error instead of pretending success.
+9. Current notification fallback behavior:
+   - Android: push remains available when Firebase device registration is working
+   - iOS: closed-app push remains disabled until APNs is configured
+   - iOS fallback uses in-app notifications plus email delivery through SMTP
 
 ## Reset Password
 1. Open the reset-password step from the app flow.
