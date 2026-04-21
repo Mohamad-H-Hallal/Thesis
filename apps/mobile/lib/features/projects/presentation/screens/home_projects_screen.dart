@@ -41,10 +41,7 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
 
     return Column(
       children: [
-        SectionHeader(
-          title: widget.title,
-          subtitle: _subtitleForScope(role, widget.scope),
-        ),
+        SectionHeader(title: widget.title),
         const SizedBox(height: AppSpacing.sm),
         SearchBar(
           leading: const Icon(Icons.search),
@@ -96,32 +93,6 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
 
               return ListView(
                 children: [
-                  AppCard(
-                    child: Wrap(
-                      spacing: AppSpacing.sm,
-                      runSpacing: AppSpacing.sm,
-                      children: [
-                        _MetricPill(
-                          label: _metricLabelForScope(role, widget.scope),
-                          value: '${filtered.length}',
-                          icon: Icons.folder_shared_outlined,
-                        ),
-                        _MetricPill(
-                          label: 'Pending reviews',
-                          value:
-                              '${filtered.fold<int>(0, (sum, p) => sum + p.pendingReviews)}',
-                          icon: Icons.rate_review_outlined,
-                        ),
-                        _MetricPill(
-                          label: 'Collectors',
-                          value:
-                              '${filtered.fold<int>(0, (sum, p) => sum + p.assignedCollectors)}',
-                          icon: Icons.groups_outlined,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.md),
                   ...List<Widget>.generate(filtered.length, (index) {
                     final project = filtered[index];
                     final contributorReadOnly =
@@ -200,16 +171,6 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
                                         project.visibilitySummaryLabel,
                                       ),
                                     ),
-                                  Chip(
-                                    label: Text(
-                                      '${project.assignedCollectors} collectors',
-                                    ),
-                                  ),
-                                  Chip(
-                                    label: Text(
-                                      '${project.pendingReviews} pending reviews',
-                                    ),
-                                  ),
                                 ],
                               ),
                             ],
@@ -242,21 +203,6 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
     return 'Assignment: not set';
   }
 
-  String _subtitleForScope(UserRole role, ProjectViewScope scope) {
-    switch (scope) {
-      case ProjectViewScope.public:
-        return role == UserRole.contributor
-            ? 'Projects published by admins for contributor discovery and map access requests.'
-            : 'Projects published by admins for read-only public and viewer access.';
-      case ProjectViewScope.assigned:
-        return role == UserRole.admin
-            ? 'Project operations and assignment-linked workstreams.'
-            : 'Projects where you have an approved contributor assignment.';
-      case ProjectViewScope.all:
-        return 'Management view across every project, assignment, and review workload.';
-    }
-  }
-
   String _searchHintForScope(UserRole role, ProjectViewScope scope) {
     switch (scope) {
       case ProjectViewScope.public:
@@ -267,17 +213,6 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
             : 'Search assigned projects';
       case ProjectViewScope.all:
         return 'Search all projects';
-    }
-  }
-
-  String _metricLabelForScope(UserRole role, ProjectViewScope scope) {
-    switch (scope) {
-      case ProjectViewScope.public:
-        return 'Published';
-      case ProjectViewScope.assigned:
-        return role == UserRole.admin ? 'Managed' : 'Assigned';
-      case ProjectViewScope.all:
-        return 'Total projects';
     }
   }
 
@@ -292,40 +227,5 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
       case ProjectViewScope.all:
         return 'No projects match your search filters.';
     }
-  }
-}
-
-class _MetricPill extends StatelessWidget {
-  const _MetricPill({
-    required this.label,
-    required this.value,
-    required this.icon,
-  });
-
-  final String label;
-  final String value;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
-        vertical: AppSpacing.xs,
-      ),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: AppRadii.md,
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 18),
-          const SizedBox(width: AppSpacing.xs),
-          Text('$label: ', style: Theme.of(context).textTheme.bodySmall),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w700)),
-        ],
-      ),
-    );
   }
 }

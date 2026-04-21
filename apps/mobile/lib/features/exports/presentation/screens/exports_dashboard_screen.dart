@@ -135,9 +135,6 @@ class _ExportsDashboardScreenState
           children: [
             SectionHeader(
               title: hasFixedProject ? 'Project exports' : 'Exports',
-              subtitle: hasFixedProject
-                  ? 'Request export packages for ${_selectedProjectName.isEmpty ? 'this project' : _selectedProjectName}.'
-                  : 'Request export packages and track their processing.',
             ),
             const SizedBox(height: AppSpacing.md),
             if (errorText != null && errorText.isNotEmpty)

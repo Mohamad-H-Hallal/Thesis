@@ -211,11 +211,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
 
         return ListView(
           children: [
-            const SectionHeader(
-              title: 'Users',
-              subtitle:
-                  'Search, filter, block, and manage viewer, contributor, and admin accounts.',
-            ),
+            const SectionHeader(title: 'Users'),
             const SizedBox(height: AppSpacing.sm),
             AppCard(
               child: Column(

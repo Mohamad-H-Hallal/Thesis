@@ -1204,8 +1204,6 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       children: [
         SectionHeader(
           title: _isEditingDraft ? 'Edit draft feature' : 'New feature',
-          subtitle:
-              'Capture geometry, fill project attributes, attach photos, and save or submit for review.',
         ),
         const SizedBox(height: AppSpacing.sm),
         AppCard(

@@ -374,7 +374,6 @@ void main() {
 
       expect(find.text('Projects'), findsOneWidget);
       expect(find.text('Published Orchard Survey'), findsOneWidget);
-      expect(find.textContaining('Published:'), findsOneWidget);
     },
   );
 
@@ -414,7 +413,6 @@ void main() {
 
       expect(find.text('Assigned Projects'), findsOneWidget);
       expect(find.text('Bekaa Collection Campaign'), findsOneWidget);
-      expect(find.textContaining('Assigned:'), findsOneWidget);
       expect(find.text('Assignment: approved'), findsOneWidget);
     },
   );
@@ -561,7 +559,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
 
       expect(find.text('Viewer access'), findsOneWidget);
-      expect(find.text('Read only'), findsOneWidget);
+      expect(find.text('Read-only access.'), findsOneWidget);
       expect(find.text('Open Map'), findsOneWidget);
       expect(find.text('New Feature'), findsNothing);
       expect(find.text('Drafts'), findsNothing);
@@ -651,12 +649,6 @@ void main() {
 
       expect(quickMapTop.dy, greaterThan(summaryTitleTop.dy));
       expect(find.text('Map Preview'), findsOneWidget);
-      expect(
-        find.text(
-          'Check the Lebanon workspace before opening the full project map.',
-        ),
-        findsOneWidget,
-      );
       expect(find.text('Open map'), findsOneWidget);
     },
   );

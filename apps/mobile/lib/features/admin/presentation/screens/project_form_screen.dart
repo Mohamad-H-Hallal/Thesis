@@ -95,7 +95,9 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
       final schemaFields = List<CollectionFormFieldSchema>.from(
         project.collectionFormSchema.fields,
       );
-      final primaryFieldIndex = schemaFields.indexWhere(_looksLikeFeatureTypeField);
+      final primaryFieldIndex = schemaFields.indexWhere(
+        _looksLikeFeatureTypeField,
+      );
       if (primaryFieldIndex >= 0) {
         _featureTypeField.applySchema(schemaFields.removeAt(primaryFieldIndex));
       } else {
@@ -582,7 +584,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                               ),
                               const SizedBox(height: AppSpacing.xs),
                               Text(
-                                'Required for feature names and map filtering.',
+                                'Used for naming and filtering.',
                                 style: Theme.of(context).textTheme.bodySmall,
                               ),
                               const SizedBox(height: AppSpacing.sm),
@@ -641,11 +643,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                 },
                               ),
                               const SizedBox(height: AppSpacing.sm),
-                              if (_fields.isEmpty)
-                                const Text(
-                                  'No additional fields yet.',
-                                )
-                              else
+                              if (_fields.isNotEmpty)
                                 ...List<Widget>.generate(_fields.length, (
                                   index,
                                 ) {
@@ -828,8 +826,8 @@ class _FieldEditorCard extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.sm),
           AppTextField(
-            label: 'Helper text',
-            hint: 'Optional guidance',
+            label: 'Hint',
+            hint: 'Optional hint',
             controller: field.hintController,
             minLines: 2,
             maxLines: 4,
@@ -1009,8 +1007,7 @@ class _EditableFormField {
     if (label.isEmpty) {
       return 'Every collection field needs a label.';
     }
-    if (type == CollectionFieldType.select &&
-        _normalizedOptions().isEmpty) {
+    if (type == CollectionFieldType.select && _normalizedOptions().isEmpty) {
       return 'Dropdown fields require at least one choice.';
     }
     return null;

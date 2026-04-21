@@ -68,7 +68,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       builder: (context) => AlertDialog(
         title: const Text('Deactivate account'),
         content: const Text(
-          'Deactivate your account? You will be signed out immediately and will not be able to log in again until an administrator reactivates access.',
+          'Deactivate your account? You will be signed out until an administrator restores access.',
         ),
         actions: [
           TextButton(
@@ -147,10 +147,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
     return ListView(
       children: [
-        const SectionHeader(
-          title: 'Profile',
-          subtitle: 'Identity, support, and account access controls',
-        ),
+        const SectionHeader(title: 'Profile'),
         const SizedBox(height: AppSpacing.md),
         AppCard(
           child: Column(
@@ -215,10 +212,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               Wrap(
                 spacing: AppSpacing.sm,
                 runSpacing: AppSpacing.sm,
-                children: [
-                  Chip(label: Text(widget.userRole.label)),
-                  const Chip(label: Text('Session active')),
-                ],
+                children: [Chip(label: Text(widget.userRole.label))],
               ),
             ],
           ),
@@ -235,10 +229,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: AppSpacing.sm),
-                const Text(
-                  'Support contact details are currently unavailable. Please try again later.',
-                  softWrap: true,
-                ),
+                const Text('Support details are unavailable.', softWrap: true),
                 const SizedBox(height: AppSpacing.sm),
                 OutlinedButton.icon(
                   onPressed: () => ref.invalidate(supportSettingsProvider),
@@ -291,9 +282,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 if (!settings.isConfigured)
-                  const Text(
-                    'Support contact details are currently unavailable. Please try again later.',
-                  )
+                  const Text('Support details are unavailable.')
                 else
                   Wrap(
                     spacing: AppSpacing.md,
@@ -358,7 +347,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 const Text(
-                  'You can deactivate your contributor account only when no active project assignments are still blocking that action.',
+                  'Deactivation is blocked while active assignments remain.',
                 ),
                 if (_accountAccessError != null) ...[
                   const SizedBox(height: AppSpacing.sm),

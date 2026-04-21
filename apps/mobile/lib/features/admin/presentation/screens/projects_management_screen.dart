@@ -122,22 +122,13 @@ class _ProjectsManagementScreenState
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const SectionHeader(
-                          title: 'Projects',
-                          subtitle:
-                              'Provision, update, and route projects into assignments, map collection, reviews, and exports.',
-                        ),
+                        const SectionHeader(title: 'Projects'),
                         const SizedBox(height: AppSpacing.sm),
                         action,
                       ],
                     );
                   }
-                  return SectionHeader(
-                    title: 'Projects',
-                    subtitle:
-                        'Provision, update, and route projects into assignments, map collection, reviews, and exports.',
-                    trailing: action,
-                  );
+                  return SectionHeader(title: 'Projects', trailing: action);
                 },
               ),
               const SizedBox(height: AppSpacing.sm),
@@ -383,11 +374,8 @@ class _ProjectsManagementScreenState
                                 style: Theme.of(context).textTheme.titleLarge,
                               ),
                               const SizedBox(height: AppSpacing.xs),
-                              Text(
-                                project.description.isEmpty
-                                    ? 'No description provided.'
-                                    : project.description,
-                              ),
+                              if (project.description.isNotEmpty)
+                                Text(project.description),
                             ],
                           );
 

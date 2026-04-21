@@ -90,11 +90,7 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const SectionHeader(
-                          title: 'Categories',
-                          subtitle:
-                              'Define the ministry project categories used for project provisioning.',
-                        ),
+                        const SectionHeader(title: 'Categories'),
                         const SizedBox(height: AppSpacing.sm),
                         createAction,
                       ],
@@ -102,8 +98,6 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                   }
                   return SectionHeader(
                     title: 'Categories',
-                    subtitle:
-                        'Define the ministry project categories used for project provisioning.',
                     trailing: createAction,
                   );
                 },
@@ -151,12 +145,9 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                                 softWrap: true,
                               ),
                               const SizedBox(height: AppSpacing.xs),
-                              Text(
-                                category.description?.trim().isNotEmpty == true
-                                    ? category.description!
-                                    : 'No description provided.',
-                                softWrap: true,
-                              ),
+                              if (category.description?.trim().isNotEmpty ==
+                                  true)
+                                Text(category.description!, softWrap: true),
                             ],
                           );
 

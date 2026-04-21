@@ -1247,9 +1247,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     title: widget.lockProjectSelection
                         ? project.name
                         : 'Project Map',
-                    subtitle: widget.lockProjectSelection
-                        ? 'Field workspace for collection, review, and map validation.'
-                        : 'Lebanon field map with project-specific features and review context.',
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   Expanded(
@@ -1265,9 +1262,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   title: widget.lockProjectSelection
                       ? project.name
                       : 'Project Map',
-                  subtitle: widget.lockProjectSelection
-                      ? 'Field workspace for collection, review, and map validation.'
-                      : 'Lebanon field map with project-specific features and review context.',
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 buildControls(),

@@ -31,11 +31,7 @@ class AdminDashboardScreen extends ConsumerWidget {
       data: (summary) {
         return ListView(
           children: [
-            const SectionHeader(
-              title: 'Admin Panel',
-              subtitle:
-                  'Operational oversight across users, contributor access, and project delivery.',
-            ),
+            const SectionHeader(title: 'Admin Panel'),
             const SizedBox(height: AppSpacing.md),
             Wrap(
               spacing: AppSpacing.sm,

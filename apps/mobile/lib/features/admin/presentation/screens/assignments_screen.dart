@@ -86,11 +86,7 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
 
           return ListView(
             children: [
-              const SectionHeader(
-                title: 'Assignments',
-                subtitle:
-                    'Open any project to manage assigned contributors, available approved contributors, and project-specific access requests.',
-              ),
+              const SectionHeader(title: 'Assignments'),
               const SizedBox(height: AppSpacing.sm),
               AppCard(
                 child: Column(
@@ -212,12 +208,7 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
                                       softWrap: true,
                                     ),
                                     const SizedBox(height: AppSpacing.xs),
-                                    Text(
-                                      project.description.isEmpty
-                                          ? 'No description provided.'
-                                          : project.description,
-                                      softWrap: true,
-                                    ),
+                                    Text(project.description, softWrap: true),
                                   ],
                                 ),
                               ),

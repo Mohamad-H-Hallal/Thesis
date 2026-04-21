@@ -17,11 +17,7 @@ import '../../domain/review_item.dart';
 enum _ReviewFilter { pending, rejected }
 
 class ReviewQueueScreen extends ConsumerStatefulWidget {
-  const ReviewQueueScreen({
-    this.projectId,
-    this.projectName,
-    super.key,
-  });
+  const ReviewQueueScreen({this.projectId, this.projectName, super.key});
 
   final String? projectId;
   final String? projectName;
@@ -46,11 +42,11 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
     final hasFixedProject = fixedProjectId != null && fixedProjectId.isNotEmpty;
     final currentAsync = _filter == _ReviewFilter.pending
         ? hasFixedProject
-            ? ref.watch(projectReviewQueueProvider(fixedProjectId))
-            : ref.watch(reviewQueueProvider)
+              ? ref.watch(projectReviewQueueProvider(fixedProjectId))
+              : ref.watch(reviewQueueProvider)
         : hasFixedProject
-            ? ref.watch(projectRejectedReviewQueueProvider(fixedProjectId))
-            : ref.watch(rejectedReviewQueueProvider);
+        ? ref.watch(projectRejectedReviewQueueProvider(fixedProjectId))
+        : ref.watch(rejectedReviewQueueProvider);
 
     return currentAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -67,7 +63,9 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
             if (_filter == _ReviewFilter.pending) {
               ref.invalidate(projectReviewQueueProvider(fixedProjectId));
             } else {
-              ref.invalidate(projectRejectedReviewQueueProvider(fixedProjectId));
+              ref.invalidate(
+                projectRejectedReviewQueueProvider(fixedProjectId),
+              );
             }
             return;
           }
@@ -97,11 +95,11 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
               title: hasFixedProject ? 'Project reviews' : 'Reviews',
               subtitle: hasFixedProject
                   ? _filter == _ReviewFilter.pending
-                      ? '${items.length} feature(s) awaiting review for ${widget.projectName ?? 'this project'}'
-                      : '${items.length} rejected feature(s) for ${widget.projectName ?? 'this project'}'
+                        ? '${items.length} feature(s) awaiting review for ${widget.projectName ?? 'this project'}'
+                        : '${items.length} rejected feature(s) for ${widget.projectName ?? 'this project'}'
                   : _filter == _ReviewFilter.pending
-                      ? '${items.length} feature(s) awaiting admin review'
-                      : '${items.length} rejected feature(s) available for re-review',
+                  ? '${items.length} feature(s) awaiting admin review'
+                  : '${items.length} rejected feature(s) available for re-review',
             ),
             const SizedBox(height: AppSpacing.sm),
             AppCard(
@@ -149,11 +147,11 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
                     : 'No rejected reviews',
                 message: hasFixedProject
                     ? _filter == _ReviewFilter.pending
-                        ? 'Submitted features for ${widget.projectName ?? 'this project'} will appear here when they need review.'
-                        : 'Rejected items for ${widget.projectName ?? 'this project'} remain here for re-review.'
+                          ? 'Submitted features for ${widget.projectName ?? 'this project'} will appear here when they need review.'
+                          : 'Rejected items for ${widget.projectName ?? 'this project'} remain here for re-review.'
                     : _filter == _ReviewFilter.pending
-                        ? 'Submitted features awaiting moderation will appear here.'
-                        : 'Rejected items remain here so admins can reopen them when needed.',
+                    ? 'Submitted features awaiting moderation will appear here.'
+                    : 'Rejected items remain here so admins can reopen them when needed.',
               )
             else
               ...filtered.map(
@@ -453,10 +451,7 @@ class _ApprovedReviewList extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView(
       children: [
-        SectionHeader(
-          title: 'Approved reviews',
-          subtitle: 'Approved reviews for $projectName only.',
-        ),
+        const SectionHeader(title: 'Approved reviews'),
         const SizedBox(height: AppSpacing.sm),
         if (items.isEmpty)
           AppEmptyState(

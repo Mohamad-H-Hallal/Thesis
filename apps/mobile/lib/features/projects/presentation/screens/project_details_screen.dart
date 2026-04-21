@@ -284,10 +284,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
             bottom: MediaQuery.paddingOf(context).bottom + AppSpacing.xl,
           ),
           children: [
-            const SectionHeader(
-              title: 'Project Details',
-              subtitle: 'Field summary, status, and map access',
-            ),
+            const SectionHeader(title: 'Project Details'),
             const SizedBox(height: AppSpacing.md),
             AnimatedReveal(
               child: AppCard(
@@ -340,12 +337,6 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                           ),
                         if (!isUserRole)
                           Chip(label: Text(project.visibilitySummaryLabel)),
-                        if (!isUserRole)
-                          Chip(
-                            label: Text(
-                              'Pending reviews: ${project.pendingReviews}',
-                            ),
-                          ),
                         Chip(
                           label: Text(
                             project.requiresPhotos
@@ -373,11 +364,6 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                             ? null
                             : (value) => _toggleViewerVisibility(value),
                         title: const Text('Visible to viewers'),
-                        subtitle: Text(
-                          project.visibleToViewers
-                              ? 'Shows in the viewer project list.'
-                              : 'Hidden from viewers.',
-                        ),
                       ),
                       const Divider(height: 1),
                       SwitchListTile(
@@ -387,56 +373,15 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                             ? null
                             : (value) => _toggleContributorVisibility(value),
                         title: const Text('Visible to contributors'),
-                        subtitle: Text(
-                          project.visibleToContributors
-                              ? 'Shows in the contributor project list.'
-                              : 'Only assigned contributors can reach this project.',
-                        ),
                       ),
                     ],
                   ),
                 ),
               ),
             ],
-            const SizedBox(height: AppSpacing.sm),
-            AnimatedReveal(
-              delay: const Duration(milliseconds: 80),
-              child: AppCard(
-                child: Wrap(
-                  spacing: AppSpacing.md,
-                  runSpacing: AppSpacing.sm,
-                  children: [
-                    _MetaTile(
-                      label: 'Assigned collectors',
-                      value: '${project.assignedCollectors}',
-                      icon: Icons.groups_outlined,
-                    ),
-                    _MetaTile(
-                      label: 'Approved features',
-                      value: '${project.approvedFeatures}',
-                      icon: Icons.check_circle_outline,
-                    ),
-                    if (!isUserRole)
-                      _MetaTile(
-                        label: 'Queue',
-                        value: '${project.pendingReviews}',
-                        icon: Icons.pending_actions_outlined,
-                      ),
-                    if (role == UserRole.viewer ||
-                        (role == UserRole.contributor &&
-                            !hasContributorAssignment))
-                      const _MetaTile(
-                        label: 'Access',
-                        value: 'Read only',
-                        icon: Icons.visibility_outlined,
-                      ),
-                  ],
-                ),
-              ),
-            ),
             const SizedBox(height: AppSpacing.md),
             AnimatedReveal(
-              delay: const Duration(milliseconds: 130),
+              delay: const Duration(milliseconds: 110),
               child: Padding(
                 padding: const EdgeInsets.only(top: AppSpacing.xs),
                 child: Wrap(
@@ -495,16 +440,12 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
             ),
             const SizedBox(height: AppSpacing.lg),
             AnimatedReveal(
-              delay: const Duration(milliseconds: 150),
-              child: const SectionHeader(
-                title: 'Map Preview',
-                subtitle:
-                    'Check the Lebanon workspace before opening the full project map.',
-              ),
+              delay: const Duration(milliseconds: 130),
+              child: const SectionHeader(title: 'Map Preview'),
             ),
             const SizedBox(height: AppSpacing.sm),
             AnimatedReveal(
-              delay: const Duration(milliseconds: 160),
+              delay: const Duration(milliseconds: 140),
               child: ProjectQuickMapCard(
                 projectId: project.id,
                 onOpenFullscreen: () =>
@@ -513,22 +454,17 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
             ),
             if (role == UserRole.admin)
               AnimatedReveal(
-                delay: const Duration(milliseconds: 170),
+                delay: const Duration(milliseconds: 150),
                 child: Padding(
                   padding: const EdgeInsets.only(top: AppSpacing.sm),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const SectionHeader(
-                        title: 'Admin tools',
-                        subtitle:
-                            'Manage this project and its workflow from one place.',
-                      ),
+                      const SectionHeader(title: 'Admin tools'),
                       const SizedBox(height: AppSpacing.sm),
                       _ProjectActionGroupCard(
                         icon: Icons.settings_suggest_outlined,
                         title: 'Project setup',
-                        subtitle: 'Update details and assignments.',
                         actions: [
                           FilledButton.icon(
                             onPressed: () =>
@@ -549,8 +485,6 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                       _ProjectActionGroupCard(
                         icon: Icons.rule_folder_outlined,
                         title: 'Review workflows',
-                        subtitle:
-                            'Moderate submissions and prepare exports without leaving this project.',
                         actions: [
                           FilledButton.icon(
                             onPressed: () => context.push(
@@ -584,7 +518,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
               ),
             if (role == UserRole.contributor && !hasContributorAssignment)
               AnimatedReveal(
-                delay: Duration(milliseconds: 200),
+                delay: const Duration(milliseconds: 180),
                 child: AppCard(
                   child: ListTile(
                     leading: Icon(
@@ -608,40 +542,38 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                     subtitle: Text(
                       contributorRequestStatus ==
                               ProjectAssignmentStatus.rejected
-                          ? 'An admin rejected your previous request. The request stays visible in Requests until it is re-approved.'
+                          ? 'Your last request was rejected.'
                           : contributorRequestStatus ==
                                 ProjectAssignmentStatus.pending
-                          ? 'Your access request is waiting for admin approval.'
+                          ? 'Your request is waiting for approval.'
                           : project.status != 'active'
-                          ? 'This project is not accepting contributor access requests while it is ${project.status}.'
-                          : 'This public project is visible to you, but collection actions stay disabled until an admin approves your assignment.',
+                          ? 'Requests are unavailable while the project is ${project.status}.'
+                          : 'Collection stays locked until your assignment is approved.',
                     ),
                   ),
                 ),
               ),
             if (isPaused)
               const AnimatedReveal(
-                delay: Duration(milliseconds: 210),
+                delay: Duration(milliseconds: 190),
                 child: AppCard(
                   child: ListTile(
                     leading: Icon(Icons.pause_circle_outline),
                     title: Text('Project paused'),
                     subtitle: Text(
-                      'The map and project details remain viewable, but feature collection and submission are disabled until the project returns to active status.',
+                      'Collection is disabled until the project returns to active status.',
                     ),
                   ),
                 ),
               ),
             if (role == UserRole.viewer)
               const AnimatedReveal(
-                delay: Duration(milliseconds: 220),
+                delay: Duration(milliseconds: 200),
                 child: AppCard(
                   child: ListTile(
                     leading: Icon(Icons.info_outline),
                     title: Text('Viewer access'),
-                    subtitle: Text(
-                      'This project is visible in read-only mode. Editing and submission actions are disabled.',
-                    ),
+                    subtitle: Text('Read-only access.'),
                   ),
                 ),
               ),
@@ -662,56 +594,15 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
   }
 }
 
-class _MetaTile extends StatelessWidget {
-  const _MetaTile({
-    required this.label,
-    required this.value,
-    required this.icon,
-  });
-
-  final String label;
-  final String value;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      constraints: const BoxConstraints(minWidth: 180),
-      padding: const EdgeInsets.all(AppSpacing.sm),
-      decoration: BoxDecoration(
-        borderRadius: AppRadii.md,
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 20),
-          const SizedBox(width: AppSpacing.xs),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: Theme.of(context).textTheme.bodySmall),
-                Text(value, style: Theme.of(context).textTheme.titleMedium),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _ProjectActionGroupCard extends StatelessWidget {
   const _ProjectActionGroupCard({
     required this.icon,
     required this.title,
-    required this.subtitle,
     required this.actions,
   });
 
   final IconData icon;
   final String title;
-  final String subtitle;
   final List<Widget> actions;
 
   @override
@@ -745,13 +636,6 @@ class _ProjectActionGroupCard extends StatelessWidget {
                 ),
               ),
             ],
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          Text(
-            subtitle,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: scheme.onSurfaceVariant,
-            ),
           ),
           const SizedBox(height: AppSpacing.md),
           LayoutBuilder(

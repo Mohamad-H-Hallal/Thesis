@@ -169,11 +169,7 @@ class _ContributorRequestsScreenState
 
     return ListView(
       children: [
-        const SectionHeader(
-          title: 'Requests',
-          subtitle:
-              'Review contributor account approvals and contributor project-access requests.',
-        ),
+        const SectionHeader(title: 'Requests'),
         const SizedBox(height: AppSpacing.sm),
         AppCard(
           child: Column(

@@ -51,9 +51,6 @@ class DraftsScreen extends ConsumerWidget {
           children: [
             SectionHeader(
               title: showSubmittedOnly ? 'My Submissions' : 'My Drafts',
-              subtitle: showSubmittedOnly
-                  ? 'Track submitted features through admin review decisions.'
-                  : 'Continue editing drafts and submit them for review.',
             ),
             const SizedBox(height: AppSpacing.md),
             ...List<Widget>.generate(visible.length, (index) {

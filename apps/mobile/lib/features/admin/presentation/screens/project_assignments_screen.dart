@@ -14,6 +14,7 @@ import '../../../auth/domain/auth_models.dart';
 import '../../domain/admin_models.dart';
 
 enum _AssignmentSection { assigned, available, requests }
+
 enum _ProjectRequestTab { pending, rejected }
 
 class ProjectAssignmentsScreen extends ConsumerStatefulWidget {
@@ -341,12 +342,7 @@ class _ProjectAssignmentsScreenState
 
               return ListView(
                 children: [
-                  SectionHeader(
-                    title: 'Project Assignments',
-                    subtitle: isViewOnlyProject
-                        ? 'Assignments are view-only for ${project.status} projects.'
-                        : 'Manage contributor assignments and project-specific access requests for ${project.name}.',
-                  ),
+                  const SectionHeader(title: 'Project Assignments'),
                   const SizedBox(height: AppSpacing.sm),
                   AppCard(
                     child: Column(
@@ -393,7 +389,7 @@ class _ProjectAssignmentsScreenState
                         const SizedBox(height: AppSpacing.sm),
                         if (isViewOnlyProject)
                           Text(
-                            'Completed and archived projects keep assignment history visible, but assignment changes are disabled.',
+                            'Assignment changes are disabled for completed and archived projects.',
                             style: Theme.of(context).textTheme.bodySmall,
                           )
                         else

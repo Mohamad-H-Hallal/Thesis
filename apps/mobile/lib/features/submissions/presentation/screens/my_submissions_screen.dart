@@ -10,10 +10,7 @@ class MySubmissionsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView(
       children: const [
-        SectionHeader(
-          title: 'My Submissions',
-          subtitle: 'Track admin feedback and approval outcomes',
-        ),
+        SectionHeader(title: 'My Submissions'),
         SizedBox(height: 24),
         AppEmptyState(
           icon: Icons.upload_file_outlined,
