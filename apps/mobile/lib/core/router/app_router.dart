@@ -25,6 +25,9 @@ import '../widgets/app_scaffold.dart';
 import 'route_paths.dart';
 
 GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
+  // On web, project details/map and other pushed routes need real shareable
+  // URLs so browser history and hard refresh work as expected.
+  GoRouter.optionURLReflectsImperativeAPIs = true;
   return GoRouter(
     initialLocation: AppRoutes.splash,
     refreshListenable: refreshListenable,
@@ -40,14 +43,21 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
       final isSplash = path == AppRoutes.splash;
 
       if (auth.status == AuthStatus.checking) {
-        return isSplash ? null : AppRoutes.splash;
+        return isSplash ? null : _splashRedirectFor(state.uri);
       }
 
       if (!auth.isAuthenticated || user == null) {
         if (isAuthRoute) {
           return null;
         }
-        return AppRoutes.login;
+        return _loginRedirectFor(state.uri);
+      }
+
+      if (isSplash || isAuthRoute || path == AppRoutes.app) {
+        return _postAuthRedirectTarget(
+          currentUri: state.uri,
+          user: user,
+        );
       }
 
       final allowedPaths = _allowedPathsForUser(user);
@@ -55,10 +65,6 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
           path == AppRoutes.app ||
           allowedPaths.any((allowedPath) => path.startsWith(allowedPath));
       if (!isAllowed) {
-        return _defaultHomeForUser(user);
-      }
-
-      if (isSplash || isAuthRoute || path == AppRoutes.app) {
         return _defaultHomeForUser(user);
       }
 
@@ -348,6 +354,76 @@ String _defaultHomeForUser(AppUser user) {
     return AppRoutes.dashboard;
   }
   return AppRoutes.projects;
+}
+
+String _splashRedirectFor(Uri currentUri) {
+  final target = _requestedTargetFromUri(currentUri);
+  if (target == null) {
+    return AppRoutes.splash;
+  }
+  final splashUri = Uri(
+    path: AppRoutes.splash,
+    queryParameters: <String, String>{'from': target},
+  );
+  return splashUri.toString();
+}
+
+String _loginRedirectFor(Uri currentUri) {
+  final target = _requestedTargetFromUri(currentUri);
+  if (target == null) {
+    return AppRoutes.login;
+  }
+  final loginUri = Uri(
+    path: AppRoutes.login,
+    queryParameters: <String, String>{'from': target},
+  );
+  return loginUri.toString();
+}
+
+String _postAuthRedirectTarget({
+  required Uri currentUri,
+  required AppUser user,
+}) {
+  final requested = _requestedTargetFromUri(currentUri);
+  if (requested == null || requested.isEmpty) {
+    return _defaultHomeForUser(user);
+  }
+
+  final requestedUri = Uri.tryParse(requested);
+  if (requestedUri == null) {
+    return _defaultHomeForUser(user);
+  }
+
+  final requestedPath = requestedUri.path;
+  final allowedPaths = _allowedPathsForUser(user);
+  final isAllowed =
+      requestedPath == AppRoutes.app ||
+      allowedPaths.any((allowedPath) => requestedPath.startsWith(allowedPath));
+  if (!isAllowed) {
+    return _defaultHomeForUser(user);
+  }
+
+  return requestedUri.toString();
+}
+
+String? _requestedTargetFromUri(Uri currentUri) {
+  final redirectedTarget = currentUri.queryParameters['from']?.trim();
+  if (redirectedTarget != null && redirectedTarget.isNotEmpty) {
+    return redirectedTarget;
+  }
+
+  final currentPath = currentUri.path;
+  if (currentPath == AppRoutes.splash ||
+      currentPath == AppRoutes.app ||
+      currentPath == AppRoutes.login ||
+      currentPath == AppRoutes.signup ||
+      currentPath == AppRoutes.forgotPassword ||
+      currentPath == AppRoutes.resetPassword) {
+    return null;
+  }
+
+  final currentTarget = currentUri.toString();
+  return currentTarget.isEmpty ? null : currentTarget;
 }
 
 Set<String> _allowedPathsForUser(AppUser user) {
