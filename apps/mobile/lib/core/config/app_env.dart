@@ -51,7 +51,10 @@ class AppEnv {
   }
 
   static String get apiVersionPrefix {
-    final value = String.fromEnvironment('API_VERSION_PREFIX', defaultValue: '/api/v1');
+    const value = String.fromEnvironment(
+      'API_VERSION_PREFIX',
+      defaultValue: '/api/v1',
+    );
     if (value.isEmpty) {
       return '/api/v1';
     }

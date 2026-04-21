@@ -18,6 +18,11 @@ flutter pub get
 flutter run -d chrome --web-port 5050 --dart-define=APP_FLAVOR=dev --dart-define=API_BASE_URL=http://localhost:3000
 ```
 
+Browser notes:
+- Chrome and Edge use the same Flutter web build output.
+- In local non-production API mode, localhost browser origins on any port are now accepted by CORS.
+- If you omit `API_BASE_URL` in `dev`, web defaults to `http://localhost:3000`.
+
 Optional UI-only mock mode (dev only):
 ```bash
 flutter run -d chrome --dart-define=APP_FLAVOR=dev --dart-define=USE_MOCK_AUTH=true --dart-define=USE_MOCK_DATA=true

@@ -31,6 +31,23 @@ const {
   userRouter,
 } = require('./routes/index');
 
+const isLocalDevelopmentOrigin = (origin: string): boolean => {
+  try {
+    const parsed = new URL(origin);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return false;
+    }
+    return (
+      parsed.hostname === 'localhost' ||
+      parsed.hostname === '127.0.0.1' ||
+      parsed.hostname === '[::1]' ||
+      parsed.hostname === '::1'
+    );
+  } catch (_) {
+    return false;
+  }
+};
+
 const buildApp = (env) => {
   const app = express();
   const normalizedApiPrefix = String(env.API_VERSION_PREFIX || '/api/v1').replace(/\/+$/, '');
@@ -55,6 +72,11 @@ const buildApp = (env) => {
 
   const corsOriginHandler = (origin, callback) => {
     if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    if (env.NODE_ENV !== 'production' && isLocalDevelopmentOrigin(origin)) {
       callback(null, true);
       return;
     }

@@ -40,6 +40,27 @@ describe('API smoke tests', () => {
         expect(response.status).toBe(200);
         expect(response.text).toContain('openapi: 3.0.3');
     });
+    test('allows localhost browser origins on arbitrary ports outside production', async () => {
+        const response = await request(app)
+            .get('/health')
+            .set('Origin', 'http://localhost:51680');
+        expect(response.status).toBe(200);
+        expect(response.headers['access-control-allow-origin']).toBe('http://localhost:51680');
+    });
+    test('blocks non-allowed external origins when CORS is strict', async () => {
+        const strictApp = buildApp({
+            ...testEnv,
+            NODE_ENV: 'development',
+            CORS_ORIGIN: 'http://localhost:3000',
+            CORS_STRICT: true,
+        });
+        const response = await request(strictApp)
+            .get('/health')
+            .set('Origin', 'https://malicious.example.com');
+        expect(response.status).toBe(500);
+        expect(response.body.success).toBe(false);
+        expect(response.body.message).toContain('Origin is not allowed by CORS');
+    });
     test(`POST ${API_PREFIX}/auth/login validates required fields`, async () => {
         const response = await request(app).post(`${API_PREFIX}/auth/login`).send({});
         expect(response.status).toBe(400);
