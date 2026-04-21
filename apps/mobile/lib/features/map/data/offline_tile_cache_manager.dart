@@ -52,9 +52,7 @@ class OfflineTileCacheManager {
           responseType: ResponseType.bytes,
           connectTimeout: const Duration(seconds: 12),
           receiveTimeout: const Duration(seconds: 18),
-          headers: const <String, String>{
-            'User-Agent': 'lb.gov.gis_collector',
-          },
+          headers: const <String, String>{'User-Agent': 'lb.gov.gis_collector'},
         ),
       );
 
@@ -256,7 +254,11 @@ class OfflineTileCacheManager {
     );
 
     if (!await dir.exists()) {
-      final updated = package.copyWith(tileCount: 0, sizeBytes: 0);
+      final updated = package.copyWith(
+        tileCount: 0,
+        sizeBytes: 0,
+        downloadedAt: null,
+      );
       await _localStore.upsertOfflineMapPackage(updated);
       return updated;
     }
@@ -274,10 +276,119 @@ class OfflineTileCacheManager {
     final updated = package.copyWith(
       tileCount: tileCount,
       sizeBytes: totalSize,
-      downloadedAt: tileCount == 0 ? package.downloadedAt : (package.downloadedAt ?? DateTime.now()),
+      downloadedAt: tileCount == 0
+          ? null
+          : (package.downloadedAt ?? DateTime.now()),
     );
     await _localStore.upsertOfflineMapPackage(updated);
     return updated;
+  }
+
+  Future<OfflineMapPackage> clearCachedTiles({
+    required OfflineMapPackage package,
+    required LebanonBasemapStyle basemapStyle,
+  }) async {
+    await initialize();
+    final dir = _styleRootDirectory(
+      package: package,
+      basemapStyle: basemapStyle,
+    );
+    if (await dir.exists()) {
+      await dir.delete(recursive: true);
+    }
+    return refreshStats(package, basemapStyle: basemapStyle);
+  }
+
+  Future<OfflineTileDownloadSummary> refreshCachedTiles({
+    required OfflineMapPackage package,
+    required LebanonBasemapStyle basemapStyle,
+    void Function(OfflineTileDownloadProgress progress)? onProgress,
+  }) async {
+    await initialize();
+    final dir = _styleRootDirectory(
+      package: package,
+      basemapStyle: basemapStyle,
+    );
+    if (!await dir.exists()) {
+      final updated = await refreshStats(package, basemapStyle: basemapStyle);
+      await _localStore.upsertOfflineMapPackage(updated);
+      return const OfflineTileDownloadSummary(
+        requestedTiles: 0,
+        downloadedTiles: 0,
+        skippedTiles: 0,
+        failedTiles: 0,
+        sizeBytes: 0,
+      );
+    }
+
+    final tiles = <({int z, int x, int y, File file})>[];
+    await for (final entity in dir.list(recursive: true, followLinks: false)) {
+      if (entity is! File || !entity.path.endsWith('.tile')) {
+        continue;
+      }
+      final relativePath = p.relative(entity.path, from: dir.path);
+      final parts = p.split(relativePath);
+      if (parts.length != 3) {
+        continue;
+      }
+      final z = int.tryParse(parts[0]);
+      final x = int.tryParse(parts[1]);
+      final y = int.tryParse(p.basenameWithoutExtension(parts[2]));
+      if (z == null || x == null || y == null) {
+        continue;
+      }
+      tiles.add((z: z, x: x, y: y, file: entity));
+    }
+
+    var completed = 0;
+    var downloaded = 0;
+    var failed = 0;
+    var sizeBytes = 0;
+    final totalRequested = tiles.length;
+
+    for (final tile in tiles) {
+      try {
+        final created = await _downloadTile(
+          basemapStyle: basemapStyle,
+          z: tile.z,
+          x: tile.x,
+          y: tile.y,
+          destination: tile.file,
+        );
+        if (created != null) {
+          downloaded += 1;
+          sizeBytes += created;
+        } else {
+          failed += 1;
+        }
+      } catch (_) {
+        failed += 1;
+      }
+      completed += 1;
+      onProgress?.call(
+        OfflineTileDownloadProgress(
+          requestedTiles: totalRequested,
+          completedTiles: completed,
+          downloadedTiles: downloaded,
+          skippedTiles: 0,
+          failedTiles: failed,
+        ),
+      );
+    }
+
+    final updatedPackage = await refreshStats(
+      package.copyWith(downloadedAt: DateTime.now()),
+      basemapStyle: basemapStyle,
+    );
+    await _localStore.upsertOfflineMapPackage(updatedPackage);
+
+    return OfflineTileDownloadSummary(
+      requestedTiles: totalRequested,
+      downloadedTiles: downloaded,
+      skippedTiles: 0,
+      failedTiles: failed,
+      sizeBytes: sizeBytes,
+    );
   }
 
   Future<int?> _downloadTile({
@@ -316,6 +427,15 @@ class OfflineTileCacheManager {
       '$z',
       '$x',
       '$y.tile',
+    );
+  }
+
+  Directory _styleRootDirectory({
+    required OfflineMapPackage package,
+    required LebanonBasemapStyle basemapStyle,
+  }) {
+    return Directory(
+      p.join(_rootDir!.path, package.version, basemapStyle.name),
     );
   }
 

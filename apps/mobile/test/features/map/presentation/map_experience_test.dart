@@ -596,11 +596,15 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.textContaining('Saved areas remain visible later'),
+        find.textContaining(
+          'Refresh it while online to replace older saved tiles',
+        ),
         findsOneWidget,
       );
       expect(find.text('Save Lebanon overview'), findsOneWidget);
       expect(find.text('Save this view'), findsOneWidget);
+      expect(find.text('Refresh saved imagery'), findsOneWidget);
+      expect(find.text('Delete saved imagery'), findsOneWidget);
       expect(
         find.textContaining('only the map area currently visible on screen'),
         findsOneWidget,
