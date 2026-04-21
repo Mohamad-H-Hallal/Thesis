@@ -278,7 +278,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                             const SizedBox(height: AppSpacing.sm),
                             AppTextField(
                               label: 'Phone number',
-                              hint: '70 123 456',
+                              hint: 'Phone number',
                               controller: _phoneController,
                               keyboardType: TextInputType.phone,
                               textInputAction: TextInputAction.next,
@@ -309,7 +309,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                             const SizedBox(height: AppSpacing.sm),
                             AppTextField(
                               label: 'Email address',
-                              hint: 'name@gov.lb',
+                              hint: 'name@example.com',
                               controller: _emailController,
                               keyboardType: TextInputType.emailAddress,
                               textInputAction: TextInputAction.next,

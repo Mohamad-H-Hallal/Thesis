@@ -99,7 +99,7 @@ class _AdminCreationScreenState extends ConsumerState<AdminCreationScreen> {
                     children: [
                       AppTextField(
                         label: 'Full name',
-                        hint: 'Ministry administrator',
+                        hint: 'Full name',
                         controller: _fullNameController,
                         validator: (value) => AuthFormValidators.requiredField(
                           value,
@@ -110,7 +110,7 @@ class _AdminCreationScreenState extends ConsumerState<AdminCreationScreen> {
                       const SizedBox(height: AppSpacing.sm),
                       AppTextField(
                         label: 'Phone number',
-                        hint: '70 123 456',
+                        hint: 'Phone number',
                         controller: _phoneController,
                         keyboardType: TextInputType.phone,
                         inputFormatters: [_phoneFormatter],
@@ -119,7 +119,7 @@ class _AdminCreationScreenState extends ConsumerState<AdminCreationScreen> {
                       const SizedBox(height: AppSpacing.sm),
                       AppTextField(
                         label: 'Email address',
-                        hint: 'admin@gov.lb',
+                        hint: 'name@example.com',
                         controller: _emailController,
                         validator: AuthFormValidators.email,
                       ),

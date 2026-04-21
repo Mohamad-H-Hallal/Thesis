@@ -488,7 +488,7 @@ class _EditPhoneDialogState extends ConsumerState<_EditPhoneDialog> {
                 ],
                 AppTextField(
                   label: 'Phone number',
-                  hint: '70 123 456',
+                  hint: 'Phone number',
                   controller: _phoneController,
                   keyboardType: TextInputType.phone,
                   inputFormatters: [_phoneFormatter],
@@ -815,7 +815,7 @@ class _SupportSettingsDialogState
                 const SizedBox(height: AppSpacing.sm),
                 AppTextField(
                   label: 'Support phone',
-                  hint: '70 123 456',
+                  hint: 'Phone number',
                   controller: _phoneController,
                   keyboardType: TextInputType.phone,
                   inputFormatters: [_phoneFormatter],

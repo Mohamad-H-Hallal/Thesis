@@ -10,7 +10,7 @@ import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/section_header.dart';
 import '../../domain/app_notification.dart';
 
-enum _NotificationFilter { all, unread }
+enum _NotificationFilter { all, read, unread }
 
 class NotificationsScreen extends ConsumerStatefulWidget {
   const NotificationsScreen({super.key});
@@ -70,11 +70,15 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
       ),
       data: (notifications) {
         final unreadCount = notifications.items.where((n) => !n.isRead).length;
-        final filtered = _filter == _NotificationFilter.unread
-            ? notifications.items
-                  .where((item) => !item.isRead)
-                  .toList(growable: false)
-            : notifications.items;
+        final filtered = switch (_filter) {
+          _NotificationFilter.read => notifications.items
+              .where((item) => item.isRead)
+              .toList(growable: false),
+          _NotificationFilter.unread => notifications.items
+              .where((item) => !item.isRead)
+              .toList(growable: false),
+          _NotificationFilter.all => notifications.items,
+        };
 
         return ListView(
           controller: _scrollController,
@@ -98,6 +102,12 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                         selected: _filter == _NotificationFilter.all,
                         onSelected: (_) =>
                             setState(() => _filter = _NotificationFilter.all),
+                      ),
+                      ChoiceChip(
+                        label: const Text('Read'),
+                        selected: _filter == _NotificationFilter.read,
+                        onSelected: (_) =>
+                            setState(() => _filter = _NotificationFilter.read),
                       ),
                       ChoiceChip(
                         label: const Text('Unread'),
@@ -149,12 +159,18 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
               AppEmptyState(
                 icon: _filter == _NotificationFilter.unread
                     ? Icons.mark_email_read_outlined
+                    : _filter == _NotificationFilter.read
+                    ? Icons.drafts_outlined
                     : Icons.notifications_off_outlined,
                 title: _filter == _NotificationFilter.unread
                     ? 'No unread notifications'
+                    : _filter == _NotificationFilter.read
+                    ? 'No read notifications'
                     : 'No notifications',
                 message: _filter == _NotificationFilter.unread
                     ? 'You have no unread updates right now.'
+                    : _filter == _NotificationFilter.read
+                    ? 'You have no read notifications right now.'
                     : 'Contributor requests, project requests, review outcomes, and export updates will appear here.',
               )
             else

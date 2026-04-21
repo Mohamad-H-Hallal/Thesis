@@ -396,7 +396,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                               const SizedBox(height: AppSpacing.sm),
                               AppTextField(
                                 label: 'Project name',
-                                hint: 'North Lebanon fruit tree census',
+                                hint: 'Project name',
                                 controller: _nameController,
                                 validator: (value) =>
                                     AuthFormValidators.requiredField(
@@ -429,7 +429,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                               const SizedBox(height: AppSpacing.sm),
                               AppTextField(
                                 label: 'Description',
-                                hint: 'Short operational summary',
+                                hint: 'Brief description',
                                 controller: _descriptionController,
                                 minLines: 3,
                                 maxLines: 6,
@@ -437,7 +437,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                               const SizedBox(height: AppSpacing.sm),
                               AppTextField(
                                 label: 'Objectives',
-                                hint: 'Survey goals and collection scope',
+                                hint: 'Project goals',
                                 controller: _objectivesController,
                                 minLines: 3,
                                 maxLines: 6,
@@ -588,14 +588,14 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                               const SizedBox(height: AppSpacing.sm),
                               AppTextField(
                                 label: 'Field label',
-                                hint: 'Tree type',
+                                hint: 'Feature type',
                                 controller: _featureTypeField.labelController,
                                 onChanged: (_) => setState(() {}),
                               ),
                               const SizedBox(height: AppSpacing.sm),
                               AppTextField(
                                 label: 'Choices',
-                                hint: 'Olive\nLemon\nOrange',
+                                hint: 'Choice 1\nChoice 2\nChoice 3',
                                 controller: _featureTypeField.optionsController,
                                 minLines: 3,
                                 maxLines: 6,
@@ -801,7 +801,7 @@ class _FieldEditorCard extends StatelessWidget {
           ),
           AppTextField(
             label: 'Label',
-            hint: 'Tree species',
+            hint: 'Field label',
             controller: field.labelController,
             onChanged: (_) => onChanged(),
           ),
@@ -829,7 +829,7 @@ class _FieldEditorCard extends StatelessWidget {
           const SizedBox(height: AppSpacing.sm),
           AppTextField(
             label: 'Helper text',
-            hint: 'Optional guidance for contributors',
+            hint: 'Optional guidance',
             controller: field.hintController,
             minLines: 2,
             maxLines: 4,
@@ -878,7 +878,7 @@ class _FieldEditorCard extends StatelessWidget {
             const SizedBox(height: AppSpacing.sm),
             AppTextField(
               label: 'Choices',
-              hint: 'Olive\nLemon\nOrange',
+              hint: 'Choice 1\nChoice 2\nChoice 3',
               controller: field.optionsController,
               minLines: 3,
               maxLines: 6,

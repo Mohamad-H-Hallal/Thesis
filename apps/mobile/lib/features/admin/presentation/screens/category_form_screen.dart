@@ -235,7 +235,7 @@ class _CategoryFormScreenState extends ConsumerState<CategoryFormScreen> {
                           const SizedBox(height: AppSpacing.sm),
                           AppTextField(
                             label: 'Category name',
-                            hint: 'Fruit trees mapping',
+                            hint: 'Category name',
                             controller: _nameController,
                             validator: (value) =>
                                 AuthFormValidators.requiredField(
@@ -247,7 +247,7 @@ class _CategoryFormScreenState extends ConsumerState<CategoryFormScreen> {
                           const SizedBox(height: AppSpacing.sm),
                           AppTextField(
                             label: 'Description',
-                            hint: 'Used to group related field projects.',
+                            hint: 'Optional description',
                             controller: _descriptionController,
                             minLines: 3,
                             maxLines: 6,
