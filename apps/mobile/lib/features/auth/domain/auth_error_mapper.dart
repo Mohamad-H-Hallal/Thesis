@@ -1,5 +1,7 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
+import '../../../core/config/app_env.dart';
 import 'auth_failure.dart';
 
 AuthFailure mapAuthDioException(
@@ -12,15 +14,15 @@ AuthFailure mapAuthDioException(
   if (error.type == DioExceptionType.connectionTimeout ||
       error.type == DioExceptionType.receiveTimeout ||
       error.type == DioExceptionType.sendTimeout) {
-    return const AuthFailure(
-      'Sign-in timed out. Check your connection and try again.',
+    return AuthFailure(
+      'Sign-in timed out. Check your connection and try again.${_localAndroidDevHint()}',
       code: 'timeout',
     );
   }
 
   if (error.type == DioExceptionType.connectionError) {
-    return const AuthFailure(
-      'You are offline. New sign-in requires internet access. Reconnect and try again.',
+    return AuthFailure(
+      'You are offline. New sign-in requires internet access. Reconnect and try again.${_localAndroidDevHint()}',
       code: 'network_error',
     );
   }
@@ -116,6 +118,17 @@ AuthFailure mapAuthDioException(
         code: 'unknown_auth_error',
       );
   }
+}
+
+String _localAndroidDevHint() {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+    return '';
+  }
+  if (AppEnv.flavor != AppFlavor.dev ||
+      !AppEnv.apiBaseUrl.contains('10.0.2.2')) {
+    return '';
+  }
+  return ' If you are using a real Android device against the local API, 10.0.2.2 only works on the emulator. Use your computer\'s LAN IP in API_BASE_URL.';
 }
 
 String? _extractMessage(Object? data) {

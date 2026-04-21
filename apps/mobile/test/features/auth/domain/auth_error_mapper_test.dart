@@ -139,7 +139,7 @@ void main() {
     );
     expect(
       failure.message,
-      'Sign-in timed out. Check your connection and try again.',
+      'Sign-in timed out. Check your connection and try again. If you are using a real Android device against the local API, 10.0.2.2 only works on the emulator. Use your computer\'s LAN IP in API_BASE_URL.',
     );
   });
 
@@ -151,7 +151,7 @@ void main() {
 
     expect(
       failure.message,
-      'You are offline. New sign-in requires internet access. Reconnect and try again.',
+      'You are offline. New sign-in requires internet access. Reconnect and try again. If you are using a real Android device against the local API, 10.0.2.2 only works on the emulator. Use your computer\'s LAN IP in API_BASE_URL.',
     );
   });
 

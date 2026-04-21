@@ -23,8 +23,9 @@ class RealAuthRepository implements AuthRepository {
   static const _userIdKey = 'user_id';
   static const _phoneKey = 'user_phone';
   static const _superAdminKey = 'is_protected_super_admin';
-
   String get _authBasePath => '${AppEnv.apiVersionPrefix}/auth';
+  Options get _publicAuthRequestOptions =>
+      Options(headers: const <String, dynamic>{'Authorization': null});
 
   @override
   Future<AuthSession?> restoreSession() async {
@@ -100,14 +101,13 @@ class RealAuthRepository implements AuthRepository {
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '$_authBasePath/login',
         data: <String, dynamic>{'email': email, 'password': password},
+        options: _publicAuthRequestOptions,
       );
       return _sessionFromAuthResponse(
         response.data ?? const <String, dynamic>{},
         rememberMe: rememberMe,
       );
     } on DioException catch (error) {
-      _apiClient.setAccessToken(null);
-      await _clearStoredSession();
       throw mapAuthDioException(error, fallbackMessage: 'Login failed.');
     }
   }
@@ -122,14 +122,13 @@ class RealAuthRepository implements AuthRepository {
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '$_authBasePath/reactivate-login',
         data: <String, dynamic>{'email': email, 'password': password},
+        options: _publicAuthRequestOptions,
       );
       return _sessionFromAuthResponse(
         response.data ?? const <String, dynamic>{},
         rememberMe: rememberMe,
       );
     } on DioException catch (error) {
-      _apiClient.setAccessToken(null);
-      await _clearStoredSession();
       throw mapAuthDioException(
         error,
         fallbackMessage: 'Account reactivation failed.',
@@ -160,6 +159,7 @@ class RealAuthRepository implements AuthRepository {
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '$_authBasePath/register',
         data: payload,
+        options: _publicAuthRequestOptions,
       );
       final payloadMap = response.data ?? const <String, dynamic>{};
       final message = payloadMap['message'] as String?;
@@ -177,6 +177,7 @@ class RealAuthRepository implements AuthRepository {
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '$_authBasePath/forgot-password',
         data: <String, dynamic>{'email': email},
+        options: _publicAuthRequestOptions,
       );
       final payload = response.data ?? const <String, dynamic>{};
       final data = Map<String, dynamic>.from(
@@ -206,6 +207,7 @@ class RealAuthRepository implements AuthRepository {
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '$_authBasePath/verify-reset-otp',
         data: <String, dynamic>{'email': email, 'otp': otp},
+        options: _publicAuthRequestOptions,
       );
       final payload = response.data ?? const <String, dynamic>{};
       final data = Map<String, dynamic>.from(
@@ -248,6 +250,7 @@ class RealAuthRepository implements AuthRepository {
           'reset_token': resetToken,
           'new_password': newPassword,
         },
+        options: _publicAuthRequestOptions,
       );
     } on DioException catch (error) {
       throw mapAuthDioException(

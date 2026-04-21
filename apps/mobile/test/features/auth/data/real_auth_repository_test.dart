@@ -185,4 +185,43 @@ void main() {
       expect(session.user.id, 'contributor-1');
     },
   );
+
+  test('login transport failures do not clear a remembered session', () async {
+    final storage = _MemorySecureStorage();
+    await seedStoredSession(
+      storage,
+      accessToken: 'remembered-access',
+      refreshToken: 'remembered-refresh',
+    );
+
+    final dio = Dio();
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          expect(options.headers['Authorization'], isNull);
+          handler.reject(
+            DioException(
+              requestOptions: options,
+              type: DioExceptionType.connectionTimeout,
+            ),
+          );
+        },
+      ),
+    );
+
+    final repository = RealAuthRepository(storage, ApiClient(dio: dio));
+
+    await expectLater(
+      repository.login(
+        email: 'collector@example.com',
+        password: 'secret123',
+        rememberMe: true,
+      ),
+      throwsA(isA<Object>()),
+    );
+
+    expect(await storage.read(key: 'access_token'), 'remembered-access');
+    expect(await storage.read(key: 'refresh_token'), 'remembered-refresh');
+    expect(await storage.read(key: 'user_id'), 'contributor-1');
+  });
 }

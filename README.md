@@ -219,6 +219,14 @@ flutter run -d emulator-5554 --dart-define=APP_FLAVOR=dev --dart-define=API_BASE
 
 Android notes:
 - Use `10.0.2.2`, not `localhost`, for the local backend from the Android emulator.
+- For a real Android device on the same network, use your computer's LAN IP instead:
+  - `flutter run -d <device-id> --dart-define=APP_FLAVOR=dev --dart-define=API_BASE_URL=http://<your-computer-lan-ip>:3000`
+- `10.0.2.2` only works from the Android emulator.
+- If you are testing over USB and prefer localhost-style routing, you can also run:
+```powershell
+adb reverse tcp:3000 tcp:3000
+flutter run -d <device-id> --dart-define=APP_FLAVOR=dev --dart-define=API_BASE_URL=http://127.0.0.1:3000
+```
 - If `API_BASE_URL` is omitted in `dev`, Android now defaults to `http://10.0.2.2:3000`; web keeps `http://localhost:3000`.
 - If the emulator shows `offline`, restart ADB:
 ```powershell
