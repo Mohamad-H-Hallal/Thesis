@@ -62,6 +62,10 @@ docker compose up -d --build
 
 Notes:
 - This root compose stack is the official app runtime.
+- Runtime env ownership:
+  - root `.env` drives the Docker Compose app runtime
+  - `apps/api/.env` drives host-side API commands like `npm run dev`
+  - tracked `*.env.example` files stay as placeholders only
 - Dev DB mapping in root compose is `55433:5432`.
 - Dev SMTP/UI now uses Mailpit through the same compose stack:
   - SMTP inside Docker: `mailpit:1025`
@@ -149,7 +153,8 @@ Password reset email:
   - `MAIL_TRANSPORT=smtp` but `SMTP_HOST=mailpit`
   - required `SMTP_*` values are missing
   - the SMTP provider rejects or fails the send attempt
-- For host-side API commands outside Docker, keep `apps/api/.env` on:
+- If you want host-side API commands outside Docker to send real SMTP mail too, mirror the same SMTP settings in `apps/api/.env`.
+- If you want host-side API commands to stay on local capture only, keep `apps/api/.env` on:
   - `MAIL_TRANSPORT=mailpit`
   - `SMTP_HOST=localhost`
   - `SMTP_PORT=1025`
@@ -159,6 +164,21 @@ Password reset email:
 - To verify the active transport from logs:
   - `docker compose logs api --tail 50 | Select-String \"Password reset mail transport initialized\"`
   - `docker compose logs api --tail 50 | Select-String \"Password reset email accepted by transport\"`
+
+Firebase mobile app config:
+- Keep `apps/mobile/android/app/google-services.json` local only.
+- Keep `apps/mobile/ios/Runner/GoogleService-Info.plist` local only.
+- Both files are gitignored and should be replaced locally after any Firebase API key rotation.
+- Current mobile Firebase API key allowlist should stay limited to:
+  - `Firebase Management API`
+  - `Cloud Logging API`
+  - `Firebase Installations API`
+  - `FCM Registration API`
+- If you later add more Firebase mobile SDKs, update the API key allowlist manually:
+  - Firebase Auth client SDK: add `Identity Toolkit API` and `Token Service API`
+  - Firebase App Check: add `Firebase App Check API`
+  - Cloud Firestore: add `Cloud Datastore API` and `Cloud Firestore API`
+  - Cloud Storage: add `Cloud Storage for Firebase API`
 
 Staging seed safety:
 - `npm run seed:staging` and `npm run phase11:staging` are destructive when `STAGING_SEED_RESET=true`.

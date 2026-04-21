@@ -33,8 +33,6 @@ services:
     working_dir: /workspace/apps/api
     environment:
       MIGRATIONS_DIR: /workspace/infra/migrations
-      MAIL_TRANSPORT: ${MAIL_TRANSPORT:-mailpit}
-      PASSWORD_RESET_TOKEN_EXPIRY_MINUTES: ${PASSWORD_RESET_TOKEN_EXPIRY_MINUTES:-15}
     command:
       [
         "sh",
