@@ -6,7 +6,7 @@ Set these values before first backend startup:
 
 ```env
 SUPER_ADMIN_EMAIL=superadmin@gov.lb
-SUPER_ADMIN_PASSWORD=ChangeThis!Gov2026
+SUPER_ADMIN_PASSWORD=replace-with-strong-super-admin-password
 SUPER_ADMIN_FULL_NAME=GIS Super Administrator
 ```
 
@@ -34,7 +34,7 @@ If it already exists but is not active admin:
 ## Security Notes
 
 - Do not commit a real production password.
-- Replace `ChangeThis!Gov2026` with a deployment-specific secret before staging or production use.
+- Replace `replace-with-strong-super-admin-password` with a deployment-specific secret before staging or production use.
 - The protected super admin identity is enforced by email match against `SUPER_ADMIN_EMAIL`.
 - Standard admin endpoints cannot delete or demote the protected super admin.
 

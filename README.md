@@ -55,7 +55,7 @@ cd D:\GIS_APP
 Copy-Item .env.dev.example .env
 # Set super admin bootstrap before first stack start:
 # SUPER_ADMIN_EMAIL=superadmin@gov.lb
-# SUPER_ADMIN_PASSWORD=ChangeThis!Gov2026
+# SUPER_ADMIN_PASSWORD=replace-with-strong-super-admin-password
 # SUPER_ADMIN_FULL_NAME=GIS Super Administrator
 docker compose up -d --build
 ```
@@ -80,7 +80,7 @@ cd apps\api
 Copy-Item .env.example .env
 # Set the super admin bootstrap values before first start:
 # SUPER_ADMIN_EMAIL=superadmin@gov.lb
-# SUPER_ADMIN_PASSWORD=ChangeThis!Gov2026
+# SUPER_ADMIN_PASSWORD=replace-with-strong-super-admin-password
 # SUPER_ADMIN_FULL_NAME=GIS Super Administrator
 # apps/api/.env.example now defaults to the official compose-backed runtime DB on 55433.
 npm ci
@@ -112,9 +112,13 @@ Health:
 - `http://localhost:3000/api/v1`
 - `http://localhost:3000/docs/openapi.yaml`
 
+OpenAPI testing:
+- Load `http://localhost:3000/docs/openapi.yaml` into Swagger Editor, Postman, or Insomnia for request testing.
+- Validate the contract from the repo with `cd apps/api && npm run openapi:check`.
+
 Super admin bootstrap:
 - Set `SUPER_ADMIN_EMAIL=superadmin@gov.lb`
-- Set `SUPER_ADMIN_PASSWORD=ChangeThis!Gov2026`
+- Set `SUPER_ADMIN_PASSWORD=replace-with-strong-super-admin-password`
 - Set `SUPER_ADMIN_FULL_NAME=GIS Super Administrator`
 - Configure them in the active `.env` file or Docker environment before first startup.
 
@@ -258,7 +262,7 @@ Set in `.env`:
 
 ```env
 SUPER_ADMIN_EMAIL=superadmin@gov.lb
-SUPER_ADMIN_PASSWORD=ChangeThis!Gov2026
+SUPER_ADMIN_PASSWORD=replace-with-strong-super-admin-password
 SUPER_ADMIN_FULL_NAME=GIS Super Administrator
 ```
 

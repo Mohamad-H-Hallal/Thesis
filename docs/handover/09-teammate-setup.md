@@ -37,7 +37,7 @@ Copy-Item .env.dev.example .env
 
 ```env
 SUPER_ADMIN_EMAIL=superadmin@gov.lb
-SUPER_ADMIN_PASSWORD=ChangeThis!Gov2026
+SUPER_ADMIN_PASSWORD=replace-with-strong-super-admin-password
 SUPER_ADMIN_FULL_NAME=GIS Super Administrator
 ```
 
