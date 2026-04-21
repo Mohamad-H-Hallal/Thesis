@@ -14,6 +14,7 @@ import '../../../auth/domain/auth_models.dart';
 import '../../domain/admin_models.dart';
 
 enum _AssignmentSection { assigned, available, requests }
+enum _ProjectRequestTab { pending, rejected }
 
 class ProjectAssignmentsScreen extends ConsumerStatefulWidget {
   const ProjectAssignmentsScreen({required this.projectId, super.key});
@@ -30,6 +31,7 @@ class _ProjectAssignmentsScreenState
   final TextEditingController _searchController = TextEditingController();
   bool _isSaving = false;
   _AssignmentSection _selectedSection = _AssignmentSection.assigned;
+  _ProjectRequestTab _selectedRequestTab = _ProjectRequestTab.pending;
 
   @override
   void dispose() {
@@ -328,6 +330,14 @@ class _ProjectAssignmentsScreenState
                     ]),
                   )
                   .toList(growable: false);
+              final effectiveRequestTab =
+                  _selectedRequestTab == _ProjectRequestTab.pending
+                  ? (pendingRequests.isEmpty && rejectedRequests.isNotEmpty
+                        ? _ProjectRequestTab.rejected
+                        : _ProjectRequestTab.pending)
+                  : (rejectedRequests.isEmpty && pendingRequests.isNotEmpty
+                        ? _ProjectRequestTab.pending
+                        : _ProjectRequestTab.rejected);
 
               return ListView(
                 children: [
@@ -467,62 +477,106 @@ class _ProjectAssignmentsScreenState
                     _AssignmentSection.requests => Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _AssignmentListSection(
-                          title: 'Pending Project Requests',
-                          emptyTitle: 'No pending project requests',
-                          emptyMessage:
-                              'Contributor self-service requests for this project appear here until an admin approves or rejects them.',
-                          children: pendingRequests
-                              .map(
-                                (assignment) => Padding(
-                                  padding: const EdgeInsets.only(
-                                    bottom: AppSpacing.sm,
-                                  ),
-                                  child: _PendingRequestCard(
-                                    assignment: assignment,
-                                    isSaving: _isSaving,
-                                    approveLabel: 'Approve',
-                                    rejectLabel: 'Reject',
-                                    onApprove: () => _updateAssignmentRequest(
-                                      assignment,
-                                      status: 'approved',
+                        AppCard(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Project Request States',
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                              const SizedBox(height: AppSpacing.sm),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  ChoiceChip(
+                                    label: Text(
+                                      'Pending (${pendingRequests.length})',
                                     ),
-                                    onReject: () => _updateAssignmentRequest(
-                                      assignment,
-                                      status: 'rejected',
+                                    selected:
+                                        effectiveRequestTab ==
+                                        _ProjectRequestTab.pending,
+                                    onSelected: (_) => setState(
+                                      () => _selectedRequestTab =
+                                          _ProjectRequestTab.pending,
                                     ),
                                   ),
-                                ),
-                              )
-                              .toList(growable: false),
+                                  ChoiceChip(
+                                    label: Text(
+                                      'Rejected (${rejectedRequests.length})',
+                                    ),
+                                    selected:
+                                        effectiveRequestTab ==
+                                        _ProjectRequestTab.rejected,
+                                    onSelected: (_) => setState(
+                                      () => _selectedRequestTab =
+                                          _ProjectRequestTab.rejected,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
                         const SizedBox(height: AppSpacing.md),
-                        _AssignmentListSection(
-                          title: 'Rejected Project Requests',
-                          emptyTitle: 'No rejected project requests',
-                          emptyMessage:
-                              'Rejected project requests stay here so admins can re-approve them later if needed.',
-                          children: rejectedRequests
-                              .map(
-                                (assignment) => Padding(
-                                  padding: const EdgeInsets.only(
-                                    bottom: AppSpacing.sm,
-                                  ),
-                                  child: _PendingRequestCard(
-                                    assignment: assignment,
-                                    isSaving: _isSaving,
-                                    approveLabel: 'Re-accept',
-                                    rejectLabel: 'Keep rejected',
-                                    onApprove: () => _updateAssignmentRequest(
-                                      assignment,
-                                      status: 'approved',
+                        if (effectiveRequestTab == _ProjectRequestTab.pending)
+                          _AssignmentListSection(
+                            title: 'Pending Project Requests',
+                            emptyTitle: 'No pending project requests',
+                            emptyMessage:
+                                'Contributor self-service requests for this project appear here until an admin approves or rejects them.',
+                            children: pendingRequests
+                                .map(
+                                  (assignment) => Padding(
+                                    padding: const EdgeInsets.only(
+                                      bottom: AppSpacing.sm,
                                     ),
-                                    onReject: null,
+                                    child: _PendingRequestCard(
+                                      assignment: assignment,
+                                      isSaving: _isSaving,
+                                      approveLabel: 'Approve',
+                                      rejectLabel: 'Reject',
+                                      onApprove: () => _updateAssignmentRequest(
+                                        assignment,
+                                        status: 'approved',
+                                      ),
+                                      onReject: () => _updateAssignmentRequest(
+                                        assignment,
+                                        status: 'rejected',
+                                      ),
+                                    ),
                                   ),
-                                ),
-                              )
-                              .toList(growable: false),
-                        ),
+                                )
+                                .toList(growable: false),
+                          )
+                        else
+                          _AssignmentListSection(
+                            title: 'Rejected Project Requests',
+                            emptyTitle: 'No rejected project requests',
+                            emptyMessage:
+                                'Rejected project requests stay here so admins can re-approve them later if needed.',
+                            children: rejectedRequests
+                                .map(
+                                  (assignment) => Padding(
+                                    padding: const EdgeInsets.only(
+                                      bottom: AppSpacing.sm,
+                                    ),
+                                    child: _PendingRequestCard(
+                                      assignment: assignment,
+                                      isSaving: _isSaving,
+                                      approveLabel: 'Re-accept',
+                                      rejectLabel: 'Keep rejected',
+                                      onApprove: () => _updateAssignmentRequest(
+                                        assignment,
+                                        status: 'approved',
+                                      ),
+                                      onReject: null,
+                                    ),
+                                  ),
+                                )
+                                .toList(growable: false),
+                          ),
                       ],
                     ),
                   },
