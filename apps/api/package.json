@@ -67,6 +67,7 @@
     "multer": "^2.1.1",
     "nodemailer": "^8.0.5",
     "pg": "^8.18.0",
+    "protobufjs": "7.5.5",
     "sharp": "^0.33.1",
     "uuid": "^9.0.1",
     "winston": "^3.19.0"
@@ -74,7 +75,8 @@
   "overrides": {
     "path-to-regexp": "0.1.13",
     "lodash": "4.18.1",
-    "@tootallnate/once": "3.0.1"
+    "@tootallnate/once": "3.0.1",
+    "protobufjs": "7.5.5"
   },
   "devDependencies": {
     "@swc/core": "^1.13.6",
