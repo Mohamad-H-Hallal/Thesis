@@ -793,6 +793,54 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('project map stays responsive on compact screens', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      _wrapWithScope(
+        overrides: <Override>[
+          authControllerProvider.overrideWith(
+            (ref) =>
+                _AuthenticatedAuthController(_session(UserRole.contributor)),
+          ),
+          syncControllerProvider.overrideWith((ref) => _buildSyncController()),
+          currentLocationServiceProvider.overrideWithValue(
+            _FakeCurrentLocationService(
+              const CurrentLocationSnapshot(
+                position: LatLng(33.8938, 35.5018),
+                accuracyMeters: 6,
+              ),
+            ),
+          ),
+          mapProjectsProvider.overrideWith(
+            (ref) async => <ProjectSummary>[_projectSummary()],
+          ),
+          projectMapFeaturesProvider.overrideWith(
+            (ref, projectId) async => const <MapFeatureSummary>[],
+          ),
+          offlineMapPackageProvider.overrideWith(
+            (ref) async => _offlinePackage(),
+          ),
+        ],
+        child: const MapScreen(
+          initialProjectId: 'project-1',
+          lockProjectSelection: true,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.ensureVisible(find.byTooltip('Add Feature'));
+
+    expect(find.byTooltip('Add Feature'), findsOneWidget);
+    expect(find.text('0 features'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'add feature screen exposes current-location driven geometry capture',
     (tester) async {
@@ -847,6 +895,52 @@ void main() {
       expect(find.text('GPS 5m'), findsOneWidget);
     },
   );
+
+  testWidgets('add feature screen stays responsive on compact screens', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final project = _projectSummary();
+
+    await tester.pumpWidget(
+      _wrapWithScope(
+        overrides: <Override>[
+          authControllerProvider.overrideWith(
+            (ref) =>
+                _AuthenticatedAuthController(_session(UserRole.contributor)),
+          ),
+          currentLocationServiceProvider.overrideWithValue(
+            _FakeCurrentLocationService(
+              const CurrentLocationSnapshot(
+                position: LatLng(33.901, 35.511),
+                accuracyMeters: 5.2,
+              ),
+            ),
+          ),
+          projectListProvider.overrideWith(
+            (ref, scope) async => <ProjectSummary>[project],
+          ),
+          projectMapFeaturesProvider.overrideWith(
+            (ref, projectId) async => const <MapFeatureSummary>[],
+          ),
+          localDraftFeaturesProvider.overrideWith(
+            (ref) async => const <LocalDraftFeature>[],
+          ),
+        ],
+        child: const AddFeatureScreen(initialProjectId: 'project-1'),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.ensureVisible(find.text('Use current location'));
+
+    expect(find.text('Use current location'), findsOneWidget);
+    expect(find.text('Hybrid'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'add feature screen starts at attributes when launched from project map capture',

@@ -38,26 +38,44 @@ class ProjectQuickMapCard extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                child: Text(
-                  'Project map',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final title = Text(
+                'Project map',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
                 ),
-              ),
-              if (onOpenFullscreen != null) ...[
-                const SizedBox(width: AppSpacing.sm),
-                TextButton.icon(
-                  onPressed: onOpenFullscreen,
-                  icon: const Icon(Icons.open_in_full_outlined),
-                  label: const Text('Open map'),
-                ),
-              ],
-            ],
+              );
+              final action = onOpenFullscreen == null
+                  ? null
+                  : TextButton.icon(
+                      onPressed: onOpenFullscreen,
+                      icon: const Icon(Icons.open_in_full_outlined),
+                      label: const Text('Open map'),
+                    );
+
+              if (action == null || constraints.maxWidth >= 360) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(child: title),
+                    if (action != null) ...[
+                      const SizedBox(width: AppSpacing.sm),
+                      action,
+                    ],
+                  ],
+                );
+              }
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  title,
+                  const SizedBox(height: AppSpacing.xs),
+                  action,
+                ],
+              );
+            },
           ),
           const SizedBox(height: 10),
           _QuickMapPill(icon: Icons.place_outlined, label: featureCountLabel),

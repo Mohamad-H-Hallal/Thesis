@@ -16,6 +16,7 @@ import '../../../../core/widgets/app_text_field.dart';
 import '../../domain/auth_failure.dart';
 import '../utils/auth_form_validators.dart';
 import '../utils/auth_input_formatters.dart';
+import '../widgets/auth_viewport.dart';
 import '../widgets/auth_error_banner.dart';
 
 class ForgotPasswordScreen extends ConsumerStatefulWidget {
@@ -131,73 +132,68 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
       showOfflineBanner: false,
       showBackButton: true,
       onBack: _goBackToLogin,
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 460),
-          child: AutofillGroup(
-            child: Form(
-              key: _formKey,
-              child: ListView(
-                shrinkWrap: true,
-                padding: const EdgeInsets.all(AppSpacing.md),
-                children: <Widget>[
-                  const AppLogo(size: 64),
-                  const SizedBox(height: AppSpacing.sm),
-                  Text(
-                    'Enter your registered email address to receive a one-time password reset code.',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSpacing.lg),
-                  AppCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: <Widget>[
-                        if (_formLevelError != null) ...<Widget>[
-                          AuthErrorBanner(message: _formLevelError!),
-                          const SizedBox(height: AppSpacing.sm),
-                        ],
-                        AppTextField(
-                          label: 'Email address',
-                          hint: 'name@example.com',
-                          controller: _emailController,
-                          keyboardType: TextInputType.emailAddress,
-                          textInputAction: TextInputAction.done,
-                          focusNode: _emailFocus,
-                          onFieldSubmitted: (_) => _submit(),
-                          inputFormatters: <TextInputFormatter>[
-                            _noLeadingSpaceFormatter,
-                          ],
-                          autofillHints: const <String>[
-                            AutofillHints.username,
-                            AutofillHints.email,
-                          ],
-                          onChanged: (_) {
-                            if (_formLevelError == null &&
-                                _emailFieldError == null) {
-                              return;
-                            }
-                            setState(() {
-                              _formLevelError = null;
-                              _emailFieldError = null;
-                            });
-                          },
-                          validator: (value) =>
-                              _emailFieldError ??
-                              AuthFormValidators.email(value),
-                        ),
-                        const SizedBox(height: AppSpacing.md),
-                        AppButton(
-                          label: 'Send reset code',
-                          icon: Icons.email_outlined,
-                          isLoading: _isSubmitting,
-                          onPressed: _isSubmitting ? null : _submit,
-                        ),
+      body: AuthViewport(
+        child: AutofillGroup(
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                const AppLogo(size: 64),
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  'Enter your registered email address to receive a one-time password reset code.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      if (_formLevelError != null) ...<Widget>[
+                        AuthErrorBanner(message: _formLevelError!),
+                        const SizedBox(height: AppSpacing.sm),
                       ],
-                    ),
+                      AppTextField(
+                        label: 'Email address',
+                        hint: 'name@example.com',
+                        controller: _emailController,
+                        keyboardType: TextInputType.emailAddress,
+                        textInputAction: TextInputAction.done,
+                        focusNode: _emailFocus,
+                        onFieldSubmitted: (_) => _submit(),
+                        inputFormatters: <TextInputFormatter>[
+                          _noLeadingSpaceFormatter,
+                        ],
+                        autofillHints: const <String>[
+                          AutofillHints.username,
+                          AutofillHints.email,
+                        ],
+                        onChanged: (_) {
+                          if (_formLevelError == null &&
+                              _emailFieldError == null) {
+                            return;
+                          }
+                          setState(() {
+                            _formLevelError = null;
+                            _emailFieldError = null;
+                          });
+                        },
+                        validator: (value) =>
+                            _emailFieldError ?? AuthFormValidators.email(value),
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                      AppButton(
+                        label: 'Send reset code',
+                        icon: Icons.email_outlined,
+                        isLoading: _isSubmitting,
+                        onPressed: _isSubmitting ? null : _submit,
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),

@@ -652,4 +652,47 @@ void main() {
       expect(find.text('Open map'), findsOneWidget);
     },
   );
+
+  testWidgets('project details stays responsive on compact screens', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final session = _sessionForRole(
+      UserRole.contributor,
+      userId: 'contributor-1',
+    );
+    final repository = _FakeProjectsRepository(<ProjectSummary>[
+      _project(
+        id: 'compact-project',
+        name: 'Compact Layout Survey',
+        assignments: <ProjectAssignment>[
+          ProjectAssignment(
+            userId: 'contributor-1',
+            role: ProjectAssignmentRole.contributor,
+            status: ProjectAssignmentStatus.approved,
+            assignedAt: DateTime.utc(2026, 4, 1),
+          ),
+        ],
+      ),
+    ]);
+
+    await tester.pumpWidget(
+      _wrapWithScope(
+        session: session,
+        projects: const <ProjectSummary>[],
+        repository: repository,
+        child: const ProjectDetailsScreen(projectId: 'compact-project'),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    await tester.ensureVisible(find.text('Open Map'));
+
+    expect(find.text('Compact Layout Survey'), findsOneWidget);
+    expect(find.text('Open Map'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

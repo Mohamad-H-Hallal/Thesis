@@ -1797,36 +1797,53 @@ class _GeometryCaptureMapCard extends StatelessWidget {
                   right: 12,
                   top: 12,
                   child: AppCard(
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            geometryType == 'Point'
-                                ? 'Tap once to place the feature.'
-                                : geometryType == 'LineString'
-                                ? 'Tap to add line vertices in order.'
-                                : 'Tap to trace the polygon boundary.',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ),
-                        const SizedBox(width: AppSpacing.sm),
-                        SegmentedButton<LebanonBasemapStyle>(
-                          segments: const [
-                            ButtonSegment(
-                              value: LebanonBasemapStyle.satellite,
-                              label: Text('Hybrid'),
-                            ),
-                            ButtonSegment(
-                              value: LebanonBasemapStyle.street,
-                              label: Text('Street'),
-                            ),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final basemapToggle =
+                            SegmentedButton<LebanonBasemapStyle>(
+                              segments: const [
+                                ButtonSegment(
+                                  value: LebanonBasemapStyle.satellite,
+                                  label: Text('Hybrid'),
+                                ),
+                                ButtonSegment(
+                                  value: LebanonBasemapStyle.street,
+                                  label: Text('Street'),
+                                ),
+                              ],
+                              selected: <LebanonBasemapStyle>{basemapStyle},
+                              showSelectedIcon: false,
+                              onSelectionChanged: (selection) =>
+                                  onToggleBasemap(selection.first),
+                            );
+                        final instruction = Text(
+                          geometryType == 'Point'
+                              ? 'Tap once to place the feature.'
+                              : geometryType == 'LineString'
+                              ? 'Tap to add line vertices in order.'
+                              : 'Tap to trace the polygon boundary.',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        );
+
+                        if (constraints.maxWidth < 420) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              instruction,
+                              const SizedBox(height: AppSpacing.sm),
+                              basemapToggle,
+                            ],
+                          );
+                        }
+
+                        return Row(
+                          children: [
+                            Expanded(child: instruction),
+                            const SizedBox(width: AppSpacing.sm),
+                            basemapToggle,
                           ],
-                          selected: <LebanonBasemapStyle>{basemapStyle},
-                          showSelectedIcon: false,
-                          onSelectionChanged: (selection) =>
-                              onToggleBasemap(selection.first),
-                        ),
-                      ],
+                        );
+                      },
                     ),
                   ),
                 ),

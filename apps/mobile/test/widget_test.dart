@@ -128,7 +128,16 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      const ProviderScope(child: MaterialApp(home: LoginScreen())),
+      ProviderScope(
+        overrides: <Override>[
+          authRepositoryProvider.overrideWithValue(
+            const _FailingAuthRepository(
+              AuthFailure('Wrong email or password.', statusCode: 401),
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: LoginScreen()),
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -140,7 +149,7 @@ void main() {
     final loginButton = find.widgetWithText(FilledButton, 'Login');
     await tester.ensureVisible(loginButton);
     await tester.tap(loginButton, warnIfMissed: false);
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(find.text('Password must be at least 8 characters'), findsNothing);
     expect(

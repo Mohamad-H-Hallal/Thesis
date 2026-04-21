@@ -14,6 +14,7 @@ import '../../../../core/widgets/app_scaffold.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../utils/auth_form_validators.dart';
+import '../widgets/auth_viewport.dart';
 import '../widgets/auth_error_banner.dart';
 
 enum _ResetPasswordStep { otp, password }
@@ -163,7 +164,9 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
     TextInput.finishAutofillContext();
 
     try {
-      await ref.read(authControllerProvider.notifier).resetPassword(
+      await ref
+          .read(authControllerProvider.notifier)
+          .resetPassword(
             resetToken: resetSessionToken,
             newPassword: _passwordController.text,
           );
@@ -286,9 +289,8 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
             autofillHints: const <String>[AutofillHints.newPassword],
             suffix: IconButton(
               tooltip: _obscurePassword ? 'Show password' : 'Hide password',
-              onPressed: () => setState(
-                () => _obscurePassword = !_obscurePassword,
-              ),
+              onPressed: () =>
+                  setState(() => _obscurePassword = !_obscurePassword),
               icon: Icon(
                 _obscurePassword ? Icons.visibility : Icons.visibility_off,
               ),
@@ -345,28 +347,22 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
         showOfflineBanner: false,
         showBackButton: true,
         onBack: _goBack,
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 460),
-            child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.md),
-              child: AppCard(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    const Text(
-                      'Start the password reset process from the email verification step.',
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                    AppButton(
-                      label: 'Back to forgot password',
-                      icon: Icons.arrow_back,
-                      onPressed: _goBack,
-                    ),
-                  ],
+        body: AuthViewport(
+          child: AppCard(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                const Text(
+                  'Start the password reset process from the email verification step.',
+                  textAlign: TextAlign.center,
                 ),
-              ),
+                const SizedBox(height: AppSpacing.md),
+                AppButton(
+                  label: 'Back to forgot password',
+                  icon: Icons.arrow_back,
+                  onPressed: _goBack,
+                ),
+              ],
             ),
           ),
         ),
@@ -378,30 +374,26 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
       showOfflineBanner: false,
       showBackButton: true,
       onBack: _goBack,
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 460),
-          child: ListView(
-            shrinkWrap: true,
-            padding: const EdgeInsets.all(AppSpacing.md),
-            children: <Widget>[
-              const AppLogo(size: 64),
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                _step == _ResetPasswordStep.otp
-                    ? 'Step 2 of 3: verify the code sent to your email.'
-                    : 'Step 3 of 3: choose a new password.',
-                style: Theme.of(context).textTheme.bodyMedium,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              AppCard(
-                child: _step == _ResetPasswordStep.otp
-                    ? _buildOtpStep(context)
-                    : _buildPasswordStep(context),
-              ),
-            ],
-          ),
+      body: AuthViewport(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const AppLogo(size: 64),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              _step == _ResetPasswordStep.otp
+                  ? 'Step 2 of 3: verify the code sent to your email.'
+                  : 'Step 3 of 3: choose a new password.',
+              style: Theme.of(context).textTheme.bodyMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            AppCard(
+              child: _step == _ResetPasswordStep.otp
+                  ? _buildOtpStep(context)
+                  : _buildPasswordStep(context),
+            ),
+          ],
         ),
       ),
     );

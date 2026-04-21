@@ -19,6 +19,7 @@ import '../../domain/auth_models.dart';
 import '../controllers/auth_controller.dart';
 import '../utils/auth_form_validators.dart';
 import '../utils/auth_input_formatters.dart';
+import '../widgets/auth_viewport.dart';
 import '../widgets/auth_error_banner.dart';
 
 class SignupScreen extends ConsumerStatefulWidget {
@@ -166,6 +167,60 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
     AppSnackbar.showError(context, failureMessage);
   }
 
+  Widget _buildRoleSelector(bool isLoading) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 320) {
+          return Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ChoiceChip(
+                label: const Text('Contributor'),
+                selected: _selectedRole == UserRole.contributor,
+                onSelected: isLoading
+                    ? null
+                    : (_) =>
+                          setState(() => _selectedRole = UserRole.contributor),
+              ),
+              ChoiceChip(
+                label: const Text('Viewer'),
+                selected: _selectedRole == UserRole.viewer,
+                onSelected: isLoading
+                    ? null
+                    : (_) => setState(() => _selectedRole = UserRole.viewer),
+              ),
+            ],
+          );
+        }
+
+        return SegmentedButton<UserRole>(
+          segments: const <ButtonSegment<UserRole>>[
+            ButtonSegment<UserRole>(
+              value: UserRole.contributor,
+              label: Text('Contributor'),
+              icon: Icon(Icons.edit_location_alt_outlined),
+            ),
+            ButtonSegment<UserRole>(
+              value: UserRole.viewer,
+              label: Text('Viewer'),
+              icon: Icon(Icons.visibility_outlined),
+            ),
+          ],
+          selected: <UserRole>{_selectedRole},
+          onSelectionChanged: isLoading
+              ? null
+              : (selection) {
+                  if (selection.isEmpty) {
+                    return;
+                  }
+                  setState(() => _selectedRole = selection.first);
+                },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authControllerProvider);
@@ -176,256 +231,228 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
       child: AppScaffold(
         title: 'Create account',
         showOfflineBanner: false,
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 460),
-            child: AutofillGroup(
-              child: Form(
-                key: _formKey,
-                child: ListView(
-                  shrinkWrap: true,
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  children: <Widget>[
-                    AnimatedReveal(
+        body: AuthViewport(
+          child: AutofillGroup(
+            child: Form(
+              key: _formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  AnimatedReveal(
+                    child: Column(
+                      children: <Widget>[
+                        const Center(child: AppLogo(size: 72)),
+                        const SizedBox(height: AppSpacing.sm),
+                        Text(
+                          'Create your account',
+                          style: Theme.of(context).textTheme.headlineSmall,
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: AppSpacing.xs),
+                        Text(
+                          'Choose viewer access for immediate login or request contributor access for field collection.',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.lg),
+                  AnimatedReveal(
+                    delay: const Duration(milliseconds: 80),
+                    child: AppCard(
                       child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: <Widget>[
-                          const Center(child: AppLogo(size: 72)),
-                          const SizedBox(height: AppSpacing.sm),
+                          if (_formLevelError != null) ...<Widget>[
+                            AuthErrorBanner(message: _formLevelError!),
+                            const SizedBox(height: AppSpacing.sm),
+                          ],
                           Text(
-                            'Create your account',
-                            style: Theme.of(context).textTheme.headlineSmall,
-                            textAlign: TextAlign.center,
+                            'Requested role',
+                            style: Theme.of(context).textTheme.labelLarge,
                           ),
                           const SizedBox(height: AppSpacing.xs),
+                          _buildRoleSelector(isLoading),
+                          const SizedBox(height: AppSpacing.xs),
                           Text(
-                            'Choose viewer access for immediate login or request contributor access for field collection.',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                            textAlign: TextAlign.center,
+                            _selectedRole == UserRole.contributor
+                                ? 'Contributor accounts require admin approval before first login.'
+                                : 'Viewer accounts are active immediately.',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          AppTextField(
+                            label: 'Full name',
+                            hint: 'First and last name',
+                            controller: _fullNameController,
+                            textCapitalization: TextCapitalization.words,
+                            textInputAction: TextInputAction.next,
+                            focusNode: _fullNameFocus,
+                            onFieldSubmitted: (_) => FocusScope.of(
+                              context,
+                            ).requestFocus(_phoneFocus),
+                            inputFormatters: <TextInputFormatter>[
+                              _noLeadingSpaceFormatter,
+                            ],
+                            autofillHints: const <String>[AutofillHints.name],
+                            validator: (value) =>
+                                AuthFormValidators.requiredField(
+                                  value,
+                                  fieldLabel: 'Full name',
+                                  minLength: 3,
+                                ),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          AppTextField(
+                            label: 'Phone number',
+                            hint: 'Phone number',
+                            controller: _phoneController,
+                            keyboardType: TextInputType.phone,
+                            textInputAction: TextInputAction.next,
+                            focusNode: _phoneFocus,
+                            onFieldSubmitted: (_) => FocusScope.of(
+                              context,
+                            ).requestFocus(_emailFocus),
+                            inputFormatters: <TextInputFormatter>[
+                              _phoneFormatter,
+                            ],
+                            autofillHints: const <String>[
+                              AutofillHints.telephoneNumber,
+                            ],
+                            onChanged: (_) {
+                              if (_formLevelError == null &&
+                                  _phoneFieldError == null) {
+                                return;
+                              }
+                              setState(() {
+                                _formLevelError = null;
+                                _phoneFieldError = null;
+                              });
+                            },
+                            validator: (value) =>
+                                _phoneFieldError ??
+                                AuthFormValidators.phoneRequired(value),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          AppTextField(
+                            label: 'Email address',
+                            hint: 'name@example.com',
+                            controller: _emailController,
+                            keyboardType: TextInputType.emailAddress,
+                            textInputAction: TextInputAction.next,
+                            focusNode: _emailFocus,
+                            onFieldSubmitted: (_) => FocusScope.of(
+                              context,
+                            ).requestFocus(_passwordFocus),
+                            inputFormatters: <TextInputFormatter>[
+                              _noLeadingSpaceFormatter,
+                            ],
+                            autofillHints: const <String>[
+                              AutofillHints.username,
+                              AutofillHints.email,
+                            ],
+                            onChanged: (_) {
+                              if (_formLevelError == null &&
+                                  _emailFieldError == null) {
+                                return;
+                              }
+                              setState(() {
+                                _formLevelError = null;
+                                _emailFieldError = null;
+                              });
+                            },
+                            validator: (value) =>
+                                _emailFieldError ??
+                                AuthFormValidators.email(value),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          AppTextField(
+                            label: 'Password',
+                            hint:
+                                'At least 8 chars with upper/lower/number/symbol',
+                            controller: _passwordController,
+                            obscureText: _obscurePassword,
+                            textInputAction: TextInputAction.next,
+                            focusNode: _passwordFocus,
+                            onFieldSubmitted: (_) => FocusScope.of(
+                              context,
+                            ).requestFocus(_confirmFocus),
+                            enableSuggestions: false,
+                            autocorrect: false,
+                            autofillHints: const <String>[
+                              AutofillHints.newPassword,
+                            ],
+                            suffix: IconButton(
+                              tooltip: _obscurePassword
+                                  ? 'Show password'
+                                  : 'Hide password',
+                              onPressed: () => setState(
+                                () => _obscurePassword = !_obscurePassword,
+                              ),
+                              icon: Icon(
+                                _obscurePassword
+                                    ? Icons.visibility
+                                    : Icons.visibility_off,
+                              ),
+                            ),
+                            validator: AuthFormValidators.password,
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          AppTextField(
+                            label: 'Confirm password',
+                            hint: 'Re-enter your password',
+                            controller: _confirmPasswordController,
+                            obscureText: _obscureConfirmPassword,
+                            textInputAction: TextInputAction.done,
+                            focusNode: _confirmFocus,
+                            onFieldSubmitted: (_) => _submit(),
+                            enableSuggestions: false,
+                            autocorrect: false,
+                            autofillHints: const <String>[
+                              AutofillHints.newPassword,
+                            ],
+                            suffix: IconButton(
+                              tooltip: _obscureConfirmPassword
+                                  ? 'Show password'
+                                  : 'Hide password',
+                              onPressed: () => setState(
+                                () => _obscureConfirmPassword =
+                                    !_obscureConfirmPassword,
+                              ),
+                              icon: Icon(
+                                _obscureConfirmPassword
+                                    ? Icons.visibility
+                                    : Icons.visibility_off,
+                              ),
+                            ),
+                            validator: (value) =>
+                                AuthFormValidators.confirmPassword(
+                                  value: value,
+                                  password: _passwordController.text,
+                                ),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          AppButton(
+                            label: _selectedRole == UserRole.contributor
+                                ? 'Request contributor access'
+                                : 'Create viewer account',
+                            icon: Icons.person_add,
+                            isLoading: isLoading,
+                            onPressed: isLoading ? null : _submit,
                           ),
                         ],
                       ),
                     ),
-                    const SizedBox(height: AppSpacing.lg),
-                    AnimatedReveal(
-                      delay: const Duration(milliseconds: 80),
-                      child: AppCard(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: <Widget>[
-                            if (_formLevelError != null) ...<Widget>[
-                              AuthErrorBanner(message: _formLevelError!),
-                              const SizedBox(height: AppSpacing.sm),
-                            ],
-                            Text(
-                              'Requested role',
-                              style: Theme.of(context).textTheme.labelLarge,
-                            ),
-                            const SizedBox(height: AppSpacing.xs),
-                            SegmentedButton<UserRole>(
-                              segments: const <ButtonSegment<UserRole>>[
-                                ButtonSegment<UserRole>(
-                                  value: UserRole.contributor,
-                                  label: Text('Contributor'),
-                                  icon: Icon(Icons.edit_location_alt_outlined),
-                                ),
-                                ButtonSegment<UserRole>(
-                                  value: UserRole.viewer,
-                                  label: Text('Viewer'),
-                                  icon: Icon(Icons.visibility_outlined),
-                                ),
-                              ],
-                              selected: <UserRole>{_selectedRole},
-                              onSelectionChanged: isLoading
-                                  ? null
-                                  : (selection) {
-                                      if (selection.isEmpty) {
-                                        return;
-                                      }
-                                      setState(
-                                        () => _selectedRole = selection.first,
-                                      );
-                                    },
-                            ),
-                            const SizedBox(height: AppSpacing.xs),
-                            Text(
-                              _selectedRole == UserRole.contributor
-                                  ? 'Contributor accounts require admin approval before first login.'
-                                  : 'User accounts are active immediately with read-only access.',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                            const SizedBox(height: AppSpacing.sm),
-                            AppTextField(
-                              label: 'Full name',
-                              hint: 'First and last name',
-                              controller: _fullNameController,
-                              textCapitalization: TextCapitalization.words,
-                              textInputAction: TextInputAction.next,
-                              focusNode: _fullNameFocus,
-                              onFieldSubmitted: (_) => FocusScope.of(
-                                context,
-                              ).requestFocus(_phoneFocus),
-                              inputFormatters: <TextInputFormatter>[
-                                _noLeadingSpaceFormatter,
-                              ],
-                              autofillHints: const <String>[AutofillHints.name],
-                              validator: (value) =>
-                                  AuthFormValidators.requiredField(
-                                    value,
-                                    fieldLabel: 'Full name',
-                                    minLength: 3,
-                                  ),
-                            ),
-                            const SizedBox(height: AppSpacing.sm),
-                            AppTextField(
-                              label: 'Phone number',
-                              hint: 'Phone number',
-                              controller: _phoneController,
-                              keyboardType: TextInputType.phone,
-                              textInputAction: TextInputAction.next,
-                              focusNode: _phoneFocus,
-                              onFieldSubmitted: (_) => FocusScope.of(
-                                context,
-                              ).requestFocus(_emailFocus),
-                              inputFormatters: <TextInputFormatter>[
-                                _phoneFormatter,
-                              ],
-                              autofillHints: const <String>[
-                                AutofillHints.telephoneNumber,
-                              ],
-                              onChanged: (_) {
-                                if (_formLevelError == null &&
-                                    _phoneFieldError == null) {
-                                  return;
-                                }
-                                setState(() {
-                                  _formLevelError = null;
-                                  _phoneFieldError = null;
-                                });
-                              },
-                              validator: (value) =>
-                                  _phoneFieldError ??
-                                  AuthFormValidators.phoneRequired(value),
-                            ),
-                            const SizedBox(height: AppSpacing.sm),
-                            AppTextField(
-                              label: 'Email address',
-                              hint: 'name@example.com',
-                              controller: _emailController,
-                              keyboardType: TextInputType.emailAddress,
-                              textInputAction: TextInputAction.next,
-                              focusNode: _emailFocus,
-                              onFieldSubmitted: (_) => FocusScope.of(
-                                context,
-                              ).requestFocus(_passwordFocus),
-                              inputFormatters: <TextInputFormatter>[
-                                _noLeadingSpaceFormatter,
-                              ],
-                              autofillHints: const <String>[
-                                AutofillHints.username,
-                                AutofillHints.email,
-                              ],
-                              onChanged: (_) {
-                                if (_formLevelError == null &&
-                                    _emailFieldError == null) {
-                                  return;
-                                }
-                                setState(() {
-                                  _formLevelError = null;
-                                  _emailFieldError = null;
-                                });
-                              },
-                              validator: (value) =>
-                                  _emailFieldError ??
-                                  AuthFormValidators.email(value),
-                            ),
-                            const SizedBox(height: AppSpacing.sm),
-                            AppTextField(
-                              label: 'Password',
-                              hint:
-                                  'At least 8 chars with upper/lower/number/symbol',
-                              controller: _passwordController,
-                              obscureText: _obscurePassword,
-                              textInputAction: TextInputAction.next,
-                              focusNode: _passwordFocus,
-                              onFieldSubmitted: (_) => FocusScope.of(
-                                context,
-                              ).requestFocus(_confirmFocus),
-                              enableSuggestions: false,
-                              autocorrect: false,
-                              autofillHints: const <String>[
-                                AutofillHints.newPassword,
-                              ],
-                              suffix: IconButton(
-                                tooltip: _obscurePassword
-                                    ? 'Show password'
-                                    : 'Hide password',
-                                onPressed: () => setState(
-                                  () => _obscurePassword = !_obscurePassword,
-                                ),
-                                icon: Icon(
-                                  _obscurePassword
-                                      ? Icons.visibility
-                                      : Icons.visibility_off,
-                                ),
-                              ),
-                              validator: AuthFormValidators.password,
-                            ),
-                            const SizedBox(height: AppSpacing.sm),
-                            AppTextField(
-                              label: 'Confirm password',
-                              hint: 'Re-enter your password',
-                              controller: _confirmPasswordController,
-                              obscureText: _obscureConfirmPassword,
-                              textInputAction: TextInputAction.done,
-                              focusNode: _confirmFocus,
-                              onFieldSubmitted: (_) => _submit(),
-                              enableSuggestions: false,
-                              autocorrect: false,
-                              autofillHints: const <String>[
-                                AutofillHints.newPassword,
-                              ],
-                              suffix: IconButton(
-                                tooltip: _obscureConfirmPassword
-                                    ? 'Show password'
-                                    : 'Hide password',
-                                onPressed: () => setState(
-                                  () => _obscureConfirmPassword =
-                                      !_obscureConfirmPassword,
-                                ),
-                                icon: Icon(
-                                  _obscureConfirmPassword
-                                      ? Icons.visibility
-                                      : Icons.visibility_off,
-                                ),
-                              ),
-                              validator: (value) =>
-                                  AuthFormValidators.confirmPassword(
-                                    value: value,
-                                    password: _passwordController.text,
-                                  ),
-                            ),
-                            const SizedBox(height: AppSpacing.sm),
-                            AppButton(
-                              label: _selectedRole == UserRole.contributor
-                                  ? 'Request contributor access'
-                                  : 'Create viewer account',
-                              icon: Icons.person_add,
-                              isLoading: isLoading,
-                              onPressed: isLoading ? null : _submit,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.xs),
-                    TextButton(
-                      onPressed: isLoading
-                          ? null
-                          : () => context.go(AppRoutes.login),
-                      child: const Text('Back to login'),
-                    ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  TextButton(
+                    onPressed: isLoading
+                        ? null
+                        : () => context.go(AppRoutes.login),
+                    child: const Text('Back to login'),
+                  ),
+                ],
               ),
             ),
           ),

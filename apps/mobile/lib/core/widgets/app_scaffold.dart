@@ -63,31 +63,48 @@ class AppScaffold extends StatelessWidget {
       floatingActionButton: floatingActionButton,
       bottomNavigationBar: bottomNavigationBar,
       body: SafeArea(
-        child: Column(
-          children: [
-            if (showOfflineBanner) const OfflineBanner(),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(AppSpacing.md),
-                child: Align(
-                  alignment: Alignment.topCenter,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 1280),
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: scheme.surface,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final outerHorizontalPadding = constraints.maxWidth < 420
+                ? AppSpacing.sm
+                : AppSpacing.md;
+            final outerVerticalPadding = constraints.maxHeight < 720
+                ? AppSpacing.sm
+                : AppSpacing.md;
+            final innerPadding = constraints.maxWidth < 420
+                ? AppSpacing.xs
+                : AppSpacing.sm;
+
+            return Column(
+              children: [
+                if (showOfflineBanner) const OfflineBanner(),
+                Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: outerHorizontalPadding,
+                      vertical: outerVerticalPadding,
+                    ),
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 1280),
+                        child: ClipRRect(
                           borderRadius: AppRadii.lg,
+                          child: ColoredBox(
+                            color: scheme.surface,
+                            child: Padding(
+                              padding: EdgeInsets.all(innerPadding),
+                              child: body,
+                            ),
+                          ),
                         ),
-                        child: Padding(
-                        padding: const EdgeInsets.all(AppSpacing.sm),
-                        child: body,
                       ),
                     ),
                   ),
                 ),
-              ),
-            ),
-          ],
+              ],
+            );
+          },
         ),
       ),
     );
