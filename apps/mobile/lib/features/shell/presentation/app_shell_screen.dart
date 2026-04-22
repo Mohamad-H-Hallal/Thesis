@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/config/app_branding.dart';
+import '../../../core/constants/design_tokens.dart';
 import '../../../core/providers/providers.dart';
 import '../../../core/router/route_paths.dart';
 import '../../../core/sync/sync_controller.dart';
@@ -83,10 +84,12 @@ class AppShellScreen extends ConsumerWidget {
 
         if (useSideNav) {
           return Scaffold(
-            body: SafeArea(
-              child: Row(
-                children: [
-                  SizedBox(
+            body: Row(
+              children: [
+                SafeArea(
+                  right: false,
+                  bottom: false,
+                  child: SizedBox(
                     width: 340,
                     child: Column(
                       children: [
@@ -114,28 +117,28 @@ class AppShellScreen extends ConsumerWidget {
                       ],
                     ),
                   ),
-                  Expanded(
-                    child: AppScaffold(
-                      title: selectedItem.label,
-                      showBackButton: false,
-                      actions: shellActions,
-                      showOfflineBanner: _shouldShowStatusBanner(
-                        session.user,
-                        selectedItem.path,
-                      ),
-                      body: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 280),
-                        switchInCurve: Curves.easeOutCubic,
-                        switchOutCurve: Curves.easeInCubic,
-                        child: KeyedSubtree(
-                          key: ValueKey<String>(selectedItem.path),
-                          child: body,
-                        ),
+                ),
+                Expanded(
+                  child: AppScaffold(
+                    title: selectedItem.label,
+                    showBackButton: false,
+                    actions: shellActions,
+                    showOfflineBanner: _shouldShowStatusBanner(
+                      session.user,
+                      selectedItem.path,
+                    ),
+                    body: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 280),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      child: KeyedSubtree(
+                        key: ValueKey<String>(selectedItem.path),
+                        child: body,
                       ),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           );
         }
@@ -194,19 +197,32 @@ class AppShellScreen extends ConsumerWidget {
               child: body,
             ),
           ),
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: selectedPrimaryIndex,
-            onDestinationSelected: (index) =>
-                context.go(primaryItems[index].path),
-            destinations: primaryItems
-                .map(
-                  (item) => NavigationDestination(
-                    icon: Icon(item.icon),
-                    selectedIcon: Icon(item.selectedIcon ?? item.icon),
-                    label: item.mobileLabel ?? item.label,
-                  ),
-                )
-                .toList(growable: false),
+          bottomNavigationBar: SafeArea(
+            top: false,
+            minimum: const EdgeInsets.fromLTRB(
+              AppSpacing.sm,
+              0,
+              AppSpacing.sm,
+              AppSpacing.xs,
+            ),
+            child: ClipRRect(
+              borderRadius: AppRadii.lg,
+              child: NavigationBar(
+                selectedIndex: selectedPrimaryIndex,
+                onDestinationSelected: (index) =>
+                    context.go(primaryItems[index].path),
+                height: 72,
+                destinations: primaryItems
+                    .map(
+                      (item) => NavigationDestination(
+                        icon: Icon(item.icon),
+                        selectedIcon: Icon(item.selectedIcon ?? item.icon),
+                        label: item.mobileLabel ?? item.label,
+                      ),
+                    )
+                    .toList(growable: false),
+              ),
+            ),
           ),
         );
       },

@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/config/app_branding.dart';
 import 'core/providers/providers.dart';
 import 'core/theme/theme.dart';
+import 'core/widgets/app_system_ui_scope.dart';
 import 'features/notifications/presentation/widgets/push_notification_coordinator.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   runApp(const ProviderScope(child: LebanonGisCollectorApp()));
 }
 
@@ -38,8 +42,10 @@ class LebanonGisCollectorApp extends ConsumerWidget {
       themeMode: ThemeMode.system,
       scrollBehavior: const AppScrollBehavior(),
       routerConfig: router,
-      builder: (context, child) => PushNotificationCoordinator(
-        child: child ?? const SizedBox.shrink(),
+      builder: (context, child) => AppSystemUiScope(
+        child: PushNotificationCoordinator(
+          child: child ?? const SizedBox.shrink(),
+        ),
       ),
     );
   }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class AppTheme {
   const AppTheme._();
@@ -30,6 +31,7 @@ class AppTheme {
     );
 
     return base.copyWith(
+      canvasColor: scheme.surface,
       scaffoldBackgroundColor: scheme.surface,
       appBarTheme: AppBarTheme(
         elevation: 0,
@@ -39,8 +41,15 @@ class AppTheme {
         surfaceTintColor: Colors.transparent,
         scrolledUnderElevation: 0,
         shadowColor: Colors.transparent,
+        systemOverlayStyle: scheme.brightness == Brightness.dark
+            ? SystemUiOverlayStyle.light
+            : SystemUiOverlayStyle.dark,
       ),
       navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: scheme.surface,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        indicatorShape: const StadiumBorder(),
         indicatorColor: scheme.primaryContainer,
         labelTextStyle: WidgetStateProperty.resolveWith((states) {
           final selected = states.contains(WidgetState.selected);
@@ -48,6 +57,18 @@ class AppTheme {
             fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
           );
         }),
+      ),
+      navigationDrawerTheme: NavigationDrawerThemeData(
+        backgroundColor: scheme.surface,
+        surfaceTintColor: Colors.transparent,
+      ),
+      drawerTheme: DrawerThemeData(
+        backgroundColor: scheme.surface,
+        surfaceTintColor: Colors.transparent,
+      ),
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: scheme.surface,
+        surfaceTintColor: Colors.transparent,
       ),
       cardTheme: CardThemeData(
         color: scheme.surface,

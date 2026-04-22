@@ -281,7 +281,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
 
         return ListView(
           padding: EdgeInsets.only(
-            bottom: MediaQuery.paddingOf(context).bottom + AppSpacing.xl,
+            bottom: AppSpacing.xl,
           ),
           children: [
             const SectionHeader(title: 'Project Details'),

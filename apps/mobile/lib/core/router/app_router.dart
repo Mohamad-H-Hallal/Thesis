@@ -310,13 +310,11 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
             Scaffold(
               resizeToAvoidBottomInset: false,
               appBar: AppBar(title: const Text('Project map')),
-              body: SafeArea(
-                child: MapScreen(
-                  initialProjectId: projectId,
-                  initialFeatureId: featureId,
-                  startCaptureOnOpen: startCapture,
-                  lockProjectSelection: true,
-                ),
+              body: MapScreen(
+                initialProjectId: projectId,
+                initialFeatureId: featureId,
+                startCaptureOnOpen: startCapture,
+                lockProjectSelection: true,
               ),
             ),
           );
