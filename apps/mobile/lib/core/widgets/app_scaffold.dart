@@ -41,7 +41,6 @@ class AppScaffold extends StatelessWidget {
     final shouldImplyLeading = shouldShowBackButton || drawer != null;
     return Scaffold(
       backgroundColor: scheme.surface,
-      extendBody: bottomNavigationBar != null,
       appBar: AppBar(
         automaticallyImplyLeading: shouldImplyLeading,
         leading: shouldShowBackButton
@@ -82,15 +81,13 @@ class AppScaffold extends StatelessWidget {
               ? AppSpacing.sm
               : AppSpacing.md;
           final innerPadding = compactWidth ? AppSpacing.xs : AppSpacing.sm;
-          final leftInset = math.max(
-            mediaPadding.left,
-            outerHorizontalPadding,
-          );
+          final leftInset = math.max(mediaPadding.left, outerHorizontalPadding);
           final rightInset = math.max(
             mediaPadding.right,
             outerHorizontalPadding,
           );
-          final bottomInset = outerVerticalPadding +
+          final bottomInset =
+              outerVerticalPadding +
               (bottomNavigationBar == null ? mediaPadding.bottom : 0);
           final borderRadius = compactWidth ? AppRadii.md : AppRadii.lg;
 

@@ -7,7 +7,6 @@ import '../../../../core/providers/providers.dart';
 import '../../../../core/widgets/animated_reveal.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
-import '../../../../core/widgets/section_header.dart';
 import '../../domain/app_notification.dart';
 
 enum _NotificationFilter { all, read, unread }
@@ -71,23 +70,25 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
       data: (notifications) {
         final unreadCount = notifications.items.where((n) => !n.isRead).length;
         final filtered = switch (_filter) {
-          _NotificationFilter.read => notifications.items
-              .where((item) => item.isRead)
-              .toList(growable: false),
-          _NotificationFilter.unread => notifications.items
-              .where((item) => !item.isRead)
-              .toList(growable: false),
+          _NotificationFilter.read =>
+            notifications.items
+                .where((item) => item.isRead)
+                .toList(growable: false),
+          _NotificationFilter.unread =>
+            notifications.items
+                .where((item) => !item.isRead)
+                .toList(growable: false),
           _NotificationFilter.all => notifications.items,
         };
 
         return ListView(
           controller: _scrollController,
           children: [
-            SectionHeader(
-              title: 'Notifications',
-              subtitle: unreadCount == 0
+            Text(
+              unreadCount == 0
                   ? 'No unread updates'
                   : '$unreadCount unread update${unreadCount == 1 ? '' : 's'}',
+              style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: AppSpacing.sm),
             AppCard(

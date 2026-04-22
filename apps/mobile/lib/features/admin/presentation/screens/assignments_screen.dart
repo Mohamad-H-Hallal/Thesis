@@ -8,7 +8,6 @@ import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
-import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../projects/domain/project.dart';
 
@@ -86,8 +85,6 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
 
           return ListView(
             children: [
-              const SectionHeader(title: 'Assignments'),
-              const SizedBox(height: AppSpacing.sm),
               AppCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,

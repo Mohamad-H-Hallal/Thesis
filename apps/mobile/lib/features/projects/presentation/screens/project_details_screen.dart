@@ -280,12 +280,8 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
             project.status == 'active';
 
         return ListView(
-          padding: EdgeInsets.only(
-            bottom: AppSpacing.xl,
-          ),
+          padding: EdgeInsets.only(bottom: AppSpacing.xl),
           children: [
-            const SectionHeader(title: 'Project Details'),
-            const SizedBox(height: AppSpacing.md),
             AnimatedReveal(
               child: AppCard(
                 child: Column(

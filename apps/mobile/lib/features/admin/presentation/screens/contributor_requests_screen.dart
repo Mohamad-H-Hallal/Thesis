@@ -7,7 +7,6 @@ import '../../../../core/providers/providers.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
-import '../../../../core/widgets/section_header.dart';
 import '../../../../core/utils/lebanese_phone.dart';
 import '../../domain/admin_models.dart';
 
@@ -169,8 +168,6 @@ class _ContributorRequestsScreenState
 
     return ListView(
       children: [
-        const SectionHeader(title: 'Requests'),
-        const SizedBox(height: AppSpacing.sm),
         AppCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,

@@ -9,7 +9,6 @@ import '../../../../core/providers/providers.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
-import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../../projects/domain/project.dart';
@@ -133,10 +132,6 @@ class _ExportsDashboardScreenState
         return ListView(
           controller: _scrollController,
           children: [
-            SectionHeader(
-              title: hasFixedProject ? 'Project exports' : 'Exports',
-            ),
-            const SizedBox(height: AppSpacing.md),
             if (errorText != null && errorText.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(bottom: AppSpacing.md),

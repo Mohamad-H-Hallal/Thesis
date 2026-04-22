@@ -9,7 +9,6 @@ import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/animated_reveal.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
-import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../domain/project.dart';
@@ -41,8 +40,6 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
 
     return Column(
       children: [
-        SectionHeader(title: widget.title),
-        const SizedBox(height: AppSpacing.sm),
         SearchBar(
           leading: const Icon(Icons.search),
           hintText: _searchHintForScope(role, widget.scope),

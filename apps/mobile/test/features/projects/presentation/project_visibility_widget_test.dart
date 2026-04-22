@@ -349,7 +349,7 @@ Widget _wrapWithScope({
 
 void main() {
   testWidgets(
-    'viewer public home shows Projects title and viewer-visible data',
+    'viewer public home shows viewer-visible data without a duplicate page header',
     (tester) async {
       final session = _sessionForRole(UserRole.viewer);
       final projects = <ProjectSummary>[
@@ -372,13 +372,13 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Projects'), findsOneWidget);
+      expect(find.text('Search visible projects'), findsOneWidget);
       expect(find.text('Published Orchard Survey'), findsOneWidget);
     },
   );
 
   testWidgets(
-    'contributor assigned home shows Assigned Projects title and assignment data',
+    'contributor assigned home shows assignment data without a duplicate page header',
     (tester) async {
       final session = _sessionForRole(
         UserRole.contributor,
@@ -411,14 +411,14 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Assigned Projects'), findsOneWidget);
+      expect(find.text('Search assigned projects'), findsOneWidget);
       expect(find.text('Bekaa Collection Campaign'), findsOneWidget);
       expect(find.text('Assignment: approved'), findsOneWidget);
     },
   );
 
   testWidgets(
-    'contributor public home shows Projects title and read-only state for public projects',
+    'contributor public home shows read-only state for public projects without a duplicate page header',
     (tester) async {
       final session = _sessionForRole(
         UserRole.contributor,
@@ -445,7 +445,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Projects'), findsOneWidget);
+      expect(find.text('Search visible projects'), findsOneWidget);
       expect(find.text('Contributor Discovery Survey'), findsOneWidget);
       expect(find.text('Read-only public view'), findsOneWidget);
     },

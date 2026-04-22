@@ -6,7 +6,6 @@ import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
-import '../../../../core/widgets/section_header.dart';
 
 class AdminDashboardScreen extends ConsumerWidget {
   const AdminDashboardScreen({super.key});
@@ -79,8 +78,6 @@ class AdminDashboardScreen extends ConsumerWidget {
 
         return ListView(
           children: [
-            const SectionHeader(title: 'Admin Panel'),
-            const SizedBox(height: AppSpacing.md),
             LayoutBuilder(
               builder: (context, constraints) {
                 final cardWidth = switch (constraints.maxWidth) {

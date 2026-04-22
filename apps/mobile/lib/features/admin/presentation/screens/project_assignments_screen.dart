@@ -7,7 +7,6 @@ import '../../../../core/providers/providers.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
-import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../../core/utils/lebanese_phone.dart';
 import '../../../auth/domain/auth_models.dart';
@@ -342,8 +341,6 @@ class _ProjectAssignmentsScreenState
 
               return ListView(
                 children: [
-                  const SectionHeader(title: 'Project Assignments'),
-                  const SizedBox(height: AppSpacing.sm),
                   AppCard(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,

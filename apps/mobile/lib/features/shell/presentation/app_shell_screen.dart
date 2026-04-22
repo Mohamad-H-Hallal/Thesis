@@ -197,30 +197,35 @@ class AppShellScreen extends ConsumerWidget {
               child: body,
             ),
           ),
-          bottomNavigationBar: SafeArea(
-            top: false,
-            minimum: const EdgeInsets.fromLTRB(
-              AppSpacing.sm,
-              0,
-              AppSpacing.sm,
-              AppSpacing.xs,
-            ),
-            child: ClipRRect(
-              borderRadius: AppRadii.lg,
-              child: NavigationBar(
-                selectedIndex: selectedPrimaryIndex,
-                onDestinationSelected: (index) =>
-                    context.go(primaryItems[index].path),
-                height: 72,
-                destinations: primaryItems
-                    .map(
-                      (item) => NavigationDestination(
-                        icon: Icon(item.icon),
-                        selectedIcon: Icon(item.selectedIcon ?? item.icon),
-                        label: item.mobileLabel ?? item.label,
-                      ),
-                    )
-                    .toList(growable: false),
+          bottomNavigationBar: ColoredBox(
+            color: Theme.of(context).colorScheme.surface,
+            child: SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.sm,
+                  AppSpacing.xs,
+                  AppSpacing.sm,
+                  AppSpacing.xs,
+                ),
+                child: ClipRRect(
+                  borderRadius: AppRadii.lg,
+                  child: NavigationBar(
+                    selectedIndex: selectedPrimaryIndex,
+                    onDestinationSelected: (index) =>
+                        context.go(primaryItems[index].path),
+                    height: 72,
+                    destinations: primaryItems
+                        .map(
+                          (item) => NavigationDestination(
+                            icon: Icon(item.icon),
+                            selectedIcon: Icon(item.selectedIcon ?? item.icon),
+                            label: item.mobileLabel ?? item.label,
+                          ),
+                        )
+                        .toList(growable: false),
+                  ),
+                ),
               ),
             ),
           ),

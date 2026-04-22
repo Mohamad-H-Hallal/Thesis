@@ -9,7 +9,6 @@ import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
-import '../../../../core/widgets/section_header.dart';
 import '../../../admin/domain/admin_models.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../../auth/presentation/utils/auth_input_formatters.dart';
@@ -147,8 +146,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
     return ListView(
       children: [
-        const SectionHeader(title: 'Profile'),
-        const SizedBox(height: AppSpacing.md),
         AppCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,

@@ -91,15 +91,15 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
 
         return ListView(
           children: [
-            SectionHeader(
-              title: hasFixedProject ? 'Project reviews' : 'Reviews',
-              subtitle: hasFixedProject
+            Text(
+              hasFixedProject
                   ? _filter == _ReviewFilter.pending
                         ? '${items.length} feature(s) awaiting review for ${widget.projectName ?? 'this project'}'
                         : '${items.length} rejected feature(s) for ${widget.projectName ?? 'this project'}'
                   : _filter == _ReviewFilter.pending
                   ? '${items.length} feature(s) awaiting admin review'
                   : '${items.length} rejected feature(s) available for re-review',
+              style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: AppSpacing.sm),
             AppCard(

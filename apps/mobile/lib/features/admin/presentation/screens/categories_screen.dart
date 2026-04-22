@@ -9,7 +9,6 @@ import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
-import '../../../../core/widgets/section_header.dart';
 import '../../domain/admin_models.dart';
 
 class CategoriesScreen extends ConsumerStatefulWidget {
@@ -78,29 +77,13 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(),
             children: [
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final createAction = FilledButton.icon(
-                    onPressed: () => context.push(AppRoutes.categoryCreate),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Create'),
-                  );
-
-                  if (constraints.maxWidth < 720) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const SectionHeader(title: 'Categories'),
-                        const SizedBox(height: AppSpacing.sm),
-                        createAction,
-                      ],
-                    );
-                  }
-                  return SectionHeader(
-                    title: 'Categories',
-                    trailing: createAction,
-                  );
-                },
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton.icon(
+                  onPressed: () => context.push(AppRoutes.categoryCreate),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Create'),
+                ),
               ),
               const SizedBox(height: AppSpacing.md),
               Padding(
