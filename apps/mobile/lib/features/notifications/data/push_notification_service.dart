@@ -178,7 +178,7 @@ class PushNotificationService {
 
   Future<void> _initializeLocalNotifications() async {
     const initializationSettings = InitializationSettings(
-      android: AndroidInitializationSettings('ic_launcher'),
+      android: AndroidInitializationSettings('ic_stat_fieldops'),
       iOS: DarwinInitializationSettings(),
     );
 
@@ -284,6 +284,7 @@ class PushNotificationService {
           'Field alerts',
           channelDescription:
               'Project reminders, reviews, exports, and workflow notifications.',
+          icon: 'ic_stat_fieldops',
           importance: Importance.high,
           priority: Priority.high,
         ),
