@@ -1,7 +1,7 @@
 import multer, { type FileFilterCallback } from 'multer';
 import path from 'node:path';
 import fs from 'node:fs';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import type { Request } from 'express';
 
 // Ensure upload directories exist
@@ -22,7 +22,7 @@ const storage = multer.diskStorage({
     cb(null, photosDir);
   },
   filename: (_req, file, cb) => {
-    const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
+    const uniqueName = `${randomUUID()}${path.extname(file.originalname)}`;
     cb(null, uniqueName);
   },
 });
@@ -65,7 +65,7 @@ const categoryIconStorage = multer.diskStorage({
     cb(null, categoryIconsDir);
   },
   filename: (_req, file, cb) => {
-    const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
+    const uniqueName = `${randomUUID()}${path.extname(file.originalname)}`;
     cb(null, uniqueName);
   },
 });

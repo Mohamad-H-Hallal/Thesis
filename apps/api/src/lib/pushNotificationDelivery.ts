@@ -1,6 +1,7 @@
 import { query, transaction } from '../config/database';
 import {
-  getPushMessaging,
+  PushDeliveryError,
+  sendPushNotification,
   isPlatformPushEnabled,
   isPushDeliveryConfigured,
 } from './firebasePush';
@@ -138,25 +139,6 @@ const deliverPendingPushNotifications = async (): Promise<{
     };
   }
 
-  const messaging = getPushMessaging();
-  if (messaging == null) {
-    for (const delivery of deliveries) {
-      skipped += 1;
-      await markPushDeliveryStatus(
-        delivery.id,
-        'skipped',
-        'Firebase messaging is unavailable in this environment.',
-      );
-    }
-
-    return {
-      attempted: deliveries.length,
-      delivered,
-      failed,
-      skipped,
-    };
-  }
-
   for (const delivery of deliveries) {
     if (!isPlatformPushEnabled(delivery.platform)) {
       skipped += 1;
@@ -171,48 +153,18 @@ const deliverPendingPushNotifications = async (): Promise<{
     }
 
     try {
-      await messaging.send({
+      await sendPushNotification(delivery.platform, {
         token: delivery.token_snapshot,
-        notification: {
-          title: delivery.title,
-          body: delivery.message,
-        },
-        data: {
-          notificationId: delivery.notification_id,
-          route: '/app/notifications',
-          title: delivery.title,
-          message: delivery.message,
-        },
-        android: {
-          priority: 'high',
-          notification: {
-            channelId: 'fieldops_alerts',
-            clickAction: 'FLUTTER_NOTIFICATION_CLICK',
-          },
-        },
-        apns: {
-          headers: {
-            'apns-priority': '10',
-          },
-          payload: {
-            aps: {
-              sound: 'default',
-            },
-          },
-        },
+        title: delivery.title,
+        message: delivery.message,
+        notificationId: delivery.notification_id,
       });
 
       delivered += 1;
       await markPushDeliveryStatus(delivery.id, 'delivered');
     } catch (error) {
-      const code =
-        error instanceof Error && 'code' in error ? String(error.code ?? '') : '';
-      const message =
-        error instanceof Error
-          ? error.message
-          : typeof error == 'string'
-            ? error
-            : 'Push notification delivery failed';
+      const code = error instanceof PushDeliveryError ? error.code : '';
+      const message = error instanceof Error ? error.message : 'Push notification delivery failed';
 
       if (
         code == 'messaging/registration-token-not-registered' ||

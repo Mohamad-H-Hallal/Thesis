@@ -54,7 +54,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\smoke-test.ps1 -BaseUrl http:
 cd D:\GIS_APP
 Copy-Item .env.dev.example .env
 # Set super admin bootstrap before first stack start:
-# SUPER_ADMIN_EMAIL=superadmin@gov.lb
+# SUPER_ADMIN_EMAIL=superadmin@example.com
 # SUPER_ADMIN_PASSWORD=replace-with-strong-super-admin-password
 # SUPER_ADMIN_FULL_NAME=GIS Super Administrator
 docker compose up -d --build
@@ -83,7 +83,7 @@ Notes:
 cd apps\api
 Copy-Item .env.example .env
 # Set the super admin bootstrap values before first start:
-# SUPER_ADMIN_EMAIL=superadmin@gov.lb
+# SUPER_ADMIN_EMAIL=superadmin@example.com
 # SUPER_ADMIN_PASSWORD=replace-with-strong-super-admin-password
 # SUPER_ADMIN_FULL_NAME=GIS Super Administrator
 # apps/api/.env.example now defaults to the official compose-backed runtime DB on 55433.
@@ -121,7 +121,7 @@ OpenAPI testing:
 - Validate the contract from the repo with `cd apps/api && npm run openapi:check`.
 
 Super admin bootstrap:
-- Set `SUPER_ADMIN_EMAIL=superadmin@gov.lb`
+- Set `SUPER_ADMIN_EMAIL` to a real deliverable mailbox for the protected super admin
 - Set `SUPER_ADMIN_PASSWORD=replace-with-strong-super-admin-password`
 - Set `SUPER_ADMIN_FULL_NAME=GIS Super Administrator`
 - Configure them in the active `.env` file or Docker environment before first startup.
@@ -289,7 +289,7 @@ Copy-Item .env.dev.example .env
 Set in `.env`:
 
 ```env
-SUPER_ADMIN_EMAIL=superadmin@gov.lb
+SUPER_ADMIN_EMAIL=superadmin@example.com
 SUPER_ADMIN_PASSWORD=replace-with-strong-super-admin-password
 SUPER_ADMIN_FULL_NAME=GIS Super Administrator
 ```

@@ -40,7 +40,7 @@ Protected super-admin state was not exposed at runtime until the local root `.en
 contained the required bootstrap variables:
 
 ```env
-SUPER_ADMIN_EMAIL=superadmin@gov.lb
+SUPER_ADMIN_EMAIL=superadmin@example.com
 SUPER_ADMIN_PASSWORD=ChangeThis!Gov2026
 SUPER_ADMIN_FULL_NAME=GIS Super Administrator
 ```

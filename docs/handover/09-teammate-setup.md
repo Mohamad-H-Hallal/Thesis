@@ -36,7 +36,7 @@ Copy-Item .env.dev.example .env
 2. Set super admin bootstrap values in `.env`:
 
 ```env
-SUPER_ADMIN_EMAIL=superadmin@gov.lb
+SUPER_ADMIN_EMAIL=superadmin@example.com
 SUPER_ADMIN_PASSWORD=replace-with-strong-super-admin-password
 SUPER_ADMIN_FULL_NAME=GIS Super Administrator
 ```
