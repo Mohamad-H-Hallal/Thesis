@@ -870,7 +870,18 @@ OfflineMapPackage? _mergeOfflineMapPackage({
     return local;
   }
   if (local == null || local.version != remote.version) {
-    return remote.copyWith(ownerUserId: ownerUserId);
+    return OfflineMapPackage(
+      ownerUserId: ownerUserId,
+      version: remote.version,
+      zoomLevelMin: remote.zoomLevelMin,
+      zoomLevelMax: remote.zoomLevelMax,
+      downloadedAt: null,
+      lastUpdatedAt: remote.lastUpdatedAt,
+      tileCount: 0,
+      sizeBytes: 0,
+      tileSource: remote.tileSource,
+      isCurrent: remote.isCurrent,
+    );
   }
   return OfflineMapPackage(
     ownerUserId: ownerUserId,

@@ -568,78 +568,29 @@ class _ProjectRequestStateTabs extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final tabs = <Widget>[
-          _ProjectRequestStateButton(
-            label: 'Pending',
-            count: pendingCount,
-            selected: selectedTab == _ProjectRequestTab.pending,
-            onPressed: () => onSelected(_ProjectRequestTab.pending),
-          ),
-          _ProjectRequestStateButton(
-            label: 'Rejected',
-            count: rejectedCount,
-            selected: selectedTab == _ProjectRequestTab.rejected,
-            onPressed: () => onSelected(_ProjectRequestTab.rejected),
-          ),
-        ];
-
-        if (constraints.maxWidth < 420) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Project requests', style: theme.textTheme.titleMedium),
-              const SizedBox(height: AppSpacing.sm),
-              ...tabs.expand(
-                (tab) => <Widget>[
-                  SizedBox(width: double.infinity, child: tab),
-                  const SizedBox(height: AppSpacing.sm),
-                ],
-              ),
-            ],
-          );
-        }
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Project requests', style: theme.textTheme.titleMedium),
+        const SizedBox(height: AppSpacing.sm),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
-            Text('Project requests', style: theme.textTheme.titleMedium),
-            const SizedBox(height: AppSpacing.sm),
-            Row(
-              children: [
-                Expanded(child: tabs[0]),
-                const SizedBox(width: AppSpacing.sm),
-                Expanded(child: tabs[1]),
-              ],
+            ChoiceChip(
+              label: Text('Pending ($pendingCount)'),
+              selected: selectedTab == _ProjectRequestTab.pending,
+              onSelected: (_) => onSelected(_ProjectRequestTab.pending),
+            ),
+            ChoiceChip(
+              label: Text('Rejected ($rejectedCount)'),
+              selected: selectedTab == _ProjectRequestTab.rejected,
+              onSelected: (_) => onSelected(_ProjectRequestTab.rejected),
             ),
           ],
-        );
-      },
+        ),
+      ],
     );
-  }
-}
-
-class _ProjectRequestStateButton extends StatelessWidget {
-  const _ProjectRequestStateButton({
-    required this.label,
-    required this.count,
-    required this.selected,
-    required this.onPressed,
-  });
-
-  final String label;
-  final int count;
-  final bool selected;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final child = Text('$label ($count)');
-    if (selected) {
-      return FilledButton.tonal(onPressed: onPressed, child: child);
-    }
-    return OutlinedButton(onPressed: onPressed, child: child);
   }
 }
 

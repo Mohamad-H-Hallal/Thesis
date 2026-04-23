@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:lebanese_gis_mobile/core/network/api_client.dart';
 import 'package:lebanese_gis_mobile/core/offline/local_models.dart';
@@ -284,7 +285,7 @@ List<MapFeatureSummary> _projectFeatures() {
         'type': 'Point',
         'coordinates': <double>[35.5018, 33.8938],
       },
-      attributes: <String, dynamic>{'tree_type': 'Olive'},
+      attributes: <String, dynamic>{'tree_type': 'Olive', 'name': 'Mazami'},
       collectedBy: 'Rana',
       photoCount: 2,
     ),
@@ -1006,6 +1007,132 @@ void main() {
         ),
         findsNothing,
       );
+    },
+  );
+
+  testWidgets('project feature browser uses a readable feature title', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(430, 932));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      _wrapWithScope(
+        overrides: <Override>[
+          authControllerProvider.overrideWith(
+            (ref) =>
+                _AuthenticatedAuthController(_session(UserRole.contributor)),
+          ),
+          syncControllerProvider.overrideWith((ref) => _buildSyncController()),
+          currentLocationServiceProvider.overrideWithValue(
+            _FakeCurrentLocationService(
+              const CurrentLocationSnapshot(
+                position: LatLng(33.8938, 35.5018),
+                accuracyMeters: 6,
+              ),
+            ),
+          ),
+          mapProjectsProvider.overrideWith(
+            (ref) async => <ProjectSummary>[_projectSummary()],
+          ),
+          projectMapFeaturesProvider.overrideWith(
+            (ref, projectId) async => _projectFeatures(),
+          ),
+          offlineMapPackageProvider.overrideWith(
+            (ref) async => _offlinePackage(),
+          ),
+        ],
+        child: const MapScreen(
+          initialProjectId: 'project-1',
+          lockProjectSelection: true,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.tap(find.byTooltip('Browse project features'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Mazami'), findsOneWidget);
+
+    await tester.tap(find.text('Mazami'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Mazami'), findsWidgets);
+  });
+
+  testWidgets(
+    'capture-seeded add feature returns to the project map when backing out of attributes',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(430, 932));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final project = _projectSummary();
+      AddFeatureFlowResult? result;
+      late final GoRouter router;
+
+      router = GoRouter(
+        routes: <RouteBase>[
+          GoRoute(
+            path: '/',
+            builder: (context, state) => Scaffold(
+              body: Center(
+                child: FilledButton(
+                  onPressed: () async {
+                    result = await context.push<AddFeatureFlowResult>('/add');
+                  },
+                  child: const Text('Open capture flow'),
+                ),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/add',
+            builder: (context, state) => AddFeatureScreen(
+              initialProjectId: 'project-1',
+              captureSeed: const AddFeatureCaptureSeed(
+                projectId: 'project-1',
+                geometryType: 'Point',
+                vertices: <LatLng>[LatLng(33.901, 35.511)],
+                gpsAccuracyMeters: 4.7,
+              ),
+            ),
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: <Override>[
+            authControllerProvider.overrideWith(
+              (ref) =>
+                  _AuthenticatedAuthController(_session(UserRole.contributor)),
+            ),
+            projectListProvider.overrideWith(
+              (ref, scope) async => <ProjectSummary>[project],
+            ),
+            projectMapFeaturesProvider.overrideWith(
+              (ref, projectId) async => const <MapFeatureSummary>[],
+            ),
+            localDraftFeaturesProvider.overrideWith(
+              (ref) async => const <LocalDraftFeature>[],
+            ),
+          ],
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.tap(find.text('Open capture flow'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Collection form'), findsOneWidget);
+      expect(find.widgetWithText(OutlinedButton, 'Back'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Back'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Open capture flow'), findsOneWidget);
+      expect(result?.shouldResumeCapture, isTrue);
     },
   );
 }

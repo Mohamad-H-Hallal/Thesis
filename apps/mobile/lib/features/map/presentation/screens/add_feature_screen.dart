@@ -146,6 +146,19 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     );
   }
 
+  void _handleBack(ProjectSummary project) {
+    if (widget.captureSeed != null && _currentStep == 1) {
+      _returnToProjectMap(
+        project.id,
+        result: const AddFeatureFlowResult.resumeCapture(),
+      );
+      return;
+    }
+    setState(() {
+      _currentStep -= 1;
+    });
+  }
+
   @override
   void dispose() {
     for (final controller in _attributeControllers.values) {
@@ -1248,7 +1261,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 OutlinedButton(
                   onPressed: _isSaving
                       ? null
-                      : () => setState(() => _currentStep -= 1),
+                      : () => _handleBack(selectedProject),
                   child: const Text('Back'),
                 ),
               if (_currentStep < 3)

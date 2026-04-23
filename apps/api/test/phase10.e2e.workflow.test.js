@@ -448,4 +448,112 @@ describe('Phase 10 E2E workflow', () => {
     expect(entryNames).toContain('metadata.json');
     expect(entryNames).toContain('README.txt');
   });
+
+  test('feature creation accepts free-text attributes like name when present in the collection schema', async () => {
+    const admin = await createAdminUser({
+      fullName: 'Phase10 Admin Schema',
+      emailPrefix: 'phase10-admin-schema',
+    });
+
+    const contributor = await registerUser({
+      role: 'contributor',
+      fullName: 'Phase10 Contributor Schema',
+      emailPrefix: 'phase10-contributor-schema',
+    });
+
+    await approveContributorRequest({
+      token: admin.token,
+      userId: contributor.user.id,
+    });
+
+    const category = await createCategory({
+      token: admin.token,
+      name: `Schema Fields ${Date.now()}`,
+    });
+
+    const createProjectResponse = await request(app)
+      .post(`${API_PREFIX}/projects`)
+      .set(authHeader(admin.token))
+      .send({
+        category_id: category.id,
+        name: `Schema Name Field ${Date.now()}`,
+        description: 'Project with a free-text name field',
+        collection_form_schema: {
+          schemaVersion: '0.1.0',
+          fields: [
+            {
+              key: 'feature_type',
+              label: 'Feature type',
+              type: 'select',
+              required: true,
+              options: ['olive', 'citrus'],
+            },
+            {
+              key: 'name',
+              label: 'Name',
+              type: 'text',
+              required: false,
+            },
+          ],
+        },
+        status: 'draft',
+        requires_photos: false,
+        min_photos: 0,
+        max_photos: 3,
+        visible_to_viewers: false,
+        visible_to_contributors: true,
+      });
+
+    expect(createProjectResponse.status).toBe(201);
+    const projectId = createProjectResponse.body.data.id;
+
+    await request(app)
+      .put(`${API_PREFIX}/projects/${projectId}`)
+      .set(authHeader(admin.token))
+      .send({ status: 'active' })
+      .expect(200);
+
+    const assignment = await createAssignment({
+      token: admin.token,
+      projectId,
+      userId: contributor.user.id,
+      role: 'contributor',
+    });
+
+    await updateAssignmentStatus({
+      token: admin.token,
+      assignmentId: assignment.id,
+      status: 'approved',
+    });
+
+    const contributorLogin = await loginUser({
+      email: contributor.email,
+      password: contributor.password,
+    });
+
+    const createFeatureResponse = await request(app)
+      .post(`${API_PREFIX}/features`)
+      .set(authHeader(contributorLogin.token))
+      .send({
+        project_id: projectId,
+        geom: {
+          type: 'Point',
+          coordinates: [35.5018, 33.8938],
+        },
+        attributes: {
+          feature_type: 'olive',
+          name: 'Mazami',
+        },
+        accuracy_meters: 4.2,
+      });
+
+    expect(createFeatureResponse.status).toBe(201);
+
+    const submitResponse = await request(app)
+      .post(`${API_PREFIX}/features/${createFeatureResponse.body.data.id}/submit`)
+      .set(authHeader(contributorLogin.token))
+      .send();
+
+    expect(submitResponse.status).toBe(200);
+  });
 });

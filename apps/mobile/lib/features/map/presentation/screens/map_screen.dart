@@ -28,6 +28,13 @@ import '../../domain/map_geometry.dart';
 import 'add_feature_screen.dart';
 import '../widgets/feature_photo_gallery.dart';
 
+enum _OfflineMapAction {
+  saveOverview,
+  saveVisibleArea,
+  refreshSavedImagery,
+  deleteSavedImagery,
+}
+
 class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({
     this.initialProjectId,
@@ -69,6 +76,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   String? _autoOpenedFeatureId;
   String? _offlineDownloadProgressLabel;
   String? _offlineDownloadResultLabel;
+  _OfflineMapAction? _activeOfflineMapAction;
   LatLng? _currentLocation;
   double? _currentLocationAccuracyMeters;
   bool _isDownloadingOffline = false;
@@ -1145,6 +1153,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       package: offlinePackage,
                       basemapStyle: _basemapStyle,
                       isDownloading: _isDownloadingOffline,
+                      activeAction: _activeOfflineMapAction,
                       progressLabel: _offlineDownloadProgressLabel,
                       statusLabel: _offlineDownloadResultLabel,
                       onDownloadOverview: offlinePackage == null
@@ -1350,7 +1359,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                         CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        'Feature ${_featureShortId(feature.id)}',
+                                        _featureDisplayTitle(feature),
                                         style: Theme.of(
                                           context,
                                         ).textTheme.titleMedium,
@@ -2587,17 +2596,22 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       await showModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
+        isDismissible: false,
+        enableDrag: false,
         backgroundColor: Colors.transparent,
         builder: (context) => _OfflineMapSheet(
           basemapStyle: _basemapStyle,
           initialOfflinePackage: offlinePackage,
           hasCollectionAccess: hasCollectionAccess,
           isDownloadingOffline: _isDownloadingOffline,
+          activeAction: _activeOfflineMapAction,
           offlineDownloadProgressLabel: _offlineDownloadProgressLabel,
           offlineDownloadResultLabel: _offlineDownloadResultLabel,
           syncState: syncState,
           canDownloadVisible: offlinePackage != null && _isMainMapReady,
-          onClose: () => Navigator.of(context).pop(),
+          onClose: _isDownloadingOffline
+              ? null
+              : () => Navigator.of(context).pop(),
           onDownloadOverview: _downloadLebanonOverview,
           onDownloadVisible: _downloadVisibleRegion,
           onRefreshSavedImagery: _refreshSavedOfflineImagery,
@@ -2614,15 +2628,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   String _featureBrowserTitle(MapFeatureSummary feature) {
-    for (final entry in feature.attributes.entries) {
-      final value = '${entry.value}'.trim();
-      if (_looksLikeFeatureTypeField(entry.key, entry.key) &&
-          value.isNotEmpty &&
-          value.length <= 40) {
-        return value;
-      }
-    }
-    return 'Feature ${_featureShortId(feature.id)}';
+    return _featureDisplayTitle(feature);
   }
 
   String _featureBrowserSubtitle(MapFeatureSummary feature) {
@@ -2634,6 +2640,93 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       details.add('Collector ${feature.collectedBy}');
     }
     return details.join(' • ');
+  }
+
+  void _startOfflineAction(
+    _OfflineMapAction action, {
+    required String progressLabel,
+  }) {
+    setState(() {
+      _isDownloadingOffline = true;
+      _activeOfflineMapAction = action;
+      _offlineDownloadProgressLabel = progressLabel;
+      _offlineDownloadResultLabel = null;
+    });
+  }
+
+  void _completeOfflineAction({
+    required String message,
+    required bool success,
+  }) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _offlineDownloadResultLabel = message;
+    });
+    if (success) {
+      AppSnackbar.showSuccess(context, message);
+    } else {
+      AppSnackbar.showError(context, message);
+    }
+  }
+
+  void _finishOfflineAction() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isDownloadingOffline = false;
+      _activeOfflineMapAction = null;
+      _offlineDownloadProgressLabel = null;
+    });
+  }
+
+  String? _featureAttributeValue(
+    MapFeatureSummary feature,
+    bool Function(String key, String label) matcher, {
+    int maxLength = 60,
+  }) {
+    for (final entry in feature.attributes.entries) {
+      final value = '${entry.value}'.trim();
+      if (!matcher(entry.key, entry.key) ||
+          value.isEmpty ||
+          value.length > maxLength) {
+        continue;
+      }
+      return value;
+    }
+    return null;
+  }
+
+  bool _looksLikeFeatureNameField(String key, String label) {
+    final normalized = '${key.toLowerCase()} ${label.toLowerCase()}';
+    return normalized.contains('name') ||
+        normalized.contains('title') ||
+        normalized.contains('label');
+  }
+
+  String _featureDisplayTitle(MapFeatureSummary feature) {
+    final nameValue = _featureAttributeValue(
+      feature,
+      _looksLikeFeatureNameField,
+    );
+    if (nameValue != null) {
+      return nameValue;
+    }
+    final typeValue = _featureAttributeValue(
+      feature,
+      _looksLikeFeatureTypeField,
+      maxLength: 40,
+    );
+    if (typeValue != null) {
+      return typeValue;
+    }
+    return switch (feature.geometry['type']) {
+      'LineString' => 'Line feature',
+      'Polygon' => 'Area feature',
+      _ => 'Point feature',
+    };
   }
 
   Future<_OfflineTileAssets> _loadOfflineTileAssets(
@@ -2657,12 +2750,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     if (_isDownloadingOffline) {
       return;
     }
-    setState(() {
-      _isDownloadingOffline = true;
-      _offlineDownloadProgressLabel =
-          'Preparing the Lebanon overview for offline browsing...';
-      _offlineDownloadResultLabel = null;
-    });
+    _startOfflineAction(
+      _OfflineMapAction.saveOverview,
+      progressLabel: 'Preparing the Lebanon overview for offline browsing...',
+    );
     try {
       final manager = ref.read(offlineTileCacheManagerProvider);
       final summary = await ref
@@ -2691,33 +2782,28 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             summary.downloadedTiles > 0 || summary.skippedTiles > 0;
         final message =
             'Lebanon overview saved on this device. ${summary.downloadedTiles} new map image(s), ${summary.skippedTiles} already available${summary.failedTiles > 0 ? ', ${summary.failedTiles} failed' : ''}.';
-        setState(() {
-          _offlineDownloadResultLabel = message;
-        });
         if (!hasUsableTiles) {
-          AppSnackbar.showError(
-            context,
-            'Unable to save the Lebanon overview right now. Please try again later.',
+          _completeOfflineAction(
+            message:
+                'Unable to save the Lebanon overview right now. Please try again later.',
+            success: false,
           );
+          return;
         }
+        _completeOfflineAction(message: message, success: true);
       }
     } catch (error) {
       if (mounted) {
-        final message = userFacingErrorMessage(
-          error,
-          fallback: 'Unable to save the Lebanon overview right now.',
+        _completeOfflineAction(
+          message: userFacingErrorMessage(
+            error,
+            fallback: 'Unable to save the Lebanon overview right now.',
+          ),
+          success: false,
         );
-        setState(() {
-          _offlineDownloadResultLabel = message;
-        });
       }
     } finally {
-      if (mounted) {
-        setState(() {
-          _isDownloadingOffline = false;
-          _offlineDownloadProgressLabel = null;
-        });
-      }
+      _finishOfflineAction();
     }
   }
 
@@ -2740,12 +2826,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       );
       return;
     }
-    setState(() {
-      _isDownloadingOffline = true;
-      _offlineDownloadProgressLabel =
-          'Preparing the visible map area for offline browsing...';
-      _offlineDownloadResultLabel = null;
-    });
+    _startOfflineAction(
+      _OfflineMapAction.saveVisibleArea,
+      progressLabel: 'Preparing the visible map area for offline browsing...',
+    );
     try {
       final manager = ref.read(offlineTileCacheManagerProvider);
       final summary = await manager.cacheVisibleRegion(
@@ -2774,33 +2858,28 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             summary.downloadedTiles > 0 || summary.skippedTiles > 0;
         final message =
             'This visible area is saved on this device. ${summary.downloadedTiles} new map image(s), ${summary.skippedTiles} already available${summary.failedTiles > 0 ? ', ${summary.failedTiles} failed' : ''}.';
-        setState(() {
-          _offlineDownloadResultLabel = message;
-        });
         if (!hasUsableTiles) {
-          AppSnackbar.showError(
-            context,
-            'Unable to save this visible area right now. Please try again later.',
+          _completeOfflineAction(
+            message:
+                'Unable to save this visible area right now. Please try again later.',
+            success: false,
           );
+          return;
         }
+        _completeOfflineAction(message: message, success: true);
       }
     } catch (error) {
       if (mounted) {
-        final message = userFacingErrorMessage(
-          error,
-          fallback: 'Unable to save this visible map area right now.',
+        _completeOfflineAction(
+          message: userFacingErrorMessage(
+            error,
+            fallback: 'Unable to save this visible map area right now.',
+          ),
+          success: false,
         );
-        setState(() {
-          _offlineDownloadResultLabel = message;
-        });
       }
     } finally {
-      if (mounted) {
-        setState(() {
-          _isDownloadingOffline = false;
-          _offlineDownloadProgressLabel = null;
-        });
-      }
+      _finishOfflineAction();
     }
   }
 
@@ -2808,12 +2887,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     if (_isDownloadingOffline) {
       return;
     }
-    setState(() {
-      _isDownloadingOffline = true;
-      _offlineDownloadProgressLabel =
-          'Refreshing saved map imagery for the current view style...';
-      _offlineDownloadResultLabel = null;
-    });
+    _startOfflineAction(
+      _OfflineMapAction.refreshSavedImagery,
+      progressLabel:
+          'Refreshing saved map imagery for the current view style...',
+    );
     try {
       final manager = ref.read(offlineTileCacheManagerProvider);
       final summary = await manager.refreshCachedTiles(
@@ -2841,29 +2919,23 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       final message = summary.requestedTiles == 0
           ? 'No saved offline imagery is available yet for the ${LebanonMapConfig.basemapLabel(_basemapStyle).toLowerCase()} view.'
           : 'Saved imagery refreshed. ${summary.downloadedTiles} map image(s) updated${summary.failedTiles > 0 ? ', ${summary.failedTiles} failed' : ''}.';
-      setState(() {
-        _offlineDownloadResultLabel = message;
-      });
       if (summary.downloadedTiles > 0) {
         _clearTileNotice();
       }
+      _completeOfflineAction(message: message, success: true);
     } catch (error) {
       if (!mounted) {
         return;
       }
-      setState(() {
-        _offlineDownloadResultLabel = userFacingErrorMessage(
+      _completeOfflineAction(
+        message: userFacingErrorMessage(
           error,
           fallback: 'Unable to refresh saved offline imagery right now.',
-        );
-      });
+        ),
+        success: false,
+      );
     } finally {
-      if (mounted) {
-        setState(() {
-          _isDownloadingOffline = false;
-          _offlineDownloadProgressLabel = null;
-        });
-      }
+      _finishOfflineAction();
     }
   }
 
@@ -2902,12 +2974,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     if (_isDownloadingOffline) {
       return;
     }
-    setState(() {
-      _isDownloadingOffline = true;
-      _offlineDownloadProgressLabel =
-          'Removing saved offline imagery from this device...';
-      _offlineDownloadResultLabel = null;
-    });
+    _startOfflineAction(
+      _OfflineMapAction.deleteSavedImagery,
+      progressLabel: 'Removing saved offline imagery from this device...',
+    );
     try {
       final manager = ref.read(offlineTileCacheManagerProvider);
       await manager.clearCachedTiles(
@@ -2924,27 +2994,24 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         return;
       }
       _clearTileNotice();
-      setState(() {
-        _offlineDownloadResultLabel =
-            'Saved ${LebanonMapConfig.basemapLabel(_basemapStyle).toLowerCase()} imagery removed from this device.';
-      });
+      _completeOfflineAction(
+        message:
+            'Saved ${LebanonMapConfig.basemapLabel(_basemapStyle).toLowerCase()} imagery removed from this device.',
+        success: true,
+      );
     } catch (error) {
       if (!mounted) {
         return;
       }
-      setState(() {
-        _offlineDownloadResultLabel = userFacingErrorMessage(
+      _completeOfflineAction(
+        message: userFacingErrorMessage(
           error,
           fallback: 'Unable to remove saved offline imagery right now.',
-        );
-      });
+        ),
+        success: false,
+      );
     } finally {
-      if (mounted) {
-        setState(() {
-          _isDownloadingOffline = false;
-          _offlineDownloadProgressLabel = null;
-        });
-      }
+      _finishOfflineAction();
     }
   }
 
@@ -3202,7 +3269,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   children: [
                     Expanded(
                       child: Text(
-                        'Feature ${_featureShortId(feature.id)}',
+                        _featureDisplayTitle(feature),
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                     ),
@@ -3658,13 +3725,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final normalized = path.replaceAll('\\', '/');
     final segments = normalized.split('/');
     return segments.isEmpty ? path : segments.last;
-  }
-
-  String _featureShortId(String value) {
-    if (value.length <= 8) {
-      return value;
-    }
-    return value.substring(0, 8);
   }
 }
 
@@ -5074,6 +5134,7 @@ class _OfflineMapSheet extends ConsumerWidget {
     required this.initialOfflinePackage,
     required this.hasCollectionAccess,
     required this.isDownloadingOffline,
+    required this.activeAction,
     required this.offlineDownloadProgressLabel,
     required this.offlineDownloadResultLabel,
     required this.syncState,
@@ -5089,11 +5150,12 @@ class _OfflineMapSheet extends ConsumerWidget {
   final OfflineMapPackage? initialOfflinePackage;
   final bool hasCollectionAccess;
   final bool isDownloadingOffline;
+  final _OfflineMapAction? activeAction;
   final String? offlineDownloadProgressLabel;
   final String? offlineDownloadResultLabel;
   final SyncState syncState;
   final bool canDownloadVisible;
-  final VoidCallback onClose;
+  final VoidCallback? onClose;
   final Future<void> Function(OfflineMapPackage package)? onDownloadOverview;
   final Future<void> Function(OfflineMapPackage package)? onDownloadVisible;
   final Future<void> Function(OfflineMapPackage package)? onRefreshSavedImagery;
@@ -5176,6 +5238,7 @@ class _OfflineMapSheet extends ConsumerWidget {
                       package: livePackage,
                       basemapStyle: basemapStyle,
                       isDownloading: isDownloadingOffline,
+                      activeAction: activeAction,
                       progressLabel: offlineDownloadProgressLabel,
                       statusLabel: offlineDownloadResultLabel,
                       onDownloadOverview:
@@ -5217,6 +5280,7 @@ class _OfflineMapStatusCard extends StatelessWidget {
     required this.package,
     required this.basemapStyle,
     required this.isDownloading,
+    required this.activeAction,
     required this.progressLabel,
     required this.statusLabel,
     required this.onDownloadOverview,
@@ -5228,6 +5292,7 @@ class _OfflineMapStatusCard extends StatelessWidget {
   final OfflineMapPackage? package;
   final LebanonBasemapStyle basemapStyle;
   final bool isDownloading;
+  final _OfflineMapAction? activeAction;
   final String? progressLabel;
   final String? statusLabel;
   final VoidCallback? onDownloadOverview;
@@ -5304,7 +5369,11 @@ class _OfflineMapStatusCard extends StatelessWidget {
                 title: 'Save Lebanon overview',
                 description:
                     'Saves a lightweight Lebanon-wide reference layer in the current style for offline orientation and country-level browsing.',
-                actionLabel: isDownloading ? 'Saving...' : 'Save overview',
+                actionLabel:
+                    isDownloading &&
+                        activeAction == _OfflineMapAction.saveOverview
+                    ? 'Saving...'
+                    : 'Save overview',
                 onPressed: isDownloading ? null : onDownloadOverview,
                 filled: true,
               ),
@@ -5314,7 +5383,11 @@ class _OfflineMapStatusCard extends StatelessWidget {
                 title: 'Save this view',
                 description:
                     'Saves the detailed map area currently visible on screen in the current style for this signed-in user.',
-                actionLabel: 'Save visible area',
+                actionLabel:
+                    isDownloading &&
+                        activeAction == _OfflineMapAction.saveVisibleArea
+                    ? 'Saving...'
+                    : 'Save visible area',
                 onPressed: isDownloading ? null : onDownloadVisible,
               ),
               if (hasSavedImagery) ...[
@@ -5324,7 +5397,9 @@ class _OfflineMapStatusCard extends StatelessWidget {
                   title: 'Refresh saved imagery',
                   description:
                       'Re-downloads the saved map images for this style on this device so older cached tiles are replaced.',
-                  actionLabel: isDownloading
+                  actionLabel:
+                      isDownloading &&
+                          activeAction == _OfflineMapAction.refreshSavedImagery
                       ? 'Refreshing...'
                       : 'Refresh saved',
                   onPressed: isDownloading ? null : onRefreshSavedImagery,
@@ -5335,7 +5410,11 @@ class _OfflineMapStatusCard extends StatelessWidget {
                   title: 'Delete saved imagery',
                   description:
                       'Removes the saved map images for this style from this device for the signed-in user.',
-                  actionLabel: 'Delete saved',
+                  actionLabel:
+                      isDownloading &&
+                          activeAction == _OfflineMapAction.deleteSavedImagery
+                      ? 'Deleting...'
+                      : 'Delete saved',
                   onPressed: isDownloading ? null : onDeleteSavedImagery,
                 ),
               ],
