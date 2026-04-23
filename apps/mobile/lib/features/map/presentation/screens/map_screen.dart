@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -35,6 +36,20 @@ enum _OfflineMapAction {
   deleteSavedImagery,
 }
 
+class _OfflineSheetUiState {
+  const _OfflineSheetUiState({
+    this.isDownloading = false,
+    this.activeAction,
+    this.progressLabel,
+    this.statusLabel,
+  });
+
+  final bool isDownloading;
+  final _OfflineMapAction? activeAction;
+  final String? progressLabel;
+  final String? statusLabel;
+}
+
 class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({
     this.initialProjectId,
@@ -64,6 +79,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   final MapController _mapController = MapController();
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _projectMapSearchFocusNode = FocusNode();
+  final ValueNotifier<_OfflineSheetUiState> _offlineSheetUiState =
+      ValueNotifier<_OfflineSheetUiState>(const _OfflineSheetUiState());
   final Set<String> _visibleStatuses = Set<String>.from(_projectMapStatusOrder);
   final List<LatLng> _captureVertices = <LatLng>[];
   final Map<String, Future<_OfflineTileAssets?>> _offlineTileAssetsFutureCache =
@@ -128,6 +145,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   @override
   void initState() {
     super.initState();
+    _publishOfflineSheetState();
     _mainMapOptions = MapOptions(
       initialCenter: _defaultMapCenter,
       initialZoom: _defaultMapZoom,
@@ -144,6 +162,15 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   bool get _isProjectMapSecondaryOverlayOpen =>
       _isProjectMapGeometryChooserOpen || _isProjectMapModalSheetOpen;
+
+  void _publishOfflineSheetState() {
+    _offlineSheetUiState.value = _OfflineSheetUiState(
+      isDownloading: _isDownloadingOffline,
+      activeAction: _activeOfflineMapAction,
+      progressLabel: _offlineDownloadProgressLabel,
+      statusLabel: _offlineDownloadResultLabel,
+    );
+  }
 
   void _moveToProjectWorkspace() {
     if (!mounted) {
@@ -358,6 +385,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     _locationNoticeTimer?.cancel();
     _tileNoticeTimer?.cancel();
     _basemapTransitionTimer?.cancel();
+    _offlineSheetUiState.dispose();
     _searchController.dispose();
     _projectMapSearchFocusNode.dispose();
     super.dispose();
@@ -2588,7 +2616,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required OfflineMapPackage? offlinePackage,
     required bool hasCollectionAccess,
   }) async {
-    final syncState = ref.read(syncControllerProvider);
     setState(() {
       _isProjectMapModalSheetOpen = true;
     });
@@ -2603,15 +2630,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           basemapStyle: _basemapStyle,
           initialOfflinePackage: offlinePackage,
           hasCollectionAccess: hasCollectionAccess,
-          isDownloadingOffline: _isDownloadingOffline,
-          activeAction: _activeOfflineMapAction,
-          offlineDownloadProgressLabel: _offlineDownloadProgressLabel,
-          offlineDownloadResultLabel: _offlineDownloadResultLabel,
-          syncState: syncState,
+          uiStateListenable: _offlineSheetUiState,
           canDownloadVisible: offlinePackage != null && _isMainMapReady,
-          onClose: _isDownloadingOffline
-              ? null
-              : () => Navigator.of(context).pop(),
+          onClose: () => Navigator.of(context).pop(),
           onDownloadOverview: _downloadLebanonOverview,
           onDownloadVisible: _downloadVisibleRegion,
           onRefreshSavedImagery: _refreshSavedOfflineImagery,
@@ -2652,6 +2673,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _offlineDownloadProgressLabel = progressLabel;
       _offlineDownloadResultLabel = null;
     });
+    _publishOfflineSheetState();
   }
 
   void _completeOfflineAction({
@@ -2664,6 +2686,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     setState(() {
       _offlineDownloadResultLabel = message;
     });
+    _publishOfflineSheetState();
     if (success) {
       AppSnackbar.showSuccess(context, message);
     } else {
@@ -2680,6 +2703,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _activeOfflineMapAction = null;
       _offlineDownloadProgressLabel = null;
     });
+    _publishOfflineSheetState();
   }
 
   String? _featureAttributeValue(
@@ -2769,6 +2793,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 _offlineDownloadProgressLabel =
                     'Saving the Lebanon overview ${progress.completedTiles}/${progress.requestedTiles} • ${progress.downloadedTiles} new • ${progress.skippedTiles} already on this device${progress.failedTiles > 0 ? ' • ${progress.failedTiles} failed' : ''}';
               });
+              _publishOfflineSheetState();
             },
           );
       _invalidateOfflineTileAssetsCache(
@@ -2845,6 +2870,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             _offlineDownloadProgressLabel =
                 'Saving this visible area ${progress.completedTiles}/${progress.requestedTiles} • ${progress.downloadedTiles} new • ${progress.skippedTiles} already on this device${progress.failedTiles > 0 ? ' • ${progress.failedTiles} failed' : ''}';
           });
+          _publishOfflineSheetState();
         },
       );
       _invalidateOfflineTileAssetsCache(
@@ -2905,6 +2931,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             _offlineDownloadProgressLabel =
                 'Refreshing saved imagery ${progress.completedTiles}/${progress.requestedTiles}${progress.failedTiles > 0 ? ' • ${progress.failedTiles} failed' : ''}';
           });
+          _publishOfflineSheetState();
         },
       );
       _invalidateOfflineTileAssetsCache(
@@ -5133,11 +5160,7 @@ class _OfflineMapSheet extends ConsumerWidget {
     required this.basemapStyle,
     required this.initialOfflinePackage,
     required this.hasCollectionAccess,
-    required this.isDownloadingOffline,
-    required this.activeAction,
-    required this.offlineDownloadProgressLabel,
-    required this.offlineDownloadResultLabel,
-    required this.syncState,
+    required this.uiStateListenable,
     required this.canDownloadVisible,
     required this.onClose,
     required this.onDownloadOverview,
@@ -5149,13 +5172,9 @@ class _OfflineMapSheet extends ConsumerWidget {
   final LebanonBasemapStyle basemapStyle;
   final OfflineMapPackage? initialOfflinePackage;
   final bool hasCollectionAccess;
-  final bool isDownloadingOffline;
-  final _OfflineMapAction? activeAction;
-  final String? offlineDownloadProgressLabel;
-  final String? offlineDownloadResultLabel;
-  final SyncState syncState;
+  final ValueListenable<_OfflineSheetUiState> uiStateListenable;
   final bool canDownloadVisible;
-  final VoidCallback? onClose;
+  final VoidCallback onClose;
   final Future<void> Function(OfflineMapPackage package)? onDownloadOverview;
   final Future<void> Function(OfflineMapPackage package)? onDownloadVisible;
   final Future<void> Function(OfflineMapPackage package)? onRefreshSavedImagery;
@@ -5163,112 +5182,126 @@ class _OfflineMapSheet extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final syncState = ref.watch(syncControllerProvider);
     final livePackage =
         ref.watch(offlineMapPackageProvider).valueOrNull ??
         initialOfflinePackage;
     final bottomInset =
         MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
-    return DraggableScrollableSheet(
-      expand: false,
-      initialChildSize: 0.44,
-      minChildSize: 0.28,
-      maxChildSize: 0.88,
-      builder: (context, controller) {
-        return DecoratedBox(
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-            boxShadow: const [
-              BoxShadow(
-                blurRadius: 24,
-                color: Color(0x29000000),
-                offset: Offset(0, -6),
-              ),
-            ],
-          ),
-          child: Column(
-            children: [
-              const SizedBox(height: 10),
-              Container(
-                width: 42,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.outlineVariant,
-                  borderRadius: BorderRadius.circular(999),
+    return ValueListenableBuilder<_OfflineSheetUiState>(
+      valueListenable: uiStateListenable,
+      builder: (context, uiState, _) {
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.44,
+          minChildSize: 0.28,
+          maxChildSize: 0.88,
+          builder: (context, controller) {
+            return DecoratedBox(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(28),
                 ),
-              ),
-              Expanded(
-                child: ListView(
-                  controller: controller,
-                  padding: EdgeInsets.fromLTRB(
-                    AppSpacing.md,
-                    AppSpacing.md,
-                    AppSpacing.md,
-                    bottomInset,
+                boxShadow: const [
+                  BoxShadow(
+                    blurRadius: 24,
+                    color: Color(0x29000000),
+                    offset: Offset(0, -6),
                   ),
-                  children: [
-                    Row(
+                ],
+              ),
+              child: Column(
+                children: [
+                  const SizedBox(height: 10),
+                  Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView(
+                      controller: controller,
+                      padding: EdgeInsets.fromLTRB(
+                        AppSpacing.md,
+                        AppSpacing.md,
+                        AppSpacing.md,
+                        bottomInset,
+                      ),
                       children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Offline map',
-                                style: Theme.of(context).textTheme.titleLarge,
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Offline map',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.titleLarge,
+                                  ),
+                                  const SizedBox(height: AppSpacing.xs),
+                                  Text(
+                                    'Save map imagery on this device so this project area stays readable without signal.',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodyMedium,
+                                  ),
+                                ],
                               ),
-                              const SizedBox(height: AppSpacing.xs),
-                              Text(
-                                'Save map imagery on this device so this project area stays readable without signal.',
-                                style: Theme.of(context).textTheme.bodyMedium,
-                              ),
-                            ],
-                          ),
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                            IconButton(
+                              tooltip: 'Close offline map',
+                              onPressed: uiState.isDownloading ? null : onClose,
+                              icon: const Icon(Icons.close_rounded),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: AppSpacing.sm),
-                        IconButton(
-                          tooltip: 'Close offline map',
-                          onPressed: onClose,
-                          icon: const Icon(Icons.close_rounded),
+                        const SizedBox(height: AppSpacing.md),
+                        _OfflineMapStatusCard(
+                          package: livePackage,
+                          basemapStyle: basemapStyle,
+                          isDownloading: uiState.isDownloading,
+                          activeAction: uiState.activeAction,
+                          progressLabel: uiState.progressLabel,
+                          statusLabel: uiState.statusLabel,
+                          onDownloadOverview:
+                              livePackage == null || onDownloadOverview == null
+                              ? null
+                              : () => onDownloadOverview!(livePackage),
+                          onDownloadVisible:
+                              livePackage == null ||
+                                  !canDownloadVisible ||
+                                  onDownloadVisible == null
+                              ? null
+                              : () => onDownloadVisible!(livePackage),
+                          onRefreshSavedImagery:
+                              livePackage == null ||
+                                  onRefreshSavedImagery == null
+                              ? null
+                              : () => onRefreshSavedImagery!(livePackage),
+                          onDeleteSavedImagery:
+                              livePackage == null ||
+                                  onDeleteSavedImagery == null
+                              ? null
+                              : () => onDeleteSavedImagery!(livePackage),
                         ),
+                        if (hasCollectionAccess) ...[
+                          const SizedBox(height: AppSpacing.md),
+                          AppCard(child: _SyncStatusLine(state: syncState)),
+                        ],
                       ],
                     ),
-                    const SizedBox(height: AppSpacing.md),
-                    _OfflineMapStatusCard(
-                      package: livePackage,
-                      basemapStyle: basemapStyle,
-                      isDownloading: isDownloadingOffline,
-                      activeAction: activeAction,
-                      progressLabel: offlineDownloadProgressLabel,
-                      statusLabel: offlineDownloadResultLabel,
-                      onDownloadOverview:
-                          livePackage == null || onDownloadOverview == null
-                          ? null
-                          : () => onDownloadOverview!(livePackage),
-                      onDownloadVisible:
-                          livePackage == null ||
-                              !canDownloadVisible ||
-                              onDownloadVisible == null
-                          ? null
-                          : () => onDownloadVisible!(livePackage),
-                      onRefreshSavedImagery:
-                          livePackage == null || onRefreshSavedImagery == null
-                          ? null
-                          : () => onRefreshSavedImagery!(livePackage),
-                      onDeleteSavedImagery:
-                          livePackage == null || onDeleteSavedImagery == null
-                          ? null
-                          : () => onDeleteSavedImagery!(livePackage),
-                    ),
-                    if (hasCollectionAccess) ...[
-                      const SizedBox(height: AppSpacing.md),
-                      AppCard(child: _SyncStatusLine(state: syncState)),
-                    ],
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            );
+          },
         );
       },
     );

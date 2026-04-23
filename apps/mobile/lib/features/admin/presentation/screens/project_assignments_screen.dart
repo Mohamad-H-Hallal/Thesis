@@ -11,9 +11,12 @@ import '../../../../core/utils/lebanese_phone.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../domain/admin_models.dart';
 
-enum _AssignmentSection { assigned, available, requests }
-
-enum _ProjectRequestTab { pending, rejected }
+enum _AssignmentSection {
+  assigned,
+  available,
+  pendingRequests,
+  rejectedRequests,
+}
 
 class ProjectAssignmentsScreen extends ConsumerStatefulWidget {
   const ProjectAssignmentsScreen({required this.projectId, super.key});
@@ -30,7 +33,6 @@ class _ProjectAssignmentsScreenState
   final TextEditingController _searchController = TextEditingController();
   bool _isSaving = false;
   _AssignmentSection _selectedSection = _AssignmentSection.assigned;
-  _ProjectRequestTab _selectedRequestTab = _ProjectRequestTab.pending;
 
   @override
   void dispose() {
@@ -282,9 +284,6 @@ class _ProjectAssignmentsScreenState
             data: (users) {
               final isViewOnlyProject =
                   project.status == 'completed' || project.status == 'archived';
-              final effectiveSection = isViewOnlyProject
-                  ? _AssignmentSection.assigned
-                  : _selectedSection;
               final approvedAssignments = assignments
                   .where((assignment) => assignment.status == 'approved')
                   .where(
@@ -329,14 +328,19 @@ class _ProjectAssignmentsScreenState
                     ]),
                   )
                   .toList(growable: false);
-              final effectiveRequestTab =
-                  _selectedRequestTab == _ProjectRequestTab.pending
-                  ? (pendingRequests.isEmpty && rejectedRequests.isNotEmpty
-                        ? _ProjectRequestTab.rejected
-                        : _ProjectRequestTab.pending)
-                  : (rejectedRequests.isEmpty && pendingRequests.isNotEmpty
-                        ? _ProjectRequestTab.pending
-                        : _ProjectRequestTab.rejected);
+              final effectiveSection = isViewOnlyProject
+                  ? _AssignmentSection.assigned
+                  : switch (_selectedSection) {
+                      _AssignmentSection.pendingRequests
+                          when pendingRequests.isEmpty &&
+                              rejectedRequests.isNotEmpty =>
+                        _AssignmentSection.rejectedRequests,
+                      _AssignmentSection.rejectedRequests
+                          when rejectedRequests.isEmpty &&
+                              pendingRequests.isNotEmpty =>
+                        _AssignmentSection.pendingRequests,
+                      _ => _selectedSection,
+                    };
 
               return ListView(
                 children: [
@@ -373,10 +377,13 @@ class _ProjectAssignmentsScreenState
                                       'Available',
                                       availableContributors.length,
                                     ),
-                                    _AssignmentSection.requests => (
-                                      'Requests',
-                                      pendingRequests.length +
-                                          rejectedRequests.length,
+                                    _AssignmentSection.pendingRequests => (
+                                      'Pending requests',
+                                      pendingRequests.length,
+                                    ),
+                                    _AssignmentSection.rejectedRequests => (
+                                      'Rejected requests',
+                                      rejectedRequests.length,
                                     ),
                                   };
                                   return ChoiceChip(
@@ -436,77 +443,60 @@ class _ProjectAssignmentsScreenState
                           )
                           .toList(growable: false),
                     ),
-                    _AssignmentSection.requests => Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        AppCard(
-                          child: _ProjectRequestStateTabs(
-                            pendingCount: pendingRequests.length,
-                            rejectedCount: rejectedRequests.length,
-                            selectedTab: effectiveRequestTab,
-                            onSelected: (tab) =>
-                                setState(() => _selectedRequestTab = tab),
-                          ),
-                        ),
-                        const SizedBox(height: AppSpacing.md),
-                        if (effectiveRequestTab == _ProjectRequestTab.pending)
-                          _AssignmentListSection(
-                            title: 'Pending Project Requests',
-                            emptyTitle: 'No pending project requests',
-                            emptyMessage:
-                                'Contributor self-service requests for this project appear here until an admin approves or rejects them.',
-                            children: pendingRequests
-                                .map(
-                                  (assignment) => Padding(
-                                    padding: const EdgeInsets.only(
-                                      bottom: AppSpacing.sm,
-                                    ),
-                                    child: _PendingRequestCard(
-                                      assignment: assignment,
-                                      isSaving: _isSaving,
-                                      approveLabel: 'Approve',
-                                      rejectLabel: 'Reject',
-                                      onApprove: () => _updateAssignmentRequest(
-                                        assignment,
-                                        status: 'approved',
-                                      ),
-                                      onReject: () => _updateAssignmentRequest(
-                                        assignment,
-                                        status: 'rejected',
-                                      ),
-                                    ),
-                                  ),
-                                )
-                                .toList(growable: false),
+                    _AssignmentSection.pendingRequests => _AssignmentListSection(
+                      title: 'Pending Project Requests',
+                      emptyTitle: 'No pending project requests',
+                      emptyMessage:
+                          'Contributor self-service requests for this project appear here until an admin approves or rejects them.',
+                      children: pendingRequests
+                          .map(
+                            (assignment) => Padding(
+                              padding: const EdgeInsets.only(
+                                bottom: AppSpacing.sm,
+                              ),
+                              child: _PendingRequestCard(
+                                assignment: assignment,
+                                isSaving: _isSaving,
+                                approveLabel: 'Approve',
+                                rejectLabel: 'Reject',
+                                onApprove: () => _updateAssignmentRequest(
+                                  assignment,
+                                  status: 'approved',
+                                ),
+                                onReject: () => _updateAssignmentRequest(
+                                  assignment,
+                                  status: 'rejected',
+                                ),
+                              ),
+                            ),
                           )
-                        else
-                          _AssignmentListSection(
-                            title: 'Rejected Project Requests',
-                            emptyTitle: 'No rejected project requests',
-                            emptyMessage:
-                                'Rejected project requests stay here so admins can re-approve them later if needed.',
-                            children: rejectedRequests
-                                .map(
-                                  (assignment) => Padding(
-                                    padding: const EdgeInsets.only(
-                                      bottom: AppSpacing.sm,
-                                    ),
-                                    child: _PendingRequestCard(
-                                      assignment: assignment,
-                                      isSaving: _isSaving,
-                                      approveLabel: 'Re-accept',
-                                      rejectLabel: 'Keep rejected',
-                                      onApprove: () => _updateAssignmentRequest(
-                                        assignment,
-                                        status: 'approved',
-                                      ),
-                                      onReject: null,
-                                    ),
-                                  ),
-                                )
-                                .toList(growable: false),
-                          ),
-                      ],
+                          .toList(growable: false),
+                    ),
+                    _AssignmentSection.rejectedRequests => _AssignmentListSection(
+                      title: 'Rejected Project Requests',
+                      emptyTitle: 'No rejected project requests',
+                      emptyMessage:
+                          'Rejected project requests stay here so admins can re-approve them later if needed.',
+                      children: rejectedRequests
+                          .map(
+                            (assignment) => Padding(
+                              padding: const EdgeInsets.only(
+                                bottom: AppSpacing.sm,
+                              ),
+                              child: _PendingRequestCard(
+                                assignment: assignment,
+                                isSaving: _isSaving,
+                                approveLabel: 'Re-accept',
+                                rejectLabel: 'Keep rejected',
+                                onApprove: () => _updateAssignmentRequest(
+                                  assignment,
+                                  status: 'approved',
+                                ),
+                                onReject: null,
+                              ),
+                            ),
+                          )
+                          .toList(growable: false),
                     ),
                   },
                 ],
@@ -547,48 +537,6 @@ class _AssignmentListSection extends StatelessWidget {
           )
         else
           ...children,
-      ],
-    );
-  }
-}
-
-class _ProjectRequestStateTabs extends StatelessWidget {
-  const _ProjectRequestStateTabs({
-    required this.pendingCount,
-    required this.rejectedCount,
-    required this.selectedTab,
-    required this.onSelected,
-  });
-
-  final int pendingCount;
-  final int rejectedCount;
-  final _ProjectRequestTab selectedTab;
-  final ValueChanged<_ProjectRequestTab> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Project requests', style: theme.textTheme.titleMedium),
-        const SizedBox(height: AppSpacing.sm),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            ChoiceChip(
-              label: Text('Pending ($pendingCount)'),
-              selected: selectedTab == _ProjectRequestTab.pending,
-              onSelected: (_) => onSelected(_ProjectRequestTab.pending),
-            ),
-            ChoiceChip(
-              label: Text('Rejected ($rejectedCount)'),
-              selected: selectedTab == _ProjectRequestTab.rejected,
-              onSelected: (_) => onSelected(_ProjectRequestTab.rejected),
-            ),
-          ],
-        ),
       ],
     );
   }
