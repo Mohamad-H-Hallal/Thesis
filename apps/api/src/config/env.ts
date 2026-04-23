@@ -36,6 +36,8 @@ export interface EnvConfig {
   METRICS_TOKEN: string;
   UPLOAD_DIR: string;
   PHOTO_MAX_SIZE: number;
+  IMPORT_MAX_SIZE: number;
+  IMPORT_MAX_FEATURES: number;
   EXPORT_DIR: string;
   EXPORT_RETENTION_DAYS: number;
   EXPORT_CLEANUP_INTERVAL_HOURS: number;
@@ -105,6 +107,8 @@ const envSchema = Joi.object({
 
   UPLOAD_DIR: Joi.string().default('./uploads'),
   PHOTO_MAX_SIZE: Joi.number().integer().min(1).default(5 * 1024 * 1024),
+  IMPORT_MAX_SIZE: Joi.number().integer().min(1).default(25 * 1024 * 1024),
+  IMPORT_MAX_FEATURES: Joi.number().integer().min(1).max(10000).default(2000),
 
   EXPORT_DIR: Joi.string().default('./exports'),
   EXPORT_RETENTION_DAYS: Joi.number().integer().min(1).default(7),

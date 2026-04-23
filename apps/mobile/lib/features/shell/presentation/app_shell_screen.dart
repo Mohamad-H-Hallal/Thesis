@@ -19,6 +19,7 @@ import '../../admin/presentation/screens/users_management_screen.dart';
 import '../../auth/domain/auth_models.dart';
 import '../../drafts/presentation/screens/drafts_screen.dart';
 import '../../exports/presentation/screens/exports_dashboard_screen.dart';
+import '../../imports/presentation/screens/imports_screen.dart';
 import '../../notifications/presentation/screens/notifications_screen.dart';
 import '../../profile/presentation/screens/profile_screen.dart';
 import '../../projects/domain/project.dart';
@@ -387,6 +388,10 @@ class AppShellScreen extends ConsumerWidget {
     if (path == AppRoutes.reviewQueue && user.role == UserRole.admin) {
       return const ReviewQueueScreen();
     }
+    if (path == AppRoutes.imports &&
+        (user.role == UserRole.admin || user.role == UserRole.contributor)) {
+      return const ImportsScreen();
+    }
     if (path == AppRoutes.exports && user.role == UserRole.admin) {
       return const ExportsDashboardScreen();
     }
@@ -523,6 +528,12 @@ class AppShellScreen extends ConsumerWidget {
           selectedIcon: Icons.rate_review,
         ),
         const _ShellItem(
+          label: 'Imports',
+          path: AppRoutes.imports,
+          icon: Icons.upload_file_outlined,
+          selectedIcon: Icons.upload_file,
+        ),
+        const _ShellItem(
           label: 'Exports',
           path: AppRoutes.exports,
           icon: Icons.file_download_outlined,
@@ -565,6 +576,12 @@ class AppShellScreen extends ConsumerWidget {
           selectedIcon: Icons.rate_review,
         ),
         const _ShellItem(
+          label: 'Imports',
+          path: AppRoutes.imports,
+          icon: Icons.upload_file_outlined,
+          selectedIcon: Icons.upload_file,
+        ),
+        const _ShellItem(
           label: 'Exports',
           path: AppRoutes.exports,
           icon: Icons.file_download_outlined,
@@ -599,6 +616,12 @@ class AppShellScreen extends ConsumerWidget {
         path: AppRoutes.assignedProjects,
         icon: Icons.assignment_outlined,
         selectedIcon: Icons.assignment,
+      ),
+      const _ShellItem(
+        label: 'Imports',
+        path: AppRoutes.imports,
+        icon: Icons.upload_file_outlined,
+        selectedIcon: Icons.upload_file,
       ),
       ...base,
     ];

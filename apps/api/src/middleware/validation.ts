@@ -319,6 +319,48 @@ const notificationValidation = {
   ] as ValidationChain[],
 };
 
+const importValidation = {
+  list: [
+    queryParam('status')
+      .optional()
+      .isIn([
+        'uploaded',
+        'processing',
+        'pending_review',
+        'approved',
+        'partially_approved',
+        'rejected',
+        'failed',
+      ])
+      .withMessage('Invalid import status'),
+    queryParam('project_id')
+      .optional()
+      .isUUID()
+      .withMessage('project_id must be a valid UUID'),
+  ] as ValidationChain[],
+  listFeatures: [
+    queryParam('status')
+      .optional()
+      .isIn(['pending_review', 'approved', 'rejected', 'failed'])
+      .withMessage('Invalid import feature status'),
+  ] as ValidationChain[],
+  review: [
+    param('importId').isUUID().withMessage('Valid import ID is required'),
+    body('status')
+      .isIn(['approved', 'rejected'])
+      .withMessage('status must be approved or rejected'),
+    body('reason').optional({ nullable: true }).trim(),
+    body('feature_ids')
+      .optional()
+      .isArray({ min: 1 })
+      .withMessage('feature_ids must be a non-empty array when provided'),
+    body('feature_ids.*')
+      .optional()
+      .isUUID()
+      .withMessage('feature_ids must contain valid UUID values'),
+  ] as ValidationChain[],
+};
+
 // Export validation rules
 const exportValidation = {
   create: [
@@ -424,6 +466,7 @@ export {
   categoryValidation,
   settingsValidation,
   notificationValidation,
+  importValidation,
   exportValidation,
   paginationValidation,
   bboxValidation,

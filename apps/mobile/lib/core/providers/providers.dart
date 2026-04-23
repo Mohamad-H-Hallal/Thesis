@@ -21,6 +21,9 @@ import '../../features/exports/data/api_exports_repository.dart';
 import '../../features/exports/data/mock_exports_repository.dart';
 import '../../features/exports/domain/exports_repository.dart';
 import '../../features/exports/presentation/controllers/exports_controller.dart';
+import '../../features/imports/data/api_imports_repository.dart';
+import '../../features/imports/data/mock_imports_repository.dart';
+import '../../features/imports/domain/imports_repository.dart';
 import '../../features/map/data/api_feature_workflow_repository.dart';
 import '../../features/map/data/api_map_repository.dart';
 import '../../features/map/data/device_current_location_service.dart';
@@ -108,6 +111,13 @@ final exportsRepositoryProvider = Provider<ExportsRepository>((ref) {
     return MockExportsRepository();
   }
   return ApiExportsRepository(ref.watch(apiClientProvider));
+});
+
+final importsRepositoryProvider = Provider<ImportsRepository>((ref) {
+  if (AppEnv.useMockData) {
+    return MockImportsRepository();
+  }
+  return ApiImportsRepository(ref.watch(apiClientProvider));
 });
 
 final notificationsRepositoryProvider = Provider<NotificationsRepository>((

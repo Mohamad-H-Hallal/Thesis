@@ -12,6 +12,7 @@ import '../../features/auth/presentation/screens/splash_screen.dart';
 import '../../features/admin/presentation/screens/category_form_screen.dart';
 import '../../features/admin/presentation/screens/project_assignments_screen.dart';
 import '../../features/exports/presentation/screens/exports_dashboard_screen.dart';
+import '../../features/imports/presentation/screens/import_detail_screen.dart';
 import '../../features/admin/presentation/screens/project_form_screen.dart';
 import '../../features/map/presentation/screens/add_feature_screen.dart';
 import '../../features/map/presentation/screens/map_screen.dart';
@@ -120,6 +121,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         AppRoutes.submissions,
         AppRoutes.assignments,
         AppRoutes.reviewQueue,
+        AppRoutes.imports,
         AppRoutes.exports,
         AppRoutes.notifications,
         AppRoutes.profile,
@@ -291,6 +293,21 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         },
       ),
       GoRoute(
+        path: '/app/imports/:importId',
+        pageBuilder: (_, state) {
+          final importId = state.pathParameters['importId'] ?? '';
+          return _buildPage(
+            state,
+            AppScaffold(
+              title: 'Import details',
+              showBackButton: true,
+              showOfflineBanner: false,
+              body: ImportDetailScreen(importId: importId),
+            ),
+          );
+        },
+      ),
+      GoRoute(
         path: '/app/projects/:projectId',
         pageBuilder: (_, state) {
           final projectId = state.pathParameters['projectId'] ?? '';
@@ -441,9 +458,11 @@ Set<String> _allowedPathsForUser(AppUser user) {
       AppRoutes.projects,
       AppRoutes.assignments,
       AppRoutes.reviewQueue,
+      AppRoutes.imports,
       AppRoutes.exports,
       AppRoutes.notifications,
       AppRoutes.profile,
+      '/app/imports/',
       '/app/categories/',
       '/app/projects/',
       AppRoutes.addFeature,
@@ -458,9 +477,11 @@ Set<String> _allowedPathsForUser(AppUser user) {
         AppRoutes.contributorRequests,
         AppRoutes.assignments,
         AppRoutes.reviewQueue,
+        AppRoutes.imports,
         AppRoutes.exports,
         AppRoutes.notifications,
         AppRoutes.profile,
+        '/app/imports/',
         '/app/categories/',
         '/app/projects/',
       };
@@ -475,10 +496,12 @@ Set<String> _allowedPathsForUser(AppUser user) {
       return <String>{
         AppRoutes.projects,
         AppRoutes.assignedProjects,
+        AppRoutes.imports,
         AppRoutes.drafts,
         AppRoutes.submissions,
         AppRoutes.notifications,
         AppRoutes.profile,
+        '/app/imports/',
         '/app/projects/',
         AppRoutes.addFeature,
       };

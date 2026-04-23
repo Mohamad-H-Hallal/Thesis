@@ -19,6 +19,7 @@ class AppRoutes {
   static const drafts = '/app/drafts';
   static const submissions = '/app/submissions';
   static const reviewQueue = '/app/review-queue';
+  static const imports = '/app/imports';
   static const exports = '/app/exports';
   static const notifications = '/app/notifications';
   static const profile = '/app/profile';
@@ -35,6 +36,7 @@ class AppRoutes {
   static String projectApprovedReviews(String id) =>
       '/app/projects/$id/approved-reviews';
   static String projectExports(String id) => '/app/projects/$id/exports';
+  static String importDetails(String id) => '/app/imports/$id';
 
   static String addFeatureForProject(String projectId) {
     final uri = Uri(

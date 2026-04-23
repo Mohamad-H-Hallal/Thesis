@@ -9,6 +9,8 @@ const RUNTIME_TABLES = [
   'notification_push_delivery',
   'notification_delivery',
   'push_device_registration',
+  'gis_import_feature',
+  'gis_import_job',
   'photo',
   'spatial_feature',
   'shapefile_export',

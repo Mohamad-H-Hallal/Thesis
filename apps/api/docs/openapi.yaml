@@ -20,6 +20,7 @@ tags:
   - name: Categories
   - name: Notifications
   - name: Exports
+  - name: Imports
   - name: Users
 paths:
   /health:
@@ -833,6 +834,103 @@ paths:
         '404':
           description: Not found
 
+  /api/v1/imports:
+    get:
+      tags: [Imports]
+      security:
+        - bearerAuth: []
+      summary: List GIS import jobs visible to the current user
+      responses:
+        '200':
+          description: Import job list
+        '401':
+          description: Unauthorized
+  /api/v1/imports/project/{projectId}/upload:
+    post:
+      tags: [Imports]
+      security:
+        - bearerAuth: []
+      summary: Upload a staged GIS import file for a project
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '202':
+          description: Import accepted and processed
+        '400':
+          description: Validation failed
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '409':
+          description: Project does not currently allow imports
+  /api/v1/imports/{importId}:
+    get:
+      tags: [Imports]
+      security:
+        - bearerAuth: []
+      summary: Get staged GIS import details and preview features
+      parameters:
+        - $ref: '#/components/parameters/importId'
+      responses:
+        '200':
+          description: Import details
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: Import not found
+  /api/v1/imports/{importId}/features:
+    get:
+      tags: [Imports]
+      security:
+        - bearerAuth: []
+      summary: List staged imported features for an import job
+      parameters:
+        - $ref: '#/components/parameters/importId'
+      responses:
+        '200':
+          description: Imported feature list
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: Import not found
+  /api/v1/imports/{importId}/review:
+    post:
+      tags: [Imports]
+      security:
+        - bearerAuth: []
+      summary: Approve or reject staged imported features
+      parameters:
+        - $ref: '#/components/parameters/importId'
+      responses:
+        '200':
+          description: Review action applied
+        '400':
+          description: Validation failed
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: Import not found
+        '409':
+          description: No staged imported features matched the review action
+
   /api/v1/users:
     get:
       tags: [Users]
@@ -968,6 +1066,13 @@ components:
     exportId:
       in: path
       name: exportId
+      required: true
+      schema:
+        type: string
+        format: uuid
+    importId:
+      in: path
+      name: importId
       required: true
       schema:
         type: string

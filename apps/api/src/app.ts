@@ -20,6 +20,7 @@ import {
 const authRoutes = require('./routes/auth.routes');
 const projectRoutes = require('./routes/project.routes');
 const featureRoutes = require('./routes/feature.routes');
+const importRoutes = require('./routes/import.routes');
 const exportRoutes = require('./routes/export.routes');
 const {
   assignmentRouter,
@@ -204,6 +205,7 @@ const buildApp = (env) => {
         projects: `${normalizedApiPrefix}/projects`,
         features: `${normalizedApiPrefix}/features`,
         assignments: `${normalizedApiPrefix}/assignments`,
+        imports: `${normalizedApiPrefix}/imports`,
         photos: `${normalizedApiPrefix}/photos`,
         categories: `${normalizedApiPrefix}/categories`,
         notifications: `${normalizedApiPrefix}/notifications`,
@@ -224,6 +226,7 @@ const buildApp = (env) => {
     app.use(`${prefix}/auth`, authRoutes);
     app.use(`${prefix}/projects`, projectRoutes);
     app.use(`${prefix}/features`, featureRoutes);
+    app.use(`${prefix}/imports`, importRoutes);
     app.use(`${prefix}/exports`, exportRoutes);
     app.use(`${prefix}/assignments`, assignmentRouter);
     app.use(`${prefix}/photos`, photoRouter);

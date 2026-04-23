@@ -54,6 +54,8 @@ const resetDb = async () => {
       notification_push_delivery,
       notification_delivery,
       push_device_registration,
+      gis_import_feature,
+      gis_import_job,
       notification,
       audit_log,
       password_reset_request,

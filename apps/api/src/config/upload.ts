@@ -9,8 +9,9 @@ const uploadDir = process.env.UPLOAD_DIR ?? './uploads';
 const photosDir = path.join(uploadDir, 'photos');
 const thumbnailsDir = path.join(uploadDir, 'thumbnails');
 const categoryIconsDir = path.join(uploadDir, 'category-icons');
+const importsDir = path.join(uploadDir, 'imports');
 
-[uploadDir, photosDir, thumbnailsDir, categoryIconsDir].forEach((dir) => {
+[uploadDir, photosDir, thumbnailsDir, categoryIconsDir, importsDir].forEach((dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -78,11 +79,49 @@ const uploadCategoryIcon = multer({
   fileFilter: fileFilter,
 }).single('icon');
 
+const importStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, importsDir);
+  },
+  filename: (_req, file, cb) => {
+    const uniqueName = `${randomUUID()}${path.extname(file.originalname)}`;
+    cb(null, uniqueName);
+  },
+});
+
+const importFileFilter = (
+  _req: Request,
+  file: { originalname: string; mimetype: string },
+  cb: FileFilterCallback,
+): void => {
+  const ext = path.extname(file.originalname).toLowerCase();
+  const allowedExt = new Set(['.geojson', '.json', '.zip', '.kml', '.kmz']);
+  if (allowedExt.has(ext)) {
+    cb(null, true);
+    return;
+  }
+  cb(
+    new Error(
+      'Only GeoJSON, zipped shapefile, KML, and KMZ files are allowed for GIS imports',
+    ),
+  );
+};
+
+const uploadImportFile = multer({
+  storage: importStorage,
+  limits: {
+    fileSize: Number.parseInt(process.env.IMPORT_MAX_SIZE ?? '26214400', 10),
+  },
+  fileFilter: importFileFilter,
+}).single('file');
+
 export {
   uploadSingle,
   uploadMultiple,
   uploadCategoryIcon,
+  uploadImportFile,
   photosDir,
   thumbnailsDir,
   categoryIconsDir,
+  importsDir,
 };
