@@ -3845,9 +3845,15 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
       child: Material(
-        elevation: 8,
+        elevation: 0,
         color: scheme.surface.withValues(alpha: 0.93),
-        borderRadius: BorderRadius.circular(24),
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: BorderSide(
+            color: scheme.outlineVariant.withValues(alpha: 0.38),
+          ),
+        ),
         child: LayoutBuilder(
           builder: (context, constraints) {
             final actionRailWidth = constraints.maxWidth >= 430
