@@ -12,7 +12,7 @@ import 'local_store.dart';
 class SqliteLocalStore implements LocalStore {
   Database? _db;
   final Uuid _uuid = const Uuid();
-  static const _dbVersion = 3;
+  static const _dbVersion = 4;
 
   @override
   Future<void> initialize() async {
@@ -51,6 +51,17 @@ class SqliteLocalStore implements LocalStore {
         if (oldVersion < 3) {
           await db.execute(
             "ALTER TABLE draft_features ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT ''",
+          );
+        }
+        if (oldVersion < 4) {
+          await db.execute(
+            "ALTER TABLE offline_map_packages ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT ''",
+          );
+          await db.execute(
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_offline_map_packages_owner_version ON offline_map_packages(owner_user_id, version);',
+          );
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_offline_map_packages_current_owner ON offline_map_packages(owner_user_id, is_current);',
           );
         }
       },
@@ -112,7 +123,8 @@ class SqliteLocalStore implements LocalStore {
 
     await db.execute('''
       CREATE TABLE offline_map_packages (
-        version TEXT PRIMARY KEY,
+        owner_user_id TEXT NOT NULL,
+        version TEXT NOT NULL,
         zoom_level_min INTEGER NOT NULL,
         zoom_level_max INTEGER NOT NULL,
         downloaded_at TEXT,
@@ -120,12 +132,16 @@ class SqliteLocalStore implements LocalStore {
         tile_count INTEGER,
         size_bytes INTEGER,
         tile_source TEXT,
-        is_current INTEGER NOT NULL
+        is_current INTEGER NOT NULL,
+        PRIMARY KEY (owner_user_id, version)
       );
     ''');
 
     await db.execute(
       'CREATE INDEX idx_sync_queue_due ON sync_queue(status, next_retry_at);',
+    );
+    await db.execute(
+      'CREATE INDEX idx_offline_map_packages_current_owner ON offline_map_packages(owner_user_id, is_current);',
     );
   }
 
@@ -364,7 +380,12 @@ class SqliteLocalStore implements LocalStore {
     final db = await _database;
     await db.transaction((txn) async {
       if (package.isCurrent) {
-        await txn.update('offline_map_packages', {'is_current': 0});
+        await txn.update(
+          'offline_map_packages',
+          {'is_current': 0},
+          where: 'owner_user_id = ?',
+          whereArgs: [package.ownerUserId],
+        );
       }
 
       await txn.insert(
@@ -376,18 +397,46 @@ class SqliteLocalStore implements LocalStore {
   }
 
   @override
-  Future<OfflineMapPackage?> getCurrentOfflineMapPackage() async {
+  Future<OfflineMapPackage?> getCurrentOfflineMapPackage({
+    required String ownerUserId,
+  }) async {
     final db = await _database;
-    final rows = await db.query(
-      'offline_map_packages',
-      where: 'is_current = 1',
-      limit: 1,
-      orderBy: 'last_updated_at DESC',
-    );
-    if (rows.isEmpty) {
+    Future<List<Map<String, Object?>>> loadRows(String targetOwnerUserId) {
+      return db.query(
+        'offline_map_packages',
+        where: 'owner_user_id = ? AND is_current = 1',
+        whereArgs: [targetOwnerUserId],
+        limit: 1,
+        orderBy: 'last_updated_at DESC',
+      );
+    }
+
+    final rows = await loadRows(ownerUserId);
+    if (rows.isNotEmpty) {
+      return OfflineMapPackage.fromRowMap(
+        Map<String, dynamic>.from(rows.first),
+      );
+    }
+    if (ownerUserId.isEmpty) {
       return null;
     }
-    return OfflineMapPackage.fromRowMap(Map<String, dynamic>.from(rows.first));
+
+    final legacyRows = await loadRows('');
+    if (legacyRows.isEmpty) {
+      return null;
+    }
+
+    final legacyPackage = OfflineMapPackage.fromRowMap(
+      Map<String, dynamic>.from(legacyRows.first),
+    );
+    final migratedPackage = legacyPackage.copyWith(ownerUserId: ownerUserId);
+    await upsertOfflineMapPackage(migratedPackage);
+    await db.delete(
+      'offline_map_packages',
+      where: 'owner_user_id = ? AND version = ?',
+      whereArgs: ['', legacyPackage.version],
+    );
+    return migratedPackage;
   }
 
   @override

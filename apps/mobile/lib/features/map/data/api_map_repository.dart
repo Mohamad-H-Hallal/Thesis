@@ -50,7 +50,8 @@ class ApiMapRepository {
     } on DioException catch (error) {
       throw userFacingDioMessage(
         error,
-        fallback: 'Unable to load project features right now. Please try again.',
+        fallback:
+            'Unable to load project features right now. Please try again.',
       );
     }
   }
@@ -69,6 +70,7 @@ class ApiMapRepository {
       }
 
       return OfflineMapPackage(
+        ownerUserId: '',
         version: (row['version'] as String?) ?? 'lebanon-satellite-v1',
         zoomLevelMin: _toInt(row['zoom_level_min']) ?? 7,
         zoomLevelMax: _toInt(row['zoom_level_max']) ?? 18,

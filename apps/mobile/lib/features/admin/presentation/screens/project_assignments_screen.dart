@@ -7,7 +7,6 @@ import '../../../../core/providers/providers.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
-import '../../../../core/widgets/status_chip.dart';
 import '../../../../core/utils/lebanese_phone.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../domain/admin_models.dart';
@@ -345,36 +344,6 @@ class _ProjectAssignmentsScreenState
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    project.name,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.titleMedium,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: AppSpacing.sm),
-                            StatusChip(status: project.status),
-                          ],
-                        ),
-                        const SizedBox(height: AppSpacing.xs),
-                        Chip(label: Text(project.category)),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  AppCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
                         SearchBar(
                           controller: _searchController,
                           hintText: isViewOnlyProject
@@ -471,45 +440,12 @@ class _ProjectAssignmentsScreenState
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         AppCard(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Project Request States',
-                                style: Theme.of(context).textTheme.titleMedium,
-                              ),
-                              const SizedBox(height: AppSpacing.sm),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  ChoiceChip(
-                                    label: Text(
-                                      'Pending (${pendingRequests.length})',
-                                    ),
-                                    selected:
-                                        effectiveRequestTab ==
-                                        _ProjectRequestTab.pending,
-                                    onSelected: (_) => setState(
-                                      () => _selectedRequestTab =
-                                          _ProjectRequestTab.pending,
-                                    ),
-                                  ),
-                                  ChoiceChip(
-                                    label: Text(
-                                      'Rejected (${rejectedRequests.length})',
-                                    ),
-                                    selected:
-                                        effectiveRequestTab ==
-                                        _ProjectRequestTab.rejected,
-                                    onSelected: (_) => setState(
-                                      () => _selectedRequestTab =
-                                          _ProjectRequestTab.rejected,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
+                          child: _ProjectRequestStateTabs(
+                            pendingCount: pendingRequests.length,
+                            rejectedCount: rejectedRequests.length,
+                            selectedTab: effectiveRequestTab,
+                            onSelected: (tab) =>
+                                setState(() => _selectedRequestTab = tab),
                           ),
                         ),
                         const SizedBox(height: AppSpacing.md),
@@ -613,6 +549,97 @@ class _AssignmentListSection extends StatelessWidget {
           ...children,
       ],
     );
+  }
+}
+
+class _ProjectRequestStateTabs extends StatelessWidget {
+  const _ProjectRequestStateTabs({
+    required this.pendingCount,
+    required this.rejectedCount,
+    required this.selectedTab,
+    required this.onSelected,
+  });
+
+  final int pendingCount;
+  final int rejectedCount;
+  final _ProjectRequestTab selectedTab;
+  final ValueChanged<_ProjectRequestTab> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final tabs = <Widget>[
+          _ProjectRequestStateButton(
+            label: 'Pending',
+            count: pendingCount,
+            selected: selectedTab == _ProjectRequestTab.pending,
+            onPressed: () => onSelected(_ProjectRequestTab.pending),
+          ),
+          _ProjectRequestStateButton(
+            label: 'Rejected',
+            count: rejectedCount,
+            selected: selectedTab == _ProjectRequestTab.rejected,
+            onPressed: () => onSelected(_ProjectRequestTab.rejected),
+          ),
+        ];
+
+        if (constraints.maxWidth < 420) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Project requests', style: theme.textTheme.titleMedium),
+              const SizedBox(height: AppSpacing.sm),
+              ...tabs.expand(
+                (tab) => <Widget>[
+                  SizedBox(width: double.infinity, child: tab),
+                  const SizedBox(height: AppSpacing.sm),
+                ],
+              ),
+            ],
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Project requests', style: theme.textTheme.titleMedium),
+            const SizedBox(height: AppSpacing.sm),
+            Row(
+              children: [
+                Expanded(child: tabs[0]),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(child: tabs[1]),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ProjectRequestStateButton extends StatelessWidget {
+  const _ProjectRequestStateButton({
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final String label;
+  final int count;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final child = Text('$label ($count)');
+    if (selected) {
+      return FilledButton.tonal(onPressed: onPressed, child: child);
+    }
+    return OutlinedButton(onPressed: onPressed, child: child);
   }
 }
 

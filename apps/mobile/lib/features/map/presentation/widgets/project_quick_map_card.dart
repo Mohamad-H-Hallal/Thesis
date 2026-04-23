@@ -12,7 +12,7 @@ import '../../domain/lebanon_map.dart';
 import '../../domain/map_feature.dart';
 import '../../domain/map_geometry.dart';
 
-class ProjectQuickMapCard extends ConsumerWidget {
+class ProjectQuickMapCard extends ConsumerStatefulWidget {
   const ProjectQuickMapCard({
     required this.projectId,
     this.onOpenFullscreen,
@@ -23,8 +23,18 @@ class ProjectQuickMapCard extends ConsumerWidget {
   final VoidCallback? onOpenFullscreen;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final featuresAsync = ref.watch(projectMapFeaturesProvider(projectId));
+  ConsumerState<ProjectQuickMapCard> createState() =>
+      _ProjectQuickMapCardState();
+}
+
+class _ProjectQuickMapCardState extends ConsumerState<ProjectQuickMapCard> {
+  LebanonBasemapStyle _previewBasemapStyle = LebanonBasemapStyle.street;
+
+  @override
+  Widget build(BuildContext context) {
+    final featuresAsync = ref.watch(
+      projectMapFeaturesProvider(widget.projectId),
+    );
     final featureCount = featuresAsync.valueOrNull?.length;
     final featureCountLabel = featureCount == null
         ? 'Loading map'
@@ -33,6 +43,27 @@ class ProjectQuickMapCard extends ConsumerWidget {
         : '$featureCount mapped features';
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+
+    final basemapToggle = SegmentedButton<LebanonBasemapStyle>(
+      showSelectedIcon: false,
+      style: SegmentedButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      segments: const [
+        ButtonSegment(
+          value: LebanonBasemapStyle.satellite,
+          label: Text('Hybrid'),
+        ),
+        ButtonSegment(value: LebanonBasemapStyle.street, label: Text('Street')),
+      ],
+      selected: <LebanonBasemapStyle>{_previewBasemapStyle},
+      onSelectionChanged: (selection) {
+        setState(() {
+          _previewBasemapStyle = selection.first;
+        });
+      },
+    );
 
     return AppCard(
       child: Column(
@@ -46,23 +77,14 @@ class ProjectQuickMapCard extends ConsumerWidget {
                   fontWeight: FontWeight.w700,
                 ),
               );
-              final action = onOpenFullscreen == null
-                  ? null
-                  : TextButton.icon(
-                      onPressed: onOpenFullscreen,
-                      icon: const Icon(Icons.open_in_full_outlined),
-                      label: const Text('Open map'),
-                    );
 
-              if (action == null || constraints.maxWidth >= 360) {
+              if (constraints.maxWidth >= 420) {
                 return Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Expanded(child: title),
-                    if (action != null) ...[
-                      const SizedBox(width: AppSpacing.sm),
-                      action,
-                    ],
+                    const SizedBox(width: AppSpacing.sm),
+                    basemapToggle,
                   ],
                 );
               }
@@ -72,7 +94,7 @@ class ProjectQuickMapCard extends ConsumerWidget {
                 children: [
                   title,
                   const SizedBox(height: AppSpacing.xs),
-                  action,
+                  basemapToggle,
                 ],
               );
             },
@@ -85,7 +107,7 @@ class ProjectQuickMapCard extends ConsumerWidget {
             borderRadius: BorderRadius.circular(22),
             clipBehavior: Clip.antiAlias,
             child: InkWell(
-              onTap: onOpenFullscreen,
+              onTap: widget.onOpenFullscreen,
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(22),
@@ -131,7 +153,7 @@ class ProjectQuickMapCard extends ConsumerWidget {
                                       TileLayer(
                                         urlTemplate:
                                             LebanonMapConfig.basemapUrlTemplate(
-                                              LebanonBasemapStyle.street,
+                                              _previewBasemapStyle,
                                             ),
                                         tileProvider: NetworkTileProvider(
                                           silenceExceptions: true,
@@ -142,13 +164,13 @@ class ProjectQuickMapCard extends ConsumerWidget {
                                     if (LebanonMapConfig
                                             .shouldRenderTileLayers &&
                                         LebanonMapConfig.referenceLabelUrlTemplate(
-                                              LebanonBasemapStyle.street,
+                                              _previewBasemapStyle,
                                             ) !=
                                             null)
                                       TileLayer(
                                         urlTemplate:
                                             LebanonMapConfig.referenceLabelUrlTemplate(
-                                              LebanonBasemapStyle.street,
+                                              _previewBasemapStyle,
                                             )!,
                                         tileProvider: NetworkTileProvider(
                                           silenceExceptions: true,
@@ -178,7 +200,7 @@ class ProjectQuickMapCard extends ConsumerWidget {
               ),
             ),
           ),
-          if (onOpenFullscreen != null) ...[
+          if (widget.onOpenFullscreen != null) ...[
             const SizedBox(height: 10),
             Row(
               children: [

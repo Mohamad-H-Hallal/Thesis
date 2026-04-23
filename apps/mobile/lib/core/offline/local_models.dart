@@ -56,6 +56,7 @@ class DraftPhoto {
 
 class OfflineMapPackage {
   const OfflineMapPackage({
+    required this.ownerUserId,
     required this.version,
     required this.zoomLevelMin,
     required this.zoomLevelMax,
@@ -67,6 +68,7 @@ class OfflineMapPackage {
     required this.isCurrent,
   });
 
+  final String ownerUserId;
   final String version;
   final int zoomLevelMin;
   final int zoomLevelMax;
@@ -78,6 +80,7 @@ class OfflineMapPackage {
   final bool isCurrent;
 
   OfflineMapPackage copyWith({
+    String? ownerUserId,
     String? version,
     int? zoomLevelMin,
     int? zoomLevelMax,
@@ -89,6 +92,7 @@ class OfflineMapPackage {
     bool? isCurrent,
   }) {
     return OfflineMapPackage(
+      ownerUserId: ownerUserId ?? this.ownerUserId,
       version: version ?? this.version,
       zoomLevelMin: zoomLevelMin ?? this.zoomLevelMin,
       zoomLevelMax: zoomLevelMax ?? this.zoomLevelMax,
@@ -103,6 +107,7 @@ class OfflineMapPackage {
 
   Map<String, dynamic> toRowMap() {
     return {
+      'owner_user_id': ownerUserId,
       'version': version,
       'zoom_level_min': zoomLevelMin,
       'zoom_level_max': zoomLevelMax,
@@ -117,6 +122,7 @@ class OfflineMapPackage {
 
   factory OfflineMapPackage.fromRowMap(Map<String, dynamic> row) {
     return OfflineMapPackage(
+      ownerUserId: row['owner_user_id'] as String? ?? '',
       version: row['version'] as String,
       zoomLevelMin: row['zoom_level_min'] as int,
       zoomLevelMax: row['zoom_level_max'] as int,

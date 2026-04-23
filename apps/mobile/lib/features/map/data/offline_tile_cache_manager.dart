@@ -84,14 +84,12 @@ class OfflineTileCacheManager {
     required LebanonBasemapStyle basemapStyle,
   }) async {
     await initialize();
-    return p.join(
-      _rootDir!.path,
-      package.version,
-      basemapStyle.name,
-      '{z}',
-      '{x}',
-      '{y}.tile',
+    final styleDir = await _resolveStyleRootDirectory(
+      package: package,
+      basemapStyle: basemapStyle,
+      migrateLegacyTiles: true,
     );
+    return p.join(styleDir.path, '{z}', '{x}', '{y}.tile');
   }
 
   Future<String> transparentFallbackPath() async {
@@ -104,8 +102,10 @@ class OfflineTileCacheManager {
     required LebanonBasemapStyle basemapStyle,
   }) async {
     await initialize();
-    final dir = Directory(
-      p.join(_rootDir!.path, package.version, basemapStyle.name),
+    final dir = await _resolveStyleRootDirectory(
+      package: package,
+      basemapStyle: basemapStyle,
+      migrateLegacyTiles: true,
     );
     if (!await dir.exists()) {
       return false;
@@ -249,8 +249,10 @@ class OfflineTileCacheManager {
     LebanonBasemapStyle basemapStyle = LebanonBasemapStyle.satellite,
   }) async {
     await initialize();
-    final dir = Directory(
-      p.join(_rootDir!.path, package.version, basemapStyle.name),
+    final dir = await _resolveStyleRootDirectory(
+      package: package,
+      basemapStyle: basemapStyle,
+      migrateLegacyTiles: true,
     );
 
     if (!await dir.exists()) {
@@ -289,9 +291,10 @@ class OfflineTileCacheManager {
     required LebanonBasemapStyle basemapStyle,
   }) async {
     await initialize();
-    final dir = _styleRootDirectory(
+    final dir = await _resolveStyleRootDirectory(
       package: package,
       basemapStyle: basemapStyle,
+      migrateLegacyTiles: true,
     );
     if (await dir.exists()) {
       await dir.delete(recursive: true);
@@ -305,9 +308,10 @@ class OfflineTileCacheManager {
     void Function(OfflineTileDownloadProgress progress)? onProgress,
   }) async {
     await initialize();
-    final dir = _styleRootDirectory(
+    final dir = await _resolveStyleRootDirectory(
       package: package,
       basemapStyle: basemapStyle,
+      migrateLegacyTiles: true,
     );
     if (!await dir.exists()) {
       final updated = await refreshStats(package, basemapStyle: basemapStyle);
@@ -420,17 +424,63 @@ class OfflineTileCacheManager {
     required int y,
   }) async {
     await initialize();
-    return p.join(
-      _rootDir!.path,
-      package.version,
-      basemapStyle.name,
-      '$z',
-      '$x',
-      '$y.tile',
+    final styleDir = await _resolveStyleRootDirectory(
+      package: package,
+      basemapStyle: basemapStyle,
+      migrateLegacyTiles: true,
     );
+    return p.join(styleDir.path, '$z', '$x', '$y.tile');
   }
 
-  Directory _styleRootDirectory({
+  Future<Directory> _resolveStyleRootDirectory({
+    required OfflineMapPackage package,
+    required LebanonBasemapStyle basemapStyle,
+    bool migrateLegacyTiles = false,
+  }) async {
+    await initialize();
+    final scoped = _scopedStyleRootDirectory(
+      package: package,
+      basemapStyle: basemapStyle,
+    );
+    if (package.ownerUserId.trim().isEmpty) {
+      return scoped;
+    }
+
+    final legacy = _legacyStyleRootDirectory(
+      package: package,
+      basemapStyle: basemapStyle,
+    );
+    if (migrateLegacyTiles && !await scoped.exists() && await legacy.exists()) {
+      await scoped.parent.create(recursive: true);
+      await legacy.rename(scoped.path);
+      return scoped;
+    }
+
+    if (await scoped.exists()) {
+      return scoped;
+    }
+    if (await legacy.exists()) {
+      return legacy;
+    }
+    return scoped;
+  }
+
+  Directory _scopedStyleRootDirectory({
+    required OfflineMapPackage package,
+    required LebanonBasemapStyle basemapStyle,
+  }) {
+    final ownerSegment = package.ownerUserId.trim();
+    final segments = <String>[_rootDir!.path];
+    if (ownerSegment.isNotEmpty) {
+      segments.add(ownerSegment);
+    }
+    segments
+      ..add(package.version)
+      ..add(basemapStyle.name);
+    return Directory(p.joinAll(segments));
+  }
+
+  Directory _legacyStyleRootDirectory({
     required OfflineMapPackage package,
     required LebanonBasemapStyle basemapStyle,
   }) {

@@ -60,7 +60,7 @@ class AdminDashboardScreen extends ConsumerWidget {
             icon: Icons.person_add_alt_1_outlined,
           ),
           (
-            label: 'Rejected requests',
+            label: 'Rejected contributor requests',
             value: '${summary.rejectedContributorRequests}',
             icon: Icons.person_off_outlined,
           ),

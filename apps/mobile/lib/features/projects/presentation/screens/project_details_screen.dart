@@ -277,7 +277,12 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
             role == UserRole.contributor &&
             contributorRequestStatus == null &&
             !project.hasApprovedCurrentUserAssignment &&
-            project.status == 'active';
+            project.visibleToContributors &&
+            const <String>{
+              'draft',
+              'active',
+              'paused',
+            }.contains(project.status);
 
         return ListView(
           padding: EdgeInsets.only(bottom: AppSpacing.xl),
@@ -355,20 +360,20 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                     children: [
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        value: project.visibleToViewers,
-                        onChanged: _updatingVisibility
-                            ? null
-                            : (value) => _toggleViewerVisibility(value),
-                        title: const Text('Visible to viewers'),
-                      ),
-                      const Divider(height: 1),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
                         value: project.visibleToContributors,
                         onChanged: _updatingVisibility
                             ? null
                             : (value) => _toggleContributorVisibility(value),
                         title: const Text('Visible to contributors'),
+                      ),
+                      const Divider(height: 1),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: project.visibleToViewers,
+                        onChanged: _updatingVisibility
+                            ? null
+                            : (value) => _toggleViewerVisibility(value),
+                        title: const Text('Visible to viewers'),
                       ),
                     ],
                   ),

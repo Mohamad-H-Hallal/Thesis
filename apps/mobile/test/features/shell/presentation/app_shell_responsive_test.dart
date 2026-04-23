@@ -131,7 +131,9 @@ class _FakeLocalStore implements LocalStore {
   }) async => const <SyncQueueItem>[];
 
   @override
-  Future<OfflineMapPackage?> getCurrentOfflineMapPackage() async => null;
+  Future<OfflineMapPackage?> getCurrentOfflineMapPackage({
+    required String ownerUserId,
+  }) async => null;
 
   @override
   Future<int> getPendingSyncCount() async => 0;
@@ -203,12 +205,10 @@ class _FakeLocalStore implements LocalStore {
 SyncController _buildSyncController() {
   final localStore = _FakeLocalStore();
   return SyncController(
-    syncEngine: SyncEngine(
+      syncEngine: SyncEngine(localStore: localStore, apiClient: ApiClient()),
       localStore: localStore,
-      apiClient: ApiClient(),
-    ),
-    localStore: localStore,
-  )..state = const SyncState(
+    )
+    ..state = const SyncState(
       pendingCount: 0,
       conflictCount: 0,
       deadLetterCount: 0,

@@ -178,7 +178,9 @@ class _FakeLocalStore implements LocalStore {
   Future<void> upsertOfflineMapPackage(OfflineMapPackage package) async {}
 
   @override
-  Future<OfflineMapPackage?> getCurrentOfflineMapPackage() async => null;
+  Future<OfflineMapPackage?> getCurrentOfflineMapPackage({
+    required String ownerUserId,
+  }) async => null;
 
   @override
   Future<List<SyncQueueItem>> getDueSyncItems(

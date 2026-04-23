@@ -102,6 +102,62 @@ const requestExport = async (req, res) => {
     format, // Store user's format preference
   };
 
+  let availabilityQuery = `
+    SELECT COUNT(*)::int AS feature_count
+    FROM spatial_feature sf
+    WHERE sf.project_id = $1
+  `;
+  const availabilityParams: unknown[] = [projectId];
+  let availabilityParamIndex = 2;
+
+  if (exportParams.status_filter && exportParams.status_filter.length > 0) {
+    availabilityQuery += ` AND sf.status = ANY($${availabilityParamIndex}::feature_status[])`;
+    availabilityParams.push(exportParams.status_filter);
+    availabilityParamIndex++;
+  }
+
+  if (exportParams.date_from) {
+    availabilityQuery += ` AND sf.collected_at >= ($${availabilityParamIndex}::date)`;
+    availabilityParams.push(exportParams.date_from);
+    availabilityParamIndex++;
+  }
+
+  if (exportParams.date_to) {
+    availabilityQuery += ` AND sf.collected_at < (($${availabilityParamIndex}::date) + INTERVAL '1 day')`;
+    availabilityParams.push(exportParams.date_to);
+    availabilityParamIndex++;
+  }
+
+  if (exportParams.bbox) {
+    availabilityQuery += `
+      AND ST_Intersects(
+        sf.geom,
+        ST_MakeEnvelope($${availabilityParamIndex}, $${availabilityParamIndex + 1}, $${availabilityParamIndex + 2}, $${availabilityParamIndex + 3}, 4326)
+      )`;
+    availabilityParams.push(
+      exportParams.bbox.minLon,
+      exportParams.bbox.minLat,
+      exportParams.bbox.maxLon,
+      exportParams.bbox.maxLat,
+    );
+    availabilityParamIndex += 4;
+  }
+
+  if (exportParams.geometry_types && exportParams.geometry_types.length > 0) {
+    const geomTypes = exportParams.geometry_types.map((t) => `ST_${t}`);
+    availabilityQuery += ` AND ST_GeometryType(sf.geom) = ANY($${availabilityParamIndex}::text[])`;
+    availabilityParams.push(geomTypes);
+  }
+
+  const availabilityResult = await query(availabilityQuery, availabilityParams);
+  const featureCount = availabilityResult.rows[0]?.feature_count ?? 0;
+  if (featureCount <= 0) {
+    throw new AppError(
+      'Exports can be requested after this project has at least one approved feature that matches the selected filters.',
+      409,
+    );
+  }
+
   // Create export request
   const result = await query(
     `INSERT INTO shapefile_export (

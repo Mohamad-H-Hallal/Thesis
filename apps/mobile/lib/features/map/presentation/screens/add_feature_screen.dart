@@ -1248,22 +1248,8 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 OutlinedButton(
                   onPressed: _isSaving
                       ? null
-                      : () {
-                          if (widget.captureSeed != null && !_isEditingDraft) {
-                            _returnToProjectMap(
-                              selectedProject.id,
-                              result:
-                                  const AddFeatureFlowResult.resumeCapture(),
-                            );
-                            return;
-                          }
-                          setState(() => _currentStep -= 1);
-                        },
-                  child: Text(
-                    widget.captureSeed != null && !_isEditingDraft
-                        ? 'Back to map'
-                        : 'Back',
-                  ),
+                      : () => setState(() => _currentStep -= 1),
+                  child: const Text('Back'),
                 ),
               if (_currentStep < 3)
                 FilledButton.icon(

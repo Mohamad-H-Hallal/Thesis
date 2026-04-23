@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
@@ -134,7 +135,9 @@ class _FakeLocalStore implements LocalStore {
   }) async => const <SyncQueueItem>[];
 
   @override
-  Future<OfflineMapPackage?> getCurrentOfflineMapPackage() async => null;
+  Future<OfflineMapPackage?> getCurrentOfflineMapPackage({
+    required String ownerUserId,
+  }) async => null;
 
   @override
   Future<int> getPendingSyncCount() async => 0;
@@ -304,6 +307,7 @@ List<MapFeatureSummary> _projectFeatures() {
 
 OfflineMapPackage _offlinePackage() {
   return OfflineMapPackage(
+    ownerUserId: 'contributor-1',
     version: 'lebanon-satellite-v1',
     zoomLevelMin: 7,
     zoomLevelMax: 18,
@@ -357,7 +361,7 @@ void main() {
       );
       expect(tester.takeException(), isNull);
 
-      await tester.tap(find.text('Open map'));
+      await tester.tapAt(tester.getCenter(find.byType(FlutterMap)));
       await tester.pump();
 
       expect(openedFullscreen, isTrue);
@@ -597,8 +601,12 @@ void main() {
       );
       expect(
         find.textContaining(
-          'Refresh it while online to replace older saved tiles',
+          'Saved imagery is stored on this device for the signed-in user',
         ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('refreshing it online replaces older cached tiles'),
         findsOneWidget,
       );
       expect(find.text('Save Lebanon overview'), findsOneWidget);
@@ -606,7 +614,7 @@ void main() {
       expect(find.text('Refresh saved imagery'), findsOneWidget);
       expect(find.text('Delete saved imagery'), findsOneWidget);
       expect(
-        find.textContaining('only the map area currently visible on screen'),
+        find.textContaining('currently visible on screen in the current style'),
         findsOneWidget,
       );
 
@@ -991,10 +999,7 @@ void main() {
 
       expect(find.text('Collection form'), findsOneWidget);
       expect(find.text('2. Attributes'), findsOneWidget);
-      expect(
-        find.widgetWithText(OutlinedButton, 'Back to map'),
-        findsOneWidget,
-      );
+      expect(find.widgetWithText(OutlinedButton, 'Back'), findsOneWidget);
       expect(
         find.textContaining(
           'Use the field map to capture geometry directly in Lebanon',

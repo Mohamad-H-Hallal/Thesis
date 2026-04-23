@@ -937,7 +937,7 @@ class _EditableFormField {
 
   _EditableFormField.featureType()
     : keyController = TextEditingController(text: 'feature_type'),
-      labelController = TextEditingController(text: 'Feature type'),
+      labelController = TextEditingController(),
       hintController = TextEditingController(),
       optionsController = TextEditingController(),
       unitController = TextEditingController(),
@@ -992,7 +992,7 @@ class _EditableFormField {
 
   void resetAsFeatureType() {
     keyController.text = 'feature_type';
-    labelController.text = 'Feature type';
+    labelController.clear();
     hintController.clear();
     optionsController.clear();
     unitController.clear();

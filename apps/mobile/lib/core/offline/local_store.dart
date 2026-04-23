@@ -23,7 +23,9 @@ abstract class LocalStore {
   });
 
   Future<void> upsertOfflineMapPackage(OfflineMapPackage package);
-  Future<OfflineMapPackage?> getCurrentOfflineMapPackage();
+  Future<OfflineMapPackage?> getCurrentOfflineMapPackage({
+    required String ownerUserId,
+  });
 
   Future<int> getPendingSyncCount();
   Future<SyncQueueStats> getSyncQueueStats();

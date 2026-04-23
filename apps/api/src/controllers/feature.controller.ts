@@ -294,11 +294,12 @@ const validateAttributesAgainstSchema = (
       throw new AppError(`Invalid type for attribute "${fieldKey}"`, 422);
     }
 
-    const allowedValues = Array.isArray(field.options)
-      ? field.options
-      : Array.isArray(field.enum)
-        ? field.enum
-        : null;
+    const allowedValues =
+      Array.isArray(field.options) && field.options.length > 0
+        ? field.options
+        : Array.isArray(field.enum) && field.enum.length > 0
+          ? field.enum
+          : null;
     if (allowedValues && value !== undefined && !allowedValues.includes(value)) {
       throw new AppError(`Invalid value for attribute "${fieldKey}"`, 422);
     }

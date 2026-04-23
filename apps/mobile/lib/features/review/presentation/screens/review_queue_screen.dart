@@ -10,7 +10,6 @@ import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
-import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../domain/review_item.dart';
 
@@ -451,7 +450,10 @@ class _ApprovedReviewList extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView(
       children: [
-        const SectionHeader(title: 'Approved reviews'),
+        Text(
+          '${items.length} approved feature(s) for $projectName',
+          style: Theme.of(context).textTheme.bodyMedium,
+        ),
         const SizedBox(height: AppSpacing.sm),
         if (items.isEmpty)
           AppEmptyState(

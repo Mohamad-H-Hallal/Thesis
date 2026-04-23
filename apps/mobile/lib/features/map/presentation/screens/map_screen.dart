@@ -1466,6 +1466,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 snap: true,
                 snapSizes: const <double>[0.24, 0.45, 0.78],
                 builder: (context, scrollController) {
+                  final bottomInset =
+                      MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
                   return DecoratedBox(
                     decoration: BoxDecoration(
                       color: Theme.of(context).colorScheme.surface,
@@ -1482,11 +1484,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     ),
                     child: ListView(
                       controller: scrollController,
-                      padding: const EdgeInsets.fromLTRB(
+                      padding: EdgeInsets.fromLTRB(
                         AppSpacing.md,
                         AppSpacing.sm,
                         AppSpacing.md,
-                        AppSpacing.xl,
+                        bottomInset,
                       ),
                       children: [
                         Center(
@@ -1657,8 +1659,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   summaryLabel: _projectMapCaptureSummary(),
                   instruction: _projectMapCaptureInstruction(),
                   onCancel: _cancelProjectMapFeatureCapture,
-                  onChangeGeometryType: () =>
-                      _startProjectMapFeatureCapture(project),
                 )
               : Stack(
                   children: [
@@ -1773,16 +1773,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           ),
         if (_isProjectMapGeometryChooserOpen)
           Positioned(
-            left: 12,
-            right: 12,
-            bottom: 12,
-            child: SafeArea(
-              top: false,
-              child: _InlineProjectMapGeometryTypeSheet(
-                geometryTypes: _projectMapGeometryTypeOptions,
-                onSelected: _enterProjectMapCapture,
-                onClose: _dismissProjectMapGeometryChooser,
-              ),
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: _InlineProjectMapGeometryTypeSheet(
+              geometryTypes: _projectMapGeometryTypeOptions,
+              onSelected: _enterProjectMapCapture,
+              onClose: _dismissProjectMapGeometryChooser,
             ),
           ),
         if (!_isProjectMapSecondaryOverlayOpen &&
@@ -2593,7 +2590,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         backgroundColor: Colors.transparent,
         builder: (context) => _OfflineMapSheet(
           basemapStyle: _basemapStyle,
-          offlinePackage: offlinePackage,
+          initialOfflinePackage: offlinePackage,
           hasCollectionAccess: hasCollectionAccess,
           isDownloadingOffline: _isDownloadingOffline,
           offlineDownloadProgressLabel: _offlineDownloadProgressLabel,
@@ -2601,18 +2598,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           syncState: syncState,
           canDownloadVisible: offlinePackage != null && _isMainMapReady,
           onClose: () => Navigator.of(context).pop(),
-          onDownloadOverview: offlinePackage == null
-              ? null
-              : () => _downloadLebanonOverview(offlinePackage),
-          onDownloadVisible: offlinePackage == null || !_isMainMapReady
-              ? null
-              : () => _downloadVisibleRegion(offlinePackage),
-          onRefreshSavedImagery: offlinePackage == null
-              ? null
-              : () => _refreshSavedOfflineImagery(offlinePackage),
-          onDeleteSavedImagery: offlinePackage == null
-              ? null
-              : () => _confirmDeleteSavedOfflineImagery(offlinePackage),
+          onDownloadOverview: _downloadLebanonOverview,
+          onDownloadVisible: _downloadVisibleRegion,
+          onRefreshSavedImagery: _refreshSavedOfflineImagery,
+          onDeleteSavedImagery: _confirmDeleteSavedOfflineImagery,
         ),
       );
     } finally {
@@ -2696,7 +2685,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         basemapStyle: _basemapStyle,
       );
       await manager.refreshStats(package, basemapStyle: _basemapStyle);
-      ref.invalidate(offlineMapPackageProvider);
+      final _ = await ref.refresh(offlineMapPackageProvider.future);
       if (mounted) {
         final hasUsableTiles =
             summary.downloadedTiles > 0 || summary.skippedTiles > 0;
@@ -2779,7 +2768,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         basemapStyle: _basemapStyle,
       );
       await manager.refreshStats(package, basemapStyle: _basemapStyle);
-      ref.invalidate(offlineMapPackageProvider);
+      final _ = await ref.refresh(offlineMapPackageProvider.future);
       if (mounted) {
         final hasUsableTiles =
             summary.downloadedTiles > 0 || summary.skippedTiles > 0;
@@ -2844,7 +2833,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         package: package,
         basemapStyle: _basemapStyle,
       );
-      ref.invalidate(offlineMapPackageProvider);
+      await manager.refreshStats(package, basemapStyle: _basemapStyle);
+      final _ = await ref.refresh(offlineMapPackageProvider.future);
       if (!mounted) {
         return;
       }
@@ -2888,7 +2878,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       builder: (dialogContext) => AlertDialog(
         title: const Text('Delete saved imagery?'),
         content: Text(
-          'This removes the saved ${LebanonMapConfig.basemapLabel(_basemapStyle).toLowerCase()} imagery from this device for the current offline map package.',
+          'This removes the saved ${LebanonMapConfig.basemapLabel(_basemapStyle).toLowerCase()} imagery from this device for the signed-in user.',
         ),
         actions: [
           TextButton(
@@ -2928,7 +2918,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         package: package,
         basemapStyle: _basemapStyle,
       );
-      ref.invalidate(offlineMapPackageProvider);
+      await manager.refreshStats(package, basemapStyle: _basemapStyle);
+      final _ = await ref.refresh(offlineMapPackageProvider.future);
       if (!mounted) {
         return;
       }
@@ -3190,192 +3181,195 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       context: context,
       isScrollControlled: true,
       builder: (sheetContext) {
-        return SafeArea(
-          child: DraggableScrollableSheet(
-            expand: false,
-            initialChildSize: 0.75,
-            minChildSize: 0.45,
-            maxChildSize: 0.94,
-            builder: (context, controller) {
-              return ListView(
-                controller: controller,
-                padding: const EdgeInsets.all(AppSpacing.md),
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Feature ${_featureShortId(feature.id)}',
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
+        final bottomInset =
+            MediaQuery.viewPaddingOf(sheetContext).bottom + AppSpacing.lg;
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.75,
+          minChildSize: 0.45,
+          maxChildSize: 0.94,
+          builder: (context, controller) {
+            return ListView(
+              controller: controller,
+              padding: EdgeInsets.fromLTRB(
+                AppSpacing.md,
+                AppSpacing.md,
+                AppSpacing.md,
+                bottomInset,
+              ),
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Feature ${_featureShortId(feature.id)}',
+                        style: Theme.of(context).textTheme.titleLarge,
                       ),
-                      StatusChip(status: feature.status),
-                    ],
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
+                    ),
+                    StatusChip(status: feature.status),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    Chip(
+                      label: Text(
+                        'Geometry: ${feature.geometry['type'] ?? 'Unknown'}',
+                      ),
+                    ),
+                    if (feature.collectedBy != null)
+                      Chip(label: Text('Collector: ${feature.collectedBy}')),
+                    if (feature.reviewedBy != null)
+                      Chip(label: Text('Reviewed by: ${feature.reviewedBy}')),
+                    if (feature.accuracyMeters != null)
                       Chip(
                         label: Text(
-                          'Geometry: ${feature.geometry['type'] ?? 'Unknown'}',
+                          'Accuracy ${feature.accuracyMeters!.toStringAsFixed(1)}m',
                         ),
                       ),
-                      if (feature.collectedBy != null)
-                        Chip(label: Text('Collector: ${feature.collectedBy}')),
-                      if (feature.reviewedBy != null)
-                        Chip(label: Text('Reviewed by: ${feature.reviewedBy}')),
-                      if (feature.accuracyMeters != null)
-                        Chip(
-                          label: Text(
-                            'Accuracy ${feature.accuracyMeters!.toStringAsFixed(1)}m',
-                          ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.md),
+                _DetailSection(
+                  title: 'Geometry summary',
+                  child: Text(_geometrySummary(feature.geometry)),
+                ),
+                _DetailSection(
+                  title: 'Lifecycle',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (feature.collectedAt != null)
+                        Text(
+                          'Collected: ${_formatDateTime(feature.collectedAt!)}',
+                        ),
+                      if (feature.submittedAt != null)
+                        Text(
+                          'Submitted: ${_formatDateTime(feature.submittedAt!)}',
+                        ),
+                      if (feature.reviewedAt != null)
+                        Text(
+                          'Reviewed: ${_formatDateTime(feature.reviewedAt!)}',
                         ),
                     ],
                   ),
-                  const SizedBox(height: AppSpacing.md),
+                ),
+                if (feature.attributes.isNotEmpty)
                   _DetailSection(
-                    title: 'Geometry summary',
-                    child: Text(_geometrySummary(feature.geometry)),
-                  ),
-                  _DetailSection(
-                    title: 'Lifecycle',
+                    title: 'Attributes',
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: feature.attributes.entries
+                          .map(
+                            (entry) => ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(entry.key),
+                              subtitle: Text('${entry.value}'),
+                            ),
+                          )
+                          .toList(growable: false),
+                    ),
+                  ),
+                if (feature.reviewNotes?.trim().isNotEmpty == true)
+                  _DetailSection(
+                    title: 'Review notes',
+                    child: Text(feature.reviewNotes!),
+                  ),
+                _DetailSection(
+                  title: 'Photos',
+                  child: feature.photos.isEmpty
+                      ? const AppEmptyState(
+                          icon: Icons.photo_library_outlined,
+                          title: 'No photos attached',
+                          message: 'Photos will appear here after upload.',
+                        )
+                      : FeaturePhotoGallery(
+                          items: feature.photos
+                              .map(
+                                (photo) => FeaturePhotoGalleryItem(
+                                  id: photo.id,
+                                  imagePath:
+                                      photo.thumbnailPath ?? photo.filePath,
+                                  label: _photoLabel(photo.filePath),
+                                  subtitle: photo.takenAt == null
+                                      ? 'Captured photo'
+                                      : 'Captured ${_formatDateTime(photo.takenAt!)}',
+                                ),
+                              )
+                              .toList(growable: false),
+                        ),
+                ),
+                if (canCollectOnMap && feature.status == 'draft')
+                  Padding(
+                    padding: const EdgeInsets.only(top: AppSpacing.md),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
                       children: [
-                        if (feature.collectedAt != null)
-                          Text(
-                            'Collected: ${_formatDateTime(feature.collectedAt!)}',
+                        OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.of(sheetContext).pop();
+                            this.context.push(
+                              AppRoutes.editDraftFeature(
+                                projectId: project.id,
+                                featureId: feature.id,
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.edit_outlined),
+                          label: const Text('Edit Draft'),
+                        ),
+                        FilledButton.icon(
+                          onPressed: () => _submitDraft(
+                            feature: feature,
+                            onSuccess: () => Navigator.of(sheetContext).pop(),
                           ),
-                        if (feature.submittedAt != null)
-                          Text(
-                            'Submitted: ${_formatDateTime(feature.submittedAt!)}',
+                          icon: const Icon(Icons.send_outlined),
+                          label: const Text('Submit Draft'),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (canReview && feature.status != 'draft')
+                  Padding(
+                    padding: const EdgeInsets.only(top: AppSpacing.md),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        if (feature.status == 'pending_review' ||
+                            feature.status == 'rejected')
+                          FilledButton.icon(
+                            onPressed: () => _reviewFeature(
+                              feature: feature,
+                              status: 'approved',
+                              onSuccess: () => Navigator.of(sheetContext).pop(),
+                            ),
+                            icon: const Icon(Icons.check_circle_outline),
+                            label: Text(
+                              feature.status == 'rejected'
+                                  ? 'Re-approve'
+                                  : 'Approve',
+                            ),
                           ),
-                        if (feature.reviewedAt != null)
-                          Text(
-                            'Reviewed: ${_formatDateTime(feature.reviewedAt!)}',
+                        if (feature.status == 'pending_review' ||
+                            feature.status == 'approved')
+                          FilledButton.tonalIcon(
+                            onPressed: () => _reviewFeature(
+                              feature: feature,
+                              status: 'rejected',
+                              onSuccess: () => Navigator.of(sheetContext).pop(),
+                            ),
+                            icon: const Icon(Icons.cancel_outlined),
+                            label: const Text('Reject'),
                           ),
                       ],
                     ),
                   ),
-                  if (feature.attributes.isNotEmpty)
-                    _DetailSection(
-                      title: 'Attributes',
-                      child: Column(
-                        children: feature.attributes.entries
-                            .map(
-                              (entry) => ListTile(
-                                contentPadding: EdgeInsets.zero,
-                                title: Text(entry.key),
-                                subtitle: Text('${entry.value}'),
-                              ),
-                            )
-                            .toList(growable: false),
-                      ),
-                    ),
-                  if (feature.reviewNotes?.trim().isNotEmpty == true)
-                    _DetailSection(
-                      title: 'Review notes',
-                      child: Text(feature.reviewNotes!),
-                    ),
-                  _DetailSection(
-                    title: 'Photos',
-                    child: feature.photos.isEmpty
-                        ? const AppEmptyState(
-                            icon: Icons.photo_library_outlined,
-                            title: 'No photos attached',
-                            message: 'Photos will appear here after upload.',
-                          )
-                        : FeaturePhotoGallery(
-                            items: feature.photos
-                                .map(
-                                  (photo) => FeaturePhotoGalleryItem(
-                                    id: photo.id,
-                                    imagePath:
-                                        photo.thumbnailPath ?? photo.filePath,
-                                    label: _photoLabel(photo.filePath),
-                                    subtitle: photo.takenAt == null
-                                        ? 'Captured photo'
-                                        : 'Captured ${_formatDateTime(photo.takenAt!)}',
-                                  ),
-                                )
-                                .toList(growable: false),
-                          ),
-                  ),
-                  if (canCollectOnMap && feature.status == 'draft')
-                    Padding(
-                      padding: const EdgeInsets.only(top: AppSpacing.md),
-                      child: Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          OutlinedButton.icon(
-                            onPressed: () {
-                              Navigator.of(sheetContext).pop();
-                              this.context.push(
-                                AppRoutes.editDraftFeature(
-                                  projectId: project.id,
-                                  featureId: feature.id,
-                                ),
-                              );
-                            },
-                            icon: const Icon(Icons.edit_outlined),
-                            label: const Text('Edit Draft'),
-                          ),
-                          FilledButton.icon(
-                            onPressed: () => _submitDraft(
-                              feature: feature,
-                              onSuccess: () => Navigator.of(sheetContext).pop(),
-                            ),
-                            icon: const Icon(Icons.send_outlined),
-                            label: const Text('Submit Draft'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  if (canReview && feature.status != 'draft')
-                    Padding(
-                      padding: const EdgeInsets.only(top: AppSpacing.md),
-                      child: Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          if (feature.status == 'pending_review' ||
-                              feature.status == 'rejected')
-                            FilledButton.icon(
-                              onPressed: () => _reviewFeature(
-                                feature: feature,
-                                status: 'approved',
-                                onSuccess: () =>
-                                    Navigator.of(sheetContext).pop(),
-                              ),
-                              icon: const Icon(Icons.check_circle_outline),
-                              label: Text(
-                                feature.status == 'rejected'
-                                    ? 'Re-approve'
-                                    : 'Approve',
-                              ),
-                            ),
-                          if (feature.status == 'pending_review' ||
-                              feature.status == 'approved')
-                            FilledButton.tonalIcon(
-                              onPressed: () => _reviewFeature(
-                                feature: feature,
-                                status: 'rejected',
-                                onSuccess: () =>
-                                    Navigator.of(sheetContext).pop(),
-                              ),
-                              icon: const Icon(Icons.cancel_outlined),
-                              label: const Text('Reject'),
-                            ),
-                        ],
-                      ),
-                    ),
-                ],
-              );
-            },
-          ),
+              ],
+            );
+          },
         );
       },
     );
@@ -4102,14 +4096,12 @@ class _ProjectMapGeometryCapturePanel extends StatelessWidget {
     required this.summaryLabel,
     required this.instruction,
     required this.onCancel,
-    required this.onChangeGeometryType,
   });
 
   final String geometryType;
   final String summaryLabel;
   final String instruction;
   final VoidCallback onCancel;
-  final VoidCallback onChangeGeometryType;
 
   @override
   Widget build(BuildContext context) {
@@ -4139,12 +4131,6 @@ class _ProjectMapGeometryCapturePanel extends StatelessWidget {
                   icon: Icons.edit_location_alt_outlined,
                   label: _geometryTypeLabel(geometryType),
                   textStyle: theme.textTheme.labelSmall,
-                ),
-                const SizedBox(width: 6),
-                _MapPanelIconButton(
-                  tooltip: 'Change geometry type',
-                  icon: Icons.swap_horiz_rounded,
-                  onPressed: onChangeGeometryType,
                 ),
                 const SizedBox(width: 6),
                 _MapPanelIconButton(
@@ -4256,12 +4242,14 @@ class _InlineProjectMapGeometryTypeSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final bottomInset =
+        MediaQuery.viewPaddingOf(context).bottom + AppSpacing.md;
     return Material(
       elevation: 10,
       color: theme.colorScheme.surface,
-      borderRadius: BorderRadius.circular(24),
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        padding: EdgeInsets.fromLTRB(16, 12, 16, bottomInset),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -4896,196 +4884,194 @@ class _ProjectFeatureBrowserSheetState
     final filteredFeatures = _filteredFeatures;
     final geometryTypes = _geometryTypes;
 
-    return SafeArea(
-      child: DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.62,
-        minChildSize: 0.34,
-        maxChildSize: 0.92,
-        builder: (context, controller) {
-          return ListView(
-            controller: controller,
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.md,
-              AppSpacing.sm,
-              AppSpacing.md,
-              AppSpacing.xl,
+    final bottomInset =
+        MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.62,
+      minChildSize: 0.34,
+      maxChildSize: 0.92,
+      builder: (context, controller) {
+        return ListView(
+          controller: controller,
+          padding: EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.sm,
+            AppSpacing.md,
+            bottomInset,
+          ),
+          children: [
+            Center(
+              child: Container(
+                width: 44,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
             ),
-            children: [
-              Center(
-                child: Container(
-                  width: 44,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.outlineVariant,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                'Project features',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${filteredFeatures.length} of ${widget.features.length} item(s) in ${widget.project.name}',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: AppSpacing.md),
-              TextField(
-                controller: _searchController,
-                textInputAction: TextInputAction.search,
-                decoration: InputDecoration(
-                  isDense: true,
-                  hintText: 'Search this project\'s features',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: _searchController.text.trim().isEmpty
-                      ? null
-                      : IconButton(
-                          onPressed: () {
-                            setState(() {
-                              _searchController.clear();
-                            });
-                          },
-                          icon: const Icon(Icons.clear),
-                        ),
-                ),
-                onChanged: (_) => setState(() {}),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              if (widget.canFilterStatuses)
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      ChoiceChip(
-                        label: const Text('All'),
-                        selected: _statusFilter == null,
-                        onSelected: (_) {
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              'Project features',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${filteredFeatures.length} of ${widget.features.length} item(s) in ${widget.project.name}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            TextField(
+              controller: _searchController,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: 'Search this project\'s features',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: _searchController.text.trim().isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: () {
                           setState(() {
-                            _statusFilter = null;
+                            _searchController.clear();
+                          });
+                        },
+                        icon: const Icon(Icons.clear),
+                      ),
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            if (widget.canFilterStatuses)
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    ChoiceChip(
+                      label: const Text('All'),
+                      selected: _statusFilter == null,
+                      onSelected: (_) {
+                        setState(() {
+                          _statusFilter = null;
+                        });
+                      },
+                    ),
+                    for (final status in _statusOrder) ...[
+                      const SizedBox(width: 8),
+                      ChoiceChip(
+                        label: Text(widget.statusLabelBuilder(status)),
+                        selected: _statusFilter == status,
+                        onSelected: (selected) {
+                          setState(() {
+                            _statusFilter = selected ? status : null;
                           });
                         },
                       ),
-                      for (final status in _statusOrder) ...[
-                        const SizedBox(width: 8),
-                        ChoiceChip(
-                          label: Text(widget.statusLabelBuilder(status)),
-                          selected: _statusFilter == status,
-                          onSelected: (selected) {
-                            setState(() {
-                              _statusFilter = selected ? status : null;
-                            });
-                          },
-                        ),
-                      ],
                     ],
-                  ),
+                  ],
                 ),
-              if (geometryTypes.length > 1) ...[
-                const SizedBox(height: AppSpacing.sm),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
+              ),
+            if (geometryTypes.length > 1) ...[
+              const SizedBox(height: AppSpacing.sm),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    ChoiceChip(
+                      label: const Text('Any geometry'),
+                      selected: _geometryTypeFilter == null,
+                      onSelected: (_) {
+                        setState(() {
+                          _geometryTypeFilter = null;
+                        });
+                      },
+                    ),
+                    for (final geometryType in geometryTypes) ...[
+                      const SizedBox(width: 8),
                       ChoiceChip(
-                        label: const Text('Any geometry'),
-                        selected: _geometryTypeFilter == null,
-                        onSelected: (_) {
+                        label: Text(_geometryLabel(geometryType)),
+                        selected: _geometryTypeFilter == geometryType,
+                        onSelected: (selected) {
                           setState(() {
-                            _geometryTypeFilter = null;
+                            _geometryTypeFilter = selected
+                                ? geometryType
+                                : null;
                           });
                         },
                       ),
-                      for (final geometryType in geometryTypes) ...[
-                        const SizedBox(width: 8),
-                        ChoiceChip(
-                          label: Text(_geometryLabel(geometryType)),
-                          selected: _geometryTypeFilter == geometryType,
-                          onSelected: (selected) {
-                            setState(() {
-                              _geometryTypeFilter = selected
-                                  ? geometryType
-                                  : null;
-                            });
-                          },
-                        ),
-                      ],
                     ],
-                  ),
+                  ],
                 ),
-              ],
-              const SizedBox(height: AppSpacing.md),
-              if (filteredFeatures.isEmpty)
-                AppEmptyState(
-                  icon: Icons.layers_clear_outlined,
-                  title: 'No features match these filters',
-                  message: widget.canFilterStatuses
-                      ? 'Try a different search, status, or geometry filter for this project.'
-                      : 'Try a different search or geometry filter for this project.',
-                  actionLabel: widget.canCollectOnMap ? 'Add Feature' : null,
-                  onAction: widget.onAddFeature,
-                )
-              else
-                ...filteredFeatures.map(
-                  (feature) => Padding(
-                    padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                    child: AppCard(
-                      onTap: () => widget.onSelectFeature(feature),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            width: 12,
-                            height: 12,
-                            margin: const EdgeInsets.only(top: 6),
-                            decoration: BoxDecoration(
-                              color: widget.statusColorBuilder(feature.status),
-                              shape: BoxShape.circle,
-                            ),
+              ),
+            ],
+            const SizedBox(height: AppSpacing.md),
+            if (filteredFeatures.isEmpty)
+              AppEmptyState(
+                icon: Icons.layers_clear_outlined,
+                title: 'No features match these filters',
+                message: widget.canFilterStatuses
+                    ? 'Try a different search, status, or geometry filter for this project.'
+                    : 'Try a different search or geometry filter for this project.',
+                actionLabel: widget.canCollectOnMap ? 'Add Feature' : null,
+                onAction: widget.onAddFeature,
+              )
+            else
+              ...filteredFeatures.map(
+                (feature) => Padding(
+                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                  child: AppCard(
+                    onTap: () => widget.onSelectFeature(feature),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 12,
+                          height: 12,
+                          margin: const EdgeInsets.only(top: 6),
+                          decoration: BoxDecoration(
+                            color: widget.statusColorBuilder(feature.status),
+                            shape: BoxShape.circle,
                           ),
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                widget.featureTitleBuilder(feature),
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                widget.featureSubtitleBuilder(feature),
+                                style: Theme.of(context).textTheme.bodySmall,
+                                softWrap: true,
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (widget.canFilterStatuses) ...[
                           const SizedBox(width: AppSpacing.sm),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  widget.featureTitleBuilder(feature),
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.titleMedium,
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  widget.featureSubtitleBuilder(feature),
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                  softWrap: true,
-                                ),
-                              ],
-                            ),
-                          ),
-                          if (widget.canFilterStatuses) ...[
-                            const SizedBox(width: AppSpacing.sm),
-                            StatusChip(status: feature.status),
-                          ],
+                          StatusChip(status: feature.status),
                         ],
-                      ),
+                      ],
                     ),
                   ),
                 ),
-            ],
-          );
-        },
-      ),
+              ),
+          ],
+        );
+      },
     );
   }
 }
 
-class _OfflineMapSheet extends StatelessWidget {
+class _OfflineMapSheet extends ConsumerWidget {
   const _OfflineMapSheet({
     required this.basemapStyle,
-    required this.offlinePackage,
+    required this.initialOfflinePackage,
     required this.hasCollectionAccess,
     required this.isDownloadingOffline,
     required this.offlineDownloadProgressLabel,
@@ -5100,7 +5086,7 @@ class _OfflineMapSheet extends StatelessWidget {
   });
 
   final LebanonBasemapStyle basemapStyle;
-  final OfflineMapPackage? offlinePackage;
+  final OfflineMapPackage? initialOfflinePackage;
   final bool hasCollectionAccess;
   final bool isDownloadingOffline;
   final String? offlineDownloadProgressLabel;
@@ -5108,108 +5094,120 @@ class _OfflineMapSheet extends StatelessWidget {
   final SyncState syncState;
   final bool canDownloadVisible;
   final VoidCallback onClose;
-  final VoidCallback? onDownloadOverview;
-  final VoidCallback? onDownloadVisible;
-  final VoidCallback? onRefreshSavedImagery;
-  final VoidCallback? onDeleteSavedImagery;
+  final Future<void> Function(OfflineMapPackage package)? onDownloadOverview;
+  final Future<void> Function(OfflineMapPackage package)? onDownloadVisible;
+  final Future<void> Function(OfflineMapPackage package)? onRefreshSavedImagery;
+  final Future<void> Function(OfflineMapPackage package)? onDeleteSavedImagery;
 
   @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      top: false,
-      child: DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.44,
-        minChildSize: 0.28,
-        maxChildSize: 0.88,
-        builder: (context, controller) {
-          return DecoratedBox(
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(28),
+  Widget build(BuildContext context, WidgetRef ref) {
+    final livePackage =
+        ref.watch(offlineMapPackageProvider).valueOrNull ??
+        initialOfflinePackage;
+    final bottomInset =
+        MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.44,
+      minChildSize: 0.28,
+      maxChildSize: 0.88,
+      builder: (context, controller) {
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+            boxShadow: const [
+              BoxShadow(
+                blurRadius: 24,
+                color: Color(0x29000000),
+                offset: Offset(0, -6),
               ),
-              boxShadow: const [
-                BoxShadow(
-                  blurRadius: 24,
-                  color: Color(0x29000000),
-                  offset: Offset(0, -6),
+            ],
+          ),
+          child: Column(
+            children: [
+              const SizedBox(height: 10),
+              Container(
+                width: 42,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                  borderRadius: BorderRadius.circular(999),
                 ),
-              ],
-            ),
-            child: Column(
-              children: [
-                const SizedBox(height: 10),
-                Container(
-                  width: 42,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.outlineVariant,
-                    borderRadius: BorderRadius.circular(999),
+              ),
+              Expanded(
+                child: ListView(
+                  controller: controller,
+                  padding: EdgeInsets.fromLTRB(
+                    AppSpacing.md,
+                    AppSpacing.md,
+                    AppSpacing.md,
+                    bottomInset,
                   ),
-                ),
-                Expanded(
-                  child: ListView(
-                    controller: controller,
-                    padding: const EdgeInsets.fromLTRB(
-                      AppSpacing.md,
-                      AppSpacing.md,
-                      AppSpacing.md,
-                      AppSpacing.xl,
-                    ),
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Offline map',
-                                  style: Theme.of(context).textTheme.titleLarge,
-                                ),
-                                const SizedBox(height: AppSpacing.xs),
-                                Text(
-                                  'Save map imagery on this device so this project area stays readable without signal.',
-                                  style: Theme.of(context).textTheme.bodyMedium,
-                                ),
-                              ],
-                            ),
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Offline map',
+                                style: Theme.of(context).textTheme.titleLarge,
+                              ),
+                              const SizedBox(height: AppSpacing.xs),
+                              Text(
+                                'Save map imagery on this device so this project area stays readable without signal.',
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: AppSpacing.sm),
-                          IconButton(
-                            tooltip: 'Close offline map',
-                            onPressed: onClose,
-                            icon: const Icon(Icons.close_rounded),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      _OfflineMapStatusCard(
-                        package: offlinePackage,
-                        basemapStyle: basemapStyle,
-                        isDownloading: isDownloadingOffline,
-                        progressLabel: offlineDownloadProgressLabel,
-                        statusLabel: offlineDownloadResultLabel,
-                        onDownloadOverview: onDownloadOverview,
-                        onDownloadVisible: canDownloadVisible
-                            ? onDownloadVisible
-                            : null,
-                        onRefreshSavedImagery: onRefreshSavedImagery,
-                        onDeleteSavedImagery: onDeleteSavedImagery,
-                      ),
-                      if (hasCollectionAccess) ...[
-                        const SizedBox(height: AppSpacing.md),
-                        AppCard(child: _SyncStatusLine(state: syncState)),
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        IconButton(
+                          tooltip: 'Close offline map',
+                          onPressed: onClose,
+                          icon: const Icon(Icons.close_rounded),
+                        ),
                       ],
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    _OfflineMapStatusCard(
+                      package: livePackage,
+                      basemapStyle: basemapStyle,
+                      isDownloading: isDownloadingOffline,
+                      progressLabel: offlineDownloadProgressLabel,
+                      statusLabel: offlineDownloadResultLabel,
+                      onDownloadOverview:
+                          livePackage == null || onDownloadOverview == null
+                          ? null
+                          : () => onDownloadOverview!(livePackage),
+                      onDownloadVisible:
+                          livePackage == null ||
+                              !canDownloadVisible ||
+                              onDownloadVisible == null
+                          ? null
+                          : () => onDownloadVisible!(livePackage),
+                      onRefreshSavedImagery:
+                          livePackage == null || onRefreshSavedImagery == null
+                          ? null
+                          : () => onRefreshSavedImagery!(livePackage),
+                      onDeleteSavedImagery:
+                          livePackage == null || onDeleteSavedImagery == null
+                          ? null
+                          : () => onDeleteSavedImagery!(livePackage),
+                    ),
+                    if (hasCollectionAccess) ...[
+                      const SizedBox(height: AppSpacing.md),
+                      AppCard(child: _SyncStatusLine(state: syncState)),
                     ],
-                  ),
+                  ],
                 ),
-              ],
-            ),
-          );
-        },
-      ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -5245,7 +5243,7 @@ class _OfflineMapStatusCard extends StatelessWidget {
 
     final downloadedAt = package!.downloadedAt;
     final downloadedSummary = downloadedAt == null
-        ? 'No saved offline areas on this device yet'
+        ? 'No saved offline areas for this account on this device yet'
         : 'Last refreshed on ${downloadedAt.toLocal().year}-${downloadedAt.toLocal().month.toString().padLeft(2, '0')}-${downloadedAt.toLocal().day.toString().padLeft(2, '0')}';
     final savedImageCount = package!.tileCount ?? 0;
     final hasSavedImagery = savedImageCount > 0;
@@ -5260,7 +5258,7 @@ class _OfflineMapStatusCard extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.xs),
           Text(
-            'Saved imagery is used when live tiles are unavailable. Refresh it while online to replace older saved tiles.',
+            'Saved imagery is stored on this device for the signed-in user. It is used when live tiles are unavailable, and refreshing it online replaces older cached tiles.',
             softWrap: true,
           ),
           const SizedBox(height: AppSpacing.xs),
@@ -5305,7 +5303,7 @@ class _OfflineMapStatusCard extends StatelessWidget {
                 icon: Icons.public_rounded,
                 title: 'Save Lebanon overview',
                 description:
-                    'Saves a lightweight Lebanon-wide reference map in the current style.',
+                    'Saves a lightweight Lebanon-wide reference layer in the current style for offline orientation and country-level browsing.',
                 actionLabel: isDownloading ? 'Saving...' : 'Save overview',
                 onPressed: isDownloading ? null : onDownloadOverview,
                 filled: true,
@@ -5315,7 +5313,7 @@ class _OfflineMapStatusCard extends StatelessWidget {
                 icon: Icons.crop_free_outlined,
                 title: 'Save this view',
                 description:
-                    'Saves only the map area currently visible on screen in the current style.',
+                    'Saves the detailed map area currently visible on screen in the current style for this signed-in user.',
                 actionLabel: 'Save visible area',
                 onPressed: isDownloading ? null : onDownloadVisible,
               ),
@@ -5325,7 +5323,7 @@ class _OfflineMapStatusCard extends StatelessWidget {
                   icon: Icons.refresh_rounded,
                   title: 'Refresh saved imagery',
                   description:
-                      'Re-downloads the saved map images for this style so older cached tiles are replaced.',
+                      'Re-downloads the saved map images for this style on this device so older cached tiles are replaced.',
                   actionLabel: isDownloading
                       ? 'Refreshing...'
                       : 'Refresh saved',
@@ -5336,7 +5334,7 @@ class _OfflineMapStatusCard extends StatelessWidget {
                   icon: Icons.delete_outline_rounded,
                   title: 'Delete saved imagery',
                   description:
-                      'Removes the saved map images for this style from this device.',
+                      'Removes the saved map images for this style from this device for the signed-in user.',
                   actionLabel: 'Delete saved',
                   onPressed: isDownloading ? null : onDeleteSavedImagery,
                 ),

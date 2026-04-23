@@ -50,14 +50,14 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         if (isAuthRoute) {
           return null;
         }
+        if (auth.errorCode == 'logged_out') {
+          return AppRoutes.login;
+        }
         return _loginRedirectFor(state.uri);
       }
 
       if (isSplash || isAuthRoute || path == AppRoutes.app) {
-        return _postAuthRedirectTarget(
-          currentUri: state.uri,
-          user: user,
-        );
+        return _postAuthRedirectTarget(currentUri: state.uri, user: user);
       }
 
       final allowedPaths = _allowedPathsForUser(user);
@@ -203,7 +203,9 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         path: '/app/projects/:projectId/reviews',
         pageBuilder: (context, state) {
           final projectId = state.pathParameters['projectId'] ?? '';
-          final projectName = state.extra is String ? state.extra as String : null;
+          final projectName = state.extra is String
+              ? state.extra as String
+              : null;
           return _buildPage(
             state,
             AppScaffold(
@@ -222,7 +224,9 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         path: '/app/projects/:projectId/approved-reviews',
         pageBuilder: (context, state) {
           final projectId = state.pathParameters['projectId'] ?? '';
-          final projectName = state.extra is String ? state.extra as String : 'Project';
+          final projectName = state.extra is String
+              ? state.extra as String
+              : 'Project';
           return _buildPage(
             state,
             AppScaffold(
@@ -269,7 +273,9 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         path: '/app/projects/:projectId/exports',
         pageBuilder: (context, state) {
           final projectId = state.pathParameters['projectId'] ?? '';
-          final projectName = state.extra is String ? state.extra as String : null;
+          final projectName = state.extra is String
+              ? state.extra as String
+              : null;
           return _buildPage(
             state,
             AppScaffold(

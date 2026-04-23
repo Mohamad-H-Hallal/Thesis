@@ -649,7 +649,10 @@ void main() {
 
       expect(quickMapTop.dy, greaterThan(summaryTitleTop.dy));
       expect(find.text('Map Preview'), findsOneWidget);
-      expect(find.text('Open map'), findsOneWidget);
+      expect(
+        find.text('Tap the preview to open the full project map.'),
+        findsOneWidget,
+      );
     },
   );
 

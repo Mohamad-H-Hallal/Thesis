@@ -103,7 +103,9 @@ class MemoryLocalStore implements LocalStore {
         'geometry': jsonDecode(draft.geometryJson) as Map<String, dynamic>,
         'attributes': jsonDecode(draft.attributesJson) as Map<String, dynamic>,
         'photo_paths': draft.remoteVersion == null
-            ? draft.photos.map((photo) => photo.filePath).toList(growable: false)
+            ? draft.photos
+                  .map((photo) => photo.filePath)
+                  .toList(growable: false)
             : const <String>[],
         'status': draft.status,
         'local_version': draft.localVersion,
@@ -153,19 +155,37 @@ class MemoryLocalStore implements LocalStore {
   Future<void> upsertOfflineMapPackage(OfflineMapPackage package) async {
     _checkInit();
     if (package.isCurrent) {
-      _offlinePackages.updateAll(
-        (_, existing) => existing.copyWith(isCurrent: false),
-      );
+      _offlinePackages.updateAll((_, existing) {
+        if (existing.ownerUserId != package.ownerUserId) {
+          return existing;
+        }
+        return existing.copyWith(isCurrent: false);
+      });
     }
-    _offlinePackages[package.version] = package;
+    _offlinePackages['${package.ownerUserId}:${package.version}'] = package;
   }
 
   @override
-  Future<OfflineMapPackage?> getCurrentOfflineMapPackage() async {
+  Future<OfflineMapPackage?> getCurrentOfflineMapPackage({
+    required String ownerUserId,
+  }) async {
     _checkInit();
     for (final package in _offlinePackages.values) {
-      if (package.isCurrent) {
+      if (package.ownerUserId == ownerUserId && package.isCurrent) {
         return package;
+      }
+    }
+    if (ownerUserId.isEmpty) {
+      return null;
+    }
+    for (final entry in _offlinePackages.entries) {
+      final package = entry.value;
+      if (package.ownerUserId.isEmpty && package.isCurrent) {
+        final migratedPackage = package.copyWith(ownerUserId: ownerUserId);
+        _offlinePackages.remove(entry.key);
+        _offlinePackages['${migratedPackage.ownerUserId}:${migratedPackage.version}'] =
+            migratedPackage;
+        return migratedPackage;
       }
     }
     return null;

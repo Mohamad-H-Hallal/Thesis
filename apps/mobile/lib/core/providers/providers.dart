@@ -119,7 +119,9 @@ final notificationsRepositoryProvider = Provider<NotificationsRepository>((
   return ApiNotificationsRepository(ref.watch(apiClientProvider));
 });
 
-final pushNotificationServiceProvider = Provider<PushNotificationService>((ref) {
+final pushNotificationServiceProvider = Provider<PushNotificationService>((
+  ref,
+) {
   final service = PushNotificationService(
     repository: ref.watch(notificationsRepositoryProvider),
     storage: ref.watch(secureStorageProvider),
@@ -434,8 +436,16 @@ final offlineMapPackageProvider = FutureProvider<OfflineMapPackage?>((
   ref,
 ) async {
   await ref.watch(offlineBootstrapProvider.future);
+  final ownerUserId = ref.watch(
+    authControllerProvider.select((state) => state.session?.user.id),
+  );
+  if (ownerUserId == null || ownerUserId.isEmpty) {
+    return null;
+  }
   final localStore = ref.watch(localStoreProvider);
-  final localPackage = await localStore.getCurrentOfflineMapPackage();
+  final localPackage = await localStore.getCurrentOfflineMapPackage(
+    ownerUserId: ownerUserId,
+  );
   try {
     final remotePackage = await ref
         .read(mapRepositoryProvider)
@@ -443,6 +453,7 @@ final offlineMapPackageProvider = FutureProvider<OfflineMapPackage?>((
     final effectivePackage = _mergeOfflineMapPackage(
       remote: remotePackage,
       local: localPackage,
+      ownerUserId: ownerUserId,
     );
     if (effectivePackage != null) {
       await localStore.upsertOfflineMapPackage(effectivePackage);
@@ -853,14 +864,16 @@ Map<String, dynamic> _decodeJsonMap(String rawJson) {
 OfflineMapPackage? _mergeOfflineMapPackage({
   required OfflineMapPackage? remote,
   required OfflineMapPackage? local,
+  required String ownerUserId,
 }) {
   if (remote == null) {
     return local;
   }
   if (local == null || local.version != remote.version) {
-    return remote;
+    return remote.copyWith(ownerUserId: ownerUserId);
   }
   return OfflineMapPackage(
+    ownerUserId: ownerUserId,
     version: remote.version,
     zoomLevelMin: remote.zoomLevelMin,
     zoomLevelMax: remote.zoomLevelMax,

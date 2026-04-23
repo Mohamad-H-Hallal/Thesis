@@ -23,9 +23,16 @@ Future<void> showDraftWorkflowSheet(
         minChildSize: 0.45,
         maxChildSize: 0.9,
         builder: (context, controller) {
+          final bottomInset =
+              MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
           return ListView(
             controller: controller,
-            padding: const EdgeInsets.all(AppSpacing.md),
+            padding: EdgeInsets.fromLTRB(
+              AppSpacing.md,
+              AppSpacing.md,
+              AppSpacing.md,
+              bottomInset,
+            ),
             children: [
               Text(
                 draft.projectName,

@@ -111,6 +111,10 @@ class _ExportsDashboardScreenState
           _selectedProjectId = projects.first.id;
           _selectedProjectName = projects.first.name;
         }
+        final selectedProject = projects.cast<ProjectSummary?>().firstWhere(
+          (project) => project?.id == _selectedProjectId,
+          orElse: () => null,
+        );
 
         final scopedJobs = hasFixedProject
             ? exportState.jobs
@@ -396,7 +400,10 @@ class _ExportsDashboardScreenState
                     child: FilledButton.icon(
                       onPressed: exportState.isSubmitting
                           ? null
-                          : () => _submit(controller),
+                          : () => _submit(
+                              controller,
+                              selectedProject: selectedProject,
+                            ),
                       icon: const Icon(Icons.playlist_add),
                       label: Text(
                         exportState.isSubmitting
@@ -493,10 +500,31 @@ class _ExportsDashboardScreenState
     );
   }
 
-  Future<void> _submit(ExportsController controller) async {
+  Future<void> _submit(
+    ExportsController controller, {
+    required ProjectSummary? selectedProject,
+  }) async {
     final projectId = _selectedProjectId;
     if (projectId == null || projectId.isEmpty) {
       AppSnackbar.showError(context, 'Select a project first.');
+      return;
+    }
+    if ((selectedProject?.approvedFeatures ?? 0) <= 0) {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Export unavailable'),
+          content: Text(
+            'Exports can be requested after this project has at least one approved feature.',
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
       return;
     }
     if (!_validateRequestFilters(showAlert: true)) {

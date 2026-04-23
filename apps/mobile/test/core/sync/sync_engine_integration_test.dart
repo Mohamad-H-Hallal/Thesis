@@ -54,8 +54,9 @@ class TrackingLocalStore implements LocalStore {
       _inner.upsertOfflineMapPackage(package);
 
   @override
-  Future<OfflineMapPackage?> getCurrentOfflineMapPackage() =>
-      _inner.getCurrentOfflineMapPackage();
+  Future<OfflineMapPackage?> getCurrentOfflineMapPackage({
+    required String ownerUserId,
+  }) => _inner.getCurrentOfflineMapPackage(ownerUserId: ownerUserId);
 
   @override
   Future<void> updateDraftStatus(
