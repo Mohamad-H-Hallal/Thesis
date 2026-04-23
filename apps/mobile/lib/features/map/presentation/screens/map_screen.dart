@@ -41,12 +41,14 @@ class _OfflineSheetUiState {
     this.isDownloading = false,
     this.activeAction,
     this.progressLabel,
+    this.progressValue,
     this.statusLabel,
   });
 
   final bool isDownloading;
   final _OfflineMapAction? activeAction;
   final String? progressLabel;
+  final double? progressValue;
   final String? statusLabel;
 }
 
@@ -93,6 +95,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   String? _autoOpenedFeatureId;
   String? _offlineDownloadProgressLabel;
   String? _offlineDownloadResultLabel;
+  double? _offlineDownloadProgressValue;
   _OfflineMapAction? _activeOfflineMapAction;
   LatLng? _currentLocation;
   double? _currentLocationAccuracyMeters;
@@ -168,6 +171,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       isDownloading: _isDownloadingOffline,
       activeAction: _activeOfflineMapAction,
       progressLabel: _offlineDownloadProgressLabel,
+      progressValue: _offlineDownloadProgressValue,
       statusLabel: _offlineDownloadResultLabel,
     );
   }
@@ -1183,6 +1187,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       isDownloading: _isDownloadingOffline,
                       activeAction: _activeOfflineMapAction,
                       progressLabel: _offlineDownloadProgressLabel,
+                      progressValue: _offlineDownloadProgressValue,
                       statusLabel: _offlineDownloadResultLabel,
                       onDownloadOverview: offlinePackage == null
                           ? null
@@ -2671,7 +2676,26 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _isDownloadingOffline = true;
       _activeOfflineMapAction = action;
       _offlineDownloadProgressLabel = progressLabel;
+      _offlineDownloadProgressValue = null;
       _offlineDownloadResultLabel = null;
+    });
+    _publishOfflineSheetState();
+  }
+
+  void _updateOfflineProgress({
+    required String label,
+    required int completedTiles,
+    required int requestedTiles,
+  }) {
+    if (!mounted) {
+      return;
+    }
+    final progressValue = requestedTiles <= 0
+        ? null
+        : (completedTiles / requestedTiles).clamp(0.0, 1.0);
+    setState(() {
+      _offlineDownloadProgressLabel = label;
+      _offlineDownloadProgressValue = progressValue;
     });
     _publishOfflineSheetState();
   }
@@ -2685,6 +2709,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     }
     setState(() {
       _offlineDownloadResultLabel = message;
+      _offlineDownloadProgressValue = null;
     });
     _publishOfflineSheetState();
     if (success) {
@@ -2702,6 +2727,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _isDownloadingOffline = false;
       _activeOfflineMapAction = null;
       _offlineDownloadProgressLabel = null;
+      _offlineDownloadProgressValue = null;
     });
     _publishOfflineSheetState();
   }
@@ -2786,14 +2812,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             package: package,
             basemapStyle: _basemapStyle,
             onProgress: (progress) {
-              if (!mounted) {
-                return;
-              }
-              setState(() {
-                _offlineDownloadProgressLabel =
-                    'Saving the Lebanon overview ${progress.completedTiles}/${progress.requestedTiles} • ${progress.downloadedTiles} new • ${progress.skippedTiles} already on this device${progress.failedTiles > 0 ? ' • ${progress.failedTiles} failed' : ''}';
-              });
-              _publishOfflineSheetState();
+              _updateOfflineProgress(
+                label:
+                    'Saving the Lebanon overview ${progress.completedTiles}/${progress.requestedTiles} • ${progress.downloadedTiles} new • ${progress.skippedTiles} already on this device${progress.failedTiles > 0 ? ' • ${progress.failedTiles} failed' : ''}',
+                completedTiles: progress.completedTiles,
+                requestedTiles: progress.requestedTiles,
+              );
             },
           );
       _invalidateOfflineTileAssetsCache(
@@ -2863,14 +2887,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         bounds: camera.visibleBounds,
         currentZoom: camera.zoom,
         onProgress: (progress) {
-          if (!mounted) {
-            return;
-          }
-          setState(() {
-            _offlineDownloadProgressLabel =
-                'Saving this visible area ${progress.completedTiles}/${progress.requestedTiles} • ${progress.downloadedTiles} new • ${progress.skippedTiles} already on this device${progress.failedTiles > 0 ? ' • ${progress.failedTiles} failed' : ''}';
-          });
-          _publishOfflineSheetState();
+          _updateOfflineProgress(
+            label:
+                'Saving this visible area ${progress.completedTiles}/${progress.requestedTiles} • ${progress.downloadedTiles} new • ${progress.skippedTiles} already on this device${progress.failedTiles > 0 ? ' • ${progress.failedTiles} failed' : ''}',
+            completedTiles: progress.completedTiles,
+            requestedTiles: progress.requestedTiles,
+          );
         },
       );
       _invalidateOfflineTileAssetsCache(
@@ -2924,14 +2946,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         package: package,
         basemapStyle: _basemapStyle,
         onProgress: (progress) {
-          if (!mounted) {
-            return;
-          }
-          setState(() {
-            _offlineDownloadProgressLabel =
-                'Refreshing saved imagery ${progress.completedTiles}/${progress.requestedTiles}${progress.failedTiles > 0 ? ' • ${progress.failedTiles} failed' : ''}';
-          });
-          _publishOfflineSheetState();
+          _updateOfflineProgress(
+            label:
+                'Refreshing saved imagery ${progress.completedTiles}/${progress.requestedTiles}${progress.failedTiles > 0 ? ' • ${progress.failedTiles} failed' : ''}',
+            completedTiles: progress.completedTiles,
+            requestedTiles: progress.requestedTiles,
+          );
         },
       );
       _invalidateOfflineTileAssetsCache(
@@ -5269,6 +5289,7 @@ class _OfflineMapSheet extends ConsumerWidget {
                           isDownloading: uiState.isDownloading,
                           activeAction: uiState.activeAction,
                           progressLabel: uiState.progressLabel,
+                          progressValue: uiState.progressValue,
                           statusLabel: uiState.statusLabel,
                           onDownloadOverview:
                               livePackage == null || onDownloadOverview == null
@@ -5315,6 +5336,7 @@ class _OfflineMapStatusCard extends StatelessWidget {
     required this.isDownloading,
     required this.activeAction,
     required this.progressLabel,
+    required this.progressValue,
     required this.statusLabel,
     required this.onDownloadOverview,
     required this.onDownloadVisible,
@@ -5327,6 +5349,7 @@ class _OfflineMapStatusCard extends StatelessWidget {
   final bool isDownloading;
   final _OfflineMapAction? activeAction;
   final String? progressLabel;
+  final double? progressValue;
   final String? statusLabel;
   final VoidCallback? onDownloadOverview;
   final VoidCallback? onDownloadVisible;
@@ -5390,6 +5413,14 @@ class _OfflineMapStatusCard extends StatelessWidget {
           if (progressLabel != null) ...[
             const SizedBox(height: AppSpacing.xs),
             Text(progressLabel!, style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: AppSpacing.xs),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                value: progressValue,
+                minHeight: 8,
+              ),
+            ),
           ] else if (statusLabel != null && statusLabel!.trim().isNotEmpty) ...[
             const SizedBox(height: AppSpacing.xs),
             Text(statusLabel!, style: Theme.of(context).textTheme.bodySmall),
