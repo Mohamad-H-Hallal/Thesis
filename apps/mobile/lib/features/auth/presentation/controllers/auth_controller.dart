@@ -135,7 +135,10 @@ class AuthController extends StateNotifier<AuthState> {
     final previousSession = state.session;
     try {
       await _repository.selfDeactivate();
-      state = const AuthState.unauthenticated();
+      state = const AuthState(
+        status: AuthStatus.unauthenticated,
+        errorCode: 'self_deactivated',
+      );
     } catch (error) {
       state = AuthState(
         status: previousSession == null

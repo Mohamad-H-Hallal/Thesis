@@ -30,22 +30,6 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
   bool _updatingVisibility = false;
   bool _requestingAccess = false;
 
-  void _showCollectionUnavailableMessage(String status) {
-    final normalized = status.trim().toLowerCase();
-    final message = switch (normalized) {
-      'paused' =>
-        'This project is paused. Feature collection is unavailable until the project returns to active status.',
-      'completed' =>
-        'This project is completed. New features cannot be added unless an admin reopens the project.',
-      'archived' =>
-        'This project is archived. Feature collection is unavailable.',
-      'draft' =>
-        'This project is still in draft status. Feature collection is unavailable until the project becomes active.',
-      _ => 'Feature collection is unavailable for this project right now.',
-    };
-    AppSnackbar.showError(context, message);
-  }
-
   Future<void> _toggleViewerVisibility(bool value) async {
     setState(() {
       _updatingVisibility = true;
@@ -268,10 +252,6 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
             role == UserRole.contributor &&
             project.hasApprovedCurrentUserAssignment;
         final isPaused = project.status == 'paused';
-        final canCollectFeatures =
-            role == UserRole.contributor &&
-            hasContributorAssignment &&
-            project.status == 'active';
         final contributorRequestStatus = project.currentUserAssignmentStatus;
         final canRequestAccess =
             role == UserRole.contributor &&
@@ -406,24 +386,6 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                             ),
                             icon: const Icon(Icons.upload_file_outlined),
                             label: const Text('Imports'),
-                          ),
-                        if (role == UserRole.contributor &&
-                            hasContributorAssignment)
-                          FilledButton.icon(
-                            onPressed: () {
-                              if (canCollectFeatures) {
-                                context.push(
-                                  AppRoutes.mapForProject(
-                                    project.id,
-                                    startCapture: true,
-                                  ),
-                                );
-                                return;
-                              }
-                              _showCollectionUnavailableMessage(project.status);
-                            },
-                            icon: const Icon(Icons.add_location_alt_outlined),
-                            label: const Text('New feature'),
                           ),
                       ],
                     ),

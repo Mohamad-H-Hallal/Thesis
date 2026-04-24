@@ -297,9 +297,118 @@ describe('GIS import workflow', () => {
     expect(detailResponse.status).toBe(200);
     expect(detailResponse.body.data.job.failed_feature_count).toBe(1);
     expect(detailResponse.body.data.job.pending_feature_count).toBe(0);
+    expect(detailResponse.body.data.job.validation_summary.top_errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: 'Missing required attribute: feature_type',
+          count: 1,
+        }),
+      ]),
+    );
     expect(detailResponse.body.data.preview_features[0].validation_errors).toEqual(
       expect.arrayContaining(['Missing required attribute: feature_type']),
     );
+  });
+
+  test('contributors can only list and open their own import jobs', async () => {
+    const admin = await createAdminUser({
+      fullName: 'Import Visibility Admin',
+      emailPrefix: 'import-visibility-admin',
+    });
+    const contributorA = await registerUser({
+      role: 'contributor',
+      fullName: 'Import Owner Contributor',
+      emailPrefix: 'import-owner-contributor',
+    });
+    const contributorB = await registerUser({
+      role: 'contributor',
+      fullName: 'Second Contributor',
+      emailPrefix: 'import-second-contributor',
+    });
+    await approveContributorRequest({
+      token: admin.token,
+      userId: contributorA.user.id,
+    });
+    await approveContributorRequest({
+      token: admin.token,
+      userId: contributorB.user.id,
+    });
+    const contributorALogin = await loginUser({
+      email: contributorA.email,
+      password: contributorA.password,
+    });
+    const contributorBLogin = await loginUser({
+      email: contributorB.email,
+      password: contributorB.password,
+    });
+
+    const category = await createCategory({
+      token: admin.token,
+      name: 'Import Visibility Category',
+    });
+    const project = await createProject({
+      token: admin.token,
+      categoryId: category.id,
+      name: 'Import Visibility Project',
+      visibleToContributors: true,
+    });
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}`)
+      .set(authHeader(admin.token))
+      .send({ status: 'active' })
+      .expect(200);
+
+    for (const userId of [contributorA.user.id, contributorB.user.id]) {
+      const assignment = await createAssignment({
+        token: admin.token,
+        projectId: project.id,
+        userId,
+      });
+      await updateAssignmentStatus({
+        token: admin.token,
+        assignmentId: assignment.id,
+        status: 'approved',
+      });
+    }
+
+    const geojsonPath = await createTempGeoJsonFile('import-own-history', {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: { feature_type: 'olive', name: 'Owner import' },
+          geometry: {
+            type: 'Point',
+            coordinates: [35.501, 33.901],
+          },
+        },
+      ],
+    });
+
+    const uploadResponse = await request(app)
+      .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+      .set(authHeader(contributorALogin.token))
+      .attach('file', geojsonPath)
+      .expect(202);
+
+    const importId = uploadResponse.body.data.id;
+    await waitForImportStatus({
+      importId,
+      token: admin.token,
+      expectedStatuses: ['pending_review'],
+    });
+
+    const listForContributorB = await request(app)
+      .get(`${API_PREFIX}/imports?page=1&limit=20`)
+      .set(authHeader(contributorBLogin.token))
+      .expect(200);
+    expect(listForContributorB.body.data).toEqual([]);
+    expect(listForContributorB.body.pagination.total).toBe(0);
+
+    await request(app)
+      .get(`${API_PREFIX}/imports/${importId}`)
+      .set(authHeader(contributorBLogin.token))
+      .expect(403);
   });
 
   test('accepts larger imports beyond the old 2000-feature cap', async () => {

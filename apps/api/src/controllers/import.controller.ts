@@ -898,6 +898,8 @@ const buildValidationSummary = ({
   warningCount,
   errorCount,
   duplicateOfImportJobId,
+  warningBreakdown,
+  errorBreakdown,
 }: {
   parsed: ParsedImportPayload;
   reviewableCount: number;
@@ -905,6 +907,8 @@ const buildValidationSummary = ({
   warningCount: number;
   errorCount: number;
   duplicateOfImportJobId: string | null;
+  warningBreakdown: Map<string, number>;
+  errorBreakdown: Map<string, number>;
 }) => ({
   file_type: parsed.fileType,
   source_crs: parsed.sourceCrs,
@@ -915,7 +919,20 @@ const buildValidationSummary = ({
   warning_count: warningCount,
   error_count: errorCount,
   duplicate_of_import_job_id: duplicateOfImportJobId,
+  top_warnings: summarizeIssueBreakdown(warningBreakdown),
+  top_errors: summarizeIssueBreakdown(errorBreakdown),
 });
+
+const summarizeIssueBreakdown = (issues: Map<string, number>) =>
+  [...issues.entries()]
+    .sort((left, right) => {
+      if (right[1] !== left[1]) {
+        return right[1] - left[1];
+      }
+      return left[0].localeCompare(right[0]);
+    })
+    .slice(0, 8)
+    .map(([message, count]) => ({ message, count }));
 
 const mapImportJobRow = (row: ImportJobRow) => ({
   id: row.id,
@@ -1217,6 +1234,8 @@ const processImportJob = async (importJobId: string): Promise<void> => {
       let failedCount = 0;
       let warningCount = 0;
       let errorCount = 0;
+      const warningBreakdown = new Map<string, number>();
+      const errorBreakdown = new Map<string, number>();
       const stagedRows: StagedImportInsertRow[] = [];
 
       for (let index = 0; index < parsed.features.length; index += 1) {
@@ -1228,6 +1247,12 @@ const processImportJob = async (importJobId: string): Promise<void> => {
         });
         warningCount += validation.warnings.length;
         errorCount += validation.errors.length;
+        for (const warning of validation.warnings) {
+          warningBreakdown.set(warning, (warningBreakdown.get(warning) ?? 0) + 1);
+        }
+        for (const error of validation.errors) {
+          errorBreakdown.set(error, (errorBreakdown.get(error) ?? 0) + 1);
+        }
         const featureStatus = validation.errors.length > 0 ? 'failed' : 'pending_review';
         if (featureStatus === 'failed') {
           failedCount += 1;
@@ -1281,6 +1306,8 @@ const processImportJob = async (importJobId: string): Promise<void> => {
         warningCount,
         errorCount,
         duplicateOfImportJobId: job.duplicate_of_import_job_id,
+        warningBreakdown,
+        errorBreakdown,
       });
       const processingMessage =
         finalStatus === 'failed'

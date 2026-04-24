@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -38,6 +40,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
   ];
 
   final ScrollController _scrollController = ScrollController();
+  static const Duration _refreshInterval = Duration(seconds: 4);
   String? _selectedCategory;
   String? _selectedProjectId;
   String? _selectedAdminCategoryId;
@@ -45,9 +48,12 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
   PlatformFile? _selectedFile;
   bool _isUploading = false;
   String _statusFilter = 'all';
+  Timer? _refreshTimer;
+  Future<void> Function()? _refreshImports;
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
@@ -132,12 +138,15 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
         final jobsController = ref.read(
           paginatedImportJobsProvider(jobsQuery).notifier,
         );
+        _refreshImports = jobsController.refresh;
         final jobsState = jobsAsync.valueOrNull;
         final jobsError = jobsAsync.asError?.error;
         if (jobsState == null && jobsAsync.isLoading) {
+          _configureAutoRefresh(false);
           return const Center(child: CircularProgressIndicator());
         }
         if (jobsState == null && jobsAsync.hasError) {
+          _configureAutoRefresh(false);
           return AppEmptyState(
             icon: Icons.error_outline,
             title: 'Imports unavailable',
@@ -151,6 +160,10 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
         }
 
         final filteredJobs = jobsState?.items ?? const <GisImportJob>[];
+        final hasProcessingJobs = filteredJobs.any(
+          (job) => _isImportStillProcessing(job.status),
+        );
+        _configureAutoRefresh(hasProcessingJobs);
         final adminProjects = _projectsForCategory(
           projects,
           _selectedAdminCategoryId,
@@ -688,6 +701,20 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
     final mb = kb / 1024;
     return '${mb.toStringAsFixed(mb >= 100 ? 0 : 1)} MB';
   }
+
+  void _configureAutoRefresh(bool enabled) {
+    if (!enabled) {
+      _refreshTimer?.cancel();
+      _refreshTimer = null;
+      return;
+    }
+    _refreshTimer ??= Timer.periodic(_refreshInterval, (_) {
+      if (!mounted) {
+        return;
+      }
+      unawaited(_refreshImports?.call());
+    });
+  }
 }
 
 class _ImportJobCard extends StatelessWidget {
@@ -714,11 +741,13 @@ class _ImportJobCard extends StatelessWidget {
                       Text(
                         job.originalFilename,
                         style: Theme.of(context).textTheme.titleMedium,
+                        softWrap: true,
                       ),
                       const SizedBox(height: 4),
                       Text(
                         job.projectName,
                         style: Theme.of(context).textTheme.bodyMedium,
+                        softWrap: true,
                       ),
                     ],
                   ),
@@ -764,4 +793,9 @@ class _StatusOption {
 
   final String value;
   final String label;
+}
+
+bool _isImportStillProcessing(String status) {
+  final normalized = status.trim().toLowerCase();
+  return normalized == 'uploaded' || normalized == 'processing';
 }

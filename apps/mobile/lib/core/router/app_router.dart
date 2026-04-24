@@ -26,6 +26,8 @@ import '../widgets/app_snackbar.dart';
 import '../widgets/app_scaffold.dart';
 import 'route_paths.dart';
 
+const _selfDeactivatedNotice = 'Your account was deactivated successfully.';
+
 GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
   // On web, project details/map and other pushed routes need real shareable
   // URLs so browser history and hard refresh work as expected.
@@ -49,6 +51,14 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
       }
 
       if (!auth.isAuthenticated || user == null) {
+        if (auth.errorCode == 'self_deactivated') {
+          final notice = Uri.encodeComponent(_selfDeactivatedNotice);
+          final target = '${AppRoutes.login}?notice=$notice&success=true';
+          if (state.uri.toString() == target) {
+            return null;
+          }
+          return target;
+        }
         if (isAuthRoute) {
           return null;
         }

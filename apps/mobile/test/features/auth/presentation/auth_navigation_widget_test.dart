@@ -344,6 +344,52 @@ void main() {
     );
   });
 
+  testWidgets('self deactivation routes back to login with a success notice', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final repository = const _TestAuthRepository();
+    final container = ProviderContainer(
+      overrides: <Override>[
+        authRepositoryProvider.overrideWithValue(repository),
+        authControllerProvider.overrideWith(
+          (ref) => _AuthenticatedAuthController(
+            repository: repository,
+            session: _sessionForRole(UserRole.viewer),
+          ),
+        ),
+        syncControllerProvider.overrideWith((ref) => _buildSyncController()),
+        projectsProvider.overrideWith((ref) async => const <ProjectSummary>[]),
+        projectListProvider.overrideWith(
+          (ref, scope) async => const <ProjectSummary>[],
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(_buildRoutedApp(container));
+    await tester.pumpAndSettle();
+
+    final router = container.read(routerProvider);
+    router.go(AppRoutes.profile);
+    await tester.pumpAndSettle();
+
+    await container.read(authControllerProvider.notifier).selfDeactivate();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(LoginScreen), findsOneWidget);
+    expect(
+      find.text('Your account was deactivated successfully.'),
+      findsWidgets,
+    );
+    expect(
+      container.read(authControllerProvider).errorCode,
+      'self_deactivated',
+    );
+  });
+
   testWidgets('pending contributor login shows blocked-state message', (
     tester,
   ) async {
