@@ -11,6 +11,7 @@ import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
+import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../../projects/domain/project.dart';
@@ -18,11 +19,7 @@ import '../../domain/import_models.dart';
 import '../import_providers.dart';
 
 class ImportsScreen extends ConsumerStatefulWidget {
-  const ImportsScreen({
-    this.fixedProjectId,
-    this.fixedProjectName,
-    super.key,
-  });
+  const ImportsScreen({this.fixedProjectId, this.fixedProjectName, super.key});
 
   final String? fixedProjectId;
   final String? fixedProjectName;
@@ -119,9 +116,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
               ? _selectedAdminProjectId
               : null,
         );
-        final jobsAsync = ref.watch(
-          importJobsProvider(jobsQuery),
-        );
+        final jobsAsync = ref.watch(importJobsProvider(jobsQuery));
         final latestJobs = jobsAsync.asData?.value;
         final jobsError = jobsAsync.asError?.error;
         if (latestJobs != null) {
@@ -147,20 +142,21 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
         final filteredJobs = _filterJobs(
           jobs: effectiveJobs ?? const <GisImportJob>[],
           projects: projects,
-          selectedCategory:
-              hasFixedProject
-                  ? _selectedCategory
-                  : user.role == UserRole.admin
-                  ? _selectedAdminCategoryId
-                  : null,
-          selectedProjectId:
-              hasFixedProject
-                  ? _selectedProjectId
-                  : user.role == UserRole.admin
-                  ? _selectedAdminProjectId
-                  : null,
+          selectedCategory: hasFixedProject
+              ? _selectedCategory
+              : user.role == UserRole.admin
+              ? _selectedAdminCategoryId
+              : null,
+          selectedProjectId: hasFixedProject
+              ? _selectedProjectId
+              : user.role == UserRole.admin
+              ? _selectedAdminProjectId
+              : null,
         );
-        final adminProjects = _projectsForCategory(projects, _selectedAdminCategoryId);
+        final adminProjects = _projectsForCategory(
+          projects,
+          _selectedAdminCategoryId,
+        );
         final fixedProject = hasFixedProject
             ? projects.cast<ProjectSummary?>().firstWhere(
                 (project) => project?.id == fixedProjectId,
@@ -209,8 +205,15 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
               const SizedBox(height: AppSpacing.md),
             ],
             Text(
-              user.role == UserRole.admin ? 'Import review queue' : 'Import history',
+              user.role == UserRole.admin
+                  ? 'Import review queue'
+                  : 'Import history',
               style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              '${filteredJobs.length} import${filteredJobs.length == 1 ? '' : 's'}',
+              style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: AppSpacing.sm),
             AppCard(
@@ -221,7 +224,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      ..._statusOptionsFor(user).map(
+                      ..._statusOptions.map(
                         (option) => ChoiceChip(
                           label: Text(option.label),
                           selected: _statusFilter == option.value,
@@ -281,8 +284,13 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                         onChanged: (value) {
                           setState(() {
                             _selectedAdminCategoryId = value;
-                            final nextProjects = _projectsForCategory(projects, value);
-                            final validIds = nextProjects.map((item) => item.id).toSet();
+                            final nextProjects = _projectsForCategory(
+                              projects,
+                              value,
+                            );
+                            final validIds = nextProjects
+                                .map((item) => item.id)
+                                .toSet();
                             if (_selectedAdminProjectId != null &&
                                 !validIds.contains(_selectedAdminProjectId)) {
                               _selectedAdminProjectId = null;
@@ -335,13 +343,22 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                     : 'Contributor uploads awaiting review will appear here when they match the selected filters.',
               )
             else
-              ...filteredJobs.map(
-                (job) => Padding(
-                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                  child: _ImportJobCard(
-                    job: job,
-                    onTap: () => context.push(AppRoutes.importDetails(job.id)),
-                  ),
+              ProgressiveListSection<GisImportJob>(
+                items: filteredJobs,
+                resetKey: Object.hash(
+                  user.role,
+                  _statusFilter,
+                  hasFixedProject ? fixedProjectId : _selectedCategory,
+                  hasFixedProject
+                      ? fixedProjectId
+                      : user.role == UserRole.admin
+                      ? _selectedAdminProjectId
+                      : _selectedProjectId,
+                  filteredJobs.length,
+                ),
+                itemBuilder: (context, job, _) => _ImportJobCard(
+                  job: job,
+                  onTap: () => context.push(AppRoutes.importDetails(job.id)),
                 ),
               ),
           ],
@@ -396,10 +413,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                   .map(
                     (option) => DropdownMenuItem<String>(
                       value: option.id,
-                      child: Text(
-                        option.name,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      child: Text(option.name, overflow: TextOverflow.ellipsis),
                     ),
                   )
                   .toList(growable: false),
@@ -409,8 +423,9 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                   final nextProjects = projects
                       .where((project) => project.categoryId == value)
                       .toList(growable: false);
-                  _selectedProjectId =
-                      nextProjects.isNotEmpty ? nextProjects.first.id : null;
+                  _selectedProjectId = nextProjects.isNotEmpty
+                      ? nextProjects.first.id
+                      : null;
                 });
               },
             ),
@@ -627,7 +642,10 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
       _selectedAdminCategoryId = null;
     }
 
-    final categoryProjects = _projectsForCategory(projects, _selectedAdminCategoryId);
+    final categoryProjects = _projectsForCategory(
+      projects,
+      _selectedAdminCategoryId,
+    );
     final validProjectIds = categoryProjects.map((item) => item.id).toSet();
     if (_selectedAdminProjectId != null &&
         !validProjectIds.contains(_selectedAdminProjectId)) {
@@ -644,42 +662,32 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
     final projectById = <String, ProjectSummary>{
       for (final project in projects) project.id: project,
     };
-    return jobs.where((job) {
-      if (selectedProjectId != null &&
-          selectedProjectId.trim().isNotEmpty &&
-          job.projectId != selectedProjectId) {
-        return false;
-      }
-      if (selectedCategory != null && selectedCategory.trim().isNotEmpty) {
-        final project = projectById[job.projectId];
-        if (project?.categoryId != selectedCategory) {
-          return false;
-        }
-      }
-      return true;
-    }).toList(growable: false);
+    return jobs
+        .where((job) {
+          if (selectedProjectId != null &&
+              selectedProjectId.trim().isNotEmpty &&
+              job.projectId != selectedProjectId) {
+            return false;
+          }
+          if (selectedCategory != null && selectedCategory.trim().isNotEmpty) {
+            final project = projectById[job.projectId];
+            if (project?.categoryId != selectedCategory) {
+              return false;
+            }
+          }
+          return true;
+        })
+        .toList(growable: false);
   }
 
-  List<_StatusOption> _statusOptionsFor(AppUser user) {
-    if (user.role == UserRole.admin) {
-      return const <_StatusOption>[
-        _StatusOption('all', 'All'),
-        _StatusOption('pending_review', 'Pending review'),
-        _StatusOption('approved', 'Approved'),
-        _StatusOption('partially_approved', 'Partial'),
-        _StatusOption('rejected', 'Rejected'),
-        _StatusOption('failed', 'Failed'),
-      ];
-    }
-    return const <_StatusOption>[
-      _StatusOption('all', 'All'),
-      _StatusOption('pending_review', 'Pending'),
-      _StatusOption('approved', 'Approved'),
-      _StatusOption('partially_approved', 'Partial'),
-      _StatusOption('rejected', 'Rejected'),
-      _StatusOption('failed', 'Failed'),
-    ];
-  }
+  List<_StatusOption> get _statusOptions => const <_StatusOption>[
+    _StatusOption('all', 'All'),
+    _StatusOption('pending_review', 'Pending'),
+    _StatusOption('approved', 'Approved'),
+    _StatusOption('partially_approved', 'Partially approved'),
+    _StatusOption('rejected', 'Rejected'),
+    _StatusOption('failed', 'Failed'),
+  ];
 
   String _formatBytes(int bytes) {
     if (bytes < 1024) {

@@ -8,6 +8,7 @@ import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
+import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../projects/domain/project.dart';
 
@@ -159,6 +160,11 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
                 ),
               ),
               const SizedBox(height: AppSpacing.md),
+              Text(
+                '${filteredProjects.length} project${filteredProjects.length == 1 ? '' : 's'}',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: AppSpacing.sm),
               if (filteredProjects.isEmpty)
                 AppEmptyState(
                   icon: Icons.assignment_outlined,
@@ -167,23 +173,28 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
                       'No projects match the current search and status filter.',
                 )
               else
-                ...filteredProjects.map((project) {
-                  final projectAssignments = allAssignments
-                      .where((item) => item.projectId == project.id)
-                      .toList(growable: false);
-                  final assignedCount = projectAssignments
-                      .where((item) => item.status == 'approved')
-                      .length;
-                  final pendingCount = projectAssignments
-                      .where((item) => item.status == 'pending')
-                      .length;
-                  final rejectedCount = projectAssignments
-                      .where((item) => item.status == 'rejected')
-                      .length;
+                ProgressiveListSection<ProjectSummary>(
+                  items: filteredProjects,
+                  resetKey: Object.hash(
+                    _searchController.text,
+                    _statusFilter,
+                    filteredProjects.length,
+                  ),
+                  itemBuilder: (context, project, _) {
+                    final projectAssignments = allAssignments
+                        .where((item) => item.projectId == project.id)
+                        .toList(growable: false);
+                    final assignedCount = projectAssignments
+                        .where((item) => item.status == 'approved')
+                        .length;
+                    final pendingCount = projectAssignments
+                        .where((item) => item.status == 'pending')
+                        .length;
+                    final rejectedCount = projectAssignments
+                        .where((item) => item.status == 'rejected')
+                        .length;
 
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                    child: AppCard(
+                    return AppCard(
                       onTap: () => context.push(
                         AppRoutes.projectAssignments(project.id),
                       ),
@@ -233,9 +244,9 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
                           ),
                         ],
                       ),
-                    ),
-                  );
-                }),
+                    );
+                  },
+                ),
             ],
           );
         },

@@ -9,6 +9,7 @@ import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
+import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../projects/domain/project.dart';
 
@@ -198,6 +199,11 @@ class _ProjectsManagementScreenState
                 ),
               ),
               const SizedBox(height: AppSpacing.md),
+              Text(
+                '${filtered.length} project${filtered.length == 1 ? '' : 's'}',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: AppSpacing.sm),
               if (filtered.isEmpty)
                 AppEmptyState(
                   icon: Icons.folder_off_outlined,
@@ -211,236 +217,233 @@ class _ProjectsManagementScreenState
                       : null,
                 )
               else
-                ...filtered.map(
-                  (project) => Padding(
-                    padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                    child: AppCard(
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          final menu = PopupMenuButton<String>(
-                            onSelected: (value) {
-                              if (value == 'activate') {
-                                _changeProjectStatus(
-                                  project,
-                                  nextStatus: 'active',
-                                  dialogTitle: 'Activate project',
-                                  dialogMessage:
-                                      'Move "${project.name}" from draft into active field operations?',
-                                  successMessage:
-                                      'Project activated successfully.',
-                                );
-                              }
-                              if (value == 'pause') {
-                                _changeProjectStatus(
-                                  project,
-                                  nextStatus: 'paused',
-                                  dialogTitle: 'Pause project',
-                                  dialogMessage:
-                                      'Pause "${project.name}"? Viewing stays available, but feature collection and submission are disabled until the project returns to active status.',
-                                  successMessage:
-                                      'Project paused successfully.',
-                                );
-                              }
-                              if (value == 'resume') {
-                                _changeProjectStatus(
-                                  project,
-                                  nextStatus: 'active',
-                                  dialogTitle: 'Resume project',
-                                  dialogMessage:
-                                      'Return "${project.name}" to active field operations?',
-                                  successMessage:
-                                      'Project resumed successfully.',
-                                );
-                              }
-                              if (value == 'complete') {
-                                _changeProjectStatus(
-                                  project,
-                                  nextStatus: 'completed',
-                                  dialogTitle: 'Mark project completed',
-                                  dialogMessage:
-                                      'Mark "${project.name}" as completed? Collection will stop until the project is reopened.',
-                                  successMessage:
-                                      'Project marked completed successfully.',
-                                );
-                              }
-                              if (value == 'reopen-active') {
-                                _changeProjectStatus(
-                                  project,
-                                  nextStatus: 'active',
-                                  dialogTitle: 'Reopen project',
-                                  dialogMessage:
-                                      'Return "${project.name}" to active status?',
-                                  successMessage:
-                                      'Project reopened successfully.',
-                                );
-                              }
-                              if (value == 'reopen-paused') {
-                                _changeProjectStatus(
-                                  project,
-                                  nextStatus: 'paused',
-                                  dialogTitle: 'Restore paused project',
-                                  dialogMessage:
-                                      'Restore "${project.name}" to paused status?',
-                                  successMessage:
-                                      'Project restored to paused status.',
-                                );
-                              }
-                              if (value == 'archive') {
-                                _changeProjectStatus(
-                                  project,
-                                  nextStatus: 'archived',
-                                  dialogTitle: 'Archive project',
-                                  dialogMessage:
-                                      'Archive "${project.name}"? This removes it from active operations and contributor lists.',
-                                  successMessage:
-                                      'Project archived successfully.',
-                                );
-                              }
-                              if (value == 'unarchive') {
-                                _changeProjectStatus(
-                                  project,
-                                  nextStatus: 'completed',
-                                  dialogTitle: 'Unarchive project',
-                                  dialogMessage:
-                                      'Restore "${project.name}" to completed so it becomes viewable again and can be managed normally.',
-                                  successMessage:
-                                      'Project restored to completed status.',
-                                );
-                              }
-                            },
-                            itemBuilder: (context) => [
-                              if (project.status == 'draft')
-                                const PopupMenuItem(
-                                  value: 'activate',
-                                  child: Text('Activate project'),
-                                ),
-                              if (project.status == 'active')
-                                const PopupMenuItem(
-                                  value: 'pause',
-                                  child: Text('Pause project'),
-                                ),
-                              if (project.status == 'active' ||
-                                  project.status == 'paused')
-                                const PopupMenuItem(
-                                  value: 'complete',
-                                  child: Text('Mark completed'),
-                                ),
-                              if (project.status == 'paused')
-                                const PopupMenuItem(
-                                  value: 'resume',
-                                  child: Text('Resume project'),
-                                ),
-                              if (project.status == 'completed')
-                                const PopupMenuItem(
-                                  value: 'reopen-active',
-                                  child: Text('Reopen as active'),
-                                ),
-                              if (project.status == 'completed')
-                                const PopupMenuItem(
-                                  value: 'reopen-paused',
-                                  child: Text('Restore paused state'),
-                                ),
-                              if (project.status == 'completed')
-                                const PopupMenuItem(
-                                  value: 'archive',
-                                  child: Text('Archive project'),
-                                ),
-                              if (project.status == 'archived')
-                                const PopupMenuItem(
-                                  value: 'unarchive',
-                                  child: Text('Unarchive project'),
-                                ),
-                            ],
-                          );
-
-                          final summary = Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                project.name,
-                                style: Theme.of(context).textTheme.titleLarge,
+                ProgressiveListSection<ProjectSummary>(
+                  items: filtered,
+                  resetKey: Object.hash(_query, _statusFilter, filtered.length),
+                  itemBuilder: (context, project, _) => AppCard(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final menu = PopupMenuButton<String>(
+                          onSelected: (value) {
+                            if (value == 'activate') {
+                              _changeProjectStatus(
+                                project,
+                                nextStatus: 'active',
+                                dialogTitle: 'Activate project',
+                                dialogMessage:
+                                    'Move "${project.name}" from draft into active field operations?',
+                                successMessage:
+                                    'Project activated successfully.',
+                              );
+                            }
+                            if (value == 'pause') {
+                              _changeProjectStatus(
+                                project,
+                                nextStatus: 'paused',
+                                dialogTitle: 'Pause project',
+                                dialogMessage:
+                                    'Pause "${project.name}"? Viewing stays available, but feature collection and submission are disabled until the project returns to active status.',
+                                successMessage: 'Project paused successfully.',
+                              );
+                            }
+                            if (value == 'resume') {
+                              _changeProjectStatus(
+                                project,
+                                nextStatus: 'active',
+                                dialogTitle: 'Resume project',
+                                dialogMessage:
+                                    'Return "${project.name}" to active field operations?',
+                                successMessage: 'Project resumed successfully.',
+                              );
+                            }
+                            if (value == 'complete') {
+                              _changeProjectStatus(
+                                project,
+                                nextStatus: 'completed',
+                                dialogTitle: 'Mark project completed',
+                                dialogMessage:
+                                    'Mark "${project.name}" as completed? Collection will stop until the project is reopened.',
+                                successMessage:
+                                    'Project marked completed successfully.',
+                              );
+                            }
+                            if (value == 'reopen-active') {
+                              _changeProjectStatus(
+                                project,
+                                nextStatus: 'active',
+                                dialogTitle: 'Reopen project',
+                                dialogMessage:
+                                    'Return "${project.name}" to active status?',
+                                successMessage:
+                                    'Project reopened successfully.',
+                              );
+                            }
+                            if (value == 'reopen-paused') {
+                              _changeProjectStatus(
+                                project,
+                                nextStatus: 'paused',
+                                dialogTitle: 'Restore paused project',
+                                dialogMessage:
+                                    'Restore "${project.name}" to paused status?',
+                                successMessage:
+                                    'Project restored to paused status.',
+                              );
+                            }
+                            if (value == 'archive') {
+                              _changeProjectStatus(
+                                project,
+                                nextStatus: 'archived',
+                                dialogTitle: 'Archive project',
+                                dialogMessage:
+                                    'Archive "${project.name}"? This removes it from active operations and contributor lists.',
+                                successMessage:
+                                    'Project archived successfully.',
+                              );
+                            }
+                            if (value == 'unarchive') {
+                              _changeProjectStatus(
+                                project,
+                                nextStatus: 'completed',
+                                dialogTitle: 'Unarchive project',
+                                dialogMessage:
+                                    'Restore "${project.name}" to completed so it becomes viewable again and can be managed normally.',
+                                successMessage:
+                                    'Project restored to completed status.',
+                              );
+                            }
+                          },
+                          itemBuilder: (context) => [
+                            if (project.status == 'draft')
+                              const PopupMenuItem(
+                                value: 'activate',
+                                child: Text('Activate project'),
                               ),
-                              const SizedBox(height: AppSpacing.xs),
-                              if (project.description.isNotEmpty)
-                                Text(project.description),
-                            ],
-                          );
+                            if (project.status == 'active')
+                              const PopupMenuItem(
+                                value: 'pause',
+                                child: Text('Pause project'),
+                              ),
+                            if (project.status == 'active' ||
+                                project.status == 'paused')
+                              const PopupMenuItem(
+                                value: 'complete',
+                                child: Text('Mark completed'),
+                              ),
+                            if (project.status == 'paused')
+                              const PopupMenuItem(
+                                value: 'resume',
+                                child: Text('Resume project'),
+                              ),
+                            if (project.status == 'completed')
+                              const PopupMenuItem(
+                                value: 'reopen-active',
+                                child: Text('Reopen as active'),
+                              ),
+                            if (project.status == 'completed')
+                              const PopupMenuItem(
+                                value: 'reopen-paused',
+                                child: Text('Restore paused state'),
+                              ),
+                            if (project.status == 'completed')
+                              const PopupMenuItem(
+                                value: 'archive',
+                                child: Text('Archive project'),
+                              ),
+                            if (project.status == 'archived')
+                              const PopupMenuItem(
+                                value: 'unarchive',
+                                child: Text('Unarchive project'),
+                              ),
+                          ],
+                        );
 
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (constraints.maxWidth < 460) ...[
-                                summary,
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: menu,
-                                ),
-                              ] else
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Expanded(child: summary),
-                                    menu,
-                                  ],
-                                ),
-                              const SizedBox(height: AppSpacing.sm),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
+                        final summary = Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              project.name,
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                            const SizedBox(height: AppSpacing.xs),
+                            if (project.description.isNotEmpty)
+                              Text(project.description),
+                          ],
+                        );
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (constraints.maxWidth < 460) ...[
+                              summary,
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: menu,
+                              ),
+                            ] else
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  StatusChip(status: project.status),
-                                  Chip(label: Text(project.category)),
-                                  Chip(
-                                    label: Text(project.visibilitySummaryLabel),
-                                  ),
-                                  Chip(
-                                    label: Text(
-                                      project.requiresPhotos
-                                          ? 'Photos ${project.minPhotos}-${project.maxPhotos}'
-                                          : 'Photos optional',
-                                    ),
-                                  ),
+                                  Expanded(child: summary),
+                                  menu,
                                 ],
                               ),
-                              const SizedBox(height: AppSpacing.sm),
-                              Wrap(
-                                spacing: AppSpacing.sm,
-                                runSpacing: AppSpacing.sm,
-                                children: [
-                                  OutlinedButton.icon(
-                                    onPressed: () => context.push(
-                                      AppRoutes.projectEdit(project.id),
-                                    ),
-                                    icon: const Icon(Icons.edit_outlined),
-                                    label: const Text('Edit'),
+                            const SizedBox(height: AppSpacing.sm),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                StatusChip(status: project.status),
+                                Chip(label: Text(project.category)),
+                                Chip(
+                                  label: Text(project.visibilitySummaryLabel),
+                                ),
+                                Chip(
+                                  label: Text(
+                                    project.requiresPhotos
+                                        ? 'Photos ${project.minPhotos}-${project.maxPhotos}'
+                                        : 'Photos optional',
                                   ),
-                                  OutlinedButton.icon(
-                                    onPressed: () => context.push(
-                                      AppRoutes.projectAssignments(project.id),
-                                    ),
-                                    icon: const Icon(Icons.assignment_outlined),
-                                    label: const Text('Assignments'),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: AppSpacing.sm),
+                            Wrap(
+                              spacing: AppSpacing.sm,
+                              runSpacing: AppSpacing.sm,
+                              children: [
+                                OutlinedButton.icon(
+                                  onPressed: () => context.push(
+                                    AppRoutes.projectEdit(project.id),
                                   ),
-                                  OutlinedButton.icon(
-                                    onPressed: () => context.push(
-                                      AppRoutes.projectDetails(project.id),
-                                    ),
-                                    icon: const Icon(Icons.visibility_outlined),
-                                    label: const Text('Open'),
+                                  icon: const Icon(Icons.edit_outlined),
+                                  label: const Text('Edit'),
+                                ),
+                                OutlinedButton.icon(
+                                  onPressed: () => context.push(
+                                    AppRoutes.projectAssignments(project.id),
                                   ),
-                                  OutlinedButton.icon(
-                                    onPressed: () => context.push(
-                                      AppRoutes.mapForProject(project.id),
-                                    ),
-                                    icon: const Icon(Icons.map_outlined),
-                                    label: const Text('Map'),
+                                  icon: const Icon(Icons.assignment_outlined),
+                                  label: const Text('Assignments'),
+                                ),
+                                OutlinedButton.icon(
+                                  onPressed: () => context.push(
+                                    AppRoutes.projectDetails(project.id),
                                   ),
-                                ],
-                              ),
-                            ],
-                          );
-                        },
-                      ),
+                                  icon: const Icon(Icons.visibility_outlined),
+                                  label: const Text('Open'),
+                                ),
+                                OutlinedButton.icon(
+                                  onPressed: () => context.push(
+                                    AppRoutes.mapForProject(project.id),
+                                  ),
+                                  icon: const Icon(Icons.map_outlined),
+                                  label: const Text('Map'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        );
+                      },
                     ),
                   ),
                 ),

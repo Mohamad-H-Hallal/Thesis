@@ -22,7 +22,10 @@ const {
 const tempFiles = [];
 
 const createTempGeoJsonFile = async (name, payload) => {
-  const filePath = path.join(__dirname, `${name}-${Date.now()}-${Math.random().toString(16).slice(2)}.geojson`);
+  const filePath = path.join(
+    __dirname,
+    `${name}-${Date.now()}-${Math.random().toString(16).slice(2)}.geojson`,
+  );
   await fs.writeFile(filePath, JSON.stringify(payload, null, 2), 'utf8');
   tempFiles.push(filePath);
   return filePath;
@@ -185,9 +188,7 @@ describe('GIS import workflow', () => {
     );
     expect(notificationCheck.rows).toHaveLength(1);
     expect(notificationCheck.rows[0].title).toContain('Import partially approved');
-    expect(notificationCheck.rows[0].message).toContain(
-      'Duplicate field survey already exists.',
-    );
+    expect(notificationCheck.rows[0].message).toContain('Duplicate field survey already exists.');
   });
 
   test('marks import as failed when staged features cannot pass required validation', async () => {
@@ -267,6 +268,79 @@ describe('GIS import workflow', () => {
       expect.arrayContaining(['Missing required attribute: feature_type']),
     );
   });
+
+  test('accepts larger imports beyond the old 2000-feature cap', async () => {
+    const admin = await createAdminUser({
+      fullName: 'Import Batch Admin',
+      emailPrefix: 'import-batch-admin',
+    });
+    const contributorRegistration = await registerUser({
+      role: 'contributor',
+      fullName: 'Import Batch Contributor',
+      emailPrefix: 'import-batch-contributor',
+    });
+    await approveContributorRequest({
+      token: admin.token,
+      userId: contributorRegistration.user.id,
+    });
+    const contributorLogin = await loginUser({
+      email: contributorRegistration.email,
+      password: contributorRegistration.password,
+    });
+
+    const category = await createCategory({
+      token: admin.token,
+      name: 'Import Batch Category',
+    });
+    const project = await createProject({
+      token: admin.token,
+      categoryId: category.id,
+      name: 'Import Batch Project',
+      visibleToContributors: true,
+    });
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}`)
+      .set(authHeader(admin.token))
+      .send({ status: 'active' })
+      .expect(200);
+    const assignment = await createAssignment({
+      token: admin.token,
+      projectId: project.id,
+      userId: contributorRegistration.user.id,
+    });
+    await updateAssignmentStatus({
+      token: admin.token,
+      assignmentId: assignment.id,
+      status: 'approved',
+    });
+
+    const features = Array.from({ length: 2105 }, (_, index) => ({
+      type: 'Feature',
+      properties: {
+        feature_type: index % 2 === 0 ? 'olive' : 'cedar',
+        name: `Imported feature ${index + 1}`,
+      },
+      geometry: {
+        type: 'Point',
+        coordinates: [35.2 + index * 0.0001, 33.1 + index * 0.0001],
+      },
+    }));
+
+    const geojsonPath = await createTempGeoJsonFile('import-large-batch', {
+      type: 'FeatureCollection',
+      features,
+    });
+
+    const uploadResponse = await request(app)
+      .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+      .set(authHeader(contributorLogin.token))
+      .attach('file', geojsonPath);
+
+    expect(uploadResponse.status).toBe(202);
+    expect(uploadResponse.body.data.status).toBe('pending_review');
+    expect(uploadResponse.body.data.geometry_count).toBe(2105);
+    expect(uploadResponse.body.data.pending_feature_count).toBe(2105);
+  }, 20000);
 
   test('rejects GeoJSON uploads with unsupported CRS before staging', async () => {
     const admin = await createAdminUser({

@@ -7,6 +7,7 @@ import '../../../../core/providers/providers.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
+import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/utils/lebanese_phone.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../domain/admin_models.dart';
@@ -301,6 +302,11 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
               ),
             ),
             const SizedBox(height: AppSpacing.md),
+            Text(
+              '${filtered.length} user${filtered.length == 1 ? '' : 's'}',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: AppSpacing.sm),
             if (filtered.isEmpty)
               const AppEmptyState(
                 icon: Icons.manage_search_outlined,
@@ -309,20 +315,24 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
                     'Try a different search term or clear one of the active filters.',
               )
             else
-              ...filtered.map(
-                (user) => Padding(
-                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                  child: _UserCard(
-                    user: user,
-                    isSuperAdmin: isSuperAdmin,
-                    isUpdating: _isUpdating,
-                    onToggleAdmin: user.canToggleAdminRole && isSuperAdmin
-                        ? () => _toggleAdminRole(user)
-                        : null,
-                    onToggleBlock: (user.canBlock || user.canUnblock)
-                        ? () => _toggleBlockState(user)
-                        : null,
-                  ),
+              ProgressiveListSection<ManagedUserSummary>(
+                items: filtered,
+                resetKey: Object.hash(
+                  _searchController.text,
+                  _roleFilter,
+                  _stateFilter,
+                  filtered.length,
+                ),
+                itemBuilder: (context, user, _) => _UserCard(
+                  user: user,
+                  isSuperAdmin: isSuperAdmin,
+                  isUpdating: _isUpdating,
+                  onToggleAdmin: user.canToggleAdminRole && isSuperAdmin
+                      ? () => _toggleAdminRole(user)
+                      : null,
+                  onToggleBlock: (user.canBlock || user.canUnblock)
+                      ? () => _toggleBlockState(user)
+                      : null,
                 ),
               ),
           ],

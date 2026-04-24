@@ -9,6 +9,7 @@ import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/animated_reveal.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
+import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../domain/project.dart';
@@ -90,15 +91,25 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
 
               return ListView(
                 children: [
-                  ...List<Widget>.generate(filtered.length, (index) {
-                    final project = filtered[index];
-                    final contributorReadOnly =
-                        role == UserRole.contributor &&
-                        !project.hasApprovedCurrentUserAssignment;
+                  Text(
+                    '${filtered.length} project${filtered.length == 1 ? '' : 's'}',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  ProgressiveListSection<ProjectSummary>(
+                    items: filtered,
+                    resetKey: Object.hash(
+                      widget.scope,
+                      role,
+                      _query,
+                      filtered.length,
+                    ),
+                    itemBuilder: (context, project, index) {
+                      final contributorReadOnly =
+                          role == UserRole.contributor &&
+                          !project.hasApprovedCurrentUserAssignment;
 
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                      child: AnimatedReveal(
+                      return AnimatedReveal(
                         delay: Duration(milliseconds: index * 70),
                         child: AppCard(
                           onTap: () => context.push(
@@ -173,9 +184,9 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
                             ],
                           ),
                         ),
-                      ),
-                    );
-                  }),
+                      );
+                    },
+                  ),
                 ],
               );
             },

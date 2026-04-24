@@ -385,65 +385,82 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
               delay: const Duration(milliseconds: 110),
               child: Padding(
                 padding: const EdgeInsets.only(top: AppSpacing.xs),
-                child: Wrap(
-                  spacing: 16,
-                  runSpacing: 16,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    FilledButton.icon(
-                      onPressed: () =>
-                          context.push(AppRoutes.mapForProject(project.id)),
-                      icon: const Icon(Icons.map_outlined),
-                      label: const Text('Open Map'),
+                    _ProjectActionGroupCard(
+                      icon: Icons.explore_outlined,
+                      title: 'Project tools',
+                      actions: [
+                        FilledButton.icon(
+                          onPressed: () =>
+                              context.push(AppRoutes.mapForProject(project.id)),
+                          icon: const Icon(Icons.map_outlined),
+                          label: const Text('Open Map'),
+                        ),
+                        if (role == UserRole.admin || hasContributorAssignment)
+                          OutlinedButton.icon(
+                            onPressed: () => context.push(
+                              AppRoutes.projectImports(project.id),
+                              extra: project.name,
+                            ),
+                            icon: const Icon(Icons.upload_file_outlined),
+                            label: const Text('Imports'),
+                          ),
+                        if (role == UserRole.contributor &&
+                            hasContributorAssignment)
+                          FilledButton.icon(
+                            onPressed: () {
+                              if (canCollectFeatures) {
+                                context.push(
+                                  AppRoutes.mapForProject(
+                                    project.id,
+                                    startCapture: true,
+                                  ),
+                                );
+                                return;
+                              }
+                              _showCollectionUnavailableMessage(project.status);
+                            },
+                            icon: const Icon(Icons.add_location_alt_outlined),
+                            label: const Text('New feature'),
+                          ),
+                      ],
                     ),
-                    if (role == UserRole.admin || hasContributorAssignment)
-                      OutlinedButton.icon(
-                        onPressed: () => context.push(
-                          AppRoutes.projectImports(project.id),
-                          extra: project.name,
-                        ),
-                        icon: const Icon(Icons.upload_file_outlined),
-                        label: const Text('Imports'),
-                      ),
-                    if (role == UserRole.contributor &&
-                        hasContributorAssignment)
-                      FilledButton.icon(
-                        onPressed: () {
-                          if (canCollectFeatures) {
-                            context.push(
-                              AppRoutes.mapForProject(
-                                project.id,
-                                startCapture: true,
+                    if (canRequestAccess ||
+                        (role == UserRole.contributor &&
+                            contributorRequestStatus ==
+                                ProjectAssignmentStatus.pending)) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      _ProjectActionGroupCard(
+                        icon: Icons.how_to_reg_outlined,
+                        title: 'Access',
+                        actions: [
+                          if (canRequestAccess)
+                            FilledButton.tonalIcon(
+                              onPressed: _requestingAccess
+                                  ? null
+                                  : _requestProjectAccess,
+                              icon: const Icon(Icons.how_to_reg_outlined),
+                              label: Text(
+                                _requestingAccess
+                                    ? 'Submitting...'
+                                    : 'Request access',
                               ),
-                            );
-                            return;
-                          }
-                          _showCollectionUnavailableMessage(project.status);
-                        },
-                        icon: const Icon(Icons.add_location_alt_outlined),
-                        label: const Text('New Feature'),
+                            ),
+                          if (role == UserRole.contributor &&
+                              contributorRequestStatus ==
+                                  ProjectAssignmentStatus.pending)
+                            OutlinedButton.icon(
+                              onPressed: _requestingAccess
+                                  ? null
+                                  : _cancelProjectAccessRequest,
+                              icon: const Icon(Icons.cancel_outlined),
+                              label: const Text('Cancel request'),
+                            ),
+                        ],
                       ),
-                    if (canRequestAccess)
-                      FilledButton.tonalIcon(
-                        onPressed: _requestingAccess
-                            ? null
-                            : _requestProjectAccess,
-                        icon: const Icon(Icons.how_to_reg_outlined),
-                        label: Text(
-                          _requestingAccess
-                              ? 'Submitting...'
-                              : 'Request Access',
-                        ),
-                      ),
-                    if (role == UserRole.contributor &&
-                        contributorRequestStatus ==
-                            ProjectAssignmentStatus.pending)
-                      OutlinedButton.icon(
-                        onPressed: _requestingAccess
-                            ? null
-                            : _cancelProjectAccessRequest,
-                        icon: const Icon(Icons.cancel_outlined),
-                        label: const Text('Cancel Request'),
-                      ),
+                    ],
                   ],
                 ),
               ),

@@ -10,6 +10,7 @@ import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
+import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../../map/domain/lebanon_map.dart';
@@ -97,23 +98,26 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
                     'This import does not currently expose preview geometries.',
               )
             else
-              ...features.map(
-                (feature) => Padding(
-                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                  child: _ImportedFeatureCard(
-                    feature: feature,
-                    selectable: isAdmin && feature.isActionable,
-                    selected: _selectedFeatureIds.contains(feature.id),
-                    onToggleSelected: () {
-                      setState(() {
-                        if (_selectedFeatureIds.contains(feature.id)) {
-                          _selectedFeatureIds.remove(feature.id);
-                        } else {
-                          _selectedFeatureIds.add(feature.id);
-                        }
-                      });
-                    },
-                  ),
+              ProgressiveListSection<ImportedFeature>(
+                items: features,
+                resetKey: Object.hash(
+                  widget.importId,
+                  details.job.updatedAt,
+                  features.length,
+                ),
+                itemBuilder: (context, feature, _) => _ImportedFeatureCard(
+                  feature: feature,
+                  selectable: isAdmin && feature.isActionable,
+                  selected: _selectedFeatureIds.contains(feature.id),
+                  onToggleSelected: () {
+                    setState(() {
+                      if (_selectedFeatureIds.contains(feature.id)) {
+                        _selectedFeatureIds.remove(feature.id);
+                      } else {
+                        _selectedFeatureIds.add(feature.id);
+                      }
+                    });
+                  },
                 ),
               ),
             if (details.job.geometryCount > features.length) ...[
@@ -227,7 +231,9 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       _isSubmitting = true;
     });
     try {
-      await ref.read(importsRepositoryProvider).reviewImport(
+      await ref
+          .read(importsRepositoryProvider)
+          .reviewImport(
             importId: widget.importId,
             status: status,
             reason: reason,
@@ -369,12 +375,14 @@ class _ImportValidationCard extends StatelessWidget {
           ),
           if (summary.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.sm),
-            ...summary.entries.take(6).map(
-              (entry) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text('${_labelize(entry.key)}: ${entry.value}'),
-              ),
-            ),
+            ...summary.entries
+                .take(6)
+                .map(
+                  (entry) => Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text('${_labelize(entry.key)}: ${entry.value}'),
+                  ),
+                ),
           ],
         ],
       ),
@@ -439,9 +447,7 @@ class _ImportedFeatureCard extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Text(
                   'Error: $error',
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ),
             ),
@@ -452,17 +458,17 @@ class _ImportedFeatureCard extends StatelessWidget {
             ),
           if (feature.attributes.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.sm),
-            Text(
-              'Attributes',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
+            Text('Attributes', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 6),
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: feature.attributes.entries.take(8).map((entry) {
-                return Chip(label: Text('${entry.key}: ${entry.value}'));
-              }).toList(growable: false),
+              children: feature.attributes.entries
+                  .take(8)
+                  .map((entry) {
+                    return Chip(label: Text('${entry.key}: ${entry.value}'));
+                  })
+                  .toList(growable: false),
             ),
           ],
         ],
@@ -584,8 +590,9 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
                       LebanonMapConfig.referenceLabelUrlTemplate(_style) !=
                           null)
                     TileLayer(
-                      urlTemplate:
-                          LebanonMapConfig.referenceLabelUrlTemplate(_style)!,
+                      urlTemplate: LebanonMapConfig.referenceLabelUrlTemplate(
+                        _style,
+                      )!,
                       tileProvider: NetworkTileProvider(
                         silenceExceptions: true,
                       ),

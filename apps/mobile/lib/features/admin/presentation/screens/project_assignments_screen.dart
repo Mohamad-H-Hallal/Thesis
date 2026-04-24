@@ -7,6 +7,7 @@ import '../../../../core/providers/providers.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
+import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/utils/lebanese_phone.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../domain/admin_models.dart';
@@ -527,7 +528,10 @@ class _AssignmentListSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title, style: Theme.of(context).textTheme.titleMedium),
+        Text(
+          '$title (${children.length})',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
         const SizedBox(height: AppSpacing.sm),
         if (children.isEmpty)
           AppEmptyState(
@@ -536,7 +540,12 @@ class _AssignmentListSection extends StatelessWidget {
             message: emptyMessage,
           )
         else
-          ...children,
+          ProgressiveListSection<Widget>(
+            items: children,
+            resetKey: Object.hash(title, children.length),
+            padding: EdgeInsets.zero,
+            itemBuilder: (context, child, _) => child,
+          ),
       ],
     );
   }

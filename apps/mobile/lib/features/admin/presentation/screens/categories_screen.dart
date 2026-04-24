@@ -9,6 +9,7 @@ import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
+import '../../../../core/widgets/progressive_list_section.dart';
 import '../../domain/admin_models.dart';
 
 class CategoriesScreen extends ConsumerStatefulWidget {
@@ -97,6 +98,11 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                   ),
                 ),
               ),
+              Text(
+                '${filtered.length} categor${filtered.length == 1 ? 'y' : 'ies'}',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: AppSpacing.sm),
               if (filtered.isEmpty)
                 AppEmptyState(
                   icon: Icons.category_outlined,
@@ -112,69 +118,69 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                       : null,
                 )
               else
-                ...filtered.map(
-                  (category) => Padding(
-                    padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                    child: AppCard(
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          final iconPreview = _previewUrl(category.iconUrl);
-                          final summary = Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                category.name,
-                                style: Theme.of(context).textTheme.titleMedium,
-                                softWrap: true,
-                              ),
-                              const SizedBox(height: AppSpacing.xs),
-                              if (category.description?.trim().isNotEmpty ==
-                                  true)
-                                Text(category.description!, softWrap: true),
-                            ],
-                          );
-
-                          final editAction = IconButton(
-                            tooltip: 'Edit category',
-                            onPressed: () => context.push(
-                              AppRoutes.categoryEdit(category.id),
+                ProgressiveListSection<ProjectCategorySummary>(
+                  items: filtered,
+                  resetKey: Object.hash(
+                    _searchController.text,
+                    filtered.length,
+                  ),
+                  itemBuilder: (context, category, _) => AppCard(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final iconPreview = _previewUrl(category.iconUrl);
+                        final summary = Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              category.name,
+                              style: Theme.of(context).textTheme.titleMedium,
+                              softWrap: true,
                             ),
-                            icon: const Icon(Icons.edit_outlined),
-                          );
-                          final avatar = CircleAvatar(
-                            radius: 28,
-                            backgroundColor: Theme.of(
-                              context,
-                            ).colorScheme.surfaceContainerHighest,
-                            backgroundImage: iconPreview != null
-                                ? NetworkImage(iconPreview)
-                                : null,
-                            child: iconPreview == null
-                                ? const Icon(Icons.category_outlined)
-                                : null,
-                          );
+                            const SizedBox(height: AppSpacing.xs),
+                            if (category.description?.trim().isNotEmpty == true)
+                              Text(category.description!, softWrap: true),
+                          ],
+                        );
 
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  avatar,
-                                  const SizedBox(width: AppSpacing.sm),
-                                  Expanded(child: summary),
-                                  if (constraints.maxWidth >= 360) editAction,
-                                ],
+                        final editAction = IconButton(
+                          tooltip: 'Edit category',
+                          onPressed: () =>
+                              context.push(AppRoutes.categoryEdit(category.id)),
+                          icon: const Icon(Icons.edit_outlined),
+                        );
+                        final avatar = CircleAvatar(
+                          radius: 28,
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.surfaceContainerHighest,
+                          backgroundImage: iconPreview != null
+                              ? NetworkImage(iconPreview)
+                              : null,
+                          child: iconPreview == null
+                              ? const Icon(Icons.category_outlined)
+                              : null,
+                        );
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                avatar,
+                                const SizedBox(width: AppSpacing.sm),
+                                Expanded(child: summary),
+                                if (constraints.maxWidth >= 360) editAction,
+                              ],
+                            ),
+                            if (constraints.maxWidth < 360)
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: editAction,
                               ),
-                              if (constraints.maxWidth < 360)
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: editAction,
-                                ),
-                            ],
-                          );
-                        },
-                      ),
+                          ],
+                        );
+                      },
                     ),
                   ),
                 ),

@@ -108,7 +108,7 @@ const envSchema = Joi.object({
   UPLOAD_DIR: Joi.string().default('./uploads'),
   PHOTO_MAX_SIZE: Joi.number().integer().min(1).default(5 * 1024 * 1024),
   IMPORT_MAX_SIZE: Joi.number().integer().min(1).default(25 * 1024 * 1024),
-  IMPORT_MAX_FEATURES: Joi.number().integer().min(1).max(10000).default(2000),
+  IMPORT_MAX_FEATURES: Joi.number().integer().min(1).max(50000).default(20000),
 
   EXPORT_DIR: Joi.string().default('./exports'),
   EXPORT_RETENTION_DAYS: Joi.number().integer().min(1).default(7),

@@ -9,6 +9,7 @@ import '../../../../core/providers/providers.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
+import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../../projects/domain/project.dart';
@@ -114,27 +115,35 @@ class _ExportsDashboardScreenState
         if (!hasFixedProject) {
           _syncProjectSelection(categories, projects);
         }
-        final availableProjects = _projectsForCategory(projects, _selectedCategoryId);
+        final availableProjects = _projectsForCategory(
+          projects,
+          _selectedCategoryId,
+        );
         final selectedProject = projects.cast<ProjectSummary?>().firstWhere(
           (project) => project?.id == _selectedProjectId,
           orElse: () => null,
         );
 
-        final selectionScopedJobs = exportState.jobs.where((job) {
-          if (_selectedProjectId != null && job.projectId != _selectedProjectId) {
-            return false;
-          }
-          if (!hasFixedProject &&
-              _selectedCategoryId != null &&
-              _selectedCategoryId!.trim().isNotEmpty) {
-            final project = projectById[job.projectId];
-            if (project?.categoryId != _selectedCategoryId) {
-              return false;
-            }
-          }
-          return true;
-        }).toList(growable: false);
-        final scopedMetrics = ExportDashboardMetrics.fromJobs(selectionScopedJobs);
+        final selectionScopedJobs = exportState.jobs
+            .where((job) {
+              if (_selectedProjectId != null &&
+                  job.projectId != _selectedProjectId) {
+                return false;
+              }
+              if (!hasFixedProject &&
+                  _selectedCategoryId != null &&
+                  _selectedCategoryId!.trim().isNotEmpty) {
+                final project = projectById[job.projectId];
+                if (project?.categoryId != _selectedCategoryId) {
+                  return false;
+                }
+              }
+              return true;
+            })
+            .toList(growable: false);
+        final scopedMetrics = ExportDashboardMetrics.fromJobs(
+          selectionScopedJobs,
+        );
         final visibleJobs = selectionScopedJobs
             .where(
               (job) => switch (_jobFormatFilter) {
@@ -274,7 +283,9 @@ class _ExportsDashboardScreenState
                         ),
                         const SizedBox(height: AppSpacing.sm),
                         InputDecorator(
-                          decoration: const InputDecoration(labelText: 'Project'),
+                          decoration: const InputDecoration(
+                            labelText: 'Project',
+                          ),
                           child: Text(
                             _selectedProjectName,
                             style: Theme.of(context).textTheme.bodyLarge,
@@ -307,19 +318,10 @@ class _ExportsDashboardScreenState
                             ),
                           ],
                           onChanged: (value) {
-                            final nextProjects = _projectsForCategory(projects, value);
                             setState(() {
                               _selectedCategoryId = value;
-                              if (value == null) {
-                                _selectedProjectId = null;
-                                _selectedProjectName = '';
-                              } else if (nextProjects.isEmpty) {
-                                _selectedProjectId = null;
-                                _selectedProjectName = '';
-                              } else {
-                                _selectedProjectId = nextProjects.first.id;
-                                _selectedProjectName = nextProjects.first.name;
-                              }
+                              _selectedProjectId = null;
+                              _selectedProjectName = '';
                             });
                           },
                         ),
@@ -327,7 +329,9 @@ class _ExportsDashboardScreenState
                         DropdownButtonFormField<String?>(
                           initialValue: _selectedProjectId,
                           isExpanded: true,
-                          decoration: const InputDecoration(labelText: 'Project'),
+                          decoration: const InputDecoration(
+                            labelText: 'Project',
+                          ),
                           items: <DropdownMenuItem<String?>>[
                             const DropdownMenuItem<String?>(
                               value: null,
@@ -478,8 +482,8 @@ class _ExportsDashboardScreenState
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(
-                      onPressed: exportState.isSubmitting ||
-                              _selectedProjectId == null
+                      onPressed:
+                          exportState.isSubmitting || _selectedProjectId == null
                           ? null
                           : () => _submit(
                               controller,
@@ -500,7 +504,7 @@ class _ExportsDashboardScreenState
             LayoutBuilder(
               builder: (context, constraints) {
                 final title = Text(
-                  'Export jobs',
+                  'Export jobs (${visibleJobs.length})',
                   style: Theme.of(context).textTheme.titleMedium,
                 );
                 final filter = _ExportListFilter(
@@ -545,34 +549,38 @@ class _ExportsDashboardScreenState
                     : 'Submit an export request to start async processing.',
               )
             else
-              ...visibleJobs.map(
-                (job) => Padding(
-                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                  child: _ExportJobCard(
-                    job: job,
-                    onRefresh: controller.refresh,
-                    onRetry: () async {
-                      await controller.retryFailedExport(job.id);
-                      if (context.mounted) {
-                        AppSnackbar.showSuccess(
-                          context,
-                          'Failed export re-queued.',
-                        );
-                      }
-                    },
-                    onDownload: () async {
-                      await _handleDownload(controller, job.id);
-                    },
-                    onOpen: job.localFilePath?.trim().isNotEmpty == true
-                        ? () => _openDownloadedFile(job.localFilePath!)
-                        : null,
-                    onShare: job.localFilePath?.trim().isNotEmpty == true
-                        ? () => _shareDownloadedFile(job)
-                        : null,
-                    onCopyPath: job.localFilePath?.trim().isNotEmpty == true
-                        ? () => _copyDownloadPath(job.localFilePath!)
-                        : null,
-                  ),
+              ProgressiveListSection<ExportJob>(
+                items: visibleJobs,
+                resetKey: Object.hash(
+                  _selectedCategoryId,
+                  _selectedProjectId,
+                  _jobFormatFilter,
+                  visibleJobs.length,
+                ),
+                itemBuilder: (context, job, _) => _ExportJobCard(
+                  job: job,
+                  onRefresh: controller.refresh,
+                  onRetry: () async {
+                    await controller.retryFailedExport(job.id);
+                    if (context.mounted) {
+                      AppSnackbar.showSuccess(
+                        context,
+                        'Failed export re-queued.',
+                      );
+                    }
+                  },
+                  onDownload: () async {
+                    await _handleDownload(controller, job.id);
+                  },
+                  onOpen: job.localFilePath?.trim().isNotEmpty == true
+                      ? () => _openDownloadedFile(job.localFilePath!)
+                      : null,
+                  onShare: job.localFilePath?.trim().isNotEmpty == true
+                      ? () => _shareDownloadedFile(job)
+                      : null,
+                  onCopyPath: job.localFilePath?.trim().isNotEmpty == true
+                      ? () => _copyDownloadPath(job.localFilePath!)
+                      : null,
                 ),
               ),
           ],
@@ -854,9 +862,13 @@ class _ExportsDashboardScreenState
       _selectedCategoryId = null;
     }
 
-    final categoryProjects = _projectsForCategory(projects, _selectedCategoryId);
+    final categoryProjects = _projectsForCategory(
+      projects,
+      _selectedCategoryId,
+    );
     final validProjectIds = categoryProjects.map((item) => item.id).toSet();
-    if (_selectedProjectId != null && !validProjectIds.contains(_selectedProjectId)) {
+    if (_selectedProjectId != null &&
+        !validProjectIds.contains(_selectedProjectId)) {
       _selectedProjectId = null;
       _selectedProjectName = '';
     } else {

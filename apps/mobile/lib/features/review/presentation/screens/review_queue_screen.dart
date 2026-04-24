@@ -10,6 +10,7 @@ import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
+import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../domain/review_item.dart';
 
@@ -136,6 +137,11 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
               ),
             ),
             const SizedBox(height: AppSpacing.md),
+            Text(
+              '${filtered.length} review item${filtered.length == 1 ? '' : 's'}',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: AppSpacing.sm),
             if (filtered.isEmpty)
               AppEmptyState(
                 icon: _filter == _ReviewFilter.pending
@@ -153,22 +159,23 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
                     : 'Rejected items remain here so admins can reopen them when needed.',
               )
             else
-              ...filtered.map(
-                (item) => Padding(
-                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                  child: _ReviewItemCard(
-                    item: item,
-                    onOpenMap: () => context.push(
-                      AppRoutes.mapForProject(
-                        item.projectId,
-                        featureId: item.id,
-                      ),
-                    ),
-                    onApprove: () =>
-                        _review(context, ref, item: item, status: 'approved'),
-                    onReject: () =>
-                        _review(context, ref, item: item, status: 'rejected'),
+              ProgressiveListSection<ReviewQueueItem>(
+                items: filtered,
+                resetKey: Object.hash(
+                  widget.projectId,
+                  _filter,
+                  _searchController.text,
+                  filtered.length,
+                ),
+                itemBuilder: (context, item, _) => _ReviewItemCard(
+                  item: item,
+                  onOpenMap: () => context.push(
+                    AppRoutes.mapForProject(item.projectId, featureId: item.id),
                   ),
+                  onApprove: () =>
+                      _review(context, ref, item: item, status: 'approved'),
+                  onReject: () =>
+                      _review(context, ref, item: item, status: 'rejected'),
                 ),
               ),
           ],
@@ -463,64 +470,63 @@ class _ApprovedReviewList extends StatelessWidget {
                 'Approved reviews for $projectName will appear here after moderation.',
           )
         else
-          ...items.map(
-            (item) => Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-              child: AppCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                item.projectName,
-                                style: Theme.of(context).textTheme.titleMedium,
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                '${item.geometryType} • ${item.collectedBy ?? 'Unknown collector'}',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                            ],
-                          ),
+          ProgressiveListSection<ReviewQueueItem>(
+            items: items,
+            resetKey: Object.hash(projectName, items.length),
+            itemBuilder: (context, item, _) => AppCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              item.projectName,
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${item.geometryType} • ${item.collectedBy ?? 'Unknown collector'}',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: AppSpacing.sm),
-                        const StatusChip(status: 'approved'),
-                      ],
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        Chip(label: Text('Feature ${item.id.substring(0, 8)}')),
-                        Chip(label: Text('${item.photoCount} photo(s)')),
-                      ],
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        OutlinedButton.icon(
-                          onPressed: () => onOpenMap(item),
-                          icon: const Icon(Icons.map_outlined, size: 18),
-                          label: const Text('Open on map'),
-                        ),
-                        FilledButton.tonalIcon(
-                          onPressed: () => onReject(item),
-                          icon: const Icon(Icons.cancel_outlined, size: 18),
-                          label: const Text('Reject'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      const StatusChip(status: 'approved'),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      Chip(label: Text('Feature ${item.id.substring(0, 8)}')),
+                      Chip(label: Text('${item.photoCount} photo(s)')),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: () => onOpenMap(item),
+                        icon: const Icon(Icons.map_outlined, size: 18),
+                        label: const Text('Open on map'),
+                      ),
+                      FilledButton.tonalIcon(
+                        onPressed: () => onReject(item),
+                        icon: const Icon(Icons.cancel_outlined, size: 18),
+                        label: const Text('Reject'),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
           ),

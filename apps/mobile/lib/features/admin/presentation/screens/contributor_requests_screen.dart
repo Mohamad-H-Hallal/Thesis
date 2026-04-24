@@ -7,6 +7,7 @@ import '../../../../core/providers/providers.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
+import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/utils/lebanese_phone.dart';
 import '../../domain/admin_models.dart';
 
@@ -286,47 +287,57 @@ class _ContributorRequestsScreenState
         }
 
         return Column(
-          children: filtered
-              .map(
-                (request) => Padding(
-                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                  child: _RequestCard(
-                    title: request.fullName,
-                    subtitle: request.email,
-                    supporting: request.phone?.trim().isNotEmpty == true
-                        ? LebanesePhone.format(request.phone)
-                        : 'No phone number provided',
-                    chips: [
-                      Chip(label: Text(request.roleLabel)),
-                      Chip(label: Text(request.accountStateLabel)),
-                    ],
-                    actions: _selectedState == _RequestStateTab.pending
-                        ? [
-                            FilledButton.tonal(
-                              onPressed: _isMutating
-                                  ? null
-                                  : () => _rejectContributor(request.id),
-                              child: const Text('Reject'),
-                            ),
-                            FilledButton(
-                              onPressed: _isMutating
-                                  ? null
-                                  : () => _approveContributor(request.id),
-                              child: const Text('Approve'),
-                            ),
-                          ]
-                        : [
-                            FilledButton(
-                              onPressed: _isMutating
-                                  ? null
-                                  : () => _approveContributor(request.id),
-                              child: const Text('Re-accept'),
-                            ),
-                          ],
-                  ),
-                ),
-              )
-              .toList(growable: false),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${filtered.length} request${filtered.length == 1 ? '' : 's'}',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            ProgressiveListSection<ManagedUserSummary>(
+              items: filtered,
+              resetKey: Object.hash(
+                _selectedGroup,
+                _selectedState,
+                _searchController.text,
+                filtered.length,
+              ),
+              itemBuilder: (context, request, _) => _RequestCard(
+                title: request.fullName,
+                subtitle: request.email,
+                supporting: request.phone?.trim().isNotEmpty == true
+                    ? LebanesePhone.format(request.phone)
+                    : 'No phone number provided',
+                chips: [
+                  Chip(label: Text(request.roleLabel)),
+                  Chip(label: Text(request.accountStateLabel)),
+                ],
+                actions: _selectedState == _RequestStateTab.pending
+                    ? [
+                        FilledButton.tonal(
+                          onPressed: _isMutating
+                              ? null
+                              : () => _rejectContributor(request.id),
+                          child: const Text('Reject'),
+                        ),
+                        FilledButton(
+                          onPressed: _isMutating
+                              ? null
+                              : () => _approveContributor(request.id),
+                          child: const Text('Approve'),
+                        ),
+                      ]
+                    : [
+                        FilledButton(
+                          onPressed: _isMutating
+                              ? null
+                              : () => _approveContributor(request.id),
+                          child: const Text('Re-accept'),
+                        ),
+                      ],
+              ),
+            ),
+          ],
         );
       },
     );
@@ -378,54 +389,64 @@ class _ContributorRequestsScreenState
         }
 
         return Column(
-          children: filtered
-              .map(
-                (assignment) => Padding(
-                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                  child: _RequestCard(
-                    title: assignment.projectName,
-                    subtitle: assignment.fullName,
-                    supporting: assignment.email,
-                    chips: [
-                      Chip(label: Text('Project ${assignment.projectStatus}')),
-                      Chip(label: Text('Request ${assignment.status}')),
-                    ],
-                    actions: _selectedState == _RequestStateTab.pending
-                        ? [
-                            FilledButton.tonal(
-                              onPressed: _isMutating
-                                  ? null
-                                  : () => _updateAssignmentStatus(
-                                      assignment,
-                                      'rejected',
-                                    ),
-                              child: const Text('Reject'),
-                            ),
-                            FilledButton(
-                              onPressed: _isMutating
-                                  ? null
-                                  : () => _updateAssignmentStatus(
-                                      assignment,
-                                      'approved',
-                                    ),
-                              child: const Text('Approve'),
-                            ),
-                          ]
-                        : [
-                            FilledButton(
-                              onPressed: _isMutating
-                                  ? null
-                                  : () => _updateAssignmentStatus(
-                                      assignment,
-                                      'approved',
-                                    ),
-                              child: const Text('Re-accept'),
-                            ),
-                          ],
-                  ),
-                ),
-              )
-              .toList(growable: false),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${filtered.length} request${filtered.length == 1 ? '' : 's'}',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            ProgressiveListSection<ManagedAssignmentSummary>(
+              items: filtered,
+              resetKey: Object.hash(
+                _selectedGroup,
+                _selectedState,
+                _searchController.text,
+                filtered.length,
+              ),
+              itemBuilder: (context, assignment, _) => _RequestCard(
+                title: assignment.projectName,
+                subtitle: assignment.fullName,
+                supporting: assignment.email,
+                chips: [
+                  Chip(label: Text('Project ${assignment.projectStatus}')),
+                  Chip(label: Text('Request ${assignment.status}')),
+                ],
+                actions: _selectedState == _RequestStateTab.pending
+                    ? [
+                        FilledButton.tonal(
+                          onPressed: _isMutating
+                              ? null
+                              : () => _updateAssignmentStatus(
+                                  assignment,
+                                  'rejected',
+                                ),
+                          child: const Text('Reject'),
+                        ),
+                        FilledButton(
+                          onPressed: _isMutating
+                              ? null
+                              : () => _updateAssignmentStatus(
+                                  assignment,
+                                  'approved',
+                                ),
+                          child: const Text('Approve'),
+                        ),
+                      ]
+                    : [
+                        FilledButton(
+                          onPressed: _isMutating
+                              ? null
+                              : () => _updateAssignmentStatus(
+                                  assignment,
+                                  'approved',
+                                ),
+                          child: const Text('Re-accept'),
+                        ),
+                      ],
+              ),
+            ),
+          ],
         );
       },
     );
