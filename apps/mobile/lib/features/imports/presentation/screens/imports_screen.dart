@@ -33,11 +33,21 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
     'kmz',
   ];
 
+  final ScrollController _scrollController = ScrollController();
   String? _selectedCategory;
   String? _selectedProjectId;
+  String? _selectedAdminCategoryId;
+  String? _selectedAdminProjectId;
   PlatformFile? _selectedFile;
   bool _isUploading = false;
   String _statusFilter = 'all';
+  List<GisImportJob>? _cachedJobs;
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -76,185 +86,205 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
         final uploadableProjects = _uploadableProjects(projects);
         if (user.role == UserRole.contributor) {
           _syncSelection(categories, uploadableProjects);
+        } else {
+          _syncAdminSelection(categories, projects);
         }
 
-        final jobsAsync = ref.watch(
-          importJobsProvider(
-            GisImportListQuery(
-              status: _statusFilter == 'all' ? null : _statusFilter,
-              projectId: user.role == UserRole.admin ? _selectedProjectId : null,
-            ),
-          ),
+        final jobsQuery = GisImportListQuery(
+          status: _statusFilter == 'all' ? null : _statusFilter,
+          projectId: user.role == UserRole.admin ? _selectedAdminProjectId : null,
         );
-
-        return jobsAsync.when(
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (error, _) => AppEmptyState(
+        final jobsAsync = ref.watch(
+          importJobsProvider(jobsQuery),
+        );
+        final latestJobs = jobsAsync.asData?.value;
+        final jobsError = jobsAsync.asError?.error;
+        if (latestJobs != null) {
+          _cachedJobs = latestJobs;
+        }
+        final effectiveJobs = latestJobs ?? _cachedJobs;
+        if (effectiveJobs == null && jobsAsync.isLoading) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (effectiveJobs == null && jobsAsync.hasError) {
+          return AppEmptyState(
             icon: Icons.error_outline,
             title: 'Imports unavailable',
             message: userFacingErrorMessage(
-              error,
+              jobsError ?? 'Unknown error',
               fallback: 'Unable to load GIS imports right now.',
             ),
             actionLabel: 'Retry',
-            onAction: () => ref.invalidate(
-              importJobsProvider(
-                GisImportListQuery(
-                  status: _statusFilter == 'all' ? null : _statusFilter,
-                  projectId:
-                      user.role == UserRole.admin ? _selectedProjectId : null,
-                ),
-              ),
-            ),
-          ),
-          data: (jobs) {
-            final filteredJobs = _filterJobs(
-              jobs: jobs,
-              projects: projects,
-              selectedCategory: null,
-              selectedProjectId:
-                  user.role == UserRole.admin ? _selectedProjectId : null,
-            );
+            onAction: () => ref.invalidate(importJobsProvider(jobsQuery)),
+          );
+        }
 
-            return ListView(
-              children: [
-                if (user.role == UserRole.contributor)
-                  _buildContributorIntro(context),
-                if (user.role == UserRole.admin) _buildAdminIntro(context),
-                if (user.role == UserRole.contributor) ...[
-                  const SizedBox(height: AppSpacing.md),
-                  _buildUploadCard(
-                    context,
-                    categories: categories,
-                    projects: uploadableProjects,
-                  ),
-                ],
-                const SizedBox(height: AppSpacing.md),
-                Text(
-                  user.role == UserRole.admin
-                      ? 'Import review queue'
-                      : 'Import history',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                AppCard(
+        final filteredJobs = _filterJobs(
+          jobs: effectiveJobs ?? const <GisImportJob>[],
+          projects: projects,
+          selectedCategory:
+              user.role == UserRole.admin ? _selectedAdminCategoryId : null,
+          selectedProjectId:
+              user.role == UserRole.admin ? _selectedAdminProjectId : null,
+        );
+        final adminProjects = _projectsForCategory(projects, _selectedAdminCategoryId);
+
+        return ListView(
+          controller: _scrollController,
+          key: PageStorageKey<String>('imports-${user.role.name}'),
+          children: [
+            if (jobsAsync.isLoading)
+              const Padding(
+                padding: EdgeInsets.only(bottom: AppSpacing.sm),
+                child: LinearProgressIndicator(),
+              ),
+            if (jobsAsync.hasError && effectiveJobs != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: AppSpacing.md),
+                child: AppCard(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          ..._statusOptionsFor(user).map(
-                            (option) => ChoiceChip(
-                              label: Text(option.label),
-                              selected: _statusFilter == option.value,
-                              onSelected: (_) {
-                                setState(() {
-                                  _statusFilter = option.value;
-                                });
-                              },
-                            ),
-                          ),
-                        ],
+                      Text(
+                        'Import list refresh failed',
+                        style: Theme.of(context).textTheme.titleSmall,
                       ),
-                      const SizedBox(height: AppSpacing.sm),
-                      if (user.role == UserRole.admin)
-                        DropdownButtonFormField<String?>(
-                          initialValue: _selectedProjectId,
-                          isExpanded: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Project filter',
-                          ),
-                          items: <DropdownMenuItem<String?>>[
-                            const DropdownMenuItem<String?>(
-                              value: null,
-                              child: Text('All projects'),
-                            ),
-                            ...projects.map(
-                              (project) => DropdownMenuItem<String?>(
-                                value: project.id,
-                                child: Text(
-                                  project.name,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ),
-                          ],
-                          onChanged: (value) {
-                            setState(() {
-                              _selectedProjectId = value;
-                            });
-                          },
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(
+                        userFacingErrorMessage(
+                          jobsError ?? 'Unknown error',
+                          fallback: 'Unable to refresh GIS imports right now.',
                         ),
+                      ),
                     ],
                   ),
                 ),
-                const SizedBox(height: AppSpacing.md),
-                if (filteredJobs.isEmpty)
-                  AppEmptyState(
-                    icon: Icons.upload_file_outlined,
-                    title: user.role == UserRole.contributor
-                        ? 'No imports submitted yet'
-                        : 'No imports match this filter',
-                    message: user.role == UserRole.contributor
-                        ? 'Choose a project, upload a GIS file, and it will appear here after staging.'
-                        : 'Contributor uploads awaiting review will appear here when they match the selected filters.',
-                  )
-                else
-                  ...filteredJobs.map(
-                    (job) => Padding(
-                      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                      child: _ImportJobCard(
-                        job: job,
-                        onTap: () =>
-                            context.push(AppRoutes.importDetails(job.id)),
+              ),
+            if (user.role == UserRole.contributor) ...[
+              _buildUploadCard(
+                context,
+                categories: categories,
+                projects: uploadableProjects,
+              ),
+              const SizedBox(height: AppSpacing.md),
+            ],
+            Text(
+              user.role == UserRole.admin ? 'Import review queue' : 'Import history',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            AppCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ..._statusOptionsFor(user).map(
+                        (option) => ChoiceChip(
+                          label: Text(option.label),
+                          selected: _statusFilter == option.value,
+                          onSelected: (_) {
+                            setState(() {
+                              _statusFilter = option.value;
+                            });
+                          },
+                        ),
                       ),
-                    ),
+                    ],
                   ),
-              ],
-            );
-          },
+                  if (user.role == UserRole.admin) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    DropdownButtonFormField<String?>(
+                      initialValue: _selectedAdminCategoryId,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Category filter',
+                      ),
+                      items: <DropdownMenuItem<String?>>[
+                        const DropdownMenuItem<String?>(
+                          value: null,
+                          child: Text('All categories'),
+                        ),
+                        ...categories.map(
+                          (option) => DropdownMenuItem<String?>(
+                            value: option.id,
+                            child: Text(
+                              option.name,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedAdminCategoryId = value;
+                          final nextProjects = _projectsForCategory(projects, value);
+                          final validIds = nextProjects.map((item) => item.id).toSet();
+                          if (_selectedAdminProjectId != null &&
+                              !validIds.contains(_selectedAdminProjectId)) {
+                            _selectedAdminProjectId = null;
+                          }
+                        });
+                      },
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    DropdownButtonFormField<String?>(
+                      initialValue: _selectedAdminProjectId,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Project filter',
+                      ),
+                      items: <DropdownMenuItem<String?>>[
+                        const DropdownMenuItem<String?>(
+                          value: null,
+                          child: Text('All projects'),
+                        ),
+                        ...adminProjects.map(
+                          (project) => DropdownMenuItem<String?>(
+                            value: project.id,
+                            child: Text(
+                              project.name,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedAdminProjectId = value;
+                        });
+                      },
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            if (filteredJobs.isEmpty)
+              AppEmptyState(
+                icon: Icons.upload_file_outlined,
+                title: user.role == UserRole.contributor
+                    ? 'No imports submitted yet'
+                    : 'No imports match this filter',
+                message: user.role == UserRole.contributor
+                    ? 'Choose a project, upload a GIS file, and it will appear here after staging.'
+                    : 'Contributor uploads awaiting review will appear here when they match the selected filters.',
+              )
+            else
+              ...filteredJobs.map(
+                (job) => Padding(
+                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                  child: _ImportJobCard(
+                    job: job,
+                    onTap: () => context.push(AppRoutes.importDetails(job.id)),
+                  ),
+                ),
+              ),
+          ],
         );
       },
-    );
-  }
-
-  Widget _buildContributorIntro(BuildContext context) {
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'GIS imports',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          Text(
-            'Upload external GIS files for a project. Imported geometries stay staged until an admin approves them.',
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAdminIntro(BuildContext context) {
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Import review',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          Text(
-            'Contributor uploads remain staged here until they are approved or rejected. Approved geometries become official project features only after review.',
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
-        ],
-      ),
     );
   }
 
@@ -465,6 +495,19 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
       ..sort((a, b) => a.name.compareTo(b.name));
   }
 
+  List<ProjectSummary> _projectsForCategory(
+    List<ProjectSummary> projects,
+    String? categoryId,
+  ) {
+    final filtered = categoryId == null || categoryId.trim().isEmpty
+        ? List<ProjectSummary>.from(projects)
+        : projects
+              .where((project) => project.categoryId == categoryId)
+              .toList(growable: false);
+    filtered.sort((a, b) => a.name.compareTo(b.name));
+    return filtered;
+  }
+
   void _syncSelection(
     List<_ImportCategoryOption> categories,
     List<ProjectSummary> uploadableProjects,
@@ -488,6 +531,24 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
     } else if (_selectedProjectId == null ||
         !validProjectIds.contains(_selectedProjectId)) {
       _selectedProjectId = categoryProjects.first.id;
+    }
+  }
+
+  void _syncAdminSelection(
+    List<_ImportCategoryOption> categories,
+    List<ProjectSummary> projects,
+  ) {
+    final validCategoryIds = categories.map((item) => item.id).toSet();
+    if (_selectedAdminCategoryId != null &&
+        !validCategoryIds.contains(_selectedAdminCategoryId)) {
+      _selectedAdminCategoryId = null;
+    }
+
+    final categoryProjects = _projectsForCategory(projects, _selectedAdminCategoryId);
+    final validProjectIds = categoryProjects.map((item) => item.id).toSet();
+    if (_selectedAdminProjectId != null &&
+        !validProjectIds.contains(_selectedAdminProjectId)) {
+      _selectedAdminProjectId = null;
     }
   }
 
@@ -519,12 +580,12 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
   List<_StatusOption> _statusOptionsFor(AppUser user) {
     if (user.role == UserRole.admin) {
       return const <_StatusOption>[
+        _StatusOption('all', 'All'),
         _StatusOption('pending_review', 'Pending review'),
-        _StatusOption('partially_approved', 'Partial'),
         _StatusOption('approved', 'Approved'),
+        _StatusOption('partially_approved', 'Partial'),
         _StatusOption('rejected', 'Rejected'),
         _StatusOption('failed', 'Failed'),
-        _StatusOption('all', 'All'),
       ];
     }
     return const <_StatusOption>[

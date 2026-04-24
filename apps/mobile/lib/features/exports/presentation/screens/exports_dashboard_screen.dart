@@ -34,6 +34,7 @@ class ExportsDashboardScreen extends ConsumerStatefulWidget {
 
 class _ExportsDashboardScreenState
     extends ConsumerState<ExportsDashboardScreen> {
+  String? _selectedCategoryId;
   String? _selectedProjectId;
   String _selectedProjectName = '';
   ExportFormat _selectedFormat = ExportFormat.geojson;
@@ -86,6 +87,7 @@ class _ExportsDashboardScreenState
         final fixedProjectId = widget.fixedProjectId?.trim();
         final hasFixedProject =
             fixedProjectId != null && fixedProjectId.isNotEmpty;
+        final categories = _deriveCategories(projects);
         if (projects.isEmpty) {
           return const AppEmptyState(
             icon: Icons.folder_off_outlined,
@@ -101,16 +103,16 @@ class _ExportsDashboardScreenState
             orElse: () => null,
           );
           if (project != null) {
+            _selectedCategoryId = project.categoryId;
             _selectedProjectId = project.id;
             _selectedProjectName = widget.fixedProjectName ?? project.name;
           }
         }
 
-        if (_selectedProjectId == null ||
-            projects.every((project) => project.id != _selectedProjectId)) {
-          _selectedProjectId = projects.first.id;
-          _selectedProjectName = projects.first.name;
+        if (!hasFixedProject) {
+          _syncProjectSelection(categories, projects);
         }
+        final availableProjects = _projectsForCategory(projects, _selectedCategoryId);
         final selectedProject = projects.cast<ProjectSummary?>().firstWhere(
           (project) => project?.id == _selectedProjectId,
           orElse: () => null,
@@ -254,33 +256,72 @@ class _ExportsDashboardScreenState
                       ),
                     )
                   else
-                    DropdownButtonFormField<String>(
-                      initialValue: _selectedProjectId,
-                      isExpanded: true,
-                      decoration: const InputDecoration(labelText: 'Project'),
-                      items: projects
-                          .map(
-                            (project) => DropdownMenuItem(
-                              value: project.id,
-                              child: Text(
-                                project.name,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          )
-                          .toList(growable: false),
-                      onChanged: (value) {
-                        if (value == null) {
-                          return;
-                        }
-                        final project = projects.firstWhere(
-                          (p) => p.id == value,
-                        );
-                        setState(() {
-                          _selectedProjectId = project.id;
-                          _selectedProjectName = project.name;
-                        });
-                      },
+                    Column(
+                      children: [
+                        DropdownButtonFormField<String>(
+                          initialValue: _selectedCategoryId,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Category',
+                          ),
+                          items: categories
+                              .map(
+                                (category) => DropdownMenuItem<String>(
+                                  value: category.id,
+                                  child: Text(
+                                    category.name,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              )
+                              .toList(growable: false),
+                          onChanged: (value) {
+                            if (value == null) {
+                              return;
+                            }
+                            final nextProjects = _projectsForCategory(projects, value);
+                            setState(() {
+                              _selectedCategoryId = value;
+                              if (nextProjects.isEmpty) {
+                                _selectedProjectId = null;
+                                _selectedProjectName = '';
+                              } else {
+                                _selectedProjectId = nextProjects.first.id;
+                                _selectedProjectName = nextProjects.first.name;
+                              }
+                            });
+                          },
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        DropdownButtonFormField<String>(
+                          initialValue: _selectedProjectId,
+                          isExpanded: true,
+                          decoration: const InputDecoration(labelText: 'Project'),
+                          items: availableProjects
+                              .map(
+                                (project) => DropdownMenuItem(
+                                  value: project.id,
+                                  child: Text(
+                                    project.name,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              )
+                              .toList(growable: false),
+                          onChanged: (value) {
+                            if (value == null) {
+                              return;
+                            }
+                            final project = availableProjects.firstWhere(
+                              (p) => p.id == value,
+                            );
+                            setState(() {
+                              _selectedProjectId = project.id;
+                              _selectedProjectName = project.name;
+                            });
+                          },
+                        ),
+                      ],
                     ),
                   const SizedBox(height: AppSpacing.sm),
                   Text('Format', style: Theme.of(context).textTheme.titleSmall),
@@ -732,6 +773,72 @@ class _ExportsDashboardScreenState
       curve: Curves.easeOut,
     );
   }
+
+  List<_CategoryOption> _deriveCategories(List<ProjectSummary> projects) {
+    final byId = <String, _CategoryOption>{};
+    for (final project in projects) {
+      final categoryId = project.categoryId;
+      if (categoryId == null || categoryId.trim().isEmpty) {
+        continue;
+      }
+      byId.putIfAbsent(
+        categoryId,
+        () => _CategoryOption(id: categoryId, name: project.category),
+      );
+    }
+    final categories = byId.values.toList(growable: false);
+    categories.sort((a, b) => a.name.compareTo(b.name));
+    return categories;
+  }
+
+  List<ProjectSummary> _projectsForCategory(
+    List<ProjectSummary> projects,
+    String? categoryId,
+  ) {
+    final filtered = categoryId == null || categoryId.trim().isEmpty
+        ? <ProjectSummary>[]
+        : projects
+              .where((project) => project.categoryId == categoryId)
+              .toList(growable: false);
+    filtered.sort((a, b) => a.name.compareTo(b.name));
+    return filtered;
+  }
+
+  void _syncProjectSelection(
+    List<_CategoryOption> categories,
+    List<ProjectSummary> projects,
+  ) {
+    final validCategoryIds = categories.map((item) => item.id).toSet();
+    if (_selectedCategoryId == null ||
+        !validCategoryIds.contains(_selectedCategoryId)) {
+      _selectedCategoryId = categories.isNotEmpty ? categories.first.id : null;
+    }
+
+    final categoryProjects = _projectsForCategory(projects, _selectedCategoryId);
+    final validProjectIds = categoryProjects.map((item) => item.id).toSet();
+    if (_selectedProjectId == null ||
+        !validProjectIds.contains(_selectedProjectId)) {
+      if (categoryProjects.isEmpty) {
+        _selectedProjectId = null;
+        _selectedProjectName = '';
+      } else {
+        _selectedProjectId = categoryProjects.first.id;
+        _selectedProjectName = categoryProjects.first.name;
+      }
+    } else {
+      final matchedProject = categoryProjects.firstWhere(
+        (project) => project.id == _selectedProjectId,
+      );
+      _selectedProjectName = matchedProject.name;
+    }
+  }
+}
+
+class _CategoryOption {
+  const _CategoryOption({required this.id, required this.name});
+
+  final String id;
+  final String name;
 }
 
 class _ExportJobCard extends StatelessWidget {

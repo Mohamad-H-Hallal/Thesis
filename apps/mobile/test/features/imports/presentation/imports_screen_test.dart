@@ -219,6 +219,7 @@ void main() {
 
     expect(find.text('Submit new import'), findsOneWidget);
     expect(find.text('Import history'), findsOneWidget);
+    expect(find.text('GIS imports'), findsNothing);
     expect(find.text('No imports submitted yet'), findsNothing);
   });
 
@@ -291,9 +292,10 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Import review'), findsOneWidget);
     expect(find.text('Import review queue'), findsOneWidget);
     expect(find.text('Submit new import'), findsNothing);
+    expect(find.text('Category filter'), findsOneWidget);
+    expect(find.text('Project filter'), findsOneWidget);
     expect(find.text('No imports match this filter'), findsNothing);
   });
 }
