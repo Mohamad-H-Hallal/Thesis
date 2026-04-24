@@ -285,31 +285,35 @@ class _ExportsDashboardScreenState
                   else
                     Column(
                       children: [
-                        DropdownButtonFormField<String>(
+                        DropdownButtonFormField<String?>(
                           initialValue: _selectedCategoryId,
                           isExpanded: true,
                           decoration: const InputDecoration(
                             labelText: 'Category',
                           ),
-                          items: categories
-                              .map(
-                                (category) => DropdownMenuItem<String>(
-                                  value: category.id,
-                                  child: Text(
-                                    category.name,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
+                          items: <DropdownMenuItem<String?>>[
+                            const DropdownMenuItem<String?>(
+                              value: null,
+                              child: Text('All categories'),
+                            ),
+                            ...categories.map(
+                              (category) => DropdownMenuItem<String?>(
+                                value: category.id,
+                                child: Text(
+                                  category.name,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                              )
-                              .toList(growable: false),
+                              ),
+                            ),
+                          ],
                           onChanged: (value) {
-                            if (value == null) {
-                              return;
-                            }
                             final nextProjects = _projectsForCategory(projects, value);
                             setState(() {
                               _selectedCategoryId = value;
-                              if (nextProjects.isEmpty) {
+                              if (value == null) {
+                                _selectedProjectId = null;
+                                _selectedProjectName = '';
+                              } else if (nextProjects.isEmpty) {
                                 _selectedProjectId = null;
                                 _selectedProjectName = '';
                               } else {
@@ -320,23 +324,31 @@ class _ExportsDashboardScreenState
                           },
                         ),
                         const SizedBox(height: AppSpacing.sm),
-                        DropdownButtonFormField<String>(
+                        DropdownButtonFormField<String?>(
                           initialValue: _selectedProjectId,
                           isExpanded: true,
                           decoration: const InputDecoration(labelText: 'Project'),
-                          items: availableProjects
-                              .map(
-                                (project) => DropdownMenuItem(
-                                  value: project.id,
-                                  child: Text(
-                                    project.name,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
+                          items: <DropdownMenuItem<String?>>[
+                            const DropdownMenuItem<String?>(
+                              value: null,
+                              child: Text('All projects'),
+                            ),
+                            ...availableProjects.map(
+                              (project) => DropdownMenuItem<String?>(
+                                value: project.id,
+                                child: Text(
+                                  project.name,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                              )
-                              .toList(growable: false),
+                              ),
+                            ),
+                          ],
                           onChanged: (value) {
                             if (value == null) {
+                              setState(() {
+                                _selectedProjectId = null;
+                                _selectedProjectName = '';
+                              });
                               return;
                             }
                             final project = availableProjects.firstWhere(
@@ -466,7 +478,8 @@ class _ExportsDashboardScreenState
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(
-                      onPressed: exportState.isSubmitting
+                      onPressed: exportState.isSubmitting ||
+                              _selectedProjectId == null
                           ? null
                           : () => _submit(
                               controller,
@@ -823,7 +836,7 @@ class _ExportsDashboardScreenState
     String? categoryId,
   ) {
     final filtered = categoryId == null || categoryId.trim().isEmpty
-        ? <ProjectSummary>[]
+        ? List<ProjectSummary>.from(projects)
         : projects
               .where((project) => project.categoryId == categoryId)
               .toList(growable: false);
@@ -836,27 +849,25 @@ class _ExportsDashboardScreenState
     List<ProjectSummary> projects,
   ) {
     final validCategoryIds = categories.map((item) => item.id).toSet();
-    if (_selectedCategoryId == null ||
+    if (_selectedCategoryId != null &&
         !validCategoryIds.contains(_selectedCategoryId)) {
-      _selectedCategoryId = categories.isNotEmpty ? categories.first.id : null;
+      _selectedCategoryId = null;
     }
 
     final categoryProjects = _projectsForCategory(projects, _selectedCategoryId);
     final validProjectIds = categoryProjects.map((item) => item.id).toSet();
-    if (_selectedProjectId == null ||
-        !validProjectIds.contains(_selectedProjectId)) {
-      if (categoryProjects.isEmpty) {
-        _selectedProjectId = null;
+    if (_selectedProjectId != null && !validProjectIds.contains(_selectedProjectId)) {
+      _selectedProjectId = null;
+      _selectedProjectName = '';
+    } else {
+      if (_selectedProjectId == null) {
         _selectedProjectName = '';
       } else {
-        _selectedProjectId = categoryProjects.first.id;
-        _selectedProjectName = categoryProjects.first.name;
+        final matchedProject = categoryProjects.firstWhere(
+          (project) => project.id == _selectedProjectId,
+        );
+        _selectedProjectName = matchedProject.name;
       }
-    } else {
-      final matchedProject = categoryProjects.firstWhere(
-        (project) => project.id == _selectedProjectId,
-      );
-      _selectedProjectName = matchedProject.name;
     }
   }
 }

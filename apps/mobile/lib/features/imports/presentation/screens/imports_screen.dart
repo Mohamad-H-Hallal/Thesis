@@ -18,7 +18,14 @@ import '../../domain/import_models.dart';
 import '../import_providers.dart';
 
 class ImportsScreen extends ConsumerStatefulWidget {
-  const ImportsScreen({super.key});
+  const ImportsScreen({
+    this.fixedProjectId,
+    this.fixedProjectName,
+    super.key,
+  });
+
+  final String? fixedProjectId;
+  final String? fixedProjectName;
 
   @override
   ConsumerState<ImportsScreen> createState() => _ImportsScreenState();
@@ -82,9 +89,23 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
         onAction: () => ref.invalidate(projectListProvider(projectScope)),
       ),
       data: (projects) {
+        final fixedProjectId = widget.fixedProjectId?.trim();
+        final hasFixedProject =
+            fixedProjectId != null && fixedProjectId.isNotEmpty;
         final categories = _deriveCategories(projects);
         final uploadableProjects = _uploadableProjects(projects);
-        if (user.role == UserRole.contributor) {
+        if (hasFixedProject) {
+          final project = projects.cast<ProjectSummary?>().firstWhere(
+            (item) => item?.id == fixedProjectId,
+            orElse: () => null,
+          );
+          if (project != null) {
+            _selectedCategory = project.categoryId;
+            _selectedProjectId = project.id;
+            _selectedAdminCategoryId = project.categoryId;
+            _selectedAdminProjectId = project.id;
+          }
+        } else if (user.role == UserRole.contributor) {
           _syncSelection(categories, uploadableProjects);
         } else {
           _syncAdminSelection(categories, projects);
@@ -92,7 +113,11 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
 
         final jobsQuery = GisImportListQuery(
           status: _statusFilter == 'all' ? null : _statusFilter,
-          projectId: user.role == UserRole.admin ? _selectedAdminProjectId : null,
+          projectId: hasFixedProject
+              ? fixedProjectId
+              : user.role == UserRole.admin
+              ? _selectedAdminProjectId
+              : null,
         );
         final jobsAsync = ref.watch(
           importJobsProvider(jobsQuery),
@@ -123,11 +148,25 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
           jobs: effectiveJobs ?? const <GisImportJob>[],
           projects: projects,
           selectedCategory:
-              user.role == UserRole.admin ? _selectedAdminCategoryId : null,
+              hasFixedProject
+                  ? _selectedCategory
+                  : user.role == UserRole.admin
+                  ? _selectedAdminCategoryId
+                  : null,
           selectedProjectId:
-              user.role == UserRole.admin ? _selectedAdminProjectId : null,
+              hasFixedProject
+                  ? _selectedProjectId
+                  : user.role == UserRole.admin
+                  ? _selectedAdminProjectId
+                  : null,
         );
         final adminProjects = _projectsForCategory(projects, _selectedAdminCategoryId);
+        final fixedProject = hasFixedProject
+            ? projects.cast<ProjectSummary?>().firstWhere(
+                (project) => project?.id == fixedProjectId,
+                orElse: () => null,
+              )
+            : null;
 
         return ListView(
           controller: _scrollController,
@@ -165,6 +204,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                 context,
                 categories: categories,
                 projects: uploadableProjects,
+                fixedProject: fixedProject,
               ),
               const SizedBox(height: AppSpacing.md),
             ],
@@ -196,67 +236,89 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                   ),
                   if (user.role == UserRole.admin) ...[
                     const SizedBox(height: AppSpacing.sm),
-                    DropdownButtonFormField<String?>(
-                      initialValue: _selectedAdminCategoryId,
-                      isExpanded: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Category filter',
-                      ),
-                      items: <DropdownMenuItem<String?>>[
-                        const DropdownMenuItem<String?>(
-                          value: null,
-                          child: Text('All categories'),
+                    if (hasFixedProject && fixedProject != null) ...[
+                      InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: 'Category filter',
                         ),
-                        ...categories.map(
-                          (option) => DropdownMenuItem<String?>(
-                            value: option.id,
-                            child: Text(
-                              option.name,
-                              overflow: TextOverflow.ellipsis,
+                        child: Text(
+                          fixedProject.category,
+                          style: Theme.of(context).textTheme.bodyLarge,
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: 'Project filter',
+                        ),
+                        child: Text(
+                          widget.fixedProjectName ?? fixedProject.name,
+                          style: Theme.of(context).textTheme.bodyLarge,
+                        ),
+                      ),
+                    ] else ...[
+                      DropdownButtonFormField<String?>(
+                        initialValue: _selectedAdminCategoryId,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Category filter',
+                        ),
+                        items: <DropdownMenuItem<String?>>[
+                          const DropdownMenuItem<String?>(
+                            value: null,
+                            child: Text('All categories'),
+                          ),
+                          ...categories.map(
+                            (option) => DropdownMenuItem<String?>(
+                              value: option.id,
+                              child: Text(
+                                option.name,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        setState(() {
-                          _selectedAdminCategoryId = value;
-                          final nextProjects = _projectsForCategory(projects, value);
-                          final validIds = nextProjects.map((item) => item.id).toSet();
-                          if (_selectedAdminProjectId != null &&
-                              !validIds.contains(_selectedAdminProjectId)) {
-                            _selectedAdminProjectId = null;
-                          }
-                        });
-                      },
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    DropdownButtonFormField<String?>(
-                      initialValue: _selectedAdminProjectId,
-                      isExpanded: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Project filter',
+                        ],
+                        onChanged: (value) {
+                          setState(() {
+                            _selectedAdminCategoryId = value;
+                            final nextProjects = _projectsForCategory(projects, value);
+                            final validIds = nextProjects.map((item) => item.id).toSet();
+                            if (_selectedAdminProjectId != null &&
+                                !validIds.contains(_selectedAdminProjectId)) {
+                              _selectedAdminProjectId = null;
+                            }
+                          });
+                        },
                       ),
-                      items: <DropdownMenuItem<String?>>[
-                        const DropdownMenuItem<String?>(
-                          value: null,
-                          child: Text('All projects'),
+                      const SizedBox(height: AppSpacing.sm),
+                      DropdownButtonFormField<String?>(
+                        initialValue: _selectedAdminProjectId,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Project filter',
                         ),
-                        ...adminProjects.map(
-                          (project) => DropdownMenuItem<String?>(
-                            value: project.id,
-                            child: Text(
-                              project.name,
-                              overflow: TextOverflow.ellipsis,
+                        items: <DropdownMenuItem<String?>>[
+                          const DropdownMenuItem<String?>(
+                            value: null,
+                            child: Text('All projects'),
+                          ),
+                          ...adminProjects.map(
+                            (project) => DropdownMenuItem<String?>(
+                              value: project.id,
+                              child: Text(
+                                project.name,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        setState(() {
-                          _selectedAdminProjectId = value;
-                        });
-                      },
-                    ),
+                        ],
+                        onChanged: (value) {
+                          setState(() {
+                            _selectedAdminProjectId = value;
+                          });
+                        },
+                      ),
+                    ],
                   ],
                 ],
               ),
@@ -292,10 +354,13 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
     BuildContext context, {
     required List<_ImportCategoryOption> categories,
     required List<ProjectSummary> projects,
+    ProjectSummary? fixedProject,
   }) {
-    final filteredProjects = projects
-        .where((project) => project.categoryId == _selectedCategory)
-        .toList(growable: false);
+    final filteredProjects = fixedProject != null
+        ? <ProjectSummary>[fixedProject]
+        : projects
+              .where((project) => project.categoryId == _selectedCategory)
+              .toList(growable: false);
 
     return AppCard(
       child: Column(
@@ -306,54 +371,72 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: AppSpacing.sm),
-          DropdownButtonFormField<String>(
-            initialValue: _selectedCategory,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Category'),
-            items: categories
-                .map(
-                  (option) => DropdownMenuItem<String>(
-                    value: option.id,
-                    child: Text(
-                      option.name,
-                      overflow: TextOverflow.ellipsis,
+          if (fixedProject != null) ...[
+            InputDecorator(
+              decoration: const InputDecoration(labelText: 'Category'),
+              child: Text(
+                fixedProject.category,
+                style: Theme.of(context).textTheme.bodyLarge,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            InputDecorator(
+              decoration: const InputDecoration(labelText: 'Project'),
+              child: Text(
+                widget.fixedProjectName ?? fixedProject.name,
+                style: Theme.of(context).textTheme.bodyLarge,
+              ),
+            ),
+          ] else ...[
+            DropdownButtonFormField<String>(
+              initialValue: _selectedCategory,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Category'),
+              items: categories
+                  .map(
+                    (option) => DropdownMenuItem<String>(
+                      value: option.id,
+                      child: Text(
+                        option.name,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-                  ),
-                )
-                .toList(growable: false),
-            onChanged: (value) {
-              setState(() {
-                _selectedCategory = value;
-                final nextProjects = projects
-                    .where((project) => project.categoryId == value)
-                    .toList(growable: false);
-                _selectedProjectId =
-                    nextProjects.isNotEmpty ? nextProjects.first.id : null;
-              });
-            },
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          DropdownButtonFormField<String>(
-            initialValue: _selectedProjectId,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Project'),
-            items: filteredProjects
-                .map(
-                  (project) => DropdownMenuItem<String>(
-                    value: project.id,
-                    child: Text(
-                      project.name,
-                      overflow: TextOverflow.ellipsis,
+                  )
+                  .toList(growable: false),
+              onChanged: (value) {
+                setState(() {
+                  _selectedCategory = value;
+                  final nextProjects = projects
+                      .where((project) => project.categoryId == value)
+                      .toList(growable: false);
+                  _selectedProjectId =
+                      nextProjects.isNotEmpty ? nextProjects.first.id : null;
+                });
+              },
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            DropdownButtonFormField<String>(
+              initialValue: _selectedProjectId,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Project'),
+              items: filteredProjects
+                  .map(
+                    (project) => DropdownMenuItem<String>(
+                      value: project.id,
+                      child: Text(
+                        project.name,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-                  ),
-                )
-                .toList(growable: false),
-            onChanged: (value) {
-              setState(() {
-                _selectedProjectId = value;
-              });
-            },
-          ),
+                  )
+                  .toList(growable: false),
+              onChanged: (value) {
+                setState(() {
+                  _selectedProjectId = value;
+                });
+              },
+            ),
+          ],
           const SizedBox(height: AppSpacing.sm),
           DecoratedBox(
             decoration: BoxDecoration(

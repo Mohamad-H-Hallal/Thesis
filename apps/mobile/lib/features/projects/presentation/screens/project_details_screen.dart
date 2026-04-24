@@ -395,6 +395,15 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                       icon: const Icon(Icons.map_outlined),
                       label: const Text('Open Map'),
                     ),
+                    if (role == UserRole.admin || hasContributorAssignment)
+                      OutlinedButton.icon(
+                        onPressed: () => context.push(
+                          AppRoutes.projectImports(project.id),
+                          extra: project.name,
+                        ),
+                        icon: const Icon(Icons.upload_file_outlined),
+                        label: const Text('Imports'),
+                      ),
                     if (role == UserRole.contributor &&
                         hasContributorAssignment)
                       FilledButton.icon(

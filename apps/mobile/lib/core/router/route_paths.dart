@@ -35,6 +35,7 @@ class AppRoutes {
   static String projectReviewQueue(String id) => '/app/projects/$id/reviews';
   static String projectApprovedReviews(String id) =>
       '/app/projects/$id/approved-reviews';
+  static String projectImports(String id) => '/app/projects/$id/imports';
   static String projectExports(String id) => '/app/projects/$id/exports';
   static String importDetails(String id) => '/app/imports/$id';
 

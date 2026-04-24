@@ -13,6 +13,7 @@ import '../../features/admin/presentation/screens/category_form_screen.dart';
 import '../../features/admin/presentation/screens/project_assignments_screen.dart';
 import '../../features/exports/presentation/screens/exports_dashboard_screen.dart';
 import '../../features/imports/presentation/screens/import_detail_screen.dart';
+import '../../features/imports/presentation/screens/imports_screen.dart';
 import '../../features/admin/presentation/screens/project_form_screen.dart';
 import '../../features/map/presentation/screens/add_feature_screen.dart';
 import '../../features/map/presentation/screens/map_screen.dart';
@@ -285,6 +286,27 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
               showBackButton: true,
               showOfflineBanner: false,
               body: ExportsDashboardScreen(
+                fixedProjectId: projectId,
+                fixedProjectName: projectName,
+              ),
+            ),
+          );
+        },
+      ),
+      GoRoute(
+        path: '/app/projects/:projectId/imports',
+        pageBuilder: (context, state) {
+          final projectId = state.pathParameters['projectId'] ?? '';
+          final projectName = state.extra is String
+              ? state.extra as String
+              : null;
+          return _buildPage(
+            state,
+            AppScaffold(
+              title: 'Project imports',
+              showBackButton: true,
+              showOfflineBanner: false,
+              body: ImportsScreen(
                 fixedProjectId: projectId,
                 fixedProjectName: projectName,
               ),
