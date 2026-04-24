@@ -181,25 +181,27 @@ class _FakeProjectsRepository implements ProjectsRepository {
     int limit = 20,
   }) async {
     final items = await fetchProjects(userId: userId, role: role, scope: scope);
-    final filtered = items.where((project) {
-      if (status?.trim().isNotEmpty ?? false) {
-        if (project.status != status) {
-          return false;
-        }
-      }
-      if (categoryId?.trim().isNotEmpty ?? false) {
-        if (project.categoryId != categoryId) {
-          return false;
-        }
-      }
-      if (query?.trim().isNotEmpty ?? false) {
-        final normalized = query!.trim().toLowerCase();
-        return project.name.toLowerCase().contains(normalized) ||
-            project.category.toLowerCase().contains(normalized) ||
-            project.description.toLowerCase().contains(normalized);
-      }
-      return true;
-    }).toList(growable: false);
+    final filtered = items
+        .where((project) {
+          if (status?.trim().isNotEmpty ?? false) {
+            if (project.status != status) {
+              return false;
+            }
+          }
+          if (categoryId?.trim().isNotEmpty ?? false) {
+            if (project.categoryId != categoryId) {
+              return false;
+            }
+          }
+          if (query?.trim().isNotEmpty ?? false) {
+            final normalized = query!.trim().toLowerCase();
+            return project.name.toLowerCase().contains(normalized) ||
+                project.category.toLowerCase().contains(normalized) ||
+                project.description.toLowerCase().contains(normalized);
+          }
+          return true;
+        })
+        .toList(growable: false);
     final start = (page - 1) * limit;
     final end = (start + limit).clamp(0, filtered.length);
     return PaginatedResult<ProjectSummary>(
@@ -649,6 +651,41 @@ void main() {
       expect(find.text('Queue'), findsNothing);
     },
   );
+
+  testWidgets('unassigned contributor does not see project imports action', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1080, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final session = _sessionForRole(
+      UserRole.contributor,
+      userId: 'contributor-1',
+    );
+    final repository = _FakeProjectsRepository(<ProjectSummary>[
+      _project(
+        id: 'contributor-project',
+        name: 'North Governorate Survey',
+        visibleToContributors: true,
+      ),
+    ]);
+
+    await tester.pumpWidget(
+      _wrapWithScope(
+        session: session,
+        projects: const <ProjectSummary>[],
+        repository: repository,
+        child: const ProjectDetailsScreen(projectId: 'contributor-project'),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.text('Open Map'), findsOneWidget);
+    expect(find.text('Imports'), findsNothing);
+    expect(find.text('New feature'), findsNothing);
+    expect(find.text('Request access'), findsOneWidget);
+  });
 
   testWidgets(
     'admin project details groups management and workflow actions clearly',

@@ -104,15 +104,17 @@ class _FakeImportsRepository implements ImportsRepository {
     String? projectId,
     String? categoryId,
   }) async {
-    return jobs.where((job) {
-      if (status != null && job.status != status) {
-        return false;
-      }
-      if (projectId != null && job.projectId != projectId) {
-        return false;
-      }
-      return true;
-    }).toList(growable: false);
+    return jobs
+        .where((job) {
+          if (status != null && job.status != status) {
+            return false;
+          }
+          if (projectId != null && job.projectId != projectId) {
+            return false;
+          }
+          return true;
+        })
+        .toList(growable: false);
   }
 
   @override
@@ -251,9 +253,9 @@ void main() {
           importsRepositoryProvider.overrideWithValue(
             _FakeImportsRepository(<GisImportJob>[importJob]),
           ),
-          projectListProvider(ProjectViewScope.assigned).overrideWith(
-            (ref) async => <ProjectSummary>[project],
-          ),
+          projectListProvider(
+            ProjectViewScope.assigned,
+          ).overrideWith((ref) async => <ProjectSummary>[project]),
         ],
         child: const MaterialApp(home: Scaffold(body: ImportsScreen())),
       ),
@@ -326,9 +328,9 @@ void main() {
           importsRepositoryProvider.overrideWithValue(
             _FakeImportsRepository(<GisImportJob>[importJob]),
           ),
-          projectListProvider(ProjectViewScope.all).overrideWith(
-            (ref) async => <ProjectSummary>[project],
-          ),
+          projectListProvider(
+            ProjectViewScope.all,
+          ).overrideWith((ref) async => <ProjectSummary>[project]),
         ],
         child: const MaterialApp(home: Scaffold(body: ImportsScreen())),
       ),
@@ -341,5 +343,110 @@ void main() {
     expect(find.text('Category filter'), findsOneWidget);
     expect(find.text('Project filter'), findsOneWidget);
     expect(find.text('No imports match this filter'), findsNothing);
+  });
+
+  testWidgets(
+    'contributor fixed project imports stay unavailable when not assigned',
+    (tester) async {
+      final assignedProject = ProjectSummary(
+        id: 'project-1',
+        name: 'Assigned Import Project',
+        category: 'Agriculture',
+        categoryId: 'cat-1',
+        status: 'active',
+        assignedCollectors: 1,
+        pendingReviews: 0,
+        description: 'Assigned project',
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWith(
+              (_) => _AuthenticatedAuthController(
+                AuthSession(
+                  accessToken: 'token',
+                  refreshToken: 'refresh',
+                  user: const AppUser(
+                    id: 'contributor-1',
+                    fullName: 'Field Contributor',
+                    email: 'contributor@example.com',
+                    role: UserRole.contributor,
+                  ),
+                ),
+              ),
+            ),
+            importsRepositoryProvider.overrideWithValue(
+              _FakeImportsRepository(const <GisImportJob>[]),
+            ),
+            projectListProvider(
+              ProjectViewScope.assigned,
+            ).overrideWith((ref) async => <ProjectSummary>[assignedProject]),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(
+              body: ImportsScreen(
+                fixedProjectId: 'project-2',
+                fixedProjectName: 'Unassigned Project',
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('Imports unavailable'), findsOneWidget);
+      expect(find.textContaining('approved assignment'), findsOneWidget);
+      expect(find.text('Submit new import'), findsNothing);
+    },
+  );
+
+  testWidgets('contributor import picker keeps assigned non-active projects', (
+    tester,
+  ) async {
+    final pausedProject = ProjectSummary(
+      id: 'project-1',
+      name: 'Paused Import Project',
+      category: 'Agriculture',
+      categoryId: 'cat-1',
+      status: 'paused',
+      assignedCollectors: 1,
+      pendingReviews: 0,
+      description: 'Assigned project',
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(
+            (_) => _AuthenticatedAuthController(
+              AuthSession(
+                accessToken: 'token',
+                refreshToken: 'refresh',
+                user: const AppUser(
+                  id: 'contributor-1',
+                  fullName: 'Field Contributor',
+                  email: 'contributor@example.com',
+                  role: UserRole.contributor,
+                ),
+              ),
+            ),
+          ),
+          importsRepositoryProvider.overrideWithValue(
+            _FakeImportsRepository(const <GisImportJob>[]),
+          ),
+          projectListProvider(
+            ProjectViewScope.assigned,
+          ).overrideWith((ref) async => <ProjectSummary>[pausedProject]),
+        ],
+        child: const MaterialApp(home: Scaffold(body: ImportsScreen())),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('Submit new import'), findsOneWidget);
+    expect(find.text('Paused Import Project'), findsOneWidget);
   });
 }

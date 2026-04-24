@@ -88,19 +88,27 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
         final fixedProjectId = widget.fixedProjectId?.trim();
         final hasFixedProject =
             fixedProjectId != null && fixedProjectId.isNotEmpty;
+        final fixedProject = hasFixedProject
+            ? projects.cast<ProjectSummary?>().firstWhere(
+                (project) => project?.id == fixedProjectId,
+                orElse: () => null,
+              )
+            : null;
+        if (hasFixedProject && fixedProject == null) {
+          return const AppEmptyState(
+            icon: Icons.lock_outline,
+            title: 'Imports unavailable',
+            message:
+                'Imports are available only for projects where you have an approved assignment.',
+          );
+        }
         final categories = _deriveCategories(projects);
         final uploadableProjects = _uploadableProjects(projects);
         if (hasFixedProject) {
-          final project = projects.cast<ProjectSummary?>().firstWhere(
-            (item) => item?.id == fixedProjectId,
-            orElse: () => null,
-          );
-          if (project != null) {
-            _selectedCategory = project.categoryId;
-            _selectedProjectId = project.id;
-            _selectedAdminCategoryId = project.categoryId;
-            _selectedAdminProjectId = project.id;
-          }
+          _selectedCategory = fixedProject?.categoryId;
+          _selectedProjectId = fixedProject?.id;
+          _selectedAdminCategoryId = fixedProject?.categoryId;
+          _selectedAdminProjectId = fixedProject?.id;
         } else if (user.role == UserRole.contributor) {
           _syncSelection(categories, uploadableProjects);
         } else {
@@ -147,13 +155,6 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
           projects,
           _selectedAdminCategoryId,
         );
-        final fixedProject = hasFixedProject
-            ? projects.cast<ProjectSummary?>().firstWhere(
-                (project) => project?.id == fixedProjectId,
-                orElse: () => null,
-              )
-            : null;
-
         return ListView(
           controller: _scrollController,
           key: PageStorageKey<String>('imports-${user.role.name}'),
@@ -328,7 +329,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                 title: user.role == UserRole.contributor
                     ? 'No imports submitted yet'
                     : 'No imports match this filter',
-                  message: user.role == UserRole.contributor
+                message: user.role == UserRole.contributor
                     ? 'Choose a project, upload a GIS file, and it will appear here once processing begins.'
                     : 'Contributor uploads awaiting review will appear here when they match the selected filters.',
               )
@@ -367,6 +368,24 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
     required List<ProjectSummary> projects,
     ProjectSummary? fixedProject,
   }) {
+    if (fixedProject == null && projects.isEmpty) {
+      return AppCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Submit new import',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            const Text(
+              'Imports are available only for projects where you have an approved assignment.',
+            ),
+          ],
+        ),
+      );
+    }
+
     final filteredProjects = fixedProject != null
         ? <ProjectSummary>[fixedProject]
         : projects
@@ -583,9 +602,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
   }
 
   List<ProjectSummary> _uploadableProjects(List<ProjectSummary> projects) {
-    return projects
-        .where((project) => project.status == 'active')
-        .toList(growable: false)
+    return List<ProjectSummary>.from(projects)
       ..sort((a, b) => a.name.compareTo(b.name));
   }
 
