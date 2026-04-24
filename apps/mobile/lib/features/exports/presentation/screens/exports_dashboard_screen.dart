@@ -70,7 +70,6 @@ class _ExportsDashboardScreenState
     final projectsAsync = ref.watch(projectListProvider(ProjectViewScope.all));
     final exportState = ref.watch(exportsControllerProvider);
     final controller = ref.read(exportsControllerProvider.notifier);
-    final metrics = exportState.metrics;
     final errorText = exportState.error?.trim();
 
     return projectsAsync.when(
@@ -88,6 +87,9 @@ class _ExportsDashboardScreenState
         final hasFixedProject =
             fixedProjectId != null && fixedProjectId.isNotEmpty;
         final categories = _deriveCategories(projects);
+        final projectById = <String, ProjectSummary>{
+          for (final project in projects) project.id: project,
+        };
         if (projects.isEmpty) {
           return const AppEmptyState(
             icon: Icons.folder_off_outlined,
@@ -118,12 +120,22 @@ class _ExportsDashboardScreenState
           orElse: () => null,
         );
 
-        final scopedJobs = hasFixedProject
-            ? exportState.jobs
-                  .where((job) => job.projectId == _selectedProjectId)
-                  .toList(growable: false)
-            : exportState.jobs;
-        final visibleJobs = scopedJobs
+        final selectionScopedJobs = exportState.jobs.where((job) {
+          if (_selectedProjectId != null && job.projectId != _selectedProjectId) {
+            return false;
+          }
+          if (!hasFixedProject &&
+              _selectedCategoryId != null &&
+              _selectedCategoryId!.trim().isNotEmpty) {
+            final project = projectById[job.projectId];
+            if (project?.categoryId != _selectedCategoryId) {
+              return false;
+            }
+          }
+          return true;
+        }).toList(growable: false);
+        final scopedMetrics = ExportDashboardMetrics.fromJobs(selectionScopedJobs);
+        final visibleJobs = selectionScopedJobs
             .where(
               (job) => switch (_jobFormatFilter) {
                 _ExportJobFormatFilter.all => true,
@@ -179,25 +191,26 @@ class _ExportsDashboardScreenState
                     _MetricCard(
                       width: cardWidth,
                       label: 'Total jobs',
-                      value: '${metrics.total}',
+                      value: '${scopedMetrics.total}',
                       icon: Icons.work_outline,
                     ),
                     _MetricCard(
                       width: cardWidth,
                       label: 'Pending/processing',
-                      value: '${metrics.pending + metrics.processing}',
+                      value:
+                          '${scopedMetrics.pending + scopedMetrics.processing}',
                       icon: Icons.hourglass_bottom,
                     ),
                     _MetricCard(
                       width: cardWidth,
                       label: 'Completed',
-                      value: '${metrics.completed}',
+                      value: '${scopedMetrics.completed}',
                       icon: Icons.check_circle_outline,
                     ),
                     _MetricCard(
                       width: cardWidth,
                       label: 'Failed',
-                      value: '${metrics.failed}',
+                      value: '${scopedMetrics.failed}',
                       icon: Icons.error_outline,
                     ),
                   ],
@@ -248,12 +261,26 @@ class _ExportsDashboardScreenState
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   if (hasFixedProject)
-                    InputDecorator(
-                      decoration: const InputDecoration(labelText: 'Project'),
-                      child: Text(
-                        _selectedProjectName,
-                        style: Theme.of(context).textTheme.bodyLarge,
-                      ),
+                    Column(
+                      children: [
+                        InputDecorator(
+                          decoration: const InputDecoration(
+                            labelText: 'Category',
+                          ),
+                          child: Text(
+                            selectedProject?.category ?? 'Category',
+                            style: Theme.of(context).textTheme.bodyLarge,
+                          ),
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        InputDecorator(
+                          decoration: const InputDecoration(labelText: 'Project'),
+                          child: Text(
+                            _selectedProjectName,
+                            style: Theme.of(context).textTheme.bodyLarge,
+                          ),
+                        ),
+                      ],
                     )
                   else
                     Column(
