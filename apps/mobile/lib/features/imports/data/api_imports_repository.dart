@@ -54,9 +54,7 @@ class ApiImportsRepository implements ImportsRepository {
       );
       final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
       final items = rows
-          .map(
-            (row) => _toImportJob(Map<String, dynamic>.from(row as Map)),
-          )
+          .map((row) => _toImportJob(Map<String, dynamic>.from(row as Map)))
           .toList(growable: false);
       final pagination = Map<String, dynamic>.from(
         response.data?['pagination'] as Map? ?? const <String, dynamic>{},
@@ -125,7 +123,8 @@ class ApiImportsRepository implements ImportsRepository {
       final previewRows =
           (data['preview_features'] as List? ?? const <dynamic>[])
               .map(
-                (row) => _toImportedFeature(Map<String, dynamic>.from(row as Map)),
+                (row) =>
+                    _toImportedFeature(Map<String, dynamic>.from(row as Map)),
               )
               .toList(growable: false);
       return GisImportDetails(job: job, previewFeatures: previewRows);
@@ -141,12 +140,14 @@ class ApiImportsRepository implements ImportsRepository {
   Future<List<ImportedFeature>> fetchImportFeatures({
     required String importId,
     String? status,
+    String? issue,
     int page = 1,
     int limit = 100,
   }) async {
     final result = await fetchImportFeaturesPage(
       importId: importId,
       status: status,
+      issue: issue,
       page: page,
       limit: limit,
     );
@@ -157,6 +158,7 @@ class ApiImportsRepository implements ImportsRepository {
   Future<PaginatedResult<ImportedFeature>> fetchImportFeaturesPage({
     required String importId,
     String? status,
+    String? issue,
     int page = 1,
     int limit = 20,
   }) async {
@@ -167,6 +169,7 @@ class ApiImportsRepository implements ImportsRepository {
           'page': page,
           'limit': limit,
           if (status?.trim().isNotEmpty ?? false) 'status': status!.trim(),
+          if (issue?.trim().isNotEmpty ?? false) 'issue': issue!.trim(),
         },
       );
       final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
@@ -210,7 +213,8 @@ class ApiImportsRepository implements ImportsRepository {
         data: <String, dynamic>{
           'status': status,
           if (reason?.trim().isNotEmpty ?? false) 'reason': reason!.trim(),
-          if (featureIds != null && featureIds.isNotEmpty) 'feature_ids': featureIds,
+          if (featureIds != null && featureIds.isNotEmpty)
+            'feature_ids': featureIds,
         },
       );
       final row = Map<String, dynamic>.from(
@@ -289,12 +293,14 @@ class ApiImportsRepository implements ImportsRepository {
           : null,
       attributes: _toMap(row['attributes']),
       status: (row['status'] as String?) ?? 'pending_review',
-      validationWarnings: ((row['validation_warnings'] as List?) ?? const <dynamic>[])
-          .map((value) => value.toString())
-          .toList(growable: false),
-      validationErrors: ((row['validation_errors'] as List?) ?? const <dynamic>[])
-          .map((value) => value.toString())
-          .toList(growable: false),
+      validationWarnings:
+          ((row['validation_warnings'] as List?) ?? const <dynamic>[])
+              .map((value) => value.toString())
+              .toList(growable: false),
+      validationErrors:
+          ((row['validation_errors'] as List?) ?? const <dynamic>[])
+              .map((value) => value.toString())
+              .toList(growable: false),
       validationReport: _toMap(row['validation_report']),
       duplicateFeatureId: row['duplicate_feature_id'] as String?,
       approvedFeatureId: row['approved_feature_id'] as String?,

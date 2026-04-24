@@ -31,8 +31,10 @@ class ImportDetailScreen extends ConsumerStatefulWidget {
 
 class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
   final Set<String> _selectedFeatureIds = <String>{};
-  static const Duration _refreshInterval = Duration(seconds: 4);
+  static const Duration _refreshInterval = Duration(seconds: 5);
   bool _isSubmitting = false;
+  GisImportDetails? _liveDetails;
+  String? _selectedIssueFilter;
   Timer? _refreshTimer;
   Future<void> Function()? _refreshImportDetails;
 
@@ -49,125 +51,195 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       return const SizedBox.shrink();
     }
     final isAdmin = session.user.role == UserRole.admin;
+    final featureQuery = ImportedFeatureListQuery(
+      importId: widget.importId,
+      issue: _selectedIssueFilter,
+    );
     final detailsAsync = ref.watch(importDetailsProvider(widget.importId));
     final featuresAsync = ref.watch(
-      paginatedImportFeaturesProvider(
-        ImportedFeatureListQuery(importId: widget.importId),
-      ),
+      paginatedImportFeaturesProvider(featureQuery),
     );
     final featuresController = ref.read(
-      paginatedImportFeaturesProvider(
-        ImportedFeatureListQuery(importId: widget.importId),
-      ).notifier,
+      paginatedImportFeaturesProvider(featureQuery).notifier,
     );
     _refreshImportDetails = () async {
-      ref.invalidate(importDetailsProvider(widget.importId));
-      await featuresController.refresh();
+      try {
+        final refreshedDetails = await ref
+            .read(importsRepositoryProvider)
+            .fetchImportDetails(widget.importId);
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _liveDetails = refreshedDetails;
+        });
+      } catch (_) {
+        if (!mounted) {
+          return;
+        }
+      }
+      await featuresController.refreshSilently();
     };
 
-    return detailsAsync.when(
-      loading: () {
-        _configureAutoRefresh(false);
-        return const Center(child: CircularProgressIndicator());
-      },
-      error: (error, _) => AppEmptyState(
-        icon: Icons.error_outline,
-        title: 'Import details unavailable',
-        message: userFacingErrorMessage(
-          error,
-          fallback: 'Unable to load this import right now.',
-        ),
-        actionLabel: 'Retry',
-        onAction: () => ref.invalidate(importDetailsProvider(widget.importId)),
-      ),
-      data: (details) {
-        _configureAutoRefresh(_isImportStillProcessing(details.job.status));
-        final featureState = featuresAsync.valueOrNull;
-        final features = featureState?.items ?? details.previewFeatures;
-        final actionableFeatures = features
-            .where((item) => item.isActionable)
-            .toList(growable: false);
-        final selectedActionableIds = _selectedFeatureIds
-            .where((id) => actionableFeatures.any((item) => item.id == id))
-            .toList(growable: false);
-        final selectedRejectableIds = _selectedFeatureIds
-            .where(
-              (id) => features.any(
-                (item) => item.id == id && item.status == 'pending_review',
-              ),
-            )
-            .toList(growable: false);
+    final providerDetails = detailsAsync.valueOrNull;
+    final details = _latestDetails(providerDetails);
+    if (providerDetails != null &&
+        (_liveDetails == null ||
+            providerDetails.job.updatedAt.isAfter(
+              _liveDetails!.job.updatedAt,
+            ))) {
+      _liveDetails = providerDetails;
+    }
 
-        return ListView(
-          children: [
-            _ImportSummaryCard(job: details.job),
-            const SizedBox(height: AppSpacing.md),
-            _ImportValidationCard(job: details.job),
-            const SizedBox(height: AppSpacing.md),
-            if (_isImportStillProcessing(details.job.status))
-              _ImportProcessingCard(job: details.job)
-            else
-              _ImportPreviewMapCard(features: features),
-            const SizedBox(height: AppSpacing.md),
-            if (isAdmin && actionableFeatures.isNotEmpty)
-              _buildReviewActions(
-                context,
-                details: details,
-                selectedActionableIds: selectedActionableIds,
-                selectedRejectableIds: selectedRejectableIds,
+    if (details == null) {
+      return detailsAsync.when(
+        loading: () {
+          _configureAutoRefresh(false);
+          return const Center(child: CircularProgressIndicator());
+        },
+        error: (error, _) => AppEmptyState(
+          icon: Icons.error_outline,
+          title: 'Import details unavailable',
+          message: userFacingErrorMessage(
+            error,
+            fallback: 'Unable to load this import right now.',
+          ),
+          actionLabel: 'Retry',
+          onAction: () =>
+              ref.invalidate(importDetailsProvider(widget.importId)),
+        ),
+        data: (_) => const SizedBox.shrink(),
+      );
+    }
+
+    _configureAutoRefresh(_isImportStillProcessing(details.job.status));
+    final featureState = featuresAsync.valueOrNull;
+    final features =
+        featureState?.items ??
+        (_selectedIssueFilter == null
+            ? details.previewFeatures
+            : const <ImportedFeature>[]);
+    final issueFilters = _issueFilterOptions(details.job.validationSummary);
+    if (_selectedIssueFilter != null &&
+        !issueFilters.any((option) => option.message == _selectedIssueFilter)) {
+      _selectedIssueFilter = null;
+    }
+    final actionableFeatures = features
+        .where((item) => item.isActionable)
+        .toList(growable: false);
+    final selectedActionableIds = _selectedFeatureIds
+        .where((id) => actionableFeatures.any((item) => item.id == id))
+        .toList(growable: false);
+    final selectedRejectableIds = _selectedFeatureIds
+        .where(
+          (id) => features.any(
+            (item) => item.id == id && item.status == 'pending_review',
+          ),
+        )
+        .toList(growable: false);
+
+    return ListView(
+      children: [
+        _ImportSummaryCard(job: details.job),
+        const SizedBox(height: AppSpacing.md),
+        _ImportValidationCard(job: details.job),
+        const SizedBox(height: AppSpacing.md),
+        if (_isImportStillProcessing(details.job.status))
+          _ImportProcessingCard(job: details.job)
+        else
+          _ImportPreviewMapCard(features: features),
+        const SizedBox(height: AppSpacing.md),
+        if (isAdmin && actionableFeatures.isNotEmpty)
+          _buildReviewActions(
+            context,
+            details: details,
+            selectedActionableIds: selectedActionableIds,
+            selectedRejectableIds: selectedRejectableIds,
+          ),
+        if (isAdmin && actionableFeatures.isNotEmpty)
+          const SizedBox(height: AppSpacing.md),
+        Text(
+          'Staged features (${featureState?.total ?? details.job.geometryCount})',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        if (issueFilters.isNotEmpty) ...[
+          DropdownButtonFormField<String?>(
+            initialValue: _selectedIssueFilter,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Issue filter'),
+            items: <DropdownMenuItem<String?>>[
+              const DropdownMenuItem<String?>(
+                value: null,
+                child: Text('All staged features'),
               ),
-            if (isAdmin && actionableFeatures.isNotEmpty)
-              const SizedBox(height: AppSpacing.md),
-            Text(
-              'Staged features (${featureState?.total ?? details.job.geometryCount})',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            if (features.isEmpty)
-              const AppEmptyState(
-                icon: Icons.map_outlined,
-                title: 'No preview features available',
-                message:
-                    'This import does not currently expose preview geometries.',
-              )
-            else
-              ProgressiveListSection<ImportedFeature>(
-                items: features,
-                resetKey: Object.hash(
-                  widget.importId,
-                  details.job.updatedAt,
-                  features.length,
-                  featureState?.total ?? 0,
+              ...issueFilters.map(
+                (option) => DropdownMenuItem<String?>(
+                  value: option.message,
+                  child: Text(
+                    '${option.message} (${option.count})',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-                hasMore: featureState?.hasMore ?? false,
-                isLoadingMore: featureState?.isLoadingMore ?? false,
-                onLoadMore: featuresController.loadMore,
-                itemBuilder: (context, feature, _) => _ImportedFeatureCard(
-                  feature: feature,
-                  selectable: isAdmin && feature.isActionable,
-                  selected: _selectedFeatureIds.contains(feature.id),
-                  onToggleSelected: () {
-                    setState(() {
-                      if (_selectedFeatureIds.contains(feature.id)) {
-                        _selectedFeatureIds.remove(feature.id);
-                      } else {
-                        _selectedFeatureIds.add(feature.id);
-                      }
-                    });
-                  },
-                ),
-              ),
-            if ((featureState?.total ?? details.job.geometryCount) >
-                features.length) ...[
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                'Showing ${features.length} of ${featureState?.total ?? details.job.geometryCount} staged feature(s) for this import.',
-                style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
-          ],
-        );
-      },
+            onChanged: (value) {
+              setState(() {
+                _selectedIssueFilter = value;
+                _selectedFeatureIds.clear();
+              });
+            },
+          ),
+          const SizedBox(height: AppSpacing.sm),
+        ],
+        if (features.isEmpty)
+          AppEmptyState(
+            icon: Icons.map_outlined,
+            title: _selectedIssueFilter == null
+                ? 'No preview features available'
+                : 'No staged features match this issue',
+            message: _selectedIssueFilter == null
+                ? 'This import does not currently expose preview geometries.'
+                : 'No staged features currently match the selected validation issue.',
+          )
+        else
+          ProgressiveListSection<ImportedFeature>(
+            items: features,
+            resetKey: Object.hash(
+              widget.importId,
+              details.job.updatedAt,
+              _selectedIssueFilter,
+              features.length,
+              featureState?.total ?? 0,
+            ),
+            hasMore: featureState?.hasMore ?? false,
+            isLoadingMore: featureState?.isLoadingMore ?? false,
+            onLoadMore: featuresController.loadMore,
+            itemBuilder: (context, feature, _) => _ImportedFeatureCard(
+              feature: feature,
+              selectable: isAdmin && feature.isActionable,
+              selected: _selectedFeatureIds.contains(feature.id),
+              onToggleSelected: () {
+                setState(() {
+                  if (_selectedFeatureIds.contains(feature.id)) {
+                    _selectedFeatureIds.remove(feature.id);
+                  } else {
+                    _selectedFeatureIds.add(feature.id);
+                  }
+                });
+              },
+            ),
+          ),
+        if ((featureState?.total ?? details.job.geometryCount) >
+            features.length) ...[
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            'Showing ${features.length} of ${featureState?.total ?? details.job.geometryCount} staged feature(s) for this import.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ],
     );
   }
 
@@ -183,6 +255,18 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       }
       unawaited(_refreshImportDetails?.call());
     });
+  }
+
+  GisImportDetails? _latestDetails(GisImportDetails? providerDetails) {
+    if (providerDetails == null) {
+      return _liveDetails;
+    }
+    if (_liveDetails == null) {
+      return providerDetails;
+    }
+    return providerDetails.job.updatedAt.isAfter(_liveDetails!.job.updatedAt)
+        ? providerDetails
+        : _liveDetails;
   }
 
   Widget _buildReviewActions(
@@ -369,8 +453,6 @@ class _ImportSummaryCard extends StatelessWidget {
             children: [
               Chip(label: Text('${job.geometryCount} geometries')),
               Chip(label: Text(job.fileType.toUpperCase())),
-              if (job.sourceCrs?.trim().isNotEmpty ?? false)
-                Chip(label: Text(job.sourceCrs!)),
               if (job.geometryTypes.isNotEmpty)
                 Chip(label: Text(job.geometryTypes.join(', '))),
             ],
@@ -380,6 +462,14 @@ class _ImportSummaryCard extends StatelessWidget {
           Text('Uploaded ${_formatDateTime(job.uploadedAt)}'),
           if (job.reviewedByName?.trim().isNotEmpty ?? false)
             Text('Reviewed by ${job.reviewedByName}'),
+          if (job.sourceCrs?.trim().isNotEmpty ?? false) ...[
+            const SizedBox(height: AppSpacing.sm),
+            _MetadataField(label: 'Source CRS', value: job.sourceCrs!),
+          ],
+          if (job.sourceLayerName?.trim().isNotEmpty ?? false) ...[
+            const SizedBox(height: AppSpacing.xs),
+            _MetadataField(label: 'Source layer', value: job.sourceLayerName!),
+          ],
           if (job.processingMessage?.trim().isNotEmpty ?? false) ...[
             const SizedBox(height: AppSpacing.sm),
             Text(job.processingMessage!, softWrap: true),
@@ -509,9 +599,9 @@ class _ImportValidationCard extends StatelessWidget {
             ...detailEntries.map(
               (entry) => Padding(
                 padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  '${_labelize(entry.key)}: ${entry.value}',
-                  softWrap: true,
+                child: _MetadataField(
+                  label: _labelize(entry.key),
+                  value: entry.value?.toString() ?? '',
                 ),
               ),
             ),
@@ -615,11 +705,53 @@ class _ImportedFeatureCard extends StatelessWidget {
   }
 }
 
+class _MetadataField extends StatelessWidget {
+  const _MetadataField({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: Theme.of(context).colorScheme.primary,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(value, softWrap: true),
+      ],
+    );
+  }
+}
+
 class _ValidationIssueGroup {
   const _ValidationIssueGroup({required this.message, required this.count});
 
   final String message;
   final int count;
+}
+
+List<_ValidationIssueGroup> _issueFilterOptions(Map<String, dynamic> summary) {
+  final groups = <_ValidationIssueGroup>[
+    ..._issueGroups(summary['error_breakdown'] ?? summary['top_errors']),
+    ..._issueGroups(summary['warning_breakdown'] ?? summary['top_warnings']),
+  ];
+  final byMessage = <String, _ValidationIssueGroup>{};
+  for (final group in groups) {
+    byMessage[group.message] = group;
+  }
+  return byMessage.values.toList(growable: false)..sort((left, right) {
+    if (right.count != left.count) {
+      return right.count.compareTo(left.count);
+    }
+    return left.message.compareTo(right.message);
+  });
 }
 
 List<_ValidationIssueGroup> _issueGroups(Object? value) {
@@ -682,6 +814,7 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
     }
 
     final previewable = _previewableFeatures(drawable);
+    final outsideWorkspaceCount = drawable.length - previewable.length;
     if (previewable.isEmpty) {
       return AppCard(
         child: Column(
@@ -693,7 +826,9 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
             ),
             const SizedBox(height: AppSpacing.sm),
             Text(
-              'This preview only renders staged geometries inside the Lebanon workspace. The current import does not expose any previewable geometry in that workspace yet.',
+              outsideWorkspaceCount > 0
+                  ? 'The staged geometry is outside the Lebanon workspace. No preview map is shown until the data falls inside Lebanon.'
+                  : 'This preview only renders staged geometries inside the Lebanon workspace. The current import does not expose any previewable geometry in that workspace yet.',
               softWrap: true,
             ),
           ],
@@ -725,6 +860,14 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
                     style: Theme.of(context).textTheme.bodySmall,
                     softWrap: true,
                   ),
+                  if (outsideWorkspaceCount > 0) ...[
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(
+                      '$outsideWorkspaceCount staged feature(s) remain outside the Lebanon workspace and are excluded from this preview.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                      softWrap: true,
+                    ),
+                  ],
                 ],
               );
               final basemapToggle = SegmentedButton<LebanonBasemapStyle>(
@@ -831,17 +974,7 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
       if (geometry == null) {
         continue;
       }
-      final type = geometry['type'] as String?;
-      if (type == 'Point') {
-        final point = geometryFocusPoint(geometry);
-        if (point != null) {
-          points.add(point);
-        }
-      } else if (type == 'LineString') {
-        points.addAll(lineGeometryPoints(geometry));
-      } else if (type == 'Polygon') {
-        points.addAll(polygonGeometryPoints(geometry));
-      }
+      points.addAll(geometryPoints(geometry).where(LebanonMapConfig.contains));
     }
     if (points.isEmpty) {
       return null;
@@ -869,7 +1002,9 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
             return null;
           }
           final point = geometryFocusPoint(geometry);
-          if (point == null || geometry['type'] != 'Point') {
+          if (point == null ||
+              (geometry['type'] != 'Point' &&
+                  geometry['type'] != 'MultiPoint')) {
             return null;
           }
           return Marker(
@@ -890,47 +1025,55 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
   }
 
   List<Polyline> _polylines(List<ImportedFeature> features) {
-    return features
-        .map((feature) {
-          final geometry = feature.geometry;
-          if (geometry == null || geometry['type'] != 'LineString') {
-            return null;
-          }
-          final points = lineGeometryPoints(geometry);
-          if (points.isEmpty) {
-            return null;
-          }
-          return Polyline(
+    final polylines = <Polyline>[];
+    for (final feature in features) {
+      final geometry = feature.geometry;
+      if (geometry == null ||
+          (geometry['type'] != 'LineString' &&
+              geometry['type'] != 'MultiLineString')) {
+        continue;
+      }
+      for (final points in _polylineSegments(geometry)) {
+        if (points.isEmpty) {
+          continue;
+        }
+        polylines.add(
+          Polyline(
             points: points,
             strokeWidth: 3,
             color: _statusColor(feature.status),
-          );
-        })
-        .whereType<Polyline>()
-        .toList(growable: false);
+          ),
+        );
+      }
+    }
+    return polylines;
   }
 
   List<Polygon> _polygons(List<ImportedFeature> features) {
-    return features
-        .map((feature) {
-          final geometry = feature.geometry;
-          if (geometry == null || geometry['type'] != 'Polygon') {
-            return null;
-          }
-          final points = polygonGeometryPoints(geometry);
-          if (points.isEmpty) {
-            return null;
-          }
-          final color = _statusColor(feature.status);
-          return Polygon(
+    final polygons = <Polygon>[];
+    for (final feature in features) {
+      final geometry = feature.geometry;
+      if (geometry == null ||
+          (geometry['type'] != 'Polygon' &&
+              geometry['type'] != 'MultiPolygon')) {
+        continue;
+      }
+      final color = _statusColor(feature.status);
+      for (final points in _polygonSegments(geometry)) {
+        if (points.isEmpty) {
+          continue;
+        }
+        polygons.add(
+          Polygon(
             points: points,
             borderStrokeWidth: 2,
             borderColor: color,
             color: color.withValues(alpha: 0.18),
-          );
-        })
-        .whereType<Polygon>()
-        .toList(growable: false);
+          ),
+        );
+      }
+    }
+    return polygons;
   }
 
   List<ImportedFeature> _previewableFeatures(List<ImportedFeature> features) {
@@ -943,19 +1086,62 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
     if (geometry == null) {
       return false;
     }
-    final type = geometry['type'] as String?;
-    final points = <LatLng>[];
-    if (type == 'Point') {
-      final point = geometryFocusPoint(geometry);
-      if (point != null) {
-        points.add(point);
-      }
-    } else if (type == 'LineString') {
-      points.addAll(lineGeometryPoints(geometry));
-    } else if (type == 'Polygon') {
-      points.addAll(polygonGeometryPoints(geometry));
+    return geometryPoints(geometry).any(LebanonMapConfig.contains);
+  }
+
+  List<List<LatLng>> _polylineSegments(Map<String, dynamic> geometry) {
+    if (geometry['type'] == 'LineString') {
+      final points = lineGeometryPoints(geometry);
+      return points.isEmpty ? const <List<LatLng>>[] : <List<LatLng>>[points];
     }
-    return points.any(LebanonMapConfig.contains);
+    if (geometry['type'] != 'MultiLineString') {
+      return const <List<LatLng>>[];
+    }
+    final coordinates = geometry['coordinates'];
+    if (coordinates is! List) {
+      return const <List<LatLng>>[];
+    }
+    return coordinates
+        .whereType<List>()
+        .map(
+          (segment) => segment
+              .map(_decodePreviewCoordinatePair)
+              .whereType<LatLng>()
+              .toList(growable: false),
+        )
+        .where((points) => points.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  List<List<LatLng>> _polygonSegments(Map<String, dynamic> geometry) {
+    if (geometry['type'] == 'Polygon') {
+      final points = polygonGeometryPoints(geometry);
+      return points.isEmpty ? const <List<LatLng>>[] : <List<LatLng>>[points];
+    }
+    if (geometry['type'] != 'MultiPolygon') {
+      return const <List<LatLng>>[];
+    }
+    final coordinates = geometry['coordinates'];
+    if (coordinates is! List) {
+      return const <List<LatLng>>[];
+    }
+    return coordinates
+        .whereType<List>()
+        .map((polygon) {
+          if (polygon.isEmpty) {
+            return const <LatLng>[];
+          }
+          final firstRing = polygon.first;
+          if (firstRing is! List) {
+            return const <LatLng>[];
+          }
+          return firstRing
+              .map(_decodePreviewCoordinatePair)
+              .whereType<LatLng>()
+              .toList(growable: false);
+        })
+        .where((points) => points.isNotEmpty)
+        .toList(growable: false);
   }
 }
 
@@ -1019,6 +1205,18 @@ String _labelize(String key) {
       .where((part) => part.isNotEmpty)
       .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
       .join(' ');
+}
+
+LatLng? _decodePreviewCoordinatePair(Object? raw) {
+  if (raw is! List || raw.length < 2) {
+    return null;
+  }
+  final lon = raw[0];
+  final lat = raw[1];
+  if (lon is! num || lat is! num) {
+    return null;
+  }
+  return LatLng(lat.toDouble(), lon.toDouble());
 }
 
 bool _isImportStillProcessing(String status) {

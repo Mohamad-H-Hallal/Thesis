@@ -40,7 +40,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
   ];
 
   final ScrollController _scrollController = ScrollController();
-  static const Duration _refreshInterval = Duration(seconds: 4);
+  static const Duration _refreshInterval = Duration(seconds: 8);
   String? _selectedCategory;
   String? _selectedProjectId;
   String? _selectedAdminCategoryId;
@@ -138,7 +138,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
         final jobsController = ref.read(
           paginatedImportJobsProvider(jobsQuery).notifier,
         );
-        _refreshImports = jobsController.refresh;
+        _refreshImports = jobsController.refreshSilently;
         final jobsState = jobsAsync.valueOrNull;
         final jobsError = jobsAsync.asError?.error;
         if (jobsState == null && jobsAsync.isLoading) {
@@ -172,11 +172,6 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
           controller: _scrollController,
           key: PageStorageKey<String>('imports-${user.role.name}'),
           children: [
-            if (jobsAsync.isLoading)
-              const Padding(
-                padding: EdgeInsets.only(bottom: AppSpacing.sm),
-                child: LinearProgressIndicator(),
-              ),
             if (jobsAsync.hasError && jobsState != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: AppSpacing.md),

@@ -308,6 +308,21 @@ describe('GIS import workflow', () => {
     expect(detailResponse.body.data.preview_features[0].validation_errors).toEqual(
       expect.arrayContaining(['Missing required attribute: feature_type']),
     );
+
+    const issueFilteredResponse = await request(app)
+      .get(
+        `${API_PREFIX}/imports/${uploadResponse.body.data.id}/features?page=1&limit=20&issue=${encodeURIComponent(
+          'Missing required attribute: feature_type',
+        )}`,
+      )
+      .set(authHeader(contributorLogin.token))
+      .expect(200);
+
+    expect(issueFilteredResponse.body.pagination.total).toBe(1);
+    expect(issueFilteredResponse.body.data).toHaveLength(1);
+    expect(issueFilteredResponse.body.data[0].validation_errors).toEqual(
+      expect.arrayContaining(['Missing required attribute: feature_type']),
+    );
   });
 
   test('contributors can only list and open their own import jobs', async () => {
@@ -410,6 +425,97 @@ describe('GIS import workflow', () => {
       .set(authHeader(contributorBLogin.token))
       .expect(403);
   });
+
+  test('accepts MultiPolygon geometries for staged review', async () => {
+    const admin = await createAdminUser({
+      fullName: 'Import Multipolygon Admin',
+      emailPrefix: 'import-multipolygon-admin',
+    });
+    const contributorRegistration = await registerUser({
+      role: 'contributor',
+      fullName: 'Import Multipolygon Contributor',
+      emailPrefix: 'import-multipolygon-contributor',
+    });
+    await approveContributorRequest({
+      token: admin.token,
+      userId: contributorRegistration.user.id,
+    });
+    const contributorLogin = await loginUser({
+      email: contributorRegistration.email,
+      password: contributorRegistration.password,
+    });
+
+    const category = await createCategory({
+      token: admin.token,
+      name: 'Import Multipolygon Category',
+    });
+    const project = await createProject({
+      token: admin.token,
+      categoryId: category.id,
+      name: 'Import Multipolygon Project',
+      visibleToContributors: true,
+    });
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}`)
+      .set(authHeader(admin.token))
+      .send({ status: 'active' })
+      .expect(200);
+    const assignment = await createAssignment({
+      token: admin.token,
+      projectId: project.id,
+      userId: contributorRegistration.user.id,
+    });
+    await updateAssignmentStatus({
+      token: admin.token,
+      assignmentId: assignment.id,
+      status: 'approved',
+    });
+
+    const geojsonPath = await createTempGeoJsonFile('import-multipolygon', {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: { feature_type: 'cedar', name: 'MultiPolygon cedar area' },
+          geometry: {
+            type: 'MultiPolygon',
+            coordinates: [
+              [
+                [
+                  [35.48, 33.89],
+                  [35.49, 33.89],
+                  [35.49, 33.90],
+                  [35.48, 33.90],
+                  [35.48, 33.89],
+                ],
+              ],
+            ],
+          },
+        },
+      ],
+    });
+
+    const uploadResponse = await request(app)
+      .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+      .set(authHeader(contributorLogin.token))
+      .attach('file', geojsonPath)
+      .expect(202);
+
+    const detailResponse = await waitForImportStatus({
+      importId: uploadResponse.body.data.id,
+      token: admin.token,
+      expectedStatuses: ['pending_review'],
+    });
+
+    expect(detailResponse.body.data.job.pending_feature_count).toBe(1);
+    expect(detailResponse.body.data.job.failed_feature_count).toBe(0);
+    expect(detailResponse.body.data.preview_features[0].geometry_type).toBe(
+      'MultiPolygon',
+    );
+    expect(detailResponse.body.data.preview_features[0].validation_errors).toEqual(
+      expect.not.arrayContaining(['Geometry is missing or unsupported.']),
+    );
+  }, 15000);
 
   test('accepts larger imports beyond the old 2000-feature cap', async () => {
     const admin = await createAdminUser({

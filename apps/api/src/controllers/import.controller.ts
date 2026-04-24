@@ -34,7 +34,13 @@ const IMPORT_PROCESSING_STALE_AFTER_MS = Number.parseInt(
 );
 
 type ImportFileType = 'geojson' | 'shapefile_zip' | 'kml' | 'kmz';
-type GeometryType = 'Point' | 'LineString' | 'Polygon';
+type GeometryType =
+  | 'Point'
+  | 'MultiPoint'
+  | 'LineString'
+  | 'MultiLineString'
+  | 'Polygon'
+  | 'MultiPolygon';
 type PlainObject = Record<string, unknown>;
 
 type ParsedImportPayload = {
@@ -202,32 +208,46 @@ const isPosition = (value: unknown): value is [number, number] => {
   return Number.isFinite(lon) && Number.isFinite(lat);
 };
 
+const validateLinearRing = (ring: unknown): boolean => {
+  if (!Array.isArray(ring) || ring.length < 4 || !ring.every(isPosition)) {
+    return false;
+  }
+
+  const first = ring[0] as [number, number];
+  const last = ring[ring.length - 1] as [number, number];
+  return first[0] === last[0] && first[1] === last[1];
+};
+
 const validateCoordinates = (type: GeometryType, coordinates: unknown): boolean => {
-  if (type === 'Point') {
-    return isPosition(coordinates);
+  switch (type) {
+    case 'Point':
+      return isPosition(coordinates);
+    case 'MultiPoint':
+      return Array.isArray(coordinates) && coordinates.length > 0 && coordinates.every(isPosition);
+    case 'LineString':
+      return Array.isArray(coordinates) && coordinates.length >= 2 && coordinates.every(isPosition);
+    case 'MultiLineString':
+      return (
+        Array.isArray(coordinates) &&
+        coordinates.length > 0 &&
+        coordinates.every(
+          (line) => Array.isArray(line) && line.length >= 2 && line.every(isPosition),
+        )
+      );
+    case 'Polygon':
+      return Array.isArray(coordinates) && coordinates.length > 0 && coordinates.every(validateLinearRing);
+    case 'MultiPolygon':
+      return (
+        Array.isArray(coordinates) &&
+        coordinates.length > 0 &&
+        coordinates.every(
+          (polygon) =>
+            Array.isArray(polygon) &&
+            polygon.length > 0 &&
+            polygon.every(validateLinearRing),
+        )
+      );
   }
-
-  if (type === 'LineString') {
-    return Array.isArray(coordinates) && coordinates.length >= 2 && coordinates.every(isPosition);
-  }
-
-  if (type === 'Polygon') {
-    if (!Array.isArray(coordinates) || coordinates.length === 0) {
-      return false;
-    }
-
-    return coordinates.every((ring) => {
-      if (!Array.isArray(ring) || ring.length < 4 || !ring.every(isPosition)) {
-        return false;
-      }
-
-      const first = ring[0] as [number, number];
-      const last = ring[ring.length - 1] as [number, number];
-      return first[0] === last[0] && first[1] === last[1];
-    });
-  }
-
-  return false;
 };
 
 const mercatorToWgs84 = ([x, y]: [number, number]): [number, number] => {
@@ -236,20 +256,55 @@ const mercatorToWgs84 = ([x, y]: [number, number]): [number, number] => {
   return [Number(lon.toFixed(8)), Number(lat.toFixed(8))];
 };
 
+const transformMultiPointCoordinates = (
+  coordinates: Array<[number, number]>,
+  projector: (value: [number, number]) => [number, number],
+) => coordinates.map(projector);
+
+const transformMultiLineCoordinates = (
+  coordinates: Array<Array<[number, number]>>,
+  projector: (value: [number, number]) => [number, number],
+) => coordinates.map((line) => line.map(projector));
+
+const transformMultiPolygonCoordinates = (
+  coordinates: Array<Array<Array<[number, number]>>>,
+  projector: (value: [number, number]) => [number, number],
+) => coordinates.map((polygon) => polygon.map((ring) => ring.map(projector)));
+
 const transformGeometryCoordinates = (
   geometryType: GeometryType,
   coordinates: unknown,
   projector: (value: [number, number]) => [number, number],
 ): unknown => {
-  if (geometryType === 'Point') {
-    return projector(coordinates as [number, number]);
+  switch (geometryType) {
+    case 'Point':
+      return projector(coordinates as [number, number]);
+    case 'MultiPoint':
+      return transformMultiPointCoordinates(
+        coordinates as Array<[number, number]>,
+        projector,
+      );
+    case 'LineString':
+      return transformMultiPointCoordinates(
+        coordinates as Array<[number, number]>,
+        projector,
+      );
+    case 'MultiLineString':
+      return transformMultiLineCoordinates(
+        coordinates as Array<Array<[number, number]>>,
+        projector,
+      );
+    case 'Polygon':
+      return transformMultiLineCoordinates(
+        coordinates as Array<Array<[number, number]>>,
+        projector,
+      );
+    case 'MultiPolygon':
+      return transformMultiPolygonCoordinates(
+        coordinates as Array<Array<Array<[number, number]>>>,
+        projector,
+      );
   }
-
-  if (geometryType === 'LineString') {
-    return (coordinates as Array<[number, number]>).map(projector);
-  }
-
-  return (coordinates as Array<Array<[number, number]>>).map((ring) => ring.map(projector));
 };
 
 const normalizeCrsName = (raw: unknown): string | null => {
@@ -289,7 +344,17 @@ const normalizeGeoJsonGeometry = (
   }
 
   const geometryType = geometry.type as GeometryType | undefined;
-  if (!geometryType || !['Point', 'LineString', 'Polygon'].includes(geometryType)) {
+  if (
+    !geometryType ||
+    ![
+      'Point',
+      'MultiPoint',
+      'LineString',
+      'MultiLineString',
+      'Polygon',
+      'MultiPolygon',
+    ].includes(geometryType)
+  ) {
     return {
       geometryType: null,
       geometry: null,
@@ -346,10 +411,16 @@ const featureTitleFromAttributes = (
   switch (geometryType) {
     case 'Point':
       return `Imported point ${sourceIndex + 1}`;
+    case 'MultiPoint':
+      return `Imported points ${sourceIndex + 1}`;
     case 'LineString':
       return `Imported line ${sourceIndex + 1}`;
+    case 'MultiLineString':
+      return `Imported lines ${sourceIndex + 1}`;
     case 'Polygon':
       return `Imported area ${sourceIndex + 1}`;
+    case 'MultiPolygon':
+      return `Imported areas ${sourceIndex + 1}`;
     default:
       return `Imported feature ${sourceIndex + 1}`;
   }
@@ -919,9 +990,21 @@ const buildValidationSummary = ({
   warning_count: warningCount,
   error_count: errorCount,
   duplicate_of_import_job_id: duplicateOfImportJobId,
+  warning_breakdown: issueBreakdownObject(warningBreakdown),
+  error_breakdown: issueBreakdownObject(errorBreakdown),
   top_warnings: summarizeIssueBreakdown(warningBreakdown),
   top_errors: summarizeIssueBreakdown(errorBreakdown),
 });
+
+const issueBreakdownObject = (issues: Map<string, number>) =>
+  Object.fromEntries(
+    [...issues.entries()].sort((left, right) => {
+      if (right[1] !== left[1]) {
+        return right[1] - left[1];
+      }
+      return left[0].localeCompare(right[0]);
+    }),
+  );
 
 const summarizeIssueBreakdown = (issues: Map<string, number>) =>
   [...issues.entries()]
@@ -1607,6 +1690,7 @@ const listImportFeatures = async (req: Request, res: Response): Promise<void> =>
   await fetchImportJobWithAccess(importId, req.user as Express.UserContext);
   const { page, limit, offset } = getPagination(req.query.page, req.query.limit);
   const status = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+  const issue = typeof req.query.issue === 'string' ? req.query.issue.trim() : '';
 
   const whereClauses = ['gif.import_job_id = $1'];
   const params: unknown[] = [importId];
@@ -1614,6 +1698,13 @@ const listImportFeatures = async (req: Request, res: Response): Promise<void> =>
   if (status) {
     whereClauses.push(`gif.status = $${paramIndex}`);
     params.push(status);
+    paramIndex += 1;
+  }
+  if (issue) {
+    whereClauses.push(
+      `(gif.validation_errors @> to_jsonb(ARRAY[$${paramIndex}]::text[]) OR gif.validation_warnings @> to_jsonb(ARRAY[$${paramIndex}]::text[]))`,
+    );
+    params.push(issue);
     paramIndex += 1;
   }
 

@@ -152,6 +152,7 @@ class _FakeImportsRepository implements ImportsRepository {
   Future<List<ImportedFeature>> fetchImportFeatures({
     required String importId,
     String? status,
+    String? issue,
     int page = 1,
     int limit = 100,
   }) {
@@ -162,6 +163,7 @@ class _FakeImportsRepository implements ImportsRepository {
   Future<PaginatedResult<ImportedFeature>> fetchImportFeaturesPage({
     required String importId,
     String? status,
+    String? issue,
     int page = 1,
     int limit = 20,
   }) async {

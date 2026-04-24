@@ -97,22 +97,26 @@ class MockImportsRepository implements ImportsRepository {
     int page = 1,
     int limit = 20,
   }) async {
-    final filtered = _jobs.where((job) {
-      if (status != null && status.trim().isNotEmpty && job.status != status) {
-        return false;
-      }
-      if (projectId != null &&
-          projectId.trim().isNotEmpty &&
-          job.projectId != projectId) {
-        return false;
-      }
-      if (categoryId != null &&
-          categoryId.trim().isNotEmpty &&
-          job.fileMetadata['category_id']?.toString() != categoryId) {
-        return false;
-      }
-      return true;
-    }).toList(growable: false);
+    final filtered = _jobs
+        .where((job) {
+          if (status != null &&
+              status.trim().isNotEmpty &&
+              job.status != status) {
+            return false;
+          }
+          if (projectId != null &&
+              projectId.trim().isNotEmpty &&
+              job.projectId != projectId) {
+            return false;
+          }
+          if (categoryId != null &&
+              categoryId.trim().isNotEmpty &&
+              job.fileMetadata['category_id']?.toString() != categoryId) {
+            return false;
+          }
+          return true;
+        })
+        .toList(growable: false);
     final start = (page - 1) * limit;
     final end = (start + limit).clamp(0, filtered.length);
     final items = start >= filtered.length
@@ -140,12 +144,14 @@ class MockImportsRepository implements ImportsRepository {
   Future<List<ImportedFeature>> fetchImportFeatures({
     required String importId,
     String? status,
+    String? issue,
     int page = 1,
     int limit = 100,
   }) async {
     final result = await fetchImportFeaturesPage(
       importId: importId,
       status: status,
+      issue: issue,
       page: page,
       limit: limit,
     );
@@ -156,17 +162,26 @@ class MockImportsRepository implements ImportsRepository {
   Future<PaginatedResult<ImportedFeature>> fetchImportFeaturesPage({
     required String importId,
     String? status,
+    String? issue,
     int page = 1,
     int limit = 20,
   }) async {
-    final rows = (_features[importId] ?? const <ImportedFeature>[]).where((
-      item,
-    ) {
-      if (status != null && status.trim().isNotEmpty && item.status != status) {
-        return false;
-      }
-      return true;
-    }).toList(growable: false);
+    final rows = (_features[importId] ?? const <ImportedFeature>[])
+        .where((item) {
+          if (status != null &&
+              status.trim().isNotEmpty &&
+              item.status != status) {
+            return false;
+          }
+          if (issue != null &&
+              issue.trim().isNotEmpty &&
+              !item.validationErrors.contains(issue) &&
+              !item.validationWarnings.contains(issue)) {
+            return false;
+          }
+          return true;
+        })
+        .toList(growable: false);
     final start = (page - 1) * limit;
     final end = (start + limit).clamp(0, rows.length);
     final items = start >= rows.length
@@ -190,44 +205,52 @@ class MockImportsRepository implements ImportsRepository {
   }) async {
     final features = _features[importId] ?? const <ImportedFeature>[];
     final targetIds = featureIds?.toSet();
-    final updatedFeatures = features.map((item) {
-      if (targetIds != null &&
-          targetIds.isNotEmpty &&
-          !targetIds.contains(item.id)) {
-        return item;
-      }
-      return ImportedFeature(
-        id: item.id,
-        importJobId: item.importJobId,
-        sourceIndex: item.sourceIndex,
-        sourceIdentifier: item.sourceIdentifier,
-        displayTitle: item.displayTitle,
-        sourceFeatureName: item.sourceFeatureName,
-        geometryType: item.geometryType,
-        geometry: item.geometry,
-        attributes: item.attributes,
-        status: status,
-        validationWarnings: item.validationWarnings,
-        validationErrors: item.validationErrors,
-        validationReport: item.validationReport,
-        duplicateFeatureId: item.duplicateFeatureId,
-        approvedFeatureId: status == 'approved'
-            ? 'approved-${item.id}'
-            : item.approvedFeatureId,
-        reviewedByUserId: 'mock-admin',
-        reviewedByName: 'Mock Admin',
-        reviewedAt: DateTime.now(),
-        approvedAt: status == 'approved' ? DateTime.now() : item.approvedAt,
-        reviewReason: reason,
-        createdAt: item.createdAt,
-        updatedAt: DateTime.now(),
-      );
-    }).toList(growable: false);
+    final updatedFeatures = features
+        .map((item) {
+          if (targetIds != null &&
+              targetIds.isNotEmpty &&
+              !targetIds.contains(item.id)) {
+            return item;
+          }
+          return ImportedFeature(
+            id: item.id,
+            importJobId: item.importJobId,
+            sourceIndex: item.sourceIndex,
+            sourceIdentifier: item.sourceIdentifier,
+            displayTitle: item.displayTitle,
+            sourceFeatureName: item.sourceFeatureName,
+            geometryType: item.geometryType,
+            geometry: item.geometry,
+            attributes: item.attributes,
+            status: status,
+            validationWarnings: item.validationWarnings,
+            validationErrors: item.validationErrors,
+            validationReport: item.validationReport,
+            duplicateFeatureId: item.duplicateFeatureId,
+            approvedFeatureId: status == 'approved'
+                ? 'approved-${item.id}'
+                : item.approvedFeatureId,
+            reviewedByUserId: 'mock-admin',
+            reviewedByName: 'Mock Admin',
+            reviewedAt: DateTime.now(),
+            approvedAt: status == 'approved' ? DateTime.now() : item.approvedAt,
+            reviewReason: reason,
+            createdAt: item.createdAt,
+            updatedAt: DateTime.now(),
+          );
+        })
+        .toList(growable: false);
     _features[importId] = updatedFeatures;
 
-    final approved = updatedFeatures.where((item) => item.status == 'approved').length;
-    final rejected = updatedFeatures.where((item) => item.status == 'rejected').length;
-    final pending = updatedFeatures.where((item) => item.status == 'pending_review').length;
+    final approved = updatedFeatures
+        .where((item) => item.status == 'approved')
+        .length;
+    final rejected = updatedFeatures
+        .where((item) => item.status == 'rejected')
+        .length;
+    final pending = updatedFeatures
+        .where((item) => item.status == 'pending_review')
+        .length;
     final nextStatus = pending > 0
         ? 'pending_review'
         : approved > 0 && rejected > 0

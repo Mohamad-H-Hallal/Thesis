@@ -100,6 +100,7 @@ class _FakeImportsRepository implements ImportsRepository {
 
   final GisImportDetails details;
   final List<ImportedFeature> features;
+  final List<String?> requestedIssues = <String?>[];
 
   @override
   Future<List<GisImportJob>> fetchImports({
@@ -128,6 +129,7 @@ class _FakeImportsRepository implements ImportsRepository {
   Future<List<ImportedFeature>> fetchImportFeatures({
     required String importId,
     String? status,
+    String? issue,
     int page = 1,
     int limit = 100,
   }) async => features;
@@ -136,19 +138,30 @@ class _FakeImportsRepository implements ImportsRepository {
   Future<PaginatedResult<ImportedFeature>> fetchImportFeaturesPage({
     required String importId,
     String? status,
+    String? issue,
     int page = 1,
     int limit = 20,
   }) async {
+    requestedIssues.add(issue);
     final filtered = status == null
         ? features
         : features
               .where((item) => item.status == status)
               .toList(growable: false);
+    final issueFiltered = issue == null
+        ? filtered
+        : filtered
+              .where(
+                (item) =>
+                    item.validationErrors.contains(issue) ||
+                    item.validationWarnings.contains(issue),
+              )
+              .toList(growable: false);
     return PaginatedResult<ImportedFeature>(
-      items: filtered,
+      items: issueFiltered,
       page: 1,
       limit: limit,
-      total: filtered.length,
+      total: issueFiltered.length,
       hasMore: false,
     );
   }
@@ -241,6 +254,38 @@ ImportedFeature _outsideLebanonFeature() {
   );
 }
 
+ImportedFeature _missingFeatureTypeFeature() {
+  return ImportedFeature(
+    id: 'feature-2',
+    importJobId: 'import-1',
+    sourceIndex: 1,
+    displayTitle: 'Missing type feature',
+    geometryType: 'Polygon',
+    geometry: const <String, dynamic>{
+      'type': 'Polygon',
+      'coordinates': <dynamic>[
+        <dynamic>[
+          <double>[35.48, 33.89],
+          <double>[35.49, 33.89],
+          <double>[35.49, 33.90],
+          <double>[35.48, 33.89],
+        ],
+      ],
+    },
+    attributes: const <String, dynamic>{'name': 'Missing type feature'},
+    status: 'failed',
+    validationWarnings: const <String>[
+      'Attributes not defined in the project form were kept: name',
+    ],
+    validationErrors: const <String>[
+      'Missing required attribute: feature_type',
+    ],
+    validationReport: const <String, dynamic>{},
+    createdAt: DateTime(2026, 4, 25),
+    updatedAt: DateTime(2026, 4, 25),
+  );
+}
+
 void main() {
   testWidgets('processing import shows processing card instead of map', (
     tester,
@@ -316,8 +361,7 @@ void main() {
         ),
       );
 
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
 
       expect(find.text('File-wide issues'), findsOneWidget);
       expect(
@@ -327,10 +371,72 @@ void main() {
         findsWidgets,
       );
       expect(
-        find.textContaining('This preview only renders staged geometries'),
+        find.textContaining(
+          'The staged geometry is outside the Lebanon workspace.',
+        ),
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('issue filter narrows staged features by validation message', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1200, 2200);
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final outsideFeature = _outsideLebanonFeature();
+    final missingTypeFeature = _missingFeatureTypeFeature();
+    final repository = _FakeImportsRepository(
+      details: GisImportDetails(
+        job: _job(
+          status: 'failed',
+          validationSummary: const <String, dynamic>{
+            'error_breakdown': <String, dynamic>{
+              'Geometry falls outside the Lebanon workspace bounds.': 1,
+              'Missing required attribute: feature_type': 1,
+            },
+          },
+        ),
+        previewFeatures: <ImportedFeature>[outsideFeature, missingTypeFeature],
+      ),
+      features: <ImportedFeature>[outsideFeature, missingTypeFeature],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(
+            (_) => _AuthenticatedAuthController(_session()),
+          ),
+          importsRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(body: ImportDetailScreen(importId: 'import-1')),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(repository.requestedIssues, contains(isNull));
+
+    await tester.tap(find.byType(DropdownButtonFormField<String?>));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.textContaining('Missing required attribute: feature_type').last,
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      repository.requestedIssues,
+      contains('Missing required attribute: feature_type'),
+    );
+    expect(tester.takeException(), isNull);
+  });
 }
