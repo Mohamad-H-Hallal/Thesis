@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lebanese_gis_mobile/core/pagination/paginated_list_controller.dart';
+import 'package:lebanese_gis_mobile/core/pagination/paginated_result.dart';
 import 'package:lebanese_gis_mobile/core/providers/providers.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_models.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_repository.dart';
@@ -167,6 +169,50 @@ class _FakeProjectsRepository implements ProjectsRepository {
         .toList(growable: false);
   }
 
+  @override
+  Future<PaginatedResult<ProjectSummary>> fetchProjectsPage({
+    required String userId,
+    required UserRole role,
+    required ProjectViewScope scope,
+    String? query,
+    String? status,
+    String? categoryId,
+    int page = 1,
+    int limit = 20,
+  }) async {
+    final items = await fetchProjects(userId: userId, role: role, scope: scope);
+    final filtered = items.where((project) {
+      if (status?.trim().isNotEmpty ?? false) {
+        if (project.status != status) {
+          return false;
+        }
+      }
+      if (categoryId?.trim().isNotEmpty ?? false) {
+        if (project.categoryId != categoryId) {
+          return false;
+        }
+      }
+      if (query?.trim().isNotEmpty ?? false) {
+        final normalized = query!.trim().toLowerCase();
+        return project.name.toLowerCase().contains(normalized) ||
+            project.category.toLowerCase().contains(normalized) ||
+            project.description.toLowerCase().contains(normalized);
+      }
+      return true;
+    }).toList(growable: false);
+    final start = (page - 1) * limit;
+    final end = (start + limit).clamp(0, filtered.length);
+    return PaginatedResult<ProjectSummary>(
+      items: start >= filtered.length
+          ? const <ProjectSummary>[]
+          : filtered.sublist(start, end),
+      page: page,
+      limit: limit,
+      total: filtered.length,
+      hasMore: end < filtered.length,
+    );
+  }
+
   ProjectSummary _withAssignment(
     ProjectSummary project, {
     required String userId,
@@ -322,6 +368,35 @@ Widget _wrapWithScope({
         (ref) => _AuthenticatedAuthController(session),
       ),
       projectsRepositoryProvider.overrideWithValue(fakeRepository),
+      paginatedProjectListProvider.overrideWith((ref, scope) {
+        return PaginatedListController<ProjectSummary>(
+          loadPage: ({required page, required limit}) {
+            return fakeRepository.fetchProjectsPage(
+              userId: session.user.id,
+              role: session.user.role,
+              scope: scope,
+              page: page,
+              limit: limit,
+            );
+          },
+        );
+      }),
+      paginatedProjectsProvider.overrideWith((ref, query) {
+        return PaginatedListController<ProjectSummary>(
+          loadPage: ({required page, required limit}) {
+            return fakeRepository.fetchProjectsPage(
+              userId: session.user.id,
+              role: session.user.role,
+              scope: query.scope,
+              query: query.query,
+              status: query.status,
+              categoryId: query.categoryId,
+              page: page,
+              limit: limit,
+            );
+          },
+        );
+      }),
       projectListProvider.overrideWith((ref, scope) {
         ref.watch(workflowRefreshTickProvider);
         return fakeRepository.fetchProjects(
@@ -370,6 +445,8 @@ void main() {
           ),
         ),
       );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 900));
       await tester.pumpAndSettle();
 
       expect(find.text('Search visible projects'), findsOneWidget);
@@ -409,6 +486,8 @@ void main() {
           ),
         ),
       );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 900));
       await tester.pumpAndSettle();
 
       expect(find.text('Search assigned projects'), findsOneWidget);
@@ -443,6 +522,8 @@ void main() {
           ),
         ),
       );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 900));
       await tester.pumpAndSettle();
 
       expect(find.text('Search visible projects'), findsOneWidget);

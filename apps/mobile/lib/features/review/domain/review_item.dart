@@ -1,3 +1,20 @@
+class ReviewQueueQuery {
+  const ReviewQueueQuery({required this.status, this.projectId});
+
+  final String status;
+  final String? projectId;
+
+  @override
+  bool operator ==(Object other) {
+    return other is ReviewQueueQuery &&
+        other.status == status &&
+        other.projectId == projectId;
+  }
+
+  @override
+  int get hashCode => Object.hash(status, projectId);
+}
+
 class ReviewQueueItem {
   const ReviewQueueItem({
     required this.id,
@@ -19,4 +36,3 @@ class ReviewQueueItem {
   final DateTime? collectedAt;
   final int photoCount;
 }
-

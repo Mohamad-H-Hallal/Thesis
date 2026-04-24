@@ -4,6 +4,32 @@ enum ProjectAssignmentStatus { pending, approved, rejected }
 
 enum ProjectViewScope { public, assigned, all }
 
+class ProjectListQuery {
+  const ProjectListQuery({
+    required this.scope,
+    this.query,
+    this.status,
+    this.categoryId,
+  });
+
+  final ProjectViewScope scope;
+  final String? query;
+  final String? status;
+  final String? categoryId;
+
+  @override
+  bool operator ==(Object other) {
+    return other is ProjectListQuery &&
+        other.scope == scope &&
+        other.query == query &&
+        other.status == status &&
+        other.categoryId == categoryId;
+  }
+
+  @override
+  int get hashCode => Object.hash(scope, query, status, categoryId);
+}
+
 extension ProjectViewScopeX on ProjectViewScope {
   String get apiValue {
     switch (this) {
@@ -156,6 +182,8 @@ class ProjectSummary {
     this.approvedFeatures = 0,
     required this.assignedCollectors,
     required this.pendingReviews,
+    this.pendingAssignmentRequests = 0,
+    this.rejectedAssignmentRequests = 0,
     required this.description,
     this.objectives,
     this.startDate,
@@ -181,6 +209,8 @@ class ProjectSummary {
   final int approvedFeatures;
   final int assignedCollectors;
   final int pendingReviews;
+  final int pendingAssignmentRequests;
+  final int rejectedAssignmentRequests;
   final String description;
   final String? objectives;
   final DateTime? startDate;

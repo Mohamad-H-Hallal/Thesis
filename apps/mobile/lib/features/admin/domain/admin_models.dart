@@ -4,6 +4,86 @@ enum ContributorRequestStatus { pending, rejected }
 
 enum UserAccountState { active, pending, rejected, blocked, inactive }
 
+class ContributorRequestsQuery {
+  const ContributorRequestsQuery({
+    required this.status,
+    this.query,
+  });
+
+  final ContributorRequestStatus status;
+  final String? query;
+
+  @override
+  bool operator ==(Object other) {
+    return other is ContributorRequestsQuery &&
+        other.status == status &&
+        other.query == query;
+  }
+
+  @override
+  int get hashCode => Object.hash(status, query);
+}
+
+class ManagedUsersQuery {
+  const ManagedUsersQuery({
+    this.query,
+    this.role,
+    this.state,
+    this.isActive,
+  });
+
+  final String? query;
+  final UserRole? role;
+  final UserAccountState? state;
+  final bool? isActive;
+
+  @override
+  bool operator ==(Object other) {
+    return other is ManagedUsersQuery &&
+        other.query == query &&
+        other.role == role &&
+        other.state == state &&
+        other.isActive == isActive;
+  }
+
+  @override
+  int get hashCode => Object.hash(query, role, state, isActive);
+}
+
+class ManagedAssignmentsQuery {
+  const ManagedAssignmentsQuery({
+    this.status,
+    this.query,
+  });
+
+  final String? status;
+  final String? query;
+
+  @override
+  bool operator ==(Object other) {
+    return other is ManagedAssignmentsQuery &&
+        other.status == status &&
+        other.query == query;
+  }
+
+  @override
+  int get hashCode => Object.hash(status, query);
+}
+
+class ProjectCategoriesQuery {
+  const ProjectCategoriesQuery({this.query});
+
+  final String? query;
+
+  @override
+  bool operator ==(Object other) {
+    return other is ProjectCategoriesQuery && other.query == query;
+  }
+
+  @override
+  int get hashCode => query.hashCode;
+}
+
 class ManagedUserSummary {
   const ManagedUserSummary({
     required this.id,

@@ -40,13 +40,12 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
   Widget build(BuildContext context) {
     final fixedProjectId = widget.projectId?.trim();
     final hasFixedProject = fixedProjectId != null && fixedProjectId.isNotEmpty;
-    final currentAsync = _filter == _ReviewFilter.pending
-        ? hasFixedProject
-              ? ref.watch(projectReviewQueueProvider(fixedProjectId))
-              : ref.watch(reviewQueueProvider)
-        : hasFixedProject
-        ? ref.watch(projectRejectedReviewQueueProvider(fixedProjectId))
-        : ref.watch(rejectedReviewQueueProvider);
+    final query = ReviewQueueQuery(
+      status: _filter == _ReviewFilter.pending ? 'pending_review' : 'rejected',
+      projectId: hasFixedProject ? fixedProjectId : null,
+    );
+    final currentAsync = ref.watch(paginatedReviewQueueProvider(query));
+    final controller = ref.read(paginatedReviewQueueProvider(query).notifier);
 
     return currentAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -58,25 +57,10 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
           fallback: 'Unable to load review items right now. Please try again.',
         ),
         actionLabel: 'Retry',
-        onAction: () {
-          if (hasFixedProject) {
-            if (_filter == _ReviewFilter.pending) {
-              ref.invalidate(projectReviewQueueProvider(fixedProjectId));
-            } else {
-              ref.invalidate(
-                projectRejectedReviewQueueProvider(fixedProjectId),
-              );
-            }
-            return;
-          }
-          if (_filter == _ReviewFilter.pending) {
-            ref.invalidate(reviewQueueProvider);
-          } else {
-            ref.invalidate(rejectedReviewQueueProvider);
-          }
-        },
+        onAction: controller.load,
       ),
-      data: (items) {
+      data: (itemsState) {
+        final items = itemsState.items;
         final query = _searchController.text.trim().toLowerCase();
         final filtered = items
             .where((item) {
@@ -94,11 +78,11 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
             Text(
               hasFixedProject
                   ? _filter == _ReviewFilter.pending
-                        ? '${items.length} feature(s) awaiting review for ${widget.projectName ?? 'this project'}'
-                        : '${items.length} rejected feature(s) for ${widget.projectName ?? 'this project'}'
+                  ? '${itemsState.total} feature(s) awaiting review for ${widget.projectName ?? 'this project'}'
+                        : '${itemsState.total} rejected feature(s) for ${widget.projectName ?? 'this project'}'
                   : _filter == _ReviewFilter.pending
-                  ? '${items.length} feature(s) awaiting admin review'
-                  : '${items.length} rejected feature(s) available for re-review',
+                  ? '${itemsState.total} feature(s) awaiting admin review'
+                  : '${itemsState.total} rejected feature(s) available for re-review',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: AppSpacing.sm),
@@ -138,7 +122,7 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
             ),
             const SizedBox(height: AppSpacing.md),
             Text(
-              '${filtered.length} review item${filtered.length == 1 ? '' : 's'}',
+              '${itemsState.total} review item${itemsState.total == 1 ? '' : 's'}',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: AppSpacing.sm),
@@ -165,8 +149,11 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
                   widget.projectId,
                   _filter,
                   _searchController.text,
-                  filtered.length,
+                  itemsState.total,
                 ),
+                hasMore: itemsState.hasMore,
+                isLoadingMore: itemsState.isLoadingMore,
+                onLoadMore: controller.loadMore,
                 itemBuilder: (context, item, _) => _ReviewItemCard(
                   item: item,
                   onOpenMap: () => context.push(
@@ -408,7 +395,14 @@ class ProjectApprovedReviewsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final approvedAsync = ref.watch(
-      projectApprovedReviewQueueProvider(projectId),
+      paginatedReviewQueueProvider(
+        ReviewQueueQuery(status: 'approved', projectId: projectId),
+      ),
+    );
+    final controller = ref.read(
+      paginatedReviewQueueProvider(
+        ReviewQueueQuery(status: 'approved', projectId: projectId),
+      ).notifier,
     );
 
     return approvedAsync.when(
@@ -422,16 +416,19 @@ class ProjectApprovedReviewsScreen extends ConsumerWidget {
               'Unable to load approved reviews right now. Please try again.',
         ),
         actionLabel: 'Retry',
-        onAction: () =>
-            ref.invalidate(projectApprovedReviewQueueProvider(projectId)),
+        onAction: controller.load,
       ),
-      data: (items) {
-        final visibleItems = items
+      data: (state) {
+        final visibleItems = state.items
             .where((item) => item.projectId == projectId)
             .toList(growable: false);
         return _ApprovedReviewList(
           projectName: projectName,
           items: visibleItems,
+          total: state.total,
+          hasMore: state.hasMore,
+          isLoadingMore: state.isLoadingMore,
+          onLoadMore: controller.loadMore,
           onOpenMap: onOpenMap,
           onReject: onReject,
         );
@@ -444,12 +441,20 @@ class _ApprovedReviewList extends StatelessWidget {
   const _ApprovedReviewList({
     required this.projectName,
     required this.items,
+    required this.total,
+    required this.hasMore,
+    required this.isLoadingMore,
+    required this.onLoadMore,
     required this.onOpenMap,
     required this.onReject,
   });
 
   final String projectName;
   final List<ReviewQueueItem> items;
+  final int total;
+  final bool hasMore;
+  final bool isLoadingMore;
+  final Future<void> Function() onLoadMore;
   final ValueChanged<ReviewQueueItem> onOpenMap;
   final Future<void> Function(ReviewQueueItem item) onReject;
 
@@ -458,7 +463,7 @@ class _ApprovedReviewList extends StatelessWidget {
     return ListView(
       children: [
         Text(
-          '${items.length} approved feature(s) for $projectName',
+          '$total approved feature(s) for $projectName',
           style: Theme.of(context).textTheme.bodyMedium,
         ),
         const SizedBox(height: AppSpacing.sm),
@@ -472,7 +477,10 @@ class _ApprovedReviewList extends StatelessWidget {
         else
           ProgressiveListSection<ReviewQueueItem>(
             items: items,
-            resetKey: Object.hash(projectName, items.length),
+            resetKey: Object.hash(projectName, total),
+            hasMore: hasMore,
+            isLoadingMore: isLoadingMore,
+            onLoadMore: onLoadMore,
             itemBuilder: (context, item, _) => AppCard(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

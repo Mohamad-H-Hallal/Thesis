@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../../../core/config/app_env.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_error_message.dart';
+import '../../../core/pagination/paginated_result.dart';
 import '../domain/import_models.dart';
 import '../domain/imports_repository.dart';
 
@@ -19,23 +20,58 @@ class ApiImportsRepository implements ImportsRepository {
   Future<List<GisImportJob>> fetchImports({
     String? status,
     String? projectId,
+    String? categoryId,
+  }) async {
+    final page = await fetchImportsPage(
+      status: status,
+      projectId: projectId,
+      categoryId: categoryId,
+      limit: 100,
+    );
+    return page.items;
+  }
+
+  @override
+  Future<PaginatedResult<GisImportJob>> fetchImportsPage({
+    String? status,
+    String? projectId,
+    String? categoryId,
+    int page = 1,
+    int limit = 20,
   }) async {
     try {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         _basePath,
         queryParameters: <String, dynamic>{
-          'limit': 100,
+          'page': page,
+          'limit': limit,
           if (status?.trim().isNotEmpty ?? false) 'status': status!.trim(),
           if (projectId?.trim().isNotEmpty ?? false)
             'project_id': projectId!.trim(),
+          if (categoryId?.trim().isNotEmpty ?? false)
+            'category_id': categoryId!.trim(),
         },
       );
       final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
-      return rows
+      final items = rows
           .map(
             (row) => _toImportJob(Map<String, dynamic>.from(row as Map)),
           )
           .toList(growable: false);
+      final pagination = Map<String, dynamic>.from(
+        response.data?['pagination'] as Map? ?? const <String, dynamic>{},
+      );
+      final total = (pagination['total'] as num?)?.toInt() ?? items.length;
+      final hasMore =
+          (pagination['has_more'] as bool?) ??
+          ((page * limit) < total && items.isNotEmpty);
+      return PaginatedResult<GisImportJob>(
+        items: items,
+        page: (pagination['page'] as num?)?.toInt() ?? page,
+        limit: (pagination['limit'] as num?)?.toInt() ?? limit,
+        total: total,
+        hasMore: hasMore,
+      );
     } on DioException catch (error) {
       throw userFacingDioMessage(
         error,
@@ -108,6 +144,22 @@ class ApiImportsRepository implements ImportsRepository {
     int page = 1,
     int limit = 100,
   }) async {
+    final result = await fetchImportFeaturesPage(
+      importId: importId,
+      status: status,
+      page: page,
+      limit: limit,
+    );
+    return result.items;
+  }
+
+  @override
+  Future<PaginatedResult<ImportedFeature>> fetchImportFeaturesPage({
+    required String importId,
+    String? status,
+    int page = 1,
+    int limit = 20,
+  }) async {
     try {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         '$_basePath/$importId/features',
@@ -118,11 +170,25 @@ class ApiImportsRepository implements ImportsRepository {
         },
       );
       final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
-      return rows
+      final items = rows
           .map(
             (row) => _toImportedFeature(Map<String, dynamic>.from(row as Map)),
           )
           .toList(growable: false);
+      final pagination = Map<String, dynamic>.from(
+        response.data?['pagination'] as Map? ?? const <String, dynamic>{},
+      );
+      final total = (pagination['total'] as num?)?.toInt() ?? items.length;
+      final hasMore =
+          (pagination['has_more'] as bool?) ??
+          ((page * limit) < total && items.isNotEmpty);
+      return PaginatedResult<ImportedFeature>(
+        items: items,
+        page: (pagination['page'] as num?)?.toInt() ?? page,
+        limit: (pagination['limit'] as num?)?.toInt() ?? limit,
+        total: total,
+        hasMore: hasMore,
+      );
     } on DioException catch (error) {
       throw userFacingDioMessage(
         error,

@@ -45,7 +45,6 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
   PlatformFile? _selectedFile;
   bool _isUploading = false;
   String _statusFilter = 'all';
-  List<GisImportJob>? _cachedJobs;
 
   @override
   void dispose() {
@@ -115,18 +114,22 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
               : user.role == UserRole.admin
               ? _selectedAdminProjectId
               : null,
+          categoryId: hasFixedProject
+              ? _selectedCategory
+              : user.role == UserRole.admin
+              ? _selectedAdminCategoryId
+              : null,
         );
-        final jobsAsync = ref.watch(importJobsProvider(jobsQuery));
-        final latestJobs = jobsAsync.asData?.value;
+        final jobsAsync = ref.watch(paginatedImportJobsProvider(jobsQuery));
+        final jobsController = ref.read(
+          paginatedImportJobsProvider(jobsQuery).notifier,
+        );
+        final jobsState = jobsAsync.valueOrNull;
         final jobsError = jobsAsync.asError?.error;
-        if (latestJobs != null) {
-          _cachedJobs = latestJobs;
-        }
-        final effectiveJobs = latestJobs ?? _cachedJobs;
-        if (effectiveJobs == null && jobsAsync.isLoading) {
+        if (jobsState == null && jobsAsync.isLoading) {
           return const Center(child: CircularProgressIndicator());
         }
-        if (effectiveJobs == null && jobsAsync.hasError) {
+        if (jobsState == null && jobsAsync.hasError) {
           return AppEmptyState(
             icon: Icons.error_outline,
             title: 'Imports unavailable',
@@ -135,24 +138,11 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
               fallback: 'Unable to load GIS imports right now.',
             ),
             actionLabel: 'Retry',
-            onAction: () => ref.invalidate(importJobsProvider(jobsQuery)),
+            onAction: jobsController.load,
           );
         }
 
-        final filteredJobs = _filterJobs(
-          jobs: effectiveJobs ?? const <GisImportJob>[],
-          projects: projects,
-          selectedCategory: hasFixedProject
-              ? _selectedCategory
-              : user.role == UserRole.admin
-              ? _selectedAdminCategoryId
-              : null,
-          selectedProjectId: hasFixedProject
-              ? _selectedProjectId
-              : user.role == UserRole.admin
-              ? _selectedAdminProjectId
-              : null,
-        );
+        final filteredJobs = jobsState?.items ?? const <GisImportJob>[];
         final adminProjects = _projectsForCategory(
           projects,
           _selectedAdminCategoryId,
@@ -173,7 +163,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                 padding: EdgeInsets.only(bottom: AppSpacing.sm),
                 child: LinearProgressIndicator(),
               ),
-            if (jobsAsync.hasError && effectiveJobs != null)
+            if (jobsAsync.hasError && jobsState != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: AppSpacing.md),
                 child: AppCard(
@@ -212,7 +202,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
             ),
             const SizedBox(height: AppSpacing.sm),
             Text(
-              '${filteredJobs.length} import${filteredJobs.length == 1 ? '' : 's'}',
+              '${jobsState?.total ?? filteredJobs.length} import${(jobsState?.total ?? filteredJobs.length) == 1 ? '' : 's'}',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: AppSpacing.sm),
@@ -338,8 +328,8 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                 title: user.role == UserRole.contributor
                     ? 'No imports submitted yet'
                     : 'No imports match this filter',
-                message: user.role == UserRole.contributor
-                    ? 'Choose a project, upload a GIS file, and it will appear here after staging.'
+                  message: user.role == UserRole.contributor
+                    ? 'Choose a project, upload a GIS file, and it will appear here once processing begins.'
                     : 'Contributor uploads awaiting review will appear here when they match the selected filters.',
               )
             else
@@ -355,7 +345,11 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                       ? _selectedAdminProjectId
                       : _selectedProjectId,
                   filteredJobs.length,
+                  jobsState?.total ?? 0,
                 ),
+                hasMore: jobsState?.hasMore ?? false,
+                isLoadingMore: jobsState?.isLoadingMore ?? false,
+                onLoadMore: jobsController.loadMore,
                 itemBuilder: (context, job, _) => _ImportJobCard(
                   job: job,
                   onTap: () => context.push(AppRoutes.importDetails(job.id)),
@@ -551,7 +545,9 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
       bumpWorkflowRefresh(ref);
       AppSnackbar.showSuccess(
         context,
-        'GIS import uploaded. ${job.pendingFeatureCount} staged feature(s) are ready for review.',
+        job.status == 'uploaded'
+            ? 'GIS import uploaded. Processing will continue in the background.'
+            : 'GIS import uploaded successfully.',
       );
     } catch (error) {
       if (!mounted) {
@@ -653,35 +649,10 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
     }
   }
 
-  List<GisImportJob> _filterJobs({
-    required List<GisImportJob> jobs,
-    required List<ProjectSummary> projects,
-    required String? selectedCategory,
-    required String? selectedProjectId,
-  }) {
-    final projectById = <String, ProjectSummary>{
-      for (final project in projects) project.id: project,
-    };
-    return jobs
-        .where((job) {
-          if (selectedProjectId != null &&
-              selectedProjectId.trim().isNotEmpty &&
-              job.projectId != selectedProjectId) {
-            return false;
-          }
-          if (selectedCategory != null && selectedCategory.trim().isNotEmpty) {
-            final project = projectById[job.projectId];
-            if (project?.categoryId != selectedCategory) {
-              return false;
-            }
-          }
-          return true;
-        })
-        .toList(growable: false);
-  }
-
   List<_StatusOption> get _statusOptions => const <_StatusOption>[
     _StatusOption('all', 'All'),
+    _StatusOption('uploaded', 'Uploaded'),
+    _StatusOption('processing', 'Processing'),
     _StatusOption('pending_review', 'Pending'),
     _StatusOption('approved', 'Approved'),
     _StatusOption('partially_approved', 'Partially approved'),

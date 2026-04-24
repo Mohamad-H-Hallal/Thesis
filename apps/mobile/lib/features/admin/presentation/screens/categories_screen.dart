@@ -28,22 +28,6 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
     super.dispose();
   }
 
-  List<ProjectCategorySummary> _applyQuery(
-    List<ProjectCategorySummary> categories,
-  ) {
-    final query = _searchController.text.trim().toLowerCase();
-    if (query.isEmpty) {
-      return categories;
-    }
-
-    return categories
-        .where((category) {
-          return category.name.toLowerCase().contains(query) ||
-              (category.description?.toLowerCase().contains(query) ?? false);
-        })
-        .toList(growable: false);
-  }
-
   String? _previewUrl(String? iconUrl) {
     final raw = iconUrl?.trim() ?? '';
     if (raw.isEmpty) {
@@ -57,7 +41,17 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final categoriesAsync = ref.watch(projectCategoriesProvider);
+    final categoriesQuery = ProjectCategoriesQuery(
+      query: _searchController.text.trim().isEmpty
+          ? null
+          : _searchController.text.trim(),
+    );
+    final categoriesAsync = ref.watch(
+      paginatedProjectCategoriesProvider(categoriesQuery),
+    );
+    final categoriesController = ref.read(
+      paginatedProjectCategoriesProvider(categoriesQuery).notifier,
+    );
 
     return categoriesAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -69,12 +63,12 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
           fallback: 'Unable to load categories right now. Please try again.',
         ),
         actionLabel: 'Retry',
-        onAction: () => ref.invalidate(projectCategoriesProvider),
+        onAction: categoriesController.load,
       ),
-      data: (categories) {
-        final filtered = _applyQuery(categories);
+      data: (categoriesState) {
+        final filtered = categoriesState.items;
         return RefreshIndicator(
-          onRefresh: () async => ref.invalidate(projectCategoriesProvider),
+          onRefresh: categoriesController.refresh,
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(),
             children: [
@@ -99,21 +93,21 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                 ),
               ),
               Text(
-                '${filtered.length} categor${filtered.length == 1 ? 'y' : 'ies'}',
+                '${categoriesState.total} categor${categoriesState.total == 1 ? 'y' : 'ies'}',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
               const SizedBox(height: AppSpacing.sm),
               if (filtered.isEmpty)
                 AppEmptyState(
                   icon: Icons.category_outlined,
-                  title: categories.isEmpty
+                  title: categoriesState.total == 0
                       ? 'No categories yet'
                       : 'No categories match',
-                  message: categories.isEmpty
+                  message: categoriesState.total == 0
                       ? 'Create your first category before provisioning projects from mobile.'
                       : 'Try a different search term or clear the active category filter.',
-                  actionLabel: categories.isEmpty ? 'Create category' : null,
-                  onAction: categories.isEmpty
+                  actionLabel: categoriesState.total == 0 ? 'Create category' : null,
+                  onAction: categoriesState.total == 0
                       ? () => context.push(AppRoutes.categoryCreate)
                       : null,
                 )
@@ -122,8 +116,11 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                   items: filtered,
                   resetKey: Object.hash(
                     _searchController.text,
-                    filtered.length,
+                    categoriesState.total,
                   ),
+                  hasMore: categoriesState.hasMore,
+                  isLoadingMore: categoriesState.isLoadingMore,
+                  onLoadMore: categoriesController.loadMore,
                   itemBuilder: (context, category, _) => AppCard(
                     child: LayoutBuilder(
                       builder: (context, constraints) {

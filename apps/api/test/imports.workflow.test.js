@@ -31,6 +31,35 @@ const createTempGeoJsonFile = async (name, payload) => {
   return filePath;
 };
 
+const waitForImportStatus = async ({
+  importId,
+  token,
+  expectedStatuses,
+  attempts = 40,
+  delayMs = 250,
+}) => {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const response = await request(app)
+      .get(`${API_PREFIX}/imports/${importId}`)
+      .set(authHeader(token));
+
+    if (response.status !== 200) {
+      throw new Error(`Unable to load import ${importId}: ${response.status}`);
+    }
+
+    const status = response.body.data?.job?.status;
+    if (expectedStatuses.includes(status)) {
+      return response;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  throw new Error(
+    `Import ${importId} did not reach one of [${expectedStatuses.join(', ')}] in time.`,
+  );
+};
+
 describe('GIS import workflow', () => {
   beforeEach(async () => {
     await resetDb();
@@ -120,15 +149,17 @@ describe('GIS import workflow', () => {
       .attach('file', geojsonPath);
 
     expect(uploadResponse.status).toBe(202);
-    expect(uploadResponse.body.data.status).toBe('pending_review');
-    expect(uploadResponse.body.data.pending_feature_count).toBe(2);
+    expect(uploadResponse.body.data.status).toBe('uploaded');
 
     const importId = uploadResponse.body.data.id;
-    const detailsResponse = await request(app)
-      .get(`${API_PREFIX}/imports/${importId}`)
-      .set(authHeader(admin.token));
+    const detailsResponse = await waitForImportStatus({
+      importId,
+      token: admin.token,
+      expectedStatuses: ['pending_review'],
+    });
 
     expect(detailsResponse.status).toBe(200);
+    expect(detailsResponse.body.data.job.pending_feature_count).toBe(2);
     expect(detailsResponse.body.data.preview_features).toHaveLength(2);
     const featureIds = detailsResponse.body.data.preview_features.map((item) => item.id);
 
@@ -256,14 +287,16 @@ describe('GIS import workflow', () => {
       .attach('file', geojsonPath);
 
     expect(uploadResponse.status).toBe(202);
-    expect(uploadResponse.body.data.status).toBe('failed');
-    expect(uploadResponse.body.data.failed_feature_count).toBe(1);
-    expect(uploadResponse.body.data.pending_feature_count).toBe(0);
+    expect(uploadResponse.body.data.status).toBe('uploaded');
 
-    const detailResponse = await request(app)
-      .get(`${API_PREFIX}/imports/${uploadResponse.body.data.id}`)
-      .set(authHeader(contributorLogin.token));
+    const detailResponse = await waitForImportStatus({
+      importId: uploadResponse.body.data.id,
+      token: contributorLogin.token,
+      expectedStatuses: ['failed'],
+    });
     expect(detailResponse.status).toBe(200);
+    expect(detailResponse.body.data.job.failed_feature_count).toBe(1);
+    expect(detailResponse.body.data.job.pending_feature_count).toBe(0);
     expect(detailResponse.body.data.preview_features[0].validation_errors).toEqual(
       expect.arrayContaining(['Missing required attribute: feature_type']),
     );
@@ -337,9 +370,42 @@ describe('GIS import workflow', () => {
       .attach('file', geojsonPath);
 
     expect(uploadResponse.status).toBe(202);
-    expect(uploadResponse.body.data.status).toBe('pending_review');
-    expect(uploadResponse.body.data.geometry_count).toBe(2105);
-    expect(uploadResponse.body.data.pending_feature_count).toBe(2105);
+    expect(uploadResponse.body.data.status).toBe('uploaded');
+
+    const detailsResponse = await waitForImportStatus({
+      importId: uploadResponse.body.data.id,
+      token: admin.token,
+      expectedStatuses: ['pending_review'],
+      attempts: 80,
+      delayMs: 250,
+    });
+
+    expect(detailsResponse.body.data.job.geometry_count).toBe(2105);
+    expect(detailsResponse.body.data.job.pending_feature_count).toBe(2105);
+
+    const featuresPage1 = await request(app)
+      .get(`${API_PREFIX}/imports/${uploadResponse.body.data.id}/features?page=1&limit=20`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(featuresPage1.body.data).toHaveLength(20);
+    expect(featuresPage1.body.pagination.total).toBe(2105);
+    expect(featuresPage1.body.pagination.has_more).toBe(true);
+
+    const featuresPage2 = await request(app)
+      .get(`${API_PREFIX}/imports/${uploadResponse.body.data.id}/features?page=2&limit=20`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(featuresPage2.body.data).toHaveLength(20);
+    expect(featuresPage2.body.pagination.total).toBe(2105);
+    expect(featuresPage2.body.pagination.has_more).toBe(true);
+
+    const importsPage = await request(app)
+      .get(`${API_PREFIX}/imports?page=1&limit=20&project_id=${project.id}`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(importsPage.body.data).toHaveLength(1);
+    expect(importsPage.body.pagination.total).toBe(1);
+    expect(importsPage.body.pagination.has_more).toBe(false);
   }, 20000);
 
   test('rejects GeoJSON uploads with unsupported CRS before staging', async () => {
@@ -412,13 +478,25 @@ describe('GIS import workflow', () => {
       .set(authHeader(contributorLogin.token))
       .attach('file', geojsonPath);
 
-    expect(uploadResponse.status).toBe(400);
-    expect(uploadResponse.body.message).toContain(
+    expect(uploadResponse.status).toBe(202);
+    expect(uploadResponse.body.data.status).toBe('uploaded');
+
+    const detailsResponse = await waitForImportStatus({
+      importId: uploadResponse.body.data.id,
+      token: contributorLogin.token,
+      expectedStatuses: ['failed'],
+    });
+
+    expect(detailsResponse.body.data.job.processing_message).toContain(
       'Unsupported coordinate reference system "EPSG:9999"',
     );
 
-    const importJobs = await pool.query(`SELECT COUNT(*)::int AS total FROM gis_import_job`);
-    expect(importJobs.rows[0].total).toBe(0);
+    const importJobs = await pool.query(
+      `SELECT COUNT(*)::int AS total
+       FROM gis_import_job
+       WHERE status = 'failed'`,
+    );
+    expect(importJobs.rows[0].total).toBe(1);
 
     const stagedFeatures = await pool.query(
       `SELECT COUNT(*)::int AS total FROM gis_import_feature`,

@@ -50,6 +50,13 @@ const resetDb = async () => {
   `);
 
   await pool.query(`
+    ALTER TABLE gis_import_job
+    ADD COLUMN IF NOT EXISTS processing_attempt_count INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS processing_heartbeat_at TIMESTAMPTZ
+  `);
+
+  await pool.query(`
     TRUNCATE TABLE
       notification_push_delivery,
       notification_delivery,

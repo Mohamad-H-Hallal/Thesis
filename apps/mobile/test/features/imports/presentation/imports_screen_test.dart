@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lebanese_gis_mobile/core/pagination/paginated_result.dart';
 import 'package:lebanese_gis_mobile/core/providers/providers.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_models.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_repository.dart';
@@ -101,6 +102,7 @@ class _FakeImportsRepository implements ImportsRepository {
   Future<List<GisImportJob>> fetchImports({
     String? status,
     String? projectId,
+    String? categoryId,
   }) async {
     return jobs.where((job) {
       if (status != null && job.status != status) {
@@ -111,6 +113,32 @@ class _FakeImportsRepository implements ImportsRepository {
       }
       return true;
     }).toList(growable: false);
+  }
+
+  @override
+  Future<PaginatedResult<GisImportJob>> fetchImportsPage({
+    String? status,
+    String? projectId,
+    String? categoryId,
+    int page = 1,
+    int limit = 20,
+  }) async {
+    final items = await fetchImports(
+      status: status,
+      projectId: projectId,
+      categoryId: categoryId,
+    );
+    final start = (page - 1) * limit;
+    final end = (start + limit).clamp(0, items.length);
+    return PaginatedResult<GisImportJob>(
+      items: start >= items.length
+          ? const <GisImportJob>[]
+          : items.sublist(start, end),
+      page: page,
+      limit: limit,
+      total: items.length,
+      hasMore: end < items.length,
+    );
   }
 
   @override
@@ -126,6 +154,22 @@ class _FakeImportsRepository implements ImportsRepository {
     int limit = 100,
   }) {
     throw UnimplementedError();
+  }
+
+  @override
+  Future<PaginatedResult<ImportedFeature>> fetchImportFeaturesPage({
+    required String importId,
+    String? status,
+    int page = 1,
+    int limit = 20,
+  }) async {
+    return const PaginatedResult<ImportedFeature>(
+      items: <ImportedFeature>[],
+      page: 1,
+      limit: 20,
+      total: 0,
+      hasMore: false,
+    );
   }
 
   @override

@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:file_picker/file_picker.dart';
 
+import '../../../core/pagination/paginated_result.dart';
 import '../domain/import_models.dart';
 import '../domain/imports_repository.dart';
 
@@ -77,8 +78,26 @@ class MockImportsRepository implements ImportsRepository {
   Future<List<GisImportJob>> fetchImports({
     String? status,
     String? projectId,
+    String? categoryId,
   }) async {
-    return _jobs.where((job) {
+    final page = await fetchImportsPage(
+      status: status,
+      projectId: projectId,
+      categoryId: categoryId,
+      limit: 100,
+    );
+    return page.items;
+  }
+
+  @override
+  Future<PaginatedResult<GisImportJob>> fetchImportsPage({
+    String? status,
+    String? projectId,
+    String? categoryId,
+    int page = 1,
+    int limit = 20,
+  }) async {
+    final filtered = _jobs.where((job) {
       if (status != null && status.trim().isNotEmpty && job.status != status) {
         return false;
       }
@@ -87,8 +106,25 @@ class MockImportsRepository implements ImportsRepository {
           job.projectId != projectId) {
         return false;
       }
+      if (categoryId != null &&
+          categoryId.trim().isNotEmpty &&
+          job.fileMetadata['category_id']?.toString() != categoryId) {
+        return false;
+      }
       return true;
     }).toList(growable: false);
+    final start = (page - 1) * limit;
+    final end = (start + limit).clamp(0, filtered.length);
+    final items = start >= filtered.length
+        ? const <GisImportJob>[]
+        : filtered.sublist(start, end);
+    return PaginatedResult<GisImportJob>(
+      items: items,
+      page: page,
+      limit: limit,
+      total: filtered.length,
+      hasMore: end < filtered.length,
+    );
   }
 
   @override
@@ -107,6 +143,22 @@ class MockImportsRepository implements ImportsRepository {
     int page = 1,
     int limit = 100,
   }) async {
+    final result = await fetchImportFeaturesPage(
+      importId: importId,
+      status: status,
+      page: page,
+      limit: limit,
+    );
+    return result.items;
+  }
+
+  @override
+  Future<PaginatedResult<ImportedFeature>> fetchImportFeaturesPage({
+    required String importId,
+    String? status,
+    int page = 1,
+    int limit = 20,
+  }) async {
     final rows = (_features[importId] ?? const <ImportedFeature>[]).where((
       item,
     ) {
@@ -115,7 +167,18 @@ class MockImportsRepository implements ImportsRepository {
       }
       return true;
     }).toList(growable: false);
-    return rows.take(limit).toList(growable: false);
+    final start = (page - 1) * limit;
+    final end = (start + limit).clamp(0, rows.length);
+    final items = start >= rows.length
+        ? const <ImportedFeature>[]
+        : rows.sublist(start, end);
+    return PaginatedResult<ImportedFeature>(
+      items: items,
+      page: page,
+      limit: limit,
+      total: rows.length,
+      hasMore: end < rows.length,
+    );
   }
 
   @override

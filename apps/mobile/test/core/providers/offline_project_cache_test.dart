@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lebanese_gis_mobile/core/offline/local_store_web.dart';
+import 'package:lebanese_gis_mobile/core/pagination/paginated_result.dart';
 import 'package:lebanese_gis_mobile/core/providers/providers.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_models.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_repository.dart';
@@ -89,6 +90,20 @@ class _StaticAuthController extends AuthController {
 
 class _OfflineProjectsRepository implements ProjectsRepository {
   @override
+  Future<PaginatedResult<ProjectSummary>> fetchProjectsPage({
+    required String userId,
+    required UserRole role,
+    required ProjectViewScope scope,
+    String? query,
+    String? status,
+    String? categoryId,
+    int page = 1,
+    int limit = 20,
+  }) async {
+    throw Exception('offline');
+  }
+
+  @override
   Future<ProjectSummary?> byId({
     required String id,
     required String userId,
@@ -175,6 +190,50 @@ class _FlakyProjectsRepository implements ProjectsRepository {
         ...assignedProjects,
       ],
     };
+  }
+
+  @override
+  Future<PaginatedResult<ProjectSummary>> fetchProjectsPage({
+    required String userId,
+    required UserRole role,
+    required ProjectViewScope scope,
+    String? query,
+    String? status,
+    String? categoryId,
+    int page = 1,
+    int limit = 20,
+  }) async {
+    final items = await fetchProjects(userId: userId, role: role, scope: scope);
+    final filtered = items.where((project) {
+      if (status?.trim().isNotEmpty ?? false) {
+        if (project.status != status) {
+          return false;
+        }
+      }
+      if (categoryId?.trim().isNotEmpty ?? false) {
+        if (project.categoryId != categoryId) {
+          return false;
+        }
+      }
+      if (query?.trim().isNotEmpty ?? false) {
+        final normalized = query!.trim().toLowerCase();
+        return project.name.toLowerCase().contains(normalized) ||
+            project.category.toLowerCase().contains(normalized) ||
+            project.description.toLowerCase().contains(normalized);
+      }
+      return true;
+    }).toList(growable: false);
+    final start = (page - 1) * limit;
+    final end = (start + limit).clamp(0, filtered.length);
+    return PaginatedResult<ProjectSummary>(
+      items: start >= filtered.length
+          ? const <ProjectSummary>[]
+          : filtered.sublist(start, end),
+      page: page,
+      limit: limit,
+      total: filtered.length,
+      hasMore: end < filtered.length,
+    );
   }
 
   @override

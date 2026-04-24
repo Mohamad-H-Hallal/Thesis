@@ -1,18 +1,37 @@
 class GisImportListQuery {
-  const GisImportListQuery({this.status, this.projectId});
+  const GisImportListQuery({this.status, this.projectId, this.categoryId});
 
   final String? status;
   final String? projectId;
+  final String? categoryId;
 
   @override
   bool operator ==(Object other) {
     return other is GisImportListQuery &&
         other.status == status &&
-        other.projectId == projectId;
+        other.projectId == projectId &&
+        other.categoryId == categoryId;
   }
 
   @override
-  int get hashCode => Object.hash(status, projectId);
+  int get hashCode => Object.hash(status, projectId, categoryId);
+}
+
+class ImportedFeatureListQuery {
+  const ImportedFeatureListQuery({required this.importId, this.status});
+
+  final String importId;
+  final String? status;
+
+  @override
+  bool operator ==(Object other) {
+    return other is ImportedFeatureListQuery &&
+        other.importId == importId &&
+        other.status == status;
+  }
+
+  @override
+  int get hashCode => Object.hash(importId, status);
 }
 
 class GisImportJob {

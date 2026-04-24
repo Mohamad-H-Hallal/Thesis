@@ -1,6 +1,7 @@
 import '../../../core/config/app_env.dart';
 import '../../../core/network/api_error_message.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/pagination/paginated_result.dart';
 import 'package:dio/dio.dart';
 import '../../auth/domain/auth_models.dart';
 import '../domain/project.dart';
@@ -19,21 +20,60 @@ class ApiProjectsRepository implements ProjectsRepository {
     required UserRole role,
     required ProjectViewScope scope,
   }) async {
+    final page = await fetchProjectsPage(
+      userId: userId,
+      role: role,
+      scope: scope,
+      limit: 100,
+    );
+    return page.items;
+  }
+
+  @override
+  Future<PaginatedResult<ProjectSummary>> fetchProjectsPage({
+    required String userId,
+    required UserRole role,
+    required ProjectViewScope scope,
+    String? query,
+    String? status,
+    String? categoryId,
+    int page = 1,
+    int limit = 20,
+  }) async {
     try {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         _projectsBasePath,
         queryParameters: <String, dynamic>{
           'access_scope': scope.apiValue,
-          'limit': 100,
+          'page': page,
+          'limit': limit,
+          if (query?.trim().isNotEmpty ?? false) 'q': query!.trim(),
+          if (status?.trim().isNotEmpty ?? false) 'status': status!.trim(),
+          if (categoryId?.trim().isNotEmpty ?? false)
+            'category_id': categoryId!.trim(),
         },
       );
       final payload = response.data ?? const <String, dynamic>{};
       final rows = (payload['data'] as List? ?? const <dynamic>[]);
-      return rows
+      final items = rows
           .map(
             (row) => _toProjectSummary(Map<String, dynamic>.from(row as Map)),
           )
           .toList(growable: false);
+      final pagination = Map<String, dynamic>.from(
+        payload['pagination'] as Map? ?? const <String, dynamic>{},
+      );
+      final total = (pagination['total'] as num?)?.toInt() ?? items.length;
+      final hasMore =
+          (pagination['has_more'] as bool?) ??
+          ((page * limit) < total && items.isNotEmpty);
+      return PaginatedResult<ProjectSummary>(
+        items: items,
+        page: (pagination['page'] as num?)?.toInt() ?? page,
+        limit: (pagination['limit'] as num?)?.toInt() ?? limit,
+        total: total,
+        hasMore: hasMore,
+      );
     } on DioException catch (error) {
       throw userFacingDioMessage(
         error,
@@ -161,6 +201,13 @@ class ApiProjectsRepository implements ProjectsRepository {
       pendingReviews:
           _toInt(row['pending_features']) ??
           _toInt(row['pending_reviews']) ??
+          0,
+      pendingAssignmentRequests:
+          _toInt(row['pending_assignment_requests']) ??
+          _toInt(row['pending_assignments']) ??
+          0,
+      rejectedAssignmentRequests:
+          _toInt(row['rejected_assignment_requests']) ??
           0,
       description:
           (row['description'] as String?) ??

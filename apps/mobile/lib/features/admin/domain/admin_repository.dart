@@ -1,6 +1,7 @@
 import 'admin_models.dart';
 import '../../auth/domain/auth_models.dart';
 import '../../projects/domain/project.dart';
+import '../../../core/pagination/paginated_result.dart';
 
 abstract class AdminRepository {
   Future<List<ManagedUserSummary>> fetchUsers({
@@ -10,8 +11,24 @@ abstract class AdminRepository {
     bool? isActive,
   });
 
+  Future<PaginatedResult<ManagedUserSummary>> fetchUsersPage({
+    String? query,
+    UserRole? role,
+    UserAccountState? state,
+    bool? isActive,
+    int page = 1,
+    int limit = 20,
+  });
+
   Future<List<ManagedUserSummary>> fetchContributorRequests({
     required ContributorRequestStatus status,
+  });
+
+  Future<PaginatedResult<ManagedUserSummary>> fetchContributorRequestsPage({
+    required ContributorRequestStatus status,
+    String? query,
+    int page = 1,
+    int limit = 20,
   });
 
   Future<ManagedUserSummary> createAdmin({
@@ -38,7 +55,20 @@ abstract class AdminRepository {
     String? status,
   });
 
+  Future<PaginatedResult<ManagedAssignmentSummary>> fetchManagedAssignmentsPage({
+    String? status,
+    String? query,
+    int page = 1,
+    int limit = 20,
+  });
+
   Future<List<ProjectCategorySummary>> fetchCategories();
+
+  Future<PaginatedResult<ProjectCategorySummary>> fetchCategoriesPage({
+    String? query,
+    int page = 1,
+    int limit = 20,
+  });
 
   Future<ProjectCategorySummary> createCategory({
     required String name,

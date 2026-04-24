@@ -33,7 +33,15 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final projectsAsync = ref.watch(projectListProvider(widget.scope));
+    final query = _query.trim();
+    final projectQuery = ProjectListQuery(
+      scope: widget.scope,
+      query: query.isEmpty ? null : query,
+    );
+    final projectsAsync = ref.watch(paginatedProjectsProvider(projectQuery));
+    final projectsController = ref.read(
+      paginatedProjectsProvider(projectQuery).notifier,
+    );
     final session = ref.watch(authControllerProvider).session;
     final currentUserId = session?.user.id;
     final role = session?.user.role ?? UserRole.viewer;
@@ -70,18 +78,13 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
                       'Unable to load projects right now. Please try again.',
                 ),
                 actionLabel: 'Retry',
-                onAction: () =>
-                    ref.invalidate(projectListProvider(widget.scope)),
+                onAction: projectsController.load,
               ),
             ),
-            data: (projects) {
-              final filtered = projects
-                  .where(
-                    (project) => project.name.toLowerCase().contains(_query),
-                  )
-                  .toList(growable: false);
+            data: (projectsState) {
+              final projects = projectsState.items;
 
-              if (filtered.isEmpty) {
+              if (projects.isEmpty) {
                 return AppEmptyState(
                   icon: Icons.folder_off_outlined,
                   title: 'No projects found',
@@ -92,18 +95,21 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
               return ListView(
                 children: [
                   Text(
-                    '${filtered.length} project${filtered.length == 1 ? '' : 's'}',
+                    '${projectsState.total} project${projectsState.total == 1 ? '' : 's'}',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   ProgressiveListSection<ProjectSummary>(
-                    items: filtered,
+                    items: projects,
                     resetKey: Object.hash(
                       widget.scope,
                       role,
                       _query,
-                      filtered.length,
+                      projectsState.total,
                     ),
+                    hasMore: projectsState.hasMore,
+                    isLoadingMore: projectsState.isLoadingMore,
+                    onLoadMore: projectsController.loadMore,
                     itemBuilder: (context, project, index) {
                       final contributorReadOnly =
                           role == UserRole.contributor &&

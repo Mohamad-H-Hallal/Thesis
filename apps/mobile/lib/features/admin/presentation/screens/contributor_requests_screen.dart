@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
+import '../../../../core/pagination/paginated_list_controller.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
@@ -138,34 +139,61 @@ class _ContributorRequestsScreenState
     }
   }
 
-  bool _matchesQuery(Iterable<String?> values) {
-    final query = _searchController.text.trim().toLowerCase();
-    if (query.isEmpty) {
-      return true;
-    }
-    return values.any(
-      (value) => (value ?? '').trim().toLowerCase().contains(query),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
+    final searchQuery = _searchController.text.trim();
     final contributorAsync = _selectedGroup == _RequestGroup.contributor
         ? ref.watch(
-            contributorRequestsProvider(
-              _selectedState == _RequestStateTab.pending
-                  ? ContributorRequestStatus.pending
-                  : ContributorRequestStatus.rejected,
+            paginatedContributorRequestsProvider(
+              ContributorRequestsQuery(
+                status: _selectedState == _RequestStateTab.pending
+                    ? ContributorRequestStatus.pending
+                    : ContributorRequestStatus.rejected,
+                query: searchQuery.isEmpty ? null : searchQuery,
+              ),
             ),
           )
-        : const AsyncValue<List<ManagedUserSummary>>.data(
-            <ManagedUserSummary>[],
+        : const AsyncValue<
+            PaginatedListState<ManagedUserSummary>
+          >.data(
+            PaginatedListState<ManagedUserSummary>.initial(),
           );
+    final contributorController = ref.read(
+      paginatedContributorRequestsProvider(
+        ContributorRequestsQuery(
+          status: _selectedState == _RequestStateTab.pending
+              ? ContributorRequestStatus.pending
+              : ContributorRequestStatus.rejected,
+          query: searchQuery.isEmpty ? null : searchQuery,
+        ),
+      ).notifier,
+    );
     final assignmentsAsync = _selectedGroup == _RequestGroup.project
-        ? ref.watch(managedAssignmentsProvider)
-        : const AsyncValue<List<ManagedAssignmentSummary>>.data(
-            <ManagedAssignmentSummary>[],
+        ? ref.watch(
+            paginatedManagedAssignmentsProvider(
+              ManagedAssignmentsQuery(
+                status: _selectedState == _RequestStateTab.pending
+                    ? 'pending'
+                    : 'rejected',
+                query: searchQuery.isEmpty ? null : searchQuery,
+              ),
+            ),
+          )
+        : const AsyncValue<
+            PaginatedListState<ManagedAssignmentSummary>
+          >.data(
+            PaginatedListState<ManagedAssignmentSummary>.initial(),
           );
+    final assignmentsController = ref.read(
+      paginatedManagedAssignmentsProvider(
+        ManagedAssignmentsQuery(
+          status: _selectedState == _RequestStateTab.pending
+              ? 'pending'
+              : 'rejected',
+          query: searchQuery.isEmpty ? null : searchQuery,
+        ),
+      ).notifier,
+    );
 
     return ListView(
       children: [
@@ -233,15 +261,16 @@ class _ContributorRequestsScreenState
         ),
         const SizedBox(height: AppSpacing.md),
         if (_selectedGroup == _RequestGroup.contributor)
-          _buildContributorRequests(contributorAsync)
+          _buildContributorRequests(contributorAsync, contributorController)
         else
-          _buildProjectRequests(assignmentsAsync),
+          _buildProjectRequests(assignmentsAsync, assignmentsController),
       ],
     );
   }
 
   Widget _buildContributorRequests(
-    AsyncValue<List<ManagedUserSummary>> currentAsync,
+    AsyncValue<PaginatedListState<ManagedUserSummary>> currentAsync,
+    PaginatedListController<ManagedUserSummary> controller,
   ) {
     return currentAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -253,26 +282,10 @@ class _ContributorRequestsScreenState
           fallback: 'Unable to load requests right now. Please try again.',
         ),
         actionLabel: 'Retry',
-        onAction: () => ref.invalidate(
-          contributorRequestsProvider(
-            _selectedState == _RequestStateTab.pending
-                ? ContributorRequestStatus.pending
-                : ContributorRequestStatus.rejected,
-          ),
-        ),
+        onAction: controller.load,
       ),
-      data: (requests) {
-        final filtered = requests
-            .where(
-              (request) => _matchesQuery(<String?>[
-                request.fullName,
-                request.email,
-                request.phone,
-              ]),
-            )
-            .toList(growable: false);
-
-        if (filtered.isEmpty) {
+      data: (requestsState) {
+        if (requestsState.items.isEmpty) {
           return AppEmptyState(
             icon: _selectedState == _RequestStateTab.pending
                 ? Icons.person_search_outlined
@@ -290,18 +303,21 @@ class _ContributorRequestsScreenState
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${filtered.length} request${filtered.length == 1 ? '' : 's'}',
+              '${requestsState.total} request${requestsState.total == 1 ? '' : 's'}',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: AppSpacing.sm),
             ProgressiveListSection<ManagedUserSummary>(
-              items: filtered,
+              items: requestsState.items,
               resetKey: Object.hash(
                 _selectedGroup,
                 _selectedState,
                 _searchController.text,
-                filtered.length,
+                requestsState.total,
               ),
+              hasMore: requestsState.hasMore,
+              isLoadingMore: requestsState.isLoadingMore,
+              onLoadMore: controller.loadMore,
               itemBuilder: (context, request, _) => _RequestCard(
                 title: request.fullName,
                 subtitle: request.email,
@@ -344,7 +360,8 @@ class _ContributorRequestsScreenState
   }
 
   Widget _buildProjectRequests(
-    AsyncValue<List<ManagedAssignmentSummary>> assignmentsAsync,
+    AsyncValue<PaginatedListState<ManagedAssignmentSummary>> assignmentsAsync,
+    PaginatedListController<ManagedAssignmentSummary> controller,
   ) {
     return assignmentsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -356,25 +373,10 @@ class _ContributorRequestsScreenState
           fallback: 'Unable to load requests right now. Please try again.',
         ),
         actionLabel: 'Retry',
-        onAction: () => ref.invalidate(managedAssignmentsProvider),
+        onAction: controller.load,
       ),
-      data: (assignments) {
-        final filtered = assignments
-            .where(
-              (item) =>
-                  item.status ==
-                      (_selectedState == _RequestStateTab.pending
-                          ? 'pending'
-                          : 'rejected') &&
-                  _matchesQuery(<String?>[
-                    item.projectName,
-                    item.fullName,
-                    item.email,
-                  ]),
-            )
-            .toList(growable: false);
-
-        if (filtered.isEmpty) {
+      data: (assignmentsState) {
+        if (assignmentsState.items.isEmpty) {
           return AppEmptyState(
             icon: _selectedState == _RequestStateTab.pending
                 ? Icons.assignment_late_outlined
@@ -392,18 +394,21 @@ class _ContributorRequestsScreenState
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${filtered.length} request${filtered.length == 1 ? '' : 's'}',
+              '${assignmentsState.total} request${assignmentsState.total == 1 ? '' : 's'}',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: AppSpacing.sm),
             ProgressiveListSection<ManagedAssignmentSummary>(
-              items: filtered,
+              items: assignmentsState.items,
               resetKey: Object.hash(
                 _selectedGroup,
                 _selectedState,
                 _searchController.text,
-                filtered.length,
+                assignmentsState.total,
               ),
+              hasMore: assignmentsState.hasMore,
+              isLoadingMore: assignmentsState.isLoadingMore,
+              onLoadMore: controller.loadMore,
               itemBuilder: (context, assignment, _) => _RequestCard(
                 title: assignment.projectName,
                 subtitle: assignment.fullName,

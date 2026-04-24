@@ -49,6 +49,8 @@ import '../network/api_client.dart';
 import '../offline/local_models.dart';
 import '../offline/local_store.dart';
 import '../offline/local_store_factory.dart';
+import '../pagination/paginated_list_controller.dart';
+import '../pagination/paginated_result.dart';
 import '../router/app_router.dart';
 import '../sync/sync_controller.dart';
 import '../sync/sync_engine.dart';
@@ -584,6 +586,210 @@ final notificationsControllerProvider =
         return NotificationsController.empty(repository);
       }
       return NotificationsController(repository);
+    });
+
+final paginatedProjectListProvider = StateNotifierProvider.autoDispose
+    .family<
+      PaginatedListController<ProjectSummary>,
+      AsyncValue<PaginatedListState<ProjectSummary>>,
+      ProjectViewScope
+    >((ref, scope) {
+      final authState = ref.watch(authControllerProvider);
+      final session = authState.session;
+      if (session == null) {
+        return PaginatedListController<ProjectSummary>(
+          loadPage: ({required page, required limit}) async {
+            return const PaginatedResult<ProjectSummary>(
+              items: <ProjectSummary>[],
+              page: 1,
+              limit: 20,
+              total: 0,
+              hasMore: false,
+            );
+          },
+          autoLoad: false,
+        );
+      }
+
+      ref.watch(workflowRefreshTickProvider);
+      final effectiveScope = _effectiveProjectScopeForRole(
+        role: session.user.role,
+        requestedScope: scope,
+      );
+      return PaginatedListController<ProjectSummary>(
+        loadPage: ({required page, required limit}) async {
+          final pageResult = await ref
+              .read(projectsRepositoryProvider)
+              .fetchProjectsPage(
+                userId: session.user.id,
+                role: session.user.role,
+                scope: effectiveScope,
+                page: page,
+                limit: limit,
+              );
+          await _mergeProjectsIntoCache(ref, pageResult.items);
+          return pageResult;
+        },
+      );
+    });
+
+final paginatedProjectsProvider = StateNotifierProvider.autoDispose
+    .family<
+      PaginatedListController<ProjectSummary>,
+      AsyncValue<PaginatedListState<ProjectSummary>>,
+      ProjectListQuery
+    >((ref, query) {
+      final authState = ref.watch(authControllerProvider);
+      final session = authState.session;
+      if (session == null) {
+        return PaginatedListController<ProjectSummary>(
+          loadPage: ({required page, required limit}) async {
+            return const PaginatedResult<ProjectSummary>(
+              items: <ProjectSummary>[],
+              page: 1,
+              limit: 20,
+              total: 0,
+              hasMore: false,
+            );
+          },
+          autoLoad: false,
+        );
+      }
+
+      ref.watch(workflowRefreshTickProvider);
+      final effectiveScope = _effectiveProjectScopeForRole(
+        role: session.user.role,
+        requestedScope: query.scope,
+      );
+      return PaginatedListController<ProjectSummary>(
+        loadPage: ({required page, required limit}) async {
+          final pageResult = await ref
+              .read(projectsRepositoryProvider)
+              .fetchProjectsPage(
+                userId: session.user.id,
+                role: session.user.role,
+                scope: effectiveScope,
+                query: query.query,
+                status: query.status,
+                categoryId: query.categoryId,
+                page: page,
+                limit: limit,
+              );
+          await _mergeProjectsIntoCache(ref, pageResult.items);
+          return pageResult;
+        },
+      );
+    });
+
+final paginatedManagedUsersProvider = StateNotifierProvider.autoDispose
+    .family<
+      PaginatedListController<ManagedUserSummary>,
+      AsyncValue<PaginatedListState<ManagedUserSummary>>,
+      ManagedUsersQuery
+    >((ref, query) {
+      ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+      ref.watch(workflowRefreshTickProvider);
+      return PaginatedListController<ManagedUserSummary>(
+        loadPage: ({required page, required limit}) {
+          return ref
+              .read(adminRepositoryProvider)
+              .fetchUsersPage(
+                query: query.query,
+                role: query.role,
+                state: query.state,
+                isActive: query.isActive,
+                page: page,
+                limit: limit,
+              );
+        },
+      );
+    });
+
+final paginatedContributorRequestsProvider = StateNotifierProvider.autoDispose
+    .family<
+      PaginatedListController<ManagedUserSummary>,
+      AsyncValue<PaginatedListState<ManagedUserSummary>>,
+      ContributorRequestsQuery
+    >((ref, query) {
+      ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+      ref.watch(workflowRefreshTickProvider);
+      return PaginatedListController<ManagedUserSummary>(
+        loadPage: ({required page, required limit}) {
+          return ref
+              .read(adminRepositoryProvider)
+              .fetchContributorRequestsPage(
+                status: query.status,
+                query: query.query,
+                page: page,
+                limit: limit,
+              );
+        },
+      );
+    });
+
+final paginatedManagedAssignmentsProvider = StateNotifierProvider.autoDispose
+    .family<
+      PaginatedListController<ManagedAssignmentSummary>,
+      AsyncValue<PaginatedListState<ManagedAssignmentSummary>>,
+      ManagedAssignmentsQuery
+    >((ref, query) {
+      ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+      ref.watch(workflowRefreshTickProvider);
+      return PaginatedListController<ManagedAssignmentSummary>(
+        loadPage: ({required page, required limit}) {
+          return ref
+              .read(adminRepositoryProvider)
+              .fetchManagedAssignmentsPage(
+                status: query.status,
+                query: query.query,
+                page: page,
+                limit: limit,
+              );
+        },
+      );
+    });
+
+final paginatedProjectCategoriesProvider = StateNotifierProvider.autoDispose
+    .family<
+      PaginatedListController<ProjectCategorySummary>,
+      AsyncValue<PaginatedListState<ProjectCategorySummary>>,
+      ProjectCategoriesQuery
+    >((ref, query) {
+      ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+      ref.watch(workflowRefreshTickProvider);
+      return PaginatedListController<ProjectCategorySummary>(
+        loadPage: ({required page, required limit}) {
+          return ref
+              .read(adminRepositoryProvider)
+              .fetchCategoriesPage(
+                query: query.query,
+                page: page,
+                limit: limit,
+              );
+        },
+      );
+    });
+
+final paginatedReviewQueueProvider = StateNotifierProvider.autoDispose
+    .family<
+      PaginatedListController<ReviewQueueItem>,
+      AsyncValue<PaginatedListState<ReviewQueueItem>>,
+      ReviewQueueQuery
+    >((ref, query) {
+      ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+      ref.watch(workflowRefreshTickProvider);
+      return PaginatedListController<ReviewQueueItem>(
+        loadPage: ({required page, required limit}) {
+          return ref
+              .read(reviewRepositoryProvider)
+              .fetchReviewItemsPage(
+                status: query.status,
+                projectId: query.projectId,
+                page: page,
+                limit: limit,
+              );
+        },
+      );
     });
 
 final exportsControllerProvider =

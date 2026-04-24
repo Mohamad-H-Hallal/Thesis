@@ -368,6 +368,44 @@ const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
 
   const result = await query(queryText, params);
 
+  let countQuery = `
+    SELECT COUNT(*)::int AS total
+    FROM spatial_feature sf
+    JOIN project p ON sf.project_id = p.id
+    WHERE 1=1
+  `;
+  const countParams: unknown[] = [];
+  let countParamIndex = 1;
+
+  if (project_id) {
+    countQuery += ` AND sf.project_id = $${countParamIndex}`;
+    countParams.push(project_id);
+    countParamIndex += 1;
+  }
+
+  if (status) {
+    countQuery += ` AND sf.status = $${countParamIndex}`;
+    countParams.push(status);
+    countParamIndex += 1;
+  }
+
+  if (req.user?.role !== 'admin') {
+    countQuery += `
+      AND EXISTS (
+        SELECT 1 FROM project_assignment pa
+        WHERE pa.project_id = sf.project_id
+          AND pa.user_id = $${countParamIndex}
+          AND pa.status = 'approved'
+      )
+      AND (sf.status = 'approved' OR sf.collected_by_user_id = $${countParamIndex})
+    `;
+    countParams.push(req.user?.id);
+    countParamIndex += 1;
+  }
+
+  const countResult = await query(countQuery, countParams);
+  const total = countResult.rows[0]?.total ?? 0;
+
   const features = result.rows.map((row: any) => ({
     ...row,
     geometry: JSON.parse(row.geometry),
@@ -379,6 +417,9 @@ const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
     pagination: {
       page,
       limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+      has_more: offset + features.length < total,
     },
   });
 };

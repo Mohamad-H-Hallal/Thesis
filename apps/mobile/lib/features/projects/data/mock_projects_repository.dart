@@ -1,4 +1,5 @@
 import '../../auth/domain/auth_models.dart';
+import '../../../core/pagination/paginated_result.dart';
 import '../domain/project.dart';
 import '../domain/projects_repository.dart';
 
@@ -8,6 +9,26 @@ class MockProjectsRepository implements ProjectsRepository {
     required String userId,
     required UserRole role,
     required ProjectViewScope scope,
+  }) async {
+    final page = await fetchProjectsPage(
+      userId: userId,
+      role: role,
+      scope: scope,
+      limit: 100,
+    );
+    return page.items;
+  }
+
+  @override
+  Future<PaginatedResult<ProjectSummary>> fetchProjectsPage({
+    required String userId,
+    required UserRole role,
+    required ProjectViewScope scope,
+    String? query,
+    String? status,
+    String? categoryId,
+    int page = 1,
+    int limit = 20,
   }) async {
     await Future<void>.delayed(const Duration(milliseconds: 700));
     final all = _allProjects();
@@ -32,9 +53,40 @@ class MockProjectsRepository implements ProjectsRepository {
       filtered = all.where((project) => project.isAssignedTo(userId));
     }
 
-    return filtered
+    final items = filtered
         .map((project) => _withCurrentUserAssignment(project, userId: userId))
+        .where((project) {
+          if (status?.trim().isNotEmpty ?? false) {
+            if (project.status != status) {
+              return false;
+            }
+          }
+          if (categoryId?.trim().isNotEmpty ?? false) {
+            if (project.categoryId != categoryId) {
+              return false;
+            }
+          }
+          if (query?.trim().isNotEmpty ?? false) {
+            final normalized = query!.trim().toLowerCase();
+            return project.name.toLowerCase().contains(normalized) ||
+                project.category.toLowerCase().contains(normalized) ||
+                project.description.toLowerCase().contains(normalized);
+          }
+          return true;
+        })
         .toList(growable: false);
+    final start = (page - 1) * limit;
+    final end = (start + limit).clamp(0, items.length);
+    final pageItems = start >= items.length
+        ? const <ProjectSummary>[]
+        : items.sublist(start, end);
+    return PaginatedResult<ProjectSummary>(
+      items: pageItems,
+      page: page,
+      limit: limit,
+      total: items.length,
+      hasMore: end < items.length,
+    );
   }
 
   @override

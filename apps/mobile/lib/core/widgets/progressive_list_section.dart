@@ -10,6 +10,9 @@ class ProgressiveListSection<T> extends StatefulWidget {
     this.initialCount = 20,
     this.step = 20,
     this.padding = const EdgeInsets.only(bottom: AppSpacing.sm),
+    this.hasMore,
+    this.isLoadingMore = false,
+    this.onLoadMore,
     super.key,
   });
 
@@ -19,6 +22,9 @@ class ProgressiveListSection<T> extends StatefulWidget {
   final int initialCount;
   final int step;
   final EdgeInsetsGeometry padding;
+  final bool? hasMore;
+  final bool isLoadingMore;
+  final Future<void> Function()? onLoadMore;
 
   @override
   State<ProgressiveListSection<T>> createState() =>
@@ -54,6 +60,32 @@ class _ProgressiveListSectionState<T> extends State<ProgressiveListSection<T>> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.onLoadMore != null) {
+      return Column(
+        children: [
+          ...List<Widget>.generate(widget.items.length, (index) {
+            return Padding(
+              padding: widget.padding,
+              child: widget.itemBuilder(context, widget.items[index], index),
+            );
+          }),
+          if (widget.isLoadingMore)
+            const Padding(
+              padding: EdgeInsets.only(bottom: AppSpacing.sm),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (widget.hasMore ?? false)
+            Center(
+              child: OutlinedButton.icon(
+                onPressed: widget.onLoadMore,
+                icon: const Icon(Icons.expand_more),
+                label: const Text('Show more'),
+              ),
+            ),
+        ],
+      );
+    }
+
     final visibleCount = _visibleCount.clamp(0, widget.items.length);
     final remaining = widget.items.length - visibleCount;
 
@@ -70,9 +102,7 @@ class _ProgressiveListSectionState<T> extends State<ProgressiveListSection<T>> {
             child: OutlinedButton.icon(
               onPressed: _loadMore,
               icon: const Icon(Icons.expand_more),
-              label: Text(
-                'Show ${remaining < widget.step ? remaining : widget.step} more',
-              ),
+              label: const Text('Show more'),
             ),
           ),
       ],

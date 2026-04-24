@@ -1,4 +1,5 @@
 import '../../auth/domain/auth_models.dart';
+import '../../../core/pagination/paginated_result.dart';
 import 'project.dart';
 
 abstract class ProjectsRepository {
@@ -6,6 +7,17 @@ abstract class ProjectsRepository {
     required String userId,
     required UserRole role,
     required ProjectViewScope scope,
+  });
+
+  Future<PaginatedResult<ProjectSummary>> fetchProjectsPage({
+    required String userId,
+    required UserRole role,
+    required ProjectViewScope scope,
+    String? query,
+    String? status,
+    String? categoryId,
+    int page = 1,
+    int limit = 20,
   });
 
   Future<ProjectSummary?> byId({

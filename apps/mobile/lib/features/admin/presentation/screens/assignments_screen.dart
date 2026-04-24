@@ -31,8 +31,17 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final projectsAsync = ref.watch(projectListProvider(ProjectViewScope.all));
-    final assignmentsAsync = ref.watch(managedAssignmentsProvider);
+    final projectQuery = ProjectListQuery(
+      scope: ProjectViewScope.all,
+      query: _searchController.text.trim().isEmpty
+          ? null
+          : _searchController.text.trim(),
+      status: _statusFilter == 'all' ? null : _statusFilter,
+    );
+    final projectsAsync = ref.watch(paginatedProjectsProvider(projectQuery));
+    final projectsController = ref.read(
+      paginatedProjectsProvider(projectQuery).notifier,
+    );
 
     return projectsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -44,23 +53,9 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
           fallback: 'Unable to load assignments right now. Please try again.',
         ),
         actionLabel: 'Retry',
-        onAction: () =>
-            ref.invalidate(projectListProvider(ProjectViewScope.all)),
+        onAction: projectsController.load,
       ),
-      data: (projects) => assignmentsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, _) => AppEmptyState(
-          icon: Icons.error_outline,
-          title: 'Assignment data unavailable',
-          message: userFacingErrorMessage(
-            error,
-            fallback: 'Unable to load assignments right now. Please try again.',
-          ),
-          actionLabel: 'Retry',
-          onAction: () => ref.invalidate(managedAssignmentsProvider),
-        ),
-        data: (allAssignments) {
-          final query = _searchController.text.trim().toLowerCase();
+      data: (projectsState) {
           const statusOptions = <String>[
             'all',
             'draft',
@@ -69,20 +64,6 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
             'completed',
             'archived',
           ];
-          final filteredProjects = projects
-              .where(
-                (project) =>
-                    _statusFilter == 'all' || project.status == _statusFilter,
-              )
-              .where((project) {
-                if (query.isEmpty) {
-                  return true;
-                }
-                return project.name.toLowerCase().contains(query) ||
-                    project.category.toLowerCase().contains(query) ||
-                    project.description.toLowerCase().contains(query);
-              })
-              .toList(growable: false);
 
           return ListView(
             children: [
@@ -161,11 +142,11 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
               ),
               const SizedBox(height: AppSpacing.md),
               Text(
-                '${filteredProjects.length} project${filteredProjects.length == 1 ? '' : 's'}',
+                '${projectsState.total} project${projectsState.total == 1 ? '' : 's'}',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
               const SizedBox(height: AppSpacing.sm),
-              if (filteredProjects.isEmpty)
+              if (projectsState.items.isEmpty)
                 AppEmptyState(
                   icon: Icons.assignment_outlined,
                   title: 'No projects found',
@@ -174,26 +155,16 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
                 )
               else
                 ProgressiveListSection<ProjectSummary>(
-                  items: filteredProjects,
+                  items: projectsState.items,
                   resetKey: Object.hash(
                     _searchController.text,
                     _statusFilter,
-                    filteredProjects.length,
+                    projectsState.total,
                   ),
+                  hasMore: projectsState.hasMore,
+                  isLoadingMore: projectsState.isLoadingMore,
+                  onLoadMore: projectsController.loadMore,
                   itemBuilder: (context, project, _) {
-                    final projectAssignments = allAssignments
-                        .where((item) => item.projectId == project.id)
-                        .toList(growable: false);
-                    final assignedCount = projectAssignments
-                        .where((item) => item.status == 'approved')
-                        .length;
-                    final pendingCount = projectAssignments
-                        .where((item) => item.status == 'pending')
-                        .length;
-                    final rejectedCount = projectAssignments
-                        .where((item) => item.status == 'rejected')
-                        .length;
-
                     return AppCard(
                       onTap: () => context.push(
                         AppRoutes.projectAssignments(project.id),
@@ -230,14 +201,20 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
                             runSpacing: 8,
                             children: [
                               Chip(label: Text(project.category)),
-                              Chip(label: Text('$assignedCount assigned')),
                               Chip(
-                                label: Text('$pendingCount pending requests'),
+                                label: Text(
+                                  '${project.assignedCollectors} assigned',
+                                ),
                               ),
-                              if (rejectedCount > 0)
+                              Chip(
+                                label: Text(
+                                  '${project.pendingAssignmentRequests} pending requests',
+                                ),
+                              ),
+                              if (project.rejectedAssignmentRequests > 0)
                                 Chip(
                                   label: Text(
-                                    '$rejectedCount rejected requests',
+                                    '${project.rejectedAssignmentRequests} rejected requests',
                                   ),
                                 ),
                             ],
@@ -249,8 +226,7 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
                 ),
             ],
           );
-        },
-      ),
+      },
     );
   }
 }

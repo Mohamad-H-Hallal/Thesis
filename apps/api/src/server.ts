@@ -5,6 +5,10 @@ const { testConnection, closePool } = require('./config/database');
 const { validateEnv } = require('./config/env');
 const { applyPendingMigrations, getPendingMigrations } = require('./db/migrationRunner');
 const { ensureExportDir, cleanupOldExports } = require('./controllers/export.controller');
+const {
+  startImportProcessingLoop,
+  stopImportProcessingLoop,
+} = require('./controllers/import.controller');
 const { runNotificationMaintenance } = require('./jobs/notificationMaintenance');
 const { buildApp } = require('./app');
 import { ensureSuperAdminExists } from './lib/userWorkflow';
@@ -56,6 +60,7 @@ const startServer = async () => {
         ),
       env.NOTIFICATION_MAINTENANCE_INTERVAL_MINUTES * 60 * 1000,
     );
+    startImportProcessingLoop();
 
     server = app.listen(env.PORT, env.HOST, () => {
       logger.info(`Server running in ${env.NODE_ENV} mode`);
@@ -84,6 +89,7 @@ const shutdown = async (signal) => {
   if (notificationMaintenanceInterval) {
     clearInterval(notificationMaintenanceInterval);
   }
+  stopImportProcessingLoop();
 
   await new Promise<void>((resolve) => {
     if (!server) {

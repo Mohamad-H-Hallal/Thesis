@@ -242,7 +242,7 @@ const createAssignment = async (req, res) => {
 
 const getManagedAssignments = async (req, res) => {
   await synchronizeProjectStatuses();
-  const { status, page = 1, limit = 50 } = req.query;
+  const { status, q, page = 1, limit = 50 } = req.query;
   const offset = (page - 1) * limit;
 
   let queryText = `
@@ -267,10 +267,65 @@ const getManagedAssignments = async (req, res) => {
     paramIndex++;
   }
 
+  if (q) {
+    queryText += ` AND (
+      p.name ILIKE $${paramIndex}
+      OR u.full_name ILIKE $${paramIndex}
+      OR COALESCE(u.email, '') ILIKE $${paramIndex}
+    )`;
+    params.push(`%${String(q).trim()}%`);
+    paramIndex++;
+  }
+
   queryText += ` ORDER BY pa.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
   params.push(limit, offset);
 
   const result = await query(queryText, params);
+
+  let countQuery = `
+    SELECT COUNT(*)::int AS total
+    FROM project_assignment pa
+    WHERE pa.role = 'contributor'
+  `;
+  const countParams: unknown[] = [];
+  let countParamIndex = 1;
+
+  if (status) {
+    countQuery += ` AND pa.status = $${countParamIndex}`;
+    countParams.push(status);
+    countParamIndex++;
+  }
+
+  if (q) {
+    countQuery = `
+      SELECT COUNT(*)::int AS total
+      FROM project_assignment pa
+      JOIN project p ON p.id = pa.project_id
+      JOIN "user" u ON u.id = pa.user_id
+      WHERE pa.role = 'contributor'
+    `;
+    if (status) {
+      countQuery += ` AND pa.status = $1`;
+      countQuery += ` AND (
+        p.name ILIKE $2
+        OR u.full_name ILIKE $2
+        OR COALESCE(u.email, '') ILIKE $2
+      )`;
+      countParams.length = 0;
+      countParams.push(status, `%${String(q).trim()}%`);
+    } else {
+      countQuery += ` AND (
+        p.name ILIKE $1
+        OR u.full_name ILIKE $1
+        OR COALESCE(u.email, '') ILIKE $1
+      )`;
+      countParams.length = 0;
+      countParams.push(`%${String(q).trim()}%`);
+    }
+  }
+
+  const countResult = await query(countQuery, countParams);
+  const total = countResult.rows[0]?.total ?? 0;
 
   res.json({
     success: true,
@@ -278,6 +333,9 @@ const getManagedAssignments = async (req, res) => {
     pagination: {
       page: parseInt(page),
       limit: parseInt(limit),
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+      has_more: offset + result.rows.length < total,
     },
   });
 };

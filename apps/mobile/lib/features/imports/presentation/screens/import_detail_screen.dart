@@ -39,6 +39,16 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
     }
     final isAdmin = session.user.role == UserRole.admin;
     final detailsAsync = ref.watch(importDetailsProvider(widget.importId));
+    final featuresAsync = ref.watch(
+      paginatedImportFeaturesProvider(
+        ImportedFeatureListQuery(importId: widget.importId),
+      ),
+    );
+    final featuresController = ref.read(
+      paginatedImportFeaturesProvider(
+        ImportedFeatureListQuery(importId: widget.importId),
+      ).notifier,
+    );
 
     return detailsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -53,7 +63,8 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
         onAction: () => ref.invalidate(importDetailsProvider(widget.importId)),
       ),
       data: (details) {
-        final features = details.previewFeatures;
+        final featureState = featuresAsync.valueOrNull;
+        final features = featureState?.items ?? details.previewFeatures;
         final actionableFeatures = features
             .where((item) => item.isActionable)
             .toList(growable: false);
@@ -86,7 +97,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
             if (isAdmin && actionableFeatures.isNotEmpty)
               const SizedBox(height: AppSpacing.md),
             Text(
-              'Staged features (${features.length})',
+              'Staged features (${featureState?.total ?? details.job.geometryCount})',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: AppSpacing.sm),
@@ -104,7 +115,11 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
                   widget.importId,
                   details.job.updatedAt,
                   features.length,
+                  featureState?.total ?? 0,
                 ),
+                hasMore: featureState?.hasMore ?? false,
+                isLoadingMore: featureState?.isLoadingMore ?? false,
+                onLoadMore: featuresController.loadMore,
                 itemBuilder: (context, feature, _) => _ImportedFeatureCard(
                   feature: feature,
                   selectable: isAdmin && feature.isActionable,
@@ -120,10 +135,11 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
                   },
                 ),
               ),
-            if (details.job.geometryCount > features.length) ...[
+            if ((featureState?.total ?? details.job.geometryCount) >
+                features.length) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
-                'Preview limited to the first ${features.length} staged feature(s) for this import.',
+                'Showing ${features.length} of ${featureState?.total ?? details.job.geometryCount} staged feature(s) for this import.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],

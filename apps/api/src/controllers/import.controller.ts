@@ -23,6 +23,15 @@ const LEBANON_BUFFER_DEGREES = 0.2;
 const IMPORT_PREVIEW_LIMIT = 500;
 const PAGE_MAX_LIMIT = 200;
 const IMPORT_INSERT_BATCH_SIZE = 250;
+const IMPORT_PROCESSING_POLL_INTERVAL_MS = Number.parseInt(
+  process.env.IMPORT_PROCESSING_POLL_INTERVAL_MS ??
+    (process.env.NODE_ENV === 'test' ? '250' : '2000'),
+  10,
+);
+const IMPORT_PROCESSING_STALE_AFTER_MS = Number.parseInt(
+  process.env.IMPORT_PROCESSING_STALE_AFTER_MS ?? String(5 * 60 * 1000),
+  10,
+);
 
 type ImportFileType = 'geojson' | 'shapefile_zip' | 'kml' | 'kmz';
 type GeometryType = 'Point' | 'LineString' | 'Polygon';
@@ -135,6 +144,9 @@ type StagedImportInsertRow = {
 };
 
 const env = validateEnv();
+let importProcessingLoop: NodeJS.Timeout | null = null;
+let importProcessingDrainScheduled = false;
+let importProcessingDrainRunning = false;
 
 const getPagination = (pageRaw: unknown, limitRaw: unknown) => {
   const page = Math.max(1, Number.parseInt(String(pageRaw ?? '1'), 10) || 1);
@@ -1034,6 +1046,409 @@ const insertStagedImportFeaturesBatch = async (
   );
 };
 
+const createImportSubmissionNotifications = async (
+  client: any,
+  {
+    importJobId,
+    projectId,
+    projectName,
+    uploader,
+    originalFilename,
+  }: {
+    importJobId: string;
+    projectId: string;
+    projectName: string;
+    uploader: Express.UserContext;
+    originalFilename: string;
+  },
+): Promise<void> => {
+  const recipients = await getImportReviewRecipients(client, projectId);
+  for (const admin of recipients) {
+    await createNotification(client, {
+      userId: admin.id,
+      type: 'import_event',
+      title: 'GIS import submitted',
+      message: `${uploader.full_name} submitted ${originalFilename} for ${projectName}. The file is processing before review.`,
+      metadata: {
+        import_job_id: importJobId,
+        project_id: projectId,
+        project_name: projectName,
+        status: 'uploaded',
+      },
+    });
+  }
+};
+
+const updateImportProcessingHeartbeat = async (
+  client: any,
+  importJobId: string,
+  processingMessage: string,
+): Promise<void> => {
+  await client.query(
+    `UPDATE gis_import_job
+     SET processing_heartbeat_at = CURRENT_TIMESTAMP,
+         processing_message = $2
+     WHERE id = $1`,
+    [importJobId, processingMessage],
+  );
+};
+
+const failImportJob = async (
+  importJobId: string,
+  {
+    projectId,
+    projectName,
+    uploadedByUserId,
+    originalFilename,
+    message,
+    sourceCrs,
+    sourceLayerName,
+  }: {
+    projectId: string;
+    projectName: string;
+    uploadedByUserId: string;
+    originalFilename: string;
+    message: string;
+    sourceCrs?: string | null;
+    sourceLayerName?: string | null;
+  },
+): Promise<void> => {
+  await transaction(async (client: any) => {
+    await client.query(
+      `UPDATE gis_import_job
+       SET status = 'failed',
+           processed_at = CURRENT_TIMESTAMP,
+           processing_message = $2,
+           source_crs = COALESCE($3, source_crs),
+           source_layer_name = COALESCE($4, source_layer_name)
+       WHERE id = $1`,
+      [importJobId, message, sourceCrs ?? null, sourceLayerName ?? null],
+    );
+
+    await createNotification(client, {
+      userId: uploadedByUserId,
+      type: 'import_event',
+      title: `Import failed in ${projectName}`,
+      message: `We could not stage ${originalFilename}. ${message}`,
+      metadata: {
+        import_job_id: importJobId,
+        project_id: projectId,
+        project_name: projectName,
+        status: 'failed',
+      },
+    });
+  });
+};
+
+const processImportJob = async (importJobId: string): Promise<void> => {
+  const jobResult = await query(
+    `SELECT gij.*, p.name AS project_name,
+            uploader.full_name AS uploaded_by_name
+     FROM gis_import_job gij
+     JOIN project p ON p.id = gij.project_id
+     JOIN "user" uploader ON uploader.id = gij.uploaded_by_user_id
+     WHERE gij.id = $1`,
+    [importJobId],
+  );
+  if (jobResult.rows.length === 0) {
+    return;
+  }
+
+  const job = jobResult.rows[0];
+  let parsed: ParsedImportPayload;
+  try {
+    parsed = await parseImportFile(job.file_path, job.file_type);
+  } catch (error) {
+    const message =
+      error instanceof AppError
+        ? error.message
+        : 'The uploaded GIS file could not be processed.';
+    await failImportJob(importJobId, {
+      projectId: job.project_id,
+      projectName: job.project_name,
+      uploadedByUserId: job.uploaded_by_user_id,
+      originalFilename: job.original_filename,
+      message,
+    });
+    return;
+  }
+
+  if (parsed.features.length === 0) {
+    await failImportJob(importJobId, {
+      projectId: job.project_id,
+      projectName: job.project_name,
+      uploadedByUserId: job.uploaded_by_user_id,
+      originalFilename: job.original_filename,
+      message: 'The uploaded file did not contain any supported geometries.',
+      sourceCrs: parsed.sourceCrs,
+      sourceLayerName: parsed.sourceLayerName,
+    });
+    return;
+  }
+
+  if (parsed.features.length > env.IMPORT_MAX_FEATURES) {
+    await failImportJob(importJobId, {
+      projectId: job.project_id,
+      projectName: job.project_name,
+      uploadedByUserId: job.uploaded_by_user_id,
+      originalFilename: job.original_filename,
+      message: `This import contains ${parsed.features.length} features. The limit is ${env.IMPORT_MAX_FEATURES}.`,
+      sourceCrs: parsed.sourceCrs,
+      sourceLayerName: parsed.sourceLayerName,
+    });
+    return;
+  }
+
+  const project = await getProjectForImport(job.project_id);
+  const formSchema =
+    project.collection_form_schema && typeof project.collection_form_schema === 'object'
+      ? (project.collection_form_schema as Record<string, unknown>)
+      : {};
+
+  try {
+    await transaction(async (client: any) => {
+      await client.query(
+        `DELETE FROM gis_import_feature
+         WHERE import_job_id = $1`,
+        [importJobId],
+      );
+
+      let reviewableCount = 0;
+      let failedCount = 0;
+      let warningCount = 0;
+      let errorCount = 0;
+      const stagedRows: StagedImportInsertRow[] = [];
+
+      for (let index = 0; index < parsed.features.length; index += 1) {
+        const incoming = parsed.features[index];
+        const validation = await validateImportedFeature(client, {
+          projectId: job.project_id,
+          formSchema,
+          incoming,
+        });
+        warningCount += validation.warnings.length;
+        errorCount += validation.errors.length;
+        const featureStatus = validation.errors.length > 0 ? 'failed' : 'pending_review';
+        if (featureStatus === 'failed') {
+          failedCount += 1;
+        } else {
+          reviewableCount += 1;
+        }
+
+        stagedRows.push({
+          importJobId,
+          sourceIndex: incoming.sourceIndex,
+          sourceIdentifier: incoming.sourceIdentifier,
+          displayTitle: incoming.displayTitle,
+          sourceFeatureName: incoming.sourceFeatureName,
+          geometryType: validation.geometryType,
+          geometryJson: validation.geometryJson,
+          attributes: validation.attributes,
+          status: featureStatus,
+          validationWarnings: validation.warnings,
+          validationErrors: validation.errors,
+          validationReport: validation.report,
+          duplicateFeatureId: validation.duplicateFeatureId,
+        });
+
+        if (stagedRows.length >= IMPORT_INSERT_BATCH_SIZE) {
+          await insertStagedImportFeaturesBatch(client, stagedRows);
+          stagedRows.length = 0;
+          await updateImportProcessingHeartbeat(
+            client,
+            importJobId,
+            `Processing imported features ${Math.min(index + 1, parsed.features.length)}/${parsed.features.length}`,
+          );
+        }
+      }
+
+      if (stagedRows.length > 0) {
+        await insertStagedImportFeaturesBatch(client, stagedRows);
+      }
+
+      const finalStatus = reviewableCount > 0 ? 'pending_review' : 'failed';
+      const geometryTypes = [
+        ...new Set(
+          parsed.features
+            .map((feature) => feature.geometryType)
+            .filter((value): value is GeometryType => value != null),
+        ),
+      ];
+      const validationSummary = buildValidationSummary({
+        parsed,
+        reviewableCount,
+        failedCount,
+        warningCount,
+        errorCount,
+        duplicateOfImportJobId: job.duplicate_of_import_job_id,
+      });
+      const processingMessage =
+        finalStatus === 'failed'
+          ? 'Import processing finished, but no staged features were eligible for review.'
+          : `Import ready for admin review with ${reviewableCount} staged feature(s).`;
+
+      await client.query(
+        `UPDATE gis_import_job
+         SET status = $2::gis_import_status,
+             geometry_count = $3,
+             pending_feature_count = $4,
+             approved_feature_count = 0,
+             rejected_feature_count = 0,
+             failed_feature_count = $5,
+             warning_count = $6,
+             error_count = $7,
+             geometry_types = $8::text[],
+             file_metadata = $9::jsonb,
+             validation_summary = $10::jsonb,
+             processed_at = CURRENT_TIMESTAMP,
+             processing_message = $11,
+             source_crs = COALESCE($12, source_crs),
+             source_layer_name = COALESCE($13, source_layer_name),
+             processing_heartbeat_at = CURRENT_TIMESTAMP
+         WHERE id = $1`,
+        [
+          importJobId,
+          finalStatus,
+          parsed.features.length,
+          reviewableCount,
+          failedCount,
+          warningCount,
+          errorCount,
+          geometryTypes,
+          JSON.stringify(parsed.fileMetadata),
+          JSON.stringify(validationSummary),
+          processingMessage,
+          parsed.sourceCrs,
+          parsed.sourceLayerName,
+        ],
+      );
+
+      if (finalStatus === 'failed') {
+        await createNotification(client, {
+          userId: job.uploaded_by_user_id,
+          type: 'import_event',
+          title: `Import failed in ${job.project_name}`,
+          message: `We could not stage any reviewable features from ${job.original_filename}. Check the validation summary for details.`,
+          metadata: {
+            import_job_id: importJobId,
+            project_id: job.project_id,
+            project_name: job.project_name,
+            status: finalStatus,
+            warning_count: warningCount,
+            error_count: errorCount,
+          },
+        });
+      }
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message.trim().length > 0
+        ? error.message.trim()
+        : 'The uploaded GIS file could not be processed.';
+    await failImportJob(importJobId, {
+      projectId: job.project_id,
+      projectName: job.project_name,
+      uploadedByUserId: job.uploaded_by_user_id,
+      originalFilename: job.original_filename,
+      message,
+      sourceCrs: parsed.sourceCrs,
+      sourceLayerName: parsed.sourceLayerName,
+    });
+    return;
+  }
+};
+
+const claimNextImportJob = async (): Promise<string | null> => {
+  return transaction(async (client: any) => {
+    const staleCutoff = new Date(Date.now() - IMPORT_PROCESSING_STALE_AFTER_MS).toISOString();
+    const result = await client.query(
+      `WITH candidate AS (
+         SELECT id
+         FROM gis_import_job
+         WHERE status = 'uploaded'
+            OR (
+              status = 'processing'
+              AND (
+                processing_heartbeat_at IS NULL
+                OR processing_heartbeat_at < $1::timestamptz
+              )
+            )
+         ORDER BY uploaded_at ASC
+         FOR UPDATE SKIP LOCKED
+         LIMIT 1
+       )
+       UPDATE gis_import_job gij
+       SET status = 'processing',
+           processing_attempt_count = gij.processing_attempt_count + 1,
+           processing_started_at = COALESCE(gij.processing_started_at, CURRENT_TIMESTAMP),
+           processing_heartbeat_at = CURRENT_TIMESTAMP,
+           processing_message = 'Processing uploaded GIS data'
+       FROM candidate
+       WHERE gij.id = candidate.id
+       RETURNING gij.id`,
+      [staleCutoff],
+    );
+    return result.rows[0]?.id ?? null;
+  });
+};
+
+const drainImportProcessingQueue = async (): Promise<void> => {
+  if (importProcessingDrainRunning) {
+    return;
+  }
+
+  importProcessingDrainRunning = true;
+  try {
+    for (;;) {
+      const nextJobId = await claimNextImportJob();
+      if (!nextJobId) {
+        break;
+      }
+
+      try {
+        await processImportJob(nextJobId);
+      } catch (error) {
+        logger.error('Background GIS import processing failed', {
+          importJobId: nextJobId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  } finally {
+    importProcessingDrainRunning = false;
+  }
+};
+
+const scheduleImportProcessing = (): void => {
+  if (importProcessingDrainScheduled) {
+    return;
+  }
+
+  importProcessingDrainScheduled = true;
+  setTimeout(() => {
+    importProcessingDrainScheduled = false;
+    void drainImportProcessingQueue();
+  }, 0);
+};
+
+const startImportProcessingLoop = (): void => {
+  if (importProcessingLoop) {
+    return;
+  }
+
+  importProcessingLoop = setInterval(() => {
+    void drainImportProcessingQueue();
+  }, IMPORT_PROCESSING_POLL_INTERVAL_MS);
+  scheduleImportProcessing();
+};
+
+const stopImportProcessingLoop = (): void => {
+  if (importProcessingLoop) {
+    clearInterval(importProcessingLoop);
+    importProcessingLoop = null;
+  }
+};
+
 const fetchImportJobWithAccess = async (importId: string, user: Express.UserContext) => {
   const result = await query(
     `SELECT gij.*, p.name AS project_name,
@@ -1067,6 +1482,7 @@ const listImports = async (req: Request, res: Response): Promise<void> => {
   const { page, limit, offset } = getPagination(req.query.page, req.query.limit);
   const status = typeof req.query.status === 'string' ? req.query.status.trim() : '';
   const projectId = typeof req.query.project_id === 'string' ? req.query.project_id.trim() : '';
+  const categoryId = typeof req.query.category_id === 'string' ? req.query.category_id.trim() : '';
 
   const whereClauses = ['1=1'];
   const params: unknown[] = [];
@@ -1090,6 +1506,12 @@ const listImports = async (req: Request, res: Response): Promise<void> => {
     paramIndex += 1;
   }
 
+  if (categoryId) {
+    whereClauses.push(`p.category_id = $${paramIndex}`);
+    params.push(categoryId);
+    paramIndex += 1;
+  }
+
   const whereSql = whereClauses.join(' AND ');
   const listSql = `
     SELECT gij.*, p.name AS project_name,
@@ -1103,7 +1525,12 @@ const listImports = async (req: Request, res: Response): Promise<void> => {
     ORDER BY gij.uploaded_at DESC
     LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
   `;
-  const countSql = `SELECT COUNT(*)::int AS total FROM gis_import_job gij WHERE ${whereSql}`;
+  const countSql = `
+    SELECT COUNT(*)::int AS total
+    FROM gis_import_job gij
+    JOIN project p ON p.id = gij.project_id
+    WHERE ${whereSql}
+  `;
 
   const [itemsResult, countResult] = await Promise.all([
     query(listSql, [...params, limit, offset]),
@@ -1119,6 +1546,7 @@ const listImports = async (req: Request, res: Response): Promise<void> => {
       limit,
       total,
       totalPages: Math.max(1, Math.ceil(total / limit)),
+      has_more: offset + itemsResult.rows.length < total,
     },
   });
 };
@@ -1188,6 +1616,7 @@ const listImportFeatures = async (req: Request, res: Response): Promise<void> =>
       limit,
       total,
       totalPages: Math.max(1, Math.ceil(total / limit)),
+      has_more: offset + itemsResult.rows.length < total,
     },
   });
 };
@@ -1219,25 +1648,6 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
   );
   const duplicateOfImportJobId = duplicateImportResult.rows[0]?.id ?? null;
 
-  let parsed: ParsedImportPayload;
-  try {
-    parsed = await parseImportFile(req.file.path, fileType);
-  } catch (error) {
-    await fs.unlink(req.file.path).catch(() => undefined);
-    throw error;
-  }
-  if (parsed.features.length === 0) {
-    await fs.unlink(req.file.path).catch(() => undefined);
-    throw new AppError('The uploaded file did not contain any supported geometries.', 400);
-  }
-  if (parsed.features.length > env.IMPORT_MAX_FEATURES) {
-    await fs.unlink(req.file.path).catch(() => undefined);
-    throw new AppError(
-      `This import contains ${parsed.features.length} features. The limit is ${env.IMPORT_MAX_FEATURES}.`,
-      400,
-    );
-  }
-
   const createdJob = await transaction(async (client: any) => {
     const insertedJob = await client.query(
       `INSERT INTO gis_import_job (
@@ -1257,7 +1667,7 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
          validation_summary,
          processing_message
        ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9::gis_import_file_type, $10, $11, 'processing', $12::jsonb, '{}'::jsonb, 'Validating imported geometries'
+         $1, $2, $3, $4, $5, $6, $7, $8, $9::gis_import_file_type, NULL, NULL, 'uploaded', $10::jsonb, '{}'::jsonb, 'Import queued for background processing'
        )
        RETURNING id`,
       [
@@ -1269,121 +1679,24 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
         req.file.path,
         req.file.size,
         fileChecksum,
-        parsed.fileType,
-        parsed.sourceCrs,
-        parsed.sourceLayerName,
-        JSON.stringify(parsed.fileMetadata),
+        fileType,
+        JSON.stringify({
+          file_name: req.file.originalname,
+          file_size_bytes: req.file.size,
+          queued_at: new Date().toISOString(),
+        }),
       ],
     );
 
     const importJobId = insertedJob.rows[0].id;
-    const formSchema =
-      project.collection_form_schema && typeof project.collection_form_schema === 'object'
-        ? (project.collection_form_schema as Record<string, unknown>)
-        : {};
 
-    let reviewableCount = 0;
-    let failedCount = 0;
-    let warningCount = 0;
-    let errorCount = 0;
-    const stagedRows: StagedImportInsertRow[] = [];
-
-    for (const incoming of parsed.features) {
-      const validation = await validateImportedFeature(client, {
-        projectId,
-        formSchema,
-        incoming,
-      });
-      warningCount += validation.warnings.length;
-      errorCount += validation.errors.length;
-      const featureStatus = validation.errors.length > 0 ? 'failed' : 'pending_review';
-      if (featureStatus === 'failed') {
-        failedCount += 1;
-      } else {
-        reviewableCount += 1;
-      }
-
-      stagedRows.push({
-        importJobId,
-        sourceIndex: incoming.sourceIndex,
-        sourceIdentifier: incoming.sourceIdentifier,
-        displayTitle: incoming.displayTitle,
-        sourceFeatureName: incoming.sourceFeatureName,
-        geometryType: validation.geometryType,
-        geometryJson: validation.geometryJson,
-        attributes: validation.attributes,
-        status: featureStatus,
-        validationWarnings: validation.warnings,
-        validationErrors: validation.errors,
-        validationReport: validation.report,
-        duplicateFeatureId: validation.duplicateFeatureId,
-      });
-
-      if (stagedRows.length >= IMPORT_INSERT_BATCH_SIZE) {
-        await insertStagedImportFeaturesBatch(client, stagedRows);
-        stagedRows.length = 0;
-      }
-    }
-
-    if (stagedRows.length > 0) {
-      await insertStagedImportFeaturesBatch(client, stagedRows);
-    }
-
-    const finalStatus = reviewableCount > 0 ? 'pending_review' : 'failed';
-    const geometryTypes = [
-      ...new Set(
-        parsed.features
-          .map((feature) => feature.geometryType)
-          .filter((value): value is GeometryType => value != null),
-      ),
-    ];
-    const validationSummary = buildValidationSummary({
-      parsed,
-      reviewableCount,
-      failedCount,
-      warningCount,
-      errorCount,
-      duplicateOfImportJobId,
+    await createImportSubmissionNotifications(client, {
+      importJobId,
+      projectId,
+      projectName: project.name,
+      uploader: currentUser,
+      originalFilename: req.file.originalname,
     });
-    const processingMessage =
-      finalStatus === 'failed'
-        ? 'Import processing finished, but no staged features were eligible for review.'
-        : `Import ready for admin review with ${reviewableCount} staged feature(s).`;
-
-    await client.query(
-      `UPDATE gis_import_job
-       SET status = $2::gis_import_status,
-           geometry_count = $3,
-           pending_feature_count = $4,
-           approved_feature_count = 0,
-           rejected_feature_count = 0,
-           failed_feature_count = $5,
-           warning_count = $6,
-           error_count = $7,
-           geometry_types = $8::text[],
-           file_metadata = $9::jsonb,
-           validation_summary = $10::jsonb,
-           processed_at = CURRENT_TIMESTAMP,
-           processing_message = $11,
-           source_crs = COALESCE($12, source_crs),
-           source_layer_name = COALESCE($13, source_layer_name)
-       WHERE id = $1`,
-      [
-        importJobId,
-        finalStatus,
-        parsed.features.length,
-        reviewableCount,
-        failedCount,
-        warningCount,
-        errorCount,
-        geometryTypes,
-        JSON.stringify(parsed.fileMetadata),
-        JSON.stringify(validationSummary),
-        processingMessage,
-        parsed.sourceCrs,
-        parsed.sourceLayerName,
-      ],
-    );
 
     const detailResult = await client.query(
       `SELECT gij.*, p.name AS project_name,
@@ -1397,45 +1710,12 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
       [importJobId],
     );
 
-    if (finalStatus === 'pending_review') {
-      const recipients = await getImportReviewRecipients(client, projectId);
-      for (const admin of recipients) {
-        await createNotification(client, {
-          userId: admin.id,
-          type: 'import_event',
-          title: 'GIS import review pending',
-          message: `${currentUser.full_name} submitted ${req.file.originalname} for ${project.name}.${warningCount > 0 ? ` ${warningCount} warning(s) were detected.` : ''}`,
-          metadata: {
-            import_job_id: importJobId,
-            project_id: projectId,
-            project_name: project.name,
-            status: finalStatus,
-            warning_count: warningCount,
-            error_count: errorCount,
-          },
-        });
-      }
-    } else {
-      await createNotification(client, {
-        userId: currentUser.id,
-        type: 'import_event',
-        title: `Import failed in ${project.name}`,
-        message: `We could not stage any reviewable features from ${req.file.originalname}. Check the validation summary for details.`,
-        metadata: {
-          import_job_id: importJobId,
-          project_id: projectId,
-          project_name: project.name,
-          status: finalStatus,
-          warning_count: warningCount,
-          error_count: errorCount,
-        },
-      });
-    }
-
     return detailResult.rows[0];
   });
 
-  logger.info('GIS import uploaded and processed', {
+  scheduleImportProcessing();
+
+  logger.info('GIS import uploaded and queued', {
     importJobId: createdJob.id,
     projectId,
     userId: currentUser.id,
@@ -1667,6 +1947,8 @@ module.exports = {
   listImportFeatures,
   uploadImport,
   reviewImport,
+  startImportProcessingLoop,
+  stopImportProcessingLoop,
 };
 
 export {};

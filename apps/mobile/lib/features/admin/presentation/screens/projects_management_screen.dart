@@ -78,7 +78,15 @@ class _ProjectsManagementScreenState
 
   @override
   Widget build(BuildContext context) {
-    final projectsAsync = ref.watch(projectListProvider(ProjectViewScope.all));
+    final projectQuery = ProjectListQuery(
+      scope: ProjectViewScope.all,
+      query: _query.trim().isEmpty ? null : _query.trim(),
+      status: _statusFilter == 'all' ? null : _statusFilter,
+    );
+    final projectsAsync = ref.watch(paginatedProjectsProvider(projectQuery));
+    final projectsController = ref.read(
+      paginatedProjectsProvider(projectQuery).notifier,
+    );
 
     return projectsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -90,24 +98,13 @@ class _ProjectsManagementScreenState
           fallback: 'Unable to load projects right now. Please try again.',
         ),
         actionLabel: 'Retry',
-        onAction: () =>
-            ref.invalidate(projectListProvider(ProjectViewScope.all)),
+        onAction: projectsController.load,
       ),
-      data: (projects) {
-        final filtered = projects
-            .where((project) {
-              final matchesQuery = project.name.toLowerCase().contains(
-                _query.toLowerCase(),
-              );
-              final matchesStatus =
-                  _statusFilter == 'all' || project.status == _statusFilter;
-              return matchesQuery && matchesStatus;
-            })
-            .toList(growable: false);
+      data: (projectsState) {
+        final filtered = projectsState.items;
 
         return RefreshIndicator(
-          onRefresh: () async =>
-              ref.invalidate(projectListProvider(ProjectViewScope.all)),
+          onRefresh: projectsController.refresh,
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(),
             children: [
@@ -200,7 +197,7 @@ class _ProjectsManagementScreenState
               ),
               const SizedBox(height: AppSpacing.md),
               Text(
-                '${filtered.length} project${filtered.length == 1 ? '' : 's'}',
+                '${projectsState.total} project${projectsState.total == 1 ? '' : 's'}',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
               const SizedBox(height: AppSpacing.sm),
@@ -208,18 +205,21 @@ class _ProjectsManagementScreenState
                 AppEmptyState(
                   icon: Icons.folder_off_outlined,
                   title: 'No projects found',
-                  message: projects.isEmpty
+                  message: projectsState.total == 0
                       ? 'Create your first project to start the mobile-first workflow.'
                       : 'No projects match the current search and status filter.',
-                  actionLabel: projects.isEmpty ? 'Create project' : null,
-                  onAction: projects.isEmpty
+                  actionLabel: projectsState.total == 0 ? 'Create project' : null,
+                  onAction: projectsState.total == 0
                       ? () => context.push(AppRoutes.projectCreate)
                       : null,
                 )
               else
                 ProgressiveListSection<ProjectSummary>(
                   items: filtered,
-                  resetKey: Object.hash(_query, _statusFilter, filtered.length),
+                  resetKey: Object.hash(_query, _statusFilter, projectsState.total),
+                  hasMore: projectsState.hasMore,
+                  isLoadingMore: projectsState.isLoadingMore,
+                  onLoadMore: projectsController.loadMore,
                   itemBuilder: (context, project, _) => AppCard(
                     child: LayoutBuilder(
                       builder: (context, constraints) {

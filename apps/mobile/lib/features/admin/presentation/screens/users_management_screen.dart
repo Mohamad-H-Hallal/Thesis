@@ -168,31 +168,21 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
     bumpWorkflowRefresh(ref);
   }
 
-  List<ManagedUserSummary> _applyFilters(List<ManagedUserSummary> users) {
-    final query = _searchController.text.trim().toLowerCase();
-    return users
-        .where((user) {
-          if (_roleFilter != null && user.role != _roleFilter) {
-            return false;
-          }
-          if (_stateFilter != null && user.accountState != _stateFilter) {
-            return false;
-          }
-          if (query.isEmpty) {
-            return true;
-          }
-          return user.fullName.toLowerCase().contains(query) ||
-              user.email.toLowerCase().contains(query) ||
-              (user.phone?.toLowerCase().contains(query) ?? false);
-        })
-        .toList(growable: false);
-  }
-
   @override
   Widget build(BuildContext context) {
     final session = ref.watch(authControllerProvider).session;
     final isSuperAdmin = session?.user.isSuperAdmin ?? false;
-    final usersAsync = ref.watch(managedUsersProvider);
+    final usersQuery = ManagedUsersQuery(
+      query: _searchController.text.trim().isEmpty
+          ? null
+          : _searchController.text.trim(),
+      role: _roleFilter,
+      state: _stateFilter,
+    );
+    final usersAsync = ref.watch(paginatedManagedUsersProvider(usersQuery));
+    final usersController = ref.read(
+      paginatedManagedUsersProvider(usersQuery).notifier,
+    );
 
     return usersAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -204,10 +194,10 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
           fallback: 'Unable to load users right now. Please try again.',
         ),
         actionLabel: 'Retry',
-        onAction: () => ref.invalidate(managedUsersProvider),
+        onAction: usersController.load,
       ),
-      data: (users) {
-        final filtered = _applyFilters(users);
+      data: (usersState) {
+        final filtered = usersState.items;
 
         return ListView(
           children: [
@@ -303,7 +293,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
             ),
             const SizedBox(height: AppSpacing.md),
             Text(
-              '${filtered.length} user${filtered.length == 1 ? '' : 's'}',
+              '${usersState.total} user${usersState.total == 1 ? '' : 's'}',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: AppSpacing.sm),
@@ -321,8 +311,11 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
                   _searchController.text,
                   _roleFilter,
                   _stateFilter,
-                  filtered.length,
+                  usersState.total,
                 ),
+                hasMore: usersState.hasMore,
+                isLoadingMore: usersState.isLoadingMore,
+                onLoadMore: usersController.loadMore,
                 itemBuilder: (context, user, _) => _UserCard(
                   user: user,
                   isSuperAdmin: isSuperAdmin,

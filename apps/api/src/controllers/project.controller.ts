@@ -26,7 +26,7 @@ const ensureCategoryExists = async (categoryId: string): Promise<void> => {
 // Get all projects (filtered by user access)
 const getAllProjects = async (req, res) => {
   await synchronizeProjectStatuses();
-  const { page = 1, limit = 20, status, category_id } = req.query;
+  const { page = 1, limit = 20, status, category_id, q } = req.query;
   const requestedScope =
     typeof req.query.access_scope === 'string' ? req.query.access_scope : undefined;
   const offset = (page - 1) * limit;
@@ -63,6 +63,16 @@ const getAllProjects = async (req, res) => {
             WHERE pac.project_id = p.id
               AND pac.role = 'contributor'
               AND pac.status = 'approved') as contributor_count,
+           (SELECT COUNT(*)
+            FROM project_assignment pac
+            WHERE pac.project_id = p.id
+              AND pac.role = 'contributor'
+              AND pac.status = 'pending') as pending_assignment_requests,
+           (SELECT COUNT(*)
+            FROM project_assignment pac
+            WHERE pac.project_id = p.id
+              AND pac.role = 'contributor'
+              AND pac.status = 'rejected') as rejected_assignment_requests,
            pa_user.role as current_user_assignment_role,
            pa_user.status as current_user_assignment_status
     FROM project p
@@ -103,6 +113,16 @@ const getAllProjects = async (req, res) => {
     paramIndex++;
   }
 
+  if (q) {
+    queryText += ` AND (
+      p.name ILIKE $${paramIndex}
+      OR COALESCE(p.description, '') ILIKE $${paramIndex}
+      OR COALESCE(pc.name, '') ILIKE $${paramIndex}
+    )`;
+    params.push(`%${String(q).trim()}%`);
+    paramIndex++;
+  }
+
   // Filter by category
   if (category_id) {
     queryText += ` AND p.category_id = $${paramIndex}`;
@@ -120,6 +140,7 @@ const getAllProjects = async (req, res) => {
   let countQuery = `
     SELECT COUNT(DISTINCT p.id) as total
     FROM project p
+    LEFT JOIN project_category pc ON p.category_id = pc.id
     LEFT JOIN project_assignment pa ON p.id = pa.project_id
     LEFT JOIN project_assignment pa_user
       ON p.id = pa_user.project_id
@@ -154,6 +175,16 @@ const getAllProjects = async (req, res) => {
     countParamIndex++;
   }
 
+  if (q) {
+    countQuery += ` AND (
+      p.name ILIKE $${countParamIndex}
+      OR COALESCE(p.description, '') ILIKE $${countParamIndex}
+      OR COALESCE(pc.name, '') ILIKE $${countParamIndex}
+    )`;
+    countParams.push(`%${String(q).trim()}%`);
+    countParamIndex++;
+  }
+
   if (category_id) {
     countQuery += ` AND p.category_id = $${countParamIndex}`;
     countParams.push(category_id);
@@ -170,6 +201,7 @@ const getAllProjects = async (req, res) => {
       limit: parseInt(limit),
       total,
       pages: Math.ceil(total / limit),
+      has_more: offset + result.rows.length < total,
     },
     access_scope: scope,
   });
@@ -187,6 +219,8 @@ const getProject = async (req, res) => {
             (SELECT COUNT(*) FROM spatial_feature WHERE project_id = p.id AND status = 'approved') as approved_features,
             (SELECT COUNT(*) FROM spatial_feature WHERE project_id = p.id AND status = 'pending_review') as pending_features,
             (SELECT COUNT(*) FROM project_assignment WHERE project_id = p.id AND role = 'contributor' AND status = 'approved') as contributor_count,
+            (SELECT COUNT(*) FROM project_assignment WHERE project_id = p.id AND role = 'contributor' AND status = 'pending') as pending_assignment_requests,
+            (SELECT COUNT(*) FROM project_assignment WHERE project_id = p.id AND role = 'contributor' AND status = 'rejected') as rejected_assignment_requests,
             pa_user.role as current_user_assignment_role,
             pa_user.status as current_user_assignment_status
      FROM project p
@@ -586,6 +620,38 @@ const getProjectFeatures = async (req, res) => {
 
   const result = await query(queryText, params);
 
+  let countQuery = `
+    SELECT COUNT(*)::int AS total
+    FROM spatial_feature sf
+    WHERE sf.project_id = $1
+  `;
+  const countParams: unknown[] = [projectId];
+  let countParamIndex = 2;
+
+  if (status) {
+    countQuery += ` AND sf.status = $${countParamIndex}`;
+    countParams.push(status);
+    countParamIndex++;
+  }
+
+  if (req.user?.role === 'viewer') {
+    countQuery += ` AND sf.status = 'approved'`;
+  } else if (req.user?.role !== 'admin') {
+    if (req.projectRole === 'admin') {
+      // Project admins can see every feature lifecycle state for this project.
+    } else {
+      countQuery += ` AND (
+        sf.status = 'approved'
+        OR sf.collected_by_user_id = $${countParamIndex}
+      )`;
+      countParams.push(req.user?.id);
+      countParamIndex++;
+    }
+  }
+
+  const countResult = await query(countQuery, countParams);
+  const total = countResult.rows[0]?.total ?? 0;
+
   // Parse geometry JSON
   const features = result.rows.map((row) => ({
     ...row,
@@ -599,6 +665,9 @@ const getProjectFeatures = async (req, res) => {
     pagination: {
       page: parseInt(page),
       limit: parseInt(limit),
+      total,
+      pages: Math.max(1, Math.ceil(total / limit)),
+      has_more: offset + features.length < total,
     },
   });
 };

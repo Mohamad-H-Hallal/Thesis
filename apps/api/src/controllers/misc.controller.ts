@@ -137,11 +137,44 @@ const assertAdminManagementAllowed = ({
 const categoryController = {
   // Get all categories
   getAll: async (req, res) => {
-    const result = await query('SELECT * FROM project_category ORDER BY name ASC');
+    const requestedPage = Number.parseInt(String(req.query.page ?? '1'), 10);
+    const requestedLimit = Number.parseInt(String(req.query.limit ?? '20'), 10);
+    const page = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+    const limit =
+      Number.isFinite(requestedLimit) && requestedLimit > 0
+        ? Math.min(requestedLimit, 100)
+        : 20;
+    const offset = (page - 1) * limit;
+    const searchQuery = String(req.query.q ?? '').trim();
+
+    let whereClause = '';
+    const params: unknown[] = [];
+    let paramIndex = 1;
+    if (searchQuery.length > 0) {
+      whereClause = ` WHERE name ILIKE $${paramIndex} OR COALESCE(description, '') ILIKE $${paramIndex}`;
+      params.push(`%${searchQuery}%`);
+      paramIndex++;
+    }
+
+    const dataSql = `SELECT * FROM project_category${whereClause} ORDER BY name ASC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    const countSql = `SELECT COUNT(*)::int AS total FROM project_category${whereClause}`;
+
+    const [result, countResult] = await Promise.all([
+      query(dataSql, [...params, limit, offset]),
+      query(countSql, params),
+    ]);
+    const total = countResult.rows[0]?.total ?? 0;
 
     res.json({
       success: true,
       data: result.rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+        has_more: offset + result.rows.length < total,
+      },
     });
   },
 
@@ -754,6 +787,79 @@ const userController = {
 
     const result = await query(queryText, params);
 
+    let countQuery = `
+      SELECT COUNT(*)::int AS total
+      FROM "user" u
+      LEFT JOIN LATERAL (
+        SELECT n.type
+        FROM notification n
+        WHERE n.user_id = u.id
+          AND n.type IN ('contributor_request', 'contributor_rejected', 'contributor_approved')
+        ORDER BY n.created_at DESC
+        LIMIT 1
+      ) latest_request ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT al.new_values->>'account_state' AS account_state
+        FROM audit_log al
+        WHERE al.entity_type = 'user'
+          AND al.entity_id = u.id
+          AND al.action_type = 'update'
+          AND al.new_values ? 'account_state'
+        ORDER BY al.created_at DESC
+        LIMIT 1
+      ) latest_account_state ON TRUE
+      WHERE 1=1
+    `;
+
+    const countParams: unknown[] = [];
+    let countParamIndex = 1;
+
+    if (protectedEmail) {
+      countQuery += ` AND LOWER(u.email) <> $${countParamIndex}`;
+      countParams.push(protectedEmail);
+      countParamIndex++;
+    }
+
+    if (!actorIsProtectedSuperAdmin) {
+      countQuery += ` AND u.role IN ('viewer', 'contributor')`;
+    }
+
+    if (role) {
+      countQuery += ` AND role = $${countParamIndex}`;
+      countParams.push(role);
+      countParamIndex++;
+    }
+
+    if (is_active !== undefined) {
+      countQuery += ` AND is_active = $${countParamIndex}`;
+      countParams.push(is_active === 'true');
+      countParamIndex++;
+    }
+
+    if (q) {
+      countQuery += ` AND (u.full_name ILIKE $${countParamIndex} OR u.email ILIKE $${countParamIndex} OR COALESCE(u.phone, '') ILIKE $${countParamIndex})`;
+      countParams.push(`%${String(q).trim()}%`);
+      countParamIndex++;
+    }
+
+    if (state) {
+      const normalizedState = String(state);
+      if (normalizedState === 'blocked') {
+        countQuery += ` AND u.is_active = FALSE AND latest_account_state.account_state = 'blocked'`;
+      } else if (normalizedState === 'inactive') {
+        countQuery += ` AND u.is_active = FALSE AND latest_account_state.account_state = 'inactive'`;
+      } else if (normalizedState === 'pending') {
+        countQuery += ` AND u.role = 'contributor' AND u.is_active = FALSE AND COALESCE(latest_request.type, 'contributor_request') = 'contributor_request' AND COALESCE(latest_account_state.account_state, 'active') <> 'blocked'`;
+      } else if (normalizedState === 'rejected') {
+        countQuery += ` AND u.role = 'contributor' AND u.is_active = FALSE AND latest_request.type = 'contributor_rejected' AND COALESCE(latest_account_state.account_state, 'active') <> 'blocked'`;
+      } else if (normalizedState === 'active') {
+        countQuery += ` AND u.is_active = TRUE`;
+      }
+    }
+
+    const countResult = await query(countQuery, countParams);
+    const total = countResult.rows[0]?.total ?? 0;
+
     res.json({
       success: true,
       data: result.rows.map((row) => ({
@@ -783,6 +889,9 @@ const userController = {
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+        has_more: offset + result.rows.length < total,
       },
     });
   },
@@ -1159,12 +1268,45 @@ const userController = {
   },
 
   getContributorRequests: async (req, res) => {
-    const { status = 'pending', page = 1, limit = 50 } = req.query;
+    const { status = 'pending', q, page = 1, limit = 50 } = req.query;
     const offset = (page - 1) * limit;
 
     if (!['pending', 'rejected'].includes(String(status))) {
       throw new AppError('status must be pending or rejected', 400);
     }
+
+    const whereClauses = [
+      `u.role = 'contributor'`,
+      `LOWER(u.email) <> $2`,
+      `u.is_active = FALSE`,
+      `(
+        ($1 = 'pending' AND COALESCE(latest_request.type, 'contributor_request') = 'contributor_request')
+        OR ($1 = 'rejected' AND latest_request.type = 'contributor_rejected')
+      )`,
+    ];
+    const queryParams: unknown[] = [status, getProtectedSuperAdminEmail()];
+    let queryParamIndex = 3;
+
+    if (q) {
+      whereClauses.push(`(
+        u.full_name ILIKE $${queryParamIndex}
+        OR COALESCE(u.email, '') ILIKE $${queryParamIndex}
+        OR COALESCE(u.phone, '') ILIKE $${queryParamIndex}
+      )`);
+      queryParams.push(`%${String(q).trim()}%`);
+      queryParamIndex++;
+    }
+
+    const baseSql = `FROM "user" u
+       LEFT JOIN LATERAL (
+         SELECT n.type, n.created_at
+         FROM notification n
+         WHERE n.user_id = u.id
+           AND n.type IN ('contributor_request', 'contributor_rejected', 'contributor_approved')
+         ORDER BY n.created_at DESC
+         LIMIT 1
+       ) latest_request ON TRUE
+       WHERE ${whereClauses.join('\n         AND ')}`;
 
     const result = await query(
       `SELECT u.id,
@@ -1177,26 +1319,18 @@ const userController = {
               u.is_active,
               latest_request.type AS latest_request_type,
               latest_request.created_at AS latest_request_at
-       FROM "user" u
-       LEFT JOIN LATERAL (
-         SELECT n.type, n.created_at
-         FROM notification n
-         WHERE n.user_id = u.id
-           AND n.type IN ('contributor_request', 'contributor_rejected', 'contributor_approved')
-         ORDER BY n.created_at DESC
-         LIMIT 1
-       ) latest_request ON TRUE
-       WHERE u.role = 'contributor'
-         AND LOWER(u.email) <> $4
-         AND u.is_active = FALSE
-         AND (
-           ($1 = 'pending' AND COALESCE(latest_request.type, 'contributor_request') = 'contributor_request')
-           OR ($1 = 'rejected' AND latest_request.type = 'contributor_rejected')
-         )
+       ${baseSql}
        ORDER BY u.created_at DESC
-       LIMIT $2 OFFSET $3`,
-      [status, limit, offset, getProtectedSuperAdminEmail()],
+       LIMIT $${queryParamIndex} OFFSET $${queryParamIndex + 1}`,
+      [...queryParams, limit, offset],
     );
+
+    const countResult = await query(
+      `SELECT COUNT(*)::int AS total
+       ${baseSql}`,
+      queryParams,
+    );
+    const total = countResult.rows[0]?.total ?? 0;
 
     res.json({
       success: true,
@@ -1208,6 +1342,9 @@ const userController = {
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+        has_more: offset + result.rows.length < total,
       },
     });
   },

@@ -858,12 +858,38 @@ const getMyExports = async (req, res) => {
 
   const result = await query(queryText, params);
 
+  let countQuery = `
+    SELECT COUNT(*)::int AS total
+    FROM shapefile_export se
+    WHERE se.requested_by_user_id = $1
+  `;
+  const countParams = [req.user.id];
+  let countParamIndex = 2;
+
+  if (status) {
+    countQuery += ` AND se.status = $${countParamIndex}`;
+    countParams.push(status);
+    countParamIndex++;
+  }
+
+  if (format) {
+    countQuery += ` AND se.export_parameters->>'format' = $${countParamIndex}`;
+    countParams.push(format);
+    countParamIndex++;
+  }
+
+  const countResult = await query(countQuery, countParams);
+  const total = countResult.rows[0]?.total ?? 0;
+
   res.json({
     success: true,
     data: result.rows,
     pagination: {
       page: parseInt(page),
       limit: parseInt(limit),
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+      has_more: offset + result.rows.length < total,
     },
   });
 };

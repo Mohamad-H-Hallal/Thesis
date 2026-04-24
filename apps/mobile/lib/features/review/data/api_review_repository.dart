@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 
 import '../../../core/config/app_env.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/pagination/paginated_result.dart';
 import '../domain/review_item.dart';
 import '../domain/review_repository.dart';
 
@@ -17,6 +18,21 @@ class ApiReviewRepository implements ReviewRepository {
     required String status,
     String? projectId,
   }) async {
+    final page = await fetchReviewItemsPage(
+      status: status,
+      projectId: projectId,
+      limit: 100,
+    );
+    return page.items;
+  }
+
+  @override
+  Future<PaginatedResult<ReviewQueueItem>> fetchReviewItemsPage({
+    required String status,
+    String? projectId,
+    int page = 1,
+    int limit = 20,
+  }) async {
     try {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         _featuresBasePath,
@@ -24,14 +40,15 @@ class ApiReviewRepository implements ReviewRepository {
           'status': status,
           if (projectId != null && projectId.trim().isNotEmpty)
             'project_id': projectId.trim(),
-          'limit': 100,
+          'page': page,
+          'limit': limit,
         },
       );
 
       final payload = response.data ?? const <String, dynamic>{};
       final rows = (payload['data'] as List? ?? const <dynamic>[]);
 
-      return rows
+      final items = rows
           .map((row) {
             final item = Map<String, dynamic>.from(row as Map);
             final geometry = Map<String, dynamic>.from(
@@ -52,6 +69,20 @@ class ApiReviewRepository implements ReviewRepository {
             );
           })
           .toList(growable: false);
+      final pagination = Map<String, dynamic>.from(
+        payload['pagination'] as Map? ?? const <String, dynamic>{},
+      );
+      final total = (pagination['total'] as num?)?.toInt() ?? items.length;
+      final hasMore =
+          (pagination['has_more'] as bool?) ??
+          ((page * limit) < total && items.isNotEmpty);
+      return PaginatedResult<ReviewQueueItem>(
+        items: items,
+        page: (pagination['page'] as num?)?.toInt() ?? page,
+        limit: (pagination['limit'] as num?)?.toInt() ?? limit,
+        total: total,
+        hasMore: hasMore,
+      );
     } on DioException catch (error) {
       throw _messageFrom(error, 'Review queue request failed.');
     }
