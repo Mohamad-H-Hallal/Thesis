@@ -138,6 +138,19 @@ describe('GIS import workflow', () => {
       });
 
     expect(approveResponse.status).toBe(200);
+    expect(approveResponse.body.data.status).toBe('pending_review');
+    expect(approveResponse.body.data.approved_feature_count).toBe(1);
+    expect(approveResponse.body.data.pending_feature_count).toBe(1);
+
+    const interimNotificationCheck = await pool.query(
+      `SELECT type, title, message
+       FROM notification
+       WHERE user_id = $1
+         AND type = 'import_event'
+       ORDER BY created_at DESC`,
+      [contributorRegistration.user.id],
+    );
+    expect(interimNotificationCheck.rows).toHaveLength(0);
 
     const rejectResponse = await request(app)
       .post(`${API_PREFIX}/imports/${importId}/review`)
@@ -170,8 +183,11 @@ describe('GIS import workflow', () => {
        ORDER BY created_at DESC`,
       [contributorRegistration.user.id],
     );
-    expect(notificationCheck.rows.length).toBeGreaterThan(0);
-    expect(notificationCheck.rows[0].title.toLowerCase()).toContain('import');
+    expect(notificationCheck.rows).toHaveLength(1);
+    expect(notificationCheck.rows[0].title).toContain('Import partially approved');
+    expect(notificationCheck.rows[0].message).toContain(
+      'Duplicate field survey already exists.',
+    );
   });
 
   test('marks import as failed when staged features cannot pass required validation', async () => {
@@ -250,5 +266,89 @@ describe('GIS import workflow', () => {
     expect(detailResponse.body.data.preview_features[0].validation_errors).toEqual(
       expect.arrayContaining(['Missing required attribute: feature_type']),
     );
+  });
+
+  test('rejects GeoJSON uploads with unsupported CRS before staging', async () => {
+    const admin = await createAdminUser({
+      fullName: 'Import CRS Admin',
+      emailPrefix: 'import-crs-admin',
+    });
+    const contributorRegistration = await registerUser({
+      role: 'contributor',
+      fullName: 'Import CRS Contributor',
+      emailPrefix: 'import-crs-contributor',
+    });
+    await approveContributorRequest({
+      token: admin.token,
+      userId: contributorRegistration.user.id,
+    });
+    const contributorLogin = await loginUser({
+      email: contributorRegistration.email,
+      password: contributorRegistration.password,
+    });
+
+    const category = await createCategory({
+      token: admin.token,
+      name: 'Import CRS Category',
+    });
+    const project = await createProject({
+      token: admin.token,
+      categoryId: category.id,
+      name: 'Import CRS Project',
+      visibleToContributors: true,
+    });
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}`)
+      .set(authHeader(admin.token))
+      .send({ status: 'active' })
+      .expect(200);
+    const assignment = await createAssignment({
+      token: admin.token,
+      projectId: project.id,
+      userId: contributorRegistration.user.id,
+    });
+    await updateAssignmentStatus({
+      token: admin.token,
+      assignmentId: assignment.id,
+      status: 'approved',
+    });
+
+    const geojsonPath = await createTempGeoJsonFile('import-unsupported-crs', {
+      type: 'FeatureCollection',
+      crs: {
+        type: 'name',
+        properties: {
+          name: 'EPSG:9999',
+        },
+      },
+      features: [
+        {
+          type: 'Feature',
+          properties: { feature_type: 'olive', name: 'Unsupported CRS feature' },
+          geometry: {
+            type: 'Point',
+            coordinates: [35.51, 33.91],
+          },
+        },
+      ],
+    });
+
+    const uploadResponse = await request(app)
+      .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+      .set(authHeader(contributorLogin.token))
+      .attach('file', geojsonPath);
+
+    expect(uploadResponse.status).toBe(400);
+    expect(uploadResponse.body.message).toContain(
+      'Unsupported coordinate reference system "EPSG:9999"',
+    );
+
+    const importJobs = await pool.query(`SELECT COUNT(*)::int AS total FROM gis_import_job`);
+    expect(importJobs.rows[0].total).toBe(0);
+
+    const stagedFeatures = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM gis_import_feature`,
+    );
+    expect(stagedFeatures.rows[0].total).toBe(0);
   });
 });

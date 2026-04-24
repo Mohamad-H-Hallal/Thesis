@@ -247,6 +247,29 @@ const normalizeCrsName = (raw: unknown): string | null => {
   return normalized.length > 0 ? normalized.toUpperCase() : null;
 };
 
+const SUPPORTED_GEOJSON_CRS = new Set([
+  'EPSG:4326',
+  'URN:OGC:DEF:CRS:EPSG::4326',
+  'OGC:CRS84',
+  'URN:OGC:DEF:CRS:OGC:1.3:CRS84',
+  'CRS84',
+  'EPSG:3857',
+  'URN:OGC:DEF:CRS:EPSG::3857',
+]);
+
+const assertSupportedGeoJsonCrs = (sourceCrs: string | null): void => {
+  if (!sourceCrs) {
+    return;
+  }
+
+  if (!SUPPORTED_GEOJSON_CRS.has(sourceCrs)) {
+    throw new AppError(
+      `Unsupported coordinate reference system "${sourceCrs}". Use WGS84 (EPSG:4326 / CRS84) or Web Mercator (EPSG:3857).`,
+      400,
+    );
+  }
+};
+
 const normalizeGeoJsonGeometry = (
   geometry: PlainObject | null | undefined,
   sourceCrs: string | null,
@@ -339,6 +362,7 @@ const parseGeoJson = async (filePath: string): Promise<ParsedImportPayload> => {
   }
 
   const sourceCrs = normalizeCrsName(parsed?.crs?.properties?.name);
+  assertSupportedGeoJsonCrs(sourceCrs);
   let features: any[] = [];
   if (parsed?.type === 'FeatureCollection' && Array.isArray(parsed.features)) {
     features = parsed.features;
@@ -1616,35 +1640,37 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
     );
     const finalJob = finalJobResult.rows[0];
 
-    const title =
-      finalJob.status === 'approved'
-        ? `Import approved in ${finalJob.project_name}`
-        : finalJob.status === 'partially_approved'
-          ? `Import partially approved in ${finalJob.project_name}`
-          : `Import rejected in ${finalJob.project_name}`;
-    const message =
-      finalJob.status === 'approved'
-        ? `${finalJob.original_filename} was approved and the imported geometries are now official project features.`
-        : finalJob.status === 'partially_approved'
-          ? `${finalJob.original_filename} was partially approved. ${finalJob.approved_feature_count} staged feature(s) were approved and ${finalJob.rejected_feature_count + finalJob.failed_feature_count} were not approved.${normalizedReason ? ` Reason: ${normalizedReason}` : ''}`
-          : `${finalJob.original_filename} was rejected.${normalizedReason ? ` Reason: ${normalizedReason}` : ''}`;
+    if (finalJob.status !== 'pending_review') {
+      const title =
+        finalJob.status === 'approved'
+          ? `Import approved in ${finalJob.project_name}`
+          : finalJob.status === 'partially_approved'
+            ? `Import partially approved in ${finalJob.project_name}`
+            : `Import rejected in ${finalJob.project_name}`;
+      const message =
+        finalJob.status === 'approved'
+          ? `${finalJob.original_filename} was approved and the imported geometries are now official project features.`
+          : finalJob.status === 'partially_approved'
+            ? `${finalJob.original_filename} was partially approved. ${finalJob.approved_feature_count} staged feature(s) were approved and ${finalJob.rejected_feature_count + finalJob.failed_feature_count} were not approved.${normalizedReason ? ` Reason: ${normalizedReason}` : ''}`
+            : `${finalJob.original_filename} was rejected.${normalizedReason ? ` Reason: ${normalizedReason}` : ''}`;
 
-    await createNotification(client, {
-      userId: finalJob.uploaded_by_user_id,
-      type: 'import_event',
-      title,
-      message,
-      metadata: {
-        import_job_id: finalJob.id,
-        project_id: finalJob.project_id,
-        project_name: finalJob.project_name,
-        status: finalJob.status,
-        approved_feature_count: finalJob.approved_feature_count,
-        rejected_feature_count: finalJob.rejected_feature_count,
-        failed_feature_count: finalJob.failed_feature_count,
-        reason: normalizedReason,
-      },
-    });
+      await createNotification(client, {
+        userId: finalJob.uploaded_by_user_id,
+        type: 'import_event',
+        title,
+        message,
+        metadata: {
+          import_job_id: finalJob.id,
+          project_id: finalJob.project_id,
+          project_name: finalJob.project_name,
+          status: finalJob.status,
+          approved_feature_count: finalJob.approved_feature_count,
+          rejected_feature_count: finalJob.rejected_feature_count,
+          failed_feature_count: finalJob.failed_feature_count,
+          reason: normalizedReason,
+        },
+      });
+    }
 
     return finalJob;
   });
