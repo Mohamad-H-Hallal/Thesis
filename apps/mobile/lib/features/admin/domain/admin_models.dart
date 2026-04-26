@@ -70,6 +70,49 @@ class ManagedAssignmentsQuery {
   int get hashCode => Object.hash(status, query);
 }
 
+class ProjectAssignmentsQuery {
+  const ProjectAssignmentsQuery({
+    required this.projectId,
+    required this.status,
+    this.query,
+  });
+
+  final String projectId;
+  final String status;
+  final String? query;
+
+  @override
+  bool operator ==(Object other) {
+    return other is ProjectAssignmentsQuery &&
+        other.projectId == projectId &&
+        other.status == status &&
+        other.query == query;
+  }
+
+  @override
+  int get hashCode => Object.hash(projectId, status, query);
+}
+
+class AvailableContributorsQuery {
+  const AvailableContributorsQuery({
+    required this.projectId,
+    this.query,
+  });
+
+  final String projectId;
+  final String? query;
+
+  @override
+  bool operator ==(Object other) {
+    return other is AvailableContributorsQuery &&
+        other.projectId == projectId &&
+        other.query == query;
+  }
+
+  @override
+  int get hashCode => Object.hash(projectId, query);
+}
+
 class ProjectCategoriesQuery {
   const ProjectCategoriesQuery({this.query});
 

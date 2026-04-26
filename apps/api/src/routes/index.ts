@@ -45,9 +45,19 @@ assignmentRouter.get(
 assignmentRouter.get(
   '/project/:projectId',
   uuidValidation('projectId'),
+  paginationValidation,
   validate,
   checkProjectAdmin,
   asyncHandler(assignmentController.getProjectAssignments),
+);
+
+assignmentRouter.get(
+  '/project/:projectId/available-contributors',
+  uuidValidation('projectId'),
+  paginationValidation,
+  validate,
+  checkProjectAdmin,
+  asyncHandler(assignmentController.getAvailableContributorsForProject),
 );
 
 // Create assignment (project admin only)

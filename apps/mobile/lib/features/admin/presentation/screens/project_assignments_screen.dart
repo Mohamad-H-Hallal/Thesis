@@ -3,13 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
+import '../../../../core/pagination/paginated_list_controller.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/utils/lebanese_phone.dart';
-import '../../../auth/domain/auth_models.dart';
 import '../../domain/admin_models.dart';
 
 enum _AssignmentSection {
@@ -215,23 +215,11 @@ class _ProjectAssignmentsScreenState
     }
   }
 
-  bool _matchesQuery(Iterable<String?> values) {
-    final query = _searchController.text.trim().toLowerCase();
-    if (query.isEmpty) {
-      return true;
-    }
-    return values.any(
-      (value) => (value ?? '').trim().toLowerCase().contains(query),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final projectAsync = ref.watch(projectByIdProvider(widget.projectId));
-    final assignmentsAsync = ref.watch(
-      projectAssignmentsProvider(widget.projectId),
-    );
-    final usersAsync = ref.watch(managedUsersProvider);
+    final searchQuery = _searchController.text.trim();
+    final normalizedQuery = searchQuery.isEmpty ? null : searchQuery;
 
     return projectAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -255,255 +243,325 @@ class _ProjectAssignmentsScreenState
           );
         }
 
-        return assignmentsAsync.when(
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (error, _) => AppEmptyState(
-            icon: Icons.error_outline,
-            title: 'Assignment data unavailable',
-            message: userFacingErrorMessage(
-              error,
-              fallback:
-                  'Unable to load project assignments right now. Please try again.',
-            ),
-            actionLabel: 'Retry',
-            onAction: () =>
-                ref.invalidate(projectAssignmentsProvider(widget.projectId)),
-          ),
-          data: (assignments) => usersAsync.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (error, _) => AppEmptyState(
-              icon: Icons.error_outline,
-              title: 'Available contributors unavailable',
-              message: userFacingErrorMessage(
-                error,
-                fallback:
-                    'Unable to load project assignments right now. Please try again.',
-              ),
-              actionLabel: 'Retry',
-              onAction: () => ref.invalidate(managedUsersProvider),
-            ),
-            data: (users) {
-              final isViewOnlyProject =
-                  project.status == 'completed' || project.status == 'archived';
-              final approvedAssignments = assignments
-                  .where((assignment) => assignment.status == 'approved')
-                  .where(
-                    (assignment) => _matchesQuery(<String?>[
-                      assignment.fullName,
-                      assignment.email,
-                    ]),
-                  )
-                  .toList(growable: false);
-              final pendingRequests = assignments
-                  .where((assignment) => assignment.status == 'pending')
-                  .where(
-                    (assignment) => _matchesQuery(<String?>[
-                      assignment.fullName,
-                      assignment.email,
-                    ]),
-                  )
-                  .toList(growable: false);
-              final rejectedRequests = assignments
-                  .where((assignment) => assignment.status == 'rejected')
-                  .where(
-                    (assignment) => _matchesQuery(<String?>[
-                      assignment.fullName,
-                      assignment.email,
-                    ]),
-                  )
-                  .toList(growable: false);
-              final reservedContributorIds = assignments
-                  .where((assignment) => assignment.status != 'rejected')
-                  .map((assignment) => assignment.userId)
-                  .toSet();
-              final availableContributors = users
-                  .where((user) => user.role == UserRole.contributor)
-                  .where((user) => user.isActive && !user.isBlocked)
-                  .where((user) => user.accountState == UserAccountState.active)
-                  .where((user) => !reservedContributorIds.contains(user.id))
-                  .where(
-                    (user) => _matchesQuery(<String?>[
-                      user.fullName,
-                      user.email,
-                      user.phone,
-                    ]),
-                  )
-                  .toList(growable: false);
-              final effectiveSection = isViewOnlyProject
-                  ? _AssignmentSection.assigned
-                  : switch (_selectedSection) {
-                      _AssignmentSection.pendingRequests
-                          when pendingRequests.isEmpty &&
-                              rejectedRequests.isNotEmpty =>
-                        _AssignmentSection.rejectedRequests,
-                      _AssignmentSection.rejectedRequests
-                          when rejectedRequests.isEmpty &&
-                              pendingRequests.isNotEmpty =>
-                        _AssignmentSection.pendingRequests,
-                      _ => _selectedSection,
-                    };
+        final isViewOnlyProject =
+            project.status == 'completed' || project.status == 'archived';
+        final assignedQuery = ProjectAssignmentsQuery(
+          projectId: widget.projectId,
+          status: 'approved',
+          query: normalizedQuery,
+        );
+        final assignedAsync = ref.watch(
+          paginatedProjectAssignmentsProvider(assignedQuery),
+        );
+        final assignedController = ref.read(
+          paginatedProjectAssignmentsProvider(assignedQuery).notifier,
+        );
+        final assignedState =
+            assignedAsync.valueOrNull ??
+            const PaginatedListState<ManagedAssignmentSummary>.initial();
 
-              return ListView(
+        final pendingQuery = ProjectAssignmentsQuery(
+          projectId: widget.projectId,
+          status: 'pending',
+          query: normalizedQuery,
+        );
+        final rejectedQuery = ProjectAssignmentsQuery(
+          projectId: widget.projectId,
+          status: 'rejected',
+          query: normalizedQuery,
+        );
+        final availableQuery = AvailableContributorsQuery(
+          projectId: widget.projectId,
+          query: normalizedQuery,
+        );
+
+        final pendingAsync = isViewOnlyProject
+            ? AsyncData<PaginatedListState<ManagedAssignmentSummary>>(
+                const PaginatedListState<ManagedAssignmentSummary>.initial(),
+              )
+            : ref.watch(paginatedProjectAssignmentsProvider(pendingQuery));
+        final pendingController = ref.read(
+          paginatedProjectAssignmentsProvider(pendingQuery).notifier,
+        );
+        final pendingState =
+            pendingAsync.valueOrNull ??
+            const PaginatedListState<ManagedAssignmentSummary>.initial();
+
+        final rejectedAsync = isViewOnlyProject
+            ? AsyncData<PaginatedListState<ManagedAssignmentSummary>>(
+                const PaginatedListState<ManagedAssignmentSummary>.initial(),
+              )
+            : ref.watch(paginatedProjectAssignmentsProvider(rejectedQuery));
+        final rejectedController = ref.read(
+          paginatedProjectAssignmentsProvider(rejectedQuery).notifier,
+        );
+        final rejectedState =
+            rejectedAsync.valueOrNull ??
+            const PaginatedListState<ManagedAssignmentSummary>.initial();
+
+        final availableAsync = isViewOnlyProject
+            ? AsyncData<PaginatedListState<ManagedUserSummary>>(
+                const PaginatedListState<ManagedUserSummary>.initial(),
+              )
+            : ref.watch(paginatedAvailableContributorsProvider(availableQuery));
+        final availableController = ref.read(
+          paginatedAvailableContributorsProvider(availableQuery).notifier,
+        );
+        final availableState =
+            availableAsync.valueOrNull ??
+            const PaginatedListState<ManagedUserSummary>.initial();
+
+        final effectiveSection = isViewOnlyProject
+            ? _AssignmentSection.assigned
+            : switch (_selectedSection) {
+                _AssignmentSection.pendingRequests
+                    when pendingState.total == 0 && rejectedState.total > 0 =>
+                  _AssignmentSection.rejectedRequests,
+                _AssignmentSection.rejectedRequests
+                    when rejectedState.total == 0 && pendingState.total > 0 =>
+                  _AssignmentSection.pendingRequests,
+                _ => _selectedSection,
+              };
+
+        final currentError = switch (effectiveSection) {
+          _AssignmentSection.assigned => assignedAsync.hasError
+              ? userFacingErrorMessage(
+                  assignedAsync.asError!.error,
+                  fallback: 'Unable to load assigned contributors right now.',
+                )
+              : null,
+          _AssignmentSection.available => availableAsync.hasError
+              ? userFacingErrorMessage(
+                  availableAsync.asError!.error,
+                  fallback:
+                      'Unable to load available contributors right now.',
+                )
+              : null,
+          _AssignmentSection.pendingRequests => pendingAsync.hasError
+              ? userFacingErrorMessage(
+                  pendingAsync.asError!.error,
+                  fallback: 'Unable to load pending requests right now.',
+                )
+              : null,
+          _AssignmentSection.rejectedRequests => rejectedAsync.hasError
+              ? userFacingErrorMessage(
+                  rejectedAsync.asError!.error,
+                  fallback: 'Unable to load rejected requests right now.',
+                )
+              : null,
+        };
+        final isCurrentLoading = switch (effectiveSection) {
+          _AssignmentSection.assigned =>
+            assignedAsync.isLoading && assignedState.items.isEmpty,
+          _AssignmentSection.available =>
+            availableAsync.isLoading && availableState.items.isEmpty,
+          _AssignmentSection.pendingRequests =>
+            pendingAsync.isLoading && pendingState.items.isEmpty,
+          _AssignmentSection.rejectedRequests =>
+            rejectedAsync.isLoading && rejectedState.items.isEmpty,
+        };
+
+        return ListView(
+          children: [
+            AppCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  AppCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SearchBar(
-                          controller: _searchController,
-                          hintText: isViewOnlyProject
-                              ? 'Search assigned contributors'
-                              : 'Search contributors and project requests',
-                          leading: const Icon(Icons.search),
-                          onChanged: (_) => setState(() {}),
-                        ),
-                        const SizedBox(height: AppSpacing.sm),
-                        if (isViewOnlyProject)
-                          Text(
-                            'Assignment changes are disabled for completed and archived projects.',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          )
-                        else
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: _AssignmentSection.values
-                                .map((section) {
-                                  final (label, count) = switch (section) {
-                                    _AssignmentSection.assigned => (
-                                      'Assigned',
-                                      approvedAssignments.length,
-                                    ),
-                                    _AssignmentSection.available => (
-                                      'Available',
-                                      availableContributors.length,
-                                    ),
-                                    _AssignmentSection.pendingRequests => (
-                                      'Pending requests',
-                                      pendingRequests.length,
-                                    ),
-                                    _AssignmentSection.rejectedRequests => (
-                                      'Rejected requests',
-                                      rejectedRequests.length,
-                                    ),
-                                  };
-                                  return ChoiceChip(
-                                    label: Text('$label ($count)'),
-                                    selected: effectiveSection == section,
-                                    onSelected: (_) => setState(
-                                      () => _selectedSection = section,
-                                    ),
-                                  );
-                                })
-                                .toList(growable: false),
-                          ),
-                      ],
-                    ),
+                  SearchBar(
+                    controller: _searchController,
+                    hintText: isViewOnlyProject
+                        ? 'Search assigned contributors'
+                        : 'Search contributors and project requests',
+                    leading: const Icon(Icons.search),
+                    onChanged: (_) => setState(() {}),
                   ),
-                  const SizedBox(height: AppSpacing.md),
-                  switch (effectiveSection) {
-                    _AssignmentSection.assigned => _AssignmentListSection(
-                      title: 'Assigned Contributors',
-                      emptyTitle: 'No contributors assigned',
-                      emptyMessage: isViewOnlyProject
-                          ? 'Approved contributors assigned to this project remain visible here for reference.'
-                          : 'Approved contributors assigned to this project appear here and can be unassigned at any time.',
-                      children: approvedAssignments
-                          .map(
-                            (assignment) => Padding(
-                              padding: const EdgeInsets.only(
-                                bottom: AppSpacing.sm,
-                              ),
-                              child: _AssignedContributorCard(
-                                assignment: assignment,
-                                isSaving: _isSaving,
-                                isViewOnly: isViewOnlyProject,
-                                onUnassign: () => _removeAssignment(assignment),
-                              ),
-                            ),
-                          )
-                          .toList(growable: false),
+                  const SizedBox(height: AppSpacing.sm),
+                  if (isViewOnlyProject)
+                    Text(
+                      'Assignment changes are disabled for completed and archived projects.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    )
+                  else
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _AssignmentSection.values.map((section) {
+                        final (label, count) = switch (section) {
+                          _AssignmentSection.assigned => (
+                            'Assigned',
+                            assignedState.total,
+                          ),
+                          _AssignmentSection.available => (
+                            'Available',
+                            availableState.total,
+                          ),
+                          _AssignmentSection.pendingRequests => (
+                            'Pending requests',
+                            pendingState.total,
+                          ),
+                          _AssignmentSection.rejectedRequests => (
+                            'Rejected requests',
+                            rejectedState.total,
+                          ),
+                        };
+                        return ChoiceChip(
+                          label: Text('$label ($count)'),
+                          selected: effectiveSection == section,
+                          onSelected: (_) =>
+                              setState(() => _selectedSection = section),
+                        );
+                      }).toList(growable: false),
                     ),
-                    _AssignmentSection.available => _AssignmentListSection(
-                      title: 'Available Approved Contributors',
-                      emptyTitle: 'No eligible contributors available',
-                      emptyMessage:
-                          'Only active approved contributors who are not currently assigned to this project appear here.',
-                      children: availableContributors
-                          .map(
-                            (user) => Padding(
-                              padding: const EdgeInsets.only(
-                                bottom: AppSpacing.sm,
-                              ),
-                              child: _AvailableContributorCard(
-                                user: user,
-                                isSaving: _isSaving,
-                                onAssign: () => _assignContributor(user),
-                              ),
-                            ),
-                          )
-                          .toList(growable: false),
-                    ),
-                    _AssignmentSection.pendingRequests => _AssignmentListSection(
-                      title: 'Pending Project Requests',
-                      emptyTitle: 'No pending project requests',
-                      emptyMessage:
-                          'Contributor self-service requests for this project appear here until an admin approves or rejects them.',
-                      children: pendingRequests
-                          .map(
-                            (assignment) => Padding(
-                              padding: const EdgeInsets.only(
-                                bottom: AppSpacing.sm,
-                              ),
-                              child: _PendingRequestCard(
-                                assignment: assignment,
-                                isSaving: _isSaving,
-                                approveLabel: 'Approve',
-                                rejectLabel: 'Reject',
-                                onApprove: () => _updateAssignmentRequest(
-                                  assignment,
-                                  status: 'approved',
-                                ),
-                                onReject: () => _updateAssignmentRequest(
-                                  assignment,
-                                  status: 'rejected',
-                                ),
-                              ),
-                            ),
-                          )
-                          .toList(growable: false),
-                    ),
-                    _AssignmentSection.rejectedRequests => _AssignmentListSection(
-                      title: 'Rejected Project Requests',
-                      emptyTitle: 'No rejected project requests',
-                      emptyMessage:
-                          'Rejected project requests stay here so admins can re-approve them later if needed.',
-                      children: rejectedRequests
-                          .map(
-                            (assignment) => Padding(
-                              padding: const EdgeInsets.only(
-                                bottom: AppSpacing.sm,
-                              ),
-                              child: _PendingRequestCard(
-                                assignment: assignment,
-                                isSaving: _isSaving,
-                                approveLabel: 'Re-accept',
-                                rejectLabel: 'Keep rejected',
-                                onApprove: () => _updateAssignmentRequest(
-                                  assignment,
-                                  status: 'approved',
-                                ),
-                                onReject: null,
-                              ),
-                            ),
-                          )
-                          .toList(growable: false),
-                    ),
-                  },
                 ],
-              );
-            },
-          ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            if (currentError != null && !_isSaving)
+              AppEmptyState(
+                icon: Icons.error_outline,
+                title: 'Assignments unavailable',
+                message: currentError,
+                actionLabel: 'Retry',
+                onAction: () {
+                  switch (effectiveSection) {
+                    case _AssignmentSection.assigned:
+                      assignedController.refresh();
+                      break;
+                    case _AssignmentSection.available:
+                      availableController.refresh();
+                      break;
+                    case _AssignmentSection.pendingRequests:
+                      pendingController.refresh();
+                      break;
+                    case _AssignmentSection.rejectedRequests:
+                      rejectedController.refresh();
+                      break;
+                  }
+                },
+              )
+            else if (isCurrentLoading)
+              const Center(child: CircularProgressIndicator())
+            else
+              switch (effectiveSection) {
+                _AssignmentSection.assigned => _AssignmentListSection(
+                  title: 'Assigned Contributors',
+                  totalCount: assignedState.total,
+                  resetKey: assignedQuery,
+                  emptyTitle: 'No contributors assigned',
+                  emptyMessage: isViewOnlyProject
+                      ? 'Approved contributors assigned to this project remain visible here for reference.'
+                      : 'Approved contributors assigned to this project appear here and can be unassigned at any time.',
+                  hasMore: assignedState.hasMore,
+                  isLoadingMore: assignedState.isLoadingMore,
+                  onLoadMore: assignedController.loadMore,
+                  children: assignedState.items
+                      .map(
+                        (assignment) => Padding(
+                          padding: const EdgeInsets.only(
+                            bottom: AppSpacing.sm,
+                          ),
+                          child: _AssignedContributorCard(
+                            assignment: assignment,
+                            isSaving: _isSaving,
+                            isViewOnly: isViewOnlyProject,
+                            onUnassign: () => _removeAssignment(assignment),
+                          ),
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+                _AssignmentSection.available => _AssignmentListSection(
+                  title: 'Available Approved Contributors',
+                  totalCount: availableState.total,
+                  resetKey: availableQuery,
+                  emptyTitle: 'No eligible contributors available',
+                  emptyMessage:
+                      'Only active approved contributors who are not currently assigned to this project appear here.',
+                  hasMore: availableState.hasMore,
+                  isLoadingMore: availableState.isLoadingMore,
+                  onLoadMore: availableController.loadMore,
+                  children: availableState.items
+                      .map(
+                        (user) => Padding(
+                          padding: const EdgeInsets.only(
+                            bottom: AppSpacing.sm,
+                          ),
+                          child: _AvailableContributorCard(
+                            user: user,
+                            isSaving: _isSaving,
+                            onAssign: () => _assignContributor(user),
+                          ),
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+                _AssignmentSection.pendingRequests => _AssignmentListSection(
+                  title: 'Pending Project Requests',
+                  totalCount: pendingState.total,
+                  resetKey: pendingQuery,
+                  emptyTitle: 'No pending project requests',
+                  emptyMessage:
+                      'Contributor self-service requests for this project appear here until an admin approves or rejects them.',
+                  hasMore: pendingState.hasMore,
+                  isLoadingMore: pendingState.isLoadingMore,
+                  onLoadMore: pendingController.loadMore,
+                  children: pendingState.items
+                      .map(
+                        (assignment) => Padding(
+                          padding: const EdgeInsets.only(
+                            bottom: AppSpacing.sm,
+                          ),
+                          child: _PendingRequestCard(
+                            assignment: assignment,
+                            isSaving: _isSaving,
+                            approveLabel: 'Approve',
+                            rejectLabel: 'Reject',
+                            onApprove: () => _updateAssignmentRequest(
+                              assignment,
+                              status: 'approved',
+                            ),
+                            onReject: () => _updateAssignmentRequest(
+                              assignment,
+                              status: 'rejected',
+                            ),
+                          ),
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+                _AssignmentSection.rejectedRequests => _AssignmentListSection(
+                  title: 'Rejected Project Requests',
+                  totalCount: rejectedState.total,
+                  resetKey: rejectedQuery,
+                  emptyTitle: 'No rejected project requests',
+                  emptyMessage:
+                      'Rejected project requests stay here so admins can re-approve them later if needed.',
+                  hasMore: rejectedState.hasMore,
+                  isLoadingMore: rejectedState.isLoadingMore,
+                  onLoadMore: rejectedController.loadMore,
+                  children: rejectedState.items
+                      .map(
+                        (assignment) => Padding(
+                          padding: const EdgeInsets.only(
+                            bottom: AppSpacing.sm,
+                          ),
+                          child: _PendingRequestCard(
+                            assignment: assignment,
+                            isSaving: _isSaving,
+                            approveLabel: 'Re-accept',
+                            rejectLabel: 'Keep rejected',
+                            onApprove: () => _updateAssignmentRequest(
+                              assignment,
+                              status: 'approved',
+                            ),
+                            onReject: null,
+                          ),
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+              },
+          ],
         );
       },
     );
@@ -513,15 +571,25 @@ class _ProjectAssignmentsScreenState
 class _AssignmentListSection extends StatelessWidget {
   const _AssignmentListSection({
     required this.title,
+    required this.totalCount,
+    required this.resetKey,
     required this.emptyTitle,
     required this.emptyMessage,
     required this.children,
+    this.hasMore = false,
+    this.isLoadingMore = false,
+    this.onLoadMore,
   });
 
   final String title;
+  final int totalCount;
+  final Object resetKey;
   final String emptyTitle;
   final String emptyMessage;
   final List<Widget> children;
+  final bool hasMore;
+  final bool isLoadingMore;
+  final Future<void> Function()? onLoadMore;
 
   @override
   Widget build(BuildContext context) {
@@ -529,7 +597,7 @@ class _AssignmentListSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          '$title (${children.length})',
+          '$title ($totalCount)',
           style: Theme.of(context).textTheme.titleMedium,
         ),
         const SizedBox(height: AppSpacing.sm),
@@ -542,8 +610,11 @@ class _AssignmentListSection extends StatelessWidget {
         else
           ProgressiveListSection<Widget>(
             items: children,
-            resetKey: Object.hash(title, children.length),
+            resetKey: resetKey,
             padding: EdgeInsets.zero,
+            hasMore: hasMore,
+            isLoadingMore: isLoadingMore,
+            onLoadMore: onLoadMore,
             itemBuilder: (context, child, _) => child,
           ),
       ],

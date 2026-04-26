@@ -20,6 +20,18 @@ const getProjectOrFail = async (projectId: string) => {
   return projectResult.rows[0];
 };
 
+const getPagination = (pageRaw: unknown, limitRaw: unknown) => {
+  const page = Math.max(1, Number.parseInt(String(pageRaw ?? '1'), 10) || 1);
+  const requestedLimit = Math.max(
+    1,
+    Number.parseInt(String(limitRaw ?? '20'), 10) || 20,
+  );
+  const limit = Math.min(requestedLimit, 100);
+  const offset = (page - 1) * limit;
+
+  return { page, limit, offset };
+};
+
 const getContributorOrFail = async (userId: string) => {
   const userResult = await query(
     `SELECT id, email, full_name, phone, role, is_active
@@ -127,10 +139,13 @@ const getMyAssignments = async (req, res) => {
 
 const getProjectAssignments = async (req, res) => {
   const { projectId } = req.params;
+  const status = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+  const searchQuery = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const { page, limit, offset } = getPagination(req.query.page, req.query.limit);
   await synchronizeProjectStatuses(projectId);
 
-  const result = await query(
-    `SELECT pa.*,
+  let queryText = `
+    SELECT pa.*,
             p.name AS project_name,
             p.status AS project_status,
             u.full_name,
@@ -141,20 +156,219 @@ const getProjectAssignments = async (req, res) => {
      JOIN "user" u ON pa.user_id = u.id
      WHERE pa.project_id = $1
        AND pa.role = 'contributor'
-     ORDER BY
-       CASE pa.status
-         WHEN 'approved' THEN 0
-         WHEN 'pending' THEN 1
-         ELSE 2
-       END,
-       u.full_name ASC,
-       pa.created_at DESC`,
-    [projectId],
-  );
+  `;
+  const params: unknown[] = [projectId];
+  let paramIndex = 2;
+
+  if (status) {
+    queryText += ` AND pa.status = $${paramIndex}`;
+    params.push(status);
+    paramIndex += 1;
+  }
+
+  if (searchQuery) {
+    queryText += `
+      AND (
+        u.full_name ILIKE $${paramIndex}
+        OR COALESCE(u.email, '') ILIKE $${paramIndex}
+        OR COALESCE(u.phone, '') ILIKE $${paramIndex}
+      )
+    `;
+    params.push(`%${searchQuery}%`);
+    paramIndex += 1;
+  }
+
+  queryText += ` ORDER BY
+      CASE pa.status
+        WHEN 'approved' THEN 0
+        WHEN 'pending' THEN 1
+        ELSE 2
+      END,
+      u.full_name ASC,
+      pa.created_at DESC
+      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+  params.push(limit, offset);
+
+  const result = await query(queryText, params);
+
+  let countQuery = `
+    SELECT COUNT(*)::int AS total
+    FROM project_assignment pa
+    JOIN "user" u ON pa.user_id = u.id
+    WHERE pa.project_id = $1
+      AND pa.role = 'contributor'
+  `;
+  const countParams: unknown[] = [projectId];
+  let countParamIndex = 2;
+
+  if (status) {
+    countQuery += ` AND pa.status = $${countParamIndex}`;
+    countParams.push(status);
+    countParamIndex += 1;
+  }
+
+  if (searchQuery) {
+    countQuery += `
+      AND (
+        u.full_name ILIKE $${countParamIndex}
+        OR COALESCE(u.email, '') ILIKE $${countParamIndex}
+        OR COALESCE(u.phone, '') ILIKE $${countParamIndex}
+      )
+    `;
+    countParams.push(`%${searchQuery}%`);
+    countParamIndex += 1;
+  }
+
+  const countResult = await query(countQuery, countParams);
+  const total = countResult.rows[0]?.total ?? 0;
 
   res.json({
     success: true,
     data: result.rows,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+      has_more: offset + result.rows.length < total,
+    },
+  });
+};
+
+const getAvailableContributorsForProject = async (req, res) => {
+  const { projectId } = req.params;
+  const searchQuery = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const { page, limit, offset } = getPagination(req.query.page, req.query.limit);
+  await synchronizeProjectStatuses(projectId);
+
+  let queryText = `
+    SELECT u.id,
+           u.email,
+           u.full_name,
+           u.phone,
+           u.role,
+           u.is_active,
+           latest_request.type AS latest_request_type,
+           latest_account_state.account_state,
+           approved_assignment_summary.approved_assignment_count
+    FROM "user" u
+    LEFT JOIN LATERAL (
+      SELECT n.type
+      FROM notification n
+      WHERE n.user_id = u.id
+        AND n.type IN ('contributor_request', 'contributor_rejected', 'contributor_approved')
+      ORDER BY n.created_at DESC
+      LIMIT 1
+    ) latest_request ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT al.new_values->>'account_state' AS account_state
+      FROM audit_log al
+      WHERE al.entity_type = 'user'
+        AND al.entity_id = u.id
+        AND al.action_type = 'update'
+        AND al.new_values ? 'account_state'
+      ORDER BY al.created_at DESC
+      LIMIT 1
+    ) latest_account_state ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*)::integer AS approved_assignment_count
+      FROM project_assignment pa
+      WHERE pa.user_id = u.id
+        AND pa.role = 'contributor'
+        AND pa.status = 'approved'
+    ) approved_assignment_summary ON TRUE
+    WHERE u.role = 'contributor'
+      AND u.is_active = TRUE
+      AND COALESCE(latest_account_state.account_state, 'active') <> 'blocked'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM project_assignment pa
+        WHERE pa.project_id = $1
+          AND pa.user_id = u.id
+          AND pa.role = 'contributor'
+          AND pa.status <> 'rejected'
+      )
+  `;
+
+  const params: unknown[] = [projectId];
+  let paramIndex = 2;
+
+  if (searchQuery) {
+    queryText += `
+      AND (
+        u.full_name ILIKE $${paramIndex}
+        OR COALESCE(u.email, '') ILIKE $${paramIndex}
+        OR COALESCE(u.phone, '') ILIKE $${paramIndex}
+      )
+    `;
+    params.push(`%${searchQuery}%`);
+    paramIndex += 1;
+  }
+
+  queryText += ` ORDER BY u.full_name ASC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+  params.push(limit, offset);
+
+  const result = await query(queryText, params);
+
+  let countQuery = `
+    SELECT COUNT(*)::int AS total
+    FROM "user" u
+    LEFT JOIN LATERAL (
+      SELECT al.new_values->>'account_state' AS account_state
+      FROM audit_log al
+      WHERE al.entity_type = 'user'
+        AND al.entity_id = u.id
+        AND al.action_type = 'update'
+        AND al.new_values ? 'account_state'
+      ORDER BY al.created_at DESC
+      LIMIT 1
+    ) latest_account_state ON TRUE
+    WHERE u.role = 'contributor'
+      AND u.is_active = TRUE
+      AND COALESCE(latest_account_state.account_state, 'active') <> 'blocked'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM project_assignment pa
+        WHERE pa.project_id = $1
+          AND pa.user_id = u.id
+          AND pa.role = 'contributor'
+          AND pa.status <> 'rejected'
+      )
+  `;
+  const countParams: unknown[] = [projectId];
+  let countParamIndex = 2;
+
+  if (searchQuery) {
+    countQuery += `
+      AND (
+        u.full_name ILIKE $${countParamIndex}
+        OR COALESCE(u.email, '') ILIKE $${countParamIndex}
+        OR COALESCE(u.phone, '') ILIKE $${countParamIndex}
+      )
+    `;
+    countParams.push(`%${searchQuery}%`);
+    countParamIndex += 1;
+  }
+
+  const countResult = await query(countQuery, countParams);
+  const total = countResult.rows[0]?.total ?? 0;
+
+  res.json({
+    success: true,
+    data: result.rows.map((row) => ({
+      ...row,
+      is_protected_super_admin: false,
+      account_state: row.is_active === true ? 'active' : 'inactive',
+      is_blocked: row.account_state === 'blocked',
+      approved_assignment_count: row.approved_assignment_count ?? 0,
+    })),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+      has_more: offset + result.rows.length < total,
+    },
   });
 };
 
@@ -598,6 +812,7 @@ module.exports = {
   getMyAssignments,
   getManagedAssignments,
   getProjectAssignments,
+  getAvailableContributorsForProject,
   createAssignment,
   requestJoinProject,
   cancelJoinProjectRequest,

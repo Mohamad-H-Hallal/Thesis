@@ -57,6 +57,15 @@ const parseBbox = (value: unknown) => {
   };
 };
 
+const getPagination = (pageRaw: unknown, limitRaw: unknown) => {
+  const page = Math.max(1, Number.parseInt(String(pageRaw ?? '1'), 10) || 1);
+  const requestedLimit = Math.max(1, Number.parseInt(String(limitRaw ?? '20'), 10) || 20);
+  const limit = Math.min(requestedLimit, 100);
+  const offset = (page - 1) * limit;
+
+  return { page, limit, offset };
+};
+
 // Request export for a project
 const requestExport = async (req, res) => {
   const { projectId } = req.params;
@@ -828,18 +837,28 @@ const zipDirectory = async (sourceDir, outPath) => {
 
 // Get all exports for current user
 const getMyExports = async (req, res) => {
-  const { page = 1, limit = 20, status, format } = req.query;
-  const offset = (page - 1) * limit;
+  const status = normalizeOptionalString(req.query.status);
+  const format = normalizeOptionalString(req.query.format);
+  const categoryId = normalizeOptionalString(req.query.category_id);
+  const projectId = normalizeOptionalString(req.query.project_id);
+  const { page, limit, offset } = getPagination(req.query.page, req.query.limit);
+  const isAdmin = req.user?.role === 'admin';
 
   let queryText = `
     SELECT se.*, p.name as project_name
     FROM shapefile_export se
     JOIN project p ON se.project_id = p.id
-    WHERE se.requested_by_user_id = $1
+    WHERE 1=1
   `;
 
-  const params = [req.user.id];
-  let paramIndex = 2;
+  const params: unknown[] = [];
+  let paramIndex = 1;
+
+  if (!isAdmin) {
+    queryText += ` AND se.requested_by_user_id = $${paramIndex}`;
+    params.push(req.user.id);
+    paramIndex++;
+  }
 
   if (status) {
     queryText += ` AND se.status = $${paramIndex}`;
@@ -853,6 +872,18 @@ const getMyExports = async (req, res) => {
     paramIndex++;
   }
 
+  if (categoryId) {
+    queryText += ` AND p.category_id = $${paramIndex}`;
+    params.push(categoryId);
+    paramIndex++;
+  }
+
+  if (projectId) {
+    queryText += ` AND se.project_id = $${paramIndex}`;
+    params.push(projectId);
+    paramIndex++;
+  }
+
   queryText += ` ORDER BY se.requested_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
   params.push(limit, offset);
 
@@ -861,10 +892,17 @@ const getMyExports = async (req, res) => {
   let countQuery = `
     SELECT COUNT(*)::int AS total
     FROM shapefile_export se
-    WHERE se.requested_by_user_id = $1
+    JOIN project p ON se.project_id = p.id
+    WHERE 1=1
   `;
-  const countParams = [req.user.id];
-  let countParamIndex = 2;
+  const countParams: unknown[] = [];
+  let countParamIndex = 1;
+
+  if (!isAdmin) {
+    countQuery += ` AND se.requested_by_user_id = $${countParamIndex}`;
+    countParams.push(req.user.id);
+    countParamIndex++;
+  }
 
   if (status) {
     countQuery += ` AND se.status = $${countParamIndex}`;
@@ -878,18 +916,90 @@ const getMyExports = async (req, res) => {
     countParamIndex++;
   }
 
+  if (categoryId) {
+    countQuery += ` AND p.category_id = $${countParamIndex}`;
+    countParams.push(categoryId);
+    countParamIndex++;
+  }
+
+  if (projectId) {
+    countQuery += ` AND se.project_id = $${countParamIndex}`;
+    countParams.push(projectId);
+    countParamIndex++;
+  }
+
   const countResult = await query(countQuery, countParams);
   const total = countResult.rows[0]?.total ?? 0;
+
+  let summaryQuery = `
+    SELECT
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE se.status = 'pending')::int AS pending,
+      COUNT(*) FILTER (WHERE se.status = 'processing')::int AS processing,
+      COUNT(*) FILTER (WHERE se.status = 'completed')::int AS completed,
+      COUNT(*) FILTER (WHERE se.status = 'failed')::int AS failed
+    FROM shapefile_export se
+    JOIN project p ON se.project_id = p.id
+    WHERE 1=1
+  `;
+  const summaryParams: unknown[] = [];
+  let summaryParamIndex = 1;
+
+  if (!isAdmin) {
+    summaryQuery += ` AND se.requested_by_user_id = $${summaryParamIndex}`;
+    summaryParams.push(req.user.id);
+    summaryParamIndex++;
+  }
+
+  if (status) {
+    summaryQuery += ` AND se.status = $${summaryParamIndex}`;
+    summaryParams.push(status);
+    summaryParamIndex++;
+  }
+
+  if (format) {
+    summaryQuery += ` AND se.export_parameters->>'format' = $${summaryParamIndex}`;
+    summaryParams.push(format);
+    summaryParamIndex++;
+  }
+
+  if (categoryId) {
+    summaryQuery += ` AND p.category_id = $${summaryParamIndex}`;
+    summaryParams.push(categoryId);
+    summaryParamIndex++;
+  }
+
+  if (projectId) {
+    summaryQuery += ` AND se.project_id = $${summaryParamIndex}`;
+    summaryParams.push(projectId);
+    summaryParamIndex++;
+  }
+
+  const summaryResult = await query(summaryQuery, summaryParams);
+  const summary = summaryResult.rows[0] ?? {
+    total: 0,
+    pending: 0,
+    processing: 0,
+    completed: 0,
+    failed: 0,
+  };
 
   res.json({
     success: true,
     data: result.rows,
     pagination: {
-      page: parseInt(page),
-      limit: parseInt(limit),
+      page,
+      limit,
       total,
       totalPages: Math.max(1, Math.ceil(total / limit)),
       has_more: offset + result.rows.length < total,
+    },
+    summary: {
+      total: summary.total ?? 0,
+      pending: summary.pending ?? 0,
+      processing: summary.processing ?? 0,
+      completed: summary.completed ?? 0,
+      failed: summary.failed ?? 0,
     },
   });
 };
@@ -897,13 +1007,15 @@ const getMyExports = async (req, res) => {
 // Get single export status
 const getExportStatus = async (req, res) => {
   const { exportId } = req.params;
+  const isAdmin = req.user?.role === 'admin';
 
   const result = await query(
     `SELECT se.*, p.name as project_name
      FROM shapefile_export se
      JOIN project p ON se.project_id = p.id
-     WHERE se.id = $1 AND se.requested_by_user_id = $2`,
-    [exportId, req.user.id],
+     WHERE se.id = $1
+       AND ($2::boolean = TRUE OR se.requested_by_user_id = $3)`,
+    [exportId, isAdmin, req.user.id],
   );
 
   if (result.rows.length === 0) {
@@ -919,12 +1031,14 @@ const getExportStatus = async (req, res) => {
 // Download export file
 const downloadExport = async (req, res) => {
   const { exportId } = req.params;
+  const isAdmin = req.user?.role === 'admin';
 
   const result = await query(
     `SELECT file_path, status, project_id, export_parameters
      FROM shapefile_export
-     WHERE id = $1 AND requested_by_user_id = $2`,
-    [exportId, req.user.id],
+     WHERE id = $1
+       AND ($2::boolean = TRUE OR requested_by_user_id = $3)`,
+    [exportId, isAdmin, req.user.id],
   );
 
   if (result.rows.length === 0) {

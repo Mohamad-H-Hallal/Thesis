@@ -477,12 +477,34 @@ class ApiAdminRepository implements AdminRepository {
   Future<List<ManagedAssignmentSummary>> fetchProjectAssignments(
     String projectId,
   ) async {
+    final page = await fetchProjectAssignmentsPage(
+      projectId: projectId,
+      status: '',
+      limit: 100,
+    );
+    return page.items;
+  }
+
+  @override
+  Future<PaginatedResult<ManagedAssignmentSummary>> fetchProjectAssignmentsPage({
+    required String projectId,
+    required String status,
+    String? query,
+    int page = 1,
+    int limit = 20,
+  }) async {
     return _run(() async {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         '$_assignmentsBasePath/project/$projectId',
+        queryParameters: <String, dynamic>{
+          'page': page,
+          'limit': limit,
+          if (status.trim().isNotEmpty) 'status': status.trim(),
+          if (query?.trim().isNotEmpty ?? false) 'q': query!.trim(),
+        },
       );
       final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
-      return rows
+      final items = rows
           .map(
             (row) => _toManagedAssignment(
               Map<String, dynamic>.from(row as Map)
@@ -492,7 +514,58 @@ class ApiAdminRepository implements AdminRepository {
             ),
           )
           .toList(growable: false);
+      final pagination = Map<String, dynamic>.from(
+        response.data?['pagination'] as Map? ?? const <String, dynamic>{},
+      );
+      final total = (pagination['total'] as num?)?.toInt() ?? items.length;
+      final hasMore =
+          (pagination['has_more'] as bool?) ??
+          ((page * limit) < total && items.isNotEmpty);
+      return PaginatedResult<ManagedAssignmentSummary>(
+        items: items,
+        page: (pagination['page'] as num?)?.toInt() ?? page,
+        limit: (pagination['limit'] as num?)?.toInt() ?? limit,
+        total: total,
+        hasMore: hasMore,
+      );
     }, fallback: 'Unable to load project assignments.');
+  }
+
+  @override
+  Future<PaginatedResult<ManagedUserSummary>> fetchAvailableContributorsPage({
+    required String projectId,
+    String? query,
+    int page = 1,
+    int limit = 20,
+  }) async {
+    return _run(() async {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_assignmentsBasePath/project/$projectId/available-contributors',
+        queryParameters: <String, dynamic>{
+          'page': page,
+          'limit': limit,
+          if (query?.trim().isNotEmpty ?? false) 'q': query!.trim(),
+        },
+      );
+      final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
+      final items = rows
+          .map((row) => _toManagedUser(Map<String, dynamic>.from(row as Map)))
+          .toList(growable: false);
+      final pagination = Map<String, dynamic>.from(
+        response.data?['pagination'] as Map? ?? const <String, dynamic>{},
+      );
+      final total = (pagination['total'] as num?)?.toInt() ?? items.length;
+      final hasMore =
+          (pagination['has_more'] as bool?) ??
+          ((page * limit) < total && items.isNotEmpty);
+      return PaginatedResult<ManagedUserSummary>(
+        items: items,
+        page: (pagination['page'] as num?)?.toInt() ?? page,
+        limit: (pagination['limit'] as num?)?.toInt() ?? limit,
+        total: total,
+        hasMore: hasMore,
+      );
+    }, fallback: 'Unable to load available contributors.');
   }
 
   @override

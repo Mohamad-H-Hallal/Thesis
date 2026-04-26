@@ -30,7 +30,6 @@ void main() {
         notifications.add('$title|$message');
       },
     );
-    await controller.initialize();
   });
 
   tearDown(() {
@@ -38,22 +37,30 @@ void main() {
   });
 
   test('request adds pending export job', () async {
-    final initialTotal = controller.state.jobs.length;
-    await controller.requestExport(
+    final success = await controller.requestExport(
       projectId: 'proj-2',
       projectName: 'Mount Lebanon Citrus Survey',
       format: ExportFormat.geojson,
       exportParameters: const <String, dynamic>{'simulate_result': 'completed'},
     );
 
-    expect(controller.state.jobs.length, initialTotal + 1);
+    expect(success, isTrue);
+    final page = await repository.fetchJobsPage(
+      requestedByUserId: session.user.id,
+      projectId: 'proj-2',
+    );
+    expect(page.total, 1);
     expect(
-      controller.state.jobs.firstWhere((j) => j.projectId == 'proj-2').status,
+      page.items.first.status,
       ExportJobStatus.pending,
+    );
+    expect(
+      notifications.where((m) => m.startsWith('Export queued')).length,
+      1,
     );
   });
 
-  test('queue transitions pending -> processing -> failed', () async {
+  test('failed export can be retried', () async {
     await controller.requestExport(
       projectId: 'proj-2',
       projectName: 'Mount Lebanon Citrus Survey',
@@ -61,25 +68,27 @@ void main() {
       exportParameters: const <String, dynamic>{'simulate_result': 'failed'},
     );
 
-    final requested = controller.state.jobs.firstWhere(
-      (j) => j.projectId == 'proj-2',
+    final requestedPage = await repository.fetchJobsPage(
+      requestedByUserId: session.user.id,
+      projectId: 'proj-2',
     );
+    final requested = requestedPage.items.first;
 
-    await controller.runQueueTick();
-    final processing = controller.state.jobs.firstWhere(
-      (j) => j.id == requested.id,
-    );
-    expect(processing.status, ExportJobStatus.processing);
+    await repository.processQueueTick(requestedByUserId: session.user.id);
+    await repository.processQueueTick(requestedByUserId: session.user.id);
 
-    await controller.runQueueTick();
-    final failed = controller.state.jobs.firstWhere(
-      (j) => j.id == requested.id,
+    final failedPage = await repository.fetchJobsPage(
+      requestedByUserId: session.user.id,
+      projectId: 'proj-2',
     );
-    expect(failed.status, ExportJobStatus.failed);
-    expect(
-      notifications.where((m) => m.startsWith('Export failed')).isNotEmpty,
-      isTrue,
+    expect(failedPage.items.first.status, ExportJobStatus.failed);
+
+    await controller.retryFailedExport(requested.id);
+    final retriedPage = await repository.fetchJobsPage(
+      requestedByUserId: session.user.id,
+      projectId: 'proj-2',
     );
+    expect(retriedPage.items.first.status, ExportJobStatus.pending);
   });
 
   test('completed export can be marked downloaded', () async {
@@ -90,24 +99,21 @@ void main() {
       exportParameters: const <String, dynamic>{'simulate_result': 'completed'},
     );
 
-    final requested = controller.state.jobs.firstWhere(
-      (j) => j.projectId == 'proj-3',
+    final requestedPage = await repository.fetchJobsPage(
+      requestedByUserId: session.user.id,
+      projectId: 'proj-3',
     );
+    final requested = requestedPage.items.first;
 
-    await controller.runQueueTick();
-    await controller.runQueueTick();
+    await repository.processQueueTick(requestedByUserId: session.user.id);
+    await repository.processQueueTick(requestedByUserId: session.user.id);
 
-    final completed = controller.state.jobs.firstWhere(
-      (j) => j.id == requested.id,
-    );
+    final downloaded = await controller.downloadExport(requested.id);
+    expect(downloaded, isNotNull);
+    final completed = downloaded!;
     expect(completed.status, ExportJobStatus.completed);
     expect(completed.canDownload, isTrue);
-
-    await controller.downloadExport(completed.id);
-    final downloaded = controller.state.jobs.firstWhere(
-      (j) => j.id == completed.id,
-    );
-    expect(downloaded.downloadedAt, isNotNull);
-    expect(downloaded.localFilePath, isNotNull);
+    expect(completed.downloadedAt, isNotNull);
+    expect(completed.localFilePath, isNotNull);
   });
 }

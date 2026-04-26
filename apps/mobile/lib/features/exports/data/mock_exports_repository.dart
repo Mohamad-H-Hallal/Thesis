@@ -1,5 +1,6 @@
 import 'package:uuid/uuid.dart';
 
+import '../../../core/pagination/paginated_result.dart';
 import '../domain/exports_repository.dart';
 import '../domain/export_job.dart';
 
@@ -9,12 +10,64 @@ class MockExportsRepository implements ExportsRepository {
 
   @override
   Future<List<ExportJob>> fetchJobs({required String requestedByUserId}) async {
+    final page = await fetchJobsPage(
+      requestedByUserId: requestedByUserId,
+      limit: 100,
+    );
+    return page.items;
+  }
+
+  @override
+  Future<PaginatedResult<ExportJob>> fetchJobsPage({
+    required String requestedByUserId,
+    String? categoryId,
+    String? projectId,
+    ExportJobStatus? status,
+    ExportFormat? format,
+    int page = 1,
+    int limit = 20,
+  }) async {
     await Future<void>.delayed(const Duration(milliseconds: 240));
     _seedIfEmpty(requestedByUserId);
-    return _jobs
+    final filtered = _jobs
         .where((job) => job.requestedByUserId == requestedByUserId)
+        .where((job) => projectId == null || job.projectId == projectId)
+        .where((job) => format == null || job.format == format)
+        .where((job) => status == null || job.status == status)
         .toList(growable: false)
       ..sort((a, b) => b.requestedAt.compareTo(a.requestedAt));
+    final start = (page - 1) * limit;
+    final end = (start + limit).clamp(0, filtered.length);
+    final items = start >= filtered.length
+        ? const <ExportJob>[]
+        : filtered.sublist(start, end);
+    return PaginatedResult<ExportJob>(
+      items: items,
+      page: page,
+      limit: limit,
+      total: filtered.length,
+      hasMore: end < filtered.length,
+    );
+  }
+
+  @override
+  Future<ExportDashboardMetrics> fetchSummary({
+    required String requestedByUserId,
+    String? categoryId,
+    String? projectId,
+    ExportJobStatus? status,
+    ExportFormat? format,
+  }) async {
+    final page = await fetchJobsPage(
+      requestedByUserId: requestedByUserId,
+      categoryId: categoryId,
+      projectId: projectId,
+      status: status,
+      format: format,
+      page: 1,
+      limit: 1000,
+    );
+    return ExportDashboardMetrics.fromJobs(page.items);
   }
 
   @override

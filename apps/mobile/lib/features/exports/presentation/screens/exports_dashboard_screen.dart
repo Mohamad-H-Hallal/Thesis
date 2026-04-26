@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -5,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/constants/design_tokens.dart';
+import '../../../../core/pagination/paginated_list_controller.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
@@ -44,12 +46,38 @@ class _ExportsDashboardScreenState
   final TextEditingController _fromDateController = TextEditingController();
   final TextEditingController _toDateController = TextEditingController();
   final TextEditingController _bboxController = TextEditingController();
+  Timer? _jobsRefreshTimer;
   String? _fromDateError;
   String? _toDateError;
   String? _bboxError;
 
   @override
+  void initState() {
+    super.initState();
+    _jobsRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!mounted) {
+        return;
+      }
+      final query = _currentJobsQuery();
+      final jobsState = ref.read(paginatedExportJobsProvider(query)).valueOrNull;
+      if (jobsState == null) {
+        return;
+      }
+      final hasActiveWork = jobsState.items.any(
+        (job) =>
+            job.status == ExportJobStatus.pending ||
+            job.status == ExportJobStatus.processing,
+      );
+      if (!hasActiveWork) {
+        return;
+      }
+      unawaited(_refreshJobs(query, silently: true));
+    });
+  }
+
+  @override
   void dispose() {
+    _jobsRefreshTimer?.cancel();
     _scrollController.dispose();
     _fromDateController.dispose();
     _toDateController.dispose();
@@ -88,9 +116,6 @@ class _ExportsDashboardScreenState
         final hasFixedProject =
             fixedProjectId != null && fixedProjectId.isNotEmpty;
         final categories = _deriveCategories(projects);
-        final projectById = <String, ProjectSummary>{
-          for (final project in projects) project.id: project,
-        };
         if (projects.isEmpty) {
           return const AppEmptyState(
             icon: Icons.folder_off_outlined,
@@ -123,38 +148,24 @@ class _ExportsDashboardScreenState
           (project) => project?.id == _selectedProjectId,
           orElse: () => null,
         );
-
-        final selectionScopedJobs = exportState.jobs
-            .where((job) {
-              if (_selectedProjectId != null &&
-                  job.projectId != _selectedProjectId) {
-                return false;
-              }
-              if (!hasFixedProject &&
-                  _selectedCategoryId != null &&
-                  _selectedCategoryId!.trim().isNotEmpty) {
-                final project = projectById[job.projectId];
-                if (project?.categoryId != _selectedCategoryId) {
-                  return false;
-                }
-              }
-              return true;
-            })
-            .toList(growable: false);
-        final scopedMetrics = ExportDashboardMetrics.fromJobs(
-          selectionScopedJobs,
+        final jobsQuery = _currentJobsQuery();
+        final jobsAsync = ref.watch(paginatedExportJobsProvider(jobsQuery));
+        final jobsController = ref.read(
+          paginatedExportJobsProvider(jobsQuery).notifier,
         );
-        final visibleJobs = selectionScopedJobs
-            .where(
-              (job) => switch (_jobFormatFilter) {
-                _ExportJobFormatFilter.all => true,
-                _ExportJobFormatFilter.geojson =>
-                  job.format == ExportFormat.geojson,
-                _ExportJobFormatFilter.shapefile =>
-                  job.format == ExportFormat.shapefile,
-              },
-            )
-            .toList(growable: false);
+        final jobsState =
+            jobsAsync.valueOrNull ??
+            const PaginatedListState<ExportJob>.initial();
+        final jobsError = jobsAsync.hasError ? jobsAsync.error.toString() : null;
+        final scopedMetrics =
+            ref.watch(exportJobsSummaryProvider(jobsQuery)).valueOrNull ??
+            const ExportDashboardMetrics(
+              total: 0,
+              pending: 0,
+              processing: 0,
+              completed: 0,
+              failed: 0,
+            );
 
         return ListView(
           controller: _scrollController,
@@ -235,9 +246,9 @@ class _ExportsDashboardScreenState
                     builder: (context, constraints) {
                       final refreshButton = IconButton(
                         tooltip: 'Refresh export jobs',
-                        onPressed: exportState.isLoading
+                        onPressed: jobsState.isRefreshing
                             ? null
-                            : controller.refresh,
+                            : () => _refreshJobs(jobsQuery),
                         icon: const Icon(Icons.refresh),
                       );
                       if (constraints.maxWidth < 420) {
@@ -504,7 +515,7 @@ class _ExportsDashboardScreenState
             LayoutBuilder(
               builder: (context, constraints) {
                 final title = Text(
-                  'Export jobs (${visibleJobs.length})',
+                  'Export jobs (${jobsState.total})',
                   style: Theme.of(context).textTheme.titleMedium,
                 );
                 final filter = _ExportListFilter(
@@ -533,12 +544,20 @@ class _ExportsDashboardScreenState
               },
             ),
             const SizedBox(height: AppSpacing.sm),
-            if (exportState.isLoading)
+            if (jobsAsync.isLoading && jobsState.items.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 24),
                 child: Center(child: CircularProgressIndicator()),
               )
-            else if (visibleJobs.isEmpty)
+            else if (jobsError != null && jobsState.items.isEmpty)
+              AppEmptyState(
+                icon: Icons.error_outline,
+                title: 'Export jobs unavailable',
+                message: jobsError,
+                actionLabel: 'Retry',
+                onAction: () => _refreshJobs(jobsQuery),
+              )
+            else if (jobsState.items.isEmpty)
               AppEmptyState(
                 icon: Icons.archive_outlined,
                 title: hasFixedProject
@@ -550,18 +569,20 @@ class _ExportsDashboardScreenState
               )
             else
               ProgressiveListSection<ExportJob>(
-                items: visibleJobs,
+                items: jobsState.items,
                 resetKey: Object.hash(
-                  _selectedCategoryId,
-                  _selectedProjectId,
-                  _jobFormatFilter,
-                  visibleJobs.length,
+                  jobsQuery,
+                  jobsState.total,
                 ),
+                hasMore: jobsState.hasMore,
+                isLoadingMore: jobsState.isLoadingMore,
+                onLoadMore: jobsController.loadMore,
                 itemBuilder: (context, job, _) => _ExportJobCard(
                   job: job,
-                  onRefresh: controller.refresh,
+                  onRefresh: () => _refreshJobs(jobsQuery),
                   onRetry: () async {
                     await controller.retryFailedExport(job.id);
+                    bumpWorkflowRefresh(ref);
                     if (context.mounted) {
                       AppSnackbar.showSuccess(
                         context,
@@ -571,6 +592,7 @@ class _ExportsDashboardScreenState
                   },
                   onDownload: () async {
                     await _handleDownload(controller, job.id);
+                    bumpWorkflowRefresh(ref);
                   },
                   onOpen: job.localFilePath?.trim().isNotEmpty == true
                       ? () => _openDownloadedFile(job.localFilePath!)
@@ -587,6 +609,31 @@ class _ExportsDashboardScreenState
         );
       },
     );
+  }
+
+  ExportJobsQuery _currentJobsQuery() {
+    return ExportJobsQuery(
+      categoryId: widget.fixedProjectId == null ? _selectedCategoryId : null,
+      projectId: widget.fixedProjectId ?? _selectedProjectId,
+      format: switch (_jobFormatFilter) {
+        _ExportJobFormatFilter.all => null,
+        _ExportJobFormatFilter.geojson => ExportFormat.geojson,
+        _ExportJobFormatFilter.shapefile => ExportFormat.shapefile,
+      },
+    );
+  }
+
+  Future<void> _refreshJobs(
+    ExportJobsQuery query, {
+    bool silently = false,
+  }) async {
+    final controller = ref.read(paginatedExportJobsProvider(query).notifier);
+    if (silently) {
+      await controller.refreshSilently();
+    } else {
+      await controller.refresh();
+    }
+    ref.invalidate(exportJobsSummaryProvider(query));
   }
 
   Future<void> _submit(
@@ -635,6 +682,7 @@ class _ExportsDashboardScreenState
       },
     );
     if (mounted && success) {
+      bumpWorkflowRefresh(ref);
       AppSnackbar.showSuccess(context, 'Export request added to queue.');
       return;
     }

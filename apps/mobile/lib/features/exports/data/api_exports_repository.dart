@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../../core/config/app_env.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_error_message.dart';
+import '../../../core/pagination/paginated_result.dart';
 import '../domain/export_job.dart';
 import '../domain/exports_repository.dart';
 
@@ -21,14 +22,43 @@ class ApiExportsRepository implements ExportsRepository {
 
   @override
   Future<List<ExportJob>> fetchJobs({required String requestedByUserId}) async {
+    final page = await fetchJobsPage(
+      requestedByUserId: requestedByUserId,
+      limit: 100,
+    );
+    return page.items;
+  }
+
+  @override
+  Future<PaginatedResult<ExportJob>> fetchJobsPage({
+    required String requestedByUserId,
+    String? categoryId,
+    String? projectId,
+    ExportJobStatus? status,
+    ExportFormat? format,
+    int page = 1,
+    int limit = 20,
+  }) async {
     try {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         _exportsBasePath,
+        queryParameters: <String, dynamic>{
+          'page': page,
+          'limit': limit,
+          if (categoryId?.trim().isNotEmpty ?? false)
+            'category_id': categoryId!.trim(),
+          if (projectId?.trim().isNotEmpty ?? false) 'project_id': projectId!.trim(),
+          if (status != null) 'status': status.name,
+          if (format != null) 'format': format.name,
+        },
       );
       final payload = response.data ?? const <String, dynamic>{};
       final rows = (payload['data'] as List? ?? const <dynamic>[]);
+      final pagination = Map<String, dynamic>.from(
+        payload['pagination'] as Map? ?? const <String, dynamic>{},
+      );
 
-      return rows
+      final items = rows
           .map((row) {
             final map = Map<String, dynamic>.from(row as Map);
             final id = (map['id'] as String?) ?? '';
@@ -38,10 +68,62 @@ class ApiExportsRepository implements ExportsRepository {
             );
           })
           .toList(growable: false);
+      final total = (pagination['total'] as num?)?.toInt() ?? items.length;
+      final hasMore =
+          (pagination['has_more'] as bool?) ??
+          ((page * limit) < total && items.isNotEmpty);
+
+      return PaginatedResult<ExportJob>(
+        items: items,
+        page: (pagination['page'] as num?)?.toInt() ?? page,
+        limit: (pagination['limit'] as num?)?.toInt() ?? limit,
+        total: total,
+        hasMore: hasMore,
+      );
     } on DioException catch (error) {
       throw userFacingDioMessage(
         error,
         fallback: 'Unable to load export jobs right now.',
+      );
+    }
+  }
+
+  @override
+  Future<ExportDashboardMetrics> fetchSummary({
+    required String requestedByUserId,
+    String? categoryId,
+    String? projectId,
+    ExportJobStatus? status,
+    ExportFormat? format,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        _exportsBasePath,
+        queryParameters: <String, dynamic>{
+          'page': 1,
+          'limit': 1,
+          if (categoryId?.trim().isNotEmpty ?? false)
+            'category_id': categoryId!.trim(),
+          if (projectId?.trim().isNotEmpty ?? false) 'project_id': projectId!.trim(),
+          if (status != null) 'status': status.name,
+          if (format != null) 'format': format.name,
+        },
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      final summary = Map<String, dynamic>.from(
+        payload['summary'] as Map? ?? const <String, dynamic>{},
+      );
+      return ExportDashboardMetrics(
+        total: _toInt(summary['total']) ?? 0,
+        pending: _toInt(summary['pending']) ?? 0,
+        processing: _toInt(summary['processing']) ?? 0,
+        completed: _toInt(summary['completed']) ?? 0,
+        failed: _toInt(summary['failed']) ?? 0,
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load export summary right now.',
       );
     }
   }

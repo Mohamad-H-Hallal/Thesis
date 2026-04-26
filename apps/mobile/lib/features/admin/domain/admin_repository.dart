@@ -106,6 +106,21 @@ abstract class AdminRepository {
     String projectId,
   );
 
+  Future<PaginatedResult<ManagedAssignmentSummary>> fetchProjectAssignmentsPage({
+    required String projectId,
+    required String status,
+    String? query,
+    int page = 1,
+    int limit = 20,
+  });
+
+  Future<PaginatedResult<ManagedUserSummary>> fetchAvailableContributorsPage({
+    required String projectId,
+    String? query,
+    int page = 1,
+    int limit = 20,
+  });
+
   Future<ManagedAssignmentSummary> createAssignment({
     required String projectId,
     required String userId,

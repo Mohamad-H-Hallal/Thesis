@@ -555,7 +555,17 @@ const getProjectStats = async (req, res) => {
 // Get project features
 const getProjectFeatures = async (req, res) => {
   const { projectId } = req.params;
-  const { status, page = 1, limit = 50 } = req.query;
+  const status = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+  const searchQuery = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const geometryType =
+    typeof req.query.geometry_type === 'string'
+      ? req.query.geometry_type.trim()
+      : '';
+  const page = Math.max(1, Number.parseInt(String(req.query.page ?? '1'), 10) || 1);
+  const limit = Math.min(
+    Math.max(1, Number.parseInt(String(req.query.limit ?? '50'), 10) || 50),
+    100,
+  );
   const offset = (page - 1) * limit;
   await synchronizeProjectStatuses(projectId);
 
@@ -600,6 +610,25 @@ const getProjectFeatures = async (req, res) => {
     paramIndex++;
   }
 
+  if (geometryType) {
+    queryText += ` AND GeometryType(sf.geom) = $${paramIndex}`;
+    params.push(geometryType);
+    paramIndex++;
+  }
+
+  if (searchQuery) {
+    queryText += `
+      AND (
+        sf.id::text ILIKE $${paramIndex}
+        OR COALESCE(u.full_name, '') ILIKE $${paramIndex}
+        OR COALESCE(sf.attributes::text, '') ILIKE $${paramIndex}
+        OR GeometryType(sf.geom) ILIKE $${paramIndex}
+      )
+    `;
+    params.push(`%${searchQuery}%`);
+    paramIndex++;
+  }
+
   if (req.user?.role === 'viewer') {
     queryText += ` AND sf.status = 'approved'`;
   } else if (req.user?.role !== 'admin') {
@@ -634,6 +663,30 @@ const getProjectFeatures = async (req, res) => {
     countParamIndex++;
   }
 
+  if (geometryType) {
+    countQuery += ` AND GeometryType(sf.geom) = $${countParamIndex}`;
+    countParams.push(geometryType);
+    countParamIndex++;
+  }
+
+  if (searchQuery) {
+    countQuery += `
+      AND (
+        sf.id::text ILIKE $${countParamIndex}
+        OR EXISTS (
+          SELECT 1
+          FROM "user" u
+          WHERE u.id = sf.collected_by_user_id
+            AND COALESCE(u.full_name, '') ILIKE $${countParamIndex}
+        )
+        OR COALESCE(sf.attributes::text, '') ILIKE $${countParamIndex}
+        OR GeometryType(sf.geom) ILIKE $${countParamIndex}
+      )
+    `;
+    countParams.push(`%${searchQuery}%`);
+    countParamIndex++;
+  }
+
   if (req.user?.role === 'viewer') {
     countQuery += ` AND sf.status = 'approved'`;
   } else if (req.user?.role !== 'admin') {
@@ -663,8 +716,8 @@ const getProjectFeatures = async (req, res) => {
     success: true,
     data: features,
     pagination: {
-      page: parseInt(page),
-      limit: parseInt(limit),
+      page,
+      limit,
       total,
       pages: Math.max(1, Math.ceil(total / limit)),
       has_more: offset + features.length < total,

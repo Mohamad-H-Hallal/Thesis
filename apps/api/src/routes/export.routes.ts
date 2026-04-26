@@ -3,7 +3,12 @@ const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const exportController = require('../controllers/export.controller');
 const { authenticate, checkProjectAccess } = require('../middleware/auth');
-const { exportValidation, validate, uuidValidation } = require('../middleware/validation');
+const {
+  exportValidation,
+  paginationValidation,
+  validate,
+  uuidValidation,
+} = require('../middleware/validation');
 const { asyncHandler } = require('../middleware/error');
 import { auditAction } from '../middleware/audit';
 import { validateEnv } from '../config/env';
@@ -38,7 +43,7 @@ router.post(
 );
 
 // Get all my exports
-router.get('/', asyncHandler(exportController.getMyExports));
+router.get('/', paginationValidation, validate, asyncHandler(exportController.getMyExports));
 
 // Get single export status
 router.get(

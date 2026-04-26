@@ -4,6 +4,7 @@ import '../../../core/offline/local_models.dart';
 import '../../../core/config/app_env.dart';
 import '../../../core/network/api_error_message.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/pagination/paginated_result.dart';
 import '../domain/map_feature.dart';
 
 class ApiMapRepository {
@@ -12,16 +13,38 @@ class ApiMapRepository {
   final ApiClient _apiClient;
 
   Future<List<MapFeatureSummary>> fetchProjectFeatures(String projectId) async {
+    final page = await fetchProjectFeaturesPage(projectId: projectId, limit: 100);
+    return page.items;
+  }
+
+  Future<PaginatedResult<MapFeatureSummary>> fetchProjectFeaturesPage({
+    required String projectId,
+    String? search,
+    String? status,
+    String? geometryType,
+    int page = 1,
+    int limit = 20,
+  }) async {
     try {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         '${AppEnv.apiVersionPrefix}/projects/$projectId/features',
-        queryParameters: const <String, dynamic>{'limit': 100},
+        queryParameters: <String, dynamic>{
+          'page': page,
+          'limit': limit,
+          if (search?.trim().isNotEmpty ?? false) 'q': search!.trim(),
+          if (status?.trim().isNotEmpty ?? false) 'status': status!.trim(),
+          if (geometryType?.trim().isNotEmpty ?? false)
+            'geometry_type': geometryType!.trim(),
+        },
       );
 
       final payload = response.data ?? const <String, dynamic>{};
       final rows = (payload['data'] as List? ?? const <dynamic>[]);
+      final pagination = Map<String, dynamic>.from(
+        payload['pagination'] as Map? ?? const <String, dynamic>{},
+      );
 
-      return rows
+      final items = rows
           .map((row) {
             final item = Map<String, dynamic>.from(row as Map);
             return MapFeatureSummary(
@@ -47,6 +70,17 @@ class ApiMapRepository {
             );
           })
           .toList(growable: false);
+      final total = (pagination['total'] as num?)?.toInt() ?? items.length;
+      final hasMore =
+          (pagination['has_more'] as bool?) ??
+          ((page * limit) < total && items.isNotEmpty);
+      return PaginatedResult<MapFeatureSummary>(
+        items: items,
+        page: (pagination['page'] as num?)?.toInt() ?? page,
+        limit: (pagination['limit'] as num?)?.toInt() ?? limit,
+        total: total,
+        hasMore: hasMore,
+      );
     } on DioException catch (error) {
       throw userFacingDioMessage(
         error,

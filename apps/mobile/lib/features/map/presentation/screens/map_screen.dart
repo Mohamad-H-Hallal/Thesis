@@ -11,12 +11,14 @@ import 'package:latlong2/latlong.dart';
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/offline/local_models.dart';
+import '../../../../core/pagination/paginated_list_controller.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/sync/sync_controller.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
+import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../../core/widgets/app_text_field.dart';
@@ -4897,7 +4899,7 @@ class _SyncStatusLine extends StatelessWidget {
   }
 }
 
-class _ProjectFeatureBrowserSheet extends StatefulWidget {
+class _ProjectFeatureBrowserSheet extends ConsumerStatefulWidget {
   const _ProjectFeatureBrowserSheet({
     required this.project,
     required this.features,
@@ -4925,12 +4927,12 @@ class _ProjectFeatureBrowserSheet extends StatefulWidget {
   final ValueChanged<MapFeatureSummary> onSelectFeature;
 
   @override
-  State<_ProjectFeatureBrowserSheet> createState() =>
+  ConsumerState<_ProjectFeatureBrowserSheet> createState() =>
       _ProjectFeatureBrowserSheetState();
 }
 
 class _ProjectFeatureBrowserSheetState
-    extends State<_ProjectFeatureBrowserSheet> {
+    extends ConsumerState<_ProjectFeatureBrowserSheet> {
   final TextEditingController _searchController = TextEditingController();
   String? _statusFilter;
   String? _geometryTypeFilter;
@@ -4948,34 +4950,15 @@ class _ProjectFeatureBrowserSheetState
     super.dispose();
   }
 
-  List<MapFeatureSummary> get _filteredFeatures {
-    final query = _searchController.text.trim().toLowerCase();
-    return widget.features
-        .where((feature) {
-          if (widget.canFilterStatuses &&
-              _statusFilter != null &&
-              feature.status != _statusFilter) {
-            return false;
-          }
-          if (_geometryTypeFilter != null &&
-              '${feature.geometry['type'] ?? ''}' != _geometryTypeFilter) {
-            return false;
-          }
-          if (query.isEmpty) {
-            return true;
-          }
-          return widget.searchBlobBuilder(feature).contains(query);
-        })
-        .toList(growable: false);
-  }
-
   List<String> get _geometryTypes {
-    final values =
-        widget.features
-            .map((feature) => '${feature.geometry['type'] ?? 'Unknown'}')
-            .toSet()
-            .toList(growable: false)
-          ..sort();
+    final values = widget.project.allowedGeometryTypes
+        .where(
+          (type) =>
+              type == 'Point' || type == 'LineString' || type == 'Polygon',
+        )
+        .toSet()
+        .toList(growable: false)
+      ..sort();
     return values;
   }
 
@@ -4994,7 +4977,33 @@ class _ProjectFeatureBrowserSheetState
 
   @override
   Widget build(BuildContext context) {
-    final filteredFeatures = _filteredFeatures;
+    final query = ProjectFeatureBrowserQuery(
+      projectId: widget.project.id,
+      search: _searchController.text.trim().isEmpty
+          ? null
+          : _searchController.text.trim(),
+      status: widget.canFilterStatuses ? _statusFilter : null,
+      geometryType: _geometryTypeFilter,
+    );
+    final featuresAsync = ref.watch(paginatedProjectFeatureBrowserProvider(query));
+    final featuresController = ref.read(
+      paginatedProjectFeatureBrowserProvider(query).notifier,
+    );
+    final featureState =
+        featuresAsync.valueOrNull ??
+        const PaginatedListState<MapFeatureSummary>.initial();
+    final useSeedFeatures =
+        featureState.items.isEmpty &&
+        widget.features.isNotEmpty &&
+        _searchController.text.trim().isEmpty &&
+        _statusFilter == null &&
+        _geometryTypeFilter == null;
+    final displayedFeatures = useSeedFeatures
+        ? widget.features
+        : featureState.items;
+    final displayedTotal = useSeedFeatures
+        ? widget.features.length
+        : featureState.total;
     final geometryTypes = _geometryTypes;
 
     final bottomInset =
@@ -5031,7 +5040,7 @@ class _ProjectFeatureBrowserSheetState
             ),
             const SizedBox(height: 4),
             Text(
-              '${filteredFeatures.length} of ${widget.features.length} item(s) in ${widget.project.name}',
+              'Showing ${displayedFeatures.length} of $displayedTotal item(s) in ${widget.project.name}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: AppSpacing.md),
@@ -5119,7 +5128,24 @@ class _ProjectFeatureBrowserSheetState
               ),
             ],
             const SizedBox(height: AppSpacing.md),
-            if (filteredFeatures.isEmpty)
+            if (featuresAsync.isLoading && displayedFeatures.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (featuresAsync.hasError && displayedFeatures.isEmpty)
+              AppEmptyState(
+                icon: Icons.error_outline,
+                title: 'Project features unavailable',
+                message: userFacingErrorMessage(
+                  featuresAsync.asError!.error,
+                  fallback:
+                      'Unable to load project features right now. Please try again.',
+                ),
+                actionLabel: 'Retry',
+                onAction: featuresController.refresh,
+              )
+            else if (displayedFeatures.isEmpty)
               AppEmptyState(
                 icon: Icons.layers_clear_outlined,
                 title: 'No features match these filters',
@@ -5130,47 +5156,49 @@ class _ProjectFeatureBrowserSheetState
                 onAction: widget.onAddFeature,
               )
             else
-              ...filteredFeatures.map(
-                (feature) => Padding(
-                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                  child: AppCard(
-                    onTap: () => widget.onSelectFeature(feature),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          width: 12,
-                          height: 12,
-                          margin: const EdgeInsets.only(top: 6),
-                          decoration: BoxDecoration(
-                            color: widget.statusColorBuilder(feature.status),
-                            shape: BoxShape.circle,
-                          ),
+              ProgressiveListSection<MapFeatureSummary>(
+                items: displayedFeatures,
+                resetKey: query,
+                hasMore: useSeedFeatures ? false : featureState.hasMore,
+                isLoadingMore: featureState.isLoadingMore,
+                onLoadMore: useSeedFeatures ? null : featuresController.loadMore,
+                itemBuilder: (context, feature, _) => AppCard(
+                  onTap: () => widget.onSelectFeature(feature),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 12,
+                        height: 12,
+                        margin: const EdgeInsets.only(top: 6),
+                        decoration: BoxDecoration(
+                          color: widget.statusColorBuilder(feature.status),
+                          shape: BoxShape.circle,
                         ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.featureTitleBuilder(feature),
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              widget.featureSubtitleBuilder(feature),
+                              style: Theme.of(context).textTheme.bodySmall,
+                              softWrap: true,
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (widget.canFilterStatuses) ...[
                         const SizedBox(width: AppSpacing.sm),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                widget.featureTitleBuilder(feature),
-                                style: Theme.of(context).textTheme.titleMedium,
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                widget.featureSubtitleBuilder(feature),
-                                style: Theme.of(context).textTheme.bodySmall,
-                                softWrap: true,
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (widget.canFilterStatuses) ...[
-                          const SizedBox(width: AppSpacing.sm),
-                          StatusChip(status: feature.status),
-                        ],
+                        StatusChip(status: feature.status),
                       ],
-                    ),
+                    ],
                   ),
                 ),
               ),

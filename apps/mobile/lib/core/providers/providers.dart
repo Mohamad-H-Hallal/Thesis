@@ -19,6 +19,7 @@ import '../../features/drafts/data/mock_drafts_repository.dart';
 import '../../features/drafts/domain/draft_item.dart';
 import '../../features/exports/data/api_exports_repository.dart';
 import '../../features/exports/data/mock_exports_repository.dart';
+import '../../features/exports/domain/export_job.dart';
 import '../../features/exports/domain/exports_repository.dart';
 import '../../features/exports/presentation/controllers/exports_controller.dart';
 import '../../features/imports/data/api_imports_repository.dart';
@@ -444,6 +445,27 @@ final projectMapFeaturesProvider =
       }
     });
 
+final paginatedProjectFeatureBrowserProvider = StateNotifierProvider.autoDispose
+    .family<
+      PaginatedListController<MapFeatureSummary>,
+      AsyncValue<PaginatedListState<MapFeatureSummary>>,
+      ProjectFeatureBrowserQuery
+    >((ref, query) {
+      ref.watch(workflowRefreshTickProvider);
+      return PaginatedListController<MapFeatureSummary>(
+        loadPage: ({required page, required limit}) {
+          return ref.read(mapRepositoryProvider).fetchProjectFeaturesPage(
+                projectId: query.projectId,
+                search: query.search,
+                status: query.status,
+                geometryType: query.geometryType,
+                page: page,
+                limit: limit,
+              );
+        },
+      );
+    });
+
 final offlineMapPackageProvider = FutureProvider<OfflineMapPackage?>((
   ref,
 ) async {
@@ -749,6 +771,51 @@ final paginatedManagedAssignmentsProvider = StateNotifierProvider.autoDispose
       );
     });
 
+final paginatedProjectAssignmentsProvider = StateNotifierProvider.autoDispose
+    .family<
+      PaginatedListController<ManagedAssignmentSummary>,
+      AsyncValue<PaginatedListState<ManagedAssignmentSummary>>,
+      ProjectAssignmentsQuery
+    >((ref, query) {
+      ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+      ref.watch(workflowRefreshTickProvider);
+      return PaginatedListController<ManagedAssignmentSummary>(
+        loadPage: ({required page, required limit}) {
+          return ref
+              .read(adminRepositoryProvider)
+              .fetchProjectAssignmentsPage(
+                projectId: query.projectId,
+                status: query.status,
+                query: query.query,
+                page: page,
+                limit: limit,
+              );
+        },
+      );
+    });
+
+final paginatedAvailableContributorsProvider = StateNotifierProvider.autoDispose
+    .family<
+      PaginatedListController<ManagedUserSummary>,
+      AsyncValue<PaginatedListState<ManagedUserSummary>>,
+      AvailableContributorsQuery
+    >((ref, query) {
+      ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+      ref.watch(workflowRefreshTickProvider);
+      return PaginatedListController<ManagedUserSummary>(
+        loadPage: ({required page, required limit}) {
+          return ref
+              .read(adminRepositoryProvider)
+              .fetchAvailableContributorsPage(
+                projectId: query.projectId,
+                query: query.query,
+                page: page,
+                limit: limit,
+              );
+        },
+      );
+    });
+
 final paginatedProjectCategoriesProvider = StateNotifierProvider.autoDispose
     .family<
       PaginatedListController<ProjectCategorySummary>,
@@ -810,9 +877,69 @@ final exportsControllerProvider =
           notifications.pushNotification(title: title, message: message);
         },
       );
-
-      controller.initialize();
       return controller;
+    });
+
+final paginatedExportJobsProvider = StateNotifierProvider.autoDispose
+    .family<
+      PaginatedListController<ExportJob>,
+      AsyncValue<PaginatedListState<ExportJob>>,
+      ExportJobsQuery
+    >((ref, query) {
+      final session = ref.watch(authControllerProvider).session;
+      if (session == null) {
+        return PaginatedListController<ExportJob>(
+          loadPage: ({required page, required limit}) async {
+            return const PaginatedResult<ExportJob>(
+              items: <ExportJob>[],
+              page: 1,
+              limit: 20,
+              total: 0,
+              hasMore: false,
+            );
+          },
+          autoLoad: false,
+        );
+      }
+      ref.watch(workflowRefreshTickProvider);
+      return PaginatedListController<ExportJob>(
+        loadPage: ({required page, required limit}) {
+          return ref.read(exportsRepositoryProvider).fetchJobsPage(
+                requestedByUserId: session.user.id,
+                categoryId: query.categoryId,
+                projectId: query.projectId,
+                status: query.status,
+                format: query.format,
+                page: page,
+                limit: limit,
+              );
+        },
+      );
+    });
+
+final exportJobsSummaryProvider =
+    FutureProvider.family<ExportDashboardMetrics, ExportJobsQuery>((
+      ref,
+      query,
+    ) async {
+      final session = ref.watch(authControllerProvider).session;
+      if (session == null) {
+        return const ExportDashboardMetrics(
+          total: 0,
+          pending: 0,
+          processing: 0,
+          completed: 0,
+          failed: 0,
+        );
+      }
+      ref.watch(workflowRefreshTickProvider);
+      return ref.read(exportsRepositoryProvider).fetchSummary(
+            requestedByUserId: session.user.id,
+            categoryId: query.categoryId,
+            projectId: query.projectId,
+            status: query.status,
+            format: query.format,
+          );
     });
 
 final reviewWorkflowServiceProvider = Provider<ReviewWorkflowService>((ref) {

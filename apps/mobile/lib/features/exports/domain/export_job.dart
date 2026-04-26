@@ -2,6 +2,32 @@ enum ExportFormat { shapefile, geojson }
 
 enum ExportJobStatus { pending, processing, completed, failed }
 
+class ExportJobsQuery {
+  const ExportJobsQuery({
+    this.categoryId,
+    this.projectId,
+    this.status,
+    this.format,
+  });
+
+  final String? categoryId;
+  final String? projectId;
+  final ExportJobStatus? status;
+  final ExportFormat? format;
+
+  @override
+  bool operator ==(Object other) {
+    return other is ExportJobsQuery &&
+        other.categoryId == categoryId &&
+        other.projectId == projectId &&
+        other.status == status &&
+        other.format == format;
+  }
+
+  @override
+  int get hashCode => Object.hash(categoryId, projectId, status, format);
+}
+
 class ExportJob {
   const ExportJob({
     required this.id,

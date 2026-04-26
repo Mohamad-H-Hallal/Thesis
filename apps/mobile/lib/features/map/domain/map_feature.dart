@@ -47,3 +47,29 @@ class MapFeatureSummary {
   final int photoCount;
   final List<MapFeaturePhoto> photos;
 }
+
+class ProjectFeatureBrowserQuery {
+  const ProjectFeatureBrowserQuery({
+    required this.projectId,
+    this.search,
+    this.status,
+    this.geometryType,
+  });
+
+  final String projectId;
+  final String? search;
+  final String? status;
+  final String? geometryType;
+
+  @override
+  bool operator ==(Object other) {
+    return other is ProjectFeatureBrowserQuery &&
+        other.projectId == projectId &&
+        other.search == search &&
+        other.status == status &&
+        other.geometryType == geometryType;
+  }
+
+  @override
+  int get hashCode => Object.hash(projectId, search, status, geometryType);
+}
