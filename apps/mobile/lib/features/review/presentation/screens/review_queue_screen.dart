@@ -40,9 +40,11 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
   Widget build(BuildContext context) {
     final fixedProjectId = widget.projectId?.trim();
     final hasFixedProject = fixedProjectId != null && fixedProjectId.isNotEmpty;
+    final searchText = _searchController.text.trim();
     final query = ReviewQueueQuery(
       status: _filter == _ReviewFilter.pending ? 'pending_review' : 'rejected',
       projectId: hasFixedProject ? fixedProjectId : null,
+      search: searchText.isEmpty ? null : searchText,
     );
     final currentAsync = ref.watch(paginatedReviewQueueProvider(query));
     final controller = ref.read(paginatedReviewQueueProvider(query).notifier);
@@ -60,18 +62,7 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
         onAction: controller.load,
       ),
       data: (itemsState) {
-        final items = itemsState.items;
-        final query = _searchController.text.trim().toLowerCase();
-        final filtered = items
-            .where((item) {
-              if (query.isEmpty) {
-                return true;
-              }
-              return item.projectName.toLowerCase().contains(query) ||
-                  (item.collectedBy ?? '').toLowerCase().contains(query) ||
-                  item.id.toLowerCase().contains(query);
-            })
-            .toList(growable: false);
+        final filtered = itemsState.items;
 
         return ListView(
           children: [
@@ -148,7 +139,7 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
                 resetKey: Object.hash(
                   widget.projectId,
                   _filter,
-                  _searchController.text,
+                  searchText,
                   itemsState.total,
                 ),
                 hasMore: itemsState.hasMore,

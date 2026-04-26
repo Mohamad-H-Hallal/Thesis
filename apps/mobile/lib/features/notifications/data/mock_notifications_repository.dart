@@ -44,22 +44,32 @@ class MockNotificationsRepository implements NotificationsRepository {
   Future<NotificationPage> fetchNotifications({
     int page = 1,
     int limit = 20,
+    bool? isRead,
   }) async {
     await Future<void>.delayed(const Duration(milliseconds: 480));
 
+    final filtered = isRead == null
+        ? _items
+        : _items.where((item) => item.isRead == isRead).toList(growable: false);
     final start = (page - 1) * limit;
-    final end = (start + limit).clamp(0, _items.length);
-    final pageItems = start >= _items.length
+    final end = (start + limit).clamp(0, filtered.length);
+    final pageItems = start >= filtered.length
         ? const <AppNotification>[]
-        : _items.sublist(start, end);
+        : filtered.sublist(start, end);
 
     return NotificationPage(
       items: pageItems,
       page: page,
       limit: limit,
-      total: _items.length,
-      hasMore: end < _items.length,
+      total: filtered.length,
+      hasMore: end < filtered.length,
     );
+  }
+
+  @override
+  Future<int> fetchUnreadCount() async {
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    return _items.where((item) => !item.isRead).length;
   }
 
   @override

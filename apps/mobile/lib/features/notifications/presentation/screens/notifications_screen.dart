@@ -45,18 +45,8 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
             ref.read(notificationsControllerProvider.notifier).load(),
       ),
       data: (notifications) {
-        final unreadCount = notifications.items.where((n) => !n.isRead).length;
-        final filtered = switch (_filter) {
-          _NotificationFilter.read =>
-            notifications.items
-                .where((item) => item.isRead)
-                .toList(growable: false),
-          _NotificationFilter.unread =>
-            notifications.items
-                .where((item) => !item.isRead)
-                .toList(growable: false),
-          _NotificationFilter.all => notifications.items,
-        };
+        final unreadCount = notifications.unreadCount;
+        final filtered = notifications.items;
 
         return ListView(
           children: [
@@ -77,21 +67,32 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                       ChoiceChip(
                         label: const Text('All'),
                         selected: _filter == _NotificationFilter.all,
-                        onSelected: (_) =>
-                            setState(() => _filter = _NotificationFilter.all),
+                        onSelected: (_) {
+                          setState(() => _filter = _NotificationFilter.all);
+                          ref
+                              .read(notificationsControllerProvider.notifier)
+                              .load();
+                        },
                       ),
                       ChoiceChip(
                         label: const Text('Read'),
                         selected: _filter == _NotificationFilter.read,
-                        onSelected: (_) =>
-                            setState(() => _filter = _NotificationFilter.read),
+                        onSelected: (_) {
+                          setState(() => _filter = _NotificationFilter.read);
+                          ref
+                              .read(notificationsControllerProvider.notifier)
+                              .load(isReadFilter: true);
+                        },
                       ),
                       ChoiceChip(
                         label: const Text('Unread'),
                         selected: _filter == _NotificationFilter.unread,
-                        onSelected: (_) => setState(
-                          () => _filter = _NotificationFilter.unread,
-                        ),
+                        onSelected: (_) {
+                          setState(() => _filter = _NotificationFilter.unread);
+                          ref
+                              .read(notificationsControllerProvider.notifier)
+                              .load(isReadFilter: false);
+                        },
                       ),
                     ],
                   );

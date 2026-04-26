@@ -6,6 +6,10 @@ const { applyTestEnvDefaults } = require('../../src/config/testEnv');
 const { buildApp } = require('../../src/app');
 const { closePool } = require('../../src/config/database');
 const { validateEnv } = require('../../src/config/env');
+const {
+  stopImportProcessingLoop,
+  waitForImportProcessingIdle,
+} = require('../../src/controllers/import.controller');
 
 const API_PREFIX = process.env.API_PREFIX || '/api/v1';
 applyTestEnvDefaults();
@@ -44,6 +48,9 @@ const uniqueEmail = (prefix = 'phase10-user') =>
   `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}@example.com`;
 
 const resetDb = async () => {
+  stopImportProcessingLoop();
+  await waitForImportProcessingIdle();
+
   await pool.query(`
     ALTER TABLE project
     ADD COLUMN IF NOT EXISTS visible_to_contributors BOOLEAN NOT NULL DEFAULT TRUE
@@ -57,10 +64,21 @@ const resetDb = async () => {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS gis_import_comment (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      import_job_id UUID NOT NULL REFERENCES gis_import_job(id) ON DELETE CASCADE,
+      author_user_id UUID NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+      comment_text TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
     TRUNCATE TABLE
       notification_push_delivery,
       notification_delivery,
       push_device_registration,
+      gis_import_comment,
       gis_import_feature,
       gis_import_job,
       notification,

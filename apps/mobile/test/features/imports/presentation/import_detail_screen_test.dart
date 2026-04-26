@@ -10,6 +10,7 @@ import 'package:lebanese_gis_mobile/features/imports/domain/import_models.dart';
 import 'package:lebanese_gis_mobile/features/imports/domain/imports_repository.dart';
 import 'package:lebanese_gis_mobile/features/imports/presentation/screens/import_detail_screen.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter_map/flutter_map.dart';
 
 class _NoopAuthRepository implements AuthRepository {
   const _NoopAuthRepository();
@@ -126,6 +127,10 @@ class _FakeImportsRepository implements ImportsRepository {
   Future<GisImportDetails> fetchImportDetails(String importId) async => details;
 
   @override
+  Future<List<ImportComment>> fetchImportComments(String importId) async =>
+      details.comments;
+
+  @override
   Future<List<ImportedFeature>> fetchImportFeatures({
     required String importId,
     String? status,
@@ -183,6 +188,18 @@ class _FakeImportsRepository implements ImportsRepository {
   }) {
     throw UnimplementedError();
   }
+
+  @override
+  Future<ImportComment> addImportComment({
+    required String importId,
+    required String comment,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<String> downloadImport(String importId) async =>
+      '/mock/imports/$importId.geojson';
 }
 
 AuthSession _session() {
@@ -209,6 +226,7 @@ GisImportJob _job({
     projectName: 'Import Project',
     uploadedByUserId: 'contributor-1',
     uploadedByName: 'Field Contributor',
+    possibleDuplicate: false,
     originalFilename: 'dataset.geojson',
     fileSizeBytes: 2048,
     fileChecksumSha256: 'a' * 64,
@@ -225,6 +243,7 @@ GisImportJob _job({
     fileMetadata: const <String, dynamic>{},
     validationSummary: validationSummary,
     processingMessage: processingMessage,
+    reviewScope: 'admin',
     uploadedAt: DateTime(2026, 4, 25),
     createdAt: DateTime(2026, 4, 25),
     updatedAt: DateTime(2026, 4, 25),
@@ -297,6 +316,11 @@ void main() {
           processingMessage: 'Processing imported features 10/13249',
         ),
         previewFeatures: const <ImportedFeature>[],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 0,
+          previewFeatureCount: 0,
+          outsideWorkspaceFeatureCount: 0,
+        ),
       ),
     );
 
@@ -341,9 +365,14 @@ void main() {
             },
             processingMessage:
                 'Import processing finished, but no staged features were eligible for review.',
-          ),
-          previewFeatures: <ImportedFeature>[feature],
         ),
+        previewFeatures: <ImportedFeature>[feature],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 1,
+          previewFeatureCount: 0,
+          outsideWorkspaceFeatureCount: 1,
+        ),
+      ),
         features: <ImportedFeature>[feature],
       );
 
@@ -370,12 +399,7 @@ void main() {
         ),
         findsWidgets,
       );
-      expect(
-        find.textContaining(
-          'The staged geometry is outside the Lebanon workspace.',
-        ),
-        findsOneWidget,
-      );
+      expect(find.byType(FlutterMap), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
@@ -404,6 +428,11 @@ void main() {
           },
         ),
         previewFeatures: <ImportedFeature>[outsideFeature, missingTypeFeature],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 2,
+          previewFeatureCount: 1,
+          outsideWorkspaceFeatureCount: 1,
+        ),
       ),
       features: <ImportedFeature>[outsideFeature, missingTypeFeature],
     );

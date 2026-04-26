@@ -33,6 +33,8 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
   final Set<String> _selectedFeatureIds = <String>{};
   static const Duration _refreshInterval = Duration(seconds: 5);
   bool _isSubmitting = false;
+  bool _isDownloading = false;
+  bool _isSavingComment = false;
   GisImportDetails? _liveDetails;
   String? _selectedIssueFilter;
   Timer? _refreshTimer;
@@ -51,6 +53,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       return const SizedBox.shrink();
     }
     final isAdmin = session.user.role == UserRole.admin;
+    final isProtectedSuperAdmin = session.user.isSuperAdmin;
     final featureQuery = ImportedFeatureListQuery(
       importId: widget.importId,
       issue: _selectedIssueFilter,
@@ -70,15 +73,35 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
         if (!mounted) {
           return;
         }
-        setState(() {
-          _liveDetails = refreshedDetails;
-        });
+        final current = _liveDetails;
+        final hasMeaningfulChange =
+            current == null ||
+            refreshedDetails.job.status != current.job.status ||
+            refreshedDetails.job.pendingFeatureCount !=
+                current.job.pendingFeatureCount ||
+            refreshedDetails.job.approvedFeatureCount !=
+                current.job.approvedFeatureCount ||
+            refreshedDetails.job.rejectedFeatureCount !=
+                current.job.rejectedFeatureCount ||
+            refreshedDetails.job.failedFeatureCount !=
+                current.job.failedFeatureCount ||
+            refreshedDetails.previewSummary.previewFeatureCount !=
+                current.previewSummary.previewFeatureCount ||
+            refreshedDetails.previewSummary.outsideWorkspaceFeatureCount !=
+                current.previewSummary.outsideWorkspaceFeatureCount ||
+            refreshedDetails.job.rejectionReason != current.job.rejectionReason ||
+            refreshedDetails.comments.length != current.comments.length;
+        if (hasMeaningfulChange) {
+          setState(() {
+            _liveDetails = refreshedDetails;
+          });
+          await featuresController.refreshSilently();
+        }
       } catch (_) {
         if (!mounted) {
           return;
         }
       }
-      await featuresController.refreshSilently();
     };
 
     final providerDetails = detailsAsync.valueOrNull;
@@ -137,27 +160,45 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
           ),
         )
         .toList(growable: false);
+    final canModerateImport =
+        isAdmin &&
+        (details.job.reviewScope != 'protected_super_admin' ||
+            isProtectedSuperAdmin);
 
     return ListView(
       children: [
         _ImportSummaryCard(job: details.job),
+        const SizedBox(height: AppSpacing.md),
+        _ImportActionCard(
+          job: details.job,
+          canComment: canModerateImport,
+          isDownloading: _isDownloading,
+          isSavingComment: _isSavingComment,
+          onDownload: _downloadImport,
+          onAddComment: canModerateImport ? _addComment : null,
+        ),
         const SizedBox(height: AppSpacing.md),
         _ImportValidationCard(job: details.job),
         const SizedBox(height: AppSpacing.md),
         if (_isImportStillProcessing(details.job.status))
           _ImportProcessingCard(job: details.job)
         else
-          _ImportPreviewMapCard(features: features),
+          _ImportPreviewMapCard(
+            features: details.previewFeatures,
+            previewSummary: details.previewSummary,
+          ),
         const SizedBox(height: AppSpacing.md),
-        if (isAdmin && actionableFeatures.isNotEmpty)
+        if (canModerateImport && actionableFeatures.isNotEmpty)
           _buildReviewActions(
             context,
             details: details,
             selectedActionableIds: selectedActionableIds,
             selectedRejectableIds: selectedRejectableIds,
           ),
-        if (isAdmin && actionableFeatures.isNotEmpty)
+        if (canModerateImport && actionableFeatures.isNotEmpty)
           const SizedBox(height: AppSpacing.md),
+        _ImportCommentsCard(comments: details.comments),
+        const SizedBox(height: AppSpacing.md),
         Text(
           'Staged features (${featureState?.total ?? details.job.geometryCount})',
           style: Theme.of(context).textTheme.titleMedium,
@@ -341,6 +382,85 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
     );
   }
 
+  Future<void> _downloadImport(BuildContext context) async {
+    setState(() {
+      _isDownloading = true;
+    });
+    try {
+      final savedPath = await ref
+          .read(importsRepositoryProvider)
+          .downloadImport(widget.importId);
+      if (!mounted || !context.mounted) {
+        return;
+      }
+      AppSnackbar.showSuccess(
+        context,
+        'Import file downloaded to $savedPath',
+      );
+    } catch (error) {
+      if (!mounted || !context.mounted) {
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        userFacingErrorMessage(
+          error,
+          fallback: 'Unable to download this import file right now.',
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDownloading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _addComment(BuildContext context) async {
+    final comment = await _promptComment(context);
+    if (comment == null || comment.trim().isEmpty || !mounted || !context.mounted) {
+      return;
+    }
+
+    setState(() {
+      _isSavingComment = true;
+    });
+    try {
+      await ref
+          .read(importsRepositoryProvider)
+          .addImportComment(importId: widget.importId, comment: comment.trim());
+      if (!mounted) {
+        return;
+      }
+      await _refreshImportDetails?.call();
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showSuccess(
+        this.context,
+        'Import comment saved successfully.',
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(
+        this.context,
+        userFacingErrorMessage(
+          error,
+          fallback: 'Unable to save this import comment right now.',
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSavingComment = false;
+        });
+      }
+    }
+  }
+
   Future<void> _runRejectWithReason(
     BuildContext context, {
     required List<String> featureIds,
@@ -412,6 +532,13 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       builder: (_) => const _ImportReasonDialog(),
     );
   }
+
+  Future<String?> _promptComment(BuildContext context) {
+    return showDialog<String>(
+      context: context,
+      builder: (_) => const _ImportCommentDialog(),
+    );
+  }
 }
 
 class _ImportSummaryCard extends StatelessWidget {
@@ -466,9 +593,12 @@ class _ImportSummaryCard extends StatelessWidget {
             const SizedBox(height: AppSpacing.sm),
             _MetadataField(label: 'Source CRS', value: job.sourceCrs!),
           ],
-          if (job.sourceLayerName?.trim().isNotEmpty ?? false) ...[
-            const SizedBox(height: AppSpacing.xs),
-            _MetadataField(label: 'Source layer', value: job.sourceLayerName!),
+          if (job.possibleDuplicate) ...[
+            const SizedBox(height: AppSpacing.sm),
+            const Text(
+              'Possible duplicate of an earlier import for this project.',
+              softWrap: true,
+            ),
           ],
           if (job.processingMessage?.trim().isNotEmpty ?? false) ...[
             const SizedBox(height: AppSpacing.sm),
@@ -516,6 +646,64 @@ class _ImportProcessingCard extends StatelessWidget {
   }
 }
 
+class _ImportActionCard extends StatelessWidget {
+  const _ImportActionCard({
+    required this.job,
+    required this.canComment,
+    required this.isDownloading,
+    required this.isSavingComment,
+    required this.onDownload,
+    this.onAddComment,
+  });
+
+  final GisImportJob job;
+  final bool canComment;
+  final bool isDownloading;
+  final bool isSavingComment;
+  final Future<void> Function(BuildContext context) onDownload;
+  final Future<void> Function(BuildContext context)? onAddComment;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'File actions',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.icon(
+                onPressed: isDownloading ? null : () => onDownload(context),
+                icon: const Icon(Icons.download_outlined),
+                label: Text(isDownloading ? 'Downloading...' : 'Download file'),
+              ),
+              if (onAddComment != null)
+                OutlinedButton.icon(
+                  onPressed: isSavingComment ? null : () => onAddComment!(context),
+                  icon: const Icon(Icons.comment_outlined),
+                  label: Text(isSavingComment ? 'Saving comment...' : 'Add comment'),
+                ),
+            ],
+          ),
+          if (job.reviewScope == 'protected_super_admin' && !canComment) ...[
+            const SizedBox(height: AppSpacing.sm),
+            const Text(
+              'This admin-submitted import requires protected super administrator review and comments.',
+              softWrap: true,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _ImportValidationCard extends StatelessWidget {
   const _ImportValidationCard({required this.job});
 
@@ -538,6 +726,10 @@ class _ImportValidationCard extends StatelessWidget {
             'failed_feature_count',
             'warning_count',
             'error_count',
+            'file_type',
+            'source_crs',
+            'source_layer_name',
+            'duplicate_of_import_job_id',
             'top_warnings',
             'top_errors',
             'warning_breakdown',
@@ -606,6 +798,50 @@ class _ImportValidationCard extends StatelessWidget {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ImportCommentsCard extends StatelessWidget {
+  const _ImportCommentsCard({required this.comments});
+
+  final List<ImportComment> comments;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Comments',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          if (comments.isEmpty)
+            const Text(
+              'No review comments have been added to this import yet.',
+              softWrap: true,
+            )
+          else
+            ...comments.map(
+              (comment) => Padding(
+                padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${comment.authorName} • ${_formatDateTime(comment.createdAt)}',
+                      style: Theme.of(context).textTheme.labelMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(comment.commentText, softWrap: true),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -713,19 +949,22 @@ class _MetadataField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: Theme.of(context).textTheme.labelMedium?.copyWith(
-            color: Theme.of(context).colorScheme.primary,
-            fontWeight: FontWeight.w700,
+    return SizedBox(
+      width: double.infinity,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: Theme.of(context).colorScheme.primary,
+              fontWeight: FontWeight.w700,
+            ),
           ),
-        ),
-        const SizedBox(height: 2),
-        Text(value, softWrap: true),
-      ],
+          const SizedBox(height: 2),
+          Text(value, softWrap: true, maxLines: null),
+        ],
+      ),
     );
   }
 }
@@ -789,9 +1028,13 @@ List<_ValidationIssueGroup> _issueGroups(Object? value) {
 }
 
 class _ImportPreviewMapCard extends StatefulWidget {
-  const _ImportPreviewMapCard({required this.features});
+  const _ImportPreviewMapCard({
+    required this.features,
+    required this.previewSummary,
+  });
 
   final List<ImportedFeature> features;
+  final ImportPreviewSummary previewSummary;
 
   @override
   State<_ImportPreviewMapCard> createState() => _ImportPreviewMapCardState();
@@ -805,17 +1048,12 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
     final drawable = widget.features
         .where((feature) => feature.geometry != null)
         .toList(growable: false);
-    if (drawable.isEmpty) {
-      return const AppEmptyState(
-        icon: Icons.map_outlined,
-        title: 'Spatial preview unavailable',
-        message: 'This import does not include previewable geometries yet.',
-      );
-    }
-
-    final previewable = _previewableFeatures(drawable);
-    final outsideWorkspaceCount = drawable.length - previewable.length;
-    if (previewable.isEmpty) {
+    final outsideWorkspaceCount =
+        widget.previewSummary.outsideWorkspaceFeatureCount;
+    final containsOnlyLebanonGeometry = _containsOnlyLebanonGeometry(drawable);
+    if (drawable.isEmpty ||
+        outsideWorkspaceCount > 0 ||
+        !containsOnlyLebanonGeometry) {
       return AppCard(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -826,9 +1064,9 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
             ),
             const SizedBox(height: AppSpacing.sm),
             Text(
-              outsideWorkspaceCount > 0
-                  ? 'The staged geometry is outside the Lebanon workspace. No preview map is shown until the data falls inside Lebanon.'
-                  : 'This preview only renders staged geometries inside the Lebanon workspace. The current import does not expose any previewable geometry in that workspace yet.',
+              outsideWorkspaceCount > 0 || !containsOnlyLebanonGeometry
+                  ? 'The staged geometry is outside the Lebanon workspace. No preview map is shown.'
+                  : 'This import does not include previewable geometries yet.',
               softWrap: true,
             ),
           ],
@@ -836,9 +1074,9 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
       );
     }
 
-    final bounds = _boundsFor(previewable);
+    final bounds = _boundsFor(drawable);
     final mapKey = ValueKey<String>(
-      'import-preview-${_style.name}-${previewable.length}-${_boundsSignature(bounds)}',
+      'import-preview-${_style.name}-${drawable.length}-${_boundsSignature(bounds)}',
     );
 
     return AppCard(
@@ -929,7 +1167,6 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
                       : LebanonMapConfig.quickFit,
                   minZoom: LebanonMapConfig.quickMinZoom,
                   maxZoom: LebanonMapConfig.quickMaxZoom,
-                  cameraConstraint: LebanonMapConfig.cameraConstraint,
                   interactionOptions: const InteractionOptions(
                     flags: InteractiveFlag.drag | InteractiveFlag.pinchZoom,
                   ),
@@ -955,9 +1192,9 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
                       ),
                       userAgentPackageName: 'lb.gov.gis_collector',
                     ),
-                  PolygonLayer(polygons: _polygons(previewable)),
-                  PolylineLayer(polylines: _polylines(previewable)),
-                  MarkerLayer(markers: _markers(previewable)),
+                  PolygonLayer(polygons: _polygons(drawable)),
+                  PolylineLayer(polylines: _polylines(drawable)),
+                  MarkerLayer(markers: _markers(drawable)),
                 ],
               ),
             ),
@@ -974,7 +1211,7 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
       if (geometry == null) {
         continue;
       }
-      points.addAll(geometryPoints(geometry).where(LebanonMapConfig.contains));
+      points.addAll(geometryPoints(geometry));
     }
     if (points.isEmpty) {
       return null;
@@ -992,6 +1229,21 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
       bounds.northEast.latitude.toStringAsFixed(4),
       bounds.northEast.longitude.toStringAsFixed(4),
     ].join(':');
+  }
+
+  bool _containsOnlyLebanonGeometry(List<ImportedFeature> features) {
+    for (final feature in features) {
+      final geometry = feature.geometry;
+      if (geometry == null) {
+        continue;
+      }
+      for (final point in geometryPoints(geometry)) {
+        if (!LebanonMapConfig.contains(point)) {
+          return false;
+        }
+      }
+    }
+    return true;
   }
 
   List<Marker> _markers(List<ImportedFeature> features) {
@@ -1076,19 +1328,6 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
     return polygons;
   }
 
-  List<ImportedFeature> _previewableFeatures(List<ImportedFeature> features) {
-    return features
-        .where((feature) => _geometryTouchesLebanon(feature.geometry))
-        .toList(growable: false);
-  }
-
-  bool _geometryTouchesLebanon(Map<String, dynamic>? geometry) {
-    if (geometry == null) {
-      return false;
-    }
-    return geometryPoints(geometry).any(LebanonMapConfig.contains);
-  }
-
   List<List<LatLng>> _polylineSegments(Map<String, dynamic> geometry) {
     if (geometry['type'] == 'LineString') {
       final points = lineGeometryPoints(geometry);
@@ -1171,6 +1410,50 @@ class _ImportReasonDialogState extends State<_ImportReasonDialog> {
           label: 'Reason',
           controller: _controller,
           hint: 'Explain why this staged import is being rejected.',
+          minLines: 3,
+          maxLines: 5,
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ImportCommentDialog extends StatefulWidget {
+  const _ImportCommentDialog();
+
+  @override
+  State<_ImportCommentDialog> createState() => _ImportCommentDialogState();
+}
+
+class _ImportCommentDialogState extends State<_ImportCommentDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Add comment'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: AppTextField(
+          label: 'Comment',
+          controller: _controller,
+          hint: 'Write a review comment for the uploader.',
           minLines: 3,
           maxLines: 5,
         ),

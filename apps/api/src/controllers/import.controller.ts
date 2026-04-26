@@ -10,7 +10,7 @@ const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
 import { validateEnv } from '../config/env';
-import { createNotification } from '../lib/userWorkflow';
+import { createNotification, isProtectedSuperAdminEmail } from '../lib/userWorkflow';
 import { synchronizeProjectStatuses } from '../lib/projectLifecycle';
 
 const LEBANON_BOUNDS = {
@@ -108,6 +108,11 @@ type ImportJobRow = {
   updated_at: string;
 };
 
+type ImportJobAccessRow = ImportJobRow & {
+  uploaded_by_email: string;
+  uploaded_by_role: string;
+};
+
 type ImportFeatureRow = {
   id: string;
   import_job_id: string;
@@ -133,6 +138,16 @@ type ImportFeatureRow = {
   updated_at: string;
 };
 
+type ImportCommentRow = {
+  id: string;
+  import_job_id: string;
+  author_user_id: string;
+  author_name: string;
+  author_role: string;
+  comment_text: string;
+  created_at: string;
+};
+
 type StagedImportInsertRow = {
   importJobId: string;
   sourceIndex: number;
@@ -153,6 +168,7 @@ const env = validateEnv();
 let importProcessingLoop: NodeJS.Timeout | null = null;
 let importProcessingDrainScheduled = false;
 let importProcessingDrainRunning = false;
+let importProcessingDrainTimeout: NodeJS.Timeout | null = null;
 
 const getPagination = (pageRaw: unknown, limitRaw: unknown) => {
   const page = Math.max(1, Number.parseInt(String(pageRaw ?? '1'), 10) || 1);
@@ -823,7 +839,53 @@ const hasProjectImportReviewAccess = async (
   return accessCheck.rows.length > 0;
 };
 
-const getImportReviewRecipients = async (executor: any, projectId: string) => {
+const importNeedsProtectedSuperAdminReview = (
+  job: Pick<ImportJobAccessRow, 'uploaded_by_role' | 'uploaded_by_email'>,
+): boolean =>
+  job.uploaded_by_role === 'admin' && !isProtectedSuperAdminEmail(job.uploaded_by_email);
+
+const canReviewImportJob = async (
+  job: ImportJobAccessRow,
+  user: Express.UserContext,
+): Promise<boolean> => {
+  if (user.role !== 'admin') {
+    return false;
+  }
+  if (importNeedsProtectedSuperAdminReview(job)) {
+    return isProtectedSuperAdminEmail(user.email);
+  }
+  return hasProjectImportReviewAccess(job.project_id, user);
+};
+
+const canCommentOnImportJob = async (
+  job: ImportJobAccessRow,
+  user: Express.UserContext,
+): Promise<boolean> => canReviewImportJob(job, user);
+
+const getImportReviewRecipients = async (
+  executor: any,
+  projectId: string,
+  {
+    uploaderRole,
+    uploaderEmail,
+  }: {
+    uploaderRole: string;
+    uploaderEmail?: string | null;
+  },
+) => {
+  if (uploaderRole === 'admin' && !isProtectedSuperAdminEmail(uploaderEmail)) {
+    const protectedEmail = String(process.env.SUPER_ADMIN_EMAIL ?? '').trim().toLowerCase();
+    const result = await executor.query(
+      `SELECT DISTINCT u.id, u.full_name, u.email
+       FROM "user" u
+       WHERE u.is_active = TRUE
+         AND u.role = 'admin'
+         AND LOWER(u.email) = $1`,
+      [protectedEmail],
+    );
+    return result.rows as Array<{ id: string; full_name: string; email: string }>;
+  }
+
   const result = await executor.query(
     `SELECT DISTINCT u.id, u.full_name, u.email
      FROM "user" u
@@ -1017,7 +1079,7 @@ const summarizeIssueBreakdown = (issues: Map<string, number>) =>
     .slice(0, 8)
     .map(([message, count]) => ({ message, count }));
 
-const mapImportJobRow = (row: ImportJobRow) => ({
+const mapImportJobRow = (row: ImportJobRow | ImportJobAccessRow) => ({
   id: row.id,
   project_id: row.project_id,
   project_name: row.project_name,
@@ -1026,6 +1088,7 @@ const mapImportJobRow = (row: ImportJobRow) => ({
   reviewed_by_user_id: row.reviewed_by_user_id,
   reviewed_by_name: row.reviewed_by_name,
   duplicate_of_import_job_id: row.duplicate_of_import_job_id,
+  possible_duplicate: Boolean(row.duplicate_of_import_job_id),
   original_filename: row.original_filename,
   stored_filename: row.stored_filename,
   file_path: row.file_path,
@@ -1047,6 +1110,10 @@ const mapImportJobRow = (row: ImportJobRow) => ({
   validation_summary: row.validation_summary ?? {},
   processing_message: row.processing_message,
   rejection_reason: row.rejection_reason,
+  review_scope:
+    'uploaded_by_role' in row && importNeedsProtectedSuperAdminReview(row)
+        ? 'protected_super_admin'
+        : 'admin',
   uploaded_at: row.uploaded_at,
   processed_at: row.processed_at,
   reviewed_at: row.reviewed_at,
@@ -1077,6 +1144,16 @@ const mapImportFeatureRow = (row: ImportFeatureRow) => ({
   review_reason: row.review_reason,
   created_at: row.created_at,
   updated_at: row.updated_at,
+});
+
+const mapImportCommentRow = (row: ImportCommentRow) => ({
+  id: row.id,
+  import_job_id: row.import_job_id,
+  author_user_id: row.author_user_id,
+  author_name: row.author_name,
+  author_role: row.author_role,
+  comment_text: row.comment_text,
+  created_at: row.created_at,
 });
 
 const insertStagedImportFeaturesBatch = async (
@@ -1154,15 +1231,20 @@ const createImportSubmissionNotifications = async (
     projectName,
     uploader,
     originalFilename,
+    uploaderRole,
   }: {
     importJobId: string;
     projectId: string;
     projectName: string;
     uploader: Express.UserContext;
     originalFilename: string;
+    uploaderRole: string;
   },
 ): Promise<void> => {
-  const recipients = await getImportReviewRecipients(client, projectId);
+  const recipients = await getImportReviewRecipients(client, projectId, {
+    uploaderRole,
+    uploaderEmail: uploader.email,
+  });
   for (const admin of recipients) {
     await createNotification(client, {
       userId: admin.id,
@@ -1535,7 +1617,8 @@ const scheduleImportProcessing = (): void => {
   }
 
   importProcessingDrainScheduled = true;
-  setTimeout(() => {
+  importProcessingDrainTimeout = setTimeout(() => {
+    importProcessingDrainTimeout = null;
     importProcessingDrainScheduled = false;
     void drainImportProcessingQueue();
   }, 0);
@@ -1557,12 +1640,33 @@ const stopImportProcessingLoop = (): void => {
     clearInterval(importProcessingLoop);
     importProcessingLoop = null;
   }
+  if (importProcessingDrainTimeout) {
+    clearTimeout(importProcessingDrainTimeout);
+    importProcessingDrainTimeout = null;
+  }
+  importProcessingDrainScheduled = false;
+};
+
+const waitForImportProcessingIdle = async (): Promise<void> => {
+  for (let attempts = 0; attempts < 200; attempts += 1) {
+    if (
+      !importProcessingDrainRunning &&
+      !importProcessingDrainScheduled &&
+      importProcessingDrainTimeout == null
+    ) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 };
 
 const fetchImportJobWithAccess = async (importId: string, user: Express.UserContext) => {
   const result = await query(
     `SELECT gij.*, p.name AS project_name,
             uploader.full_name AS uploaded_by_name,
+            uploader.email AS uploaded_by_email,
+            uploader.role AS uploaded_by_role,
             reviewer.full_name AS reviewed_by_name
      FROM gis_import_job gij
      JOIN project p ON p.id = gij.project_id
@@ -1574,7 +1678,7 @@ const fetchImportJobWithAccess = async (importId: string, user: Express.UserCont
   if (result.rows.length === 0) {
     throw new AppError('Import job not found', 404);
   }
-  const job = result.rows[0];
+  const job = result.rows[0] as ImportJobAccessRow;
   if (user.role === 'admin') {
     return job;
   }
@@ -1664,6 +1768,7 @@ const listImports = async (req: Request, res: Response): Promise<void> => {
 const getImportDetails = async (req: Request, res: Response): Promise<void> => {
   const importId = req.params.importId;
   const job = await fetchImportJobWithAccess(importId, req.user as Express.UserContext);
+  const lebanonEnvelopeSql = `ST_MakeEnvelope(${LEBANON_BOUNDS.minLon - LEBANON_BUFFER_DEGREES}, ${LEBANON_BOUNDS.minLat - LEBANON_BUFFER_DEGREES}, ${LEBANON_BOUNDS.maxLon + LEBANON_BUFFER_DEGREES}, ${LEBANON_BOUNDS.maxLat + LEBANON_BUFFER_DEGREES}, 4326)`;
 
   const previewResult = await query(
     `SELECT gif.*, reviewer.full_name AS reviewed_by_name,
@@ -1671,9 +1776,40 @@ const getImportDetails = async (req: Request, res: Response): Promise<void> => {
      FROM gis_import_feature gif
      LEFT JOIN "user" reviewer ON reviewer.id = gif.reviewed_by_user_id
      WHERE gif.import_job_id = $1
+       AND gif.geom IS NOT NULL
+       AND ST_CoveredBy(gif.geom, ${lebanonEnvelopeSql})
      ORDER BY gif.source_index ASC
      LIMIT $2`,
     [importId, IMPORT_PREVIEW_LIMIT],
+  );
+
+  const previewSummaryResult = await query(
+    `SELECT
+        COUNT(*) FILTER (WHERE geom IS NOT NULL)::int AS geometry_feature_count,
+        COUNT(*) FILTER (
+          WHERE geom IS NOT NULL
+            AND ST_CoveredBy(geom, ${lebanonEnvelopeSql})
+        )::int AS preview_feature_count
+     FROM gis_import_feature
+     WHERE import_job_id = $1`,
+    [importId],
+  );
+  const previewSummaryRow = previewSummaryResult.rows[0] ?? {};
+  const geometryFeatureCount = Number(previewSummaryRow.geometry_feature_count ?? 0);
+  const previewFeatureCount = Number(previewSummaryRow.preview_feature_count ?? 0);
+  const commentsResult = await query(
+    `SELECT gic.id,
+            gic.import_job_id,
+            gic.author_user_id,
+            gic.comment_text,
+            gic.created_at,
+            u.full_name AS author_name,
+            u.role AS author_role
+     FROM gis_import_comment gic
+     JOIN "user" u ON u.id = gic.author_user_id
+     WHERE gic.import_job_id = $1
+     ORDER BY gic.created_at ASC`,
+    [importId],
   );
 
   res.json({
@@ -1681,6 +1817,12 @@ const getImportDetails = async (req: Request, res: Response): Promise<void> => {
     data: {
       job: mapImportJobRow(job),
       preview_features: previewResult.rows.map(mapImportFeatureRow),
+      preview_summary: {
+        geometry_feature_count: geometryFeatureCount,
+        preview_feature_count: previewFeatureCount,
+        outside_workspace_feature_count: Math.max(geometryFeatureCount - previewFeatureCount, 0),
+      },
+      comments: commentsResult.rows.map((row) => mapImportCommentRow(row as ImportCommentRow)),
     },
   });
 };
@@ -1814,6 +1956,7 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
       projectName: project.name,
       uploader: currentUser,
       originalFilename: req.file.originalname,
+      uploaderRole: currentUser.role,
     });
 
     const detailResult = await client.query(
@@ -1848,6 +1991,110 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
   });
 };
 
+const downloadImport = async (req: Request, res: Response): Promise<void> => {
+  const importId = req.params.importId;
+  const job = await fetchImportJobWithAccess(importId, req.user as Express.UserContext);
+  const filePath = path.resolve(job.file_path);
+
+  try {
+    await fs.access(filePath);
+  } catch (_error) {
+    throw new AppError('The original import file is no longer available for download.', 404);
+  }
+
+  res.download(filePath, job.original_filename);
+};
+
+const listImportComments = async (req: Request, res: Response): Promise<void> => {
+  const importId = req.params.importId;
+  await fetchImportJobWithAccess(importId, req.user as Express.UserContext);
+
+  const result = await query(
+    `SELECT gic.id,
+            gic.import_job_id,
+            gic.author_user_id,
+            gic.comment_text,
+            gic.created_at,
+            u.full_name AS author_name,
+            u.role AS author_role
+     FROM gis_import_comment gic
+     JOIN "user" u ON u.id = gic.author_user_id
+     WHERE gic.import_job_id = $1
+     ORDER BY gic.created_at ASC`,
+    [importId],
+  );
+
+  res.json({
+    success: true,
+    data: result.rows.map((row) => mapImportCommentRow(row as ImportCommentRow)),
+  });
+};
+
+const addImportComment = async (req: Request, res: Response): Promise<void> => {
+  const importId = req.params.importId;
+  const currentUser = req.user as Express.UserContext;
+  const commentText = String(req.body?.comment ?? '').trim();
+  if (!commentText) {
+    throw new AppError('A comment is required.', 400);
+  }
+
+  const job = await fetchImportJobWithAccess(importId, currentUser);
+  const canComment = await canCommentOnImportJob(job, currentUser);
+  if (!canComment) {
+    throw new AppError('You are not allowed to comment on this import.', 403);
+  }
+
+  const createdComment = await transaction(async (client: any) => {
+    const insertResult = await client.query(
+      `INSERT INTO gis_import_comment (
+         import_job_id,
+         author_user_id,
+         comment_text
+       ) VALUES ($1, $2, $3)
+       RETURNING id, import_job_id, author_user_id, comment_text, created_at`,
+      [importId, currentUser.id, commentText],
+    );
+
+    if (job.uploaded_by_user_id !== currentUser.id) {
+      await createNotification(client, {
+        userId: job.uploaded_by_user_id,
+        type: 'import_event',
+        title: `Import comment added in ${job.project_name}`,
+        message: `${currentUser.full_name} added a comment on ${job.original_filename}.`,
+        metadata: {
+          import_job_id: job.id,
+          project_id: job.project_id,
+          project_name: job.project_name,
+          status: job.status,
+          comment_preview: commentText.slice(0, 240),
+        },
+      });
+    }
+
+    const commentResult = await client.query(
+      `SELECT gic.id,
+              gic.import_job_id,
+              gic.author_user_id,
+              gic.comment_text,
+              gic.created_at,
+              u.full_name AS author_name,
+              u.role AS author_role
+       FROM gis_import_comment gic
+       JOIN "user" u ON u.id = gic.author_user_id
+       WHERE gic.id = $1`,
+      [insertResult.rows[0].id],
+    );
+
+    return commentResult.rows[0] as ImportCommentRow;
+  });
+
+  res.status(201).json({
+    success: true,
+    message: 'Import comment saved successfully.',
+    data: mapImportCommentRow(createdComment),
+  });
+};
+
 const reviewImport = async (req: Request, res: Response): Promise<void> => {
   const importId = req.params.importId;
   const {
@@ -1862,7 +2109,7 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
 
   const currentUser = req.user as Express.UserContext;
   const job = await fetchImportJobWithAccess(importId, currentUser);
-  const canReview = await hasProjectImportReviewAccess(job.project_id, currentUser);
+  const canReview = await canReviewImportJob(job, currentUser);
   if (!canReview) {
     throw new AppError('You are not allowed to review this import.', 403);
   }
@@ -2064,9 +2311,13 @@ module.exports = {
   getImportDetails,
   listImportFeatures,
   uploadImport,
+  downloadImport,
+  listImportComments,
+  addImportComment,
   reviewImport,
   startImportProcessingLoop,
   stopImportProcessingLoop,
+  waitForImportProcessingIdle,
 };
 
 export {};

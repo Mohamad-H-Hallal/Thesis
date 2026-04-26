@@ -149,6 +149,11 @@ class _FakeImportsRepository implements ImportsRepository {
   }
 
   @override
+  Future<List<ImportComment>> fetchImportComments(String importId) {
+    throw UnimplementedError();
+  }
+
+  @override
   Future<List<ImportedFeature>> fetchImportFeatures({
     required String importId,
     String? status,
@@ -193,6 +198,19 @@ class _FakeImportsRepository implements ImportsRepository {
   }) {
     throw UnimplementedError();
   }
+
+  @override
+  Future<ImportComment> addImportComment({
+    required String importId,
+    required String comment,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<String> downloadImport(String importId) {
+    throw UnimplementedError();
+  }
 }
 
 void main() {
@@ -215,6 +233,7 @@ void main() {
       projectName: 'Assigned Import Project',
       uploadedByUserId: 'contributor-1',
       uploadedByName: 'Field Contributor',
+      possibleDuplicate: false,
       originalFilename: 'cedars.geojson',
       fileSizeBytes: 1024,
       fileChecksumSha256: 'a' * 64,
@@ -230,6 +249,7 @@ void main() {
       geometryTypes: const <String>['Point'],
       fileMetadata: const <String, dynamic>{},
       validationSummary: const <String, dynamic>{},
+      reviewScope: 'admin',
       uploadedAt: DateTime(2026, 4, 24),
       createdAt: DateTime(2026, 4, 24),
       updatedAt: DateTime(2026, 4, 24),
@@ -271,7 +291,7 @@ void main() {
     expect(find.text('No imports submitted yet'), findsNothing);
   });
 
-  testWidgets('admin import screen shows review queue without upload form', (
+  testWidgets('admin import screen shows review queue with upload form', (
     tester,
   ) async {
     final project = ProjectSummary(
@@ -290,6 +310,7 @@ void main() {
       projectName: 'Import Review Project',
       uploadedByUserId: 'contributor-1',
       uploadedByName: 'Field Contributor',
+      possibleDuplicate: false,
       originalFilename: 'review.geojson',
       fileSizeBytes: 1024,
       fileChecksumSha256: 'b' * 64,
@@ -305,6 +326,7 @@ void main() {
       geometryTypes: const <String>['Point'],
       fileMetadata: const <String, dynamic>{},
       validationSummary: const <String, dynamic>{},
+      reviewScope: 'admin',
       uploadedAt: DateTime(2026, 4, 24),
       createdAt: DateTime(2026, 4, 24),
       updatedAt: DateTime(2026, 4, 24),
@@ -341,7 +363,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Import review queue'), findsOneWidget);
-    expect(find.text('Submit new import'), findsNothing);
+    expect(find.text('Submit new import'), findsOneWidget);
     expect(find.text('Category filter'), findsOneWidget);
     expect(find.text('Project filter'), findsOneWidget);
     expect(find.text('No imports match this filter'), findsNothing);

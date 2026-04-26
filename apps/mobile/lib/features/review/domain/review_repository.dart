@@ -5,11 +5,13 @@ abstract class ReviewRepository {
   Future<List<ReviewQueueItem>> fetchReviewItems({
     required String status,
     String? projectId,
+    String? search,
   });
 
   Future<PaginatedResult<ReviewQueueItem>> fetchReviewItemsPage({
     required String status,
     String? projectId,
+    String? search,
     int page = 1,
     int limit = 20,
   });

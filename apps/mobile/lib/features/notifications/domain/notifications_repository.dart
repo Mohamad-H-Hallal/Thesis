@@ -17,7 +17,13 @@ class NotificationPage {
 }
 
 abstract class NotificationsRepository {
-  Future<NotificationPage> fetchNotifications({int page = 1, int limit = 20});
+  Future<NotificationPage> fetchNotifications({
+    int page = 1,
+    int limit = 20,
+    bool? isRead,
+  });
+
+  Future<int> fetchUnreadCount();
 
   Future<void> markAsRead(String notificationId);
 

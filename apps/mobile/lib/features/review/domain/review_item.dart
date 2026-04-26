@@ -1,18 +1,20 @@
 class ReviewQueueQuery {
-  const ReviewQueueQuery({required this.status, this.projectId});
+  const ReviewQueueQuery({required this.status, this.projectId, this.search});
 
   final String status;
   final String? projectId;
+  final String? search;
 
   @override
   bool operator ==(Object other) {
     return other is ReviewQueueQuery &&
         other.status == status &&
-        other.projectId == projectId;
+        other.projectId == projectId &&
+        other.search == search;
   }
 
   @override
-  int get hashCode => Object.hash(status, projectId);
+  int get hashCode => Object.hash(status, projectId, search);
 }
 
 class ReviewQueueItem {

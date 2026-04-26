@@ -426,6 +426,106 @@ describe('GIS import workflow', () => {
       .expect(403);
   });
 
+  test('admin-submitted imports require protected super admin review and support download/comments', async () => {
+    const previousProtectedEmail = process.env.SUPER_ADMIN_EMAIL;
+    const protectedAdmin = await createAdminUser({
+      fullName: 'Protected Import Admin',
+      emailPrefix: 'protected-import-admin',
+    });
+    process.env.SUPER_ADMIN_EMAIL = protectedAdmin.email;
+
+    try {
+      const standardAdmin = await createAdminUser({
+        fullName: 'Standard Import Admin',
+        emailPrefix: 'standard-import-admin',
+      });
+
+      const category = await createCategory({
+        token: protectedAdmin.token,
+        name: 'Admin Import Category',
+      });
+      const project = await createProject({
+        token: protectedAdmin.token,
+        categoryId: category.id,
+        name: 'Admin Import Project',
+        visibleToContributors: true,
+      });
+      await request(app)
+        .put(`${API_PREFIX}/projects/${project.id}`)
+        .set(authHeader(protectedAdmin.token))
+        .send({ status: 'active' })
+        .expect(200);
+
+      const geojsonPath = await createTempGeoJsonFile('admin-import-review-scope', {
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            properties: { feature_type: 'olive', name: 'Admin import feature' },
+            geometry: {
+              type: 'Point',
+              coordinates: [35.5004, 33.9004],
+            },
+          },
+        ],
+      });
+
+      const uploadResponse = await request(app)
+        .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+        .set(authHeader(standardAdmin.token))
+        .attach('file', geojsonPath)
+        .expect(202);
+
+      const importId = uploadResponse.body.data.id;
+      const detailResponse = await waitForImportStatus({
+        importId,
+        token: protectedAdmin.token,
+        expectedStatuses: ['pending_review'],
+      });
+      expect(detailResponse.body.data.job.review_scope).toBe('protected_super_admin');
+
+      await request(app)
+        .post(`${API_PREFIX}/imports/${importId}/review`)
+        .set(authHeader(standardAdmin.token))
+        .send({ status: 'approved' })
+        .expect(403);
+
+      await request(app)
+        .post(`${API_PREFIX}/imports/${importId}/comments`)
+        .set(authHeader(protectedAdmin.token))
+        .send({ comment: 'Please verify the imported admin dataset naming.' })
+        .expect(201);
+
+      const commentVisibleToUploader = await request(app)
+        .get(`${API_PREFIX}/imports/${importId}`)
+        .set(authHeader(standardAdmin.token))
+        .expect(200);
+      expect(commentVisibleToUploader.body.data.comments).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            comment_text: 'Please verify the imported admin dataset naming.',
+          }),
+        ]),
+      );
+
+      const downloadResponse = await request(app)
+        .get(`${API_PREFIX}/imports/${importId}/download`)
+        .set(authHeader(protectedAdmin.token))
+        .expect(200);
+      expect(downloadResponse.headers['content-disposition']).toContain(
+        'admin-import-review-scope',
+      );
+
+      await request(app)
+        .post(`${API_PREFIX}/imports/${importId}/review`)
+        .set(authHeader(protectedAdmin.token))
+        .send({ status: 'approved' })
+        .expect(200);
+    } finally {
+      process.env.SUPER_ADMIN_EMAIL = previousProtectedEmail;
+    }
+  });
+
   test('accepts MultiPolygon geometries for staged review', async () => {
     const admin = await createAdminUser({
       fullName: 'Import Multipolygon Admin',

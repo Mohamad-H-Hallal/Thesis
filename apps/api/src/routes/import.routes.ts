@@ -43,6 +43,35 @@ router.get(
 );
 
 router.get(
+  '/:importId/download',
+  uuidValidation('importId'),
+  validate,
+  asyncHandler(importController.downloadImport),
+);
+
+router.get(
+  '/:importId/comments',
+  uuidValidation('importId'),
+  validate,
+  asyncHandler(importController.listImportComments),
+);
+
+router.post(
+  '/:importId/comments',
+  auditDynamicAction({
+    entityType: 'gis_import_job',
+    resolveEntityId: (req) => req.params.importId ?? null,
+    resolveActionType: () => 'comment',
+    resolveNewValues: (req) => ({
+      comment: req.body?.comment,
+    }),
+  }),
+  importValidation.comment,
+  validate,
+  asyncHandler(importController.addImportComment),
+);
+
+router.get(
   '/:importId/features',
   uuidValidation('importId'),
   importValidation.listFeatures,

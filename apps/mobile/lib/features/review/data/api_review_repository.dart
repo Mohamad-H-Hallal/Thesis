@@ -17,10 +17,12 @@ class ApiReviewRepository implements ReviewRepository {
   Future<List<ReviewQueueItem>> fetchReviewItems({
     required String status,
     String? projectId,
+    String? search,
   }) async {
     final page = await fetchReviewItemsPage(
       status: status,
       projectId: projectId,
+      search: search,
       limit: 100,
     );
     return page.items;
@@ -30,6 +32,7 @@ class ApiReviewRepository implements ReviewRepository {
   Future<PaginatedResult<ReviewQueueItem>> fetchReviewItemsPage({
     required String status,
     String? projectId,
+    String? search,
     int page = 1,
     int limit = 20,
   }) async {
@@ -40,6 +43,7 @@ class ApiReviewRepository implements ReviewRepository {
           'status': status,
           if (projectId != null && projectId.trim().isNotEmpty)
             'project_id': projectId.trim(),
+          if (search != null && search.trim().isNotEmpty) 'q': search.trim(),
           'page': page,
           'limit': limit,
         },

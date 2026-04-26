@@ -313,6 +313,7 @@ const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
     typeof req.query.project_id === 'string' ? req.query.project_id : undefined
   );
   const { project_id, status } = req.query;
+  const searchQuery = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   const { page, limit, offset } = getPagination(req.query.page, req.query.limit);
 
   if (project_id && req.user?.role !== 'admin') {
@@ -346,6 +347,18 @@ const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
   if (status) {
     queryText += ` AND sf.status = $${paramIndex}`;
     params.push(status);
+    paramIndex += 1;
+  }
+
+  if (searchQuery) {
+    queryText += `
+      AND (
+        sf.id::text ILIKE $${paramIndex}
+        OR p.name ILIKE $${paramIndex}
+        OR COALESCE(u.full_name, '') ILIKE $${paramIndex}
+      )
+    `;
+    params.push(`%${searchQuery}%`);
     paramIndex += 1;
   }
 
@@ -386,6 +399,18 @@ const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
   if (status) {
     countQuery += ` AND sf.status = $${countParamIndex}`;
     countParams.push(status);
+    countParamIndex += 1;
+  }
+
+  if (searchQuery) {
+    countQuery += `
+      AND (
+        sf.id::text ILIKE $${countParamIndex}
+        OR p.name ILIKE $${countParamIndex}
+        OR COALESCE(u.full_name, '') ILIKE $${countParamIndex}
+      )
+    `;
+    countParams.push(`%${searchQuery}%`);
     countParamIndex += 1;
   }
 

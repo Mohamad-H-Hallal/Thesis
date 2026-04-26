@@ -18,11 +18,16 @@ class ApiNotificationsRepository implements NotificationsRepository {
   Future<NotificationPage> fetchNotifications({
     int page = 1,
     int limit = 20,
+    bool? isRead,
   }) async {
     try {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         _notificationsBasePath,
-        queryParameters: <String, dynamic>{'page': page, 'limit': limit},
+        queryParameters: <String, dynamic>{
+          'page': page,
+          'limit': limit,
+          ...?isRead == null ? null : <String, dynamic>{'is_read': isRead},
+        },
       );
       final payload = response.data ?? const <String, dynamic>{};
       final rows = (payload['data'] as List? ?? const <dynamic>[]);
@@ -64,6 +69,34 @@ class ApiNotificationsRepository implements NotificationsRepository {
       throw userFacingDioMessage(
         error,
         fallback: 'Unable to load notifications right now. Please try again.',
+      );
+    }
+  }
+
+  @override
+  Future<int> fetchUnreadCount() async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_notificationsBasePath/unread/count',
+      );
+      final data = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      final raw = data['count'];
+      if (raw is int) {
+        return raw;
+      }
+      if (raw is num) {
+        return raw.toInt();
+      }
+      if (raw is String) {
+        return int.tryParse(raw) ?? 0;
+      }
+      return 0;
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load unread notification count right now.',
       );
     }
   }

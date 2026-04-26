@@ -785,6 +785,7 @@ final paginatedReviewQueueProvider = StateNotifierProvider.autoDispose
               .fetchReviewItemsPage(
                 status: query.status,
                 projectId: query.projectId,
+                search: query.search,
                 page: page,
                 limit: limit,
               );

@@ -194,7 +194,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                   ),
                 ),
               ),
-            if (user.role == UserRole.contributor) ...[
+            if (user.role == UserRole.contributor || user.role == UserRole.admin) ...[
               _buildUploadCard(
                 context,
                 categories: categories,

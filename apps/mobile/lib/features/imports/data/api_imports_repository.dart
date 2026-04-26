@@ -1,6 +1,10 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import '../../../core/config/app_env.dart';
 import '../../../core/network/api_client.dart';
@@ -127,11 +131,48 @@ class ApiImportsRepository implements ImportsRepository {
                     _toImportedFeature(Map<String, dynamic>.from(row as Map)),
               )
               .toList(growable: false);
-      return GisImportDetails(job: job, previewFeatures: previewRows);
+      final previewSummary = _toPreviewSummary(
+        Map<String, dynamic>.from(
+          data['preview_summary'] as Map? ?? const <String, dynamic>{},
+        ),
+      );
+      final comments =
+          (data['comments'] as List? ?? const <dynamic>[])
+              .map(
+                (row) =>
+                    _toImportComment(Map<String, dynamic>.from(row as Map)),
+              )
+              .toList(growable: false);
+      return GisImportDetails(
+        job: job,
+        previewFeatures: previewRows,
+        previewSummary: previewSummary,
+        comments: comments,
+      );
     } on DioException catch (error) {
       throw userFacingDioMessage(
         error,
         fallback: 'Unable to load this GIS import right now.',
+      );
+    }
+  }
+
+  @override
+  Future<List<ImportComment>> fetchImportComments(String importId) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_basePath/$importId/comments',
+      );
+      final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
+      return rows
+          .map(
+            (row) => _toImportComment(Map<String, dynamic>.from(row as Map)),
+          )
+          .toList(growable: false);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load import comments right now.',
       );
     }
   }
@@ -229,6 +270,49 @@ class ApiImportsRepository implements ImportsRepository {
     }
   }
 
+  @override
+  Future<ImportComment> addImportComment({
+    required String importId,
+    required String comment,
+  }) async {
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_basePath/$importId/comments',
+        data: <String, dynamic>{'comment': comment.trim()},
+      );
+      final row = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return _toImportComment(row);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to save this import comment right now.',
+      );
+    }
+  }
+
+  @override
+  Future<String> downloadImport(String importId) async {
+    try {
+      final response = await _apiClient.dio.get<List<int>>(
+        '$_basePath/$importId/download',
+        options: Options(responseType: ResponseType.bytes),
+      );
+      final fileBytes = _normalizeBytes(response.data);
+      if (fileBytes == null || fileBytes.isEmpty) {
+        throw StateError('The import download returned an empty file.');
+      }
+      return _saveImportFile(
+        importId: importId,
+        bytes: fileBytes,
+        headers: response.headers,
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(error, fallback: 'Import download failed.');
+    }
+  }
+
   Future<MultipartFile> _toMultipartFile(PlatformFile file) async {
     if (kIsWeb || file.path == null || file.path!.trim().isEmpty) {
       final bytes = file.bytes;
@@ -250,6 +334,7 @@ class ApiImportsRepository implements ImportsRepository {
       reviewedByUserId: row['reviewed_by_user_id'] as String?,
       reviewedByName: row['reviewed_by_name'] as String?,
       duplicateOfImportJobId: row['duplicate_of_import_job_id'] as String?,
+      possibleDuplicate: (row['possible_duplicate'] as bool?) ?? false,
       originalFilename: (row['original_filename'] as String?) ?? 'import',
       fileSizeBytes: _toInt(row['file_size_bytes']),
       fileChecksumSha256: (row['file_checksum_sha256'] as String?) ?? '',
@@ -271,6 +356,7 @@ class ApiImportsRepository implements ImportsRepository {
       validationSummary: _toMap(row['validation_summary']),
       processingMessage: row['processing_message'] as String?,
       rejectionReason: row['rejection_reason'] as String?,
+      reviewScope: (row['review_scope'] as String?) ?? 'admin',
       uploadedAt: _toDate(row['uploaded_at']),
       processedAt: _toOptionalDate(row['processed_at']),
       reviewedAt: _toOptionalDate(row['reviewed_at']),
@@ -314,6 +400,26 @@ class ApiImportsRepository implements ImportsRepository {
     );
   }
 
+  ImportPreviewSummary _toPreviewSummary(Map<String, dynamic> row) {
+    return ImportPreviewSummary(
+      geometryFeatureCount: _toInt(row['geometry_feature_count']),
+      previewFeatureCount: _toInt(row['preview_feature_count']),
+      outsideWorkspaceFeatureCount: _toInt(row['outside_workspace_feature_count']),
+    );
+  }
+
+  ImportComment _toImportComment(Map<String, dynamic> row) {
+    return ImportComment(
+      id: (row['id'] as String?) ?? '',
+      importJobId: (row['import_job_id'] as String?) ?? '',
+      authorUserId: (row['author_user_id'] as String?) ?? '',
+      authorName: (row['author_name'] as String?) ?? 'Admin',
+      authorRole: (row['author_role'] as String?) ?? 'admin',
+      commentText: (row['comment_text'] as String?) ?? '',
+      createdAt: _toDate(row['created_at']),
+    );
+  }
+
   int _toInt(dynamic value) {
     if (value is int) {
       return value;
@@ -347,5 +453,65 @@ class ApiImportsRepository implements ImportsRepository {
       return Map<String, dynamic>.from(raw);
     }
     return const <String, dynamic>{};
+  }
+
+  List<int>? _normalizeBytes(Object? raw) {
+    if (raw is List<int>) {
+      return raw;
+    }
+    if (raw is List) {
+      return raw.whereType<num>().map((value) => value.toInt()).toList();
+    }
+    return null;
+  }
+
+  Future<String> _saveImportFile({
+    required String importId,
+    required List<int> bytes,
+    required Headers headers,
+  }) async {
+    final baseDir = await _resolveImportDirectory();
+    await baseDir.create(recursive: true);
+
+    final fileName = _fileNameFromHeaders(headers) ?? 'import_$importId.zip';
+    final safeFileName = fileName.replaceAll(RegExp(r'[<>:\"/\\\\|?*]+'), '_');
+    final target = File(p.join(baseDir.path, safeFileName));
+    await target.writeAsBytes(bytes, flush: true);
+    return target.path;
+  }
+
+  Future<Directory> _resolveImportDirectory() async {
+    final externalDir = await getExternalStorageDirectory();
+    if (externalDir != null) {
+      return Directory(p.join(externalDir.path, 'imports'));
+    }
+
+    final documentsDir = await getApplicationDocumentsDirectory();
+    return Directory(p.join(documentsDir.path, 'imports'));
+  }
+
+  String? _fileNameFromHeaders(Headers headers) {
+    final raw = headers.value('content-disposition');
+    if (raw == null || raw.trim().isEmpty) {
+      return null;
+    }
+
+    final utfMatch = RegExp(
+      r"filename\*=UTF-8''([^;]+)",
+      caseSensitive: false,
+    ).firstMatch(raw);
+    if (utfMatch != null) {
+      return Uri.decodeFull(utfMatch.group(1)!);
+    }
+
+    final basicMatch = RegExp(
+      r'filename=\"?([^\";]+)\"?',
+      caseSensitive: false,
+    ).firstMatch(raw);
+    if (basicMatch != null) {
+      return basicMatch.group(1);
+    }
+
+    return null;
   }
 }

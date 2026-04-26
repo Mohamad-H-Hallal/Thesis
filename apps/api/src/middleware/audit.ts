@@ -2,7 +2,14 @@ import type { NextFunction, Request, Response } from 'express';
 import { query } from '../config/database';
 const logger = require('../utils/logger');
 
-type AuditActionType = 'create' | 'update' | 'delete' | 'approve' | 'reject' | 'export';
+type AuditActionType =
+  | 'create'
+  | 'update'
+  | 'delete'
+  | 'approve'
+  | 'reject'
+  | 'export'
+  | 'comment';
 
 interface AuditActionOptions {
   actionType: AuditActionType;

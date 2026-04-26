@@ -25,6 +25,8 @@ abstract class ImportsRepository {
 
   Future<GisImportDetails> fetchImportDetails(String importId);
 
+  Future<List<ImportComment>> fetchImportComments(String importId);
+
   Future<List<ImportedFeature>> fetchImportFeatures({
     required String importId,
     String? status,
@@ -47,4 +49,11 @@ abstract class ImportsRepository {
     String? reason,
     List<String>? featureIds,
   });
+
+  Future<ImportComment> addImportComment({
+    required String importId,
+    required String comment,
+  });
+
+  Future<String> downloadImport(String importId);
 }

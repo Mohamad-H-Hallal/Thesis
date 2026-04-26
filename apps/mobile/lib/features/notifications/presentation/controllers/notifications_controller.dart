@@ -10,6 +10,8 @@ class NotificationsViewState {
     required this.page,
     required this.pageSize,
     required this.total,
+    required this.unreadCount,
+    required this.isReadFilter,
     required this.hasMore,
     required this.isLoadingMore,
   });
@@ -19,6 +21,8 @@ class NotificationsViewState {
       page = 0,
       pageSize = 20,
       total = 0,
+      unreadCount = 0,
+      isReadFilter = null,
       hasMore = true,
       isLoadingMore = false;
 
@@ -26,6 +30,8 @@ class NotificationsViewState {
   final int page;
   final int pageSize;
   final int total;
+  final int unreadCount;
+  final bool? isReadFilter;
   final bool hasMore;
   final bool isLoadingMore;
 
@@ -34,6 +40,8 @@ class NotificationsViewState {
     int? page,
     int? pageSize,
     int? total,
+    int? unreadCount,
+    bool? isReadFilter,
     bool? hasMore,
     bool? isLoadingMore,
   }) {
@@ -42,6 +50,8 @@ class NotificationsViewState {
       page: page ?? this.page,
       pageSize: pageSize ?? this.pageSize,
       total: total ?? this.total,
+      unreadCount: unreadCount ?? this.unreadCount,
+      isReadFilter: isReadFilter ?? this.isReadFilter,
       hasMore: hasMore ?? this.hasMore,
       isLoadingMore: isLoadingMore ?? this.isLoadingMore,
     );
@@ -60,16 +70,25 @@ class NotificationsController
   final NotificationsRepository _repository;
   final Uuid _uuid = const Uuid();
   static const int _pageSize = 20;
+  bool? _currentIsReadFilter;
 
-  Future<void> load() async {
+  Future<void> load({bool? isReadFilter}) async {
+    _currentIsReadFilter = isReadFilter;
     state = const AsyncLoading();
     state = await AsyncValue.guard(() async {
-      final page = await _repository.fetchNotifications(limit: _pageSize);
+      final results = await Future.wait<dynamic>([
+        _repository.fetchNotifications(limit: _pageSize, isRead: isReadFilter),
+        _repository.fetchUnreadCount(),
+      ]);
+      final page = results[0] as NotificationPage;
+      final unreadCount = results[1] as int;
       return NotificationsViewState(
         items: page.items,
         page: page.page,
         pageSize: page.limit,
         total: page.total,
+        unreadCount: unreadCount,
+        isReadFilter: isReadFilter,
         hasMore: page.hasMore,
         isLoadingMore: false,
       );
@@ -89,6 +108,7 @@ class NotificationsController
       final page = await _repository.fetchNotifications(
         page: nextPage,
         limit: current.pageSize,
+        isRead: _currentIsReadFilter,
       );
       state = AsyncData(
         current.copyWith(
@@ -96,6 +116,7 @@ class NotificationsController
           page: page.page,
           pageSize: page.limit,
           total: page.total,
+          isReadFilter: _currentIsReadFilter,
           hasMore: page.hasMore,
           isLoadingMore: false,
         ),
@@ -124,6 +145,9 @@ class NotificationsController
         items: current.items
             .map((item) => item.id == id ? item.copyWith(isRead: true) : item)
             .toList(growable: false),
+        unreadCount: current.unreadCount > 0
+            ? current.unreadCount - 1
+            : 0,
       ),
     );
 
@@ -153,6 +177,7 @@ class NotificationsController
         items: current.items
             .map((item) => item.id == id ? item.copyWith(isRead: false) : item)
             .toList(growable: false),
+        unreadCount: current.unreadCount + 1,
       ),
     );
 
@@ -174,6 +199,7 @@ class NotificationsController
         items: current.items
             .map((item) => item.copyWith(isRead: true))
             .toList(growable: false),
+        unreadCount: 0,
       ),
     );
 
@@ -198,6 +224,7 @@ class NotificationsController
         value.copyWith(
           items: <AppNotification>[notification, ...value.items],
           total: value.total + 1,
+          unreadCount: value.unreadCount + 1,
         ),
       ),
       loading: () => AsyncData(
@@ -206,6 +233,7 @@ class NotificationsController
           page: 1,
           pageSize: _pageSize,
           total: 1,
+          unreadCount: 1,
           hasMore: false,
         ),
       ),
@@ -215,6 +243,7 @@ class NotificationsController
           page: 1,
           pageSize: _pageSize,
           total: 1,
+          unreadCount: 1,
           hasMore: false,
         ),
       ),

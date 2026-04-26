@@ -16,6 +16,7 @@ class MockImportsRepository implements ImportsRepository {
         projectName: 'Cedars Survey',
         uploadedByUserId: 'mock-user',
         uploadedByName: 'Field Contributor',
+        possibleDuplicate: false,
         originalFilename: 'cedars.geojson',
         fileSizeBytes: 20480,
         fileChecksumSha256: 'a' * 64,
@@ -35,6 +36,7 @@ class MockImportsRepository implements ImportsRepository {
         validationSummary: const <String, dynamic>{'warning_count': 1},
         processingMessage: 'Import ready for review.',
         rejectionReason: null,
+        reviewScope: 'admin',
         uploadedAt: now.subtract(const Duration(hours: 3)),
         processedAt: now.subtract(const Duration(hours: 3)),
         reviewedAt: null,
@@ -137,8 +139,17 @@ class MockImportsRepository implements ImportsRepository {
     return GisImportDetails(
       job: job,
       previewFeatures: _features[importId] ?? const <ImportedFeature>[],
+      previewSummary: ImportPreviewSummary(
+        geometryFeatureCount: (_features[importId] ?? const <ImportedFeature>[]).length,
+        previewFeatureCount: (_features[importId] ?? const <ImportedFeature>[]).length,
+        outsideWorkspaceFeatureCount: 0,
+      ),
     );
   }
+
+  @override
+  Future<List<ImportComment>> fetchImportComments(String importId) async =>
+      const <ImportComment>[];
 
   @override
   Future<List<ImportedFeature>> fetchImportFeatures({
@@ -272,6 +283,7 @@ class MockImportsRepository implements ImportsRepository {
             reviewedByUserId: 'mock-admin',
             reviewedByName: 'Mock Admin',
             duplicateOfImportJobId: job.duplicateOfImportJobId,
+            possibleDuplicate: job.possibleDuplicate,
             originalFilename: job.originalFilename,
             fileSizeBytes: job.fileSizeBytes,
             fileChecksumSha256: job.fileChecksumSha256,
@@ -291,6 +303,7 @@ class MockImportsRepository implements ImportsRepository {
             validationSummary: job.validationSummary,
             processingMessage: job.processingMessage,
             rejectionReason: reason,
+            reviewScope: job.reviewScope,
             uploadedAt: job.uploadedAt,
             processedAt: job.processedAt,
             reviewedAt: DateTime.now(),
@@ -316,6 +329,7 @@ class MockImportsRepository implements ImportsRepository {
       projectName: 'Imported Project',
       uploadedByUserId: 'mock-user',
       uploadedByName: 'Field Contributor',
+      possibleDuplicate: false,
       originalFilename: file.name,
       fileSizeBytes: file.size,
       fileChecksumSha256: 'b' * 64,
@@ -335,6 +349,7 @@ class MockImportsRepository implements ImportsRepository {
       validationSummary: const <String, dynamic>{'warning_count': 0},
       processingMessage: 'Import ready for review.',
       rejectionReason: null,
+      reviewScope: 'admin',
       uploadedAt: now,
       processedAt: now,
       reviewedAt: null,
@@ -345,4 +360,23 @@ class MockImportsRepository implements ImportsRepository {
     _features[id] = <ImportedFeature>[];
     return job;
   }
+
+  @override
+  Future<ImportComment> addImportComment({
+    required String importId,
+    required String comment,
+  }) async {
+    return ImportComment(
+      id: 'comment-1',
+      importJobId: importId,
+      authorUserId: 'mock-admin',
+      authorName: 'Mock Admin',
+      authorRole: 'admin',
+      commentText: comment,
+      createdAt: DateTime.now(),
+    );
+  }
+
+  @override
+  Future<String> downloadImport(String importId) async => '/mock/imports/$importId.zip';
 }

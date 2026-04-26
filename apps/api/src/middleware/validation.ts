@@ -337,6 +337,10 @@ const importValidation = {
       .optional()
       .isUUID()
       .withMessage('project_id must be a valid UUID'),
+    queryParam('category_id')
+      .optional()
+      .isUUID()
+      .withMessage('category_id must be a valid UUID'),
   ] as ValidationChain[],
   listFeatures: [
     queryParam('status')
@@ -358,6 +362,15 @@ const importValidation = {
       .optional()
       .isUUID()
       .withMessage('feature_ids must contain valid UUID values'),
+  ] as ValidationChain[],
+  comment: [
+    param('importId').isUUID().withMessage('Valid import ID is required'),
+    body('comment')
+      .trim()
+      .notEmpty()
+      .withMessage('comment is required')
+      .isLength({ max: 4000 })
+      .withMessage('comment must be 4000 characters or fewer'),
   ] as ValidationChain[],
 };
 

@@ -50,6 +50,7 @@ class GisImportJob {
     this.reviewedByUserId,
     this.reviewedByName,
     this.duplicateOfImportJobId,
+    this.possibleDuplicate = false,
     required this.originalFilename,
     required this.fileSizeBytes,
     required this.fileChecksumSha256,
@@ -69,6 +70,7 @@ class GisImportJob {
     required this.validationSummary,
     this.processingMessage,
     this.rejectionReason,
+    this.reviewScope = 'admin',
     required this.uploadedAt,
     this.processedAt,
     this.reviewedAt,
@@ -84,6 +86,7 @@ class GisImportJob {
   final String? reviewedByUserId;
   final String? reviewedByName;
   final String? duplicateOfImportJobId;
+  final bool possibleDuplicate;
   final String originalFilename;
   final int fileSizeBytes;
   final String fileChecksumSha256;
@@ -103,6 +106,7 @@ class GisImportJob {
   final Map<String, dynamic> validationSummary;
   final String? processingMessage;
   final String? rejectionReason;
+  final String reviewScope;
   final DateTime uploadedAt;
   final DateTime? processedAt;
   final DateTime? reviewedAt;
@@ -111,6 +115,38 @@ class GisImportJob {
 
   bool get canBeReviewed =>
       status == 'pending_review' || status == 'partially_approved';
+}
+
+class ImportPreviewSummary {
+  const ImportPreviewSummary({
+    required this.geometryFeatureCount,
+    required this.previewFeatureCount,
+    required this.outsideWorkspaceFeatureCount,
+  });
+
+  final int geometryFeatureCount;
+  final int previewFeatureCount;
+  final int outsideWorkspaceFeatureCount;
+}
+
+class ImportComment {
+  const ImportComment({
+    required this.id,
+    required this.importJobId,
+    required this.authorUserId,
+    required this.authorName,
+    required this.authorRole,
+    required this.commentText,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String importJobId;
+  final String authorUserId;
+  final String authorName;
+  final String authorRole;
+  final String commentText;
+  final DateTime createdAt;
 }
 
 class ImportedFeature {
@@ -166,8 +202,15 @@ class ImportedFeature {
 }
 
 class GisImportDetails {
-  const GisImportDetails({required this.job, required this.previewFeatures});
+  const GisImportDetails({
+    required this.job,
+    required this.previewFeatures,
+    required this.previewSummary,
+    this.comments = const <ImportComment>[],
+  });
 
   final GisImportJob job;
   final List<ImportedFeature> previewFeatures;
+  final ImportPreviewSummary previewSummary;
+  final List<ImportComment> comments;
 }

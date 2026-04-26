@@ -16,20 +16,28 @@ class _FakeNotificationsRepository implements NotificationsRepository {
   Future<NotificationPage> fetchNotifications({
     int page = 1,
     int limit = 20,
+    bool? isRead,
   }) async {
+    final filtered = isRead == null
+        ? _items
+        : _items.where((item) => item.isRead == isRead).toList(growable: false);
     final start = (page - 1) * limit;
-    final end = start + limit > _items.length ? _items.length : start + limit;
-    final items = start >= _items.length
+    final end = start + limit > filtered.length ? filtered.length : start + limit;
+    final items = start >= filtered.length
         ? const <AppNotification>[]
-        : _items.sublist(start, end);
+        : filtered.sublist(start, end);
     return NotificationPage(
       items: items,
       page: page,
       limit: limit,
-      total: _items.length,
-      hasMore: end < _items.length,
+      total: filtered.length,
+      hasMore: end < filtered.length,
     );
   }
+
+  @override
+  Future<int> fetchUnreadCount() async =>
+      _items.where((item) => !item.isRead).length;
 
   @override
   Future<void> markAllAsRead() async {
