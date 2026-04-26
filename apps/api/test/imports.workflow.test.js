@@ -227,6 +227,149 @@ describe('GIS import workflow', () => {
     expect(notificationCheck.rows[0].message).toContain('Duplicate field survey already exists.');
   });
 
+  test('duplicate warnings apply only to matching staged features', async () => {
+    const admin = await createAdminUser({
+      fullName: 'Import Duplicate Admin',
+      emailPrefix: 'import-duplicate-admin',
+    });
+    const contributorRegistration = await registerUser({
+      role: 'contributor',
+      fullName: 'Import Duplicate Contributor',
+      emailPrefix: 'import-duplicate-contributor',
+    });
+    await approveContributorRequest({
+      token: admin.token,
+      userId: contributorRegistration.user.id,
+    });
+    const contributorLogin = await loginUser({
+      email: contributorRegistration.email,
+      password: contributorRegistration.password,
+    });
+
+    const category = await createCategory({
+      token: admin.token,
+      name: 'Import Duplicate Category',
+    });
+    const project = await createProject({
+      token: admin.token,
+      categoryId: category.id,
+      name: 'Import Duplicate Project',
+      visibleToContributors: true,
+    });
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}`)
+      .set(authHeader(admin.token))
+      .send({ status: 'active' })
+      .expect(200);
+    const assignment = await createAssignment({
+      token: admin.token,
+      projectId: project.id,
+      userId: contributorRegistration.user.id,
+    });
+    await updateAssignmentStatus({
+      token: admin.token,
+      assignmentId: assignment.id,
+      status: 'approved',
+    });
+
+    await pool.query(
+      `INSERT INTO spatial_feature (
+         project_id,
+         collected_by_user_id,
+         geom,
+         attributes,
+         status,
+         submitted_at,
+         reviewed_by_user_id,
+         reviewed_at,
+         collected_offline
+       ) VALUES (
+         $1,
+         $2,
+         ST_SetSRID(ST_GeomFromGeoJSON($3), 4326),
+         $4::jsonb,
+         'approved',
+         CURRENT_TIMESTAMP,
+         $2,
+         CURRENT_TIMESTAMP,
+         FALSE
+       )`,
+      [
+        project.id,
+        admin.user.id,
+        JSON.stringify({
+          type: 'Point',
+          coordinates: [35.5001, 33.9001],
+        }),
+        JSON.stringify({ feature_type: 'olive' }),
+      ],
+    );
+
+    const geojsonPath = await createTempGeoJsonFile('import-duplicate-warnings', {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: { feature_type: 'olive' },
+          geometry: {
+            type: 'Point',
+            coordinates: [35.5001, 33.9001],
+          },
+        },
+        {
+          type: 'Feature',
+          properties: { feature_type: 'cedar' },
+          geometry: {
+            type: 'Point',
+            coordinates: [35.5201, 33.9201],
+          },
+        },
+      ],
+    });
+
+    const uploadResponse = await request(app)
+      .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+      .set(authHeader(contributorLogin.token))
+      .attach('file', geojsonPath)
+      .expect(202);
+
+    const detailsResponse = await waitForImportStatus({
+      importId: uploadResponse.body.data.id,
+      token: admin.token,
+      expectedStatuses: ['pending_review'],
+    });
+
+    expect(detailsResponse.body.data.job.warning_count).toBe(1);
+    expect(detailsResponse.body.data.job.validation_summary.top_warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: 'Geometry matches an approved feature already present in this project.',
+          count: 1,
+        }),
+      ]),
+    );
+
+    const warningCheck = await pool.query(
+      `SELECT source_index, validation_warnings
+       FROM gis_import_feature
+       WHERE import_job_id = $1
+       ORDER BY source_index ASC`,
+      [uploadResponse.body.data.id],
+    );
+
+    expect(warningCheck.rows).toHaveLength(2);
+    expect(warningCheck.rows[0].validation_warnings).toEqual(
+      expect.arrayContaining([
+        'Geometry matches an approved feature already present in this project.',
+      ]),
+    );
+    expect(warningCheck.rows[1].validation_warnings).not.toEqual(
+      expect.arrayContaining([
+        'Geometry matches an approved feature already present in this project.',
+      ]),
+    );
+  });
+
   test('marks import as failed when staged features cannot pass required validation', async () => {
     const admin = await createAdminUser({
       fullName: 'Import Failure Admin',
@@ -474,6 +617,12 @@ describe('GIS import workflow', () => {
           },
         ],
       });
+
+      await request(app)
+        .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+        .set(authHeader(protectedAdmin.token))
+        .attach('file', geojsonPath)
+        .expect(403);
 
       const uploadResponse = await request(app)
         .post(`${API_PREFIX}/imports/project/${project.id}/upload`)

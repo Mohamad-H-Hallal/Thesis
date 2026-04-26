@@ -65,6 +65,9 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
       return const SizedBox.shrink();
     }
     final user = session.user;
+    final canUploadImports =
+        user.role == UserRole.contributor ||
+        (user.role == UserRole.admin && !user.isSuperAdmin);
     if (user.role == UserRole.viewer) {
       return const AppEmptyState(
         icon: Icons.lock_outline,
@@ -194,7 +197,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                   ),
                 ),
               ),
-            if (user.role == UserRole.contributor || user.role == UserRole.admin) ...[
+            if (canUploadImports) ...[
               _buildUploadCard(
                 context,
                 categories: categories,

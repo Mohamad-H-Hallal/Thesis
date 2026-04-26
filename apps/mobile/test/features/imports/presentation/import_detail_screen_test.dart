@@ -102,6 +102,7 @@ class _FakeImportsRepository implements ImportsRepository {
   final GisImportDetails details;
   final List<ImportedFeature> features;
   final List<String?> requestedIssues = <String?>[];
+  int featurePageRequests = 0;
 
   @override
   Future<List<GisImportJob>> fetchImports({
@@ -147,6 +148,7 @@ class _FakeImportsRepository implements ImportsRepository {
     int page = 1,
     int limit = 20,
   }) async {
+    featurePageRequests += 1;
     requestedIssues.add(issue);
     final filtered = status == null
         ? features
@@ -356,6 +358,7 @@ void main() {
 
     expect(find.text('Spatial preview'), findsOneWidget);
     expect(find.textContaining('Processing imported features'), findsWidgets);
+    expect(repository.featurePageRequests, 0);
     expect(tester.takeException(), isNull);
   });
 
@@ -413,14 +416,14 @@ void main() {
             },
             processingMessage:
                 'Import processing finished, but no staged features were eligible for review.',
+          ),
+          previewFeatures: <ImportedFeature>[feature],
+          previewSummary: const ImportPreviewSummary(
+            geometryFeatureCount: 1,
+            previewFeatureCount: 0,
+            outsideWorkspaceFeatureCount: 1,
+          ),
         ),
-        previewFeatures: <ImportedFeature>[feature],
-        previewSummary: const ImportPreviewSummary(
-          geometryFeatureCount: 1,
-          previewFeatureCount: 0,
-          outsideWorkspaceFeatureCount: 1,
-        ),
-      ),
         features: <ImportedFeature>[feature],
       );
 
@@ -452,6 +455,70 @@ void main() {
     },
   );
 
+  testWidgets(
+    'preview stays visible for in-workspace geometry when only some staged features are outside Lebanon',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1200, 2200);
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final repository = _FakeImportsRepository(
+        details: GisImportDetails(
+          job: _job(
+            status: 'failed',
+            validationSummary: const <String, dynamic>{
+              'top_warnings': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'message':
+                      'Geometry falls outside the Lebanon workspace bounds.',
+                  'count': 1,
+                },
+              ],
+            },
+          ),
+          previewFeatures: <ImportedFeature>[_missingFeatureTypeFeature()],
+          previewSummary: const ImportPreviewSummary(
+            geometryFeatureCount: 2,
+            previewFeatureCount: 1,
+            outsideWorkspaceFeatureCount: 1,
+          ),
+        ),
+        features: <ImportedFeature>[_missingFeatureTypeFeature()],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWith(
+              (_) => _AuthenticatedAuthController(_session()),
+            ),
+            importsRepositoryProvider.overrideWithValue(repository),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(body: ImportDetailScreen(importId: 'import-1')),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(find.text('Spatial preview').last, 300);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(FlutterMap), findsOneWidget);
+      expect(
+        find.textContaining(
+          '1 staged feature(s) remain outside the Lebanon workspace and are excluded from this preview.',
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('issue filter narrows staged features by validation message', (
     tester,
   ) async {
@@ -475,11 +542,11 @@ void main() {
             },
           },
         ),
-        previewFeatures: <ImportedFeature>[outsideFeature, missingTypeFeature],
+        previewFeatures: const <ImportedFeature>[],
         previewSummary: const ImportPreviewSummary(
           geometryFeatureCount: 2,
-          previewFeatureCount: 1,
-          outsideWorkspaceFeatureCount: 1,
+          previewFeatureCount: 0,
+          outsideWorkspaceFeatureCount: 2,
         ),
       ),
       features: <ImportedFeature>[outsideFeature, missingTypeFeature],

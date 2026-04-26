@@ -805,7 +805,7 @@ const hasProjectImportAccess = async (
   user: Express.UserContext,
 ): Promise<boolean> => {
   if (user.role === 'admin') {
-    return true;
+    return !isProtectedSuperAdminEmail(user.email);
   }
   const accessCheck = await query(
     `SELECT 1
@@ -954,10 +954,10 @@ const validateImportedFeature = async (
        SELECT ST_SetSRID(ST_GeomFromGeoJSON($1), 4326) AS geom
      )
      SELECT
-       ST_IsValid(geom) AS is_valid,
-       ST_IsValidReason(geom) AS valid_reason,
+       ST_IsValid(candidate.geom) AS is_valid,
+       ST_IsValidReason(candidate.geom) AS valid_reason,
        ST_Intersects(
-         geom,
+         candidate.geom,
          ST_MakeEnvelope($2, $3, $4, $5, 4326)
        ) AS intersects_lebanon,
        EXISTS (
@@ -965,14 +965,14 @@ const validateImportedFeature = async (
          FROM spatial_feature sf
          WHERE sf.project_id = $6
            AND sf.status = 'approved'
-           AND ST_Equals(sf.geom, geom)
+           AND ST_Equals(sf.geom, candidate.geom)
        ) AS exact_duplicate,
        (
          SELECT sf.id
          FROM spatial_feature sf
          WHERE sf.project_id = $6
            AND sf.status = 'approved'
-           AND ST_Equals(sf.geom, geom)
+           AND ST_Equals(sf.geom, candidate.geom)
          LIMIT 1
        ) AS duplicate_feature_id,
        EXISTS (
@@ -982,7 +982,7 @@ const validateImportedFeature = async (
            AND sf.status = 'approved'
            AND ST_DWithin(
              sf.geom::geography,
-             geom::geography,
+             candidate.geom::geography,
              5
            )
        ) AS nearby_duplicate

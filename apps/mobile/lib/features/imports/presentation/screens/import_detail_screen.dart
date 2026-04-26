@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
@@ -15,6 +17,7 @@ import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../auth/domain/auth_models.dart';
+import '../../../exports/presentation/export_file_actions.dart';
 import '../../../map/domain/lebanon_map.dart';
 import '../../../map/domain/map_geometry.dart';
 import '../../domain/import_models.dart';
@@ -31,11 +34,13 @@ class ImportDetailScreen extends ConsumerStatefulWidget {
 
 class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
   final Set<String> _selectedFeatureIds = <String>{};
-  static const Duration _refreshInterval = Duration(seconds: 5);
+  static const Duration _refreshInterval = Duration(seconds: 15);
   bool _isSubmitting = false;
   bool _isDownloading = false;
   bool _isSavingComment = false;
+  bool _isRefreshingImportDetails = false;
   GisImportDetails? _liveDetails;
+  String? _downloadedImportPath;
   String? _selectedIssueFilter;
   Timer? _refreshTimer;
   Future<void> Function()? _refreshImportDetails;
@@ -59,13 +64,11 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       issue: _selectedIssueFilter,
     );
     final detailsAsync = ref.watch(importDetailsProvider(widget.importId));
-    final featuresAsync = ref.watch(
-      paginatedImportFeaturesProvider(featureQuery),
-    );
-    final featuresController = ref.read(
-      paginatedImportFeaturesProvider(featureQuery).notifier,
-    );
     _refreshImportDetails = () async {
+      if (_isRefreshingImportDetails) {
+        return;
+      }
+      _isRefreshingImportDetails = true;
       try {
         final refreshedDetails = await ref
             .read(importsRepositoryProvider)
@@ -89,18 +92,25 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
                 current.previewSummary.previewFeatureCount ||
             refreshedDetails.previewSummary.outsideWorkspaceFeatureCount !=
                 current.previewSummary.outsideWorkspaceFeatureCount ||
-            refreshedDetails.job.rejectionReason != current.job.rejectionReason ||
+            refreshedDetails.job.rejectionReason !=
+                current.job.rejectionReason ||
             refreshedDetails.comments.length != current.comments.length;
         if (hasMeaningfulChange) {
           setState(() {
             _liveDetails = refreshedDetails;
           });
-          await featuresController.refreshSilently();
+          if (!_isImportStillProcessing(refreshedDetails.job.status)) {
+            await ref
+                .read(paginatedImportFeaturesProvider(featureQuery).notifier)
+                .refreshSilently();
+          }
         }
       } catch (_) {
         if (!mounted) {
           return;
         }
+      } finally {
+        _isRefreshingImportDetails = false;
       }
     };
 
@@ -136,7 +146,14 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
     }
 
     _configureAutoRefresh(_isImportStillProcessing(details.job.status));
-    final featureState = featuresAsync.valueOrNull;
+    final shouldLoadFeatures = !_isImportStillProcessing(details.job.status);
+    final featuresAsync = shouldLoadFeatures
+        ? ref.watch(paginatedImportFeaturesProvider(featureQuery))
+        : null;
+    final featuresController = shouldLoadFeatures
+        ? ref.read(paginatedImportFeaturesProvider(featureQuery).notifier)
+        : null;
+    final featureState = featuresAsync?.valueOrNull;
     final features =
         featureState?.items ??
         (_selectedIssueFilter == null
@@ -165,6 +182,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
         (details.job.reviewScope != 'protected_super_admin' ||
             isProtectedSuperAdmin);
     final canDownloadImport = canModerateImport;
+    final downloadedImportPath = _downloadedImportPath;
 
     return ListView(
       children: [
@@ -179,6 +197,18 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
             isSavingComment: _isSavingComment,
             onDownload: _downloadImport,
             onAddComment: canModerateImport ? _addComment : null,
+            onOpenDownloadedFile:
+                downloadedImportPath?.trim().isNotEmpty == true
+                ? () => _openDownloadedImport(downloadedImportPath!)
+                : null,
+            onShareDownloadedFile:
+                downloadedImportPath?.trim().isNotEmpty == true
+                ? () => _shareDownloadedImport(downloadedImportPath!, details)
+                : null,
+            onCopyDownloadedPath:
+                downloadedImportPath?.trim().isNotEmpty == true
+                ? () => _copyDownloadedImportPath(downloadedImportPath!)
+                : null,
           ),
           const SizedBox(height: AppSpacing.md),
         ],
@@ -208,81 +238,89 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
           style: Theme.of(context).textTheme.titleMedium,
         ),
         const SizedBox(height: AppSpacing.sm),
-        if (issueFilters.isNotEmpty) ...[
-          DropdownButtonFormField<String?>(
-            initialValue: _selectedIssueFilter,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Issue filter'),
-            items: <DropdownMenuItem<String?>>[
-              const DropdownMenuItem<String?>(
-                value: null,
-                child: Text('All staged features'),
-              ),
-              ...issueFilters.map(
-                (option) => DropdownMenuItem<String?>(
-                  value: option.message,
-                  child: Text(
-                    '${option.message} (${option.count})',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+        if (!shouldLoadFeatures)
+          const AppCard(
+            child: Text(
+              'Staged features will appear here after processing finishes.',
+              softWrap: true,
+            ),
+          )
+        else ...[
+          if (issueFilters.isNotEmpty) ...[
+            DropdownButtonFormField<String?>(
+              initialValue: _selectedIssueFilter,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Issue filter'),
+              items: <DropdownMenuItem<String?>>[
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('All staged features'),
+                ),
+                ...issueFilters.map(
+                  (option) => DropdownMenuItem<String?>(
+                    value: option.message,
+                    child: Text(
+                      '${option.message} (${option.count})',
+                      maxLines: 3,
+                    ),
                   ),
                 ),
-              ),
-            ],
-            onChanged: (value) {
-              setState(() {
-                _selectedIssueFilter = value;
-                _selectedFeatureIds.clear();
-              });
-            },
-          ),
-          const SizedBox(height: AppSpacing.sm),
-        ],
-        if (features.isEmpty)
-          AppEmptyState(
-            icon: Icons.map_outlined,
-            title: _selectedIssueFilter == null
-                ? 'No preview features available'
-                : 'No staged features match this issue',
-            message: _selectedIssueFilter == null
-                ? 'This import does not currently expose preview geometries.'
-                : 'No staged features currently match the selected validation issue.',
-          )
-        else
-          ProgressiveListSection<ImportedFeature>(
-            items: features,
-            resetKey: Object.hash(
-              widget.importId,
-              details.job.updatedAt,
-              _selectedIssueFilter,
-              features.length,
-              featureState?.total ?? 0,
-            ),
-            hasMore: featureState?.hasMore ?? false,
-            isLoadingMore: featureState?.isLoadingMore ?? false,
-            onLoadMore: featuresController.loadMore,
-            itemBuilder: (context, feature, _) => _ImportedFeatureCard(
-              feature: feature,
-              selectable: isAdmin && feature.isActionable,
-              selected: _selectedFeatureIds.contains(feature.id),
-              onToggleSelected: () {
+              ],
+              onChanged: (value) {
                 setState(() {
-                  if (_selectedFeatureIds.contains(feature.id)) {
-                    _selectedFeatureIds.remove(feature.id);
-                  } else {
-                    _selectedFeatureIds.add(feature.id);
-                  }
+                  _selectedIssueFilter = value;
+                  _selectedFeatureIds.clear();
                 });
               },
             ),
-          ),
-        if ((featureState?.total ?? details.job.geometryCount) >
-            features.length) ...[
-          const SizedBox(height: AppSpacing.sm),
-          Text(
-            'Showing ${features.length} of ${featureState?.total ?? details.job.geometryCount} staged feature(s) for this import.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+          if (features.isEmpty)
+            AppEmptyState(
+              icon: Icons.map_outlined,
+              title: _selectedIssueFilter == null
+                  ? 'No preview features available'
+                  : 'No staged features match this issue',
+              message: _selectedIssueFilter == null
+                  ? 'This import does not currently expose preview geometries.'
+                  : 'No staged features currently match the selected validation issue.',
+            )
+          else
+            ProgressiveListSection<ImportedFeature>(
+              items: features,
+              resetKey: Object.hash(
+                widget.importId,
+                details.job.updatedAt,
+                _selectedIssueFilter,
+                features.length,
+                featureState?.total ?? 0,
+              ),
+              hasMore: featureState?.hasMore ?? false,
+              isLoadingMore: featureState?.isLoadingMore ?? false,
+              onLoadMore: featuresController!.loadMore,
+              itemBuilder: (context, feature, _) => _ImportedFeatureCard(
+                feature: feature,
+                selectable: isAdmin && feature.isActionable,
+                selected: _selectedFeatureIds.contains(feature.id),
+                onToggleSelected: () {
+                  setState(() {
+                    if (_selectedFeatureIds.contains(feature.id)) {
+                      _selectedFeatureIds.remove(feature.id);
+                    } else {
+                      _selectedFeatureIds.add(feature.id);
+                    }
+                  });
+                },
+              ),
+            ),
+          if ((featureState?.total ?? details.job.geometryCount) >
+              features.length) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              'Showing ${features.length} of ${featureState?.total ?? details.job.geometryCount} staged feature(s) for this import.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
         ],
       ],
     );
@@ -397,9 +435,12 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       if (!mounted || !context.mounted) {
         return;
       }
+      setState(() {
+        _downloadedImportPath = savedPath;
+      });
       AppSnackbar.showSuccess(
         context,
-        'Import file downloaded to $savedPath',
+        'Import file downloaded. Use Open, Share, or Copy path.',
       );
     } catch (error) {
       if (!mounted || !context.mounted) {
@@ -421,9 +462,83 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
     }
   }
 
+  Future<void> _openDownloadedImport(String path) async {
+    final file = File(path);
+    if (!await file.exists()) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        'The downloaded import file is no longer available at that path.',
+      );
+      return;
+    }
+
+    try {
+      await ExportFileActions.openFile(path);
+    } on PlatformException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        error.message?.trim().isNotEmpty == true
+            ? error.message!
+            : 'This device could not open the downloaded import file.',
+      );
+    }
+  }
+
+  Future<void> _shareDownloadedImport(
+    String path,
+    GisImportDetails details,
+  ) async {
+    final file = File(path);
+    if (!await file.exists()) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        'The downloaded import file is no longer available at that path.',
+      );
+      return;
+    }
+
+    try {
+      await ExportFileActions.shareFile(
+        path: path,
+        subject: '${details.job.projectName} import package',
+        text: 'Original GIS import file for ${details.job.projectName}.',
+      );
+    } on PlatformException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        error.message?.trim().isNotEmpty == true
+            ? error.message!
+            : 'This device could not open the share sheet for the import file.',
+      );
+    }
+  }
+
+  Future<void> _copyDownloadedImportPath(String path) async {
+    await Clipboard.setData(ClipboardData(text: path));
+    if (!mounted) {
+      return;
+    }
+    AppSnackbar.showInfo(context, 'Import path copied.');
+  }
+
   Future<void> _addComment(BuildContext context) async {
     final comment = await _promptComment(context);
-    if (comment == null || comment.trim().isEmpty || !mounted || !context.mounted) {
+    if (comment == null ||
+        comment.trim().isEmpty ||
+        !mounted ||
+        !context.mounted) {
       return;
     }
 
@@ -659,6 +774,9 @@ class _ImportActionCard extends StatelessWidget {
     required this.isSavingComment,
     required this.onDownload,
     this.onAddComment,
+    this.onOpenDownloadedFile,
+    this.onShareDownloadedFile,
+    this.onCopyDownloadedPath,
   });
 
   final GisImportJob job;
@@ -668,6 +786,9 @@ class _ImportActionCard extends StatelessWidget {
   final bool isSavingComment;
   final Future<void> Function(BuildContext context) onDownload;
   final Future<void> Function(BuildContext context)? onAddComment;
+  final Future<void> Function()? onOpenDownloadedFile;
+  final Future<void> Function()? onShareDownloadedFile;
+  final Future<void> Function()? onCopyDownloadedPath;
 
   @override
   Widget build(BuildContext context) {
@@ -675,10 +796,7 @@ class _ImportActionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'File actions',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
+          Text('File actions', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: AppSpacing.sm),
           Wrap(
             spacing: 8,
@@ -688,13 +806,37 @@ class _ImportActionCard extends StatelessWidget {
                 FilledButton.icon(
                   onPressed: isDownloading ? null : () => onDownload(context),
                   icon: const Icon(Icons.download_outlined),
-                  label: Text(isDownloading ? 'Downloading...' : 'Download file'),
+                  label: Text(
+                    isDownloading ? 'Downloading...' : 'Download file',
+                  ),
+                ),
+              if (onOpenDownloadedFile != null)
+                OutlinedButton.icon(
+                  onPressed: onOpenDownloadedFile,
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('Open'),
+                ),
+              if (onShareDownloadedFile != null)
+                OutlinedButton.icon(
+                  onPressed: onShareDownloadedFile,
+                  icon: const Icon(Icons.share_outlined),
+                  label: const Text('Share'),
+                ),
+              if (onCopyDownloadedPath != null)
+                OutlinedButton.icon(
+                  onPressed: onCopyDownloadedPath,
+                  icon: const Icon(Icons.copy_all_outlined),
+                  label: const Text('Copy path'),
                 ),
               if (onAddComment != null)
                 OutlinedButton.icon(
-                  onPressed: isSavingComment ? null : () => onAddComment!(context),
+                  onPressed: isSavingComment
+                      ? null
+                      : () => onAddComment!(context),
                   icon: const Icon(Icons.comment_outlined),
-                  label: Text(isSavingComment ? 'Saving comment...' : 'Add comment'),
+                  label: Text(
+                    isSavingComment ? 'Saving comment...' : 'Add comment',
+                  ),
                 ),
             ],
           ),
@@ -822,10 +964,7 @@ class _ImportCommentsCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Comments',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
+          Text('Comments', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: AppSpacing.sm),
           if (comments.isEmpty)
             const Text(
@@ -1055,12 +1194,10 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
     final drawable = widget.features
         .where((feature) => feature.geometry != null)
         .toList(growable: false);
+    final previewFeatureCount = widget.previewSummary.previewFeatureCount;
     final outsideWorkspaceCount =
         widget.previewSummary.outsideWorkspaceFeatureCount;
-    final containsOnlyLebanonGeometry = _containsOnlyLebanonGeometry(drawable);
-    if (drawable.isEmpty ||
-        outsideWorkspaceCount > 0 ||
-        !containsOnlyLebanonGeometry) {
+    if (previewFeatureCount == 0 || drawable.isEmpty) {
       return AppCard(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1071,7 +1208,7 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
             ),
             const SizedBox(height: AppSpacing.sm),
             Text(
-              outsideWorkspaceCount > 0 || !containsOnlyLebanonGeometry
+              outsideWorkspaceCount > 0
                   ? 'The staged geometry is outside the Lebanon workspace. No preview map is shown.'
                   : 'This import does not include previewable geometries yet.',
               softWrap: true,
@@ -1082,7 +1219,7 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
     }
 
     final mapKey = ValueKey<String>(
-      'import-preview-${_style.name}-${drawable.length}',
+      'import-preview-${_style.name}-$previewFeatureCount-$outsideWorkspaceCount-${drawable.length}',
     );
 
     return AppCard(
@@ -1165,9 +1302,8 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
               child: FlutterMap(
                 key: mapKey,
                 options: MapOptions(
-                  initialCameraFit: LebanonMapConfig.lebanonFit(
-                    padding: const EdgeInsets.all(20),
-                  ),
+                  initialCenter: LebanonMapConfig.center,
+                  initialZoom: LebanonMapConfig.quickInitialZoom,
                   cameraConstraint: LebanonMapConfig.cameraConstraint,
                   minZoom: LebanonMapConfig.quickMinZoom,
                   maxZoom: LebanonMapConfig.quickMaxZoom,
@@ -1206,21 +1342,6 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
         ],
       ),
     );
-  }
-
-  bool _containsOnlyLebanonGeometry(List<ImportedFeature> features) {
-    for (final feature in features) {
-      final geometry = feature.geometry;
-      if (geometry == null) {
-        continue;
-      }
-      for (final point in geometryPoints(geometry)) {
-        if (!LebanonMapConfig.contains(point)) {
-          return false;
-        }
-      }
-    }
-    return true;
   }
 
   List<Marker> _markers(List<ImportedFeature> features) {
