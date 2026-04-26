@@ -29,9 +29,9 @@ class MemoryLocalStore implements LocalStore {
     _offlinePackages.clear();
   }
 
-  void _checkInit() {
+  Future<void> _ensureInitialized() async {
     if (!_initialized) {
-      throw StateError('LocalStore not initialized.');
+      await initialize();
     }
   }
 
@@ -40,7 +40,7 @@ class MemoryLocalStore implements LocalStore {
     required List<ProjectSummary> projects,
     required List<LocalDraftFeature> drafts,
   }) async {
-    _checkInit();
+    await _ensureInitialized();
 
     if (_projects.isEmpty) {
       for (final project in projects) {
@@ -57,7 +57,7 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<void> cacheProjects(List<ProjectSummary> projects) async {
-    _checkInit();
+    await _ensureInitialized();
     _projects
       ..clear()
       ..addEntries(projects.map((p) => MapEntry(p.id, p)));
@@ -65,7 +65,7 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<List<ProjectSummary>> getCachedProjects() async {
-    _checkInit();
+    await _ensureInitialized();
     return _projects.values.toList(growable: false);
   }
 
@@ -74,7 +74,7 @@ class MemoryLocalStore implements LocalStore {
     LocalDraftFeature draft, {
     bool enqueueSync = true,
   }) async {
-    _checkInit();
+    await _ensureInitialized();
     _drafts[draft.id] = draft;
 
     if (!enqueueSync) {
@@ -122,7 +122,7 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<List<LocalDraftFeature>> getDrafts() async {
-    _checkInit();
+    await _ensureInitialized();
     final drafts = _drafts.values.toList(growable: false);
     drafts.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     return drafts;
@@ -130,7 +130,7 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<LocalDraftFeature?> getDraftById(String draftId) async {
-    _checkInit();
+    await _ensureInitialized();
     return _drafts[draftId];
   }
 
@@ -140,7 +140,7 @@ class MemoryLocalStore implements LocalStore {
     required String status,
     int? remoteVersion,
   }) async {
-    _checkInit();
+    await _ensureInitialized();
     final draft = _drafts[draftId];
     if (draft == null) return;
 
@@ -153,7 +153,7 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<void> upsertOfflineMapPackage(OfflineMapPackage package) async {
-    _checkInit();
+    await _ensureInitialized();
     if (package.isCurrent) {
       _offlinePackages.updateAll((_, existing) {
         if (existing.ownerUserId != package.ownerUserId) {
@@ -169,7 +169,7 @@ class MemoryLocalStore implements LocalStore {
   Future<OfflineMapPackage?> getCurrentOfflineMapPackage({
     required String ownerUserId,
   }) async {
-    _checkInit();
+    await _ensureInitialized();
     for (final package in _offlinePackages.values) {
       if (package.ownerUserId == ownerUserId && package.isCurrent) {
         return package;
@@ -193,13 +193,13 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<int> getPendingSyncCount() async {
-    _checkInit();
+    await _ensureInitialized();
     return (await getSyncQueueStats()).actionable;
   }
 
   @override
   Future<SyncQueueStats> getSyncQueueStats() async {
-    _checkInit();
+    await _ensureInitialized();
 
     var pending = 0;
     var processing = 0;
@@ -241,7 +241,7 @@ class MemoryLocalStore implements LocalStore {
     DateTime now, {
     int limit = 20,
   }) async {
-    _checkInit();
+    await _ensureInitialized();
 
     final due = _syncQueue.values
         .where((item) {
@@ -263,13 +263,13 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<void> enqueueSyncItem(SyncQueueItem item) async {
-    _checkInit();
+    await _ensureInitialized();
     _syncQueue[item.id] = item;
   }
 
   @override
   Future<void> markSyncProcessing(String queueId) async {
-    _checkInit();
+    await _ensureInitialized();
     final item = _syncQueue[queueId];
     if (item == null) return;
 
@@ -285,7 +285,7 @@ class MemoryLocalStore implements LocalStore {
     int? remoteVersion,
     String? draftStatus,
   }) async {
-    _checkInit();
+    await _ensureInitialized();
     _syncQueue.remove(item.id);
 
     final draft = _drafts[item.entityId];
@@ -304,7 +304,7 @@ class MemoryLocalStore implements LocalStore {
     required String error,
     required DateTime nextRetryAt,
   }) async {
-    _checkInit();
+    await _ensureInitialized();
     _syncQueue[item.id] = item.copyWith(
       attemptCount: item.attemptCount + 1,
       status: SyncQueueStatus.failed,
@@ -319,7 +319,7 @@ class MemoryLocalStore implements LocalStore {
     SyncQueueItem item, {
     required String error,
   }) async {
-    _checkInit();
+    await _ensureInitialized();
     _syncQueue[item.id] = item.copyWith(
       attemptCount: item.attemptCount + 1,
       status: SyncQueueStatus.conflict,
@@ -334,7 +334,7 @@ class MemoryLocalStore implements LocalStore {
     SyncQueueItem item, {
     required String error,
   }) async {
-    _checkInit();
+    await _ensureInitialized();
     _syncQueue[item.id] = item.copyWith(
       attemptCount: item.attemptCount + 1,
       status: SyncQueueStatus.deadLetter,

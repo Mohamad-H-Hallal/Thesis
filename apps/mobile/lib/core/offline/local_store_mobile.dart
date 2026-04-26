@@ -11,6 +11,7 @@ import 'local_store.dart';
 
 class SqliteLocalStore implements LocalStore {
   Database? _db;
+  Future<void>? _initialization;
   final Uuid _uuid = const Uuid();
   static const _dbVersion = 4;
 
@@ -19,7 +20,24 @@ class SqliteLocalStore implements LocalStore {
     if (_db != null) {
       return;
     }
+    final currentInitialization = _initialization;
+    if (currentInitialization != null) {
+      await currentInitialization;
+      return;
+    }
 
+    final initialization = _openDatabase();
+    _initialization = initialization;
+    try {
+      await initialization;
+    } finally {
+      if (identical(_initialization, initialization)) {
+        _initialization = null;
+      }
+    }
+  }
+
+  Future<void> _openDatabase() async {
     final dir = await getApplicationDocumentsDirectory();
     final dbPath = p.join(dir.path, 'gis_collector_offline.db');
 
@@ -146,6 +164,7 @@ class SqliteLocalStore implements LocalStore {
   }
 
   Future<Database> get _database async {
+    await initialize();
     final db = _db;
     if (db == null) {
       throw StateError('LocalStore not initialized.');
@@ -155,8 +174,17 @@ class SqliteLocalStore implements LocalStore {
 
   @override
   Future<void> dispose() async {
+    final initialization = _initialization;
+    if (initialization != null) {
+      try {
+        await initialization;
+      } catch (_) {
+        // Dispose should still clear partial initialization state.
+      }
+    }
     await _db?.close();
     _db = null;
+    _initialization = null;
   }
 
   @override

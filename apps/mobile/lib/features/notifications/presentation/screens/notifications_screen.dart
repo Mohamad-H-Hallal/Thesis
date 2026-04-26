@@ -50,13 +50,54 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
 
         return ListView(
           children: [
-            Text(
-              unreadCount == 0
-                  ? 'No unread updates'
-                  : '$unreadCount unread update${unreadCount == 1 ? '' : 's'}',
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            const SizedBox(height: AppSpacing.sm),
+            if (unreadCount > 0) ...[
+              AppCard(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final summary = Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.mark_email_unread_outlined),
+                        const SizedBox(width: AppSpacing.sm),
+                        Flexible(
+                          child: Text(
+                            '$unreadCount unread notification${unreadCount == 1 ? '' : 's'}',
+                            style: Theme.of(context).textTheme.titleMedium,
+                            softWrap: true,
+                          ),
+                        ),
+                      ],
+                    );
+                    final action = OutlinedButton.icon(
+                      onPressed: () => ref
+                          .read(notificationsControllerProvider.notifier)
+                          .markAllAsRead(),
+                      icon: const Icon(Icons.done_all_outlined),
+                      label: const Text('Mark all as read'),
+                    );
+
+                    if (constraints.maxWidth < 520) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          summary,
+                          const SizedBox(height: AppSpacing.sm),
+                          action,
+                        ],
+                      );
+                    }
+
+                    return Row(
+                      children: [
+                        Expanded(child: summary),
+                        action,
+                      ],
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+            ],
             AppCard(
               child: LayoutBuilder(
                 builder: (context, constraints) {
@@ -97,38 +138,11 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                     ],
                   );
 
-                  final Widget? markAll = unreadCount > 0
-                      ? OutlinedButton.icon(
-                          onPressed: () => ref
-                              .read(notificationsControllerProvider.notifier)
-                              .markAllAsRead(),
-                          icon: const Icon(Icons.done_all_outlined),
-                          label: const Text('Mark all read'),
-                        )
-                      : null;
-                  final trailingActions = markAll == null
-                      ? const <Widget>[]
-                      : <Widget>[markAll];
-
                   if (constraints.maxWidth < 520) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        filters,
-                        if (trailingActions.isNotEmpty) ...[
-                          const SizedBox(height: AppSpacing.sm),
-                          ...trailingActions,
-                        ],
-                      ],
-                    );
+                    return filters;
                   }
 
-                  return Row(
-                    children: [
-                      Expanded(child: filters),
-                      ...trailingActions,
-                    ],
-                  );
+                  return filters;
                 },
               ),
             ),

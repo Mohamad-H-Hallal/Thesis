@@ -140,14 +140,26 @@ class NotificationsController
       return;
     }
 
+    final nextItems = current.isReadFilter == false
+        ? current.items.where((item) => item.id != id).toList(growable: false)
+        : current.items
+              .map(
+                (item) => item.id == id ? item.copyWith(isRead: true) : item,
+              )
+              .toList(growable: false);
+
     state = AsyncData(
       current.copyWith(
-        items: current.items
-            .map((item) => item.id == id ? item.copyWith(isRead: true) : item)
-            .toList(growable: false),
+        items: nextItems,
+        total: current.isReadFilter == false
+            ? (current.total > 0 ? current.total - 1 : 0)
+            : current.total,
         unreadCount: current.unreadCount > 0
             ? current.unreadCount - 1
             : 0,
+        hasMore: current.isReadFilter == false
+            ? nextItems.length < (current.total > 0 ? current.total - 1 : 0)
+            : current.hasMore,
       ),
     );
 
@@ -172,12 +184,24 @@ class NotificationsController
       return;
     }
 
+    final nextItems = current.isReadFilter == true
+        ? current.items.where((item) => item.id != id).toList(growable: false)
+        : current.items
+              .map(
+                (item) => item.id == id ? item.copyWith(isRead: false) : item,
+              )
+              .toList(growable: false);
+
     state = AsyncData(
       current.copyWith(
-        items: current.items
-            .map((item) => item.id == id ? item.copyWith(isRead: false) : item)
-            .toList(growable: false),
+        items: nextItems,
+        total: current.isReadFilter == true
+            ? (current.total > 0 ? current.total - 1 : 0)
+            : current.total,
         unreadCount: current.unreadCount + 1,
+        hasMore: current.isReadFilter == true
+            ? nextItems.length < (current.total > 0 ? current.total - 1 : 0)
+            : current.hasMore,
       ),
     );
 
@@ -194,12 +218,17 @@ class NotificationsController
       return;
     }
 
+    final clearingUnreadFilter = current.isReadFilter == false;
     state = AsyncData(
       current.copyWith(
-        items: current.items
-            .map((item) => item.copyWith(isRead: true))
-            .toList(growable: false),
+        items: clearingUnreadFilter
+            ? const <AppNotification>[]
+            : current.items
+                  .map((item) => item.copyWith(isRead: true))
+                  .toList(growable: false),
+        total: clearingUnreadFilter ? 0 : current.total,
         unreadCount: 0,
+        hasMore: clearingUnreadFilter ? false : current.hasMore,
       ),
     );
 
@@ -220,13 +249,18 @@ class NotificationsController
     );
 
     state = state.when(
-      data: (value) => AsyncData(
-        value.copyWith(
-          items: <AppNotification>[notification, ...value.items],
-          total: value.total + 1,
-          unreadCount: value.unreadCount + 1,
-        ),
-      ),
+      data: (value) {
+        final shouldShowInCurrentFilter = value.isReadFilter != true;
+        return AsyncData(
+          value.copyWith(
+            items: shouldShowInCurrentFilter
+                ? <AppNotification>[notification, ...value.items]
+                : value.items,
+            total: shouldShowInCurrentFilter ? value.total + 1 : value.total,
+            unreadCount: value.unreadCount + 1,
+          ),
+        );
+      },
       loading: () => AsyncData(
         const NotificationsViewState.initial().copyWith(
           items: <AppNotification>[notification],
