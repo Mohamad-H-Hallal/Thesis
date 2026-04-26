@@ -164,20 +164,24 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
         isAdmin &&
         (details.job.reviewScope != 'protected_super_admin' ||
             isProtectedSuperAdmin);
+    final canDownloadImport = canModerateImport;
 
     return ListView(
       children: [
         _ImportSummaryCard(job: details.job),
         const SizedBox(height: AppSpacing.md),
-        _ImportActionCard(
-          job: details.job,
-          canComment: canModerateImport,
-          isDownloading: _isDownloading,
-          isSavingComment: _isSavingComment,
-          onDownload: _downloadImport,
-          onAddComment: canModerateImport ? _addComment : null,
-        ),
-        const SizedBox(height: AppSpacing.md),
+        if (canDownloadImport || canModerateImport) ...[
+          _ImportActionCard(
+            job: details.job,
+            canDownload: canDownloadImport,
+            canComment: canModerateImport,
+            isDownloading: _isDownloading,
+            isSavingComment: _isSavingComment,
+            onDownload: _downloadImport,
+            onAddComment: canModerateImport ? _addComment : null,
+          ),
+          const SizedBox(height: AppSpacing.md),
+        ],
         _ImportValidationCard(job: details.job),
         const SizedBox(height: AppSpacing.md),
         if (_isImportStillProcessing(details.job.status))
@@ -649,6 +653,7 @@ class _ImportProcessingCard extends StatelessWidget {
 class _ImportActionCard extends StatelessWidget {
   const _ImportActionCard({
     required this.job,
+    required this.canDownload,
     required this.canComment,
     required this.isDownloading,
     required this.isSavingComment,
@@ -657,6 +662,7 @@ class _ImportActionCard extends StatelessWidget {
   });
 
   final GisImportJob job;
+  final bool canDownload;
   final bool canComment;
   final bool isDownloading;
   final bool isSavingComment;
@@ -678,11 +684,12 @@ class _ImportActionCard extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              FilledButton.icon(
-                onPressed: isDownloading ? null : () => onDownload(context),
-                icon: const Icon(Icons.download_outlined),
-                label: Text(isDownloading ? 'Downloading...' : 'Download file'),
-              ),
+              if (canDownload)
+                FilledButton.icon(
+                  onPressed: isDownloading ? null : () => onDownload(context),
+                  icon: const Icon(Icons.download_outlined),
+                  label: Text(isDownloading ? 'Downloading...' : 'Download file'),
+                ),
               if (onAddComment != null)
                 OutlinedButton.icon(
                   onPressed: isSavingComment ? null : () => onAddComment!(context),
@@ -1074,9 +1081,8 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
       );
     }
 
-    final bounds = _boundsFor(drawable);
     final mapKey = ValueKey<String>(
-      'import-preview-${_style.name}-${drawable.length}-${_boundsSignature(bounds)}',
+      'import-preview-${_style.name}-${drawable.length}',
     );
 
     return AppCard(
@@ -1159,12 +1165,10 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
               child: FlutterMap(
                 key: mapKey,
                 options: MapOptions(
-                  initialCameraFit: bounds != null
-                      ? CameraFit.bounds(
-                          bounds: bounds,
-                          padding: const EdgeInsets.all(24),
-                        )
-                      : LebanonMapConfig.quickFit,
+                  initialCameraFit: LebanonMapConfig.lebanonFit(
+                    padding: const EdgeInsets.all(20),
+                  ),
+                  cameraConstraint: LebanonMapConfig.cameraConstraint,
                   minZoom: LebanonMapConfig.quickMinZoom,
                   maxZoom: LebanonMapConfig.quickMaxZoom,
                   interactionOptions: const InteractionOptions(
@@ -1202,33 +1206,6 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
         ],
       ),
     );
-  }
-
-  LatLngBounds? _boundsFor(List<ImportedFeature> features) {
-    final points = <LatLng>[];
-    for (final feature in features) {
-      final geometry = feature.geometry;
-      if (geometry == null) {
-        continue;
-      }
-      points.addAll(geometryPoints(geometry));
-    }
-    if (points.isEmpty) {
-      return null;
-    }
-    return LatLngBounds.fromPoints(points);
-  }
-
-  String _boundsSignature(LatLngBounds? bounds) {
-    if (bounds == null) {
-      return 'none';
-    }
-    return [
-      bounds.southWest.latitude.toStringAsFixed(4),
-      bounds.southWest.longitude.toStringAsFixed(4),
-      bounds.northEast.latitude.toStringAsFixed(4),
-      bounds.northEast.longitude.toStringAsFixed(4),
-    ].join(':');
   }
 
   bool _containsOnlyLebanonGeometry(List<ImportedFeature> features) {

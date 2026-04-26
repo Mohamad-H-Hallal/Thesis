@@ -163,6 +163,11 @@ describe('GIS import workflow', () => {
     expect(detailsResponse.body.data.preview_features).toHaveLength(2);
     const featureIds = detailsResponse.body.data.preview_features.map((item) => item.id);
 
+    await request(app)
+      .get(`${API_PREFIX}/imports/${importId}/download`)
+      .set(authHeader(contributorLogin.token))
+      .expect(403);
+
     const approveResponse = await request(app)
       .post(`${API_PREFIX}/imports/${importId}/review`)
       .set(authHeader(admin.token))
@@ -491,10 +496,36 @@ describe('GIS import workflow', () => {
         .expect(403);
 
       await request(app)
+        .get(`${API_PREFIX}/imports/${importId}/download`)
+        .set(authHeader(standardAdmin.token))
+        .expect(403);
+
+      await request(app)
         .post(`${API_PREFIX}/imports/${importId}/comments`)
         .set(authHeader(protectedAdmin.token))
         .send({ comment: 'Please verify the imported admin dataset naming.' })
         .expect(201);
+
+      const commentAuditCheck = await pool.query(
+        `SELECT action_type, entity_type, entity_id
+         FROM audit_log
+         WHERE action_type = 'comment'
+           AND entity_type = 'gis_import_job'
+           AND entity_id = $1`,
+        [importId],
+      );
+      expect(commentAuditCheck.rows).toHaveLength(1);
+
+      const commentNotificationCheck = await pool.query(
+        `SELECT type, title, metadata
+         FROM notification
+         WHERE user_id = $1
+           AND type = 'import_event'
+         ORDER BY created_at DESC`,
+        [standardAdmin.user.id],
+      );
+      expect(commentNotificationCheck.rows).toHaveLength(1);
+      expect(commentNotificationCheck.rows[0].title).toContain('Import comment added');
 
       const commentVisibleToUploader = await request(app)
         .get(`${API_PREFIX}/imports/${importId}`)

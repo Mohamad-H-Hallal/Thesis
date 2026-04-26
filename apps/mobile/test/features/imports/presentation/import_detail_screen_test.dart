@@ -215,6 +215,19 @@ AuthSession _session() {
   );
 }
 
+AuthSession _contributorSession() {
+  return const AuthSession(
+    accessToken: 'token',
+    refreshToken: 'refresh',
+    user: AppUser(
+      id: 'contributor-1',
+      fullName: 'Field Contributor',
+      email: 'contributor@example.com',
+      role: UserRole.contributor,
+    ),
+  );
+}
+
 GisImportJob _job({
   required String status,
   Map<String, dynamic> validationSummary = const <String, dynamic>{},
@@ -343,6 +356,41 @@ void main() {
 
     expect(find.text('Spatial preview'), findsOneWidget);
     expect(find.textContaining('Processing imported features'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('contributors do not see reviewer file actions', (tester) async {
+    final repository = _FakeImportsRepository(
+      details: GisImportDetails(
+        job: _job(status: 'failed'),
+        previewFeatures: const <ImportedFeature>[],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 0,
+          previewFeatureCount: 0,
+          outsideWorkspaceFeatureCount: 0,
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(
+            (_) => _AuthenticatedAuthController(_contributorSession()),
+          ),
+          importsRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(body: ImportDetailScreen(importId: 'import-1')),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('File actions'), findsNothing);
+    expect(find.text('Download file'), findsNothing);
+    expect(find.text('Add comment'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

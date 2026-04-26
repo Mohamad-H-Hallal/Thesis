@@ -862,6 +862,11 @@ const canCommentOnImportJob = async (
   user: Express.UserContext,
 ): Promise<boolean> => canReviewImportJob(job, user);
 
+const canDownloadImportJob = async (
+  job: ImportJobAccessRow,
+  user: Express.UserContext,
+): Promise<boolean> => canReviewImportJob(job, user);
+
 const getImportReviewRecipients = async (
   executor: any,
   projectId: string,
@@ -1993,7 +1998,12 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
 
 const downloadImport = async (req: Request, res: Response): Promise<void> => {
   const importId = req.params.importId;
-  const job = await fetchImportJobWithAccess(importId, req.user as Express.UserContext);
+  const currentUser = req.user as Express.UserContext;
+  const job = await fetchImportJobWithAccess(importId, currentUser);
+  const canDownload = await canDownloadImportJob(job, currentUser);
+  if (!canDownload) {
+    throw new AppError('You are not allowed to download this import file.', 403);
+  }
   const filePath = path.resolve(job.file_path);
 
   try {
