@@ -40,6 +40,23 @@ class ImportedFeatureListQuery {
   int get hashCode => Object.hash(importId, status, issue);
 }
 
+class ImportMapQuery {
+  const ImportMapQuery({required this.importId, required this.projectId});
+
+  final String importId;
+  final String projectId;
+
+  @override
+  bool operator ==(Object other) {
+    return other is ImportMapQuery &&
+        other.importId == importId &&
+        other.projectId == projectId;
+  }
+
+  @override
+  int get hashCode => Object.hash(importId, projectId);
+}
+
 class GisImportJob {
   const GisImportJob({
     required this.id,
@@ -198,7 +215,11 @@ class ImportedFeature {
   final DateTime createdAt;
   final DateTime updatedAt;
 
-  bool get isActionable => status == 'pending_review' || status == 'rejected';
+  bool get canBeApproved => status == 'pending_review' || status == 'rejected';
+
+  bool get canBeRejected => status == 'pending_review' || status == 'approved';
+
+  bool get isActionable => canBeApproved || canBeRejected;
 }
 
 class GisImportDetails {

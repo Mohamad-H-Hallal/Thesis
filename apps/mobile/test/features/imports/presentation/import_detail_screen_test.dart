@@ -324,6 +324,13 @@ void main() {
   testWidgets('processing import shows processing card instead of map', (
     tester,
   ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1200, 2200);
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
     final repository = _FakeImportsRepository(
       details: GisImportDetails(
         job: _job(

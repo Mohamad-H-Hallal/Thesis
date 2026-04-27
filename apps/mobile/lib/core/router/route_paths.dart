@@ -38,6 +38,14 @@ class AppRoutes {
   static String projectImports(String id) => '/app/projects/$id/imports';
   static String projectExports(String id) => '/app/projects/$id/exports';
   static String importDetails(String id) => '/app/imports/$id';
+  static String importReview(String id) => '/app/imports/$id/review';
+  static String importMap(String id, {required String projectId}) {
+    final uri = Uri(
+      path: '/app/imports/$id/map',
+      queryParameters: {'projectId': projectId},
+    );
+    return uri.toString();
+  }
 
   static String addFeatureForProject(String projectId) {
     final uri = Uri(

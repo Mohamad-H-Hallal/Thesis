@@ -370,6 +370,124 @@ describe('GIS import workflow', () => {
     );
   });
 
+  test('approved staged features can be rejected later and are removed from official project features', async () => {
+    const admin = await createAdminUser({
+      fullName: 'Import Reversal Admin',
+      emailPrefix: 'import-reversal-admin',
+    });
+    const contributorRegistration = await registerUser({
+      role: 'contributor',
+      fullName: 'Import Reversal Contributor',
+      emailPrefix: 'import-reversal-contributor',
+    });
+    await approveContributorRequest({
+      token: admin.token,
+      userId: contributorRegistration.user.id,
+    });
+    const contributorLogin = await loginUser({
+      email: contributorRegistration.email,
+      password: contributorRegistration.password,
+    });
+
+    const category = await createCategory({
+      token: admin.token,
+      name: 'Import Reversal Category',
+    });
+    const project = await createProject({
+      token: admin.token,
+      categoryId: category.id,
+      name: 'Import Reversal Project',
+      visibleToContributors: true,
+    });
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}`)
+      .set(authHeader(admin.token))
+      .send({ status: 'active' })
+      .expect(200);
+    const assignment = await createAssignment({
+      token: admin.token,
+      projectId: project.id,
+      userId: contributorRegistration.user.id,
+    });
+    await updateAssignmentStatus({
+      token: admin.token,
+      assignmentId: assignment.id,
+      status: 'approved',
+    });
+
+    const geojsonPath = await createTempGeoJsonFile('import-approved-rejected', {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: { feature_type: 'olive', name: 'Reversible feature' },
+          geometry: {
+            type: 'Point',
+            coordinates: [35.5001, 33.9001],
+          },
+        },
+      ],
+    });
+
+    const uploadResponse = await request(app)
+      .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+      .set(authHeader(contributorLogin.token))
+      .attach('file', geojsonPath)
+      .expect(202);
+
+    const importId = uploadResponse.body.data.id;
+    const detailsResponse = await waitForImportStatus({
+      importId,
+      token: admin.token,
+      expectedStatuses: ['pending_review'],
+    });
+    const featureId = detailsResponse.body.data.preview_features[0].id;
+
+    await request(app)
+      .post(`${API_PREFIX}/imports/${importId}/review`)
+      .set(authHeader(admin.token))
+      .send({ status: 'approved', feature_ids: [featureId] })
+      .expect(200);
+
+    const approvedFeatures = await pool.query(
+      `SELECT id
+       FROM spatial_feature
+       WHERE project_id = $1`,
+      [project.id],
+    );
+    expect(approvedFeatures.rows).toHaveLength(1);
+
+    const rejectResponse = await request(app)
+      .post(`${API_PREFIX}/imports/${importId}/review`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'rejected',
+        feature_ids: [featureId],
+        reason: 'Boundary correction required.',
+      })
+      .expect(200);
+
+    expect(rejectResponse.body.data.status).toBe('rejected');
+
+    const finalOfficialFeatures = await pool.query(
+      `SELECT id
+       FROM spatial_feature
+       WHERE project_id = $1`,
+      [project.id],
+    );
+    expect(finalOfficialFeatures.rows).toHaveLength(0);
+
+    const stagedFeature = await pool.query(
+      `SELECT status, approved_feature_id, review_reason
+       FROM gis_import_feature
+       WHERE id = $1`,
+      [featureId],
+    );
+    expect(stagedFeature.rows[0].status).toBe('rejected');
+    expect(stagedFeature.rows[0].approved_feature_id).toBeNull();
+    expect(stagedFeature.rows[0].review_reason).toBe('Boundary correction required.');
+  });
+
   test('marks import as failed when staged features cannot pass required validation', async () => {
     const admin = await createAdminUser({
       fullName: 'Import Failure Admin',

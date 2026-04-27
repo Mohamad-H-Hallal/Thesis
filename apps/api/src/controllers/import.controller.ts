@@ -2132,9 +2132,9 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
 
   const updatedJob = await transaction(async (client: any) => {
     const allowedStatuses =
-      status === 'approved' && selectedFeatureIds.length > 0
+      status === 'approved'
         ? ['pending_review', 'rejected']
-        : ['pending_review'];
+        : ['pending_review', 'approved'];
 
     const targetParams: unknown[] = [importId, allowedStatuses];
     let targetFilter = `import_job_id = $1 AND status = ANY($2::gis_import_feature_status[])`;
@@ -2146,7 +2146,7 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
     const targetResult = await client.query(
       `SELECT id, display_title, geometry_type,
               CASE WHEN geom IS NULL THEN NULL ELSE ST_AsGeoJSON(geom) END AS geometry,
-              attributes, status
+              attributes, status, approved_feature_id
        FROM gis_import_feature
        WHERE ${targetFilter}
        ORDER BY source_index ASC`,
@@ -2214,11 +2214,21 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
       }
     } else {
       for (const row of targetResult.rows) {
+        if (row.status === 'approved' && row.approved_feature_id) {
+          await client.query(
+            `DELETE FROM spatial_feature
+             WHERE id = $1
+               AND project_id = $2`,
+            [row.approved_feature_id, job.project_id],
+          );
+        }
         await client.query(
           `UPDATE gis_import_feature
            SET status = 'rejected',
+               approved_feature_id = NULL,
                reviewed_by_user_id = $2,
                reviewed_at = CURRENT_TIMESTAMP,
+               approved_at = NULL,
                review_reason = $3
            WHERE id = $1`,
           [row.id, currentUser.id, normalizedReason],

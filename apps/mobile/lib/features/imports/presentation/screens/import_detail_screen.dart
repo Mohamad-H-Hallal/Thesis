@@ -5,11 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
+import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
@@ -178,13 +180,16 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
     final actionableFeatures = features
         .where((item) => item.isActionable)
         .toList(growable: false);
-    final selectedActionableIds = _selectedFeatureIds
+    final selectedApprovableIds = _selectedFeatureIds
         .where((id) => actionableFeatures.any((item) => item.id == id))
+        .where(
+          (id) => features.any((item) => item.id == id && item.canBeApproved),
+        )
         .toList(growable: false);
     final selectedRejectableIds = _selectedFeatureIds
         .where(
           (id) => features.any(
-            (item) => item.id == id && item.status == 'pending_review',
+            (item) => item.id == id && item.canBeRejected,
           ),
         )
         .toList(growable: false);
@@ -198,6 +203,12 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
     return ListView(
       children: [
         _ImportSummaryCard(job: details.job),
+        const SizedBox(height: AppSpacing.md),
+        _ImportNavigationCard(
+          importId: widget.importId,
+          projectId: details.job.projectId,
+          reviewLabel: canModerateImport ? 'Review features' : 'View features',
+        ),
         const SizedBox(height: AppSpacing.md),
         if (canDownloadImport || canModerateImport) ...[
           _ImportActionCard(
@@ -237,7 +248,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
           _buildReviewActions(
             context,
             details: details,
-            selectedActionableIds: selectedActionableIds,
+            selectedApprovableIds: selectedApprovableIds,
             selectedRejectableIds: selectedRejectableIds,
           ),
         if (canModerateImport && actionableFeatures.isNotEmpty)
@@ -408,7 +419,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
   Widget _buildReviewActions(
     BuildContext context, {
     required GisImportDetails details,
-    required List<String> selectedActionableIds,
+    required List<String> selectedApprovableIds,
     required List<String> selectedRejectableIds,
   }) {
     return AppCard(
@@ -425,7 +436,10 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
             runSpacing: 8,
             children: [
               FilledButton.icon(
-                onPressed: _isSubmitting || details.job.pendingFeatureCount == 0
+                onPressed:
+                    _isSubmitting ||
+                        (details.job.pendingFeatureCount == 0 &&
+                            details.job.rejectedFeatureCount == 0)
                     ? null
                     : () => _runReviewAction(
                         context,
@@ -433,29 +447,32 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
                         featureIds: const <String>[],
                       ),
                 icon: const Icon(Icons.check_circle_outline),
-                label: const Text('Approve all pending'),
+                label: const Text('Approve all reviewable'),
               ),
               OutlinedButton.icon(
-                onPressed: _isSubmitting || details.job.pendingFeatureCount == 0
+                onPressed:
+                    _isSubmitting ||
+                        (details.job.pendingFeatureCount == 0 &&
+                            details.job.approvedFeatureCount == 0)
                     ? null
                     : () => _runRejectWithReason(
                         context,
                         featureIds: const <String>[],
                       ),
                 icon: const Icon(Icons.cancel_outlined),
-                label: const Text('Reject all pending'),
+                label: const Text('Reject all reviewable'),
               ),
               FilledButton.tonalIcon(
-                onPressed: _isSubmitting || selectedActionableIds.isEmpty
+                onPressed: _isSubmitting || selectedApprovableIds.isEmpty
                     ? null
                     : () => _runReviewAction(
                         context,
                         status: 'approved',
-                        featureIds: selectedActionableIds,
+                        featureIds: selectedApprovableIds,
                       ),
                 icon: const Icon(Icons.done_all),
                 label: Text(
-                  'Approve selected (${selectedActionableIds.length})',
+                  'Approve selected (${selectedApprovableIds.length})',
                 ),
               ),
               FilledButton.tonalIcon(
@@ -900,6 +917,52 @@ class _ImportActionCard extends StatelessWidget {
               softWrap: true,
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ImportNavigationCard extends StatelessWidget {
+  const _ImportNavigationCard({
+    required this.importId,
+    required this.projectId,
+    required this.reviewLabel,
+  });
+
+  final String importId;
+  final String projectId;
+  final String reviewLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Import tools',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.icon(
+                onPressed: () => context.push(
+                  AppRoutes.importMap(importId, projectId: projectId),
+                ),
+                icon: const Icon(Icons.map_outlined),
+                label: const Text('Open import map'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => context.push(AppRoutes.importReview(importId)),
+                icon: const Icon(Icons.rule_folder_outlined),
+                label: Text(reviewLabel),
+              ),
+            ],
+          ),
         ],
       ),
     );
