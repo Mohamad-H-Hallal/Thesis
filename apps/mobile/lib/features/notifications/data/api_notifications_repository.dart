@@ -82,7 +82,7 @@ class ApiNotificationsRepository implements NotificationsRepository {
       final data = Map<String, dynamic>.from(
         response.data?['data'] as Map? ?? const <String, dynamic>{},
       );
-      final raw = data['count'];
+      final raw = data['unread_count'] ?? data['count'];
       if (raw is int) {
         return raw;
       }

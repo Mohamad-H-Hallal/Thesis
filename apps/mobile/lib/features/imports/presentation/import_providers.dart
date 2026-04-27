@@ -15,13 +15,11 @@ final importJobsProvider =
           .fetchImports(status: query.status, projectId: query.projectId);
     });
 
-final importDetailsProvider = FutureProvider.family<GisImportDetails, String>((
-  ref,
-  importId,
-) async {
-  ref.watch(workflowRefreshTickProvider);
-  return ref.read(importsRepositoryProvider).fetchImportDetails(importId);
-});
+final importDetailsProvider = FutureProvider.autoDispose
+    .family<GisImportDetails, String>((ref, importId) async {
+      ref.watch(workflowRefreshTickProvider);
+      return ref.read(importsRepositoryProvider).fetchImportDetails(importId);
+    });
 
 final paginatedImportJobsProvider = StateNotifierProvider.autoDispose
     .family<

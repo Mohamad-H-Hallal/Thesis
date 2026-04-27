@@ -46,6 +46,17 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
   Future<void> Function()? _refreshImportDetails;
 
   @override
+  void initState() {
+    super.initState();
+    Future<void>.microtask(() {
+      if (!mounted) {
+        return;
+      }
+      ref.invalidate(importDetailsProvider(widget.importId));
+    });
+  }
+
+  @override
   void dispose() {
     _refreshTimer?.cancel();
     super.dispose();
@@ -347,9 +358,51 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
     if (_liveDetails == null) {
       return providerDetails;
     }
-    return providerDetails.job.updatedAt.isAfter(_liveDetails!.job.updatedAt)
-        ? providerDetails
-        : _liveDetails;
+    final live = _liveDetails!;
+    if (providerDetails.job.updatedAt.isAfter(live.job.updatedAt)) {
+      return providerDetails;
+    }
+    if (_isImportDetailSnapshotNewer(providerDetails, live)) {
+      return providerDetails;
+    }
+    return live;
+  }
+
+  bool _isImportDetailSnapshotNewer(
+    GisImportDetails providerDetails,
+    GisImportDetails liveDetails,
+  ) {
+    if (providerDetails.job.updatedAt.isBefore(liveDetails.job.updatedAt)) {
+      return false;
+    }
+    if (!providerDetails.job.updatedAt.isAtSameMomentAs(
+      liveDetails.job.updatedAt,
+    )) {
+      return false;
+    }
+    if (providerDetails.job.status != liveDetails.job.status) {
+      return true;
+    }
+    if (providerDetails.job.pendingFeatureCount !=
+            liveDetails.job.pendingFeatureCount ||
+        providerDetails.job.approvedFeatureCount !=
+            liveDetails.job.approvedFeatureCount ||
+        providerDetails.job.rejectedFeatureCount !=
+            liveDetails.job.rejectedFeatureCount ||
+        providerDetails.job.failedFeatureCount !=
+            liveDetails.job.failedFeatureCount ||
+        providerDetails.job.warningCount != liveDetails.job.warningCount ||
+        providerDetails.job.errorCount != liveDetails.job.errorCount) {
+      return true;
+    }
+    if (providerDetails.previewSummary.previewFeatureCount !=
+            liveDetails.previewSummary.previewFeatureCount ||
+        providerDetails.previewSummary.outsideWorkspaceFeatureCount !=
+            liveDetails.previewSummary.outsideWorkspaceFeatureCount ||
+        providerDetails.comments.length != liveDetails.comments.length) {
+      return true;
+    }
+    return false;
   }
 
   Widget _buildReviewActions(
@@ -917,21 +970,14 @@ class _ImportValidationCard extends StatelessWidget {
             const SizedBox(height: AppSpacing.xs),
             ...errorGroups.map(
               (issue) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  '${issue.count} feature(s): ${issue.message}',
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                  softWrap: true,
-                ),
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _ImportIssueSummaryBlock(issue: issue, isError: true),
               ),
             ),
             ...warningGroups.map(
               (issue) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  '${issue.count} feature(s): ${issue.message}',
-                  softWrap: true,
-                ),
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _ImportIssueSummaryBlock(issue: issue),
               ),
             ),
           ],
@@ -1041,12 +1087,15 @@ class _ImportedFeatureCard extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.sm),
           if (feature.validationWarnings.isNotEmpty)
-            ...feature.validationWarnings.map(
-              (warning) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text('Warning: $warning', softWrap: true),
-              ),
-            ),
+            ...feature.validationWarnings
+                .where((warning) => !_isUnknownFieldWarning(warning))
+                .map(
+                  (warning) => Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text('Warning: $warning', softWrap: true),
+                  ),
+                ),
+          ..._buildUnknownFieldWarningBlocks(feature.validationReport),
           if (feature.validationErrors.isNotEmpty)
             ...feature.validationErrors.map(
               (error) => Padding(
@@ -1070,19 +1119,78 @@ class _ImportedFeatureCard extends StatelessWidget {
             const SizedBox(height: AppSpacing.sm),
             Text('Attributes', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: feature.attributes.entries
-                  .take(8)
-                  .map((entry) {
-                    return Chip(label: Text('${entry.key}: ${entry.value}'));
-                  })
-                  .toList(growable: false),
-            ),
+            _ImportAttributeGrid(attributes: feature.attributes),
           ],
         ],
       ),
+    );
+  }
+}
+
+class _ImportAttributeGrid extends StatelessWidget {
+  const _ImportAttributeGrid({required this.attributes});
+
+  final Map<String, dynamic> attributes;
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = attributes.entries.toList(growable: false);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final useTwoColumns = constraints.maxWidth >= 520;
+        final itemWidth = useTwoColumns
+            ? (constraints.maxWidth - AppSpacing.sm) / 2
+            : constraints.maxWidth;
+
+        return Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.sm,
+          children: entries
+              .map((entry) {
+                return SizedBox(
+                  width: itemWidth,
+                  child: _MetadataField(
+                    label: _labelize(entry.key),
+                    value: _formatAttributeValue(entry.value),
+                  ),
+                );
+              })
+              .toList(growable: false),
+        );
+      },
+    );
+  }
+}
+
+class _ImportIssueSummaryBlock extends StatelessWidget {
+  const _ImportIssueSummaryBlock({required this.issue, this.isError = false});
+
+  final _ValidationIssueGroup issue;
+  final bool isError;
+
+  @override
+  Widget build(BuildContext context) {
+    final extraFields = _parseUnknownFieldWarning(issue.message);
+    final color = isError ? Theme.of(context).colorScheme.error : null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${issue.count} feature(s): ${extraFields == null ? issue.message : 'Extra source attributes were kept.'}',
+          style: color == null ? null : TextStyle(color: color),
+          softWrap: true,
+        ),
+        if (extraFields != null && extraFields.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: extraFields
+                .map((field) => Chip(label: Text(field)))
+                .toList(growable: false),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -1121,6 +1229,9 @@ class _ValidationIssueGroup {
   final String message;
   final int count;
 }
+
+const String _unknownFieldWarningPrefix =
+    'Attributes not defined in the project form were kept:';
 
 List<_ValidationIssueGroup> _issueFilterOptions(Map<String, dynamic> summary) {
   final groups = <_ValidationIssueGroup>[
@@ -1586,6 +1697,75 @@ String _labelize(String key) {
       .where((part) => part.isNotEmpty)
       .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
       .join(' ');
+}
+
+String _formatAttributeValue(Object? value) {
+  if (value == null) {
+    return 'Not provided';
+  }
+  if (value is List) {
+    return value.map((item) => item.toString()).join(', ');
+  }
+  if (value is Map) {
+    return value.entries
+        .map((entry) => '${entry.key}: ${entry.value}')
+        .join(', ');
+  }
+  return value.toString();
+}
+
+bool _isUnknownFieldWarning(String message) =>
+    message.startsWith(_unknownFieldWarningPrefix);
+
+List<String>? _parseUnknownFieldWarning(String message) {
+  if (!_isUnknownFieldWarning(message)) {
+    return null;
+  }
+  final suffix = message.substring(_unknownFieldWarningPrefix.length).trim();
+  if (suffix.isEmpty) {
+    return const <String>[];
+  }
+  return suffix
+      .split(',')
+      .map((part) => part.trim())
+      .where((part) => part.isNotEmpty)
+      .toList(growable: false);
+}
+
+List<Widget> _buildUnknownFieldWarningBlocks(
+  Map<String, dynamic> validationReport,
+) {
+  final raw = validationReport['unknown_fields'];
+  if (raw is! List || raw.isEmpty) {
+    return const <Widget>[];
+  }
+  final fields = raw
+      .map((value) => value?.toString().trim() ?? '')
+      .where((value) => value.isNotEmpty)
+      .toList(growable: false);
+  if (fields.isEmpty) {
+    return const <Widget>[];
+  }
+
+  return <Widget>[
+    const Padding(
+      padding: EdgeInsets.only(bottom: 4),
+      child: Text(
+        'Warning: Extra source attributes were kept.',
+        softWrap: true,
+      ),
+    ),
+    Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: fields
+            .map((field) => Chip(label: Text(field)))
+            .toList(growable: false),
+      ),
+    ),
+  ];
 }
 
 LatLng? _decodePreviewCoordinatePair(Object? raw) {
