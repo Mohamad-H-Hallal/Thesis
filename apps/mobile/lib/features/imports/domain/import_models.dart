@@ -1,3 +1,5 @@
+import '../../map/domain/map_feature.dart';
+
 class GisImportListQuery {
   const GisImportListQuery({this.status, this.projectId, this.categoryId});
 
@@ -38,23 +40,6 @@ class ImportedFeatureListQuery {
 
   @override
   int get hashCode => Object.hash(importId, status, issue);
-}
-
-class ImportMapQuery {
-  const ImportMapQuery({required this.importId, required this.projectId});
-
-  final String importId;
-  final String projectId;
-
-  @override
-  bool operator ==(Object other) {
-    return other is ImportMapQuery &&
-        other.importId == importId &&
-        other.projectId == projectId;
-  }
-
-  @override
-  int get hashCode => Object.hash(importId, projectId);
 }
 
 class GisImportJob {
@@ -234,4 +219,31 @@ class GisImportDetails {
   final List<ImportedFeature> previewFeatures;
   final ImportPreviewSummary previewSummary;
   final List<ImportComment> comments;
+}
+
+class ImportMapQuery {
+  const ImportMapQuery({required this.importId, required this.projectId});
+
+  final String importId;
+  final String projectId;
+
+  @override
+  bool operator ==(Object other) {
+    return other is ImportMapQuery &&
+        other.importId == importId &&
+        other.projectId == projectId;
+  }
+
+  @override
+  int get hashCode => Object.hash(importId, projectId);
+}
+
+class ImportMapData {
+  const ImportMapData({
+    required this.stagedFeatures,
+    required this.approvedProjectFeatures,
+  });
+
+  final List<ImportedFeature> stagedFeatures;
+  final List<MapFeatureSummary> approvedProjectFeatures;
 }

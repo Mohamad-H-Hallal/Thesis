@@ -1161,6 +1161,21 @@ const mapImportCommentRow = (row: ImportCommentRow) => ({
   created_at: row.created_at,
 });
 
+const mapImportMapProjectFeatureRow = (row: any) => ({
+  id: row.id,
+  status: row.status,
+  geometry: row.geometry ? JSON.parse(row.geometry) : null,
+  attributes: row.attributes ?? {},
+  collected_by: row.collected_by ?? null,
+  reviewed_by: row.reviewed_by ?? null,
+  review_notes: row.review_notes ?? null,
+  accuracy_meters: row.accuracy_meters ?? null,
+  collected_at: row.collected_at ?? null,
+  submitted_at: row.submitted_at ?? null,
+  reviewed_at: row.reviewed_at ?? null,
+  photo_count: row.photo_count ?? 0,
+});
+
 const insertStagedImportFeaturesBatch = async (
   client: any,
   rows: StagedImportInsertRow[],
@@ -1832,6 +1847,52 @@ const getImportDetails = async (req: Request, res: Response): Promise<void> => {
   });
 };
 
+const getImportMapData = async (req: Request, res: Response): Promise<void> => {
+  const importId = req.params.importId;
+  const job = await fetchImportJobWithAccess(importId, req.user as Express.UserContext);
+
+  const stagedResult = await query(
+    `SELECT gif.*, reviewer.full_name AS reviewed_by_name,
+            CASE WHEN gif.geom IS NULL THEN NULL ELSE ST_AsGeoJSON(gif.geom) END AS geometry
+     FROM gis_import_feature gif
+     LEFT JOIN "user" reviewer ON reviewer.id = gif.reviewed_by_user_id
+     WHERE gif.import_job_id = $1
+       AND gif.geom IS NOT NULL
+     ORDER BY gif.source_index ASC`,
+    [importId],
+  );
+
+  const approvedProjectResult = await query(
+    `SELECT sf.id,
+            sf.status,
+            ST_AsGeoJSON(sf.geom) AS geometry,
+            sf.attributes,
+            collector.full_name AS collected_by,
+            reviewer.full_name AS reviewed_by,
+            sf.review_notes,
+            sf.accuracy_meters,
+            sf.collected_at,
+            sf.submitted_at,
+            sf.reviewed_at,
+            (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) AS photo_count
+     FROM spatial_feature sf
+     LEFT JOIN "user" collector ON collector.id = sf.collected_by_user_id
+     LEFT JOIN "user" reviewer ON reviewer.id = sf.reviewed_by_user_id
+     WHERE sf.project_id = $1
+       AND sf.status = 'approved'
+     ORDER BY sf.reviewed_at DESC NULLS LAST, sf.submitted_at DESC NULLS LAST, sf.id ASC`,
+    [job.project_id],
+  );
+
+  res.json({
+    success: true,
+    data: {
+      staged_features: stagedResult.rows.map((row) => mapImportFeatureRow(row as ImportFeatureRow)),
+      approved_project_features: approvedProjectResult.rows.map(mapImportMapProjectFeatureRow),
+    },
+  });
+};
+
 const listImportFeatures = async (req: Request, res: Response): Promise<void> => {
   const importId = req.params.importId;
   await fetchImportJobWithAccess(importId, req.user as Express.UserContext);
@@ -2329,6 +2390,7 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
 module.exports = {
   listImports,
   getImportDetails,
+  getImportMapData,
   listImportFeatures,
   uploadImport,
   downloadImport,

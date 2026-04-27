@@ -9,6 +9,7 @@ import 'package:lebanese_gis_mobile/features/auth/presentation/controllers/auth_
 import 'package:lebanese_gis_mobile/features/imports/domain/import_models.dart';
 import 'package:lebanese_gis_mobile/features/imports/domain/imports_repository.dart';
 import 'package:lebanese_gis_mobile/features/imports/presentation/screens/import_detail_screen.dart';
+import 'package:lebanese_gis_mobile/features/map/domain/map_feature.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_map/flutter_map.dart';
 
@@ -126,6 +127,15 @@ class _FakeImportsRepository implements ImportsRepository {
 
   @override
   Future<GisImportDetails> fetchImportDetails(String importId) async => details;
+
+  @override
+  Future<ImportMapData> fetchImportMapData({
+    required String importId,
+    required String projectId,
+  }) async => const ImportMapData(
+        stagedFeatures: <ImportedFeature>[],
+        approvedProjectFeatures: <MapFeatureSummary>[],
+      );
 
   @override
   Future<List<ImportComment>> fetchImportComments(String importId) async =>
@@ -407,6 +417,13 @@ void main() {
   testWidgets(
     'failed import outside Lebanon shows file issues without map exception',
     (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1200, 2200);
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
       final feature = _outsideLebanonFeature();
       final repository = _FakeImportsRepository(
         details: GisImportDetails(
@@ -448,6 +465,9 @@ void main() {
         ),
       );
 
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(find.text('File-wide issues'), 300);
       await tester.pumpAndSettle();
 
       expect(find.text('File-wide issues'), findsOneWidget);
@@ -577,7 +597,7 @@ void main() {
 
     expect(repository.requestedIssues, contains(isNull));
 
-    await tester.tap(find.byType(DropdownButtonFormField<String?>));
+    await tester.tap(find.widgetWithText(DropdownButtonFormField<String?>, 'All staged features').last);
     await tester.pumpAndSettle();
     await tester.tap(
       find.textContaining('Missing required attribute: feature_type').last,

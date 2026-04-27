@@ -10,6 +10,7 @@ import '../../../core/config/app_env.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_error_message.dart';
 import '../../../core/pagination/paginated_result.dart';
+import '../../map/domain/map_feature.dart';
 import '../domain/import_models.dart';
 import '../domain/imports_repository.dart';
 
@@ -153,6 +154,45 @@ class ApiImportsRepository implements ImportsRepository {
       throw userFacingDioMessage(
         error,
         fallback: 'Unable to load this GIS import right now.',
+      );
+    }
+  }
+
+  @override
+  Future<ImportMapData> fetchImportMapData({
+    required String importId,
+    required String projectId,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_basePath/$importId/map',
+        queryParameters: <String, dynamic>{'project_id': projectId},
+      );
+      final data = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      final stagedRows =
+          (data['staged_features'] as List? ?? const <dynamic>[])
+              .map(
+                (row) =>
+                    _toImportedFeature(Map<String, dynamic>.from(row as Map)),
+              )
+              .toList(growable: false);
+      final approvedRows =
+          (data['approved_project_features'] as List? ?? const <dynamic>[])
+              .map(
+                (row) =>
+                    _toProjectFeature(Map<String, dynamic>.from(row as Map)),
+              )
+              .toList(growable: false);
+      return ImportMapData(
+        stagedFeatures: stagedRows,
+        approvedProjectFeatures: approvedRows,
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load the import map right now.',
       );
     }
   }
@@ -420,6 +460,28 @@ class ApiImportsRepository implements ImportsRepository {
     );
   }
 
+  MapFeatureSummary _toProjectFeature(Map<String, dynamic> item) {
+    return MapFeatureSummary(
+      id: (item['id'] as String?) ?? '',
+      status: (item['status'] as String?) ?? 'approved',
+      geometry: Map<String, dynamic>.from(
+        item['geometry'] as Map? ?? const <String, dynamic>{},
+      ),
+      attributes: Map<String, dynamic>.from(
+        item['attributes'] as Map? ?? const <String, dynamic>{},
+      ),
+      collectedBy: item['collected_by'] as String?,
+      reviewedBy: item['reviewed_by'] as String?,
+      reviewNotes: item['review_notes'] as String?,
+      accuracyMeters: _toDouble(item['accuracy_meters']),
+      collectedAt: _toOptionalDate(item['collected_at']),
+      submittedAt: _toOptionalDate(item['submitted_at']),
+      reviewedAt: _toOptionalDate(item['reviewed_at']),
+      photoCount: _toInt(item['photo_count']),
+      photos: const <MapFeaturePhoto>[],
+    );
+  }
+
   int _toInt(dynamic value) {
     if (value is int) {
       return value;
@@ -431,6 +493,19 @@ class ApiImportsRepository implements ImportsRepository {
       return int.tryParse(value) ?? 0;
     }
     return 0;
+  }
+
+  double? _toDouble(dynamic value) {
+    if (value is double) {
+      return value;
+    }
+    if (value is num) {
+      return value.toDouble();
+    }
+    if (value is String) {
+      return double.tryParse(value);
+    }
+    return null;
   }
 
   DateTime _toDate(dynamic value) {

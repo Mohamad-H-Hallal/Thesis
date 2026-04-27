@@ -43,6 +43,13 @@ router.get(
 );
 
 router.get(
+  '/:importId/map',
+  uuidValidation('importId'),
+  validate,
+  asyncHandler(importController.getImportMapData),
+);
+
+router.get(
   '/:importId/download',
   uuidValidation('importId'),
   validate,

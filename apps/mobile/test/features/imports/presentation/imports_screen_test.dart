@@ -149,6 +149,14 @@ class _FakeImportsRepository implements ImportsRepository {
   }
 
   @override
+  Future<ImportMapData> fetchImportMapData({
+    required String importId,
+    required String projectId,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
   Future<List<ImportComment>> fetchImportComments(String importId) {
     throw UnimplementedError();
   }

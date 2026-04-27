@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:file_picker/file_picker.dart';
 
 import '../../../core/pagination/paginated_result.dart';
+import '../../map/domain/map_feature.dart';
 import '../domain/import_models.dart';
 import '../domain/imports_repository.dart';
 
@@ -144,6 +145,27 @@ class MockImportsRepository implements ImportsRepository {
         previewFeatureCount: (_features[importId] ?? const <ImportedFeature>[]).length,
         outsideWorkspaceFeatureCount: 0,
       ),
+    );
+  }
+
+  @override
+  Future<ImportMapData> fetchImportMapData({
+    required String importId,
+    required String projectId,
+  }) async {
+    return ImportMapData(
+      stagedFeatures: _features[importId] ?? const <ImportedFeature>[],
+      approvedProjectFeatures: const <MapFeatureSummary>[
+        MapFeatureSummary(
+          id: 'mock-approved-feature-1',
+          status: 'approved',
+          geometry: <String, dynamic>{
+            'type': 'Point',
+            'coordinates': <double>[35.84, 34.25],
+          },
+          attributes: <String, dynamic>{'name': 'Approved context feature'},
+        ),
+      ],
     );
   }
 

@@ -90,7 +90,7 @@ void main() {
         overrides: [
           importDetailsProvider('import-1').overrideWith((ref) async => details),
           importMapDataProvider(query).overrideWith(
-            (ref) async => (
+            (ref) async => ImportMapData(
               stagedFeatures: <ImportedFeature>[
                 _importedFeature('feature-1', 'pending_review', 35.5, 33.9),
                 _importedFeature('feature-2', 'approved', 35.55, 33.95),

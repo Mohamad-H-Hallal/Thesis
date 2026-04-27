@@ -14,7 +14,6 @@ import '../../features/admin/presentation/screens/project_assignments_screen.dar
 import '../../features/exports/presentation/screens/exports_dashboard_screen.dart';
 import '../../features/imports/presentation/screens/import_detail_screen.dart';
 import '../../features/imports/presentation/screens/import_map_screen.dart';
-import '../../features/imports/presentation/screens/import_review_screen.dart';
 import '../../features/imports/presentation/screens/imports_screen.dart';
 import '../../features/admin/presentation/screens/project_form_screen.dart';
 import '../../features/map/presentation/screens/add_feature_screen.dart';
@@ -337,21 +336,6 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
               showBackButton: true,
               showOfflineBanner: false,
               body: ImportDetailScreen(importId: importId),
-            ),
-          );
-        },
-      ),
-      GoRoute(
-        path: '/app/imports/:importId/review',
-        pageBuilder: (_, state) {
-          final importId = state.pathParameters['importId'] ?? '';
-          return _buildPage(
-            state,
-            AppScaffold(
-              title: 'Review imported features',
-              showBackButton: true,
-              showOfflineBanner: false,
-              body: ImportReviewScreen(importId: importId),
             ),
           );
         },

@@ -25,6 +25,11 @@ abstract class ImportsRepository {
 
   Future<GisImportDetails> fetchImportDetails(String importId);
 
+  Future<ImportMapData> fetchImportMapData({
+    required String importId,
+    required String projectId,
+  });
+
   Future<List<ImportComment>> fetchImportComments(String importId);
 
   Future<List<ImportedFeature>> fetchImportFeatures({

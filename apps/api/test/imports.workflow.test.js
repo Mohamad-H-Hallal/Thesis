@@ -370,6 +370,116 @@ describe('GIS import workflow', () => {
     );
   });
 
+  test('import map data stays separated from official project features', async () => {
+    const admin = await createAdminUser({
+      fullName: 'Import Map Admin',
+      emailPrefix: 'import-map-admin',
+    });
+    const contributorRegistration = await registerUser({
+      role: 'contributor',
+      fullName: 'Import Map Contributor',
+      emailPrefix: 'import-map-contributor',
+    });
+    await approveContributorRequest({
+      token: admin.token,
+      userId: contributorRegistration.user.id,
+    });
+    const contributorLogin = await loginUser({
+      email: contributorRegistration.email,
+      password: contributorRegistration.password,
+    });
+
+    const category = await createCategory({
+      token: admin.token,
+      name: 'Import Map Category',
+    });
+    const project = await createProject({
+      token: admin.token,
+      categoryId: category.id,
+      name: 'Import Map Project',
+      visibleToContributors: true,
+    });
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}`)
+      .set(authHeader(admin.token))
+      .send({ status: 'active' })
+      .expect(200);
+    const assignment = await createAssignment({
+      token: admin.token,
+      projectId: project.id,
+      userId: contributorRegistration.user.id,
+    });
+    await updateAssignmentStatus({
+      token: admin.token,
+      assignmentId: assignment.id,
+      status: 'approved',
+    });
+
+    const geojsonPath = await createTempGeoJsonFile('import-map-separation', {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: { feature_type: 'olive', name: 'Pending import feature' },
+          geometry: {
+            type: 'Point',
+            coordinates: [35.5001, 33.9001],
+          },
+        },
+        {
+          type: 'Feature',
+          properties: { feature_type: 'cedar', name: 'Approved import feature' },
+          geometry: {
+            type: 'Point',
+            coordinates: [35.5015, 33.9015],
+          },
+        },
+      ],
+    });
+
+    const uploadResponse = await request(app)
+      .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+      .set(authHeader(contributorLogin.token))
+      .attach('file', geojsonPath)
+      .expect(202);
+
+    const importId = uploadResponse.body.data.id;
+    const detailsResponse = await waitForImportStatus({
+      importId,
+      token: admin.token,
+      expectedStatuses: ['pending_review'],
+    });
+    const featureIds = detailsResponse.body.data.preview_features.map((item) => item.id);
+
+    await request(app)
+      .post(`${API_PREFIX}/imports/${importId}/review`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'approved',
+        feature_ids: [featureIds[1]],
+      })
+      .expect(200);
+
+    const importMapResponse = await request(app)
+      .get(`${API_PREFIX}/imports/${importId}/map`)
+      .set(authHeader(admin.token))
+      .expect(200);
+
+    expect(importMapResponse.body.data.staged_features).toHaveLength(2);
+    expect(importMapResponse.body.data.staged_features.map((item) => item.status)).toEqual(
+      expect.arrayContaining(['pending_review', 'approved']),
+    );
+    expect(importMapResponse.body.data.approved_project_features).toHaveLength(1);
+
+    const projectMapResponse = await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/features?limit=100`)
+      .set(authHeader(admin.token))
+      .expect(200);
+
+    expect(projectMapResponse.body.data).toHaveLength(1);
+    expect(projectMapResponse.body.data[0].status).toBe('approved');
+  });
+
   test('approved staged features can be rejected later and are removed from official project features', async () => {
     const admin = await createAdminUser({
       fullName: 'Import Reversal Admin',

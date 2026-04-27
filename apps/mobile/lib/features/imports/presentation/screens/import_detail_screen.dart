@@ -43,6 +43,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
   bool _isRefreshingImportDetails = false;
   GisImportDetails? _liveDetails;
   String? _downloadedImportPath;
+  String? _selectedStatusFilter;
   String? _selectedIssueFilter;
   Timer? _refreshTimer;
   Future<void> Function()? _refreshImportDetails;
@@ -74,6 +75,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
     final isProtectedSuperAdmin = session.user.isSuperAdmin;
     final featureQuery = ImportedFeatureListQuery(
       importId: widget.importId,
+      status: _selectedStatusFilter,
       issue: _selectedIssueFilter,
     );
     final detailsAsync = ref.watch(importDetailsProvider(widget.importId));
@@ -204,10 +206,10 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       children: [
         _ImportSummaryCard(job: details.job),
         const SizedBox(height: AppSpacing.md),
-        _ImportNavigationCard(
+        _ImportMapActionCard(
           importId: widget.importId,
           projectId: details.job.projectId,
-          reviewLabel: canModerateImport ? 'Review features' : 'View features',
+          isProcessing: _isImportStillProcessing(details.job.status),
         ),
         const SizedBox(height: AppSpacing.md),
         if (canDownloadImport || canModerateImport) ...[
@@ -268,44 +270,35 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
             ),
           )
         else ...[
-          if (issueFilters.isNotEmpty) ...[
-            DropdownButtonFormField<String?>(
-              initialValue: _selectedIssueFilter,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Issue filter'),
-              items: <DropdownMenuItem<String?>>[
-                const DropdownMenuItem<String?>(
-                  value: null,
-                  child: Text('All staged features'),
-                ),
-                ...issueFilters.map(
-                  (option) => DropdownMenuItem<String?>(
-                    value: option.message,
-                    child: Text(
-                      '${option.message} (${option.count})',
-                      maxLines: 3,
-                    ),
-                  ),
-                ),
-              ],
-              onChanged: (value) {
-                setState(() {
-                  _selectedIssueFilter = value;
-                  _selectedFeatureIds.clear();
-                });
-              },
-            ),
-            const SizedBox(height: AppSpacing.sm),
-          ],
+          _ImportFeatureFiltersCard(
+            selectedStatus: _selectedStatusFilter,
+            selectedIssue: _selectedIssueFilter,
+            issueFilters: issueFilters,
+            onStatusChanged: (value) {
+              setState(() {
+                _selectedStatusFilter = value;
+                _selectedFeatureIds.clear();
+              });
+            },
+            onIssueChanged: (value) {
+              setState(() {
+                _selectedIssueFilter = value;
+                _selectedFeatureIds.clear();
+              });
+            },
+          ),
+          const SizedBox(height: AppSpacing.sm),
           if (features.isEmpty)
             AppEmptyState(
               icon: Icons.map_outlined,
-              title: _selectedIssueFilter == null
+              title:
+                  _selectedIssueFilter == null && _selectedStatusFilter == null
                   ? 'No preview features available'
-                  : 'No staged features match this issue',
-              message: _selectedIssueFilter == null
+                  : 'No staged features match the current filters',
+              message:
+                  _selectedIssueFilter == null && _selectedStatusFilter == null
                   ? 'This import does not currently expose preview geometries.'
-                  : 'No staged features currently match the selected validation issue.',
+                  : 'No staged features currently match the selected status or validation issue.',
             )
           else
             ProgressiveListSection<ImportedFeature>(
@@ -923,16 +916,16 @@ class _ImportActionCard extends StatelessWidget {
   }
 }
 
-class _ImportNavigationCard extends StatelessWidget {
-  const _ImportNavigationCard({
+class _ImportMapActionCard extends StatelessWidget {
+  const _ImportMapActionCard({
     required this.importId,
     required this.projectId,
-    required this.reviewLabel,
+    required this.isProcessing,
   });
 
   final String importId;
   final String projectId;
-  final String reviewLabel;
+  final bool isProcessing;
 
   @override
   Widget build(BuildContext context) {
@@ -941,28 +934,110 @@ class _ImportNavigationCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Import tools',
+            'Spatial review',
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: AppSpacing.sm),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilledButton.icon(
-                onPressed: () => context.push(
-                  AppRoutes.importMap(importId, projectId: projectId),
-                ),
-                icon: const Icon(Icons.map_outlined),
-                label: const Text('Open import map'),
+          Text(
+            'Open the dedicated import map to inspect staged import features separately from the project map.',
+            softWrap: true,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          FilledButton.icon(
+            onPressed: isProcessing
+                ? null
+                : () => context.push(
+                    AppRoutes.importMap(importId, projectId: projectId),
+                  ),
+            icon: const Icon(Icons.map_outlined),
+            label: Text(
+              isProcessing ? 'Import map available after processing' : 'Open import map',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ImportFeatureFiltersCard extends StatelessWidget {
+  const _ImportFeatureFiltersCard({
+    required this.selectedStatus,
+    required this.selectedIssue,
+    required this.issueFilters,
+    required this.onStatusChanged,
+    required this.onIssueChanged,
+  });
+
+  final String? selectedStatus;
+  final String? selectedIssue;
+  final List<_ValidationIssueGroup> issueFilters;
+  final ValueChanged<String?> onStatusChanged;
+  final ValueChanged<String?> onIssueChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Feature filters',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          DropdownButtonFormField<String?>(
+            initialValue: selectedStatus,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Status filter'),
+            items: const <DropdownMenuItem<String?>>[
+              DropdownMenuItem<String?>(
+                value: null,
+                child: Text('All staged features'),
               ),
-              OutlinedButton.icon(
-                onPressed: () => context.push(AppRoutes.importReview(importId)),
-                icon: const Icon(Icons.rule_folder_outlined),
-                label: Text(reviewLabel),
+              DropdownMenuItem<String?>(
+                value: 'pending_review',
+                child: Text('Pending'),
+              ),
+              DropdownMenuItem<String?>(
+                value: 'approved',
+                child: Text('Approved'),
+              ),
+              DropdownMenuItem<String?>(
+                value: 'rejected',
+                child: Text('Rejected'),
+              ),
+              DropdownMenuItem<String?>(
+                value: 'failed',
+                child: Text('Failed'),
               ),
             ],
+            onChanged: onStatusChanged,
           ),
+          if (issueFilters.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.sm),
+            DropdownButtonFormField<String?>(
+              initialValue: selectedIssue,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Issue filter'),
+              items: <DropdownMenuItem<String?>>[
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('All staged features'),
+                ),
+                ...issueFilters.map(
+                  (option) => DropdownMenuItem<String?>(
+                    value: option.message,
+                    child: Text(
+                      '${option.message} (${option.count})',
+                      maxLines: 3,
+                    ),
+                  ),
+                ),
+              ],
+              onChanged: onIssueChanged,
+            ),
+          ],
         ],
       ),
     );
