@@ -190,9 +190,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
         .toList(growable: false);
     final selectedRejectableIds = _selectedFeatureIds
         .where(
-          (id) => features.any(
-            (item) => item.id == id && item.canBeRejected,
-          ),
+          (id) => features.any((item) => item.id == id && item.canBeRejected),
         )
         .toList(growable: false);
     final canModerateImport =
@@ -328,12 +326,12 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
                 onOpenMap: feature.geometry == null
                     ? null
                     : () => context.push(
-                          AppRoutes.importMap(
-                            widget.importId,
-                            projectId: details.job.projectId,
-                            featureId: feature.id,
-                          ),
+                        AppRoutes.importMap(
+                          widget.importId,
+                          projectId: details.job.projectId,
+                          featureId: feature.id,
                         ),
+                      ),
                 onAddComment: canModerateImport
                     ? () => _addComment(context, feature: feature)
                     : null,
@@ -452,10 +450,10 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
             children: [
               if (selectedFeatureCount > 0)
                 OutlinedButton(
-                onPressed: selectedFeatureCount == 0
-                    ? null
-                    : () => setState(_selectedFeatureIds.clear),
-                child: const Text('Clear selection'),
+                  onPressed: selectedFeatureCount == 0
+                      ? null
+                      : () => setState(_selectedFeatureIds.clear),
+                  child: const Text('Clear selection'),
                 ),
             ],
           ),
@@ -989,10 +987,7 @@ class _ImportMapActionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Import map',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
+          Text('Import map', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: AppSpacing.sm),
           FilledButton.icon(
             onPressed: isProcessing
@@ -1056,10 +1051,7 @@ class _ImportFeatureFiltersCard extends StatelessWidget {
                 value: 'rejected',
                 child: Text('Rejected'),
               ),
-              DropdownMenuItem<String?>(
-                value: 'failed',
-                child: Text('Failed'),
-              ),
+              DropdownMenuItem<String?>(value: 'failed', child: Text('Failed')),
             ],
             onChanged: onStatusChanged,
           ),
@@ -1299,7 +1291,11 @@ class _ImportedFeatureCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '${feature.geometryType ?? 'Unknown geometry'} • source #${feature.sourceIndex + 1}',
+                      _importFeatureTypeLabel(
+                        feature.geometryType ??
+                            feature.geometry?['type']?.toString() ??
+                            'Unknown',
+                      ),
                       softWrap: true,
                     ),
                   ],
@@ -1379,7 +1375,9 @@ class _ImportAttributeGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final entries = attributes.entries.toList(growable: false);
+    final entries = _filteredImportAttributes(
+      attributes,
+    ).entries.toList(growable: false);
     return LayoutBuilder(
       builder: (context, constraints) {
         final useTwoColumns = constraints.maxWidth >= 520;
@@ -1656,7 +1654,10 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
             clipBehavior: Clip.antiAlias,
             child: InkWell(
               onTap: () => context.push(
-                AppRoutes.importMap(widget.importId, projectId: widget.projectId),
+                AppRoutes.importMap(
+                  widget.importId,
+                  projectId: widget.projectId,
+                ),
               ),
               child: DecoratedBox(
                 decoration: BoxDecoration(
@@ -1679,14 +1680,16 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
                                   LebanonMapConfig.quickInitialZoom - 0.15,
                               minZoom: LebanonMapConfig.quickMinZoom,
                               maxZoom: LebanonMapConfig.quickMaxZoom,
-                              cameraConstraint: LebanonMapConfig.cameraConstraint,
+                              cameraConstraint:
+                                  LebanonMapConfig.cameraConstraint,
                             ),
                             children: [
                               if (LebanonMapConfig.shouldRenderTileLayers)
                                 TileLayer(
-                                  urlTemplate: LebanonMapConfig.basemapUrlTemplate(
-                                    _style,
-                                  ),
+                                  urlTemplate:
+                                      LebanonMapConfig.basemapUrlTemplate(
+                                        _style,
+                                      ),
                                   tileProvider: NetworkTileProvider(
                                     silenceExceptions: true,
                                   ),
@@ -2039,7 +2042,7 @@ List<String>? _parseUnknownFieldWarning(String message) {
   return suffix
       .split(',')
       .map((part) => part.trim())
-      .where((part) => part.isNotEmpty)
+      .where((part) => part.isNotEmpty && !_shouldHideImportAttributeKey(part))
       .toList(growable: false);
 }
 
@@ -2052,7 +2055,9 @@ List<Widget> _buildUnknownFieldWarningBlocks(
   }
   final fields = raw
       .map((value) => value?.toString().trim() ?? '')
-      .where((value) => value.isNotEmpty)
+      .where(
+        (value) => value.isNotEmpty && !_shouldHideImportAttributeKey(value),
+      )
       .toList(growable: false);
   if (fields.isEmpty) {
     return const <Widget>[];
@@ -2094,6 +2099,45 @@ LatLng? _decodePreviewCoordinatePair(Object? raw) {
 bool _isImportStillProcessing(String status) {
   final normalized = status.trim().toLowerCase();
   return normalized == 'uploaded' || normalized == 'processing';
+}
+
+String _importFeatureTypeLabel(String geometryType) {
+  switch (geometryType) {
+    case 'Point':
+    case 'MultiPoint':
+      return 'Point feature';
+    case 'LineString':
+    case 'MultiLineString':
+      return 'Line feature';
+    case 'Polygon':
+    case 'MultiPolygon':
+      return 'Area feature';
+    default:
+      return geometryType;
+  }
+}
+
+Map<String, dynamic> _filteredImportAttributes(
+  Map<String, dynamic> attributes,
+) {
+  final filtered = <String, dynamic>{};
+  for (final entry in attributes.entries) {
+    if (_shouldHideImportAttributeKey(entry.key)) {
+      continue;
+    }
+    filtered[entry.key] = entry.value;
+  }
+  return filtered;
+}
+
+bool _shouldHideImportAttributeKey(String key) {
+  final normalized = key.trim().toLowerCase().replaceAll(
+    RegExp(r'[^a-z0-9]'),
+    '',
+  );
+  return normalized == 'accuracy' ||
+      normalized == 'accuracymeter' ||
+      normalized == 'accuracymeters';
 }
 
 Color _statusColor(String status) {
