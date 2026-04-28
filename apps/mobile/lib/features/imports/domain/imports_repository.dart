@@ -44,6 +44,8 @@ abstract class ImportsRepository {
     required String importId,
     String? status,
     String? issue,
+    String? search,
+    String? geometryType,
     int page = 1,
     int limit = 20,
   });
@@ -58,6 +60,7 @@ abstract class ImportsRepository {
   Future<ImportComment> addImportComment({
     required String importId,
     required String comment,
+    String? featureId,
   });
 
   Future<String> downloadImport(String importId);

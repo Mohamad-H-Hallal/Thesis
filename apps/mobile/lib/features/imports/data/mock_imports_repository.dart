@@ -196,6 +196,8 @@ class MockImportsRepository implements ImportsRepository {
     required String importId,
     String? status,
     String? issue,
+    String? search,
+    String? geometryType,
     int page = 1,
     int limit = 20,
   }) async {
@@ -211,6 +213,35 @@ class MockImportsRepository implements ImportsRepository {
               !item.validationErrors.contains(issue) &&
               !item.validationWarnings.contains(issue)) {
             return false;
+          }
+          if (geometryType != null &&
+              geometryType.trim().isNotEmpty) {
+            final normalized = geometryType.trim();
+            final itemType = item.geometryType ?? '';
+            final matches = switch (normalized) {
+              'point' => itemType == 'Point' || itemType == 'MultiPoint',
+              'line' =>
+                itemType == 'LineString' || itemType == 'MultiLineString',
+              'polygon' => itemType == 'Polygon' || itemType == 'MultiPolygon',
+              _ => itemType == normalized,
+            };
+            if (!matches) {
+              return false;
+            }
+          }
+          if (search != null && search.trim().isNotEmpty) {
+            final needle = search.trim().toLowerCase();
+            final haystack = <String>[
+              item.displayTitle,
+              item.sourceFeatureName ?? '',
+              item.geometryType ?? '',
+              item.attributes.toString(),
+              ...item.validationWarnings,
+              ...item.validationErrors,
+            ].join(' ').toLowerCase();
+            if (!haystack.contains(needle)) {
+              return false;
+            }
           }
           return true;
         })
@@ -387,6 +418,7 @@ class MockImportsRepository implements ImportsRepository {
   Future<ImportComment> addImportComment({
     required String importId,
     required String comment,
+    String? featureId,
   }) async {
     return ImportComment(
       id: 'comment-1',
@@ -395,6 +427,8 @@ class MockImportsRepository implements ImportsRepository {
       authorName: 'Mock Admin',
       authorRole: 'admin',
       commentText: comment,
+      importFeatureId: featureId,
+      featureDisplayTitle: featureId == null ? null : 'Linked feature',
       createdAt: DateTime.now(),
     );
   }

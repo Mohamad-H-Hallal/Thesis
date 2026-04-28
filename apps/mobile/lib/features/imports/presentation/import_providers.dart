@@ -58,6 +58,8 @@ final paginatedImportFeaturesProvider = StateNotifierProvider.autoDispose
                 importId: query.importId,
                 status: query.status,
                 issue: query.issue,
+                search: query.search,
+                geometryType: query.geometryType,
                 page: page,
                 limit: limit,
               );

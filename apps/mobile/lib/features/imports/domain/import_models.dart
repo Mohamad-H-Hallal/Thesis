@@ -24,22 +24,28 @@ class ImportedFeatureListQuery {
     required this.importId,
     this.status,
     this.issue,
+    this.search,
+    this.geometryType,
   });
 
   final String importId;
   final String? status;
   final String? issue;
+  final String? search;
+  final String? geometryType;
 
   @override
   bool operator ==(Object other) {
     return other is ImportedFeatureListQuery &&
         other.importId == importId &&
         other.status == status &&
-        other.issue == issue;
+        other.issue == issue &&
+        other.search == search &&
+        other.geometryType == geometryType;
   }
 
   @override
-  int get hashCode => Object.hash(importId, status, issue);
+  int get hashCode => Object.hash(importId, status, issue, search, geometryType);
 }
 
 class GisImportJob {
@@ -139,6 +145,8 @@ class ImportComment {
     required this.authorName,
     required this.authorRole,
     required this.commentText,
+    this.importFeatureId,
+    this.featureDisplayTitle,
     required this.createdAt,
   });
 
@@ -148,6 +156,8 @@ class ImportComment {
   final String authorName;
   final String authorRole;
   final String commentText;
+  final String? importFeatureId;
+  final String? featureDisplayTitle;
   final DateTime createdAt;
 }
 

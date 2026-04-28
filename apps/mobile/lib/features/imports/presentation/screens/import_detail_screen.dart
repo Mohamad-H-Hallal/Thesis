@@ -257,7 +257,11 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
           ),
         if (canModerateImport && actionableFeatures.isNotEmpty)
           const SizedBox(height: AppSpacing.md),
-        _ImportCommentsCard(comments: details.comments),
+        _ImportCommentsCard(
+          importId: widget.importId,
+          projectId: details.job.projectId,
+          comments: details.comments,
+        ),
         const SizedBox(height: AppSpacing.md),
         Text(
           'Staged features (${featureState?.total ?? details.job.geometryCount})',
@@ -308,6 +312,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
               resetKey: Object.hash(
                 widget.importId,
                 details.job.updatedAt,
+                _selectedStatusFilter,
                 _selectedIssueFilter,
                 features.length,
                 featureState?.total ?? 0,
@@ -315,22 +320,25 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
               hasMore: featureState?.hasMore ?? false,
               isLoadingMore: featureState?.isLoadingMore ?? false,
               onLoadMore: featuresController!.loadMore,
-                itemBuilder: (context, feature, _) => _ImportedFeatureCard(
-                  feature: feature,
-                  selectable: isAdmin && feature.isActionable,
-                  selected: _selectedFeatureIds.contains(feature.id),
-                  onOpenMap: feature.geometry == null
-                      ? null
-                      : () => context.push(
-                            AppRoutes.importMap(
-                              widget.importId,
-                              projectId: details.job.projectId,
-                              featureId: feature.id,
-                            ),
+              itemBuilder: (context, feature, _) => _ImportedFeatureCard(
+                feature: feature,
+                selectable: canModerateImport && feature.isActionable,
+                selected: _selectedFeatureIds.contains(feature.id),
+                onOpenMap: feature.geometry == null
+                    ? null
+                    : () => context.push(
+                          AppRoutes.importMap(
+                            widget.importId,
+                            projectId: details.job.projectId,
+                            featureId: feature.id,
                           ),
-                  onToggleSelected: () {
-                    setState(() {
-                      if (_selectedFeatureIds.contains(feature.id)) {
+                        ),
+                onAddComment: canModerateImport
+                    ? () => _addComment(context, feature: feature)
+                    : null,
+                onToggleSelected: () {
+                  setState(() {
+                    if (_selectedFeatureIds.contains(feature.id)) {
                       _selectedFeatureIds.remove(feature.id);
                     } else {
                       _selectedFeatureIds.add(feature.id);
@@ -607,8 +615,11 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
     AppSnackbar.showInfo(context, 'Import path copied.');
   }
 
-  Future<void> _addComment(BuildContext context) async {
-    final comment = await _promptComment(context);
+  Future<void> _addComment(
+    BuildContext context, {
+    ImportedFeature? feature,
+  }) async {
+    final comment = await _promptComment(context, feature: feature);
     if (comment == null ||
         comment.trim().isEmpty ||
         !mounted ||
@@ -622,7 +633,11 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
     try {
       await ref
           .read(importsRepositoryProvider)
-          .addImportComment(importId: widget.importId, comment: comment.trim());
+          .addImportComment(
+            importId: widget.importId,
+            comment: comment.trim(),
+            featureId: feature?.id,
+          );
       if (!mounted) {
         return;
       }
@@ -632,7 +647,9 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       }
       AppSnackbar.showSuccess(
         this.context,
-        'Import comment saved successfully.',
+        feature == null
+            ? 'Import comment saved successfully.'
+            : 'Feature comment saved successfully.',
       );
     } catch (error) {
       if (!mounted) {
@@ -726,10 +743,13 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
     );
   }
 
-  Future<String?> _promptComment(BuildContext context) {
+  Future<String?> _promptComment(
+    BuildContext context, {
+    ImportedFeature? feature,
+  }) {
     return showDialog<String>(
       context: context,
-      builder: (_) => const _ImportCommentDialog(),
+      builder: (_) => _ImportCommentDialog(feature: feature),
     );
   }
 }
@@ -1149,8 +1169,14 @@ class _ImportValidationCard extends StatelessWidget {
 }
 
 class _ImportCommentsCard extends StatelessWidget {
-  const _ImportCommentsCard({required this.comments});
+  const _ImportCommentsCard({
+    required this.importId,
+    required this.projectId,
+    required this.comments,
+  });
 
+  final String importId;
+  final String projectId;
   final List<ImportComment> comments;
 
   @override
@@ -1179,6 +1205,33 @@ class _ImportCommentsCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(comment.commentText, softWrap: true),
+                    if (comment.featureDisplayTitle?.trim().isNotEmpty ??
+                        false) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Chip(
+                            label: Text(
+                              'Feature: ${comment.featureDisplayTitle}',
+                            ),
+                          ),
+                          TextButton.icon(
+                            onPressed: () => context.push(
+                              AppRoutes.importMap(
+                                importId,
+                                projectId: projectId,
+                                featureId: comment.importFeatureId,
+                              ),
+                            ),
+                            icon: const Icon(Icons.map_outlined, size: 18),
+                            label: const Text('Open on map'),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -1195,6 +1248,7 @@ class _ImportedFeatureCard extends StatelessWidget {
     required this.selectable,
     required this.selected,
     required this.onOpenMap,
+    required this.onAddComment,
     required this.onToggleSelected,
   });
 
@@ -1202,6 +1256,7 @@ class _ImportedFeatureCard extends StatelessWidget {
   final bool selectable;
   final bool selected;
   final VoidCallback? onOpenMap;
+  final VoidCallback? onAddComment;
   final VoidCallback onToggleSelected;
 
   @override
@@ -1272,15 +1327,25 @@ class _ImportedFeatureCard extends StatelessWidget {
             const SizedBox(height: 6),
             _ImportAttributeGrid(attributes: feature.attributes),
           ],
-          if (onOpenMap != null) ...[
+          if (onOpenMap != null || onAddComment != null) ...[
             const SizedBox(height: AppSpacing.sm),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: onOpenMap,
-                icon: const Icon(Icons.map_outlined),
-                label: const Text('Open on map'),
-              ),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (onOpenMap != null)
+                  TextButton.icon(
+                    onPressed: onOpenMap,
+                    icon: const Icon(Icons.map_outlined),
+                    label: const Text('Open on map'),
+                  ),
+                if (onAddComment != null)
+                  TextButton.icon(
+                    onPressed: onAddComment,
+                    icon: const Icon(Icons.comment_outlined),
+                    label: const Text('Comment on feature'),
+                  ),
+              ],
             ),
           ],
         ],
@@ -1498,6 +1563,28 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
     final mapKey = ValueKey<String>(
       'import-preview-${_style.name}-$previewFeatureCount-$outsideWorkspaceCount-${drawable.length}',
     );
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final basemapToggle = SegmentedButton<LebanonBasemapStyle>(
+      showSelectedIcon: false,
+      style: SegmentedButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      segments: const [
+        ButtonSegment(
+          value: LebanonBasemapStyle.satellite,
+          label: Text('Hybrid'),
+        ),
+        ButtonSegment(value: LebanonBasemapStyle.street, label: Text('Street')),
+      ],
+      selected: <LebanonBasemapStyle>{_style},
+      onSelectionChanged: (selection) {
+        setState(() {
+          _style = selection.first;
+        });
+      },
+    );
 
     return AppCard(
       child: Column(
@@ -1505,153 +1592,140 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
         children: [
           LayoutBuilder(
             builder: (context, constraints) {
-              final title = Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Spatial preview',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    'Shows staged geometry positions for this import before approval. Tap the preview to open the full import map.',
-                    style: Theme.of(context).textTheme.bodySmall,
-                    softWrap: true,
-                  ),
-                  if (outsideWorkspaceCount > 0) ...[
-                    const SizedBox(height: AppSpacing.xs),
-                    Text(
-                      '$outsideWorkspaceCount staged feature(s) fall outside the Lebanon workspace and stay visible here for review.',
-                      style: Theme.of(context).textTheme.bodySmall,
-                      softWrap: true,
-                    ),
-                  ],
-                ],
-              );
-              final basemapToggle = SegmentedButton<LebanonBasemapStyle>(
-                showSelectedIcon: false,
-                style: SegmentedButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              final title = Text(
+                'Import map',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
                 ),
-                segments: const [
-                  ButtonSegment(
-                    value: LebanonBasemapStyle.satellite,
-                    label: Text('Hybrid'),
-                  ),
-                  ButtonSegment(
-                    value: LebanonBasemapStyle.street,
-                    label: Text('Street'),
-                  ),
-                ],
-                selected: <LebanonBasemapStyle>{_style},
-                onSelectionChanged: (selection) {
-                  setState(() {
-                    _style = selection.first;
-                  });
-                },
               );
 
-              if (constraints.maxWidth < 420) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              if (constraints.maxWidth >= 420) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    title,
-                    const SizedBox(height: AppSpacing.xs),
+                    Expanded(child: title),
+                    const SizedBox(width: AppSpacing.sm),
                     basemapToggle,
                   ],
                 );
               }
-              return Row(
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(child: title),
-                  const SizedBox(width: AppSpacing.sm),
+                  title,
+                  const SizedBox(height: AppSpacing.xs),
                   basemapToggle,
                 ],
               );
             },
           ),
-          const SizedBox(height: AppSpacing.sm),
-          InkWell(
-            borderRadius: AppRadii.lg,
-            onTap: () => context.push(
-              AppRoutes.importMap(
-                widget.importId,
-                projectId: widget.projectId,
+          if (outsideWorkspaceCount > 0) ...[
+            const SizedBox(height: 10),
+            Text(
+              '$outsideWorkspaceCount staged feature(s) fall outside the Lebanon workspace and will only be visible on the full import map.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
               ),
+              softWrap: true,
             ),
-            child: SizedBox(
-              height: 260,
-              child: ClipRRect(
-                borderRadius: AppRadii.lg,
-                child: FlutterMap(
-                  key: mapKey,
-                  options: MapOptions(
-                    initialCameraFit: _previewCameraFit(drawable),
-                    minZoom: 3,
-                    maxZoom: LebanonMapConfig.quickMaxZoom,
-                    interactionOptions: const InteractionOptions(
-                      flags: InteractiveFlag.drag | InteractiveFlag.pinchZoom,
-                    ),
+          ],
+          const SizedBox(height: AppSpacing.md),
+          Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(22),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: () => context.push(
+                AppRoutes.importMap(widget.importId, projectId: widget.projectId),
+              ),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(color: theme.dividerColor),
+                  color: scheme.surfaceContainerLow,
+                  boxShadow: AppShadows.soft,
+                ),
+                child: SizedBox(
+                  height: 236,
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: FlutterMap(
+                            key: mapKey,
+                            options: MapOptions(
+                              initialCenter: LebanonMapConfig.center,
+                              initialZoom:
+                                  LebanonMapConfig.quickInitialZoom - 0.15,
+                              minZoom: LebanonMapConfig.quickMinZoom,
+                              maxZoom: LebanonMapConfig.quickMaxZoom,
+                              cameraConstraint: LebanonMapConfig.cameraConstraint,
+                            ),
+                            children: [
+                              if (LebanonMapConfig.shouldRenderTileLayers)
+                                TileLayer(
+                                  urlTemplate: LebanonMapConfig.basemapUrlTemplate(
+                                    _style,
+                                  ),
+                                  tileProvider: NetworkTileProvider(
+                                    silenceExceptions: true,
+                                  ),
+                                  userAgentPackageName: 'lb.gov.gis_collector',
+                                ),
+                              if (LebanonMapConfig.shouldRenderTileLayers &&
+                                  LebanonMapConfig.referenceLabelUrlTemplate(
+                                        _style,
+                                      ) !=
+                                      null)
+                                TileLayer(
+                                  urlTemplate:
+                                      LebanonMapConfig.referenceLabelUrlTemplate(
+                                        _style,
+                                      )!,
+                                  tileProvider: NetworkTileProvider(
+                                    silenceExceptions: true,
+                                  ),
+                                  userAgentPackageName: 'lb.gov.gis_collector',
+                                ),
+                              PolygonLayer(polygons: _polygons(drawable)),
+                              PolylineLayer(polylines: _polylines(drawable)),
+                              MarkerLayer(markers: _markers(drawable)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  children: [
-                    if (LebanonMapConfig.shouldRenderTileLayers)
-                      TileLayer(
-                        urlTemplate: LebanonMapConfig.basemapUrlTemplate(_style),
-                        tileProvider: NetworkTileProvider(
-                          silenceExceptions: true,
-                        ),
-                        userAgentPackageName: 'lb.gov.gis_collector',
-                      ),
-                    if (LebanonMapConfig.shouldRenderTileLayers &&
-                        LebanonMapConfig.referenceLabelUrlTemplate(_style) !=
-                            null)
-                      TileLayer(
-                        urlTemplate: LebanonMapConfig.referenceLabelUrlTemplate(
-                          _style,
-                        )!,
-                        tileProvider: NetworkTileProvider(
-                          silenceExceptions: true,
-                        ),
-                        userAgentPackageName: 'lb.gov.gis_collector',
-                      ),
-                    PolygonLayer(polygons: _polygons(drawable)),
-                    PolylineLayer(polylines: _polylines(drawable)),
-                    MarkerLayer(markers: _markers(drawable)),
-                  ],
                 ),
               ),
             ),
           ),
-          const SizedBox(height: AppSpacing.xs),
-          Text(
-            'Tap the preview to open the full import map.',
-            style: Theme.of(context).textTheme.bodySmall,
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Icon(Icons.touch_app_outlined, size: 16, color: scheme.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Tap the preview to open the full import map.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                Icons.arrow_forward_rounded,
+                size: 18,
+                color: scheme.primary,
+              ),
+            ],
           ),
         ],
       ),
-    );
-  }
-
-  CameraFit _previewCameraFit(List<ImportedFeature> features) {
-    final points = <LatLng>[
-      for (final feature in features)
-        if (feature.geometry != null) ...geometryPoints(feature.geometry!),
-    ];
-    if (points.isEmpty) {
-      return LebanonMapConfig.lebanonFit(padding: const EdgeInsets.all(20));
-    }
-    if (points.length == 1) {
-      final point = points.first;
-      return CameraFit.coordinates(
-        coordinates: <LatLng>[point],
-        padding: const EdgeInsets.all(28),
-        maxZoom: 13,
-      );
-    }
-    return CameraFit.bounds(
-      bounds: LatLngBounds.fromPoints(points),
-      padding: const EdgeInsets.all(24),
     );
   }
 
@@ -1838,7 +1912,9 @@ class _ImportReasonDialogState extends State<_ImportReasonDialog> {
 }
 
 class _ImportCommentDialog extends StatefulWidget {
-  const _ImportCommentDialog();
+  const _ImportCommentDialog({this.feature});
+
+  final ImportedFeature? feature;
 
   @override
   State<_ImportCommentDialog> createState() => _ImportCommentDialogState();
@@ -1855,14 +1931,19 @@ class _ImportCommentDialogState extends State<_ImportCommentDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final feature = widget.feature;
     return AlertDialog(
-      title: const Text('Add comment'),
+      title: Text(
+        feature == null ? 'Add comment' : 'Comment on ${feature.displayTitle}',
+      ),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 520),
         child: AppTextField(
           label: 'Comment',
           controller: _controller,
-          hint: 'Write a review comment for the uploader.',
+          hint: feature == null
+              ? 'Write a review comment for the uploader.'
+              : 'Write a review comment about this imported feature.',
           minLines: 3,
           maxLines: 5,
         ),

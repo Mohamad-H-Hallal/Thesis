@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,9 +7,15 @@ import 'package:latlong2/latlong.dart';
 
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
+import '../../../../core/pagination/paginated_list_controller.dart';
+import '../../../../core/providers/providers.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
-import '../../../../core/widgets/status_chip.dart';
+import '../../../../core/widgets/app_snackbar.dart';
+import '../../../../core/widgets/app_text_field.dart';
+import '../../../../core/widgets/progressive_list_section.dart';
+import '../../../auth/domain/auth_models.dart';
+import '../../../map/domain/current_location_service.dart';
 import '../../../map/domain/lebanon_map.dart';
 import '../../../map/domain/map_feature.dart';
 import '../../../map/domain/map_geometry.dart';
@@ -31,512 +39,2285 @@ class ImportMapScreen extends ConsumerStatefulWidget {
 }
 
 class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
-  LebanonBasemapStyle _style = LebanonBasemapStyle.street;
-  bool _showProjectApprovedFeatures = true;
-  bool _showTools = true;
-  String? _selectedFeatureId;
-  Set<String> _visibleStatuses = <String>{'pending_review', 'approved', 'rejected', 'failed'};
+  static const List<String> _statusOrder = <String>[
+    'pending_review',
+    'approved',
+    'rejected',
+    'failed',
+  ];
+
+  final MapController _mapController = MapController();
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
+  final Distance _distance = const Distance();
+  final Set<String> _visibleStatuses = Set<String>.from(_statusOrder);
+  late final MapOptions _mapOptions;
+
+  bool _isMapReady = false;
+  bool _isLocating = false;
+  bool _isPanelVisible = true;
+  bool _isPanelExpanded = false;
+  bool _isSearchOpen = false;
+  bool _showApprovedProjectContext = true;
+  bool _isFeatureBrowserOpen = false;
+  LebanonBasemapStyle _basemapStyle = LebanonBasemapStyle.street;
+  MapCamera? _latestMapCamera;
+  String? _selectedGeometryChip;
+  String? _focusedFeatureId;
+  String? _lastAutoFocusedFeatureId;
+  LatLng? _currentLocation;
+  double? _currentLocationAccuracyMeters;
+  VoidCallback? _pendingMapAction;
 
   @override
   void initState() {
     super.initState();
-    _selectedFeatureId = widget.initialFeatureId;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final detailsAsync = ref.watch(importDetailsProvider(widget.importId));
-    return detailsAsync.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, _) => AppEmptyState(
-        icon: Icons.map_outlined,
-        title: 'Import map unavailable',
-        message: userFacingErrorMessage(error, fallback: 'Unable to load this import map right now.'),
-        actionLabel: 'Retry',
-        onAction: () => ref.invalidate(importDetailsProvider(widget.importId)),
-      ),
-      data: (details) {
-        if (_isImportStillProcessing(details.job.status)) {
-          return AppEmptyState(
-            icon: Icons.hourglass_top_outlined,
-            title: 'Import map pending processing',
-            message: details.job.processingMessage?.trim().isNotEmpty == true
-                ? details.job.processingMessage!
-                : 'The import map becomes available after staging finishes.',
-          );
+    _mapOptions = MapOptions(
+      initialCenter: LebanonMapConfig.center,
+      initialZoom: LebanonMapConfig.fullscreenInitialZoom,
+      minZoom: LebanonMapConfig.fullscreenMinZoom,
+      maxZoom: LebanonMapConfig.fullscreenMaxZoom,
+      cameraConstraint: LebanonMapConfig.cameraConstraint,
+      onMapReady: _handleMapReady,
+      onPositionChanged: (camera, hasGesture) {
+        _latestMapCamera = camera;
+        if (!_isMapReady && mounted) {
+          setState(() {
+            _isMapReady = true;
+          });
         }
-        final mapDataAsync = ref.watch(
-          importMapDataProvider(
-            ImportMapQuery(importId: widget.importId, projectId: widget.projectId),
-          ),
-        );
-        return mapDataAsync.when(
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (error, _) => AppEmptyState(
-            icon: Icons.public_off_outlined,
-            title: 'Import map unavailable',
-            message: userFacingErrorMessage(error, fallback: 'Unable to load the staged import geometry right now.'),
-          ),
-          data: (mapData) {
-            final staged = mapData.stagedFeatures.map(_ImportMapFeature.staged).toList(growable: false);
-            final approvedContext = mapData.approvedProjectFeatures.map(_ImportMapFeature.projectApproved).toList(growable: false);
-            final visibleStaged = staged.where((feature) => _visibleStatuses.contains(feature.status) && feature.hasGeometry).toList(growable: false);
-            final visibleContext = _showProjectApprovedFeatures
-                ? approvedContext.where((feature) => feature.hasGeometry).toList(growable: false)
-                : const <_ImportMapFeature>[];
-            final drawableFeatures = <_ImportMapFeature>[...visibleContext, ...visibleStaged];
-            final focusedFeature = _focusedFeature(drawableFeatures);
-            final outsideWorkspaceCount = staged.where((feature) => !feature.touchesLebanonWorkspace).length;
-            return Stack(
-              children: [
-                Positioned.fill(
-                  child: _ImportMapCanvas(
-                    mapKey: ValueKey<String>('import-map-${widget.importId}-${widget.initialFeatureId ?? 'none'}-${_style.name}-${_showProjectApprovedFeatures ? 'context' : 'staged'}-${_visibleStatuses.join(',')}-${focusedFeature?.id ?? 'all'}-${drawableFeatures.length}'),
-                    basemapStyle: _style,
-                    drawableFeatures: drawableFeatures,
-                    focusedFeature: focusedFeature,
-                    onSelectFeature: (feature) {
-                      setState(() => _selectedFeatureId = feature.id);
-                      _showFeatureDetails(context, feature);
-                    },
+        final pendingAction = _pendingMapAction;
+        if (pendingAction != null) {
+          _pendingMapAction = null;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) {
+              return;
+            }
+            _runMapAction(pendingAction, queueUntilReady: true);
+          });
+        }
+      },
+      onTap: (_, point) {
+        final details = ref.read(importDetailsProvider(widget.importId)).valueOrNull;
+        final session = ref.read(authControllerProvider).session;
+        final mapData = ref
+                .read(
+                  importMapDataProvider(
+                    ImportMapQuery(
+                      importId: widget.importId,
+                      projectId: widget.projectId,
+                    ),
                   ),
-                ),
-                Positioned(
-                  top: AppSpacing.md,
-                  left: AppSpacing.md,
-                  right: AppSpacing.md,
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    child: _showTools
-                        ? _ImportMapToolsCard(
-                            key: const ValueKey<String>('import-map-tools'),
-                            projectName: details.job.projectName,
-                            totalStagedCount: staged.length,
-                            visibleStagedCount: visibleStaged.length,
-                            contextCount: approvedContext.length,
-                            outsideWorkspaceCount: outsideWorkspaceCount,
-                            basemapStyle: _style,
-                            showProjectApprovedFeatures: _showProjectApprovedFeatures,
-                            visibleStatuses: _visibleStatuses,
-                            onBasemapChanged: (style) => setState(() => _style = style),
-                            onToggleProjectContext: (value) => setState(() => _showProjectApprovedFeatures = value),
-                            onToggleAllStatuses: _showAllStatuses,
-                            onToggleStatus: _toggleStatus,
-                            onHideTools: () => setState(() => _showTools = false),
-                          )
-                        : Align(
-                            key: const ValueKey<String>('import-map-show-tools'),
-                            alignment: Alignment.topRight,
-                            child: FilledButton.tonalIcon(
-                              onPressed: () => setState(() => _showTools = true),
-                              icon: const Icon(Icons.layers_outlined),
-                              label: const Text('Show tools'),
-                            ),
-                          ),
-                  ),
-                ),
-                Positioned(
-                  left: AppSpacing.md,
-                  right: AppSpacing.md,
-                  bottom: AppSpacing.md,
-                  child: _ImportMapLegendBar(
-                    selectedFeature: focusedFeature,
-                    onClearSelection: _selectedFeatureId == null ? null : () => setState(() => _selectedFeatureId = null),
-                  ),
-                ),
-              ],
+                )
+                .valueOrNull ??
+            const ImportMapData(
+              stagedFeatures: <ImportedFeature>[],
+              approvedProjectFeatures: <MapFeatureSummary>[],
             );
-          },
+        _handleMapTap(
+          point,
+          stagedFeatures: _filteredStagedFeatures(mapData.stagedFeatures),
+          approvedFeatures: _showApprovedProjectContext
+              ? mapData.approvedProjectFeatures
+              : const <MapFeatureSummary>[],
+          canModerateImport: session != null
+              ? _canModerateImport(session.user, details)
+              : false,
         );
       },
     );
   }
 
-  _ImportMapFeature? _focusedFeature(List<_ImportMapFeature> features) {
-    final selectedFeatureId = _selectedFeatureId;
-    if (selectedFeatureId == null) {
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _searchFocusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final session = ref.watch(authControllerProvider).session;
+    if (session == null) {
+      return const SizedBox.shrink();
+    }
+    final importDetailsAsync = ref.watch(importDetailsProvider(widget.importId));
+    final projectAsync = ref.watch(projectByIdProvider(widget.projectId));
+    final mapDataAsync = ref.watch(
+      importMapDataProvider(
+        ImportMapQuery(importId: widget.importId, projectId: widget.projectId),
+      ),
+    );
+
+    if (mapDataAsync.isLoading && mapDataAsync.valueOrNull == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (mapDataAsync.hasError && mapDataAsync.valueOrNull == null) {
+      return AppEmptyState(
+        icon: Icons.map_outlined,
+        title: 'Import map unavailable',
+        message: userFacingErrorMessage(
+          mapDataAsync.asError!.error,
+          fallback: 'Unable to load imported features right now.',
+        ),
+        actionLabel: 'Retry',
+        onAction: () => ref.invalidate(
+          importMapDataProvider(
+            ImportMapQuery(
+              importId: widget.importId,
+              projectId: widget.projectId,
+            ),
+          ),
+        ),
+      );
+    }
+
+    final details = importDetailsAsync.valueOrNull;
+    final project = projectAsync.valueOrNull;
+    final mapData = mapDataAsync.valueOrNull ??
+        const ImportMapData(
+          stagedFeatures: <ImportedFeature>[],
+          approvedProjectFeatures: <MapFeatureSummary>[],
+        );
+    final canModerateImport = _canModerateImport(session.user, details);
+    final visibleStagedFeatures = _filteredStagedFeatures(mapData.stagedFeatures);
+    final selectedFeature = _findImportedFeature(
+      mapData.stagedFeatures,
+      _focusedFeatureId ?? widget.initialFeatureId,
+    );
+    _scheduleInitialFeatureFocus(visibleStagedFeatures, selectedFeature);
+
+    final projectLabel = project?.name ?? details?.job.projectName ?? 'Project';
+    final categoryLabel = project?.category ?? 'Project';
+
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: FlutterMap(
+            key: ValueKey<String>('import_map_${widget.importId}'),
+            options: _mapOptions,
+            mapController: _mapController,
+            children: [
+              if (LebanonMapConfig.shouldRenderTileLayers)
+                TileLayer(
+                  urlTemplate: LebanonMapConfig.basemapUrlTemplate(_basemapStyle),
+                  tileProvider: NetworkTileProvider(silenceExceptions: true),
+                  userAgentPackageName: 'lb.gov.gis_collector',
+                ),
+              if (LebanonMapConfig.shouldRenderTileLayers &&
+                  LebanonMapConfig.referenceLabelUrlTemplate(_basemapStyle) !=
+                      null)
+                TileLayer(
+                  urlTemplate:
+                      LebanonMapConfig.referenceLabelUrlTemplate(_basemapStyle)!,
+                  tileProvider: NetworkTileProvider(silenceExceptions: true),
+                  userAgentPackageName: 'lb.gov.gis_collector',
+                ),
+              if (_showApprovedProjectContext) ...[
+                PolygonLayer(
+                  polygons: _projectContextPolygons(
+                    mapData.approvedProjectFeatures,
+                  ),
+                ),
+                PolylineLayer(
+                  polylines: _projectContextPolylines(
+                    mapData.approvedProjectFeatures,
+                  ),
+                ),
+                MarkerLayer(
+                  markers: _projectContextMarkers(
+                    mapData.approvedProjectFeatures,
+                  ),
+                ),
+              ],
+              PolygonLayer(polygons: _stagedPolygons(visibleStagedFeatures)),
+              PolylineLayer(polylines: _stagedPolylines(visibleStagedFeatures)),
+              MarkerLayer(
+                markers: _stagedMarkers(
+                  visibleStagedFeatures,
+                  canModerateImport,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (_currentLocation != null)
+          Positioned(
+            right: AppSpacing.md,
+            bottom: 240,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Theme.of(context).colorScheme.primary,
+                border: Border.all(color: Colors.white, width: 2),
+              ),
+              child: const SizedBox(width: 18, height: 18),
+            ),
+          ),
+        if (_isPanelVisible)
+          Positioned(
+            left: AppSpacing.md,
+            top: AppSpacing.md,
+            right: 88,
+            child: _ImportMapFloatingPanel(
+              projectName: projectLabel,
+              categoryLabel: categoryLabel,
+              visibleFeatureCount: visibleStagedFeatures.length,
+              approvedContextCount: mapData.approvedProjectFeatures.length,
+              searchController: _searchController,
+              searchFocusNode: _searchFocusNode,
+              selectedGeometryChip: _selectedGeometryChip,
+              visibleStatuses: _visibleStatuses,
+              basemapStyle: _basemapStyle,
+              gpsAccuracyMeters: _currentLocationAccuracyMeters,
+              isExpanded: _isPanelExpanded,
+              isSearchOpen: _isSearchOpen,
+              searchSummaryLabel: _searchSummaryLabel(
+                visibleStagedFeatures.length,
+              ),
+              visibleStatusSummaryLabel: _visibleStatusSummaryLabel(),
+              showApprovedProjectContext: _showApprovedProjectContext,
+              onSearchPressed: _toggleSearch,
+              onSearchChanged: () => setState(() {}),
+              onClearSearch: () => setState(_searchController.clear),
+              onChipSelected: (value) => setState(() {
+                _selectedGeometryChip = value;
+              }),
+              onResetVisibleStatuses: () => setState(() {
+                _visibleStatuses
+                  ..clear()
+                  ..addAll(_statusOrder);
+              }),
+              onToggleVisibleStatus: (status) => setState(() {
+                if (_visibleStatuses.contains(status)) {
+                  _visibleStatuses.remove(status);
+                } else {
+                  _visibleStatuses.add(status);
+                }
+              }),
+              onBasemapStyleChanged: (style) => setState(() {
+                _basemapStyle = style;
+              }),
+              onToggleExpanded: () => setState(() {
+                _isPanelExpanded = !_isPanelExpanded;
+              }),
+              onHidePanel: () {
+                setState(() {
+                  _isPanelVisible = false;
+                  _isPanelExpanded = false;
+                  _isSearchOpen = false;
+                });
+                _searchFocusNode.unfocus();
+              },
+              onToggleProjectContext: (value) => setState(() {
+                _showApprovedProjectContext = value;
+              }),
+            ),
+          )
+        else
+          Positioned(
+            left: AppSpacing.md,
+            top: AppSpacing.md,
+            child: FloatingActionButton.small(
+              heroTag: 'show_import_map_tools',
+              onPressed: () => setState(() {
+                _isPanelVisible = true;
+              }),
+              child: const Icon(Icons.tune_rounded),
+            ),
+          ),
+        Positioned(
+          right: AppSpacing.md,
+          bottom: AppSpacing.lg,
+          child: _ImportMapControlRail(
+            featureCount: visibleStagedFeatures.length,
+            onOpenFeatures: () => _openFeatureBrowser(
+              context,
+              projectName: projectLabel,
+              canModerateImport: canModerateImport,
+            ),
+            onCenterCurrentLocation: _centerOnCurrentLocation,
+            onFitWorkspace: _focusLebanonWorkspace,
+            onZoomIn: () => _zoomBy(1),
+            onZoomOut: () => _zoomBy(-1),
+            isLocating: _isLocating,
+          ),
+        ),
+      ],
+    );
+  }
+
+  bool _canModerateImport(AppUser user, GisImportDetails? details) {
+    if (user.role != UserRole.admin) {
+      return false;
+    }
+    final reviewScope = details?.job.reviewScope ?? 'admin';
+    if (reviewScope != 'protected_super_admin') {
+      return true;
+    }
+    return user.isSuperAdmin;
+  }
+
+  List<ImportedFeature> _filteredStagedFeatures(List<ImportedFeature> features) {
+    final query = _searchController.text.trim().toLowerCase();
+    return features.where((feature) {
+      if (!_visibleStatuses.contains(feature.status)) {
+        return false;
+      }
+      if (!_matchesGeometryQuickFilter(feature)) {
+        return false;
+      }
+      if (query.isEmpty) {
+        return true;
+      }
+      return _featureSearchBlob(feature).contains(query);
+    }).toList(growable: false);
+  }
+
+  bool _matchesGeometryQuickFilter(ImportedFeature feature) {
+    final selected = _selectedGeometryChip;
+    if (selected == null) {
+      return true;
+    }
+    final geometryType =
+        feature.geometryType ?? feature.geometry?['type']?.toString() ?? '';
+    switch (selected) {
+      case 'point':
+        return geometryType == 'Point' || geometryType == 'MultiPoint';
+      case 'line':
+        return geometryType == 'LineString' || geometryType == 'MultiLineString';
+      case 'polygon':
+        return geometryType == 'Polygon' || geometryType == 'MultiPolygon';
+      default:
+        return true;
+    }
+  }
+
+  String _featureSearchBlob(ImportedFeature feature) {
+    final buffer = StringBuffer()
+      ..write(feature.displayTitle.toLowerCase())
+      ..write(' ')
+      ..write(
+        '${feature.geometryType ?? feature.geometry?['type'] ?? ''}'
+            .toLowerCase(),
+      )
+      ..write(' ')
+      ..write(_statusLabel(feature.status).toLowerCase());
+    if (feature.sourceFeatureName?.trim().isNotEmpty ?? false) {
+      buffer
+        ..write(' ')
+        ..write(feature.sourceFeatureName!.toLowerCase());
+    }
+    for (final entry in feature.attributes.entries) {
+      buffer
+        ..write(' ')
+        ..write(entry.key.toLowerCase())
+        ..write(' ')
+        ..write('${entry.value}'.toLowerCase());
+    }
+    return buffer.toString();
+  }
+
+  String? _searchSummaryLabel(int visibleCount) {
+    final query = _searchController.text.trim();
+    if (query.isEmpty) {
+      return null;
+    }
+    return visibleCount == 1
+        ? '1 staged feature matches "$query"'
+        : '$visibleCount staged features match "$query"';
+  }
+
+  String _visibleStatusSummaryLabel() {
+    if (_visibleStatuses.length == _statusOrder.length) {
+      return 'All statuses';
+    }
+    if (_visibleStatuses.isEmpty) {
+      return 'No statuses';
+    }
+    return _visibleStatuses.map(_statusLabel).join(', ');
+  }
+
+  void _toggleSearch() {
+    setState(() {
+      _isSearchOpen = !_isSearchOpen;
+      if (!_isSearchOpen) {
+        _searchController.clear();
+      }
+    });
+    if (_isSearchOpen) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        _searchFocusNode.requestFocus();
+      });
+    } else {
+      _searchFocusNode.unfocus();
+    }
+  }
+
+  void _handleMapReady() {
+    if (!mounted) {
+      return;
+    }
+    final pendingAction = _pendingMapAction;
+    _pendingMapAction = null;
+    setState(() {
+      _isMapReady = true;
+    });
+    if (pendingAction != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        pendingAction();
+      });
+    }
+  }
+
+  void _runMapAction(VoidCallback action, {bool queueUntilReady = false}) {
+    if (!_isMapReady && !queueUntilReady) {
+      AppSnackbar.showError(
+        context,
+        'Map is still preparing. Please try again in a moment.',
+      );
+      return;
+    }
+    try {
+      action();
+      if (!_isMapReady && mounted) {
+        setState(() {
+          _isMapReady = true;
+        });
+      }
+    } catch (error) {
+      if (error.toString().contains(
+        'You need to have FlutterMap widget rendered at least once before using MapController',
+      )) {
+        if (!queueUntilReady) {
+          AppSnackbar.showError(
+            context,
+            'Map is still preparing. Please try again in a moment.',
+          );
+          return;
+        }
+        _pendingMapAction = action;
+        if (mounted) {
+          setState(() {
+            _isMapReady = false;
+          });
+        }
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  void _focusLebanonWorkspace() {
+    _runMapAction(
+      () => _mapController.fitCamera(LebanonMapConfig.lebanonFit()),
+      queueUntilReady: true,
+    );
+  }
+
+  void _zoomBy(double delta) {
+    final center = _latestMapCamera?.center ?? LebanonMapConfig.center;
+    final zoom =
+        (_latestMapCamera?.zoom ?? LebanonMapConfig.fullscreenInitialZoom) +
+            delta;
+    _runMapAction(
+      () => _mapController.move(
+        center,
+        zoom
+            .clamp(
+              LebanonMapConfig.fullscreenMinZoom,
+              LebanonMapConfig.fullscreenMaxZoom,
+            )
+            .toDouble(),
+      ),
+      queueUntilReady: true,
+    );
+  }
+
+  Future<void> _centerOnCurrentLocation() async {
+    if (_isLocating) {
+      return;
+    }
+    setState(() {
+      _isLocating = true;
+    });
+    try {
+      final location = await ref
+          .read(currentLocationServiceProvider)
+          .fetchCurrentLocation();
+      if (!LebanonMapConfig.contains(location.position)) {
+        if (!mounted) {
+          return;
+        }
+        AppSnackbar.showError(
+          context,
+          'Current location is outside Lebanon. Staying on the Lebanon workspace.',
+        );
+        _focusLebanonWorkspace();
+        return;
+      }
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _currentLocation = location.position;
+        _currentLocationAccuracyMeters = location.accuracyMeters;
+      });
+      _runMapAction(
+        () => _mapController.move(location.position, 16),
+        queueUntilReady: true,
+      );
+    } on CurrentLocationFailure catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(context, error.message);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLocating = false;
+        });
+      }
+    }
+  }
+
+  ImportedFeature? _findImportedFeature(
+    List<ImportedFeature> features,
+    String? id,
+  ) {
+    if (id == null) {
       return null;
     }
     for (final feature in features) {
-      if (feature.id == selectedFeatureId) {
+      if (feature.id == id) {
         return feature;
       }
     }
     return null;
   }
 
-  void _showAllStatuses() {
-    setState(() {
-      _visibleStatuses = <String>{'pending_review', 'approved', 'rejected', 'failed'};
+  void _scheduleInitialFeatureFocus(
+    List<ImportedFeature> visibleStagedFeatures,
+    ImportedFeature? selectedFeature,
+  ) {
+    final featureId = widget.initialFeatureId;
+    if (featureId == null || _lastAutoFocusedFeatureId == featureId) {
+      return;
+    }
+    if (selectedFeature == null ||
+        !visibleStagedFeatures.any((item) => item.id == featureId)) {
+      return;
+    }
+    _lastAutoFocusedFeatureId = featureId;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _focusImportedFeature(selectedFeature);
+      _openImportedFeatureDetails(
+        selectedFeature,
+        canModerateImport: _canModerateImport(
+          ref.read(authControllerProvider).session!.user,
+          ref.read(importDetailsProvider(widget.importId)).valueOrNull,
+        ),
+      );
     });
   }
 
-  void _toggleStatus(String status) {
-    setState(() {
-      final next = Set<String>.from(_visibleStatuses);
-      if (next.contains(status)) {
-        next.remove(status);
-      } else {
-        next.add(status);
+  void _handleMapTap(
+    LatLng point, {
+    required List<ImportedFeature> stagedFeatures,
+    required List<MapFeatureSummary> approvedFeatures,
+    required bool canModerateImport,
+  }) {
+    if (_isSearchOpen || _isPanelExpanded) {
+      setState(() {
+        _isSearchOpen = false;
+        _isPanelExpanded = false;
+      });
+      _searchFocusNode.unfocus();
+      return;
+    }
+
+    final stagedMatch = _nearestImportedFeature(point, stagedFeatures);
+    if (stagedMatch != null) {
+      _focusImportedFeature(stagedMatch);
+      _openImportedFeatureDetails(
+        stagedMatch,
+        canModerateImport: canModerateImport,
+      );
+      return;
+    }
+
+    if (_showApprovedProjectContext) {
+      final approvedMatch = _nearestApprovedProjectFeature(
+        point,
+        approvedFeatures,
+      );
+      if (approvedMatch != null) {
+        _focusProjectContextFeature(approvedMatch);
+        _openApprovedProjectFeatureDetails(approvedMatch);
       }
-      _visibleStatuses = next;
-      if (_selectedFeatureId != null && !next.contains(status)) {
-        _selectedFeatureId = null;
-      }
-    });
+    }
   }
 
-  Future<void> _showFeatureDetails(BuildContext context, _ImportMapFeature feature) {
-    return showModalBottomSheet<void>(
+  ImportedFeature? _nearestImportedFeature(
+    LatLng point,
+    List<ImportedFeature> features,
+  ) {
+    ImportedFeature? best;
+    var bestDistance = double.infinity;
+    final thresholdMeters = _selectionThresholdMeters();
+    for (final feature in features) {
+      final geometry = feature.geometry;
+      if (geometry == null) {
+        continue;
+      }
+      final focusPoint = _featureFocusPoint(geometry);
+      if (focusPoint == null) {
+        continue;
+      }
+      final distanceMeters = _distance.as(
+        LengthUnit.Meter,
+        point,
+        focusPoint,
+      );
+      if (distanceMeters < bestDistance) {
+        bestDistance = distanceMeters;
+        best = feature;
+      }
+    }
+    if (bestDistance > thresholdMeters) {
+      return null;
+    }
+    return best;
+  }
+
+  MapFeatureSummary? _nearestApprovedProjectFeature(
+    LatLng point,
+    List<MapFeatureSummary> features,
+  ) {
+    MapFeatureSummary? best;
+    var bestDistance = double.infinity;
+    final thresholdMeters = _selectionThresholdMeters();
+    for (final feature in features) {
+      final focusPoint = _featureFocusPoint(feature.geometry);
+      if (focusPoint == null) {
+        continue;
+      }
+      final distanceMeters = _distance.as(
+        LengthUnit.Meter,
+        point,
+        focusPoint,
+      );
+      if (distanceMeters < bestDistance) {
+        bestDistance = distanceMeters;
+        best = feature;
+      }
+    }
+    if (bestDistance > thresholdMeters) {
+      return null;
+    }
+    return best;
+  }
+
+  double _selectionThresholdMeters() {
+    final zoom = _latestMapCamera?.zoom ??
+        LebanonMapConfig.fullscreenInitialZoom;
+    if (zoom >= 15) {
+      return 120;
+    }
+    if (zoom >= 13) {
+      return 220;
+    }
+    if (zoom >= 11) {
+      return 420;
+    }
+    return 700;
+  }
+
+  LatLng? _featureFocusPoint(Map<String, dynamic> geometry) {
+    final type = geometry['type'];
+    if (type == 'Point') {
+      return geometryFocusPoint(geometry);
+    }
+    final points = geometryPoints(geometry);
+    if (points.isEmpty) {
+      return null;
+    }
+    final latitude =
+        points.fold<double>(0, (sum, item) => sum + item.latitude) /
+        points.length;
+    final longitude =
+        points.fold<double>(0, (sum, item) => sum + item.longitude) /
+        points.length;
+    return LatLng(latitude, longitude);
+  }
+
+  void _focusImportedFeature(ImportedFeature feature) {
+    setState(() {
+      _focusedFeatureId = feature.id;
+    });
+    final geometry = feature.geometry;
+    if (geometry == null) {
+      return;
+    }
+    final points = geometryPoints(geometry);
+    if (points.isEmpty) {
+      return;
+    }
+    _runMapAction(() {
+      if (points.length == 1) {
+        _mapController.move(
+          points.first,
+          math.max(_latestMapCamera?.zoom ?? 14, 14),
+        );
+        return;
+      }
+      _mapController.fitCamera(
+        CameraFit.bounds(
+          bounds: LatLngBounds.fromPoints(points),
+          padding: const EdgeInsets.all(48),
+        ),
+      );
+    }, queueUntilReady: true);
+  }
+
+  void _focusProjectContextFeature(MapFeatureSummary feature) {
+    final points = geometryPoints(feature.geometry);
+    if (points.isEmpty) {
+      return;
+    }
+    _runMapAction(() {
+      if (points.length == 1) {
+        _mapController.move(
+          points.first,
+          math.max(_latestMapCamera?.zoom ?? 14, 14),
+        );
+        return;
+      }
+      _mapController.fitCamera(
+        CameraFit.bounds(
+          bounds: LatLngBounds.fromPoints(points),
+          padding: const EdgeInsets.all(48),
+        ),
+      );
+    }, queueUntilReady: true);
+  }
+
+  Future<void> _openFeatureBrowser(
+    BuildContext context, {
+    required String projectName,
+    required bool canModerateImport,
+  }) async {
+    if (_isFeatureBrowserOpen) {
+      return;
+    }
+    setState(() {
+      _isFeatureBrowserOpen = true;
+    });
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (sheetContext) => _ImportFeatureBrowserSheet(
+          importId: widget.importId,
+          projectName: projectName,
+          initialSearch: _searchController.text.trim(),
+          initialStatus: _visibleStatuses.length == 1
+              ? _visibleStatuses.first
+              : null,
+          initialGeometryType: _selectedGeometryTypeForSheet(),
+          onSelectFeature: (feature) {
+            Navigator.of(sheetContext).pop();
+            _focusImportedFeature(feature);
+            _openImportedFeatureDetails(
+              feature,
+              canModerateImport: canModerateImport,
+            );
+          },
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isFeatureBrowserOpen = false;
+        });
+      }
+    }
+  }
+
+  String? _selectedGeometryTypeForSheet() {
+    switch (_selectedGeometryChip) {
+      case 'point':
+        return 'point';
+      case 'line':
+        return 'line';
+      case 'polygon':
+        return 'polygon';
+      default:
+        return null;
+    }
+  }
+
+  Future<void> _openImportedFeatureDetails(
+    ImportedFeature feature, {
+    required bool canModerateImport,
+  }) async {
+    await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      showDragHandle: true,
-      builder: (_) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(AppSpacing.lg),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(feature.title, style: Theme.of(context).textTheme.titleLarge, softWrap: true),
-                        const SizedBox(height: 4),
-                        Text(feature.subtitle, softWrap: true),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: AppSpacing.sm),
-                  StatusChip(status: feature.status),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              if (feature.isProjectContext)
-                const Text(
-                  'This is an already-approved project feature shown only as context. It is not part of the staged import review.',
-                  softWrap: true,
-                )
-              else ...[
-                if (feature.validationWarnings.isNotEmpty)
-                  ...feature.validationWarnings.map((warning) => Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Text('Warning: $warning', softWrap: true),
-                      )),
-                if (feature.validationErrors.isNotEmpty)
-                  ...feature.validationErrors.map((error) => Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Text(
-                          'Error: $error',
-                          style: TextStyle(color: Theme.of(context).colorScheme.error),
-                          softWrap: true,
-                        ),
-                      )),
-                if (feature.reviewReason?.trim().isNotEmpty ?? false)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text('Review reason: ${feature.reviewReason}', softWrap: true),
-                  ),
-              ],
-              if (feature.attributes.isNotEmpty) ...[
-                const SizedBox(height: AppSpacing.md),
-                Text('Attributes', style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: AppSpacing.sm),
-                _ImportMapAttributeGrid(attributes: feature.attributes),
-              ],
-            ],
-          ),
-        ),
+      builder: (context) => _ImportFeatureDetailsSheet(
+        feature: feature,
+        canComment: canModerateImport,
+        onAddComment: canModerateImport
+            ? () => _addFeatureComment(context, feature)
+            : null,
       ),
     );
   }
-}
 
-class _ImportMapCanvas extends StatelessWidget {
-  const _ImportMapCanvas({
-    required this.mapKey,
-    required this.basemapStyle,
-    required this.drawableFeatures,
-    required this.focusedFeature,
-    required this.onSelectFeature,
-  });
-
-  final ValueKey<String> mapKey;
-  final LebanonBasemapStyle basemapStyle;
-  final List<_ImportMapFeature> drawableFeatures;
-  final _ImportMapFeature? focusedFeature;
-  final ValueChanged<_ImportMapFeature> onSelectFeature;
-
-  @override
-  Widget build(BuildContext context) {
-    return FlutterMap(
-      key: mapKey,
-      options: MapOptions(
-        initialCameraFit: _cameraFit(drawableFeatures, focusedFeature: focusedFeature),
-        minZoom: 3,
-        maxZoom: LebanonMapConfig.fullscreenMaxZoom,
-        interactionOptions: const InteractionOptions(
-          flags: InteractiveFlag.drag | InteractiveFlag.pinchZoom | InteractiveFlag.doubleTapZoom,
-        ),
+  Future<void> _openApprovedProjectFeatureDetails(
+    MapFeatureSummary feature,
+  ) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => _ApprovedProjectFeatureDetailsSheet(
+        feature: feature,
       ),
-      children: [
-        if (LebanonMapConfig.shouldRenderTileLayers)
-          TileLayer(
-            urlTemplate: LebanonMapConfig.basemapUrlTemplate(basemapStyle),
-            tileProvider: NetworkTileProvider(silenceExceptions: true),
-            userAgentPackageName: 'lb.gov.gis_collector',
-          ),
-        if (LebanonMapConfig.shouldRenderTileLayers && LebanonMapConfig.referenceLabelUrlTemplate(basemapStyle) != null)
-          TileLayer(
-            urlTemplate: LebanonMapConfig.referenceLabelUrlTemplate(basemapStyle)!,
-            tileProvider: NetworkTileProvider(silenceExceptions: true),
-            userAgentPackageName: 'lb.gov.gis_collector',
-          ),
-        PolygonLayer(polygons: _polygons(drawableFeatures, focusedFeature)),
-        PolylineLayer(polylines: _polylines(drawableFeatures, focusedFeature)),
-        MarkerLayer(markers: _markers(drawableFeatures, focusedFeature, onSelectFeature)),
-      ],
     );
   }
 
-  CameraFit _cameraFit(List<_ImportMapFeature> features, {required _ImportMapFeature? focusedFeature}) {
-    final points = focusedFeature == null
-        ? <LatLng>[for (final feature in features) ...feature.points]
-        : focusedFeature.points;
-    if (points.isEmpty) {
-      return LebanonMapConfig.lebanonFit(padding: const EdgeInsets.all(20));
+  Future<void> _addFeatureComment(
+    BuildContext dialogContext,
+    ImportedFeature feature,
+  ) async {
+    final note = await showDialog<String>(
+      context: dialogContext,
+      builder: (dialogContext) => _ImportFeatureCommentDialog(feature: feature),
+    );
+    if (!mounted || note == null || note.trim().isEmpty) {
+      return;
     }
-    if (points.length == 1) {
-      return CameraFit.coordinates(coordinates: points, padding: const EdgeInsets.all(32), maxZoom: 13);
-    }
-    return CameraFit.bounds(bounds: LatLngBounds.fromPoints(points), padding: const EdgeInsets.all(36));
-  }
-
-  List<Marker> _markers(
-    List<_ImportMapFeature> features,
-    _ImportMapFeature? focusedFeature,
-    ValueChanged<_ImportMapFeature> onSelectFeature,
-  ) {
-    return features
-        .map((feature) {
-          final point = feature.focusPoint;
-          if (point == null) {
-            return null;
-          }
-          final isFocused = focusedFeature?.id == feature.id;
-          final isProjectLayer = feature.isProjectContext;
-          return Marker(
-            point: point,
-            width: isFocused ? 24 : (isProjectLayer ? 14 : 18),
-            height: isFocused ? 24 : (isProjectLayer ? 14 : 18),
-            child: GestureDetector(
-              onTap: () => onSelectFeature(feature),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: feature.color,
-                  border: Border.all(
-                    color: Colors.white,
-                    width: isFocused ? 3 : (isProjectLayer ? 1.5 : 2),
-                  ),
-                  boxShadow: isFocused
-                      ? const [BoxShadow(blurRadius: 10, color: Color(0x33000000), offset: Offset(0, 2))]
-                      : null,
-                ),
-              ),
-            ),
+    try {
+      await ref.read(importsRepositoryProvider).addImportComment(
+            importId: widget.importId,
+            comment: note.trim(),
+            featureId: feature.id,
           );
-        })
-        .whereType<Marker>()
-        .toList(growable: false);
-  }
-
-  List<Polyline> _polylines(List<_ImportMapFeature> features, _ImportMapFeature? focusedFeature) {
-    final polylines = <Polyline>[];
-    for (final feature in features) {
-      if (!feature.isLine) {
-        continue;
+      ref.invalidate(importDetailsProvider(widget.importId));
+      ref.read(workflowRefreshTickProvider.notifier).state++;
+      if (!mounted) {
+        return;
       }
-      final isFocused = focusedFeature?.id == feature.id;
-      for (final segment in feature.lineSegments) {
-        if (segment.isEmpty) {
-          continue;
-        }
-        polylines.add(
-          Polyline(
-            points: segment,
-            strokeWidth: isFocused ? 5 : (feature.isProjectContext ? 2 : 3),
-            color: feature.color.withValues(alpha: feature.isProjectContext ? 0.82 : 1),
-          ),
-        );
+      AppSnackbar.showSuccess(context, 'Feature comment saved successfully.');
+    } catch (error) {
+      if (!mounted) {
+        return;
       }
+      AppSnackbar.showError(
+        context,
+        userFacingErrorMessage(
+          error,
+          fallback: 'Unable to save this feature comment right now.',
+        ),
+      );
     }
-    return polylines;
   }
 
-  List<Polygon> _polygons(List<_ImportMapFeature> features, _ImportMapFeature? focusedFeature) {
+  List<Polygon> _stagedPolygons(List<ImportedFeature> features) {
     final polygons = <Polygon>[];
     for (final feature in features) {
-      if (!feature.isPolygon) {
+      final geometry = feature.geometry;
+      if (geometry == null) {
         continue;
       }
-      final isFocused = focusedFeature?.id == feature.id;
-      for (final ring in feature.polygonSegments) {
-        if (ring.isEmpty) {
+      final type = geometry['type'];
+      if (type != 'Polygon' && type != 'MultiPolygon') {
+        continue;
+      }
+      final color = _statusColor(feature.status);
+      for (final points in _polygonSegments(geometry)) {
+        if (points.isEmpty) {
           continue;
         }
         polygons.add(
           Polygon(
-            points: ring,
-            borderStrokeWidth: isFocused ? 4 : (feature.isProjectContext ? 1.5 : 2),
-            borderColor: feature.color,
-            color: feature.color.withValues(alpha: feature.isProjectContext ? 0.06 : 0.16),
+            points: points,
+            borderStrokeWidth: _focusedFeatureId == feature.id ? 3 : 2,
+            borderColor: color,
+            color: color.withValues(alpha: 0.18),
           ),
         );
       }
     }
     return polygons;
   }
+
+  List<Polyline> _stagedPolylines(List<ImportedFeature> features) {
+    final lines = <Polyline>[];
+    for (final feature in features) {
+      final geometry = feature.geometry;
+      if (geometry == null) {
+        continue;
+      }
+      final type = geometry['type'];
+      if (type != 'LineString' && type != 'MultiLineString') {
+        continue;
+      }
+      final color = _statusColor(feature.status);
+      for (final points in _polylineSegments(geometry)) {
+        if (points.isEmpty) {
+          continue;
+        }
+        lines.add(
+          Polyline(
+            points: points,
+            strokeWidth: _focusedFeatureId == feature.id ? 4 : 3,
+            color: color,
+          ),
+        );
+      }
+    }
+    return lines;
+  }
+
+  List<Marker> _stagedMarkers(
+    List<ImportedFeature> features,
+    bool canModerateImport,
+  ) {
+    return features.map((feature) {
+      final geometry = feature.geometry;
+      final point = geometry == null ? null : _featureFocusPoint(geometry);
+      if (point == null) {
+        return null;
+      }
+      return Marker(
+        point: point,
+        width: 22,
+        height: 22,
+        child: GestureDetector(
+          onTap: () {
+            _focusImportedFeature(feature);
+            _openImportedFeatureDetails(
+              feature,
+              canModerateImport: canModerateImport,
+            );
+          },
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _statusColor(feature.status),
+              border: Border.all(
+                color: _focusedFeatureId == feature.id
+                    ? Colors.black87
+                    : Colors.white,
+                width: _focusedFeatureId == feature.id ? 2.4 : 1.8,
+              ),
+            ),
+          ),
+        ),
+      );
+    }).whereType<Marker>().toList(growable: false);
+  }
+
+  List<Polygon> _projectContextPolygons(List<MapFeatureSummary> features) {
+    return features
+        .where((feature) {
+          final type = feature.geometry['type'];
+          return type == 'Polygon' || type == 'MultiPolygon';
+        })
+        .expand((feature) sync* {
+          for (final points in _polygonSegments(feature.geometry)) {
+            if (points.isEmpty) {
+              continue;
+            }
+            yield Polygon(
+              points: points,
+              borderStrokeWidth: 1.6,
+              borderColor: _projectContextColor,
+              color: _projectContextColor.withValues(alpha: 0.08),
+            );
+          }
+        })
+        .toList(growable: false);
+  }
+
+  List<Polyline> _projectContextPolylines(List<MapFeatureSummary> features) {
+    return features
+        .where((feature) {
+          final type = feature.geometry['type'];
+          return type == 'LineString' || type == 'MultiLineString';
+        })
+        .expand((feature) sync* {
+          for (final points in _polylineSegments(feature.geometry)) {
+            if (points.isEmpty) {
+              continue;
+            }
+            yield Polyline(
+              points: points,
+              strokeWidth: 2,
+              color: _projectContextColor,
+            );
+          }
+        })
+        .toList(growable: false);
+  }
+
+  List<Marker> _projectContextMarkers(List<MapFeatureSummary> features) {
+    return features.map((feature) {
+      final point = _featureFocusPoint(feature.geometry);
+      if (point == null) {
+        return null;
+      }
+      return Marker(
+        point: point,
+        width: 18,
+        height: 18,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: _projectContextColor,
+            border: Border.all(color: Colors.white, width: 1.5),
+          ),
+        ),
+      );
+    }).whereType<Marker>().toList(growable: false);
+  }
+
+  List<List<LatLng>> _polylineSegments(Map<String, dynamic> geometry) {
+    final type = geometry['type'];
+    if (type == 'LineString') {
+      final points = lineGeometryPoints(geometry);
+      return points.isEmpty ? const <List<LatLng>>[] : <List<LatLng>>[points];
+    }
+    if (type != 'MultiLineString') {
+      return const <List<LatLng>>[];
+    }
+    final coordinates = geometry['coordinates'];
+    if (coordinates is! List) {
+      return const <List<LatLng>>[];
+    }
+    return coordinates
+        .whereType<List>()
+        .map(
+          (segment) => segment
+              .map(_decodeCoordinatePair)
+              .whereType<LatLng>()
+              .toList(growable: false),
+        )
+        .where((points) => points.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  List<List<LatLng>> _polygonSegments(Map<String, dynamic> geometry) {
+    final type = geometry['type'];
+    if (type == 'Polygon') {
+      final points = polygonGeometryPoints(geometry);
+      return points.isEmpty ? const <List<LatLng>>[] : <List<LatLng>>[points];
+    }
+    if (type != 'MultiPolygon') {
+      return const <List<LatLng>>[];
+    }
+    final coordinates = geometry['coordinates'];
+    if (coordinates is! List) {
+      return const <List<LatLng>>[];
+    }
+    return coordinates
+        .whereType<List>()
+        .map((polygon) {
+          if (polygon.isEmpty) {
+            return const <LatLng>[];
+          }
+          final firstRing = polygon.first;
+          if (firstRing is! List) {
+            return const <LatLng>[];
+          }
+          return firstRing
+              .map(_decodeCoordinatePair)
+              .whereType<LatLng>()
+              .toList(growable: false);
+        })
+        .where((points) => points.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  LatLng? _decodeCoordinatePair(Object? raw) {
+    if (raw is! List || raw.length < 2) {
+      return null;
+    }
+    final lon = raw[0];
+    final lat = raw[1];
+    if (lon is! num || lat is! num) {
+      return null;
+    }
+    return LatLng(lat.toDouble(), lon.toDouble());
+  }
 }
 
-class _ImportMapToolsCard extends StatelessWidget {
-  const _ImportMapToolsCard({
-    super.key,
+class _ImportGeometryQuickFilter {
+  const _ImportGeometryQuickFilter({required this.id, required this.label});
+
+  final String id;
+  final String label;
+}
+
+const List<_ImportGeometryQuickFilter> _importGeometryQuickFilters =
+    <_ImportGeometryQuickFilter>[
+      _ImportGeometryQuickFilter(id: 'point', label: 'Point'),
+      _ImportGeometryQuickFilter(id: 'line', label: 'Line'),
+      _ImportGeometryQuickFilter(id: 'polygon', label: 'Polygon'),
+    ];
+
+const Color _projectContextColor = Color(0xFF546E7A);
+
+class _ImportMapFloatingPanel extends StatelessWidget {
+  const _ImportMapFloatingPanel({
     required this.projectName,
-    required this.totalStagedCount,
-    required this.visibleStagedCount,
-    required this.contextCount,
-    required this.outsideWorkspaceCount,
-    required this.basemapStyle,
-    required this.showProjectApprovedFeatures,
+    required this.categoryLabel,
+    required this.visibleFeatureCount,
+    required this.approvedContextCount,
+    required this.searchController,
+    required this.searchFocusNode,
+    required this.selectedGeometryChip,
     required this.visibleStatuses,
-    required this.onBasemapChanged,
+    required this.basemapStyle,
+    required this.gpsAccuracyMeters,
+    required this.isExpanded,
+    required this.isSearchOpen,
+    required this.searchSummaryLabel,
+    required this.visibleStatusSummaryLabel,
+    required this.showApprovedProjectContext,
+    required this.onSearchPressed,
+    required this.onSearchChanged,
+    required this.onClearSearch,
+    required this.onChipSelected,
+    required this.onResetVisibleStatuses,
+    required this.onToggleVisibleStatus,
+    required this.onBasemapStyleChanged,
+    required this.onToggleExpanded,
+    required this.onHidePanel,
     required this.onToggleProjectContext,
-    required this.onToggleAllStatuses,
-    required this.onToggleStatus,
-    required this.onHideTools,
   });
 
   final String projectName;
-  final int totalStagedCount;
-  final int visibleStagedCount;
-  final int contextCount;
-  final int outsideWorkspaceCount;
-  final LebanonBasemapStyle basemapStyle;
-  final bool showProjectApprovedFeatures;
+  final String categoryLabel;
+  final int visibleFeatureCount;
+  final int approvedContextCount;
+  final TextEditingController searchController;
+  final FocusNode searchFocusNode;
+  final String? selectedGeometryChip;
   final Set<String> visibleStatuses;
-  final ValueChanged<LebanonBasemapStyle> onBasemapChanged;
+  final LebanonBasemapStyle basemapStyle;
+  final double? gpsAccuracyMeters;
+  final bool isExpanded;
+  final bool isSearchOpen;
+  final String? searchSummaryLabel;
+  final String visibleStatusSummaryLabel;
+  final bool showApprovedProjectContext;
+  final VoidCallback onSearchPressed;
+  final VoidCallback onSearchChanged;
+  final VoidCallback onClearSearch;
+  final ValueChanged<String?> onChipSelected;
+  final VoidCallback onResetVisibleStatuses;
+  final ValueChanged<String> onToggleVisibleStatus;
+  final ValueChanged<LebanonBasemapStyle> onBasemapStyleChanged;
+  final VoidCallback onToggleExpanded;
+  final VoidCallback onHidePanel;
   final ValueChanged<bool> onToggleProjectContext;
-  final VoidCallback onToggleAllStatuses;
-  final ValueChanged<String> onToggleStatus;
-  final VoidCallback onHideTools;
 
   @override
   Widget build(BuildContext context) {
-    final allSelected = visibleStatuses.length == 4;
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Import map', style: Theme.of(context).textTheme.titleLarge),
-                    const SizedBox(height: 4),
-                    Text(projectName, style: Theme.of(context).textTheme.titleSmall),
-                    const SizedBox(height: 4),
-                    Text(
-                      'This map is separate from the project map. Staged import features are visible here for review. Approved project features appear only as context when enabled.',
-                      style: Theme.of(context).textTheme.bodySmall,
-                      softWrap: true,
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final visibleCountLabel = visibleFeatureCount == 1
+        ? '1 imported feature'
+        : '$visibleFeatureCount imported features';
+    final contextCountLabel = approvedContextCount == 1
+        ? '1 project context feature'
+        : '$approvedContextCount project context features';
+    final activeFilterLabel = selectedGeometryChip == null
+        ? 'All geometry'
+        : _importGeometryQuickFilters
+              .firstWhere(
+                (chip) => chip.id == selectedGeometryChip,
+                orElse: () => const _ImportGeometryQuickFilter(
+                  id: 'all',
+                  label: 'All geometry',
+                ),
+              )
+              .label;
+
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      child: Material(
+        elevation: 0,
+        color: scheme.surface.withValues(alpha: 0.93),
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: BorderSide(
+            color: scheme.outlineVariant.withValues(alpha: 0.38),
+          ),
+        ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final actionRailWidth = constraints.maxWidth >= 430
+                ? 146.0
+                : constraints.maxWidth >= 370
+                ? 118.0
+                : 92.0;
+            final metaMaxWidth = constraints.maxWidth >= 420
+                ? 156.0
+                : constraints.maxWidth >= 360
+                ? 128.0
+                : 106.0;
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(12, 11, 12, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 1),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                projectName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  height: 1.15,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  _CompactMapMetaPill(
+                                    icon: Icons.category_outlined,
+                                    label: categoryLabel.trim().isEmpty
+                                        ? 'Project'
+                                        : categoryLabel.trim(),
+                                    maxWidth: metaMaxWidth,
+                                    textStyle: theme.textTheme.labelSmall
+                                        ?.copyWith(
+                                          color: scheme.onSurfaceVariant,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                  ),
+                                  _CompactMapMetaPill(
+                                    icon: Icons.layers_outlined,
+                                    label: visibleCountLabel,
+                                    maxWidth: metaMaxWidth,
+                                    textStyle: theme.textTheme.labelSmall
+                                        ?.copyWith(
+                                          color: scheme.onSurfaceVariant,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: actionRailWidth),
+                        child: Align(
+                          alignment: Alignment.topRight,
+                          child: Wrap(
+                            alignment: WrapAlignment.end,
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              _MapStyleMenuButton(
+                                basemapStyle: basemapStyle,
+                                onSelected: onBasemapStyleChanged,
+                              ),
+                              _MapPanelIconButton(
+                                tooltip: isSearchOpen
+                                    ? 'Close search'
+                                    : 'Search imported features',
+                                icon: isSearchOpen
+                                    ? Icons.search_off_rounded
+                                    : Icons.search_rounded,
+                                onPressed: onSearchPressed,
+                              ),
+                              _MapPanelIconButton(
+                                tooltip: isExpanded
+                                    ? 'Hide quick filters'
+                                    : 'Show quick filters',
+                                icon: isExpanded
+                                    ? Icons.keyboard_arrow_up_rounded
+                                    : Icons.tune_rounded,
+                                onPressed: onToggleExpanded,
+                              ),
+                              _ProjectMapOverflowMenuButton(
+                                onHidePanel: onHidePanel,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (isSearchOpen) ...[
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: searchController,
+                      focusNode: searchFocusNode,
+                      textInputAction: TextInputAction.search,
+                      onChanged: (_) => onSearchChanged(),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        hintText: 'Search imported features on this map',
+                        prefixIcon: const Icon(Icons.search, size: 20),
+                        suffixIcon: searchController.text.trim().isEmpty
+                            ? null
+                            : IconButton(
+                                tooltip: 'Clear search',
+                                onPressed: onClearSearch,
+                                icon: const Icon(Icons.clear),
+                              ),
+                      ),
                     ),
                   ],
-                ),
-              ),
-              PopupMenuButton<String>(
-                onSelected: (value) {
-                  if (value == 'hide') {
-                    onHideTools();
-                  }
-                },
-                itemBuilder: (context) => const [PopupMenuItem<String>(value: 'hide', child: Text('Hide tools'))],
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final toggle = SegmentedButton<LebanonBasemapStyle>(
-                showSelectedIcon: false,
-                style: SegmentedButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                segments: const [
-                  ButtonSegment(value: LebanonBasemapStyle.satellite, label: Text('Hybrid')),
-                  ButtonSegment(value: LebanonBasemapStyle.street, label: Text('Street')),
+                  if (!isExpanded) ...[
+                    if (searchSummaryLabel != null ||
+                        visibleStatusSummaryLabel != 'All statuses' ||
+                        selectedGeometryChip != null ||
+                        gpsAccuracyMeters != null ||
+                        !showApprovedProjectContext) ...[
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          if (searchSummaryLabel != null)
+                            _MapInfoPill(
+                              icon: Icons.search,
+                              label: searchSummaryLabel!,
+                            ),
+                          if (visibleStatusSummaryLabel != 'All statuses')
+                            _MapInfoPill(
+                              icon: Icons.visibility_outlined,
+                              label: visibleStatusSummaryLabel,
+                            ),
+                          if (selectedGeometryChip != null)
+                            _MapInfoPill(
+                              icon: Icons.layers_outlined,
+                              label: activeFilterLabel,
+                            ),
+                          if (gpsAccuracyMeters != null)
+                            _MapInfoPill(
+                              icon: Icons.my_location,
+                              label:
+                                  'GPS ${gpsAccuracyMeters!.toStringAsFixed(0)}m',
+                            ),
+                          if (!showApprovedProjectContext)
+                            const _MapInfoPill(
+                              icon: Icons.visibility_off_outlined,
+                              label: 'Project context hidden',
+                            ),
+                        ],
+                      ),
+                    ],
+                  ],
+                  if (isExpanded) ...[
+                    const SizedBox(height: 10),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          ChoiceChip(
+                            label: const Text('All'),
+                            selected: visibleStatuses.length ==
+                                _ImportMapScreenState._statusOrder.length,
+                            onSelected: (_) => onResetVisibleStatuses(),
+                          ),
+                          for (final status
+                              in _ImportMapScreenState._statusOrder) ...[
+                            const SizedBox(width: 8),
+                            ChoiceChip(
+                              label: Text(_statusLabel(status)),
+                              selected: visibleStatuses.contains(status),
+                              onSelected: (_) => onToggleVisibleStatus(status),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          ChoiceChip(
+                            label: const Text('All geometry'),
+                            selected: selectedGeometryChip == null,
+                            onSelected: (_) => onChipSelected(null),
+                          ),
+                          for (final chip in _importGeometryQuickFilters) ...[
+                            const SizedBox(width: 8),
+                            ChoiceChip(
+                              label: Text(chip.label),
+                              selected: selectedGeometryChip == chip.id,
+                              onSelected: (selected) =>
+                                  onChipSelected(selected ? chip.id : null),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _MapInfoPill(
+                          icon: _basemapStyleIcon(basemapStyle),
+                          label:
+                              '${LebanonMapConfig.basemapLabel(basemapStyle)} view',
+                        ),
+                        _MapInfoPill(
+                          icon: Icons.map_outlined,
+                          label: contextCountLabel,
+                        ),
+                        if (gpsAccuracyMeters != null)
+                          _MapInfoPill(
+                            icon: Icons.my_location,
+                            label:
+                                'GPS ${gpsAccuracyMeters!.toStringAsFixed(0)}m',
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: scheme.surfaceContainerHighest.withValues(
+                          alpha: 0.62,
+                        ),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Show approved project context',
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    'Keep approved project features visible as read-only reference.',
+                                    style: theme.textTheme.bodySmall,
+                                    softWrap: true,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Switch.adaptive(
+                              value: showApprovedProjectContext,
+                              onChanged: onToggleProjectContext,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
-                selected: <LebanonBasemapStyle>{basemapStyle},
-                onSelectionChanged: (selection) => onBasemapChanged(selection.first),
-              );
-              if (constraints.maxWidth < 420) {
-                return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [_summaryChips(), const SizedBox(height: AppSpacing.sm), toggle]);
-              }
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [Expanded(child: _summaryChips()), const SizedBox(width: AppSpacing.sm), toggle],
-              );
-            },
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilterChip(selected: allSelected, label: const Text('All'), onSelected: (_) => onToggleAllStatuses()),
-              _StatusFilterChip(label: 'Pending', selected: visibleStatuses.contains('pending_review'), onSelected: () => onToggleStatus('pending_review'), color: Colors.orange.shade700),
-              _StatusFilterChip(label: 'Approved', selected: visibleStatuses.contains('approved'), onSelected: () => onToggleStatus('approved'), color: Colors.green.shade700),
-              _StatusFilterChip(label: 'Rejected', selected: visibleStatuses.contains('rejected'), onSelected: () => onToggleStatus('rejected'), color: Colors.red.shade700),
-              _StatusFilterChip(label: 'Failed', selected: visibleStatuses.contains('failed'), onSelected: () => onToggleStatus('failed'), color: Colors.purple.shade700),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          SwitchListTile.adaptive(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Show approved project features for context'),
-            value: showProjectApprovedFeatures,
-            onChanged: onToggleProjectContext,
-          ),
-        ],
+              ),
+            );
+          },
+        ),
       ),
     );
   }
+}
 
-  Widget _summaryChips() {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
+class _ImportMapControlRail extends StatelessWidget {
+  const _ImportMapControlRail({
+    required this.featureCount,
+    required this.onOpenFeatures,
+    required this.onCenterCurrentLocation,
+    required this.onFitWorkspace,
+    required this.onZoomIn,
+    required this.onZoomOut,
+    required this.isLocating,
+  });
+
+  final int featureCount;
+  final VoidCallback? onOpenFeatures;
+  final VoidCallback? onCenterCurrentLocation;
+  final VoidCallback? onFitWorkspace;
+  final VoidCallback? onZoomIn;
+  final VoidCallback? onZoomOut;
+  final bool isLocating;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        Chip(label: Text('$visibleStagedCount of $totalStagedCount staged shown')),
-        if (contextCount > 0) Chip(label: Text('$contextCount approved project features')),
-        if (outsideWorkspaceCount > 0) Chip(label: Text('$outsideWorkspaceCount outside Lebanon workspace')),
+        if (onOpenFeatures != null) ...[
+          _MapFloatingActionButton(
+            tooltip: 'Browse imported features',
+            onPressed: onOpenFeatures,
+            badgeLabel: '$featureCount',
+            child: const Icon(Icons.layers_outlined, size: 20),
+          ),
+          const SizedBox(height: 12),
+        ],
+        Material(
+          elevation: 6,
+          color: scheme.surface.withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _GroupedMapRailButton(
+                tooltip: 'Current location',
+                onPressed: onCenterCurrentLocation,
+                icon: isLocating
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.my_location_outlined),
+                isTop: true,
+              ),
+              const _GroupedMapRailDivider(),
+              _GroupedMapRailButton(
+                tooltip: 'Fit Lebanon workspace',
+                onPressed: onFitWorkspace,
+                icon: const Icon(Icons.center_focus_strong_outlined),
+              ),
+              const _GroupedMapRailDivider(),
+              _GroupedMapRailButton(
+                tooltip: 'Zoom in',
+                onPressed: onZoomIn,
+                icon: const Icon(Icons.add),
+              ),
+              const _GroupedMapRailDivider(),
+              _GroupedMapRailButton(
+                tooltip: 'Zoom out',
+                onPressed: onZoomOut,
+                icon: const Icon(Icons.remove),
+                isBottom: true,
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }
 }
 
-class _ImportMapLegendBar extends StatelessWidget {
-  const _ImportMapLegendBar({required this.selectedFeature, required this.onClearSelection});
+class _ImportFeatureBrowserSheet extends ConsumerStatefulWidget {
+  const _ImportFeatureBrowserSheet({
+    required this.importId,
+    required this.projectName,
+    required this.onSelectFeature,
+    this.initialSearch,
+    this.initialStatus,
+    this.initialGeometryType,
+  });
 
-  final _ImportMapFeature? selectedFeature;
-  final VoidCallback? onClearSelection;
+  final String importId;
+  final String projectName;
+  final String? initialSearch;
+  final String? initialStatus;
+  final String? initialGeometryType;
+  final ValueChanged<ImportedFeature> onSelectFeature;
+
+  @override
+  ConsumerState<_ImportFeatureBrowserSheet> createState() =>
+      _ImportFeatureBrowserSheetState();
+}
+
+class _ImportFeatureBrowserSheetState
+    extends ConsumerState<_ImportFeatureBrowserSheet> {
+  static const List<String> _statusOrder = <String>[
+    'pending_review',
+    'approved',
+    'rejected',
+    'failed',
+  ];
+
+  late final TextEditingController _searchController;
+  String? _statusFilter;
+  String? _geometryTypeFilter;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController(text: widget.initialSearch ?? '');
+    _statusFilter = widget.initialStatus;
+    _geometryTypeFilter = widget.initialGeometryType;
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final query = ImportedFeatureListQuery(
+      importId: widget.importId,
+      status: _statusFilter,
+      search: _searchController.text.trim().isEmpty
+          ? null
+          : _searchController.text.trim(),
+      geometryType: _geometryTypeFilter,
+    );
+    final featuresAsync = ref.watch(paginatedImportFeaturesProvider(query));
+    final featuresController = ref.read(
+      paginatedImportFeaturesProvider(query).notifier,
+    );
+    final featureState =
+        featuresAsync.valueOrNull ??
+        const PaginatedListState<ImportedFeature>.initial();
+    final displayedFeatures = featureState.items;
+    final bottomInset =
+        MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
+
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.64,
+      minChildSize: 0.34,
+      maxChildSize: 0.92,
+      builder: (context, controller) {
+        return ListView(
+          controller: controller,
+          padding: EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.sm,
+            AppSpacing.md,
+            bottomInset,
+          ),
+          children: [
+            Center(
+              child: Container(
+                width: 44,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              'Imported features',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Showing ${displayedFeatures.length} of ${featureState.total} item(s) in ${widget.projectName}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            TextField(
+              controller: _searchController,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: 'Search imported features',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: _searchController.text.trim().isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: () {
+                          setState(() {
+                            _searchController.clear();
+                          });
+                        },
+                        icon: const Icon(Icons.clear),
+                      ),
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  ChoiceChip(
+                    label: const Text('All'),
+                    selected: _statusFilter == null,
+                    onSelected: (_) {
+                      setState(() {
+                        _statusFilter = null;
+                      });
+                    },
+                  ),
+                  for (final status in _statusOrder) ...[
+                    const SizedBox(width: 8),
+                    ChoiceChip(
+                      label: Text(_statusLabel(status)),
+                      selected: _statusFilter == status,
+                      onSelected: (selected) {
+                        setState(() {
+                          _statusFilter = selected ? status : null;
+                        });
+                      },
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  ChoiceChip(
+                    label: const Text('Any geometry'),
+                    selected: _geometryTypeFilter == null,
+                    onSelected: (_) {
+                      setState(() {
+                        _geometryTypeFilter = null;
+                      });
+                    },
+                  ),
+                  for (final filter in _importGeometryQuickFilters) ...[
+                    const SizedBox(width: 8),
+                    ChoiceChip(
+                      label: Text(filter.label),
+                      selected: _geometryTypeFilter == filter.id,
+                      onSelected: (selected) {
+                        setState(() {
+                          _geometryTypeFilter = selected ? filter.id : null;
+                        });
+                      },
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            if (featuresAsync.isLoading && displayedFeatures.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (featuresAsync.hasError && displayedFeatures.isEmpty)
+              AppEmptyState(
+                icon: Icons.error_outline,
+                title: 'Imported features unavailable',
+                message: userFacingErrorMessage(
+                  featuresAsync.asError!.error,
+                  fallback:
+                      'Unable to load imported features right now. Please try again.',
+                ),
+                actionLabel: 'Retry',
+                onAction: featuresController.refresh,
+              )
+            else if (displayedFeatures.isEmpty)
+              AppEmptyState(
+                icon: Icons.layers_clear_outlined,
+                title: 'No imported features match these filters',
+                message: 'Try a different search, status, or geometry filter.',
+                actionLabel: 'Clear filters',
+                onAction: () {
+                  setState(() {
+                    _searchController.clear();
+                    _statusFilter = null;
+                    _geometryTypeFilter = null;
+                  });
+                },
+              )
+            else
+              ProgressiveListSection<ImportedFeature>(
+                items: displayedFeatures,
+                resetKey: query,
+                hasMore: featureState.hasMore,
+                isLoadingMore: featureState.isLoadingMore,
+                onLoadMore: featuresController.loadMore,
+                itemBuilder: (context, feature, _) => AppCard(
+                  onTap: () => widget.onSelectFeature(feature),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 12,
+                        height: 12,
+                        margin: const EdgeInsets.only(top: 6),
+                        decoration: BoxDecoration(
+                          color: _statusColor(feature.status),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              feature.displayTitle,
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _importedFeatureSubtitle(feature),
+                              style: Theme.of(context).textTheme.bodySmall,
+                              softWrap: true,
+                            ),
+                            if (feature.validationWarnings.isNotEmpty ||
+                                feature.validationErrors.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  if (feature.validationWarnings.isNotEmpty)
+                                    _MapInfoPill(
+                                      icon: Icons.warning_amber_rounded,
+                                      label:
+                                          '${feature.validationWarnings.length} warning${feature.validationWarnings.length == 1 ? '' : 's'}',
+                                    ),
+                                  if (feature.validationErrors.isNotEmpty)
+                                    _MapInfoPill(
+                                      icon: Icons.error_outline,
+                                      label:
+                                          '${feature.validationErrors.length} error${feature.validationErrors.length == 1 ? '' : 's'}',
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      _ImportFeatureStatusChip(status: feature.status),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ImportFeatureDetailsSheet extends StatelessWidget {
+  const _ImportFeatureDetailsSheet({
+    required this.feature,
+    required this.canComment,
+    this.onAddComment,
+  });
+
+  final ImportedFeature feature;
+  final bool canComment;
+  final VoidCallback? onAddComment;
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset =
+        MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.64,
+      minChildSize: 0.34,
+      maxChildSize: 0.92,
+      builder: (context, controller) {
+        return ListView(
+          controller: controller,
+          padding: EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.sm,
+            AppSpacing.md,
+            bottomInset,
+          ),
+          children: [
+            Center(
+              child: Container(
+                width: 44,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        feature.displayTitle,
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _importedFeatureSubtitle(feature),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                _ImportFeatureStatusChip(status: feature.status),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+            if (feature.reviewReason?.trim().isNotEmpty ?? false) ...[
+              _DetailSection(
+                title: 'Review reason',
+                child: Text(feature.reviewReason!.trim(), softWrap: true),
+              ),
+              const SizedBox(height: AppSpacing.md),
+            ],
+            if (feature.validationErrors.isNotEmpty) ...[
+              _ValidationIssueGroup(
+                title: 'Validation errors',
+                icon: Icons.error_outline,
+                toneColor: Theme.of(context).colorScheme.error,
+                messages: feature.validationErrors,
+              ),
+              const SizedBox(height: AppSpacing.md),
+            ],
+            if (feature.validationWarnings.isNotEmpty) ...[
+              _ValidationIssueGroup(
+                title: 'Validation warnings',
+                icon: Icons.warning_amber_rounded,
+                toneColor: const Color(0xFFE67E22),
+                messages: feature.validationWarnings,
+              ),
+              const SizedBox(height: AppSpacing.md),
+            ],
+            _DetailSection(
+              title: 'Feature details',
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _MapInfoPill(
+                    icon: Icons.category_outlined,
+                    label: _geometryLabel(
+                      feature.geometryType ??
+                          feature.geometry?['type']?.toString() ??
+                          'Unknown',
+                    ),
+                  ),
+                  _MapInfoPill(
+                    icon: Icons.tag_outlined,
+                    label: 'Source #${feature.sourceIndex}',
+                  ),
+                  if (feature.sourceFeatureName?.trim().isNotEmpty ?? false)
+                    _MapInfoPill(
+                      icon: Icons.badge_outlined,
+                      label: feature.sourceFeatureName!.trim(),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            _DetailSection(
+              title: 'Attributes',
+              child: feature.attributes.isEmpty
+                  ? const Text('No attributes were imported for this feature.')
+                  : _AttributesGrid(attributes: feature.attributes),
+            ),
+            if (canComment && onAddComment != null) ...[
+              const SizedBox(height: AppSpacing.md),
+              FilledButton.icon(
+                onPressed: onAddComment,
+                icon: const Icon(Icons.comment_outlined),
+                label: const Text('Add comment on this feature'),
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ApprovedProjectFeatureDetailsSheet extends StatelessWidget {
+  const _ApprovedProjectFeatureDetailsSheet({required this.feature});
+
+  final MapFeatureSummary feature;
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset =
+        MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.58,
+      minChildSize: 0.32,
+      maxChildSize: 0.9,
+      builder: (context, controller) {
+        return ListView(
+          controller: controller,
+          padding: EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.sm,
+            AppSpacing.md,
+            bottomInset,
+          ),
+          children: [
+            Center(
+              child: Container(
+                width: 44,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _projectFeatureTitle(feature),
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Approved project feature shown only as map context.',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                const _MapInfoPill(
+                  icon: Icons.check_circle_outline,
+                  label: 'Project context',
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+            _DetailSection(
+              title: 'Feature details',
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _MapInfoPill(
+                    icon: Icons.category_outlined,
+                    label: _geometryLabel(
+                      feature.geometry['type']?.toString() ?? 'Unknown',
+                    ),
+                  ),
+                  if (feature.collectedBy?.trim().isNotEmpty ?? false)
+                    _MapInfoPill(
+                      icon: Icons.person_outline,
+                      label: 'Collected by ${feature.collectedBy!.trim()}',
+                    ),
+                  if (feature.reviewedBy?.trim().isNotEmpty ?? false)
+                    _MapInfoPill(
+                      icon: Icons.verified_outlined,
+                      label: 'Reviewed by ${feature.reviewedBy!.trim()}',
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            _DetailSection(
+              title: 'Attributes',
+              child: feature.attributes.isEmpty
+                  ? const Text(
+                      'No attributes are available for this approved project feature.',
+                    )
+                  : _AttributesGrid(attributes: feature.attributes),
+            ),
+            if (feature.reviewNotes?.trim().isNotEmpty ?? false) ...[
+              const SizedBox(height: AppSpacing.md),
+              _DetailSection(
+                title: 'Review notes',
+                child: Text(feature.reviewNotes!.trim(), softWrap: true),
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _AttributesGrid extends StatelessWidget {
+  const _AttributesGrid({required this.attributes});
+
+  final Map<String, dynamic> attributes;
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = attributes.entries.toList(growable: false)
+      ..sort((left, right) => left.key.compareTo(right.key));
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 520 ? 2 : 1;
+        final itemWidth = columns == 1
+            ? constraints.maxWidth
+            : (constraints.maxWidth - 12) / 2;
+        return Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            for (final entry in entries)
+              SizedBox(
+                width: itemWidth,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.outlineVariant.withValues(alpha: 0.36),
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _labelize(entry.key),
+                          style: Theme.of(context).textTheme.labelMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                          softWrap: true,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _formatAttributeValue(entry.value),
+                          style: Theme.of(context).textTheme.bodyMedium,
+                          softWrap: true,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ImportFeatureCommentDialog extends StatefulWidget {
+  const _ImportFeatureCommentDialog({required this.feature});
+
+  final ImportedFeature feature;
+
+  @override
+  State<_ImportFeatureCommentDialog> createState() =>
+      _ImportFeatureCommentDialogState();
+}
+
+class _ImportFeatureCommentDialogState extends State<_ImportFeatureCommentDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Add feature comment'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            widget.feature.displayTitle,
+            style: Theme.of(context).textTheme.titleSmall,
+            softWrap: true,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          AppTextField(
+            label: 'Comment',
+            controller: _controller,
+            hint: 'Add a review note for this imported feature.',
+            minLines: 3,
+            maxLines: 6,
+            onChanged: (_) => setState(() {}),
+            textCapitalization: TextCapitalization.sentences,
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _controller.text.trim().isEmpty
+              ? null
+              : () => Navigator.of(context).pop(_controller.text.trim()),
+          child: const Text('Save comment'),
+        ),
+      ],
+    );
+  }
+}
+
+class _DetailSection extends StatelessWidget {
+  const _DetailSection({required this.title, required this.child});
+
+  final String title;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
@@ -544,25 +2325,73 @@ class _ImportMapLegendBar extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          Text(
+            title,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _ValidationIssueGroup extends StatelessWidget {
+  const _ValidationIssueGroup({
+    required this.title,
+    required this.icon,
+    required this.toneColor,
+    required this.messages,
+  });
+
+  final String title;
+  final IconData icon;
+  final Color toneColor;
+  final List<String> messages;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              _LegendChip(label: 'Pending', color: Colors.orange.shade700),
-              _LegendChip(label: 'Approved', color: Colors.green.shade700),
-              _LegendChip(label: 'Rejected', color: Colors.red.shade700),
-              _LegendChip(label: 'Failed', color: Colors.purple.shade700),
-              _LegendChip(label: 'Project context', color: Colors.blueGrey.shade700),
+              Icon(icon, color: toneColor, size: 18),
+              const SizedBox(width: AppSpacing.xs),
+              Expanded(
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
             ],
           ),
-          if (selectedFeature != null) ...[
-            const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: AppSpacing.sm),
+          for (final message in messages) ...[
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(child: Text('Focused feature: ${selectedFeature!.title}', softWrap: true)),
-                if (onClearSelection != null) TextButton(onPressed: onClearSelection, child: const Text('Clear focus')),
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Icon(Icons.circle, size: 7, color: toneColor),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    message,
+                    softWrap: true,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ),
               ],
             ),
+            if (message != messages.last) const SizedBox(height: 8),
           ],
         ],
       ),
@@ -570,281 +2399,496 @@ class _ImportMapLegendBar extends StatelessWidget {
   }
 }
 
-class _StatusFilterChip extends StatelessWidget {
-  const _StatusFilterChip({required this.label, required this.selected, required this.onSelected, required this.color});
+class _ImportFeatureStatusChip extends StatelessWidget {
+  const _ImportFeatureStatusChip({required this.status});
 
-  final String label;
-  final bool selected;
-  final VoidCallback onSelected;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return FilterChip(
-      selected: selected,
-      label: Text(label),
-      selectedColor: color.withValues(alpha: 0.18),
-      checkmarkColor: color,
-      onSelected: (_) => onSelected(),
-    );
-  }
-}
-
-class _ImportMapAttributeGrid extends StatelessWidget {
-  const _ImportMapAttributeGrid({required this.attributes});
-
-  final Map<String, dynamic> attributes;
-
-  @override
-  Widget build(BuildContext context) {
-    final entries = attributes.entries.toList(growable: false);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final useTwoColumns = constraints.maxWidth >= 520;
-        final itemWidth = useTwoColumns ? (constraints.maxWidth - AppSpacing.sm) / 2 : constraints.maxWidth;
-        return Wrap(
-          spacing: AppSpacing.sm,
-          runSpacing: AppSpacing.sm,
-          children: entries.map((entry) => SizedBox(width: itemWidth, child: _ImportMapMetadataField(label: _labelize(entry.key), value: _formatValue(entry.value)))).toList(growable: false),
-        );
-      },
-    );
-  }
-}
-
-class _ImportMapMetadataField extends StatelessWidget {
-  const _ImportMapMetadataField({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: Theme.of(context).textTheme.labelMedium?.copyWith(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 2),
-        Text(value, softWrap: true, maxLines: null),
-      ],
-    );
-  }
-}
-
-class _ImportMapFeature {
-  _ImportMapFeature({
-    required this.id,
-    required this.title,
-    required this.subtitle,
-    required this.status,
-    required this.color,
-    required this.geometry,
-    required this.attributes,
-    required this.validationWarnings,
-    required this.validationErrors,
-    required this.reviewReason,
-    required this.isProjectContext,
-  }) : points = geometry == null ? const <LatLng>[] : geometryPoints(geometry),
-       lineSegments = geometry == null ? const <List<LatLng>>[] : _lineSegments(geometry),
-       polygonSegments = geometry == null ? const <List<LatLng>>[] : _polygonSegments(geometry),
-       focusPoint = geometry == null ? null : geometryFocusPoint(geometry),
-       touchesLebanonWorkspace = geometry == null ? false : geometryPoints(geometry).any(LebanonMapConfig.contains),
-       isLine = geometry?['type'] == 'LineString' || geometry?['type'] == 'MultiLineString',
-       isPolygon = geometry?['type'] == 'Polygon' || geometry?['type'] == 'MultiPolygon';
-
-  factory _ImportMapFeature.staged(ImportedFeature feature) {
-    return _ImportMapFeature(
-      id: feature.id,
-      title: feature.displayTitle,
-      subtitle: '${feature.geometryType ?? 'Unknown geometry'} • source #${feature.sourceIndex + 1}',
-      status: feature.status,
-      color: _stagedStatusColor(feature.status),
-      geometry: feature.geometry,
-      attributes: feature.attributes,
-      validationWarnings: feature.validationWarnings,
-      validationErrors: feature.validationErrors,
-      reviewReason: feature.reviewReason,
-      isProjectContext: false,
-    );
-  }
-
-  factory _ImportMapFeature.projectApproved(MapFeatureSummary feature) {
-    return _ImportMapFeature(
-      id: feature.id,
-      title: _projectFeatureTitle(feature),
-      subtitle: '${feature.geometry['type'] ?? 'Unknown geometry'} • approved project feature',
-      status: 'approved',
-      color: Colors.blueGrey.shade700,
-      geometry: feature.geometry,
-      attributes: feature.attributes,
-      validationWarnings: const <String>[],
-      validationErrors: const <String>[],
-      reviewReason: feature.reviewNotes,
-      isProjectContext: true,
-    );
-  }
-
-  final String id;
-  final String title;
-  final String subtitle;
   final String status;
-  final Color color;
-  final Map<String, dynamic>? geometry;
-  final Map<String, dynamic> attributes;
-  final List<String> validationWarnings;
-  final List<String> validationErrors;
-  final String? reviewReason;
-  final bool isProjectContext;
-  final List<LatLng> points;
-  final List<List<LatLng>> lineSegments;
-  final List<List<LatLng>> polygonSegments;
-  final LatLng? focusPoint;
-  final bool touchesLebanonWorkspace;
-  final bool isLine;
-  final bool isPolygon;
-
-  bool get hasGeometry => geometry != null && points.isNotEmpty;
-}
-
-class _LegendChip extends StatelessWidget {
-  const _LegendChip({required this.label, required this.color});
-
-  final String label;
-  final Color color;
 
   @override
   Widget build(BuildContext context) {
-    return Chip(avatar: Icon(Icons.circle, color: color, size: 12), label: Text(label));
+    final color = _statusColor(status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        _statusLabel(status),
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: color,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
   }
 }
 
-List<List<LatLng>> _lineSegments(Map<String, dynamic> geometry) {
-  if (geometry['type'] == 'LineString') {
-    final points = lineGeometryPoints(geometry);
-    return points.isEmpty ? const <List<LatLng>>[] : <List<LatLng>>[points];
+class _MapPanelIconButton extends StatelessWidget {
+  const _MapPanelIconButton({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: scheme.secondaryContainer.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onPressed,
+          child: SizedBox(width: 30, height: 30, child: Icon(icon, size: 16)),
+        ),
+      ),
+    );
   }
-  if (geometry['type'] != 'MultiLineString') {
-    return const <List<LatLng>>[];
-  }
-  final coordinates = geometry['coordinates'];
-  if (coordinates is! List) {
-    return const <List<LatLng>>[];
-  }
-  return coordinates.whereType<List>().map((segment) => segment.map(_decodeCoordinatePair).whereType<LatLng>().toList(growable: false)).where((points) => points.isNotEmpty).toList(growable: false);
 }
 
-List<List<LatLng>> _polygonSegments(Map<String, dynamic> geometry) {
-  if (geometry['type'] == 'Polygon') {
-    final points = polygonGeometryPoints(geometry);
-    return points.isEmpty ? const <List<LatLng>>[] : <List<LatLng>>[points];
+class _MapStyleMenuButton extends StatelessWidget {
+  const _MapStyleMenuButton({
+    required this.basemapStyle,
+    required this.onSelected,
+  });
+
+  final LebanonBasemapStyle basemapStyle;
+  final ValueChanged<LebanonBasemapStyle> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return PopupMenuButton<LebanonBasemapStyle>(
+      tooltip: 'Map style',
+      onSelected: onSelected,
+      itemBuilder: (context) => <PopupMenuEntry<LebanonBasemapStyle>>[
+        for (final style in LebanonBasemapStyle.values)
+          PopupMenuItem<LebanonBasemapStyle>(
+            value: style,
+            child: SizedBox(
+              width: 210,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(_basemapStyleIcon(style), size: 18),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(LebanonMapConfig.basemapLabel(style)),
+                        const SizedBox(height: 2),
+                        Text(
+                          LebanonMapConfig.basemapDescription(style),
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (style == basemapStyle) ...[
+                    const SizedBox(width: AppSpacing.sm),
+                    Icon(Icons.check_rounded, size: 18, color: scheme.primary),
+                  ],
+                ],
+              ),
+            ),
+          ),
+      ],
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: scheme.secondaryContainer.withValues(alpha: 0.7),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: SizedBox(
+          width: 30,
+          height: 30,
+          child: Icon(_basemapStyleIcon(basemapStyle), size: 16),
+        ),
+      ),
+    );
   }
-  if (geometry['type'] != 'MultiPolygon') {
-    return const <List<LatLng>>[];
-  }
-  final coordinates = geometry['coordinates'];
-  if (coordinates is! List) {
-    return const <List<LatLng>>[];
-  }
-  return coordinates.whereType<List>().map((polygon) {
-    if (polygon.isEmpty) {
-      return const <LatLng>[];
-    }
-    final firstRing = polygon.first;
-    if (firstRing is! List) {
-      return const <LatLng>[];
-    }
-    return firstRing.map(_decodeCoordinatePair).whereType<LatLng>().toList(growable: false);
-  }).where((points) => points.isNotEmpty).toList(growable: false);
 }
 
-LatLng? _decodeCoordinatePair(Object? raw) {
-  if (raw is! List || raw.length < 2) {
-    return null;
+IconData _basemapStyleIcon(LebanonBasemapStyle style) {
+  switch (style) {
+    case LebanonBasemapStyle.street:
+      return Icons.map_outlined;
+    case LebanonBasemapStyle.satellite:
+      return Icons.satellite_alt_outlined;
   }
-  final lon = raw[0];
-  final lat = raw[1];
-  if (lon is! num || lat is! num) {
-    return null;
+}
+
+enum _ProjectMapOverflowAction { hideTools }
+
+class _ProjectMapOverflowMenuButton extends StatelessWidget {
+  const _ProjectMapOverflowMenuButton({required this.onHidePanel});
+
+  final VoidCallback onHidePanel;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return PopupMenuButton<_ProjectMapOverflowAction>(
+      tooltip: 'More map tools',
+      onSelected: (action) {
+        switch (action) {
+          case _ProjectMapOverflowAction.hideTools:
+            onHidePanel();
+            break;
+        }
+      },
+      itemBuilder: (context) =>
+          const <PopupMenuEntry<_ProjectMapOverflowAction>>[
+            PopupMenuItem<_ProjectMapOverflowAction>(
+              value: _ProjectMapOverflowAction.hideTools,
+              child: ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.visibility_off_outlined, size: 18),
+                title: Text('Hide map tools'),
+              ),
+            ),
+          ],
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: scheme.secondaryContainer.withValues(alpha: 0.7),
+          borderRadius: BorderRadius.circular(13),
+        ),
+        child: const SizedBox(
+          width: 32,
+          height: 32,
+          child: Icon(Icons.more_horiz_rounded, size: 16),
+        ),
+      ),
+    );
   }
-  return LatLng(lat.toDouble(), lon.toDouble());
+}
+
+class _CompactMapMetaPill extends StatelessWidget {
+  const _CompactMapMetaPill({
+    required this.icon,
+    required this.label,
+    this.textStyle,
+    this.maxWidth = 110,
+  });
+
+  final IconData icon;
+  final String label;
+  final TextStyle? textStyle;
+  final double maxWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: maxWidth + 40),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 12, color: scheme.primary),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textStyle,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MapInfoPill extends StatelessWidget {
+  const _MapInfoPill({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: scheme.primary),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                label,
+                style: Theme.of(context).textTheme.bodySmall,
+                softWrap: true,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GroupedMapRailDivider extends StatelessWidget {
+  const _GroupedMapRailDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Divider(
+      height: 1,
+      thickness: 0.8,
+      indent: 8,
+      endIndent: 8,
+      color: Theme.of(context).colorScheme.outlineVariant,
+    );
+  }
+}
+
+class _GroupedMapRailButton extends StatelessWidget {
+  const _GroupedMapRailButton({
+    required this.tooltip,
+    required this.onPressed,
+    required this.icon,
+    this.isTop = false,
+    this.isBottom = false,
+  });
+
+  final String tooltip;
+  final VoidCallback? onPressed;
+  final Widget icon;
+  final bool isTop;
+  final bool isBottom;
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = BorderRadius.vertical(
+      top: isTop ? const Radius.circular(22) : Radius.zero,
+      bottom: isBottom ? const Radius.circular(22) : Radius.zero,
+    );
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: radius,
+          onTap: onPressed,
+          child: SizedBox(width: 44, height: 42, child: Center(child: icon)),
+        ),
+      ),
+    );
+  }
+}
+
+class _MapFloatingActionButton extends StatelessWidget {
+  const _MapFloatingActionButton({
+    required this.tooltip,
+    required this.onPressed,
+    required this.child,
+    this.badgeLabel,
+  });
+
+  final String tooltip;
+  final VoidCallback? onPressed;
+  final Widget child;
+  final String? badgeLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        elevation: 6,
+        color: scheme.surface.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onPressed,
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Center(child: child),
+                if (badgeLabel != null)
+                  Positioned(
+                    right: 4,
+                    top: 4,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: scheme.primary,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 1.5,
+                        ),
+                        child: Text(
+                          badgeLabel!,
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(
+                                color: scheme.onPrimary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _statusLabel(String status) {
+  switch (status) {
+    case 'pending_review':
+      return 'Pending';
+    case 'approved':
+      return 'Approved';
+    case 'rejected':
+      return 'Rejected';
+    case 'failed':
+      return 'Failed';
+    default:
+      return _labelize(status);
+  }
+}
+
+String _geometryLabel(String geometryType) {
+  switch (geometryType) {
+    case 'Point':
+    case 'MultiPoint':
+      return 'Point';
+    case 'LineString':
+    case 'MultiLineString':
+      return 'Line';
+    case 'Polygon':
+    case 'MultiPolygon':
+      return 'Polygon';
+    default:
+      return geometryType;
+  }
+}
+
+Color _statusColor(String status) {
+  switch (status) {
+    case 'pending_review':
+      return const Color(0xFFE67E22);
+    case 'approved':
+      return const Color(0xFF2E7D32);
+    case 'rejected':
+      return const Color(0xFFC62828);
+    case 'failed':
+      return const Color(0xFF7B1FA2);
+    default:
+      return const Color(0xFF546E7A);
+  }
+}
+
+String _importedFeatureSubtitle(ImportedFeature feature) {
+  final type = _geometryLabel(
+    feature.geometryType ?? feature.geometry?['type']?.toString() ?? 'Unknown',
+  );
+  final source = 'source #${feature.sourceIndex}';
+  final sourceName = feature.sourceFeatureName?.trim();
+  if (sourceName != null && sourceName.isNotEmpty) {
+    return '$type • $source • $sourceName';
+  }
+  return '$type • $source';
 }
 
 String _projectFeatureTitle(MapFeatureSummary feature) {
-  String? attributeValue(bool Function(String key) matcher, {int maxLength = 80}) {
-    for (final entry in feature.attributes.entries) {
-      final value = '${entry.value}'.trim();
-      if (!matcher(entry.key) || value.isEmpty || value.length > maxLength) {
-        continue;
-      }
-      return value;
+  const preferredKeys = <String>['name', 'title', 'label', 'feature_type'];
+  for (final key in preferredKeys) {
+    final raw = feature.attributes[key];
+    if (raw == null) {
+      continue;
     }
-    return null;
+    final text = '$raw'.trim();
+    if (text.isNotEmpty) {
+      return text;
+    }
   }
-
-  bool looksLikeName(String key) {
-    final normalized = key.toLowerCase();
-    return normalized.contains('name') || normalized.contains('title') || normalized.contains('label');
-  }
-
-  bool looksLikeType(String key) {
-    final normalized = key.toLowerCase();
-    return normalized.contains('type') || normalized.contains('class') || normalized.contains('category');
-  }
-
-  final nameValue = attributeValue(looksLikeName);
-  if (nameValue != null) {
-    return nameValue;
-  }
-  final typeValue = attributeValue(looksLikeType, maxLength: 40);
-  if (typeValue != null) {
-    return typeValue;
-  }
-  return switch (feature.geometry['type']) {
-    'LineString' => 'Approved line feature',
-    'MultiLineString' => 'Approved line feature',
-    'Polygon' => 'Approved area feature',
-    'MultiPolygon' => 'Approved area feature',
-    _ => 'Approved point feature',
-  };
+  final type = _geometryLabel(feature.geometry['type']?.toString() ?? 'Feature');
+  final suffix = feature.id.length > 8 ? feature.id.substring(0, 8) : feature.id;
+  return '$type feature $suffix';
 }
 
-String _labelize(String key) {
-  return key.replaceAll('_', ' ').split(' ').where((part) => part.isNotEmpty).map((part) => '${part[0].toUpperCase()}${part.substring(1)}').join(' ');
+String _labelize(String value) {
+  final normalized = value
+      .replaceAllMapped(
+        RegExp(r'([a-z0-9])([A-Z])'),
+        (match) => '${match.group(1)} ${match.group(2)}',
+      )
+      .replaceAll('_', ' ')
+      .replaceAll('-', ' ')
+      .trim();
+  if (normalized.isEmpty) {
+    return value;
+  }
+  return normalized
+      .split(RegExp(r'\s+'))
+      .map(
+        (part) =>
+            part.isEmpty ? part : '${part[0].toUpperCase()}${part.substring(1)}',
+      )
+      .join(' ');
 }
 
-String _formatValue(Object? value) {
+String _formatAttributeValue(Object? value) {
   if (value == null) {
-    return 'Not provided';
+    return '—';
+  }
+  if (value is bool) {
+    return value ? 'Yes' : 'No';
   }
   if (value is List) {
-    return value.map((item) => item.toString()).join(', ');
+    if (value.isEmpty) {
+      return '—';
+    }
+    return value.map(_formatAttributeValue).join(', ');
   }
   if (value is Map) {
-    return value.entries.map((entry) => '${entry.key}: ${entry.value}').join(', ');
+    if (value.isEmpty) {
+      return '—';
+    }
+    return value.entries
+        .map(
+          (entry) =>
+              '${_labelize('${entry.key}')} : ${_formatAttributeValue(entry.value)}',
+        )
+        .join(', ');
   }
-  return value.toString();
-}
-
-bool _isImportStillProcessing(String status) {
-  final normalized = status.trim().toLowerCase();
-  return normalized == 'uploaded' || normalized == 'processing';
-}
-
-Color _stagedStatusColor(String status) {
-  switch (status.toLowerCase()) {
-    case 'approved':
-      return Colors.green.shade700;
-    case 'rejected':
-      return Colors.red.shade700;
-    case 'failed':
-      return Colors.purple.shade700;
-    case 'pending_review':
-    case 'partially_approved':
-      return Colors.orange.shade700;
-    default:
-      return Colors.blueGrey.shade600;
-  }
+  final text = '$value'.trim();
+  return text.isEmpty ? '—' : text;
 }

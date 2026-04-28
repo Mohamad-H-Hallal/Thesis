@@ -177,6 +177,8 @@ class _FakeImportsRepository implements ImportsRepository {
     required String importId,
     String? status,
     String? issue,
+    String? search,
+    String? geometryType,
     int page = 1,
     int limit = 20,
   }) async {
@@ -211,6 +213,7 @@ class _FakeImportsRepository implements ImportsRepository {
   Future<ImportComment> addImportComment({
     required String importId,
     required String comment,
+    String? featureId,
   }) {
     throw UnimplementedError();
   }

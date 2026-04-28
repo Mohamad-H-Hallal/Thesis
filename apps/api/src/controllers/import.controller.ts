@@ -141,6 +141,8 @@ type ImportFeatureRow = {
 type ImportCommentRow = {
   id: string;
   import_job_id: string;
+  import_feature_id: string | null;
+  feature_display_title: string | null;
   author_user_id: string;
   author_name: string;
   author_role: string;
@@ -1154,6 +1156,8 @@ const mapImportFeatureRow = (row: ImportFeatureRow) => ({
 const mapImportCommentRow = (row: ImportCommentRow) => ({
   id: row.id,
   import_job_id: row.import_job_id,
+  import_feature_id: row.import_feature_id,
+  feature_display_title: row.feature_display_title,
   author_user_id: row.author_user_id,
   author_name: row.author_name,
   author_role: row.author_role,
@@ -1828,12 +1832,15 @@ const getImportDetails = async (req: Request, res: Response): Promise<void> => {
   const commentsResult = await query(
     `SELECT gic.id,
             gic.import_job_id,
+            gic.import_feature_id,
+            gif.display_title AS feature_display_title,
             gic.author_user_id,
             gic.comment_text,
             gic.created_at,
             u.full_name AS author_name,
             u.role AS author_role
      FROM gis_import_comment gic
+     LEFT JOIN gis_import_feature gif ON gif.id = gic.import_feature_id
      JOIN "user" u ON u.id = gic.author_user_id
      WHERE gic.import_job_id = $1
      ORDER BY gic.created_at ASC`,
@@ -1907,6 +1914,9 @@ const listImportFeatures = async (req: Request, res: Response): Promise<void> =>
   const { page, limit, offset } = getPagination(req.query.page, req.query.limit);
   const status = typeof req.query.status === 'string' ? req.query.status.trim() : '';
   const issue = typeof req.query.issue === 'string' ? req.query.issue.trim() : '';
+  const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+  const geometryType =
+    typeof req.query.geometry_type === 'string' ? req.query.geometry_type.trim() : '';
 
   const whereClauses = ['gif.import_job_id = $1'];
   const params: unknown[] = [importId];
@@ -1921,6 +1931,45 @@ const listImportFeatures = async (req: Request, res: Response): Promise<void> =>
       `(gif.validation_errors @> to_jsonb(ARRAY[$${paramIndex}]::text[]) OR gif.validation_warnings @> to_jsonb(ARRAY[$${paramIndex}]::text[]))`,
     );
     params.push(issue);
+    paramIndex += 1;
+  }
+  if (geometryType) {
+    switch (geometryType) {
+      case 'point':
+        whereClauses.push(
+          `(gif.geometry_type = $${paramIndex} OR gif.geometry_type = $${paramIndex + 1})`,
+        );
+        params.push('Point', 'MultiPoint');
+        paramIndex += 2;
+        break;
+      case 'line':
+        whereClauses.push(
+          `(gif.geometry_type = $${paramIndex} OR gif.geometry_type = $${paramIndex + 1})`,
+        );
+        params.push('LineString', 'MultiLineString');
+        paramIndex += 2;
+        break;
+      case 'polygon':
+        whereClauses.push(
+          `(gif.geometry_type = $${paramIndex} OR gif.geometry_type = $${paramIndex + 1})`,
+        );
+        params.push('Polygon', 'MultiPolygon');
+        paramIndex += 2;
+        break;
+      default:
+        whereClauses.push(`gif.geometry_type = $${paramIndex}`);
+        params.push(geometryType);
+        paramIndex += 1;
+        break;
+    }
+  }
+  if (search) {
+    whereClauses.push(
+      `(gif.display_title ILIKE $${paramIndex}
+        OR COALESCE(gif.source_feature_name, '') ILIKE $${paramIndex}
+        OR gif.attributes::text ILIKE $${paramIndex})`,
+    );
+    params.push(`%${search}%`);
     paramIndex += 1;
   }
 
@@ -2091,12 +2140,15 @@ const listImportComments = async (req: Request, res: Response): Promise<void> =>
   const result = await query(
     `SELECT gic.id,
             gic.import_job_id,
+            gic.import_feature_id,
+            gif.display_title AS feature_display_title,
             gic.author_user_id,
             gic.comment_text,
             gic.created_at,
             u.full_name AS author_name,
             u.role AS author_role
      FROM gis_import_comment gic
+     LEFT JOIN gis_import_feature gif ON gif.id = gic.import_feature_id
      JOIN "user" u ON u.id = gic.author_user_id
      WHERE gic.import_job_id = $1
      ORDER BY gic.created_at ASC`,
@@ -2113,6 +2165,8 @@ const addImportComment = async (req: Request, res: Response): Promise<void> => {
   const importId = req.params.importId;
   const currentUser = req.user as Express.UserContext;
   const commentText = String(req.body?.comment ?? '').trim();
+  const rawFeatureId = typeof req.body?.feature_id === 'string' ? req.body.feature_id.trim() : '';
+  const featureId = rawFeatureId.length > 0 ? rawFeatureId : null;
   if (!commentText) {
     throw new AppError('A comment is required.', 400);
   }
@@ -2123,15 +2177,32 @@ const addImportComment = async (req: Request, res: Response): Promise<void> => {
     throw new AppError('You are not allowed to comment on this import.', 403);
   }
 
+  let linkedFeature: { id: string; display_title: string } | null = null;
+  if (featureId) {
+    const featureResult = await query(
+      `SELECT id, display_title
+       FROM gis_import_feature
+       WHERE id = $1
+         AND import_job_id = $2
+       LIMIT 1`,
+      [featureId, importId],
+    );
+    linkedFeature = featureResult.rows[0] ?? null;
+    if (!linkedFeature) {
+      throw new AppError('The selected imported feature was not found for this import.', 404);
+    }
+  }
+
   const createdComment = await transaction(async (client: any) => {
     const insertResult = await client.query(
       `INSERT INTO gis_import_comment (
          import_job_id,
+         import_feature_id,
          author_user_id,
          comment_text
-       ) VALUES ($1, $2, $3)
-       RETURNING id, import_job_id, author_user_id, comment_text, created_at`,
-      [importId, currentUser.id, commentText],
+       ) VALUES ($1, $2, $3, $4)
+       RETURNING id, import_job_id, import_feature_id, author_user_id, comment_text, created_at`,
+      [importId, linkedFeature?.id ?? null, currentUser.id, commentText],
     );
 
     if (job.uploaded_by_user_id !== currentUser.id) {
@@ -2139,12 +2210,16 @@ const addImportComment = async (req: Request, res: Response): Promise<void> => {
         userId: job.uploaded_by_user_id,
         type: 'import_event',
         title: `Import comment added in ${job.project_name}`,
-        message: `${currentUser.full_name} added a comment on ${job.original_filename}.`,
+        message: linkedFeature
+          ? `${currentUser.full_name} added a comment on ${linkedFeature.display_title} in ${job.original_filename}.`
+          : `${currentUser.full_name} added a comment on ${job.original_filename}.`,
         metadata: {
           import_job_id: job.id,
           project_id: job.project_id,
           project_name: job.project_name,
           status: job.status,
+          feature_id: linkedFeature?.id ?? null,
+          feature_display_title: linkedFeature?.display_title ?? null,
           comment_preview: commentText.slice(0, 240),
         },
       });
@@ -2153,12 +2228,15 @@ const addImportComment = async (req: Request, res: Response): Promise<void> => {
     const commentResult = await client.query(
       `SELECT gic.id,
               gic.import_job_id,
+              gic.import_feature_id,
+              gif.display_title AS feature_display_title,
               gic.author_user_id,
               gic.comment_text,
               gic.created_at,
               u.full_name AS author_name,
               u.role AS author_role
        FROM gis_import_comment gic
+       LEFT JOIN gis_import_feature gif ON gif.id = gic.import_feature_id
        JOIN "user" u ON u.id = gic.author_user_id
        WHERE gic.id = $1`,
       [insertResult.rows[0].id],

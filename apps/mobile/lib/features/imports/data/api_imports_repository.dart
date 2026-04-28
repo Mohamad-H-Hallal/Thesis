@@ -240,6 +240,8 @@ class ApiImportsRepository implements ImportsRepository {
     required String importId,
     String? status,
     String? issue,
+    String? search,
+    String? geometryType,
     int page = 1,
     int limit = 20,
   }) async {
@@ -251,6 +253,9 @@ class ApiImportsRepository implements ImportsRepository {
           'limit': limit,
           if (status?.trim().isNotEmpty ?? false) 'status': status!.trim(),
           if (issue?.trim().isNotEmpty ?? false) 'issue': issue!.trim(),
+          if (search?.trim().isNotEmpty ?? false) 'search': search!.trim(),
+          if (geometryType?.trim().isNotEmpty ?? false)
+            'geometry_type': geometryType!.trim(),
         },
       );
       final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
@@ -314,11 +319,15 @@ class ApiImportsRepository implements ImportsRepository {
   Future<ImportComment> addImportComment({
     required String importId,
     required String comment,
+    String? featureId,
   }) async {
     try {
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '$_basePath/$importId/comments',
-        data: <String, dynamic>{'comment': comment.trim()},
+        data: <String, dynamic>{
+          'comment': comment.trim(),
+          if (featureId?.trim().isNotEmpty ?? false) 'feature_id': featureId!.trim(),
+        },
       );
       final row = Map<String, dynamic>.from(
         response.data?['data'] as Map? ?? const <String, dynamic>{},
@@ -456,6 +465,8 @@ class ApiImportsRepository implements ImportsRepository {
       authorName: (row['author_name'] as String?) ?? 'Admin',
       authorRole: (row['author_role'] as String?) ?? 'admin',
       commentText: (row['comment_text'] as String?) ?? '',
+      importFeatureId: row['import_feature_id'] as String?,
+      featureDisplayTitle: row['feature_display_title'] as String?,
       createdAt: _toDate(row['created_at']),
     );
   }

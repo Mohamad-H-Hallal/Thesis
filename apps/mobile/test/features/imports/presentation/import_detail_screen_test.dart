@@ -155,6 +155,8 @@ class _FakeImportsRepository implements ImportsRepository {
     required String importId,
     String? status,
     String? issue,
+    String? search,
+    String? geometryType,
     int page = 1,
     int limit = 20,
   }) async {
@@ -205,6 +207,7 @@ class _FakeImportsRepository implements ImportsRepository {
   Future<ImportComment> addImportComment({
     required String importId,
     required String comment,
+    String? featureId,
   }) {
     throw UnimplementedError();
   }
@@ -532,13 +535,13 @@ void main() {
 
       await tester.pumpAndSettle();
 
-      await tester.scrollUntilVisible(find.text('Spatial preview').last, 300);
+      await tester.scrollUntilVisible(find.text('Import map').last, 300);
       await tester.pumpAndSettle();
 
       expect(find.byType(FlutterMap), findsOneWidget);
       expect(
         find.textContaining(
-          '1 staged feature(s) fall outside the Lebanon workspace and stay visible here for review.',
+          '1 staged feature(s) fall outside the Lebanon workspace',
         ),
         findsOneWidget,
       );

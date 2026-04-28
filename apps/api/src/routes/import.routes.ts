@@ -71,6 +71,7 @@ router.post(
     resolveActionType: () => 'comment',
     resolveNewValues: (req) => ({
       comment: req.body?.comment,
+      feature_id: req.body?.feature_id,
     }),
   }),
   importValidation.comment,

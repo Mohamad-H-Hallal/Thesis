@@ -1,11 +1,96 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:lebanese_gis_mobile/core/providers/providers.dart';
+import 'package:lebanese_gis_mobile/features/auth/domain/auth_models.dart';
+import 'package:lebanese_gis_mobile/features/auth/domain/auth_repository.dart';
+import 'package:lebanese_gis_mobile/features/auth/presentation/controllers/auth_controller.dart';
 import 'package:lebanese_gis_mobile/features/imports/domain/import_models.dart';
 import 'package:lebanese_gis_mobile/features/imports/presentation/import_providers.dart';
 import 'package:lebanese_gis_mobile/features/imports/presentation/screens/import_map_screen.dart';
 import 'package:lebanese_gis_mobile/features/map/domain/map_feature.dart';
-import 'package:flutter_map/flutter_map.dart';
+
+class _NoopAuthRepository implements AuthRepository {
+  const _NoopAuthRepository();
+
+  @override
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {}
+
+  @override
+  Future<AuthSession> login({
+    required String email,
+    required String password,
+    required bool rememberMe,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> logout() async {}
+
+  @override
+  Future<PasswordResetRequestResult> requestPasswordReset(String email) async {
+    return const PasswordResetRequestResult(message: 'sent');
+  }
+
+  @override
+  Future<PasswordResetOtpVerificationResult> verifyPasswordResetOtp({
+    required String email,
+    required String otp,
+  }) async => const PasswordResetOtpVerificationResult(
+    message: 'verified',
+    resetToken: 'token',
+    email: 'user@example.com',
+  );
+
+  @override
+  Future<void> resetPassword({
+    required String resetToken,
+    required String newPassword,
+  }) async {}
+
+  @override
+  Future<AuthSession> reactivateContributorAndLogin({
+    required String email,
+    required String password,
+    required bool rememberMe,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> selfDeactivate() async {}
+
+  @override
+  Future<AuthSession?> restoreSession() async => null;
+
+  @override
+  Future<String> signup({
+    required String fullName,
+    required String email,
+    required String password,
+    required UserRole role,
+    String? phone,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<AppUser> updateProfile({String? fullName, String? phone}) async {
+    throw UnimplementedError();
+  }
+}
+
+class _AuthenticatedAuthController extends AuthController {
+  _AuthenticatedAuthController(AuthSession session)
+    : super(const _NoopAuthRepository()) {
+    state = AuthState.authenticated(session);
+  }
+}
 
 GisImportJob _job() {
   return GisImportJob(
@@ -70,6 +155,19 @@ MapFeatureSummary _approvedFeature() {
   );
 }
 
+AuthSession _session() {
+  return const AuthSession(
+    accessToken: 'token',
+    refreshToken: 'refresh',
+    user: AppUser(
+      id: 'admin-1',
+      fullName: 'Admin Reviewer',
+      email: 'admin@example.com',
+      role: UserRole.admin,
+    ),
+  );
+}
+
 void main() {
   testWidgets('import map shows staged and approved context layers separately', (
     tester,
@@ -88,6 +186,9 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          authControllerProvider.overrideWith(
+            (_) => _AuthenticatedAuthController(_session()),
+          ),
           importDetailsProvider('import-1').overrideWith((ref) async => details),
           importMapDataProvider(query).overrideWith(
             (ref) async => ImportMapData(
@@ -109,9 +210,8 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Import map'), findsOneWidget);
-    expect(find.textContaining('2 of 2 staged shown'), findsOneWidget);
-    expect(find.textContaining('1 approved project features'), findsOneWidget);
+    expect(find.text('Import Project'), findsOneWidget);
+    expect(find.textContaining('2 imported features'), findsOneWidget);
     expect(find.byType(FlutterMap), findsOneWidget);
   });
 }

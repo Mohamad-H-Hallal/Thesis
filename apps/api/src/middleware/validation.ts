@@ -347,6 +347,25 @@ const importValidation = {
       .optional()
       .isIn(['pending_review', 'approved', 'rejected', 'failed'])
       .withMessage('Invalid import feature status'),
+    queryParam('geometry_type')
+      .optional()
+      .isIn([
+        'point',
+        'line',
+        'polygon',
+        'Point',
+        'LineString',
+        'Polygon',
+        'MultiPoint',
+        'MultiLineString',
+        'MultiPolygon',
+      ])
+      .withMessage('Invalid import feature geometry type'),
+    queryParam('search')
+      .optional()
+      .trim()
+      .isLength({ max: 200 })
+      .withMessage('search must be 200 characters or fewer'),
   ] as ValidationChain[],
   review: [
     param('importId').isUUID().withMessage('Valid import ID is required'),
@@ -371,6 +390,10 @@ const importValidation = {
       .withMessage('comment is required')
       .isLength({ max: 4000 })
       .withMessage('comment must be 4000 characters or fewer'),
+    body('feature_id')
+      .optional({ nullable: true })
+      .isUUID()
+      .withMessage('feature_id must be a valid UUID'),
   ] as ValidationChain[],
 };
 
