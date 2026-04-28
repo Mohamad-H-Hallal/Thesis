@@ -195,17 +195,6 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
           ),
         )
         .toList(growable: false);
-    final visibleSelectableIds = actionableFeatures
-        .map((item) => item.id)
-        .toList(growable: false);
-    final visibleApprovableIds = features
-        .where((item) => item.canBeApproved)
-        .map((item) => item.id)
-        .toList(growable: false);
-    final visibleRejectableIds = features
-        .where((item) => item.canBeRejected)
-        .map((item) => item.id)
-        .toList(growable: false);
     final canModerateImport =
         isAdmin &&
         (details.job.reviewScope != 'protected_super_admin' ||
@@ -266,9 +255,6 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
             selectedFeatureCount: _selectedFeatureIds.length,
             selectedApprovableIds: selectedApprovableIds,
             selectedRejectableIds: selectedRejectableIds,
-            visibleSelectableIds: visibleSelectableIds,
-            visibleApprovableIds: visibleApprovableIds,
-            visibleRejectableIds: visibleRejectableIds,
           ),
         if (canModerateImport && actionableFeatures.isNotEmpty)
           const SizedBox(height: AppSpacing.md),
@@ -449,9 +435,6 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
     required int selectedFeatureCount,
     required List<String> selectedApprovableIds,
     required List<String> selectedRejectableIds,
-    required List<String> visibleSelectableIds,
-    required List<String> visibleApprovableIds,
-    required List<String> visibleRejectableIds,
   }) {
     return AppCard(
       child: Column(
@@ -467,46 +450,13 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
             runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              OutlinedButton(
-                onPressed: visibleSelectableIds.isEmpty
-                    ? null
-                    : () => setState(() {
-                        _selectedFeatureIds
-                          ..clear()
-                          ..addAll(visibleSelectableIds);
-                      }),
-                child: Text('Select visible (${visibleSelectableIds.length})'),
-              ),
-              OutlinedButton(
-                onPressed: visibleApprovableIds.isEmpty
-                    ? null
-                    : () => setState(() {
-                        _selectedFeatureIds
-                          ..clear()
-                          ..addAll(visibleApprovableIds);
-                      }),
-                child: Text(
-                  'Select approvable (${visibleApprovableIds.length})',
-                ),
-              ),
-              OutlinedButton(
-                onPressed: visibleRejectableIds.isEmpty
-                    ? null
-                    : () => setState(() {
-                        _selectedFeatureIds
-                          ..clear()
-                          ..addAll(visibleRejectableIds);
-                      }),
-                child: Text(
-                  'Select rejectable (${visibleRejectableIds.length})',
-                ),
-              ),
-              OutlinedButton(
+              if (selectedFeatureCount > 0)
+                OutlinedButton(
                 onPressed: selectedFeatureCount == 0
                     ? null
                     : () => setState(_selectedFeatureIds.clear),
                 child: const Text('Clear selection'),
-              ),
+                ),
             ],
           ),
           const SizedBox(height: AppSpacing.xs),
@@ -1597,7 +1547,7 @@ class _ImportPreviewMapCard extends StatefulWidget {
 }
 
 class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
-  LebanonBasemapStyle _style = LebanonBasemapStyle.street;
+  static const LebanonBasemapStyle _style = LebanonBasemapStyle.street;
 
   @override
   Widget build(BuildContext context) {
@@ -1633,60 +1583,16 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
     );
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final basemapToggle = SegmentedButton<LebanonBasemapStyle>(
-      showSelectedIcon: false,
-      style: SegmentedButton.styleFrom(
-        visualDensity: VisualDensity.compact,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      ),
-      segments: const [
-        ButtonSegment(
-          value: LebanonBasemapStyle.satellite,
-          label: Text('Hybrid'),
-        ),
-        ButtonSegment(value: LebanonBasemapStyle.street, label: Text('Street')),
-      ],
-      selected: <LebanonBasemapStyle>{_style},
-      onSelectionChanged: (selection) {
-        setState(() {
-          _style = selection.first;
-        });
-      },
-    );
 
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final title = Text(
-                'Import map',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-              );
-
-              if (constraints.maxWidth >= 420) {
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Expanded(child: title),
-                    const SizedBox(width: AppSpacing.sm),
-                    basemapToggle,
-                  ],
-                );
-              }
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  title,
-                  const SizedBox(height: AppSpacing.xs),
-                  basemapToggle,
-                ],
-              );
-            },
+          Text(
+            'Import map',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
           ),
           if (outsideWorkspaceCount > 0) ...[
             const SizedBox(height: 10),

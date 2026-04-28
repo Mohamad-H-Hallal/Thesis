@@ -348,10 +348,9 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
           final featureId = state.uri.queryParameters['featureId'];
           return _buildPage(
             state,
-            AppScaffold(
-              title: 'Import map',
-              showBackButton: true,
-              showOfflineBanner: false,
+            Scaffold(
+              resizeToAvoidBottomInset: false,
+              appBar: AppBar(title: const Text('Import map')),
               body: ImportMapScreen(
                 importId: importId,
                 projectId: projectId,

@@ -181,6 +181,10 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
         );
     final canModerateImport = _canModerateImport(session.user, details);
     final visibleStagedFeatures = _filteredStagedFeatures(mapData.stagedFeatures);
+    final markerPlacements = _buildMarkerPlacements(
+      visibleStagedFeatures,
+      _showApprovedProjectContext ? mapData.approvedProjectFeatures : const [],
+    );
     final selectedFeature = _findImportedFeature(
       mapData.stagedFeatures,
       _focusedFeatureId ?? widget.initialFeatureId,
@@ -227,6 +231,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
                 MarkerLayer(
                   markers: _projectContextMarkers(
                     mapData.approvedProjectFeatures,
+                    markerPlacements.projectPoints,
                   ),
                 ),
               ],
@@ -263,6 +268,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
                 markers: _stagedMarkers(
                   visibleStagedFeatures,
                   canModerateImport,
+                  markerPlacements.stagedPoints,
                 ),
               ),
             ],
@@ -887,11 +893,26 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (context) => _ImportFeatureDetailsSheet(
+      builder: (sheetContext) => _ImportFeatureDetailsSheet(
         feature: feature,
         canComment: canModerateImport,
+        canReview: canModerateImport,
         onAddComment: canModerateImport
             ? () => _addFeatureComment(context, feature)
+            : null,
+        onApprove: feature.canBeApproved
+            ? () => _reviewFeatureFromMap(
+                  sheetContext,
+                  feature,
+                  status: 'approved',
+                )
+            : null,
+        onReject: feature.canBeRejected
+            ? () => _reviewFeatureFromMap(
+                  sheetContext,
+                  feature,
+                  status: 'rejected',
+                )
             : null,
       ),
     );
@@ -941,6 +962,55 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
         userFacingErrorMessage(
           error,
           fallback: 'Unable to save this feature comment right now.',
+        ),
+      );
+    }
+  }
+
+  Future<void> _reviewFeatureFromMap(
+    BuildContext sheetContext,
+    ImportedFeature feature, {
+    required String status,
+  }) async {
+    String? reason;
+    if (status == 'rejected') {
+      reason = await showDialog<String>(
+        context: sheetContext,
+        builder: (dialogContext) => const _ImportFeatureReviewReasonDialog(),
+      );
+      if (reason == null || reason.trim().isEmpty) {
+        return;
+      }
+    }
+    try {
+      await ref.read(importsRepositoryProvider).reviewImport(
+            importId: widget.importId,
+            status: status,
+            reason: reason?.trim(),
+            featureIds: <String>[feature.id],
+          );
+      ref.read(workflowRefreshTickProvider.notifier).state++;
+      if (!mounted || !sheetContext.mounted) {
+        return;
+      }
+      Navigator.of(sheetContext).pop();
+      AppSnackbar.showSuccess(
+        context,
+        status == 'approved'
+            ? 'Imported feature approved.'
+            : 'Imported feature rejected.',
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        userFacingErrorMessage(
+          error,
+          fallback: status == 'approved'
+              ? 'Unable to approve this imported feature right now.'
+              : 'Unable to reject this imported feature right now.',
         ),
       );
     }
@@ -1006,11 +1076,13 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
   List<Marker> _stagedMarkers(
     List<ImportedFeature> features,
     bool canModerateImport,
+    Map<String, LatLng> markerPoints,
   ) {
     final grouped = <String, List<(ImportedFeature, LatLng)>>{};
     for (final feature in features) {
       final geometry = feature.geometry;
-      final point = geometry == null ? null : _featureFocusPoint(geometry);
+      final point = markerPoints[feature.id] ??
+          (geometry == null ? null : _featureFocusPoint(geometry));
       if (point == null) {
         continue;
       }
@@ -1027,14 +1099,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
       for (var index = 0; index < entries.length; index++) {
         final entry = entries[index];
         final feature = entry.$1;
-        final basePoint = entry.$2;
-        final markerPoint = entries.length == 1
-            ? basePoint
-            : _spreadDuplicateMarkerPoint(
-                basePoint,
-                duplicateIndex: index,
-                duplicateCount: entries.length,
-              );
+        final markerPoint = entry.$2;
         final color = _statusColor(feature.status);
         markers.add(
           Marker(
@@ -1129,34 +1194,28 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
         .toList(growable: false);
   }
 
-  List<Marker> _projectContextMarkers(List<MapFeatureSummary> features) {
-    final grouped = <String, List<LatLng>>{};
+  List<Marker> _projectContextMarkers(
+    List<MapFeatureSummary> features,
+    Map<String, LatLng> markerPoints,
+  ) {
+    final markers = <Marker>[];
     for (final feature in features) {
-      final point = _featureFocusPoint(feature.geometry);
-      if (point == null) {
+      final markerPoint =
+          markerPoints[feature.id] ?? _featureFocusPoint(feature.geometry);
+      if (markerPoint == null) {
         continue;
       }
-      final key =
-          '${point.latitude.toStringAsFixed(7)}:${point.longitude.toStringAsFixed(7)}';
-      grouped.putIfAbsent(key, () => <LatLng>[]).add(point);
-    }
-
-    final markers = <Marker>[];
-    for (final entries in grouped.values) {
-      for (var index = 0; index < entries.length; index++) {
-        final basePoint = entries[index];
-        final markerPoint = entries.length == 1
-            ? basePoint
-            : _spreadDuplicateMarkerPoint(
-                basePoint,
-                duplicateIndex: index,
-                duplicateCount: entries.length,
-              );
-        markers.add(
-          Marker(
-            point: markerPoint,
-            width: 30,
-            height: 30,
+      markers.add(
+        Marker(
+          point: markerPoint,
+          width: 30,
+          height: 30,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () {
+              _focusProjectContextFeature(feature);
+              _openApprovedProjectFeatureDetails(feature);
+            },
             child: Center(
               child: Container(
                 width: 20,
@@ -1181,10 +1240,68 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
               ),
             ),
           ),
-        );
-      }
+        ),
+      );
     }
     return markers;
+  }
+
+  _ImportMarkerPlacements _buildMarkerPlacements(
+    List<ImportedFeature> stagedFeatures,
+    List<MapFeatureSummary> approvedFeatures,
+  ) {
+    final grouped = <String, List<_MarkerPlacementSeed>>{};
+
+    for (final feature in stagedFeatures) {
+      final geometry = feature.geometry;
+      final point = geometry == null ? null : _featureFocusPoint(geometry);
+      if (point == null) {
+        continue;
+      }
+      final key =
+          '${point.latitude.toStringAsFixed(7)}:${point.longitude.toStringAsFixed(7)}';
+      grouped.putIfAbsent(key, () => <_MarkerPlacementSeed>[]).add(
+            _MarkerPlacementSeed.staged(id: feature.id, point: point),
+          );
+    }
+
+    for (final feature in approvedFeatures) {
+      final point = _featureFocusPoint(feature.geometry);
+      if (point == null) {
+        continue;
+      }
+      final key =
+          '${point.latitude.toStringAsFixed(7)}:${point.longitude.toStringAsFixed(7)}';
+      grouped.putIfAbsent(key, () => <_MarkerPlacementSeed>[]).add(
+            _MarkerPlacementSeed.project(id: feature.id, point: point),
+          );
+    }
+
+    final stagedPoints = <String, LatLng>{};
+    final projectPoints = <String, LatLng>{};
+
+    for (final entries in grouped.values) {
+      for (var index = 0; index < entries.length; index++) {
+        final seed = entries[index];
+        final markerPoint = entries.length == 1
+            ? seed.point
+            : _spreadDuplicateMarkerPoint(
+                seed.point,
+                duplicateIndex: index,
+                duplicateCount: entries.length,
+              );
+        if (seed.kind == _MarkerSeedKind.staged) {
+          stagedPoints[seed.id] = markerPoint;
+        } else {
+          projectPoints[seed.id] = markerPoint;
+        }
+      }
+    }
+
+    return _ImportMarkerPlacements(
+      stagedPoints: stagedPoints,
+      projectPoints: projectPoints,
+    );
   }
 
   LatLng _spreadDuplicateMarkerPoint(
@@ -2056,12 +2173,18 @@ class _ImportFeatureDetailsSheet extends StatelessWidget {
   const _ImportFeatureDetailsSheet({
     required this.feature,
     required this.canComment,
+    required this.canReview,
     this.onAddComment,
+    this.onApprove,
+    this.onReject,
   });
 
   final ImportedFeature feature;
   final bool canComment;
+  final bool canReview;
   final VoidCallback? onAddComment;
+  final Future<void> Function()? onApprove;
+  final Future<void> Function()? onReject;
 
   @override
   Widget build(BuildContext context) {
@@ -2175,12 +2298,39 @@ class _ImportFeatureDetailsSheet extends StatelessWidget {
                   ? const Text('No attributes were imported for this feature.')
                   : _AttributesGrid(attributes: feature.attributes),
             ),
-            if (canComment && onAddComment != null) ...[
+            if (canReview || (canComment && onAddComment != null)) ...[
               const SizedBox(height: AppSpacing.md),
-              FilledButton.icon(
-                onPressed: onAddComment,
-                icon: const Icon(Icons.comment_outlined),
-                label: const Text('Add comment on this feature'),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  if (canReview && onApprove != null)
+                    FilledButton.icon(
+                      onPressed: onApprove,
+                      icon: const Icon(Icons.check_circle_outline),
+                      label: Text(
+                        feature.status == 'rejected'
+                            ? 'Approve again'
+                            : 'Approve feature',
+                      ),
+                    ),
+                  if (canReview && onReject != null)
+                    OutlinedButton.icon(
+                      onPressed: onReject,
+                      icon: const Icon(Icons.cancel_outlined),
+                      label: Text(
+                        feature.status == 'approved'
+                            ? 'Reject feature'
+                            : 'Reject with reason',
+                      ),
+                    ),
+                  if (canComment && onAddComment != null)
+                    FilledButton.tonalIcon(
+                      onPressed: onAddComment,
+                      icon: const Icon(Icons.comment_outlined),
+                      label: const Text('Comment on feature'),
+                    ),
+                ],
               ),
             ],
           ],
@@ -2424,6 +2574,58 @@ class _ImportFeatureCommentDialogState extends State<_ImportFeatureCommentDialog
               ? null
               : () => Navigator.of(context).pop(_controller.text.trim()),
           child: const Text('Save comment'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ImportFeatureReviewReasonDialog extends StatefulWidget {
+  const _ImportFeatureReviewReasonDialog();
+
+  @override
+  State<_ImportFeatureReviewReasonDialog> createState() =>
+      _ImportFeatureReviewReasonDialogState();
+}
+
+class _ImportFeatureReviewReasonDialogState
+    extends State<_ImportFeatureReviewReasonDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Reject feature'),
+      content: AppTextField(
+        label: 'Reason',
+        controller: _controller,
+        hint: 'Explain why this imported feature is being rejected.',
+        minLines: 3,
+        maxLines: 5,
+        onChanged: (_) => setState(() {}),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _controller.text.trim().isEmpty
+              ? null
+              : () => Navigator.of(context).pop(_controller.text.trim()),
+          child: const Text('Save reason'),
         ),
       ],
     );
@@ -2768,6 +2970,30 @@ class _MapInfoPill extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ImportMarkerPlacements {
+  const _ImportMarkerPlacements({
+    required this.stagedPoints,
+    required this.projectPoints,
+  });
+
+  final Map<String, LatLng> stagedPoints;
+  final Map<String, LatLng> projectPoints;
+}
+
+enum _MarkerSeedKind { staged, project }
+
+class _MarkerPlacementSeed {
+  const _MarkerPlacementSeed.staged({required this.id, required this.point})
+      : kind = _MarkerSeedKind.staged;
+
+  const _MarkerPlacementSeed.project({required this.id, required this.point})
+      : kind = _MarkerSeedKind.project;
+
+  final _MarkerSeedKind kind;
+  final String id;
+  final LatLng point;
 }
 
 class _GroupedMapRailDivider extends StatelessWidget {
