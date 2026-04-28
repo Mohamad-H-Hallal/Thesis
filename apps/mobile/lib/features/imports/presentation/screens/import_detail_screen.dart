@@ -195,6 +195,17 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
           ),
         )
         .toList(growable: false);
+    final visibleSelectableIds = actionableFeatures
+        .map((item) => item.id)
+        .toList(growable: false);
+    final visibleApprovableIds = features
+        .where((item) => item.canBeApproved)
+        .map((item) => item.id)
+        .toList(growable: false);
+    final visibleRejectableIds = features
+        .where((item) => item.canBeRejected)
+        .map((item) => item.id)
+        .toList(growable: false);
     final canModerateImport =
         isAdmin &&
         (details.job.reviewScope != 'protected_super_admin' ||
@@ -252,8 +263,12 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
           _buildReviewActions(
             context,
             details: details,
+            selectedFeatureCount: _selectedFeatureIds.length,
             selectedApprovableIds: selectedApprovableIds,
             selectedRejectableIds: selectedRejectableIds,
+            visibleSelectableIds: visibleSelectableIds,
+            visibleApprovableIds: visibleApprovableIds,
+            visibleRejectableIds: visibleRejectableIds,
           ),
         if (canModerateImport && actionableFeatures.isNotEmpty)
           const SizedBox(height: AppSpacing.md),
@@ -431,8 +446,12 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
   Widget _buildReviewActions(
     BuildContext context, {
     required GisImportDetails details,
+    required int selectedFeatureCount,
     required List<String> selectedApprovableIds,
     required List<String> selectedRejectableIds,
+    required List<String> visibleSelectableIds,
+    required List<String> visibleApprovableIds,
+    required List<String> visibleRejectableIds,
   }) {
     return AppCard(
       child: Column(
@@ -441,6 +460,62 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
           Text(
             'Review actions',
             style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              OutlinedButton(
+                onPressed: visibleSelectableIds.isEmpty
+                    ? null
+                    : () => setState(() {
+                        _selectedFeatureIds
+                          ..clear()
+                          ..addAll(visibleSelectableIds);
+                      }),
+                child: Text('Select visible (${visibleSelectableIds.length})'),
+              ),
+              OutlinedButton(
+                onPressed: visibleApprovableIds.isEmpty
+                    ? null
+                    : () => setState(() {
+                        _selectedFeatureIds
+                          ..clear()
+                          ..addAll(visibleApprovableIds);
+                      }),
+                child: Text(
+                  'Select approvable (${visibleApprovableIds.length})',
+                ),
+              ),
+              OutlinedButton(
+                onPressed: visibleRejectableIds.isEmpty
+                    ? null
+                    : () => setState(() {
+                        _selectedFeatureIds
+                          ..clear()
+                          ..addAll(visibleRejectableIds);
+                      }),
+                child: Text(
+                  'Select rejectable (${visibleRejectableIds.length})',
+                ),
+              ),
+              OutlinedButton(
+                onPressed: selectedFeatureCount == 0
+                    ? null
+                    : () => setState(_selectedFeatureIds.clear),
+                child: const Text('Clear selection'),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            selectedFeatureCount == 0
+                ? 'Selection applies to the currently visible filtered features on this page.'
+                : '$selectedFeatureCount feature(s) selected on the current filtered page.',
+            style: Theme.of(context).textTheme.bodySmall,
+            softWrap: true,
           ),
           const SizedBox(height: AppSpacing.sm),
           Wrap(
@@ -965,13 +1040,8 @@ class _ImportMapActionCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Spatial review',
+            'Import map',
             style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          Text(
-            'Open the dedicated import map to inspect staged import features separately from the project map.',
-            softWrap: true,
           ),
           const SizedBox(height: AppSpacing.sm),
           FilledButton.icon(
@@ -981,9 +1051,7 @@ class _ImportMapActionCard extends StatelessWidget {
                     AppRoutes.importMap(importId, projectId: projectId),
                   ),
             icon: const Icon(Icons.map_outlined),
-            label: Text(
-              isProcessing ? 'Import map available after processing' : 'Open import map',
-            ),
+            label: const Text('Open import map'),
           ),
         ],
       ),
@@ -1744,13 +1812,25 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
           }
           return Marker(
             point: point,
-            width: 18,
-            height: 18,
-            child: DecoratedBox(
+            width: 20,
+            height: 20,
+            child: Container(
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: _statusColor(feature.status),
-                border: Border.all(color: Colors.white, width: 2),
+                border: Border.all(color: Colors.white, width: 1.5),
+                boxShadow: const [
+                  BoxShadow(
+                    blurRadius: 6,
+                    offset: Offset(0, 2),
+                    color: Color(0x26000000),
+                  ),
+                ],
+              ),
+              child: Icon(
+                _statusIcon(feature.status),
+                color: Colors.white,
+                size: 10,
               ),
             ),
           );
@@ -2071,12 +2151,29 @@ Color _statusColor(String status) {
     case 'approved':
       return Colors.green.shade700;
     case 'rejected':
-    case 'failed':
       return Colors.red.shade700;
     case 'pending_review':
     case 'partially_approved':
       return Colors.orange.shade700;
+    case 'failed':
+      return const Color(0xFF7B1FA2);
     default:
       return Colors.blueGrey.shade600;
+  }
+}
+
+IconData _statusIcon(String status) {
+  switch (status.toLowerCase()) {
+    case 'approved':
+      return Icons.check;
+    case 'rejected':
+      return Icons.close;
+    case 'failed':
+      return Icons.priority_high_rounded;
+    case 'pending_review':
+    case 'partially_approved':
+      return Icons.schedule;
+    default:
+      return Icons.circle;
   }
 }

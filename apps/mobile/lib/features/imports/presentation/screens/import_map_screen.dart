@@ -232,6 +232,33 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
               ],
               PolygonLayer(polygons: _stagedPolygons(visibleStagedFeatures)),
               PolylineLayer(polylines: _stagedPolylines(visibleStagedFeatures)),
+              if (_currentLocation != null)
+                MarkerLayer(
+                  markers: [
+                    Marker(
+                      point: _currentLocation!,
+                      width: 48,
+                      height: 48,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: const Color(0x291565C0),
+                          border: Border.all(
+                            color: const Color(0xFF1565C0),
+                            width: 2,
+                          ),
+                        ),
+                        child: const Center(
+                          child: Icon(
+                            Icons.my_location,
+                            color: Color(0xFF1565C0),
+                            size: 24,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               MarkerLayer(
                 markers: _stagedMarkers(
                   visibleStagedFeatures,
@@ -241,19 +268,6 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
             ],
           ),
         ),
-        if (_currentLocation != null)
-          Positioned(
-            right: AppSpacing.md,
-            bottom: 240,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Theme.of(context).colorScheme.primary,
-                border: Border.all(color: Colors.white, width: 2),
-              ),
-              child: const SizedBox(width: 18, height: 18),
-            ),
-          ),
         if (_isPanelVisible)
           Positioned(
             left: AppSpacing.md,
@@ -993,39 +1007,83 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
     List<ImportedFeature> features,
     bool canModerateImport,
   ) {
-    return features.map((feature) {
+    final grouped = <String, List<(ImportedFeature, LatLng)>>{};
+    for (final feature in features) {
       final geometry = feature.geometry;
       final point = geometry == null ? null : _featureFocusPoint(geometry);
       if (point == null) {
-        return null;
+        continue;
       }
-      return Marker(
-        point: point,
-        width: 22,
-        height: 22,
-        child: GestureDetector(
-          onTap: () {
-            _focusImportedFeature(feature);
-            _openImportedFeatureDetails(
-              feature,
-              canModerateImport: canModerateImport,
-            );
-          },
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _statusColor(feature.status),
-              border: Border.all(
-                color: _focusedFeatureId == feature.id
-                    ? Colors.black87
-                    : Colors.white,
-                width: _focusedFeatureId == feature.id ? 2.4 : 1.8,
+      final key =
+          '${point.latitude.toStringAsFixed(7)}:${point.longitude.toStringAsFixed(7)}';
+      grouped.putIfAbsent(key, () => <(ImportedFeature, LatLng)>[]).add((
+        feature,
+        point,
+      ));
+    }
+
+    final markers = <Marker>[];
+    for (final entries in grouped.values) {
+      for (var index = 0; index < entries.length; index++) {
+        final entry = entries[index];
+        final feature = entry.$1;
+        final basePoint = entry.$2;
+        final markerPoint = entries.length == 1
+            ? basePoint
+            : _spreadDuplicateMarkerPoint(
+                basePoint,
+                duplicateIndex: index,
+                duplicateCount: entries.length,
+              );
+        final color = _statusColor(feature.status);
+        markers.add(
+          Marker(
+            point: markerPoint,
+            width: 34,
+            height: 34,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: () {
+                _focusImportedFeature(feature);
+                _openImportedFeatureDetails(
+                  feature,
+                  canModerateImport: canModerateImport,
+                );
+              },
+              child: Center(
+                child: Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    color: color,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: _focusedFeatureId == feature.id
+                          ? Colors.black87
+                          : Colors.white,
+                      width: _focusedFeatureId == feature.id ? 2.2 : 1.8,
+                    ),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x33000000),
+                        blurRadius: 6,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Icon(
+                    _statusIcon(feature.status),
+                    color: Colors.white,
+                    size: 11,
+                  ),
+                ),
               ),
             ),
           ),
-        ),
-      );
-    }).whereType<Marker>().toList(growable: false);
+        );
+      }
+    }
+    return markers;
   }
 
   List<Polygon> _projectContextPolygons(List<MapFeatureSummary> features) {
@@ -1072,24 +1130,78 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
   }
 
   List<Marker> _projectContextMarkers(List<MapFeatureSummary> features) {
-    return features.map((feature) {
+    final grouped = <String, List<LatLng>>{};
+    for (final feature in features) {
       final point = _featureFocusPoint(feature.geometry);
       if (point == null) {
-        return null;
+        continue;
       }
-      return Marker(
-        point: point,
-        width: 18,
-        height: 18,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: _projectContextColor,
-            border: Border.all(color: Colors.white, width: 1.5),
+      final key =
+          '${point.latitude.toStringAsFixed(7)}:${point.longitude.toStringAsFixed(7)}';
+      grouped.putIfAbsent(key, () => <LatLng>[]).add(point);
+    }
+
+    final markers = <Marker>[];
+    for (final entries in grouped.values) {
+      for (var index = 0; index < entries.length; index++) {
+        final basePoint = entries[index];
+        final markerPoint = entries.length == 1
+            ? basePoint
+            : _spreadDuplicateMarkerPoint(
+                basePoint,
+                duplicateIndex: index,
+                duplicateCount: entries.length,
+              );
+        markers.add(
+          Marker(
+            point: markerPoint,
+            width: 30,
+            height: 30,
+            child: Center(
+              child: Container(
+                width: 20,
+                height: 20,
+                decoration: BoxDecoration(
+                  color: _projectContextColor,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 1.6),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x26000000),
+                      blurRadius: 6,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.layers_outlined,
+                  color: Colors.white,
+                  size: 10,
+                ),
+              ),
+            ),
           ),
-        ),
-      );
-    }).whereType<Marker>().toList(growable: false);
+        );
+      }
+    }
+    return markers;
+  }
+
+  LatLng _spreadDuplicateMarkerPoint(
+    LatLng origin, {
+    required int duplicateIndex,
+    required int duplicateCount,
+  }) {
+    final ringCapacity = duplicateCount <= 6 ? duplicateCount : 6;
+    final ring = duplicateIndex ~/ 6;
+    final ringIndex = duplicateIndex % 6;
+    final pointsInRing = math.min(duplicateCount - (ring * 6), ringCapacity);
+    final angle = (-math.pi / 2) + ((2 * math.pi * ringIndex) / pointsInRing);
+    final radiusDegrees = 0.0012 + (ring * 0.00055);
+    return LatLng(
+      origin.latitude + (math.sin(angle) * radiusDegrees),
+      origin.longitude + (math.cos(angle) * radiusDegrees),
+    );
   }
 
   List<List<LatLng>> _polylineSegments(Map<String, dynamic> geometry) {
@@ -1323,7 +1435,7 @@ class _ImportMapFloatingPanel extends StatelessWidget {
                                         ),
                                   ),
                                   _CompactMapMetaPill(
-                                    icon: Icons.layers_outlined,
+                                    icon: Icons.place_outlined,
                                     label: visibleCountLabel,
                                     maxWidth: metaMaxWidth,
                                     textStyle: theme.textTheme.labelSmall
@@ -1456,7 +1568,12 @@ class _ImportMapFloatingPanel extends StatelessWidget {
                           for (final status
                               in _ImportMapScreenState._statusOrder) ...[
                             const SizedBox(width: 8),
-                            ChoiceChip(
+                            FilterChip(
+                              avatar: Icon(
+                                _statusIcon(status),
+                                size: 16,
+                                color: _statusColor(status),
+                              ),
                               label: Text(_statusLabel(status)),
                               selected: visibleStatuses.contains(status),
                               onSelected: (_) => onToggleVisibleStatus(status),
@@ -2812,6 +2929,21 @@ Color _statusColor(String status) {
       return const Color(0xFF7B1FA2);
     default:
       return const Color(0xFF546E7A);
+  }
+}
+
+IconData _statusIcon(String status) {
+  switch (status) {
+    case 'approved':
+      return Icons.check;
+    case 'rejected':
+      return Icons.close;
+    case 'failed':
+      return Icons.priority_high_rounded;
+    case 'pending_review':
+      return Icons.schedule;
+    default:
+      return Icons.circle;
   }
 }
 
