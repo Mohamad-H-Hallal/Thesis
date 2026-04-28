@@ -1285,7 +1285,7 @@ class _ImportedFeatureCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      feature.displayTitle,
+                      _importFeatureDisplayTitle(feature),
                       style: Theme.of(context).textTheme.titleMedium,
                       softWrap: true,
                     ),
@@ -1967,7 +1967,9 @@ class _ImportCommentDialogState extends State<_ImportCommentDialog> {
     final feature = widget.feature;
     return AlertDialog(
       title: Text(
-        feature == null ? 'Add comment' : 'Comment on ${feature.displayTitle}',
+        feature == null
+            ? 'Add comment'
+            : 'Comment on ${_importFeatureDisplayTitle(feature)}',
       ),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 520),
@@ -2111,10 +2113,40 @@ String _importFeatureTypeLabel(String geometryType) {
       return 'Line feature';
     case 'Polygon':
     case 'MultiPolygon':
-      return 'Area feature';
+      return 'Polygon feature';
     default:
       return geometryType;
   }
+}
+
+String _importFeatureDisplayTitle(ImportedFeature feature) {
+  final title = feature.displayTitle.trim();
+  final lower = title.toLowerCase();
+  final typeLabel = _importFeatureTypeLabel(
+    feature.geometryType ?? feature.geometry?['type']?.toString() ?? 'Feature',
+  );
+  if (lower == 'point' ||
+      lower == 'multipoint' ||
+      lower == 'linestring' ||
+      lower == 'multilinestring' ||
+      lower == 'polygon' ||
+      lower == 'multipolygon') {
+    return typeLabel;
+  }
+  final replacements = <String, String>{
+    'imported point ': 'Point feature ',
+    'imported points ': 'Point feature ',
+    'imported line ': 'Line feature ',
+    'imported lines ': 'Line feature ',
+    'imported area ': 'Polygon feature ',
+    'imported areas ': 'Polygon feature ',
+  };
+  for (final entry in replacements.entries) {
+    if (lower.startsWith(entry.key)) {
+      return '${entry.value}${title.substring(entry.key.length)}'.trim();
+    }
+  }
+  return title;
 }
 
 Map<String, dynamic> _filteredImportAttributes(

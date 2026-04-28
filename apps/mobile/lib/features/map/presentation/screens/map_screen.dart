@@ -1426,12 +1426,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                       'Collector: ${feature.collectedBy}',
                                     ),
                                   ),
-                                if (feature.accuracyMeters != null)
-                                  Chip(
-                                    label: Text(
-                                      'GPS ${feature.accuracyMeters!.toStringAsFixed(1)}m',
-                                    ),
-                                  ),
                                 TextButton.icon(
                                   onPressed: () {
                                     _focusFeature(feature);
@@ -2314,13 +2308,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                             LebanonMapConfig.basemapDescription(_basemapStyle),
                           ),
                         ),
-                        if (_currentLocationAccuracyMeters != null)
-                          Chip(
-                            avatar: const Icon(Icons.my_location, size: 18),
-                            label: Text(
-                              'GPS ${_currentLocationAccuracyMeters!.toStringAsFixed(0)}m',
-                            ),
-                          ),
                       ],
                     ),
                     if (quickFeatureChips.isNotEmpty) ...[
@@ -2776,7 +2763,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     }
     return switch (feature.geometry['type']) {
       'LineString' => 'Line feature',
-      'Polygon' => 'Area feature',
+      'Polygon' => 'Polygon feature',
       _ => 'Point feature',
     };
   }
@@ -3339,12 +3326,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       Chip(label: Text('Collector: ${feature.collectedBy}')),
                     if (feature.reviewedBy != null)
                       Chip(label: Text('Reviewed by: ${feature.reviewedBy}')),
-                    if (feature.accuracyMeters != null)
-                      Chip(
-                        label: Text(
-                          'Accuracy ${feature.accuracyMeters!.toStringAsFixed(1)}m',
-                        ),
-                      ),
                   ],
                 ),
                 const SizedBox(height: AppSpacing.md),
@@ -3995,8 +3976,7 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                   if (!isExpanded) ...[
                     if (searchSummaryLabel != null ||
                         !_isDefaultStatusSummary(visibleStatusSummaryLabel) ||
-                        selectedFeatureChip != null ||
-                        gpsAccuracyMeters != null) ...[
+                        selectedFeatureChip != null) ...[
                       const SizedBox(height: 10),
                       Wrap(
                         spacing: 8,
@@ -4019,12 +3999,6 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                             _MapInfoPill(
                               icon: Icons.layers_outlined,
                               label: activeFilterLabel,
-                            ),
-                          if (gpsAccuracyMeters != null)
-                            _MapInfoPill(
-                              icon: Icons.my_location,
-                              label:
-                                  'GPS ${gpsAccuracyMeters!.toStringAsFixed(0)}m',
                             ),
                         ],
                       ),
@@ -4090,12 +4064,6 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                           label:
                               '${LebanonMapConfig.basemapLabel(basemapStyle)} view',
                         ),
-                        if (gpsAccuracyMeters != null)
-                          _MapInfoPill(
-                            icon: Icons.my_location,
-                            label:
-                                'GPS ${gpsAccuracyMeters!.toStringAsFixed(0)}m',
-                          ),
                       ],
                     ),
                   ],
@@ -4951,14 +4919,15 @@ class _ProjectFeatureBrowserSheetState
   }
 
   List<String> get _geometryTypes {
-    final values = widget.project.allowedGeometryTypes
-        .where(
-          (type) =>
-              type == 'Point' || type == 'LineString' || type == 'Polygon',
-        )
-        .toSet()
-        .toList(growable: false)
-      ..sort();
+    final values =
+        widget.project.allowedGeometryTypes
+            .where(
+              (type) =>
+                  type == 'Point' || type == 'LineString' || type == 'Polygon',
+            )
+            .toSet()
+            .toList(growable: false)
+          ..sort();
     return values;
   }
 
@@ -4985,7 +4954,9 @@ class _ProjectFeatureBrowserSheetState
       status: widget.canFilterStatuses ? _statusFilter : null,
       geometryType: _geometryTypeFilter,
     );
-    final featuresAsync = ref.watch(paginatedProjectFeatureBrowserProvider(query));
+    final featuresAsync = ref.watch(
+      paginatedProjectFeatureBrowserProvider(query),
+    );
     final featuresController = ref.read(
       paginatedProjectFeatureBrowserProvider(query).notifier,
     );
@@ -5161,7 +5132,9 @@ class _ProjectFeatureBrowserSheetState
                 resetKey: query,
                 hasMore: useSeedFeatures ? false : featureState.hasMore,
                 isLoadingMore: featureState.isLoadingMore,
-                onLoadMore: useSeedFeatures ? null : featuresController.loadMore,
+                onLoadMore: useSeedFeatures
+                    ? null
+                    : featuresController.loadMore,
                 itemBuilder: (context, feature, _) => AppCard(
                   onTap: () => widget.onSelectFeature(feature),
                   child: Row(

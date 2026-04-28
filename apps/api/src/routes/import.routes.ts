@@ -63,6 +63,14 @@ router.get(
   asyncHandler(importController.listImportComments),
 );
 
+router.get(
+  '/:importId/features/:featureId',
+  uuidValidation('importId'),
+  uuidValidation('featureId'),
+  validate,
+  asyncHandler(importController.getImportFeatureDetails),
+);
+
 router.post(
   '/:importId/comments',
   auditDynamicAction({

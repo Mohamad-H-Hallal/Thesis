@@ -133,9 +133,17 @@ class _FakeImportsRepository implements ImportsRepository {
     required String importId,
     required String projectId,
   }) async => const ImportMapData(
-        stagedFeatures: <ImportedFeature>[],
-        approvedProjectFeatures: <MapFeatureSummary>[],
-      );
+    stagedFeatures: <ImportedFeature>[],
+    approvedProjectFeatures: <MapFeatureSummary>[],
+  );
+
+  @override
+  Future<ImportedFeature> fetchImportFeatureById({
+    required String importId,
+    required String featureId,
+  }) async {
+    return features.firstWhere((item) => item.id == featureId);
+  }
 
   @override
   Future<List<ImportComment>> fetchImportComments(String importId) async =>
@@ -600,7 +608,14 @@ void main() {
 
     expect(repository.requestedIssues, contains(isNull));
 
-    await tester.tap(find.widgetWithText(DropdownButtonFormField<String?>, 'All staged features').last);
+    await tester.tap(
+      find
+          .widgetWithText(
+            DropdownButtonFormField<String?>,
+            'All staged features',
+          )
+          .last,
+    );
     await tester.pumpAndSettle();
     await tester.tap(
       find.textContaining('Missing required attribute: feature_type').last,

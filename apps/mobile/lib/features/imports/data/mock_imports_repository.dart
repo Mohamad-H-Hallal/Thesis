@@ -141,8 +141,10 @@ class MockImportsRepository implements ImportsRepository {
       job: job,
       previewFeatures: _features[importId] ?? const <ImportedFeature>[],
       previewSummary: ImportPreviewSummary(
-        geometryFeatureCount: (_features[importId] ?? const <ImportedFeature>[]).length,
-        previewFeatureCount: (_features[importId] ?? const <ImportedFeature>[]).length,
+        geometryFeatureCount:
+            (_features[importId] ?? const <ImportedFeature>[]).length,
+        previewFeatureCount:
+            (_features[importId] ?? const <ImportedFeature>[]).length,
         outsideWorkspaceFeatureCount: 0,
       ),
     );
@@ -154,7 +156,35 @@ class MockImportsRepository implements ImportsRepository {
     required String projectId,
   }) async {
     return ImportMapData(
-      stagedFeatures: _features[importId] ?? const <ImportedFeature>[],
+      stagedFeatures: (_features[importId] ?? const <ImportedFeature>[])
+          .map(
+            (feature) => ImportedFeature(
+              id: feature.id,
+              importJobId: feature.importJobId,
+              sourceIndex: feature.sourceIndex,
+              sourceIdentifier: feature.sourceIdentifier,
+              displayTitle: feature.displayTitle,
+              sourceFeatureName: feature.sourceFeatureName,
+              geometryType: feature.geometryType,
+              geometry: feature.geometry,
+              attributes: const <String, dynamic>{},
+              status: feature.status,
+              validationWarnings: const <String>[],
+              validationErrors: const <String>[],
+              validationReport: const <String, dynamic>{},
+              duplicateFeatureId: feature.duplicateFeatureId,
+              approvedFeatureId: feature.approvedFeatureId,
+              reviewedByUserId: feature.reviewedByUserId,
+              reviewedByName: feature.reviewedByName,
+              reviewedAt: feature.reviewedAt,
+              approvedAt: feature.approvedAt,
+              reviewReason: feature.reviewReason,
+              isSummary: true,
+              createdAt: feature.createdAt,
+              updatedAt: feature.updatedAt,
+            ),
+          )
+          .toList(growable: false),
       approvedProjectFeatures: const <MapFeatureSummary>[
         MapFeatureSummary(
           id: 'mock-approved-feature-1',
@@ -167,6 +197,20 @@ class MockImportsRepository implements ImportsRepository {
         ),
       ],
     );
+  }
+
+  @override
+  Future<ImportedFeature> fetchImportFeatureById({
+    required String importId,
+    required String featureId,
+  }) async {
+    final feature = (_features[importId] ?? const <ImportedFeature>[])
+        .cast<ImportedFeature?>()
+        .firstWhere((item) => item?.id == featureId, orElse: () => null);
+    if (feature == null) {
+      throw 'Imported feature not found.';
+    }
+    return feature;
   }
 
   @override
@@ -214,8 +258,7 @@ class MockImportsRepository implements ImportsRepository {
               !item.validationWarnings.contains(issue)) {
             return false;
           }
-          if (geometryType != null &&
-              geometryType.trim().isNotEmpty) {
+          if (geometryType != null && geometryType.trim().isNotEmpty) {
             final normalized = geometryType.trim();
             final itemType = item.geometryType ?? '';
             final matches = switch (normalized) {
@@ -434,5 +477,6 @@ class MockImportsRepository implements ImportsRepository {
   }
 
   @override
-  Future<String> downloadImport(String importId) async => '/mock/imports/$importId.zip';
+  Future<String> downloadImport(String importId) async =>
+      '/mock/imports/$importId.zip';
 }

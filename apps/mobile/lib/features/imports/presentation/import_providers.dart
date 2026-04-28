@@ -67,14 +67,24 @@ final paginatedImportFeaturesProvider = StateNotifierProvider.autoDispose
       );
     });
 
-final importMapDataProvider =
-    FutureProvider.autoDispose.family<ImportMapData, ImportMapQuery>((
-      ref,
-      query,
-    ) async {
+final importMapDataProvider = FutureProvider.autoDispose
+    .family<ImportMapData, ImportMapQuery>((ref, query) async {
       ref.watch(workflowRefreshTickProvider);
-      return ref.read(importsRepositoryProvider).fetchImportMapData(
+      return ref
+          .read(importsRepositoryProvider)
+          .fetchImportMapData(
             importId: query.importId,
             projectId: query.projectId,
+          );
+    });
+
+final importFeatureProvider = FutureProvider.autoDispose
+    .family<ImportedFeature, ImportFeatureQuery>((ref, query) async {
+      ref.watch(workflowRefreshTickProvider);
+      return ref
+          .read(importsRepositoryProvider)
+          .fetchImportFeatureById(
+            importId: query.importId,
+            featureId: query.featureId,
           );
     });

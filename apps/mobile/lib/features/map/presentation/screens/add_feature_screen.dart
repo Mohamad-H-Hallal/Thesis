@@ -1431,13 +1431,6 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                     avatar: const Icon(Icons.rule_outlined, size: 18),
                     label: Text('Lebanon-only capture'),
                   ),
-                  if (_gpsAccuracyMeters != null)
-                    Chip(
-                      avatar: const Icon(Icons.my_location, size: 18),
-                      label: Text(
-                        'GPS ${_gpsAccuracyMeters!.toStringAsFixed(0)}m',
-                      ),
-                    ),
                 ],
               ),
             ],

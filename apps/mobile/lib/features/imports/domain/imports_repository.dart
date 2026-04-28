@@ -30,6 +30,11 @@ abstract class ImportsRepository {
     required String projectId,
   });
 
+  Future<ImportedFeature> fetchImportFeatureById({
+    required String importId,
+    required String featureId,
+  });
+
   Future<List<ImportComment>> fetchImportComments(String importId);
 
   Future<List<ImportedFeature>> fetchImportFeatures({

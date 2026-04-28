@@ -45,7 +45,8 @@ class ImportedFeatureListQuery {
   }
 
   @override
-  int get hashCode => Object.hash(importId, status, issue, search, geometryType);
+  int get hashCode =>
+      Object.hash(importId, status, issue, search, geometryType);
 }
 
 class GisImportJob {
@@ -183,6 +184,7 @@ class ImportedFeature {
     this.reviewedAt,
     this.approvedAt,
     this.reviewReason,
+    this.isSummary = false,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -207,6 +209,7 @@ class ImportedFeature {
   final DateTime? reviewedAt;
   final DateTime? approvedAt;
   final String? reviewReason;
+  final bool isSummary;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -246,6 +249,23 @@ class ImportMapQuery {
 
   @override
   int get hashCode => Object.hash(importId, projectId);
+}
+
+class ImportFeatureQuery {
+  const ImportFeatureQuery({required this.importId, required this.featureId});
+
+  final String importId;
+  final String featureId;
+
+  @override
+  bool operator ==(Object other) {
+    return other is ImportFeatureQuery &&
+        other.importId == importId &&
+        other.featureId == featureId;
+  }
+
+  @override
+  int get hashCode => Object.hash(importId, featureId);
 }
 
 class ImportMapData {

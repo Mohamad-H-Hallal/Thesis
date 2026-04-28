@@ -461,7 +461,6 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(locationService.callCount, 1);
-      expect(find.text('GPS 6m'), findsWidgets);
 
       await tester.tap(find.byTooltip('Hide quick filters'));
       await tester.pumpAndSettle();
@@ -901,7 +900,6 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(locationService.callCount, 1);
-      expect(find.text('GPS 5m'), findsOneWidget);
     },
   );
 

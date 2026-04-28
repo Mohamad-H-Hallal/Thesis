@@ -157,6 +157,14 @@ class _FakeImportsRepository implements ImportsRepository {
   }
 
   @override
+  Future<ImportedFeature> fetchImportFeatureById({
+    required String importId,
+    required String featureId,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
   Future<List<ImportComment>> fetchImportComments(String importId) {
     throw UnimplementedError();
   }

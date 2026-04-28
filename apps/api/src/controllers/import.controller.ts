@@ -134,6 +134,7 @@ type ImportFeatureRow = {
   reviewed_at: string | null;
   approved_at: string | null;
   review_reason: string | null;
+  is_summary?: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -428,17 +429,17 @@ const featureTitleFromAttributes = (
 
   switch (geometryType) {
     case 'Point':
-      return `Imported point ${sourceIndex + 1}`;
+      return `Point feature ${sourceIndex + 1}`;
     case 'MultiPoint':
-      return `Imported points ${sourceIndex + 1}`;
+      return `Point feature ${sourceIndex + 1}`;
     case 'LineString':
-      return `Imported line ${sourceIndex + 1}`;
+      return `Line feature ${sourceIndex + 1}`;
     case 'MultiLineString':
-      return `Imported lines ${sourceIndex + 1}`;
+      return `Line feature ${sourceIndex + 1}`;
     case 'Polygon':
-      return `Imported area ${sourceIndex + 1}`;
+      return `Polygon feature ${sourceIndex + 1}`;
     case 'MultiPolygon':
-      return `Imported areas ${sourceIndex + 1}`;
+      return `Polygon feature ${sourceIndex + 1}`;
     default:
       return `Imported feature ${sourceIndex + 1}`;
   }
@@ -1149,6 +1150,33 @@ const mapImportFeatureRow = (row: ImportFeatureRow) => ({
   reviewed_at: row.reviewed_at,
   approved_at: row.approved_at,
   review_reason: row.review_reason,
+  is_summary: row.is_summary ?? false,
+  created_at: row.created_at,
+  updated_at: row.updated_at,
+});
+
+const mapImportMapFeatureRow = (row: ImportFeatureRow) => ({
+  id: row.id,
+  import_job_id: row.import_job_id,
+  source_index: row.source_index,
+  source_identifier: row.source_identifier,
+  display_title: row.display_title,
+  source_feature_name: row.source_feature_name,
+  geometry_type: row.geometry_type,
+  geometry: row.geometry ? JSON.parse(row.geometry) : null,
+  attributes: {},
+  status: row.status,
+  validation_warnings: [],
+  validation_errors: [],
+  validation_report: {},
+  duplicate_feature_id: row.duplicate_feature_id,
+  approved_feature_id: row.approved_feature_id,
+  reviewed_by_user_id: row.reviewed_by_user_id,
+  reviewed_by_name: row.reviewed_by_name,
+  reviewed_at: row.reviewed_at,
+  approved_at: row.approved_at,
+  review_reason: row.review_reason,
+  is_summary: true,
   created_at: row.created_at,
   updated_at: row.updated_at,
 });
@@ -1867,7 +1895,23 @@ const getImportMapData = async (req: Request, res: Response): Promise<void> => {
   const job = await fetchImportJobWithAccess(importId, req.user as Express.UserContext);
 
   const stagedResult = await query(
-    `SELECT gif.*, reviewer.full_name AS reviewed_by_name,
+    `SELECT gif.id,
+            gif.import_job_id,
+            gif.source_index,
+            gif.source_identifier,
+            gif.display_title,
+            gif.source_feature_name,
+            gif.geometry_type,
+            gif.status,
+            gif.duplicate_feature_id,
+            gif.approved_feature_id,
+            gif.reviewed_by_user_id,
+            reviewer.full_name AS reviewed_by_name,
+            gif.reviewed_at,
+            gif.approved_at,
+            gif.review_reason,
+            gif.created_at,
+            gif.updated_at,
             CASE WHEN gif.geom IS NULL THEN NULL ELSE ST_AsGeoJSON(gif.geom) END AS geometry
      FROM gis_import_feature gif
      LEFT JOIN "user" reviewer ON reviewer.id = gif.reviewed_by_user_id
@@ -1902,9 +1946,38 @@ const getImportMapData = async (req: Request, res: Response): Promise<void> => {
   res.json({
     success: true,
     data: {
-      staged_features: stagedResult.rows.map((row) => mapImportFeatureRow(row as ImportFeatureRow)),
+      staged_features: stagedResult.rows.map((row) =>
+        mapImportMapFeatureRow(row as ImportFeatureRow),
+      ),
       approved_project_features: approvedProjectResult.rows.map(mapImportMapProjectFeatureRow),
     },
+  });
+};
+
+const getImportFeatureDetails = async (req: Request, res: Response): Promise<void> => {
+  const importId = req.params.importId;
+  const featureId = req.params.featureId;
+  await fetchImportJobWithAccess(importId, req.user as Express.UserContext);
+
+  const result = await query(
+    `SELECT gif.*, reviewer.full_name AS reviewed_by_name,
+            CASE WHEN gif.geom IS NULL THEN NULL ELSE ST_AsGeoJSON(gif.geom) END AS geometry
+     FROM gis_import_feature gif
+     LEFT JOIN "user" reviewer ON reviewer.id = gif.reviewed_by_user_id
+     WHERE gif.import_job_id = $1
+       AND gif.id = $2
+     LIMIT 1`,
+    [importId, featureId],
+  );
+
+  const row = result.rows[0] as ImportFeatureRow | undefined;
+  if (!row) {
+    throw new AppError('The imported feature was not found for this import.', 404);
+  }
+
+  res.json({
+    success: true,
+    data: mapImportFeatureRow(row),
   });
 };
 
@@ -2477,6 +2550,7 @@ module.exports = {
   listImports,
   getImportDetails,
   getImportMapData,
+  getImportFeatureDetails,
   listImportFeatures,
   uploadImport,
   downloadImport,

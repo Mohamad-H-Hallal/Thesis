@@ -137,13 +137,9 @@ class ApiImportsRepository implements ImportsRepository {
           data['preview_summary'] as Map? ?? const <String, dynamic>{},
         ),
       );
-      final comments =
-          (data['comments'] as List? ?? const <dynamic>[])
-              .map(
-                (row) =>
-                    _toImportComment(Map<String, dynamic>.from(row as Map)),
-              )
-              .toList(growable: false);
+      final comments = (data['comments'] as List? ?? const <dynamic>[])
+          .map((row) => _toImportComment(Map<String, dynamic>.from(row as Map)))
+          .toList(growable: false);
       return GisImportDetails(
         job: job,
         previewFeatures: previewRows,
@@ -171,13 +167,11 @@ class ApiImportsRepository implements ImportsRepository {
       final data = Map<String, dynamic>.from(
         response.data?['data'] as Map? ?? const <String, dynamic>{},
       );
-      final stagedRows =
-          (data['staged_features'] as List? ?? const <dynamic>[])
-              .map(
-                (row) =>
-                    _toImportedFeature(Map<String, dynamic>.from(row as Map)),
-              )
-              .toList(growable: false);
+      final stagedRows = (data['staged_features'] as List? ?? const <dynamic>[])
+          .map(
+            (row) => _toImportedFeature(Map<String, dynamic>.from(row as Map)),
+          )
+          .toList(growable: false);
       final approvedRows =
           (data['approved_project_features'] as List? ?? const <dynamic>[])
               .map(
@@ -198,6 +192,27 @@ class ApiImportsRepository implements ImportsRepository {
   }
 
   @override
+  Future<ImportedFeature> fetchImportFeatureById({
+    required String importId,
+    required String featureId,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_basePath/$importId/features/$featureId',
+      );
+      final data = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return _toImportedFeature(data);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load this imported feature right now.',
+      );
+    }
+  }
+
+  @override
   Future<List<ImportComment>> fetchImportComments(String importId) async {
     try {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
@@ -205,9 +220,7 @@ class ApiImportsRepository implements ImportsRepository {
       );
       final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
       return rows
-          .map(
-            (row) => _toImportComment(Map<String, dynamic>.from(row as Map)),
-          )
+          .map((row) => _toImportComment(Map<String, dynamic>.from(row as Map)))
           .toList(growable: false);
     } on DioException catch (error) {
       throw userFacingDioMessage(
@@ -326,7 +339,8 @@ class ApiImportsRepository implements ImportsRepository {
         '$_basePath/$importId/comments',
         data: <String, dynamic>{
           'comment': comment.trim(),
-          if (featureId?.trim().isNotEmpty ?? false) 'feature_id': featureId!.trim(),
+          if (featureId?.trim().isNotEmpty ?? false)
+            'feature_id': featureId!.trim(),
         },
       );
       final row = Map<String, dynamic>.from(
@@ -444,6 +458,7 @@ class ApiImportsRepository implements ImportsRepository {
       reviewedAt: _toOptionalDate(row['reviewed_at']),
       approvedAt: _toOptionalDate(row['approved_at']),
       reviewReason: row['review_reason'] as String?,
+      isSummary: row['is_summary'] as bool? ?? false,
       createdAt: _toDate(row['created_at']),
       updatedAt: _toDate(row['updated_at']),
     );
@@ -453,7 +468,9 @@ class ApiImportsRepository implements ImportsRepository {
     return ImportPreviewSummary(
       geometryFeatureCount: _toInt(row['geometry_feature_count']),
       previewFeatureCount: _toInt(row['preview_feature_count']),
-      outsideWorkspaceFeatureCount: _toInt(row['outside_workspace_feature_count']),
+      outsideWorkspaceFeatureCount: _toInt(
+        row['outside_workspace_feature_count'],
+      ),
     );
   }
 
