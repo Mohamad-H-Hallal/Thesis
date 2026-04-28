@@ -110,7 +110,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Import map'), findsOneWidget);
-    expect(find.textContaining('2 staged total'), findsOneWidget);
+    expect(find.textContaining('2 of 2 staged shown'), findsOneWidget);
     expect(find.textContaining('1 approved project features'), findsOneWidget);
     expect(find.byType(FlutterMap), findsOneWidget);
   });

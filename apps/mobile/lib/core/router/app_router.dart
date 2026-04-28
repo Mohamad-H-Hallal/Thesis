@@ -345,13 +345,18 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         pageBuilder: (_, state) {
           final importId = state.pathParameters['importId'] ?? '';
           final projectId = state.uri.queryParameters['projectId'] ?? '';
+          final featureId = state.uri.queryParameters['featureId'];
           return _buildPage(
             state,
             AppScaffold(
               title: 'Import map',
               showBackButton: true,
               showOfflineBanner: false,
-              body: ImportMapScreen(importId: importId, projectId: projectId),
+              body: ImportMapScreen(
+                importId: importId,
+                projectId: projectId,
+                initialFeatureId: featureId,
+              ),
             ),
           );
         },

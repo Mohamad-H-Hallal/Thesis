@@ -242,6 +242,8 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
           _ImportProcessingCard(job: details.job)
         else
           _ImportPreviewMapCard(
+            importId: widget.importId,
+            projectId: details.job.projectId,
             features: details.previewFeatures,
             previewSummary: details.previewSummary,
           ),
@@ -313,13 +315,22 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
               hasMore: featureState?.hasMore ?? false,
               isLoadingMore: featureState?.isLoadingMore ?? false,
               onLoadMore: featuresController!.loadMore,
-              itemBuilder: (context, feature, _) => _ImportedFeatureCard(
-                feature: feature,
-                selectable: isAdmin && feature.isActionable,
-                selected: _selectedFeatureIds.contains(feature.id),
-                onToggleSelected: () {
-                  setState(() {
-                    if (_selectedFeatureIds.contains(feature.id)) {
+                itemBuilder: (context, feature, _) => _ImportedFeatureCard(
+                  feature: feature,
+                  selectable: isAdmin && feature.isActionable,
+                  selected: _selectedFeatureIds.contains(feature.id),
+                  onOpenMap: feature.geometry == null
+                      ? null
+                      : () => context.push(
+                            AppRoutes.importMap(
+                              widget.importId,
+                              projectId: details.job.projectId,
+                              featureId: feature.id,
+                            ),
+                          ),
+                  onToggleSelected: () {
+                    setState(() {
+                      if (_selectedFeatureIds.contains(feature.id)) {
                       _selectedFeatureIds.remove(feature.id);
                     } else {
                       _selectedFeatureIds.add(feature.id);
@@ -1183,12 +1194,14 @@ class _ImportedFeatureCard extends StatelessWidget {
     required this.feature,
     required this.selectable,
     required this.selected,
+    required this.onOpenMap,
     required this.onToggleSelected,
   });
 
   final ImportedFeature feature;
   final bool selectable;
   final bool selected;
+  final VoidCallback? onOpenMap;
   final VoidCallback onToggleSelected;
 
   @override
@@ -1258,6 +1271,17 @@ class _ImportedFeatureCard extends StatelessWidget {
             Text('Attributes', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 6),
             _ImportAttributeGrid(attributes: feature.attributes),
+          ],
+          if (onOpenMap != null) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: onOpenMap,
+                icon: const Icon(Icons.map_outlined),
+                label: const Text('Open on map'),
+              ),
+            ),
           ],
         ],
       ),
@@ -1424,10 +1448,14 @@ List<_ValidationIssueGroup> _issueGroups(Object? value) {
 
 class _ImportPreviewMapCard extends StatefulWidget {
   const _ImportPreviewMapCard({
+    required this.importId,
+    required this.projectId,
     required this.features,
     required this.previewSummary,
   });
 
+  final String importId;
+  final String projectId;
   final List<ImportedFeature> features;
   final ImportPreviewSummary previewSummary;
 
@@ -1458,7 +1486,7 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
             const SizedBox(height: AppSpacing.sm),
             Text(
               outsideWorkspaceCount > 0
-                  ? 'The staged geometry is outside the Lebanon workspace. No preview map is shown.'
+                  ? 'No preview geometry is available yet. Open the import map to inspect the staged data directly.'
                   : 'This import does not include previewable geometries yet.',
               softWrap: true,
             ),
@@ -1486,14 +1514,14 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
                   ),
                   const SizedBox(height: AppSpacing.xs),
                   Text(
-                    'Shows staged geometry positions inside the Lebanon workspace before approval.',
+                    'Shows staged geometry positions for this import before approval. Tap the preview to open the full import map.',
                     style: Theme.of(context).textTheme.bodySmall,
                     softWrap: true,
                   ),
                   if (outsideWorkspaceCount > 0) ...[
                     const SizedBox(height: AppSpacing.xs),
                     Text(
-                      '$outsideWorkspaceCount staged feature(s) remain outside the Lebanon workspace and are excluded from this preview.',
+                      '$outsideWorkspaceCount staged feature(s) fall outside the Lebanon workspace and stay visible here for review.',
                       style: Theme.of(context).textTheme.bodySmall,
                       softWrap: true,
                     ),
@@ -1544,52 +1572,86 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
             },
           ),
           const SizedBox(height: AppSpacing.sm),
-          SizedBox(
-            height: 260,
-            child: ClipRRect(
-              borderRadius: AppRadii.lg,
-              child: FlutterMap(
-                key: mapKey,
-                options: MapOptions(
-                  initialCenter: LebanonMapConfig.center,
-                  initialZoom: LebanonMapConfig.quickInitialZoom,
-                  cameraConstraint: LebanonMapConfig.cameraConstraint,
-                  minZoom: LebanonMapConfig.quickMinZoom,
-                  maxZoom: LebanonMapConfig.quickMaxZoom,
-                  interactionOptions: const InteractionOptions(
-                    flags: InteractiveFlag.drag | InteractiveFlag.pinchZoom,
+          InkWell(
+            borderRadius: AppRadii.lg,
+            onTap: () => context.push(
+              AppRoutes.importMap(
+                widget.importId,
+                projectId: widget.projectId,
+              ),
+            ),
+            child: SizedBox(
+              height: 260,
+              child: ClipRRect(
+                borderRadius: AppRadii.lg,
+                child: FlutterMap(
+                  key: mapKey,
+                  options: MapOptions(
+                    initialCameraFit: _previewCameraFit(drawable),
+                    minZoom: 3,
+                    maxZoom: LebanonMapConfig.quickMaxZoom,
+                    interactionOptions: const InteractionOptions(
+                      flags: InteractiveFlag.drag | InteractiveFlag.pinchZoom,
+                    ),
                   ),
+                  children: [
+                    if (LebanonMapConfig.shouldRenderTileLayers)
+                      TileLayer(
+                        urlTemplate: LebanonMapConfig.basemapUrlTemplate(_style),
+                        tileProvider: NetworkTileProvider(
+                          silenceExceptions: true,
+                        ),
+                        userAgentPackageName: 'lb.gov.gis_collector',
+                      ),
+                    if (LebanonMapConfig.shouldRenderTileLayers &&
+                        LebanonMapConfig.referenceLabelUrlTemplate(_style) !=
+                            null)
+                      TileLayer(
+                        urlTemplate: LebanonMapConfig.referenceLabelUrlTemplate(
+                          _style,
+                        )!,
+                        tileProvider: NetworkTileProvider(
+                          silenceExceptions: true,
+                        ),
+                        userAgentPackageName: 'lb.gov.gis_collector',
+                      ),
+                    PolygonLayer(polygons: _polygons(drawable)),
+                    PolylineLayer(polylines: _polylines(drawable)),
+                    MarkerLayer(markers: _markers(drawable)),
+                  ],
                 ),
-                children: [
-                  if (LebanonMapConfig.shouldRenderTileLayers)
-                    TileLayer(
-                      urlTemplate: LebanonMapConfig.basemapUrlTemplate(_style),
-                      tileProvider: NetworkTileProvider(
-                        silenceExceptions: true,
-                      ),
-                      userAgentPackageName: 'lb.gov.gis_collector',
-                    ),
-                  if (LebanonMapConfig.shouldRenderTileLayers &&
-                      LebanonMapConfig.referenceLabelUrlTemplate(_style) !=
-                          null)
-                    TileLayer(
-                      urlTemplate: LebanonMapConfig.referenceLabelUrlTemplate(
-                        _style,
-                      )!,
-                      tileProvider: NetworkTileProvider(
-                        silenceExceptions: true,
-                      ),
-                      userAgentPackageName: 'lb.gov.gis_collector',
-                    ),
-                  PolygonLayer(polygons: _polygons(drawable)),
-                  PolylineLayer(polylines: _polylines(drawable)),
-                  MarkerLayer(markers: _markers(drawable)),
-                ],
               ),
             ),
           ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'Tap the preview to open the full import map.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
         ],
       ),
+    );
+  }
+
+  CameraFit _previewCameraFit(List<ImportedFeature> features) {
+    final points = <LatLng>[
+      for (final feature in features)
+        if (feature.geometry != null) ...geometryPoints(feature.geometry!),
+    ];
+    if (points.isEmpty) {
+      return LebanonMapConfig.lebanonFit(padding: const EdgeInsets.all(20));
+    }
+    if (points.length == 1) {
+      final point = points.first;
+      return CameraFit.coordinates(
+        coordinates: <LatLng>[point],
+        padding: const EdgeInsets.all(28),
+        maxZoom: 13,
+      );
+    }
+    return CameraFit.bounds(
+      bounds: LatLngBounds.fromPoints(points),
+      padding: const EdgeInsets.all(24),
     );
   }
 

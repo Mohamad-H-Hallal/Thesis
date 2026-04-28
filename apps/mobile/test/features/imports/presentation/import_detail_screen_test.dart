@@ -538,7 +538,7 @@ void main() {
       expect(find.byType(FlutterMap), findsOneWidget);
       expect(
         find.textContaining(
-          '1 staged feature(s) remain outside the Lebanon workspace and are excluded from this preview.',
+          '1 staged feature(s) fall outside the Lebanon workspace and stay visible here for review.',
         ),
         findsOneWidget,
       );

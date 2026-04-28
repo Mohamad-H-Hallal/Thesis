@@ -1797,7 +1797,6 @@ const getImportDetails = async (req: Request, res: Response): Promise<void> => {
      LEFT JOIN "user" reviewer ON reviewer.id = gif.reviewed_by_user_id
      WHERE gif.import_job_id = $1
        AND gif.geom IS NOT NULL
-       AND ST_CoveredBy(gif.geom, ${lebanonEnvelopeSql})
      ORDER BY gif.source_index ASC
      LIMIT $2`,
     [importId, IMPORT_PREVIEW_LIMIT],
@@ -1805,18 +1804,27 @@ const getImportDetails = async (req: Request, res: Response): Promise<void> => {
 
   const previewSummaryResult = await query(
     `SELECT
-        COUNT(*) FILTER (WHERE geom IS NOT NULL)::int AS geometry_feature_count,
-        COUNT(*) FILTER (
-          WHERE geom IS NOT NULL
-            AND ST_CoveredBy(geom, ${lebanonEnvelopeSql})
-        )::int AS preview_feature_count
-     FROM gis_import_feature
-     WHERE import_job_id = $1`,
-    [importId],
-  );
-  const previewSummaryRow = previewSummaryResult.rows[0] ?? {};
-  const geometryFeatureCount = Number(previewSummaryRow.geometry_feature_count ?? 0);
-  const previewFeatureCount = Number(previewSummaryRow.preview_feature_count ?? 0);
+         COUNT(*) FILTER (WHERE geom IS NOT NULL)::int AS geometry_feature_count,
+         COUNT(*) FILTER (
+           WHERE geom IS NOT NULL
+         )::int AS preview_feature_count,
+         COUNT(*) FILTER (
+           WHERE geom IS NOT NULL
+             AND NOT ST_Intersects(geom, ${lebanonEnvelopeSql})
+         )::int AS outside_workspace_feature_count
+       FROM gis_import_feature
+       WHERE import_job_id = $1`,
+     [importId],
+   );
+   const previewSummaryRow = previewSummaryResult.rows[0] ?? {};
+   const geometryFeatureCount = Number(previewSummaryRow.geometry_feature_count ?? 0);
+   const previewFeatureCount = Math.min(
+     Number(previewSummaryRow.preview_feature_count ?? 0),
+     IMPORT_PREVIEW_LIMIT,
+   );
+   const outsideWorkspaceFeatureCount = Number(
+     previewSummaryRow.outside_workspace_feature_count ?? 0,
+   );
   const commentsResult = await query(
     `SELECT gic.id,
             gic.import_job_id,
@@ -1840,7 +1848,7 @@ const getImportDetails = async (req: Request, res: Response): Promise<void> => {
       preview_summary: {
         geometry_feature_count: geometryFeatureCount,
         preview_feature_count: previewFeatureCount,
-        outside_workspace_feature_count: Math.max(geometryFeatureCount - previewFeatureCount, 0),
+        outside_workspace_feature_count: outsideWorkspaceFeatureCount,
       },
       comments: commentsResult.rows.map((row) => mapImportCommentRow(row as ImportCommentRow)),
     },
