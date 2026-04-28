@@ -1547,7 +1547,7 @@ class _ImportPreviewMapCard extends StatefulWidget {
 }
 
 class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
-  static const LebanonBasemapStyle _style = LebanonBasemapStyle.street;
+  LebanonBasemapStyle _style = LebanonBasemapStyle.street;
 
   @override
   Widget build(BuildContext context) {
@@ -1583,16 +1583,60 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
     );
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final basemapToggle = SegmentedButton<LebanonBasemapStyle>(
+      showSelectedIcon: false,
+      style: SegmentedButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      segments: const [
+        ButtonSegment(
+          value: LebanonBasemapStyle.satellite,
+          label: Text('Hybrid'),
+        ),
+        ButtonSegment(value: LebanonBasemapStyle.street, label: Text('Street')),
+      ],
+      selected: <LebanonBasemapStyle>{_style},
+      onSelectionChanged: (selection) {
+        setState(() {
+          _style = selection.first;
+        });
+      },
+    );
 
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Import map',
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final title = Text(
+                'Import map',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              );
+
+              if (constraints.maxWidth >= 420) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(child: title),
+                    const SizedBox(width: AppSpacing.sm),
+                    basemapToggle,
+                  ],
+                );
+              }
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  title,
+                  const SizedBox(height: AppSpacing.xs),
+                  basemapToggle,
+                ],
+              );
+            },
           ),
           if (outsideWorkspaceCount > 0) ...[
             const SizedBox(height: 10),

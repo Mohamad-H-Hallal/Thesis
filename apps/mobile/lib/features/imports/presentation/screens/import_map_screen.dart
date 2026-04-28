@@ -274,83 +274,126 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
             ],
           ),
         ),
-        if (_isPanelVisible)
-          Positioned(
-            left: AppSpacing.md,
-            top: AppSpacing.md,
-            right: 88,
-            child: _ImportMapFloatingPanel(
-              projectName: projectLabel,
-              categoryLabel: categoryLabel,
-              visibleFeatureCount: visibleStagedFeatures.length,
-              approvedContextCount: mapData.approvedProjectFeatures.length,
-              searchController: _searchController,
-              searchFocusNode: _searchFocusNode,
-              selectedGeometryChip: _selectedGeometryChip,
-              visibleStatuses: _visibleStatuses,
-              basemapStyle: _basemapStyle,
-              gpsAccuracyMeters: _currentLocationAccuracyMeters,
-              isExpanded: _isPanelExpanded,
-              isSearchOpen: _isSearchOpen,
-              searchSummaryLabel: _searchSummaryLabel(
-                visibleStagedFeatures.length,
+        Positioned(
+          top: 12,
+          left: 12,
+          right: 12,
+          child: Stack(
+            children: [
+              Padding(
+                padding: EdgeInsets.only(
+                  right: _isPanelVisible ? 0 : 64,
+                ),
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 220),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, animation) => FadeTransition(
+                      opacity: animation,
+                      child: SizeTransition(
+                        sizeFactor: animation,
+                        axisAlignment: -1,
+                        child: child,
+                      ),
+                    ),
+                    child: _isPanelVisible
+                        ? SizedBox(
+                            key: const ValueKey<String>(
+                              'import_map_panel_visible',
+                            ),
+                            width: double.infinity,
+                            child: _ImportMapFloatingPanel(
+                              projectName: projectLabel,
+                              categoryLabel: categoryLabel,
+                              visibleFeatureCount: visibleStagedFeatures.length,
+                              approvedContextCount:
+                                  mapData.approvedProjectFeatures.length,
+                              searchController: _searchController,
+                              searchFocusNode: _searchFocusNode,
+                              visibleStatuses: _visibleStatuses,
+                              basemapStyle: _basemapStyle,
+                              gpsAccuracyMeters: _currentLocationAccuracyMeters,
+                              isExpanded: _isPanelExpanded,
+                              isSearchOpen: _isSearchOpen,
+                              searchSummaryLabel: _searchSummaryLabel(
+                                visibleStagedFeatures.length,
+                              ),
+                              visibleStatusSummaryLabel:
+                                  _visibleStatusSummaryLabel(),
+                              showApprovedProjectContext:
+                                  _showApprovedProjectContext,
+                              onSearchPressed: _toggleSearch,
+                              onSearchChanged: () => setState(() {}),
+                              onClearSearch: () => setState(
+                                _searchController.clear,
+                              ),
+                              onResetVisibleStatuses: () => setState(() {
+                                _visibleStatuses
+                                  ..clear()
+                                  ..addAll(_statusOrder);
+                              }),
+                              onToggleVisibleStatus: (status) => setState(() {
+                                if (_visibleStatuses.contains(status)) {
+                                  _visibleStatuses.remove(status);
+                                } else {
+                                  _visibleStatuses.add(status);
+                                }
+                              }),
+                              onBasemapStyleChanged: (style) => setState(() {
+                                _basemapStyle = style;
+                              }),
+                              onToggleExpanded: () => setState(() {
+                                _isPanelExpanded = !_isPanelExpanded;
+                              }),
+                              onHidePanel: () {
+                                setState(() {
+                                  _isPanelVisible = false;
+                                  _isPanelExpanded = false;
+                                  _isSearchOpen = false;
+                                });
+                                _searchFocusNode.unfocus();
+                              },
+                              onToggleProjectContext: (value) => setState(() {
+                                _showApprovedProjectContext = value;
+                              }),
+                            ),
+                          )
+                        : const SizedBox.shrink(
+                            key: ValueKey<String>('import_map_panel_hidden'),
+                          ),
+                  ),
+                ),
               ),
-              visibleStatusSummaryLabel: _visibleStatusSummaryLabel(),
-              showApprovedProjectContext: _showApprovedProjectContext,
-              onSearchPressed: _toggleSearch,
-              onSearchChanged: () => setState(() {}),
-              onClearSearch: () => setState(_searchController.clear),
-              onChipSelected: (value) => setState(() {
-                _selectedGeometryChip = value;
-              }),
-              onResetVisibleStatuses: () => setState(() {
-                _visibleStatuses
-                  ..clear()
-                  ..addAll(_statusOrder);
-              }),
-              onToggleVisibleStatus: (status) => setState(() {
-                if (_visibleStatuses.contains(status)) {
-                  _visibleStatuses.remove(status);
-                } else {
-                  _visibleStatuses.add(status);
-                }
-              }),
-              onBasemapStyleChanged: (style) => setState(() {
-                _basemapStyle = style;
-              }),
-              onToggleExpanded: () => setState(() {
-                _isPanelExpanded = !_isPanelExpanded;
-              }),
-              onHidePanel: () {
-                setState(() {
-                  _isPanelVisible = false;
-                  _isPanelExpanded = false;
-                  _isSearchOpen = false;
-                });
-                _searchFocusNode.unfocus();
-              },
-              onToggleProjectContext: (value) => setState(() {
-                _showApprovedProjectContext = value;
-              }),
-            ),
-          )
-        else
-          Positioned(
-            left: AppSpacing.md,
-            top: AppSpacing.md,
-            child: FloatingActionButton.small(
-              heroTag: 'show_import_map_tools',
-              onPressed: () => setState(() {
-                _isPanelVisible = true;
-              }),
-              child: const Icon(Icons.tune_rounded),
-            ),
+              if (!_isPanelVisible)
+                Positioned(
+                  top: 0,
+                  right: 0,
+                  child: FloatingActionButton.small(
+                    heroTag: 'show_import_map_tools',
+                    onPressed: () => setState(() {
+                      _isPanelVisible = true;
+                    }),
+                    child: const Icon(Icons.tune_rounded),
+                  ),
+                ),
+            ],
           ),
+        ),
         Positioned(
           right: AppSpacing.md,
           bottom: AppSpacing.lg,
           child: _ImportMapControlRail(
             featureCount: visibleStagedFeatures.length,
+            approvedContextCount: mapData.approvedProjectFeatures.length,
+            onOpenApprovedFeatures: mapData.approvedProjectFeatures.isEmpty
+                ? null
+                : () => _openApprovedFeatureBrowser(
+                      context,
+                      projectName: projectLabel,
+                      features: mapData.approvedProjectFeatures,
+                    ),
             onOpenFeatures: () => _openFeatureBrowser(
               context,
               projectName: projectLabel,
@@ -873,6 +916,40 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
     }
   }
 
+  Future<void> _openApprovedFeatureBrowser(
+    BuildContext context, {
+    required String projectName,
+    required List<MapFeatureSummary> features,
+  }) async {
+    if (_isFeatureBrowserOpen) {
+      return;
+    }
+    setState(() {
+      _isFeatureBrowserOpen = true;
+    });
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (sheetContext) => _ApprovedProjectFeatureBrowserSheet(
+          projectName: projectName,
+          features: features,
+          onSelectFeature: (feature) {
+            Navigator.of(sheetContext).pop();
+            _focusProjectContextFeature(feature);
+            _openApprovedProjectFeatureDetails(feature);
+          },
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isFeatureBrowserOpen = false;
+        });
+      }
+    }
+  }
+
   String? _selectedGeometryTypeForSheet() {
     switch (_selectedGeometryChip) {
       case 'point':
@@ -978,7 +1055,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
         context: sheetContext,
         builder: (dialogContext) => const _ImportFeatureReviewReasonDialog(),
       );
-      if (reason == null || reason.trim().isEmpty) {
+      if (reason == null) {
         return;
       }
     }
@@ -1415,7 +1492,6 @@ class _ImportMapFloatingPanel extends StatelessWidget {
     required this.approvedContextCount,
     required this.searchController,
     required this.searchFocusNode,
-    required this.selectedGeometryChip,
     required this.visibleStatuses,
     required this.basemapStyle,
     required this.gpsAccuracyMeters,
@@ -1427,7 +1503,6 @@ class _ImportMapFloatingPanel extends StatelessWidget {
     required this.onSearchPressed,
     required this.onSearchChanged,
     required this.onClearSearch,
-    required this.onChipSelected,
     required this.onResetVisibleStatuses,
     required this.onToggleVisibleStatus,
     required this.onBasemapStyleChanged,
@@ -1442,7 +1517,6 @@ class _ImportMapFloatingPanel extends StatelessWidget {
   final int approvedContextCount;
   final TextEditingController searchController;
   final FocusNode searchFocusNode;
-  final String? selectedGeometryChip;
   final Set<String> visibleStatuses;
   final LebanonBasemapStyle basemapStyle;
   final double? gpsAccuracyMeters;
@@ -1454,7 +1528,6 @@ class _ImportMapFloatingPanel extends StatelessWidget {
   final VoidCallback onSearchPressed;
   final VoidCallback onSearchChanged;
   final VoidCallback onClearSearch;
-  final ValueChanged<String?> onChipSelected;
   final VoidCallback onResetVisibleStatuses;
   final ValueChanged<String> onToggleVisibleStatus;
   final ValueChanged<LebanonBasemapStyle> onBasemapStyleChanged;
@@ -1472,17 +1545,6 @@ class _ImportMapFloatingPanel extends StatelessWidget {
     final contextCountLabel = approvedContextCount == 1
         ? '1 project context feature'
         : '$approvedContextCount project context features';
-    final activeFilterLabel = selectedGeometryChip == null
-        ? 'All geometry'
-        : _importGeometryQuickFilters
-              .firstWhere(
-                (chip) => chip.id == selectedGeometryChip,
-                orElse: () => const _ImportGeometryQuickFilter(
-                  id: 'all',
-                  label: 'All geometry',
-                ),
-              )
-              .label;
 
     return AnimatedSize(
       duration: const Duration(milliseconds: 220),
@@ -1632,7 +1694,6 @@ class _ImportMapFloatingPanel extends StatelessWidget {
                   if (!isExpanded) ...[
                     if (searchSummaryLabel != null ||
                         visibleStatusSummaryLabel != 'All statuses' ||
-                        selectedGeometryChip != null ||
                         gpsAccuracyMeters != null ||
                         !showApprovedProjectContext) ...[
                       const SizedBox(height: 10),
@@ -1649,11 +1710,6 @@ class _ImportMapFloatingPanel extends StatelessWidget {
                             _MapInfoPill(
                               icon: Icons.visibility_outlined,
                               label: visibleStatusSummaryLabel,
-                            ),
-                          if (selectedGeometryChip != null)
-                            _MapInfoPill(
-                              icon: Icons.layers_outlined,
-                              label: activeFilterLabel,
                             ),
                           if (gpsAccuracyMeters != null)
                             _MapInfoPill(
@@ -1700,28 +1756,6 @@ class _ImportMapFloatingPanel extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 10),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          ChoiceChip(
-                            label: const Text('All geometry'),
-                            selected: selectedGeometryChip == null,
-                            onSelected: (_) => onChipSelected(null),
-                          ),
-                          for (final chip in _importGeometryQuickFilters) ...[
-                            const SizedBox(width: 8),
-                            ChoiceChip(
-                              label: Text(chip.label),
-                              selected: selectedGeometryChip == chip.id,
-                              onSelected: (selected) =>
-                                  onChipSelected(selected ? chip.id : null),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
@@ -1801,6 +1835,8 @@ class _ImportMapFloatingPanel extends StatelessWidget {
 class _ImportMapControlRail extends StatelessWidget {
   const _ImportMapControlRail({
     required this.featureCount,
+    required this.approvedContextCount,
+    required this.onOpenApprovedFeatures,
     required this.onOpenFeatures,
     required this.onCenterCurrentLocation,
     required this.onFitWorkspace,
@@ -1810,6 +1846,8 @@ class _ImportMapControlRail extends StatelessWidget {
   });
 
   final int featureCount;
+  final int approvedContextCount;
+  final VoidCallback? onOpenApprovedFeatures;
   final VoidCallback? onOpenFeatures;
   final VoidCallback? onCenterCurrentLocation;
   final VoidCallback? onFitWorkspace;
@@ -1824,6 +1862,15 @@ class _ImportMapControlRail extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
+        if (onOpenApprovedFeatures != null) ...[
+          _MapFloatingActionButton(
+            tooltip: 'Browse approved project features',
+            onPressed: onOpenApprovedFeatures,
+            badgeLabel: '$approvedContextCount',
+            child: const Icon(Icons.verified_outlined, size: 20),
+          ),
+          const SizedBox(height: 12),
+        ],
         if (onOpenFeatures != null) ...[
           _MapFloatingActionButton(
             tooltip: 'Browse imported features',
@@ -2169,6 +2216,196 @@ class _ImportFeatureBrowserSheetState
   }
 }
 
+class _ApprovedProjectFeatureBrowserSheet extends StatefulWidget {
+  const _ApprovedProjectFeatureBrowserSheet({
+    required this.projectName,
+    required this.features,
+    required this.onSelectFeature,
+  });
+
+  final String projectName;
+  final List<MapFeatureSummary> features;
+  final ValueChanged<MapFeatureSummary> onSelectFeature;
+
+  @override
+  State<_ApprovedProjectFeatureBrowserSheet> createState() =>
+      _ApprovedProjectFeatureBrowserSheetState();
+}
+
+class _ApprovedProjectFeatureBrowserSheetState
+    extends State<_ApprovedProjectFeatureBrowserSheet> {
+  late final TextEditingController _searchController;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final query = _searchController.text.trim().toLowerCase();
+    final displayedFeatures = widget.features.where((feature) {
+      if (query.isEmpty) {
+        return true;
+      }
+      return _approvedProjectFeatureSearchBlob(feature).contains(query);
+    }).toList(growable: false);
+    final bottomInset =
+        MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
+
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.64,
+      minChildSize: 0.34,
+      maxChildSize: 0.92,
+      builder: (context, controller) {
+        return ListView(
+          controller: controller,
+          padding: EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.sm,
+            AppSpacing.md,
+            bottomInset,
+          ),
+          children: [
+            Center(
+              child: Container(
+                width: 44,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              'Approved project features',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Showing ${displayedFeatures.length} of ${widget.features.length} approved feature(s) in ${widget.projectName}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            TextField(
+              controller: _searchController,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: 'Search approved project features',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: _searchController.text.trim().isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: () {
+                          setState(() {
+                            _searchController.clear();
+                          });
+                        },
+                        icon: const Icon(Icons.clear),
+                      ),
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            if (displayedFeatures.isEmpty)
+              AppEmptyState(
+                icon: Icons.layers_clear_outlined,
+                title: 'No approved project features match this search',
+                message: 'Try a different search term.',
+                actionLabel: 'Clear search',
+                onAction: () {
+                  setState(() {
+                    _searchController.clear();
+                  });
+                },
+              )
+            else
+              Column(
+                children: displayedFeatures
+                    .map(
+                      (feature) => Padding(
+                        padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                        child: AppCard(
+                          onTap: () => widget.onSelectFeature(feature),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: 24,
+                                height: 24,
+                                margin: const EdgeInsets.only(top: 2),
+                                decoration: BoxDecoration(
+                                  color: _projectContextColor,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white,
+                                    width: 1.6,
+                                  ),
+                                  boxShadow: const [
+                                    BoxShadow(
+                                      color: Color(0x26000000),
+                                      blurRadius: 6,
+                                      offset: Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                                child: const Icon(
+                                  Icons.layers_outlined,
+                                  color: Colors.white,
+                                  size: 12,
+                                ),
+                              ),
+                              const SizedBox(width: AppSpacing.sm),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _projectFeatureTitle(feature),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium,
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      _approvedProjectFeatureSubtitle(feature),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall,
+                                      softWrap: true,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: AppSpacing.sm),
+                              const _MapInfoPill(
+                                icon: Icons.check_circle_outline,
+                                label: 'Approved',
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList(growable: false),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _ImportFeatureDetailsSheet extends StatelessWidget {
   const _ImportFeatureDetailsSheet({
     required this.feature,
@@ -2308,21 +2545,13 @@ class _ImportFeatureDetailsSheet extends StatelessWidget {
                     FilledButton.icon(
                       onPressed: onApprove,
                       icon: const Icon(Icons.check_circle_outline),
-                      label: Text(
-                        feature.status == 'rejected'
-                            ? 'Approve again'
-                            : 'Approve feature',
-                      ),
+                      label: const Text('Approve feature'),
                     ),
                   if (canReview && onReject != null)
                     OutlinedButton.icon(
                       onPressed: onReject,
                       icon: const Icon(Icons.cancel_outlined),
-                      label: Text(
-                        feature.status == 'approved'
-                            ? 'Reject feature'
-                            : 'Reject with reason',
-                      ),
+                      label: const Text('Reject feature'),
                     ),
                   if (canComment && onAddComment != null)
                     FilledButton.tonalIcon(
@@ -2609,12 +2838,11 @@ class _ImportFeatureReviewReasonDialogState
     return AlertDialog(
       title: const Text('Reject feature'),
       content: AppTextField(
-        label: 'Reason',
+        label: 'Reason (optional)',
         controller: _controller,
         hint: 'Explain why this imported feature is being rejected.',
         minLines: 3,
         maxLines: 5,
-        onChanged: (_) => setState(() {}),
       ),
       actions: [
         TextButton(
@@ -2622,10 +2850,8 @@ class _ImportFeatureReviewReasonDialogState
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: _controller.text.trim().isEmpty
-              ? null
-              : () => Navigator.of(context).pop(_controller.text.trim()),
-          child: const Text('Save reason'),
+          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
+          child: const Text('Continue'),
         ),
       ],
     );
@@ -3200,6 +3426,34 @@ String _projectFeatureTitle(MapFeatureSummary feature) {
   final type = _geometryLabel(feature.geometry['type']?.toString() ?? 'Feature');
   final suffix = feature.id.length > 8 ? feature.id.substring(0, 8) : feature.id;
   return '$type feature $suffix';
+}
+
+String _approvedProjectFeatureSubtitle(MapFeatureSummary feature) {
+  final details = <String>[
+    _geometryLabel(feature.geometry['type']?.toString() ?? 'Geometry'),
+    '${feature.photoCount} photo(s)',
+  ];
+  if (feature.collectedBy?.trim().isNotEmpty ?? false) {
+    details.add('Collector ${feature.collectedBy!.trim()}');
+  }
+  return details.join(' • ');
+}
+
+String _approvedProjectFeatureSearchBlob(MapFeatureSummary feature) {
+  final buffer = StringBuffer()
+    ..write(_projectFeatureTitle(feature).toLowerCase())
+    ..write(' ')
+    ..write(
+      _approvedProjectFeatureSubtitle(feature).toLowerCase(),
+    );
+  for (final entry in feature.attributes.entries) {
+    buffer
+      ..write(' ')
+      ..write(entry.key.toLowerCase())
+      ..write(' ')
+      ..write('${entry.value}'.toLowerCase());
+  }
+  return buffer.toString();
 }
 
 String _labelize(String value) {
