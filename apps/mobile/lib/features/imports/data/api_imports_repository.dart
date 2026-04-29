@@ -158,11 +158,23 @@ class ApiImportsRepository implements ImportsRepository {
   Future<ImportMapData> fetchImportMapData({
     required String importId,
     required String projectId,
+    required double minLon,
+    required double minLat,
+    required double maxLon,
+    required double maxLat,
+    required double zoom,
   }) async {
     try {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         '$_basePath/$importId/map',
-        queryParameters: <String, dynamic>{'project_id': projectId},
+        queryParameters: <String, dynamic>{
+          'project_id': projectId,
+          'minLon': minLon,
+          'minLat': minLat,
+          'maxLon': maxLon,
+          'maxLat': maxLat,
+          'zoom': zoom,
+        },
       );
       final data = Map<String, dynamic>.from(
         response.data?['data'] as Map? ?? const <String, dynamic>{},
@@ -498,6 +510,7 @@ class ApiImportsRepository implements ImportsRepository {
       attributes: Map<String, dynamic>.from(
         item['attributes'] as Map? ?? const <String, dynamic>{},
       ),
+      sourceGeometryType: item['source_geometry_type'] as String?,
       collectedBy: item['collected_by'] as String?,
       reviewedBy: item['reviewed_by'] as String?,
       reviewNotes: item['review_notes'] as String?,
@@ -507,6 +520,7 @@ class ApiImportsRepository implements ImportsRepository {
       reviewedAt: _toOptionalDate(item['reviewed_at']),
       photoCount: _toInt(item['photo_count']),
       photos: const <MapFeaturePhoto>[],
+      isSummary: item['is_summary'] as bool? ?? false,
     );
   }
 

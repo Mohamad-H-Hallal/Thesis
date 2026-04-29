@@ -235,20 +235,39 @@ class GisImportDetails {
 }
 
 class ImportMapQuery {
-  const ImportMapQuery({required this.importId, required this.projectId});
+  const ImportMapQuery({
+    required this.importId,
+    required this.projectId,
+    required this.minLon,
+    required this.minLat,
+    required this.maxLon,
+    required this.maxLat,
+    required this.zoom,
+  });
 
   final String importId;
   final String projectId;
+  final double minLon;
+  final double minLat;
+  final double maxLon;
+  final double maxLat;
+  final double zoom;
 
   @override
   bool operator ==(Object other) {
     return other is ImportMapQuery &&
         other.importId == importId &&
-        other.projectId == projectId;
+        other.projectId == projectId &&
+        other.minLon == minLon &&
+        other.minLat == minLat &&
+        other.maxLon == maxLon &&
+        other.maxLat == maxLat &&
+        other.zoom == zoom;
   }
 
   @override
-  int get hashCode => Object.hash(importId, projectId);
+  int get hashCode =>
+      Object.hash(importId, projectId, minLon, minLat, maxLon, maxLat, zoom);
 }
 
 class ImportFeatureQuery {

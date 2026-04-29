@@ -132,6 +132,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Timer? _basemapTransitionTimer;
   late final MapOptions _mainMapOptions;
   bool _isBasemapTransitioning = false;
+  Timer? _viewportRefreshTimer;
+  ProjectMapViewportQuery? _projectViewportQuery;
+  List<MapFeatureSummary>? _lastViewportFeatures;
 
   LatLng get _defaultMapCenter => widget.lockProjectSelection
       ? LebanonMapConfig.projectWorkspaceCenter
@@ -391,6 +394,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     _locationNoticeTimer?.cancel();
     _tileNoticeTimer?.cancel();
     _basemapTransitionTimer?.cancel();
+    _viewportRefreshTimer?.cancel();
     _offlineSheetUiState.dispose();
     _searchController.dispose();
     _projectMapSearchFocusNode.dispose();
@@ -435,6 +439,42 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         _runMainMapAction(pendingAction, queueUntilReady: true);
       });
     }
+    _scheduleViewportRefresh();
+  }
+
+  void _scheduleViewportRefresh() {
+    _viewportRefreshTimer?.cancel();
+    _viewportRefreshTimer = Timer(const Duration(milliseconds: 180), () {
+      if (!mounted) {
+        return;
+      }
+      final projectId = _selectedProjectId ?? widget.initialProjectId;
+      if (projectId == null || projectId.isEmpty) {
+        return;
+      }
+      final nextQuery = _buildProjectViewportQuery(projectId);
+      setState(() {
+        if (_projectViewportQuery != nextQuery) {
+          _projectViewportQuery = nextQuery;
+        }
+      });
+    });
+  }
+
+  ProjectMapViewportQuery _buildProjectViewportQuery(String projectId) {
+    final bounds = _latestMapCamera?.visibleBounds ?? LebanonMapConfig.bounds;
+    final zoom = _latestMapCamera?.zoom ?? _defaultMapZoom;
+    final precision = zoom >= 12 ? 4 : 3;
+    double normalize(double value) =>
+        double.parse(value.toStringAsFixed(precision));
+    return ProjectMapViewportQuery(
+      projectId: projectId,
+      minLon: normalize(bounds.southWest.longitude),
+      minLat: normalize(bounds.southWest.latitude),
+      maxLon: normalize(bounds.northEast.longitude),
+      maxLat: normalize(bounds.northEast.latitude),
+      zoom: double.parse(zoom.toStringAsFixed(2)),
+    );
   }
 
   void _scheduleProjectMapTilePrime(OfflineMapPackage? offlinePackage) {
@@ -1030,7 +1070,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           availableProjects,
           requestedProjectId: widget.initialProjectId,
         );
-        final featuresAsync = ref.watch(projectMapFeaturesProvider(project.id));
+        _selectedProjectId ??= project.id;
+        final viewportQuery = _projectViewportQuery ?? _buildProjectViewportQuery(project.id);
+        final featuresAsync = ref.watch(projectMapViewportFeaturesProvider(viewportQuery));
+        if (featuresAsync.valueOrNull != null) {
+          _lastViewportFeatures = featuresAsync.valueOrNull;
+        }
         final offlineMapPackageAsync = ref.watch(offlineMapPackageProvider);
         final hasContributorAssignment =
             role == UserRole.contributor &&
@@ -1073,6 +1118,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         _selectedFeatureChip = null;
                         _searchController.clear();
                         _lastAutoFrameKey = null;
+                        _projectViewportQuery = _buildProjectViewportQuery(value);
+                        _lastViewportFeatures = null;
                       });
                       _clearTileNotice();
                       _clearLocationNotice();
@@ -1163,9 +1210,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         label: const Text('Review Queue'),
                       ),
                     OutlinedButton.icon(
-                      onPressed: () => ref.invalidate(
-                        projectMapFeaturesProvider(project.id),
-                      ),
+                      onPressed: () {
+                        _lastViewportFeatures = null;
+                        bumpWorkflowRefresh(ref);
+                      },
                       icon: const Icon(Icons.refresh),
                       label: const Text('Refresh'),
                     ),
@@ -1219,63 +1267,69 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         }
 
         Widget buildWorkspace({Widget? embeddedControls}) {
-          return featuresAsync.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (error, _) => AppEmptyState(
-              icon: Icons.error_outline,
-              title: 'Project map unavailable',
-              message: userFacingErrorMessage(
-                error,
-                fallback:
-                    'Unable to load project features right now. Please try again.',
-              ),
-              actionLabel: 'Retry',
-              onAction: () =>
-                  ref.invalidate(projectMapFeaturesProvider(project.id)),
-            ),
-            data: (features) {
-              final scopedFeatures = isUserRole
-                  ? features
-                        .where((feature) => feature.status == 'approved')
-                        .toList(growable: false)
-                  : features;
-              final quickFeatureChips = _deriveFeatureChips(
-                project,
-                scopedFeatures,
-              );
-              final filteredFeatures = scopedFeatures
-                  .where(
-                    (feature) =>
-                        isUserRole || _visibleStatuses.contains(feature.status),
-                  )
-                  .where(
-                    (feature) => _matchesSearchAndChip(
-                      feature,
-                      query: _searchController.text,
-                      selectedChip: _selectedFeatureChip,
-                    ),
-                  )
-                  .toList(growable: false);
-              _maybeOpenInitialFeatureDetails(
-                project: project,
-                features: filteredFeatures,
-                canCollectOnMap: canCollectOnMap,
-                canReview: canReview,
-              );
+          Widget buildLoadedWorkspace(List<MapFeatureSummary> features) {
+            final scopedFeatures = isUserRole
+                ? features
+                    .where((feature) => feature.status == 'approved')
+                    .toList(growable: false)
+                : features;
+            final quickFeatureChips = _deriveFeatureChips(
+              project,
+              scopedFeatures,
+            );
+            final filteredFeatures = scopedFeatures
+                .where(
+                  (feature) =>
+                      isUserRole || _visibleStatuses.contains(feature.status),
+                )
+                .where(
+                  (feature) => _matchesSearchAndChip(
+                    feature,
+                    query: _searchController.text,
+                    selectedChip: _selectedFeatureChip,
+                  ),
+                )
+                .toList(growable: false);
+            _maybeOpenInitialFeatureDetails(
+              project: project,
+              features: filteredFeatures,
+              canCollectOnMap: canCollectOnMap,
+              canReview: canReview,
+            );
 
-              return _buildMapWorkspace(
-                context,
-                project: project,
-                features: filteredFeatures,
-                quickFeatureChips: quickFeatureChips,
-                offlinePackageAsync: offlineMapPackageAsync,
-                hasCollectionAccess: hasContributorAssignment,
-                canCollectOnMap: canCollectOnMap,
-                canReview: canReview,
-                canFilterStatuses: !isUserRole,
-                embeddedControls: embeddedControls,
-              );
-            },
+            return _buildMapWorkspace(
+              context,
+              project: project,
+              features: filteredFeatures,
+              quickFeatureChips: quickFeatureChips,
+              offlinePackageAsync: offlineMapPackageAsync,
+              hasCollectionAccess: hasContributorAssignment,
+              canCollectOnMap: canCollectOnMap,
+              canReview: canReview,
+              canFilterStatuses: !isUserRole,
+              embeddedControls: embeddedControls,
+            );
+          }
+
+          final cachedFeatures = _lastViewportFeatures;
+          return featuresAsync.when(
+            loading: () => cachedFeatures != null
+                ? buildLoadedWorkspace(cachedFeatures)
+                : const Center(child: CircularProgressIndicator()),
+            error: (error, _) => cachedFeatures != null
+                ? buildLoadedWorkspace(cachedFeatures)
+                : AppEmptyState(
+                    icon: Icons.error_outline,
+                    title: 'Project map unavailable',
+                    message: userFacingErrorMessage(
+                      error,
+                      fallback:
+                          'Unable to load project features right now. Please try again.',
+                    ),
+                    actionLabel: 'Retry',
+                    onAction: () => bumpWorkflowRefresh(ref),
+                  ),
+            data: buildLoadedWorkspace,
           );
         }
 
@@ -2647,8 +2701,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   String _featureBrowserSubtitle(MapFeatureSummary feature) {
+    final geometryType =
+        (feature.sourceGeometryType ?? feature.geometry['type'] ?? 'Geometry')
+            .toString();
     final details = <String>[
-      '${feature.geometry['type'] ?? 'Geometry'}',
+      _mapGeometryLabel(geometryType),
       '${feature.photoCount} photo(s)',
     ];
     if (feature.collectedBy != null && feature.collectedBy!.trim().isNotEmpty) {
@@ -2761,9 +2818,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     if (typeValue != null) {
       return typeValue;
     }
-    return switch (feature.geometry['type']) {
-      'LineString' => 'Line feature',
-      'Polygon' => 'Polygon feature',
+    return switch (
+      (feature.sourceGeometryType ?? feature.geometry['type'] ?? '')
+          .toString()
+          .toLowerCase()
+    ) {
+      'linestring' || 'multilinestring' => 'Line feature',
+      'polygon' || 'multipolygon' => 'Polygon feature',
       _ => 'Point feature',
     };
   }
@@ -3283,190 +3344,233 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (sheetContext) {
-        final bottomInset =
-            MediaQuery.viewPaddingOf(sheetContext).bottom + AppSpacing.lg;
-        return DraggableScrollableSheet(
-          expand: false,
-          initialChildSize: 0.75,
-          minChildSize: 0.45,
-          maxChildSize: 0.94,
-          builder: (context, controller) {
-            return ListView(
-              controller: controller,
-              padding: EdgeInsets.fromLTRB(
-                AppSpacing.md,
-                AppSpacing.md,
-                AppSpacing.md,
-                bottomInset,
-              ),
+      builder: (sheetContext) => feature.isSummary
+          ? Consumer(
+              builder: (context, ref, _) {
+                final detailAsync = ref.watch(
+                  projectFeatureDetailsProvider(feature.id),
+                );
+                return detailAsync.when(
+                  loading: () => _ProjectFeatureLoadingSheet(
+                    title: _featureDisplayTitle(feature),
+                  ),
+                  error: (error, _) => _ProjectFeatureErrorSheet(
+                    title: _featureDisplayTitle(feature),
+                    message: userFacingErrorMessage(
+                      error,
+                      fallback:
+                          'Unable to load this project feature right now.',
+                    ),
+                    onRetry: () =>
+                        ref.invalidate(projectFeatureDetailsProvider(feature.id)),
+                  ),
+                  data: (loadedFeature) => _buildProjectFeatureDetailsSheet(
+                    sheetContext,
+                    project: project,
+                    feature: loadedFeature,
+                    canCollectOnMap: canCollectOnMap,
+                    canReview: canReview,
+                  ),
+                );
+              },
+            )
+          : _buildProjectFeatureDetailsSheet(
+              sheetContext,
+              project: project,
+              feature: feature,
+              canCollectOnMap: canCollectOnMap,
+              canReview: canReview,
+            ),
+    );
+  }
+
+  Widget _buildProjectFeatureDetailsSheet(
+    BuildContext sheetContext, {
+    required ProjectSummary project,
+    required MapFeatureSummary feature,
+    required bool canCollectOnMap,
+    required bool canReview,
+  }) {
+    final bottomInset =
+        MediaQuery.viewPaddingOf(sheetContext).bottom + AppSpacing.lg;
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.75,
+      minChildSize: 0.45,
+      maxChildSize: 0.94,
+      builder: (context, controller) {
+        return ListView(
+          controller: controller,
+          padding: EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.md,
+            AppSpacing.md,
+            bottomInset,
+          ),
+          children: [
+            Row(
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _featureDisplayTitle(feature),
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                    ),
-                    StatusChip(status: feature.status),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    Chip(
-                      label: Text(
-                        'Geometry: ${feature.geometry['type'] ?? 'Unknown'}',
-                      ),
-                    ),
-                    if (feature.collectedBy != null)
-                      Chip(label: Text('Collector: ${feature.collectedBy}')),
-                    if (feature.reviewedBy != null)
-                      Chip(label: Text('Reviewed by: ${feature.reviewedBy}')),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.md),
-                _DetailSection(
-                  title: 'Geometry summary',
-                  child: Text(_geometrySummary(feature.geometry)),
-                ),
-                _DetailSection(
-                  title: 'Lifecycle',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (feature.collectedAt != null)
-                        Text(
-                          'Collected: ${_formatDateTime(feature.collectedAt!)}',
-                        ),
-                      if (feature.submittedAt != null)
-                        Text(
-                          'Submitted: ${_formatDateTime(feature.submittedAt!)}',
-                        ),
-                      if (feature.reviewedAt != null)
-                        Text(
-                          'Reviewed: ${_formatDateTime(feature.reviewedAt!)}',
-                        ),
-                    ],
+                Expanded(
+                  child: Text(
+                    _featureDisplayTitle(feature),
+                    style: Theme.of(context).textTheme.titleLarge,
                   ),
                 ),
-                if (feature.attributes.isNotEmpty)
-                  _DetailSection(
-                    title: 'Attributes',
-                    child: Column(
-                      children: feature.attributes.entries
+                StatusChip(status: feature.status),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                Chip(
+                  label: Text(
+                    'Geometry: ${feature.sourceGeometryType ?? feature.geometry['type'] ?? 'Unknown'}',
+                  ),
+                ),
+                if (feature.collectedBy != null)
+                  Chip(label: Text('Collector: ${feature.collectedBy}')),
+                if (feature.reviewedBy != null)
+                  Chip(label: Text('Reviewed by: ${feature.reviewedBy}')),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+            _DetailSection(
+              title: 'Geometry summary',
+              child: Text(_geometrySummary(feature.geometry)),
+            ),
+            _DetailSection(
+              title: 'Lifecycle',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (feature.collectedAt != null)
+                    Text(
+                      'Collected: ${_formatDateTime(feature.collectedAt!)}',
+                    ),
+                  if (feature.submittedAt != null)
+                    Text(
+                      'Submitted: ${_formatDateTime(feature.submittedAt!)}',
+                    ),
+                  if (feature.reviewedAt != null)
+                    Text(
+                      'Reviewed: ${_formatDateTime(feature.reviewedAt!)}',
+                    ),
+                ],
+              ),
+            ),
+            if (feature.attributes.isNotEmpty)
+              _DetailSection(
+                title: 'Attributes',
+                child: Column(
+                  children: feature.attributes.entries
+                      .map(
+                        (entry) => ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(entry.key),
+                          subtitle: Text('${entry.value}'),
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+              ),
+            if (feature.reviewNotes?.trim().isNotEmpty == true)
+              _DetailSection(
+                title: 'Review notes',
+                child: Text(feature.reviewNotes!),
+              ),
+            _DetailSection(
+              title: 'Photos',
+              child: feature.photos.isEmpty
+                  ? const AppEmptyState(
+                      icon: Icons.photo_library_outlined,
+                      title: 'No photos attached',
+                      message: 'Photos will appear here after upload.',
+                    )
+                  : FeaturePhotoGallery(
+                      items: feature.photos
                           .map(
-                            (entry) => ListTile(
-                              contentPadding: EdgeInsets.zero,
-                              title: Text(entry.key),
-                              subtitle: Text('${entry.value}'),
+                            (photo) => FeaturePhotoGalleryItem(
+                              id: photo.id,
+                              imagePath: photo.thumbnailPath ?? photo.filePath,
+                              label: _photoLabel(photo.filePath),
+                              subtitle: photo.takenAt == null
+                                  ? 'Captured photo'
+                                  : 'Captured ${_formatDateTime(photo.takenAt!)}',
                             ),
                           )
                           .toList(growable: false),
                     ),
-                  ),
-                if (feature.reviewNotes?.trim().isNotEmpty == true)
-                  _DetailSection(
-                    title: 'Review notes',
-                    child: Text(feature.reviewNotes!),
-                  ),
-                _DetailSection(
-                  title: 'Photos',
-                  child: feature.photos.isEmpty
-                      ? const AppEmptyState(
-                          icon: Icons.photo_library_outlined,
-                          title: 'No photos attached',
-                          message: 'Photos will appear here after upload.',
-                        )
-                      : FeaturePhotoGallery(
-                          items: feature.photos
-                              .map(
-                                (photo) => FeaturePhotoGalleryItem(
-                                  id: photo.id,
-                                  imagePath:
-                                      photo.thumbnailPath ?? photo.filePath,
-                                  label: _photoLabel(photo.filePath),
-                                  subtitle: photo.takenAt == null
-                                      ? 'Captured photo'
-                                      : 'Captured ${_formatDateTime(photo.takenAt!)}',
-                                ),
-                              )
-                              .toList(growable: false),
-                        ),
+            ),
+            if (canCollectOnMap && feature.status == 'draft')
+              Padding(
+                padding: const EdgeInsets.only(top: AppSpacing.md),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.of(sheetContext).pop();
+                        this.context.push(
+                          AppRoutes.editDraftFeature(
+                            projectId: project.id,
+                            featureId: feature.id,
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.edit_outlined),
+                      label: const Text('Edit Draft'),
+                    ),
+                    FilledButton.icon(
+                      onPressed: () => _submitDraft(
+                        feature: feature,
+                        onSuccess: () => Navigator.of(sheetContext).pop(),
+                      ),
+                      icon: const Icon(Icons.send_outlined),
+                      label: const Text('Submit Draft'),
+                    ),
+                  ],
                 ),
-                if (canCollectOnMap && feature.status == 'draft')
-                  Padding(
-                    padding: const EdgeInsets.only(top: AppSpacing.md),
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        OutlinedButton.icon(
-                          onPressed: () {
-                            Navigator.of(sheetContext).pop();
-                            this.context.push(
-                              AppRoutes.editDraftFeature(
-                                projectId: project.id,
-                                featureId: feature.id,
-                              ),
-                            );
-                          },
-                          icon: const Icon(Icons.edit_outlined),
-                          label: const Text('Edit Draft'),
+              ),
+            if (canReview && feature.status != 'draft')
+              Padding(
+                padding: const EdgeInsets.only(top: AppSpacing.md),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (feature.status == 'pending_review' ||
+                        feature.status == 'rejected')
+                      FilledButton.icon(
+                        onPressed: () => _reviewFeature(
+                          feature: feature,
+                          status: 'approved',
+                          onSuccess: () => Navigator.of(sheetContext).pop(),
                         ),
-                        FilledButton.icon(
-                          onPressed: () => _submitDraft(
-                            feature: feature,
-                            onSuccess: () => Navigator.of(sheetContext).pop(),
-                          ),
-                          icon: const Icon(Icons.send_outlined),
-                          label: const Text('Submit Draft'),
+                        icon: const Icon(Icons.check_circle_outline),
+                        label: Text(
+                          feature.status == 'rejected'
+                              ? 'Re-approve'
+                              : 'Approve',
                         ),
-                      ],
-                    ),
-                  ),
-                if (canReview && feature.status != 'draft')
-                  Padding(
-                    padding: const EdgeInsets.only(top: AppSpacing.md),
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        if (feature.status == 'pending_review' ||
-                            feature.status == 'rejected')
-                          FilledButton.icon(
-                            onPressed: () => _reviewFeature(
-                              feature: feature,
-                              status: 'approved',
-                              onSuccess: () => Navigator.of(sheetContext).pop(),
-                            ),
-                            icon: const Icon(Icons.check_circle_outline),
-                            label: Text(
-                              feature.status == 'rejected'
-                                  ? 'Re-approve'
-                                  : 'Approve',
-                            ),
-                          ),
-                        if (feature.status == 'pending_review' ||
-                            feature.status == 'approved')
-                          FilledButton.tonalIcon(
-                            onPressed: () => _reviewFeature(
-                              feature: feature,
-                              status: 'rejected',
-                              onSuccess: () => Navigator.of(sheetContext).pop(),
-                            ),
-                            icon: const Icon(Icons.cancel_outlined),
-                            label: const Text('Reject'),
-                          ),
-                      ],
-                    ),
-                  ),
-              ],
-            );
-          },
+                      ),
+                    if (feature.status == 'pending_review' ||
+                        feature.status == 'approved')
+                      FilledButton.tonalIcon(
+                        onPressed: () => _reviewFeature(
+                          feature: feature,
+                          status: 'rejected',
+                          onSuccess: () => Navigator.of(sheetContext).pop(),
+                        ),
+                        icon: const Icon(Icons.cancel_outlined),
+                        label: const Text('Reject'),
+                      ),
+                  ],
+                ),
+              ),
+          ],
         );
       },
     );
@@ -5661,6 +5765,108 @@ class _LegendChip extends StatelessWidget {
     return Chip(
       avatar: Icon(Icons.circle, color: color, size: 12),
       label: Text(label),
+    );
+  }
+}
+
+String _mapGeometryLabel(String geometryType) {
+  switch (geometryType.toLowerCase()) {
+    case 'point':
+    case 'multipoint':
+      return 'Point';
+    case 'linestring':
+    case 'multilinestring':
+      return 'Line';
+    case 'polygon':
+    case 'multipolygon':
+      return 'Polygon';
+    default:
+      return geometryType;
+  }
+}
+
+class _ProjectFeatureLoadingSheet extends StatelessWidget {
+  const _ProjectFeatureLoadingSheet({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset =
+        MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.38,
+      minChildSize: 0.28,
+      maxChildSize: 0.5,
+      builder: (context, controller) {
+        return ListView(
+          controller: controller,
+          padding: EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.md,
+            AppSpacing.md,
+            bottomInset,
+          ),
+          children: [
+            Text(title, style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: AppSpacing.lg),
+            const Center(child: CircularProgressIndicator()),
+            const SizedBox(height: AppSpacing.md),
+            Text(
+              'Loading feature details...',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ProjectFeatureErrorSheet extends StatelessWidget {
+  const _ProjectFeatureErrorSheet({
+    required this.title,
+    required this.message,
+    required this.onRetry,
+  });
+
+  final String title;
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset =
+        MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.46,
+      minChildSize: 0.32,
+      maxChildSize: 0.64,
+      builder: (context, controller) {
+        return ListView(
+          controller: controller,
+          padding: EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.md,
+            AppSpacing.md,
+            bottomInset,
+          ),
+          children: [
+            Text(title, style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: AppSpacing.lg),
+            AppEmptyState(
+              icon: Icons.error_outline,
+              title: 'Feature details unavailable',
+              message: message,
+              actionLabel: 'Retry',
+              onAction: onRetry,
+            ),
+          ],
+        );
+      },
     );
   }
 }

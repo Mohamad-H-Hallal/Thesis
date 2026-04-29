@@ -33,6 +33,90 @@ const IMPORT_PROCESSING_STALE_AFTER_MS = Number.parseInt(
   10,
 );
 
+const normalizeMapZoom = (zoomRaw: unknown, fallback = 11): number => {
+  const parsed = Number.parseFloat(String(zoomRaw ?? fallback));
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(0, Math.min(parsed, 24));
+};
+
+const mapSimplifyTolerance = (zoom: number): number => {
+  if (zoom >= 13.5) {
+    return 0;
+  }
+  if (zoom >= 12.5) {
+    return 0.00008;
+  }
+  if (zoom >= 11.5) {
+    return 0.0002;
+  }
+  if (zoom >= 10.5) {
+    return 0.0005;
+  }
+  return 0;
+};
+
+const parseViewportBounds = (input: {
+  minLon: unknown;
+  minLat: unknown;
+  maxLon: unknown;
+  maxLat: unknown;
+}) => {
+  const minLon = Number.parseFloat(String(input.minLon ?? LEBANON_BOUNDS.minLon));
+  const minLat = Number.parseFloat(String(input.minLat ?? LEBANON_BOUNDS.minLat));
+  const maxLon = Number.parseFloat(String(input.maxLon ?? LEBANON_BOUNDS.maxLon));
+  const maxLat = Number.parseFloat(String(input.maxLat ?? LEBANON_BOUNDS.maxLat));
+
+  if (
+    !Number.isFinite(minLon) ||
+    !Number.isFinite(minLat) ||
+    !Number.isFinite(maxLon) ||
+    !Number.isFinite(maxLat)
+  ) {
+    return {
+      minLon: LEBANON_BOUNDS.minLon,
+      minLat: LEBANON_BOUNDS.minLat,
+      maxLon: LEBANON_BOUNDS.maxLon,
+      maxLat: LEBANON_BOUNDS.maxLat,
+    };
+  }
+
+  if (minLon >= maxLon || minLat >= maxLat) {
+    return {
+      minLon: LEBANON_BOUNDS.minLon,
+      minLat: LEBANON_BOUNDS.minLat,
+      maxLon: LEBANON_BOUNDS.maxLon,
+      maxLat: LEBANON_BOUNDS.maxLat,
+    };
+  }
+
+  return { minLon, minLat, maxLon, maxLat };
+};
+
+const mapRenderGeometrySql = (
+  geometrySql: string,
+  zoom: number,
+  simplifyTolerance: number
+) => {
+  const zoomLiteral = Number(zoom.toFixed(2));
+  const toleranceLiteral = Number(simplifyTolerance.toFixed(8));
+  return `
+  CASE
+    WHEN ${zoomLiteral} < 10.5
+      AND GeometryType(${geometrySql}) IN ('POLYGON', 'MULTIPOLYGON')
+      THEN ST_AsGeoJSON(ST_PointOnSurface(${geometrySql}))
+    WHEN ${zoomLiteral} < 10.5
+      AND GeometryType(${geometrySql}) IN ('LINESTRING', 'MULTILINESTRING')
+      THEN ST_AsGeoJSON(ST_Centroid(${geometrySql}))
+    WHEN ${toleranceLiteral} > 0
+      AND GeometryType(${geometrySql}) IN ('POLYGON', 'MULTIPOLYGON', 'LINESTRING', 'MULTILINESTRING')
+      THEN ST_AsGeoJSON(ST_SimplifyPreserveTopology(${geometrySql}, ${toleranceLiteral}))
+    ELSE ST_AsGeoJSON(${geometrySql})
+  END
+`;
+};
+
 type ImportFileType = 'geojson' | 'shapefile_zip' | 'kml' | 'kmz';
 type GeometryType =
   | 'Point'
@@ -1198,6 +1282,7 @@ const mapImportMapProjectFeatureRow = (row: any) => ({
   status: row.status,
   geometry: row.geometry ? JSON.parse(row.geometry) : null,
   attributes: row.attributes ?? {},
+  source_geometry_type: row.source_geometry_type ?? null,
   collected_by: row.collected_by ?? null,
   reviewed_by: row.reviewed_by ?? null,
   review_notes: row.review_notes ?? null,
@@ -1206,6 +1291,7 @@ const mapImportMapProjectFeatureRow = (row: any) => ({
   submitted_at: row.submitted_at ?? null,
   reviewed_at: row.reviewed_at ?? null,
   photo_count: row.photo_count ?? 0,
+  is_summary: true,
 });
 
 const insertStagedImportFeaturesBatch = async (
@@ -1893,6 +1979,16 @@ const getImportDetails = async (req: Request, res: Response): Promise<void> => {
 const getImportMapData = async (req: Request, res: Response): Promise<void> => {
   const importId = req.params.importId;
   const job = await fetchImportJobWithAccess(importId, req.user as Express.UserContext);
+  const bounds = parseViewportBounds({
+    minLon: req.query.minLon,
+    minLat: req.query.minLat,
+    maxLon: req.query.maxLon,
+    maxLat: req.query.maxLat,
+  });
+  const zoom = normalizeMapZoom(req.query.zoom, 11);
+  const simplifyTolerance = mapSimplifyTolerance(zoom);
+  const stagedGeometrySql = mapRenderGeometrySql('gif.geom', zoom, simplifyTolerance);
+  const projectGeometrySql = mapRenderGeometrySql('sf.geom', zoom, simplifyTolerance);
 
   const stagedResult = await query(
     `SELECT gif.id,
@@ -1912,19 +2008,27 @@ const getImportMapData = async (req: Request, res: Response): Promise<void> => {
             gif.review_reason,
             gif.created_at,
             gif.updated_at,
-            CASE WHEN gif.geom IS NULL THEN NULL ELSE ST_AsGeoJSON(gif.geom) END AS geometry
+            ${stagedGeometrySql} AS geometry
      FROM gis_import_feature gif
      LEFT JOIN "user" reviewer ON reviewer.id = gif.reviewed_by_user_id
      WHERE gif.import_job_id = $1
        AND gif.geom IS NOT NULL
+       AND gif.geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
      ORDER BY gif.source_index ASC`,
-    [importId],
+    [
+      importId,
+      bounds.minLon,
+      bounds.minLat,
+      bounds.maxLon,
+      bounds.maxLat,
+    ],
   );
 
   const approvedProjectResult = await query(
     `SELECT sf.id,
             sf.status,
-            ST_AsGeoJSON(sf.geom) AS geometry,
+            GeometryType(sf.geom) AS source_geometry_type,
+            ${projectGeometrySql} AS geometry,
             sf.attributes,
             collector.full_name AS collected_by,
             reviewer.full_name AS reviewed_by,
@@ -1939,8 +2043,15 @@ const getImportMapData = async (req: Request, res: Response): Promise<void> => {
      LEFT JOIN "user" reviewer ON reviewer.id = sf.reviewed_by_user_id
      WHERE sf.project_id = $1
        AND sf.status = 'approved'
+       AND sf.geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
      ORDER BY sf.reviewed_at DESC NULLS LAST, sf.submitted_at DESC NULLS LAST, sf.id ASC`,
-    [job.project_id],
+    [
+      job.project_id,
+      bounds.minLon,
+      bounds.minLat,
+      bounds.maxLon,
+      bounds.maxLat,
+    ],
   );
 
   res.json({

@@ -7,6 +7,7 @@ const {
   validate,
   paginationValidation,
   bboxValidation,
+  bboxPaginationValidation,
   uuidValidation,
 } = require('../middleware/validation');
 const { asyncHandler } = require('../middleware/error');
@@ -27,7 +28,7 @@ router.get(
 router.get('/nearby', asyncHandler(featureController.findFeaturesNearby));
 
 // Spatial query: BBOX for map rendering
-router.get('/bbox', bboxValidation, paginationValidation, validate, asyncHandler(featureController.findFeaturesByBbox));
+router.get('/bbox', bboxValidation, bboxPaginationValidation, validate, asyncHandler(featureController.findFeaturesByBbox));
 
 // Create new feature
 router.post(

@@ -65,6 +65,8 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
   bool _useClusteredMarkers = false;
   LebanonBasemapStyle _basemapStyle = LebanonBasemapStyle.street;
   MapCamera? _latestMapCamera;
+  ImportMapQuery? _viewportQuery;
+  ImportMapData? _lastViewportData;
   String? _selectedFeatureTypeChip;
   String? _focusedFeatureId;
   String? _lastAutoFocusedFeatureId;
@@ -120,14 +122,17 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
             .read(importDetailsProvider(widget.importId))
             .valueOrNull;
         final session = ref.read(authControllerProvider).session;
+        final viewportQuery =
+            _viewportQuery ??
+            _buildViewportQuery(
+              bounds: LebanonMapConfig.bounds,
+              zoom: _defaultMapZoom,
+            );
         final mapData =
             ref
                 .read(
                   importMapDataProvider(
-                    ImportMapQuery(
-                      importId: widget.importId,
-                      projectId: widget.projectId,
-                    ),
+                    viewportQuery,
                   ),
                 )
                 .valueOrNull ??
@@ -146,6 +151,10 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
               : false,
         );
       },
+    );
+    _viewportQuery = _buildViewportQuery(
+      bounds: LebanonMapConfig.bounds,
+      zoom: _defaultMapZoom,
     );
   }
 
@@ -168,16 +177,24 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
       importDetailsProvider(widget.importId),
     );
     final projectAsync = ref.watch(projectByIdProvider(widget.projectId));
+    final viewportQuery =
+        _viewportQuery ??
+        _buildViewportQuery(bounds: LebanonMapConfig.bounds, zoom: _defaultMapZoom);
     final mapDataAsync = ref.watch(
-      importMapDataProvider(
-        ImportMapQuery(importId: widget.importId, projectId: widget.projectId),
-      ),
+      importMapDataProvider(viewportQuery),
     );
+    if (mapDataAsync.valueOrNull != null) {
+      _lastViewportData = mapDataAsync.valueOrNull;
+    }
 
-    if (mapDataAsync.isLoading && mapDataAsync.valueOrNull == null) {
+    if (mapDataAsync.isLoading &&
+        mapDataAsync.valueOrNull == null &&
+        _lastViewportData == null) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (mapDataAsync.hasError && mapDataAsync.valueOrNull == null) {
+    if (mapDataAsync.hasError &&
+        mapDataAsync.valueOrNull == null &&
+        _lastViewportData == null) {
       return AppEmptyState(
         icon: Icons.map_outlined,
         title: 'Import map unavailable',
@@ -186,14 +203,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
           fallback: 'Unable to load imported features right now.',
         ),
         actionLabel: 'Retry',
-        onAction: () => ref.invalidate(
-          importMapDataProvider(
-            ImportMapQuery(
-              importId: widget.importId,
-              projectId: widget.projectId,
-            ),
-          ),
-        ),
+        onAction: () => ref.invalidate(importMapDataProvider(viewportQuery)),
       );
     }
 
@@ -201,6 +211,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
     final project = projectAsync.valueOrNull;
     final mapData =
         mapDataAsync.valueOrNull ??
+        _lastViewportData ??
         const ImportMapData(
           stagedFeatures: <ImportedFeature>[],
           approvedProjectFeatures: <MapFeatureSummary>[],
@@ -688,15 +699,39 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
   }
 
   void _scheduleCameraRefresh() {
-    if (_cameraRefreshTimer?.isActive ?? false) {
-      return;
-    }
-    _cameraRefreshTimer = Timer(const Duration(milliseconds: 90), () {
+    _cameraRefreshTimer?.cancel();
+    _cameraRefreshTimer = Timer(const Duration(milliseconds: 160), () {
       if (!mounted) {
         return;
       }
-      setState(() {});
+      final nextViewportQuery = _buildViewportQuery(
+        bounds: _latestMapCamera?.visibleBounds ?? LebanonMapConfig.bounds,
+        zoom: _latestMapCamera?.zoom ?? _defaultMapZoom,
+      );
+      setState(() {
+        if (_viewportQuery != nextViewportQuery) {
+          _viewportQuery = nextViewportQuery;
+        }
+      });
     });
+  }
+
+  ImportMapQuery _buildViewportQuery({
+    required LatLngBounds bounds,
+    required double zoom,
+  }) {
+    final precision = zoom >= 12 ? 4 : 3;
+    double normalize(double value) =>
+        double.parse(value.toStringAsFixed(precision));
+    return ImportMapQuery(
+      importId: widget.importId,
+      projectId: widget.projectId,
+      minLon: normalize(bounds.southWest.longitude),
+      minLat: normalize(bounds.southWest.latitude),
+      maxLon: normalize(bounds.northEast.longitude),
+      maxLat: normalize(bounds.northEast.latitude),
+      zoom: double.parse(zoom.toStringAsFixed(2)),
+    );
   }
 
   void _handleMapReady() {
@@ -3332,7 +3367,9 @@ class _ApprovedProjectFeatureDetailsSheet extends StatelessWidget {
                   _MapInfoPill(
                     icon: Icons.category_outlined,
                     label: _featureTypeDisplayLabel(
-                      feature.geometry['type']?.toString() ?? 'Unknown',
+                      feature.sourceGeometryType ??
+                          feature.geometry['type']?.toString() ??
+                          'Unknown',
                     ),
                   ),
                   if (feature.collectedBy?.trim().isNotEmpty ?? false)
@@ -4220,18 +4257,16 @@ String _statusLabel(String status) {
 }
 
 String _featureTypeFilterLabel(String geometryType) {
-  switch (geometryType) {
+  switch (geometryType.toLowerCase()) {
     case 'point':
-    case 'Point':
-    case 'MultiPoint':
+    case 'multipoint':
       return 'Point';
     case 'line':
-    case 'LineString':
-    case 'MultiLineString':
+    case 'linestring':
+    case 'multilinestring':
       return 'Line';
     case 'polygon':
-    case 'Polygon':
-    case 'MultiPolygon':
+    case 'multipolygon':
       return 'Polygon';
     default:
       return geometryType;
@@ -4239,18 +4274,16 @@ String _featureTypeFilterLabel(String geometryType) {
 }
 
 String _featureTypeDisplayLabel(String geometryType) {
-  switch (geometryType) {
+  switch (geometryType.toLowerCase()) {
     case 'point':
-    case 'Point':
-    case 'MultiPoint':
+    case 'multipoint':
       return 'Point feature';
     case 'line':
-    case 'LineString':
-    case 'MultiLineString':
+    case 'linestring':
+    case 'multilinestring':
       return 'Line feature';
     case 'polygon':
-    case 'Polygon':
-    case 'MultiPolygon':
+    case 'multipolygon':
       return 'Polygon feature';
     default:
       return _featureTypeFilterLabel(geometryType);
@@ -4352,7 +4385,9 @@ String _projectFeatureTitle(MapFeatureSummary feature) {
 String _approvedProjectFeatureSubtitle(MapFeatureSummary feature) {
   final details = <String>[
     _featureTypeDisplayLabel(
-      feature.geometry['type']?.toString() ?? 'Geometry',
+      feature.sourceGeometryType ??
+          feature.geometry['type']?.toString() ??
+          'Geometry',
     ),
     '${feature.photoCount} photo(s)',
   ];

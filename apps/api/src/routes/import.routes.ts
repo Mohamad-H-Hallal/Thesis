@@ -7,6 +7,7 @@ const {
   validate,
   paginationValidation,
   uuidValidation,
+  bboxValidation,
 } = require('../middleware/validation');
 const { asyncHandler } = require('../middleware/error');
 const { uploadImportFile } = require('../config/upload');
@@ -45,6 +46,7 @@ router.get(
 router.get(
   '/:importId/map',
   uuidValidation('importId'),
+  bboxValidation,
   validate,
   asyncHandler(importController.getImportMapData),
 );

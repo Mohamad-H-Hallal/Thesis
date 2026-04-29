@@ -28,6 +28,11 @@ abstract class ImportsRepository {
   Future<ImportMapData> fetchImportMapData({
     required String importId,
     required String projectId,
+    required double minLon,
+    required double minLat,
+    required double maxLon,
+    required double maxLat,
+    required double zoom,
   });
 
   Future<ImportedFeature> fetchImportFeatureById({

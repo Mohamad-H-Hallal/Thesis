@@ -154,6 +154,11 @@ class MockImportsRepository implements ImportsRepository {
   Future<ImportMapData> fetchImportMapData({
     required String importId,
     required String projectId,
+    required double minLon,
+    required double minLat,
+    required double maxLon,
+    required double maxLat,
+    required double zoom,
   }) async {
     return ImportMapData(
       stagedFeatures: (_features[importId] ?? const <ImportedFeature>[])
@@ -194,6 +199,7 @@ class MockImportsRepository implements ImportsRepository {
             'coordinates': <double>[35.84, 34.25],
           },
           attributes: <String, dynamic>{'name': 'Approved context feature'},
+          isSummary: true,
         ),
       ],
     );

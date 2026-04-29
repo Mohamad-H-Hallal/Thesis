@@ -33,6 +33,66 @@ interface FormSchemaField {
 }
 
 const MAX_PAGE_LIMIT = 500;
+const MAX_BBOX_PAGE_LIMIT = 20000;
+
+const normalizeMapZoom = (zoomRaw: unknown, fallback = 11): number => {
+  const parsed = Number.parseFloat(String(zoomRaw ?? fallback));
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(0, Math.min(parsed, 24));
+};
+
+const mapSimplifyTolerance = (zoom: number): number => {
+  if (zoom >= 13.5) {
+    return 0;
+  }
+  if (zoom >= 12.5) {
+    return 0.00008;
+  }
+  if (zoom >= 11.5) {
+    return 0.0002;
+  }
+  if (zoom >= 10.5) {
+    return 0.0005;
+  }
+  return 0;
+};
+
+const getBboxPagination = (pageRaw: unknown, limitRaw: unknown): Pagination => {
+  const page = Math.max(1, Number.parseInt(String(pageRaw ?? '1'), 10) || 1);
+  const requestedLimit = Math.max(
+    1,
+    Number.parseInt(String(limitRaw ?? String(MAX_BBOX_PAGE_LIMIT)), 10) ||
+        MAX_BBOX_PAGE_LIMIT,
+  );
+  const limit = Math.min(requestedLimit, MAX_BBOX_PAGE_LIMIT);
+  const offset = (page - 1) * limit;
+  return { page, limit, offset };
+};
+
+const mapRenderGeometrySql = (
+  geometrySql: string,
+  zoom: number,
+  simplifyTolerance: number
+) => {
+  const zoomLiteral = Number(zoom.toFixed(2));
+  const toleranceLiteral = Number(simplifyTolerance.toFixed(8));
+  return `
+  CASE
+    WHEN ${zoomLiteral} < 10.5
+      AND GeometryType(${geometrySql}) IN ('POLYGON', 'MULTIPOLYGON')
+      THEN ST_AsGeoJSON(ST_PointOnSurface(${geometrySql}))
+    WHEN ${zoomLiteral} < 10.5
+      AND GeometryType(${geometrySql}) IN ('LINESTRING', 'MULTILINESTRING')
+      THEN ST_AsGeoJSON(ST_Centroid(${geometrySql}))
+    WHEN ${toleranceLiteral} > 0
+      AND GeometryType(${geometrySql}) IN ('POLYGON', 'MULTIPOLYGON', 'LINESTRING', 'MULTILINESTRING')
+      THEN ST_AsGeoJSON(ST_SimplifyPreserveTopology(${geometrySql}, ${toleranceLiteral}))
+    ELSE ST_AsGeoJSON(${geometrySql})
+  END
+`;
+};
 
 const getPagination = (pageRaw: unknown, limitRaw: unknown): Pagination => {
   const page = Math.max(1, Number.parseInt(String(pageRaw ?? '1'), 10) || 1);
@@ -455,6 +515,25 @@ const getFeature = async (req: Request, res: Response): Promise<void> => {
   const result = await query(
     `SELECT sf.*,
             ST_AsGeoJSON(sf.geom) as geometry,
+            (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) as photo_count,
+            COALESCE(
+              (
+                SELECT json_agg(
+                  json_build_object(
+                    'id', ph.id,
+                    'file_path', ph.file_path,
+                    'thumbnail_path', ph.thumbnail_path,
+                    'status', ph.status,
+                    'taken_at', ph.taken_at,
+                    'display_order', ph.display_order
+                  )
+                  ORDER BY ph.display_order ASC, ph.uploaded_at ASC
+                )
+                FROM photo ph
+                WHERE ph.feature_id = sf.id
+              ),
+              '[]'::json
+            ) as photos,
             u.full_name as collected_by,
             r.full_name as reviewed_by,
             p.name as project_name
@@ -891,7 +970,9 @@ const findFeaturesByBbox = async (req: Request, res: Response): Promise<void> =>
   const maxLat = Number.parseFloat(String(req.query.maxLat));
   const projectId = req.query.project_id ? String(req.query.project_id) : null;
   const status = req.query.status ? String(req.query.status) : null;
-  const { page, limit, offset } = getPagination(req.query.page, req.query.limit);
+  const zoom = normalizeMapZoom(req.query.zoom, 11);
+  const simplifyTolerance = mapSimplifyTolerance(zoom);
+  const { page, limit, offset } = getBboxPagination(req.query.page, req.query.limit);
 
   if (!Number.isFinite(minLon) || !Number.isFinite(minLat) || !Number.isFinite(maxLon) || !Number.isFinite(maxLat)) {
     throw new AppError('Bounding box coordinates must be valid numbers', 400);
@@ -941,16 +1022,26 @@ const findFeaturesByBbox = async (req: Request, res: Response): Promise<void> =>
   }
 
   const whereSql = whereClauses.join(' AND ');
+  const geometrySql = mapRenderGeometrySql('sf.geom', zoom, simplifyTolerance);
 
   const dataSql = `
     SELECT sf.id,
            sf.project_id,
            sf.status,
            sf.attributes,
+           GeometryType(sf.geom) AS source_geometry_type,
            sf.collected_at,
+           sf.submitted_at,
+           sf.reviewed_at,
+           sf.review_notes,
            sf.version,
-           ST_AsGeoJSON(sf.geom) AS geometry
+           collector.full_name AS collected_by,
+           reviewer.full_name AS reviewed_by,
+           (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) AS photo_count,
+           ${geometrySql} AS geometry
     FROM spatial_feature sf
+    LEFT JOIN "user" collector ON collector.id = sf.collected_by_user_id
+    LEFT JOIN "user" reviewer ON reviewer.id = sf.reviewed_by_user_id
     WHERE ${whereSql}
     ORDER BY sf.collected_at DESC
     LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
@@ -969,16 +1060,24 @@ const findFeaturesByBbox = async (req: Request, res: Response): Promise<void> =>
 
   const features = dataResult.rows.map((row: any) => ({
     type: 'Feature',
-    id: row.id,
-    geometry: JSON.parse(row.geometry),
-    properties: {
-      project_id: row.project_id,
-      status: row.status,
-      attributes: row.attributes,
-      collected_at: row.collected_at,
-      version: row.version,
-    },
-  }));
+      id: row.id,
+      geometry: JSON.parse(row.geometry),
+      properties: {
+        project_id: row.project_id,
+        status: row.status,
+        attributes: row.attributes,
+        source_geometry_type: row.source_geometry_type,
+        collected_at: row.collected_at,
+        submitted_at: row.submitted_at,
+        reviewed_at: row.reviewed_at,
+        review_notes: row.review_notes,
+        collected_by: row.collected_by,
+        reviewed_by: row.reviewed_by,
+        photo_count: Number(row.photo_count ?? 0),
+        version: row.version,
+        is_summary: true,
+      },
+    }));
 
   const total = Number(countResult.rows[0]?.total ?? 0);
 

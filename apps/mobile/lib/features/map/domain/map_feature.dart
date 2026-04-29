@@ -22,6 +22,7 @@ class MapFeatureSummary {
     required this.status,
     required this.geometry,
     required this.attributes,
+    this.sourceGeometryType,
     this.collectedBy,
     this.reviewedBy,
     this.reviewNotes,
@@ -31,12 +32,14 @@ class MapFeatureSummary {
     this.reviewedAt,
     this.photoCount = 0,
     this.photos = const <MapFeaturePhoto>[],
+    this.isSummary = false,
   });
 
   final String id;
   final String status;
   final Map<String, dynamic> geometry;
   final Map<String, dynamic> attributes;
+  final String? sourceGeometryType;
   final String? collectedBy;
   final String? reviewedBy;
   final String? reviewNotes;
@@ -46,6 +49,7 @@ class MapFeatureSummary {
   final DateTime? reviewedAt;
   final int photoCount;
   final List<MapFeaturePhoto> photos;
+  final bool isSummary;
 }
 
 class ProjectFeatureBrowserQuery {
@@ -72,4 +76,43 @@ class ProjectFeatureBrowserQuery {
 
   @override
   int get hashCode => Object.hash(projectId, search, status, geometryType);
+}
+
+class ProjectMapViewportQuery {
+  const ProjectMapViewportQuery({
+    required this.projectId,
+    required this.minLon,
+    required this.minLat,
+    required this.maxLon,
+    required this.maxLat,
+    required this.zoom,
+  });
+
+  final String projectId;
+  final double minLon;
+  final double minLat;
+  final double maxLon;
+  final double maxLat;
+  final double zoom;
+
+  @override
+  bool operator ==(Object other) {
+    return other is ProjectMapViewportQuery &&
+        other.projectId == projectId &&
+        other.minLon == minLon &&
+        other.minLat == minLat &&
+        other.maxLon == maxLon &&
+        other.maxLat == maxLat &&
+        other.zoom == zoom;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    projectId,
+    minLon,
+    minLat,
+    maxLon,
+    maxLat,
+    zoom,
+  );
 }

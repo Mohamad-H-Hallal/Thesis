@@ -75,6 +75,11 @@ final importMapDataProvider = FutureProvider.autoDispose
           .fetchImportMapData(
             importId: query.importId,
             projectId: query.projectId,
+            minLon: query.minLon,
+            minLat: query.minLat,
+            maxLon: query.maxLon,
+            maxLat: query.maxLat,
+            zoom: query.zoom,
           );
     });
 

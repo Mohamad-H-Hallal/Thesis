@@ -172,7 +172,15 @@ void main() {
   testWidgets('import map shows staged and approved context layers separately', (
     tester,
   ) async {
-    const query = ImportMapQuery(importId: 'import-1', projectId: 'project-1');
+    const query = ImportMapQuery(
+      importId: 'import-1',
+      projectId: 'project-1',
+      minLon: 35.094,
+      minLat: 33.045,
+      maxLon: 36.645,
+      maxLat: 34.695,
+      zoom: 8,
+    );
     final details = GisImportDetails(
       job: _job(),
       previewFeatures: const <ImportedFeature>[],

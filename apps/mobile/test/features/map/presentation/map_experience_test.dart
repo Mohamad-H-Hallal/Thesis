@@ -326,7 +326,12 @@ Widget _wrapWithScope({
   required Widget child,
 }) {
   return ProviderScope(
-    overrides: overrides,
+    overrides: <Override>[
+      projectMapViewportFeaturesProvider.overrideWith((ref, query) async {
+        return ref.watch(projectMapFeaturesProvider(query.projectId).future);
+      }),
+      ...overrides,
+    ],
     child: MaterialApp(home: Scaffold(body: child)),
   );
 }

@@ -461,7 +461,9 @@ describe('GIS import workflow', () => {
       .expect(200);
 
     const importMapResponse = await request(app)
-      .get(`${API_PREFIX}/imports/${importId}/map`)
+      .get(
+        `${API_PREFIX}/imports/${importId}/map?minLon=35.094&minLat=33.045&maxLon=36.645&maxLat=34.695&zoom=8`,
+      )
       .set(authHeader(admin.token))
       .expect(200);
 

@@ -17,6 +17,51 @@ class ApiMapRepository {
     return page.items;
   }
 
+  Future<List<MapFeatureSummary>> fetchProjectFeaturesViewport({
+    required String projectId,
+    required double minLon,
+    required double minLat,
+    required double maxLon,
+    required double maxLat,
+    required double zoom,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '${AppEnv.apiVersionPrefix}/features/bbox',
+        queryParameters: <String, dynamic>{
+          'project_id': projectId,
+          'minLon': minLon,
+          'minLat': minLat,
+          'maxLon': maxLon,
+          'maxLat': maxLat,
+          'zoom': zoom,
+          'page': 1,
+          'limit': 20000,
+        },
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      final featureCollection = Map<String, dynamic>.from(
+        payload['data'] as Map? ?? const <String, dynamic>{},
+      );
+      final rows =
+          (featureCollection['features'] as List? ?? const <dynamic>[])
+              .cast<Map>();
+      return rows
+          .map(
+            (row) => _toViewportFeature(
+              Map<String, dynamic>.from(row),
+            ),
+          )
+          .toList(growable: false);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback:
+            'Unable to load project map features right now. Please try again.',
+      );
+    }
+  }
+
   Future<PaginatedResult<MapFeatureSummary>> fetchProjectFeaturesPage({
     required String projectId,
     String? search,
@@ -47,27 +92,7 @@ class ApiMapRepository {
       final items = rows
           .map((row) {
             final item = Map<String, dynamic>.from(row as Map);
-            return MapFeatureSummary(
-              id: (item['id'] as String?) ?? '',
-              status: (item['status'] as String?) ?? 'draft',
-              geometry: Map<String, dynamic>.from(
-                item['geometry'] as Map? ?? const <String, dynamic>{},
-              ),
-              attributes: Map<String, dynamic>.from(
-                item['attributes'] as Map? ?? const <String, dynamic>{},
-              ),
-              collectedBy: item['collected_by'] as String?,
-              reviewedBy: item['reviewed_by'] as String?,
-              reviewNotes: item['review_notes'] as String?,
-              accuracyMeters: _toDouble(item['accuracy_meters']),
-              collectedAt: _toDateTime(item['collected_at']),
-              submittedAt: _toDateTime(item['submitted_at']),
-              reviewedAt: _toDateTime(item['reviewed_at']),
-              photoCount: _toInt(item['photo_count']) ?? 0,
-              photos: ((item['photos'] as List?) ?? const <dynamic>[])
-                  .map((raw) => _toPhoto(Map<String, dynamic>.from(raw as Map)))
-                  .toList(growable: false),
-            );
+            return _toProjectFeature(item);
           })
           .toList(growable: false);
       final total = (pagination['total'] as num?)?.toInt() ?? items.length;
@@ -127,6 +152,25 @@ class ApiMapRepository {
     }
   }
 
+  Future<MapFeatureSummary> fetchProjectFeatureById(String featureId) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '${AppEnv.apiVersionPrefix}/features/$featureId',
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      final row = Map<String, dynamic>.from(
+        payload['data'] as Map? ?? const <String, dynamic>{},
+      );
+      return _toProjectFeature(row);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback:
+            'Unable to load this project feature right now. Please try again.',
+      );
+    }
+  }
+
   MapFeaturePhoto _toPhoto(Map<String, dynamic> item) {
     return MapFeaturePhoto(
       id: (item['id'] as String?) ?? '',
@@ -135,6 +179,57 @@ class ApiMapRepository {
       status: item['status'] as String?,
       takenAt: _toDateTime(item['taken_at']),
       displayOrder: _toInt(item['display_order']),
+    );
+  }
+
+  MapFeatureSummary _toProjectFeature(Map<String, dynamic> item) {
+    return MapFeatureSummary(
+      id: (item['id'] as String?) ?? '',
+      status: (item['status'] as String?) ?? 'draft',
+      geometry: Map<String, dynamic>.from(
+        item['geometry'] as Map? ?? const <String, dynamic>{},
+      ),
+      attributes: Map<String, dynamic>.from(
+        item['attributes'] as Map? ?? const <String, dynamic>{},
+      ),
+      sourceGeometryType: item['source_geometry_type'] as String?,
+      collectedBy: item['collected_by'] as String?,
+      reviewedBy: item['reviewed_by'] as String?,
+      reviewNotes: item['review_notes'] as String?,
+      accuracyMeters: _toDouble(item['accuracy_meters']),
+      collectedAt: _toDateTime(item['collected_at']),
+      submittedAt: _toDateTime(item['submitted_at']),
+      reviewedAt: _toDateTime(item['reviewed_at']),
+      photoCount: _toInt(item['photo_count']) ?? 0,
+      photos: ((item['photos'] as List?) ?? const <dynamic>[])
+          .map((raw) => _toPhoto(Map<String, dynamic>.from(raw as Map)))
+          .toList(growable: false),
+      isSummary: item['is_summary'] as bool? ?? false,
+    );
+  }
+
+  MapFeatureSummary _toViewportFeature(Map<String, dynamic> feature) {
+    final properties = Map<String, dynamic>.from(
+      feature['properties'] as Map? ?? const <String, dynamic>{},
+    );
+    return MapFeatureSummary(
+      id: (feature['id'] as String?) ?? '',
+      status: (properties['status'] as String?) ?? 'approved',
+      geometry: Map<String, dynamic>.from(
+        feature['geometry'] as Map? ?? const <String, dynamic>{},
+      ),
+      attributes: Map<String, dynamic>.from(
+        properties['attributes'] as Map? ?? const <String, dynamic>{},
+      ),
+      sourceGeometryType: properties['source_geometry_type'] as String?,
+      collectedBy: properties['collected_by'] as String?,
+      reviewedBy: properties['reviewed_by'] as String?,
+      reviewNotes: properties['review_notes'] as String?,
+      collectedAt: _toDateTime(properties['collected_at']),
+      submittedAt: _toDateTime(properties['submitted_at']),
+      reviewedAt: _toDateTime(properties['reviewed_at']),
+      photoCount: _toInt(properties['photo_count']) ?? 0,
+      isSummary: true,
     );
   }
 

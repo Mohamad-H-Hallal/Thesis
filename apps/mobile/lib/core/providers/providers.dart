@@ -32,6 +32,7 @@ import '../../features/map/data/offline_tile_cache_manager.dart';
 import '../../features/map/domain/current_location_service.dart';
 import '../../features/map/domain/feature_workflow_repository.dart';
 import '../../features/map/domain/map_feature.dart';
+import '../../features/map/domain/map_geometry.dart';
 import '../../features/notifications/data/api_notifications_repository.dart';
 import '../../features/notifications/data/mock_notifications_repository.dart';
 import '../../features/notifications/data/push_notification_service.dart';
@@ -443,6 +444,55 @@ final projectMapFeaturesProvider =
         }
         rethrow;
       }
+    });
+
+final projectMapViewportFeaturesProvider = FutureProvider.autoDispose
+    .family<List<MapFeatureSummary>, ProjectMapViewportQuery>((ref, query) async {
+      ref.watch(workflowRefreshTickProvider);
+      if (query.projectId.isEmpty) {
+        return const <MapFeatureSummary>[];
+      }
+      final localDrafts = await ref.watch(localDraftFeaturesProvider.future);
+      final projectDrafts = localDrafts.where((draft) {
+        if (draft.projectId != query.projectId) {
+          return false;
+        }
+        final geometry = _decodeJsonMap(draft.geometryJson);
+        final points = geometryPoints(geometry);
+        return points.any(
+          (point) =>
+              point.longitude >= query.minLon &&
+              point.longitude <= query.maxLon &&
+              point.latitude >= query.minLat &&
+              point.latitude <= query.maxLat,
+        );
+      }).toList(growable: false);
+
+      try {
+        final remoteFeatures = await ref.read(mapRepositoryProvider).fetchProjectFeaturesViewport(
+              projectId: query.projectId,
+              minLon: query.minLon,
+              minLat: query.minLat,
+              maxLon: query.maxLon,
+              maxLat: query.maxLat,
+              zoom: query.zoom,
+            );
+        return _mergeProjectFeatures(remoteFeatures, projectDrafts);
+      } catch (error) {
+        final localFeatures = projectDrafts
+            .map(_mapFeatureFromLocalDraft)
+            .toList(growable: false);
+        if (localFeatures.isNotEmpty || _isOfflineFeatureFetchError(error)) {
+          return localFeatures;
+        }
+        rethrow;
+      }
+    });
+
+final projectFeatureDetailsProvider =
+    FutureProvider.autoDispose.family<MapFeatureSummary, String>((ref, featureId) async {
+      ref.watch(workflowRefreshTickProvider);
+      return ref.read(mapRepositoryProvider).fetchProjectFeatureById(featureId);
     });
 
 final paginatedProjectFeatureBrowserProvider = StateNotifierProvider.autoDispose

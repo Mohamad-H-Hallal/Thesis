@@ -450,6 +450,14 @@ const paginationValidation: ValidationChain[] = [
     .withMessage('Limit must be between 1 and 100'),
 ];
 
+const bboxPaginationValidation: ValidationChain[] = [
+  queryParam('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  queryParam('limit')
+    .optional()
+    .isInt({ min: 1, max: 20000 })
+    .withMessage('Limit must be between 1 and 20000'),
+];
+
 const bboxValidation: ValidationChain[] = [
   queryParam('minLon')
     .exists()
@@ -505,6 +513,7 @@ export {
   importValidation,
   exportValidation,
   paginationValidation,
+  bboxPaginationValidation,
   bboxValidation,
   uuidValidation,
 };
