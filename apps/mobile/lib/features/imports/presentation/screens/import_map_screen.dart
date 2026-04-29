@@ -116,6 +116,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
             _runMapAction(pendingAction, queueUntilReady: true);
           });
         }
+        _scheduleCameraRefresh();
       },
       onTap: (_, point) {
         final details = ref

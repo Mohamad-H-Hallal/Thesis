@@ -28,6 +28,7 @@ export interface EnvConfig {
   ENABLE_LEGACY_API_PREFIX: boolean;
   RATE_LIMIT_WINDOW_MS: number;
   RATE_LIMIT_MAX_REQUESTS: number;
+  RATE_LIMIT_MAP_READ_MAX_REQUESTS: number;
   RATE_LIMIT_AUTH_MAX_REQUESTS: number;
   RATE_LIMIT_EXPORT_MAX_REQUESTS: number;
   LOG_LEVEL: 'error' | 'warn' | 'info' | 'http' | 'verbose' | 'debug' | 'silly';
@@ -97,6 +98,7 @@ const envSchema = Joi.object({
   ENABLE_LEGACY_API_PREFIX: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(true),
   RATE_LIMIT_WINDOW_MS: Joi.number().integer().min(1000).default(15 * 60 * 1000),
   RATE_LIMIT_MAX_REQUESTS: Joi.number().integer().min(1).default(100),
+  RATE_LIMIT_MAP_READ_MAX_REQUESTS: Joi.number().integer().min(1).default(2000),
   RATE_LIMIT_AUTH_MAX_REQUESTS: Joi.number().integer().min(1).default(20),
   RATE_LIMIT_EXPORT_MAX_REQUESTS: Joi.number().integer().min(1).default(40),
 

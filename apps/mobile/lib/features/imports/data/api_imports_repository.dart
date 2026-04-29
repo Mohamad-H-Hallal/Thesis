@@ -1,5 +1,6 @@
 import 'dart:collection';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
@@ -23,6 +24,7 @@ class ApiImportsRepository implements ImportsRepository {
   final LinkedHashMap<String, ImportMapData> _importTileCache =
       LinkedHashMap<String, ImportMapData>();
   static const int _importTileCacheMaxEntries = 192;
+  static const int _importTileBatchSize = 4;
   int _importTileCacheRevision = 0;
 
   String get _basePath => '${AppEnv.apiVersionPrefix}/imports';
@@ -182,18 +184,38 @@ class ApiImportsRepository implements ImportsRepository {
         maxLon: maxLon,
         maxLat: maxLat,
         zoom: zoom,
+        buffer: 0,
       );
-      final tileResults = await Future.wait(
-        tiles.map(
-          (tile) => _fetchImportMapTile(
-            importId: importId,
-            projectId: projectId,
-            z: tile.z,
-            x: tile.x,
-            y: tile.y,
-          ),
-        ),
-      );
+      final tileResults = <ImportMapData>[];
+      Object? firstError;
+      for (var start = 0; start < tiles.length; start += _importTileBatchSize) {
+        final end = math.min(start + _importTileBatchSize, tiles.length);
+        final batch = tiles.sublist(start, end);
+        final batchResults = await Future.wait(
+          batch.map((tile) async {
+            try {
+              return await _fetchImportMapTile(
+                importId: importId,
+                projectId: projectId,
+                z: tile.z,
+                x: tile.x,
+                y: tile.y,
+              );
+            } catch (error) {
+              firstError ??= error;
+              return null;
+            }
+          }),
+        );
+        for (final result in batchResults) {
+          if (result != null) {
+            tileResults.add(result);
+          }
+        }
+      }
+      if (tileResults.isEmpty && firstError != null) {
+        throw firstError!;
+      }
       final stagedRows = <String, ImportedFeature>{};
       final approvedRows = <String, MapFeatureSummary>{};
       for (final tile in tileResults) {

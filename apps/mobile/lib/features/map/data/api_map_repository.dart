@@ -1,4 +1,5 @@
 import 'dart:collection';
+import 'dart:math' as math;
 
 import 'package:dio/dio.dart';
 
@@ -17,6 +18,7 @@ class ApiMapRepository {
   final LinkedHashMap<String, List<MapFeatureSummary>> _projectTileCache =
       LinkedHashMap<String, List<MapFeatureSummary>>();
   static const int _projectTileCacheMaxEntries = 192;
+  static const int _projectTileBatchSize = 4;
   int _projectTileCacheRevision = 0;
 
   Future<List<MapFeatureSummary>> fetchProjectFeatures(String projectId) async {
@@ -44,17 +46,37 @@ class ApiMapRepository {
         maxLon: maxLon,
         maxLat: maxLat,
         zoom: zoom,
+        buffer: 0,
       );
-      final tileResults = await Future.wait(
-        tiles.map(
-          (tile) => fetchProjectFeatureTile(
-            projectId: projectId,
-            z: tile.z,
-            x: tile.x,
-            y: tile.y,
-          ),
-        ),
-      );
+      final tileResults = <List<MapFeatureSummary>>[];
+      Object? firstError;
+      for (var start = 0; start < tiles.length; start += _projectTileBatchSize) {
+        final end = math.min(start + _projectTileBatchSize, tiles.length);
+        final batch = tiles.sublist(start, end);
+        final batchResults = await Future.wait(
+          batch.map((tile) async {
+            try {
+              return await fetchProjectFeatureTile(
+                projectId: projectId,
+                z: tile.z,
+                x: tile.x,
+                y: tile.y,
+              );
+            } catch (error) {
+              firstError ??= error;
+              return null;
+            }
+          }),
+        );
+        for (final result in batchResults) {
+          if (result != null) {
+            tileResults.add(result);
+          }
+        }
+      }
+      if (tileResults.isEmpty && firstError != null) {
+        throw firstError!;
+      }
       final merged = <String, MapFeatureSummary>{};
       for (final features in tileResults) {
         for (final feature in features) {

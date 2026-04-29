@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const rateLimit = require('express-rate-limit');
 const featureController = require('../controllers/feature.controller');
 const { authenticate } = require('../middleware/auth');
 const {
@@ -14,6 +15,18 @@ const {
 } = require('../middleware/validation');
 const { asyncHandler } = require('../middleware/error');
 import { auditAction, auditDynamicAction } from '../middleware/audit';
+import { validateEnv } from '../config/env';
+
+const env = validateEnv();
+
+const featureReadLimiter = rateLimit({
+  windowMs: env.RATE_LIMIT_WINDOW_MS,
+  max: env.RATE_LIMIT_MAP_READ_MAX_REQUESTS,
+  message: 'Too many map read requests, please slow down',
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.id ?? req.ip,
+});
 
 // All routes require authentication
 router.use(authenticate);
@@ -21,19 +34,20 @@ router.use(authenticate);
 // Get all features (with filters)
 router.get(
   '/',
+  featureReadLimiter,
   paginationValidation,
   validate,
   asyncHandler(featureController.getAllFeatures)
 );
 
 // Spatial query: Find features nearby
-router.get('/nearby', asyncHandler(featureController.findFeaturesNearby));
+router.get('/nearby', featureReadLimiter, asyncHandler(featureController.findFeaturesNearby));
 
 // Spatial query: BBOX for map rendering
-router.get('/bbox', bboxValidation, bboxPaginationValidation, validate, asyncHandler(featureController.findFeaturesByBbox));
+router.get('/bbox', featureReadLimiter, bboxValidation, bboxPaginationValidation, validate, asyncHandler(featureController.findFeaturesByBbox));
 
 // Spatial query: XYZ tile delivery for map rendering
-router.get('/tiles/:z/:x/:y', tileParamValidation, tileFeatureQueryValidation, validate, asyncHandler(featureController.findFeaturesTile));
+router.get('/tiles/:z/:x/:y', featureReadLimiter, tileParamValidation, tileFeatureQueryValidation, validate, asyncHandler(featureController.findFeaturesTile));
 
 // Create new feature
 router.post(
@@ -54,6 +68,7 @@ router.post('/batch', asyncHandler(featureController.batchCreateFeatures));
 // Get single feature
 router.get(
   '/:featureId',
+  featureReadLimiter,
   uuidValidation('featureId'),
   validate,
   asyncHandler(featureController.getFeature)

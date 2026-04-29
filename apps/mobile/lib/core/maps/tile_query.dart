@@ -32,21 +32,35 @@ List<GeoTileQuery> buildVisibleTileQueries({
   int buffer = 1,
   int minZoom = 7,
   int maxZoom = 14,
+  int maxTileCount = 12,
 }) {
-  final tileZoom = zoom.floor().clamp(minZoom, maxZoom);
+  var tileZoom = zoom.floor().clamp(minZoom, maxZoom);
   final normalizedMinLat = _clampLatitude(minLat);
   final normalizedMaxLat = _clampLatitude(maxLat);
   final normalizedMinLon = minLon.clamp(-180.0, 180.0).toDouble();
   final normalizedMaxLon = maxLon.clamp(-180.0, 180.0).toDouble();
-  final n = 1 << tileZoom;
+  late int minTileX;
+  late int maxTileX;
+  late int minTileY;
+  late int maxTileY;
 
-  int clampX(int value) => value.clamp(0, n - 1);
-  int clampY(int value) => value.clamp(0, n - 1);
+  while (true) {
+    final n = 1 << tileZoom;
 
-  final minTileX = clampX(_lonToTileX(normalizedMinLon, tileZoom) - buffer);
-  final maxTileX = clampX(_lonToTileX(normalizedMaxLon, tileZoom) + buffer);
-  final minTileY = clampY(_latToTileY(normalizedMaxLat, tileZoom) - buffer);
-  final maxTileY = clampY(_latToTileY(normalizedMinLat, tileZoom) + buffer);
+    int clampX(int value) => value.clamp(0, n - 1);
+    int clampY(int value) => value.clamp(0, n - 1);
+
+    minTileX = clampX(_lonToTileX(normalizedMinLon, tileZoom) - buffer);
+    maxTileX = clampX(_lonToTileX(normalizedMaxLon, tileZoom) + buffer);
+    minTileY = clampY(_latToTileY(normalizedMaxLat, tileZoom) - buffer);
+    maxTileY = clampY(_latToTileY(normalizedMinLat, tileZoom) + buffer);
+
+    final tileCount = (maxTileX - minTileX + 1) * (maxTileY - minTileY + 1);
+    if (tileCount <= maxTileCount || tileZoom <= minZoom) {
+      break;
+    }
+    tileZoom -= 1;
+  }
 
   final queries = <GeoTileQuery>[];
   for (var x = minTileX; x <= maxTileX; x++) {

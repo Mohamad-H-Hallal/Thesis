@@ -49,6 +49,25 @@ const isLocalDevelopmentOrigin = (origin: string): boolean => {
   }
 };
 
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const buildHighVolumeReadPatterns = (prefixes: string[]): RegExp[] =>
+  prefixes.flatMap((prefix) => {
+    const escapedPrefix = escapeRegExp(prefix.replace(/\/+$/, ''));
+    const uuid = '[0-9a-fA-F-]{36}';
+    return [
+      new RegExp(`^${escapedPrefix}/features/bbox$`),
+      new RegExp(`^${escapedPrefix}/features/tiles/\\d+/\\d+/\\d+$`),
+      new RegExp(`^${escapedPrefix}/features/${uuid}$`),
+      new RegExp(`^${escapedPrefix}/imports$`),
+      new RegExp(`^${escapedPrefix}/imports/${uuid}$`),
+      new RegExp(`^${escapedPrefix}/imports/${uuid}/map$`),
+      new RegExp(`^${escapedPrefix}/imports/${uuid}/tiles/\\d+/\\d+/\\d+$`),
+      new RegExp(`^${escapedPrefix}/imports/${uuid}/features$`),
+      new RegExp(`^${escapedPrefix}/imports/${uuid}/features/${uuid}$`),
+    ];
+  });
+
 const buildApp = (env) => {
   const app = express();
   const normalizedApiPrefix = String(env.API_VERSION_PREFIX || '/api/v1').replace(/\/+$/, '');
@@ -57,6 +76,7 @@ const buildApp = (env) => {
   if (env.ENABLE_LEGACY_API_PREFIX && normalizedApiPrefix !== legacyPrefix) {
     apiPrefixes.push(legacyPrefix);
   }
+  const highVolumeReadPatterns = buildHighVolumeReadPatterns(apiPrefixes);
 
   const allowedOrigins = (env.CORS_ORIGIN || '')
     .split(',')
@@ -161,6 +181,9 @@ const buildApp = (env) => {
     message: 'Too many requests from this IP, please try again later',
     standardHeaders: true,
     legacyHeaders: false,
+    skip: (req) =>
+      req.method === 'GET' &&
+      highVolumeReadPatterns.some((pattern) => pattern.test(req.path)),
   });
   for (const prefix of apiPrefixes) {
     app.use(`${prefix}/`, limiter);
