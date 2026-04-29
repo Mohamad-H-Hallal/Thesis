@@ -736,7 +736,6 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
           projectId: project.id,
           geometry: geometry,
           attributes: attributes,
-          accuracyMeters: _gpsAccuracyMeters,
           collectedOffline: false,
         );
         featureId = feature.id;

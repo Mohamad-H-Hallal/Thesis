@@ -20,7 +20,6 @@ class ApiFeatureWorkflowRepository implements FeatureWorkflowRepository {
     required String projectId,
     required Map<String, dynamic> geometry,
     required Map<String, dynamic> attributes,
-    double? accuracyMeters,
     required bool collectedOffline,
   }) async {
     try {
@@ -30,9 +29,6 @@ class ApiFeatureWorkflowRepository implements FeatureWorkflowRepository {
         'attributes': attributes,
         'collected_offline': collectedOffline,
       };
-      if (accuracyMeters != null) {
-        payload['accuracy_meters'] = accuracyMeters;
-      }
 
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         _featuresBasePath,

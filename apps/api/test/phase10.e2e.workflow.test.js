@@ -314,6 +314,8 @@ describe('Phase 10 E2E workflow', () => {
     expect(geojson.features).toHaveLength(1);
     expect(geojson.features[0].properties.site_name).toBe('Inside bbox');
     expect(geojson.features[0].properties.feature_id).toBe(approvedInside.body.data.id);
+    expect(geojson.features[0].properties.accuracy_meters).toBeUndefined();
+    expect(Object.keys(geojson.features[0].properties)).not.toContain('accuracy_meters');
   });
 
   test('shapefile export completes with full component set for approved features', async () => {
@@ -447,6 +449,12 @@ describe('Phase 10 E2E workflow', () => {
     expect(entryNames.some((name) => name.endsWith('.prj'))).toBe(true);
     expect(entryNames).toContain('metadata.json');
     expect(entryNames).toContain('README.txt');
+
+    const readmeEntry = zip.getEntries().find((entry) => entry.entryName === 'README.txt');
+    expect(readmeEntry).toBeTruthy();
+    const readme = readmeEntry.getData().toString('utf8');
+    expect(readme).not.toContain('accuracy_meters');
+    expect(readme).not.toContain('accuracy:');
   });
 
   test('feature creation accepts free-text attributes like name when present in the collection schema', async () => {

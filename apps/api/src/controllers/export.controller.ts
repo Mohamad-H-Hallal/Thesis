@@ -4,6 +4,7 @@ const logger = require('../utils/logger');
 const fs = require('fs').promises;
 const path = require('path');
 const AdmZip = require('adm-zip');
+import { sanitizeManagedFeatureAttributes } from '../lib/featureAttributes';
 
 // For shapefile generation
 const shpwrite = require('@mapbox/shp-write');
@@ -236,7 +237,6 @@ const processExport = async (exportId, projectName) => {
         ST_GeometryType(sf.geom) as geometry_type,
         sf.attributes,
         sf.collected_at,
-        sf.accuracy_meters,
         u.full_name as collected_by
       FROM spatial_feature sf
       JOIN "user" u ON sf.collected_by_user_id = u.id
@@ -503,13 +503,13 @@ const createShapefile = async (outputDir, fileName, features, _geometryType) => 
       feat_id: f.id.substring(0, 10),
       collect_at: f.collected_at ? new Date(f.collected_at).toISOString().substring(0, 10) : '',
       collect_by: f.collected_by ? f.collected_by.substring(0, 50) : '',
-      accuracy: f.accuracy_meters || 0,
     };
 
-    if (f.attributes) {
-      Object.keys(f.attributes).forEach((key) => {
+    const sanitizedAttributes = sanitizeManagedFeatureAttributes(f.attributes);
+    if (sanitizedAttributes) {
+      Object.keys(sanitizedAttributes).forEach((key) => {
         const truncatedKey = key.substring(0, 10);
-        let value = f.attributes[key];
+        let value = sanitizedAttributes[key];
 
         if (typeof value === 'string') {
           properties[truncatedKey] = value.substring(0, 254);
@@ -578,8 +578,7 @@ const createGeoJSON = (features, projectName, geometryType) => {
           feature_id: f.id,
           collected_at: f.collected_at,
           collected_by: f.collected_by,
-          accuracy_meters: f.accuracy_meters,
-          ...f.attributes,
+          ...sanitizeManagedFeatureAttributes(f.attributes),
         },
       };
     }),
@@ -709,7 +708,6 @@ DBF file contains feature attributes:
 - feat_id: Feature identifier (truncated)
 - collect_at: Collection date
 - collect_by: Collector name (truncated to 50 chars)
-- accuracy: GPS accuracy (meters)
 - Plus all custom fields from your survey form (names truncated to 10 chars)
 
 ⚠️  Check metadata.json for full field names
@@ -719,7 +717,6 @@ GeoJSON contains all feature attributes:
 - feature_id: Complete feature identifier
 - collected_at: Full ISO timestamp
 - collected_by: Complete collector name
-- accuracy_meters: GPS accuracy
 - Plus all custom fields with full names (no truncation)
 `
 }

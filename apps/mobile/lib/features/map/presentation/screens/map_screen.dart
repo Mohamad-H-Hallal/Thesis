@@ -1455,7 +1455,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                       ),
                                       const SizedBox(height: 4),
                                       Text(
-                                        '${feature.geometry['type'] ?? 'Geometry'} • ${feature.photoCount} photo(s)',
+                                        '${_projectFeatureTypeLabel((feature.sourceGeometryType ?? feature.geometry['type'] ?? 'Geometry').toString())} • ${feature.photoCount} photo(s)',
                                         style: Theme.of(
                                           context,
                                         ).textTheme.bodySmall,
@@ -1788,8 +1788,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                     selectedFeatureChip: _selectedFeatureChip,
                                     visibleStatuses: _visibleStatuses,
                                     basemapStyle: _basemapStyle,
-                                    gpsAccuracyMeters:
-                                        _currentLocationAccuracyMeters,
                                     isExpanded: _projectMapPanelExpanded,
                                     isSearchOpen: _projectMapSearchOpen,
                                     searchSummaryLabel: _searchSummaryLabel(),
@@ -1844,10 +1842,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     if (!_isProjectMapPanelVisible)
                       Align(
                         alignment: Alignment.topRight,
-                        child: _MapPanelIconButton(
+                        child: FloatingActionButton.small(
+                          heroTag: 'show_project_map_tools',
                           tooltip: 'Show map tools',
-                          icon: Icons.layers_outlined,
                           onPressed: () => _setProjectMapPanelVisible(true),
+                          child: const Icon(Icons.tune_rounded),
                         ),
                       ),
                   ],
@@ -3894,16 +3893,20 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   String _geometrySummary(Map<String, dynamic> geometry) {
     final type = geometry['type'] as String? ?? 'Unknown';
     final focusPoint = geometryFocusPoint(geometry);
-    if (type == 'Point' && focusPoint != null) {
-      return 'Point at ${focusPoint.latitude.toStringAsFixed(5)}, ${focusPoint.longitude.toStringAsFixed(5)}';
+    final normalizedType = type.toLowerCase();
+    if (normalizedType == 'point' && focusPoint != null) {
+      return 'Point feature at ${focusPoint.latitude.toStringAsFixed(5)}, ${focusPoint.longitude.toStringAsFixed(5)}';
     }
-    if (type == 'LineString') {
-      return 'LineString with ${lineGeometryPoints(geometry).length} vertices';
+    if (normalizedType == 'multipoint') {
+      return 'Point feature with ${geometryPoints(geometry).length} points';
     }
-    if (type == 'Polygon') {
-      return 'Polygon with ${polygonGeometryPoints(geometry).length} boundary points';
+    if (normalizedType == 'linestring' || normalizedType == 'multilinestring') {
+      return 'Line feature with ${lineGeometryPoints(geometry).length} vertices';
     }
-    return type;
+    if (normalizedType == 'polygon' || normalizedType == 'multipolygon') {
+      return 'Polygon feature with ${polygonGeometryPoints(geometry).length} boundary points';
+    }
+    return _projectFeatureTypeLabel(type);
   }
 
   String _formatDateTime(DateTime value) {
@@ -3932,7 +3935,6 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
     required this.selectedFeatureChip,
     required this.visibleStatuses,
     required this.basemapStyle,
-    required this.gpsAccuracyMeters,
     required this.isExpanded,
     required this.isSearchOpen,
     required this.searchSummaryLabel,
@@ -3958,7 +3960,6 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
   final String? selectedFeatureChip;
   final Set<String> visibleStatuses;
   final LebanonBasemapStyle basemapStyle;
-  final double? gpsAccuracyMeters;
   final bool isExpanded;
   final bool isSearchOpen;
   final String? searchSummaryLabel;

@@ -5,7 +5,6 @@ abstract class FeatureWorkflowRepository {
     required String projectId,
     required Map<String, dynamic> geometry,
     required Map<String, dynamic> attributes,
-    double? accuracyMeters,
     required bool collectedOffline,
   });
 

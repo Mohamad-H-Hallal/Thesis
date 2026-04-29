@@ -10,6 +10,7 @@ const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
 import { validateEnv } from '../config/env';
+import { sanitizeManagedFeatureAttributes } from '../lib/featureAttributes';
 import { createNotification, isProtectedSuperAdminEmail } from '../lib/userWorkflow';
 import { synchronizeProjectStatuses } from '../lib/projectLifecycle';
 
@@ -1313,12 +1314,11 @@ const mapImportMapProjectFeatureRow = (row: any) => ({
   id: row.id,
   status: row.status,
   geometry: row.geometry ? JSON.parse(row.geometry) : null,
-  attributes: row.attributes ?? {},
+  attributes: sanitizeManagedFeatureAttributes(row.attributes),
   source_geometry_type: row.source_geometry_type ?? null,
   collected_by: row.collected_by ?? null,
   reviewed_by: row.reviewed_by ?? null,
   review_notes: row.review_notes ?? null,
-  accuracy_meters: row.accuracy_meters ?? null,
   collected_at: row.collected_at ?? null,
   submitted_at: row.submitted_at ?? null,
   reviewed_at: row.reviewed_at ?? null,
@@ -2089,7 +2089,6 @@ const fetchImportMapLayerData = async ({
             collector.full_name AS collected_by,
             reviewer.full_name AS reviewed_by,
             sf.review_notes,
-            sf.accuracy_meters,
             sf.collected_at,
             sf.submitted_at,
             sf.reviewed_at,
@@ -2616,7 +2615,7 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
             job.project_id,
             job.uploaded_by_user_id,
             row.geometry,
-            JSON.stringify(row.attributes ?? {}),
+            JSON.stringify(sanitizeManagedFeatureAttributes(row.attributes)),
             currentUser.id,
             `Imported from ${job.original_filename}${normalizedReason ? ` (${normalizedReason})` : ''}`,
           ],

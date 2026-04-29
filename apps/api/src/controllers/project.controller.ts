@@ -1,6 +1,7 @@
 const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
+import { sanitizeManagedFeatureAttributes } from '../lib/featureAttributes';
 import {
   assertProjectStatusTransition,
   normalizeProjectDateInput,
@@ -574,7 +575,7 @@ const getProjectFeatures = async (req, res) => {
   await synchronizeProjectStatuses(projectId);
 
   let queryText = `
-    SELECT sf.id, sf.status, sf.attributes, sf.accuracy_meters,
+    SELECT sf.id, sf.status, sf.attributes,
            sf.collected_at, sf.submitted_at, sf.reviewed_at,
            sf.review_notes,
            ST_AsGeoJSON(sf.geom) as geometry,
@@ -750,6 +751,7 @@ const getProjectFeatures = async (req, res) => {
   // Parse geometry JSON
   const features = result.rows.map((row) => ({
     ...row,
+    attributes: sanitizeManagedFeatureAttributes(row.attributes),
     geometry: JSON.parse(row.geometry),
     photos: Array.isArray(row.photos) ? row.photos : [],
   }));

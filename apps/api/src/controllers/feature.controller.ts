@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
+import { sanitizeManagedFeatureAttributes } from '../lib/featureAttributes';
 import { synchronizeProjectStatuses } from '../lib/projectLifecycle';
 
 type GeometryType = 'Point' | 'LineString' | 'Polygon';
@@ -406,7 +407,7 @@ const validateAttributesAgainstSchema = (
     }
   }
 
-  return attributes;
+  return sanitizeManagedFeatureAttributes(attributes);
 };
 
 const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
@@ -426,7 +427,7 @@ const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
 
   let queryText = `
     SELECT sf.id, sf.project_id, p.name as project_name, sf.status, sf.attributes,
-           sf.accuracy_meters, sf.collected_at, sf.submitted_at,
+           sf.collected_at, sf.submitted_at,
            ST_AsGeoJSON(sf.geom) as geometry,
            u.full_name as collected_by,
            (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) as photo_count
@@ -534,6 +535,7 @@ const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
 
   const features = result.rows.map((row: any) => ({
     ...row,
+    attributes: sanitizeManagedFeatureAttributes(row.attributes),
     geometry: JSON.parse(row.geometry),
   }));
 
@@ -607,8 +609,10 @@ const getFeature = async (req: Request, res: Response): Promise<void> => {
 
   const feature = {
     ...result.rows[0],
+    attributes: sanitizeManagedFeatureAttributes(result.rows[0].attributes),
     geometry: JSON.parse(result.rows[0].geometry),
   };
+  delete feature.accuracy_meters;
 
   res.json({
     success: true,
@@ -617,7 +621,7 @@ const getFeature = async (req: Request, res: Response): Promise<void> => {
 };
 
 const createFeature = async (req: Request, res: Response): Promise<void> => {
-  const { id, project_id, geom, attributes, accuracy_meters, collected_offline = false } = req.body;
+  const { id, project_id, geom, attributes, collected_offline = false } = req.body;
 
   await assertProjectAllowsCollectionMutations(project_id);
   const normalizedGeometry = validateGeoJsonGeometry(geom);
@@ -655,7 +659,7 @@ const createFeature = async (req: Request, res: Response): Promise<void> => {
       req.user?.id,
       JSON.stringify(normalizedGeometry),
       JSON.stringify(normalizedAttributes),
-      accuracy_meters,
+      null,
       collected_offline,
     ]
   );
@@ -1114,7 +1118,7 @@ const findFeaturesByBbox = async (req: Request, res: Response): Promise<void> =>
       properties: {
         project_id: row.project_id,
         status: row.status,
-        attributes: row.attributes,
+        attributes: sanitizeManagedFeatureAttributes(row.attributes),
         source_geometry_type: row.source_geometry_type,
         collected_at: row.collected_at,
         submitted_at: row.submitted_at,
@@ -1229,7 +1233,7 @@ const findFeaturesTile = async (req: Request, res: Response): Promise<void> => {
     properties: {
       project_id: row.project_id,
       status: row.status,
-      attributes: row.attributes,
+      attributes: sanitizeManagedFeatureAttributes(row.attributes),
       source_geometry_type: row.source_geometry_type,
       collected_at: row.collected_at,
       submitted_at: row.submitted_at,
@@ -1295,7 +1299,7 @@ const batchCreateFeatures = async (req: Request, res: Response): Promise<void> =
     const results: any[] = [];
 
     for (const feature of features) {
-      const { id, project_id, geom, attributes, accuracy_meters, collected_offline } = feature;
+      const { id, project_id, geom, attributes, collected_offline } = feature;
       const normalizedGeometry = validateGeoJsonGeometry(geom);
       const formSchema = await getProjectFormSchema(project_id);
       const normalizedAttributes = validateAttributesAgainstSchema(attributes, formSchema);
@@ -1321,7 +1325,7 @@ const batchCreateFeatures = async (req: Request, res: Response): Promise<void> =
           req.user?.id,
           JSON.stringify(normalizedGeometry),
           JSON.stringify(normalizedAttributes),
-          accuracy_meters,
+          null,
           collected_offline || false,
         ]
       );

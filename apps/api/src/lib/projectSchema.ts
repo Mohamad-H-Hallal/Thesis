@@ -1,4 +1,5 @@
 const { AppError } = require('../middleware/error');
+import { shouldStripManagedFeatureAttributeKey } from './featureAttributes';
 
 const defaultAllowedGeometryTypes = ['Point', 'LineString', 'Polygon'] as const;
 const defaultCollectionSchemaVersion = 'v1.0';
@@ -158,6 +159,12 @@ const normalizeCollectionFormSchema = (schemaInput: unknown): Record<string, unk
   for (const field of fields) {
     if (keys.has(field.key)) {
       throw new AppError(`Collection field keys must be unique. Duplicate key: ${field.key}`, 422);
+    }
+    if (shouldStripManagedFeatureAttributeKey(field.key)) {
+      throw new AppError(
+        `Field "${field.label}" uses a reserved attribute key and cannot be saved.`,
+        422,
+      );
     }
     keys.add(field.key);
 
