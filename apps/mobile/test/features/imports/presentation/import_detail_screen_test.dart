@@ -262,6 +262,7 @@ GisImportJob _job({
   required String status,
   Map<String, dynamic> validationSummary = const <String, dynamic>{},
   String? processingMessage,
+  List<String> geometryTypes = const <String>['Point'],
 }) {
   return GisImportJob(
     id: 'import-1',
@@ -282,7 +283,7 @@ GisImportJob _job({
     failedFeatureCount: status == 'failed' ? 1 : 0,
     warningCount: 0,
     errorCount: status == 'failed' ? 1 : 0,
-    geometryTypes: const <String>['Point'],
+    geometryTypes: geometryTypes,
     fileMetadata: const <String, dynamic>{},
     validationSummary: validationSummary,
     processingMessage: processingMessage,
@@ -338,6 +339,38 @@ ImportedFeature _missingFeatureTypeFeature() {
     status: 'failed',
     validationWarnings: const <String>[
       'Attributes not defined in the project form were kept: name',
+    ],
+    validationErrors: const <String>[
+      'Missing required attribute: feature_type',
+    ],
+    validationReport: const <String, dynamic>{},
+    createdAt: DateTime(2026, 4, 25),
+    updatedAt: DateTime(2026, 4, 25),
+  );
+}
+
+ImportedFeature _hiddenAccuracyWarningFeature() {
+  return ImportedFeature(
+    id: 'feature-3',
+    importJobId: 'import-1',
+    sourceIndex: 2,
+    displayTitle: 'Imported line feature',
+    geometryType: 'LineString',
+    geometry: const <String, dynamic>{
+      'type': 'LineString',
+      'coordinates': <dynamic>[
+        <double>[35.48, 33.89],
+        <double>[35.49, 33.90],
+      ],
+    },
+    attributes: const <String, dynamic>{
+      'name': 'Imported line feature',
+      'feat_id': 'abc-123',
+      'accuracy_meters': 7,
+    },
+    status: 'failed',
+    validationWarnings: const <String>[
+      'Attributes not defined in the project form were kept: feat_id, accuracy_meters',
     ],
     validationErrors: const <String>[
       'Missing required attribute: feature_type',
@@ -633,6 +666,94 @@ void main() {
       repository.requestedIssues,
       contains('Missing required attribute: feature_type'),
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('import summary uses friendly geometry labels', (tester) async {
+    final repository = _FakeImportsRepository(
+      details: GisImportDetails(
+        job: _job(
+          status: 'pending_review',
+          geometryTypes: const <String>['LineString'],
+        ),
+        previewFeatures: const <ImportedFeature>[],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 2,
+          previewFeatureCount: 2,
+          outsideWorkspaceFeatureCount: 0,
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(
+            (_) => _AuthenticatedAuthController(_session()),
+          ),
+          importsRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(body: ImportDetailScreen(importId: 'import-1')),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('Line feature'), findsOneWidget);
+    expect(find.text('LineString'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('import warnings hide accuracy_meters but keep real fields', (
+    tester,
+  ) async {
+    final feature = _hiddenAccuracyWarningFeature();
+    final repository = _FakeImportsRepository(
+      details: GisImportDetails(
+        job: _job(
+          status: 'failed',
+          validationSummary: const <String, dynamic>{
+            'top_warnings': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'message':
+                    'Attributes not defined in the project form were kept: feat_id, accuracy_meters',
+                'count': 1,
+              },
+            ],
+          },
+        ),
+        previewFeatures: const <ImportedFeature>[],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 1,
+          previewFeatureCount: 0,
+          outsideWorkspaceFeatureCount: 0,
+        ),
+      ),
+      features: <ImportedFeature>[feature],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(
+            (_) => _AuthenticatedAuthController(_session()),
+          ),
+          importsRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(body: ImportDetailScreen(importId: 'import-1')),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('File-wide issues'), 300);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('feat_id'), findsWidgets);
+    expect(find.textContaining('accuracy_meters'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

@@ -768,6 +768,15 @@ const validateType = (value: unknown, expectedType: string): boolean => {
   }
 };
 
+const shouldHideImportAttributeKey = (key: string): boolean => {
+  const normalized = key.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  return (
+    normalized === 'accuracy' ||
+    normalized === 'accuracymeter' ||
+    normalized === 'accuracymeters'
+  );
+};
+
 const validateAttributesAgainstSchema = (
   attributesInput: Record<string, unknown>,
   schema: Record<string, unknown>,
@@ -852,6 +861,9 @@ const validateAttributesAgainstSchema = (
   }
 
   const unknownKeys = Object.keys(attributesInput).filter((key) => {
+    if (shouldHideImportAttributeKey(key)) {
+      return false;
+    }
     if (jsonSchemaProps[key]) {
       return false;
     }

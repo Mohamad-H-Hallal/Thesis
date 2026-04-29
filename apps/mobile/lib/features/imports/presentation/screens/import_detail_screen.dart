@@ -816,8 +816,9 @@ class _ImportSummaryCard extends StatelessWidget {
             children: [
               Chip(label: Text('${job.geometryCount} geometries')),
               Chip(label: Text(job.fileType.toUpperCase())),
-              if (job.geometryTypes.isNotEmpty)
-                Chip(label: Text(job.geometryTypes.join(', '))),
+              if (_friendlyImportGeometryTypes(job.geometryTypes)
+                  case final geometrySummary?)
+                Chip(label: Text(geometrySummary)),
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
@@ -1508,9 +1509,11 @@ List<_ValidationIssueGroup> _issueGroups(Object? value) {
             return null;
           }
           final row = Map<String, dynamic>.from(item);
-          final message = row['message']?.toString().trim() ?? '';
+          final message = _sanitizeImportValidationMessage(
+            row['message']?.toString(),
+          );
           final count = (row['count'] as num?)?.toInt() ?? 0;
-          if (message.isEmpty || count <= 0) {
+          if (message == null || message.isEmpty || count <= 0) {
             return null;
           }
           return _ValidationIssueGroup(message: message, count: count);
@@ -1521,9 +1524,9 @@ List<_ValidationIssueGroup> _issueGroups(Object? value) {
   if (value is Map) {
     return value.entries
         .map((entry) {
-          final message = entry.key.toString().trim();
+          final message = _sanitizeImportValidationMessage(entry.key.toString());
           final count = (entry.value as num?)?.toInt() ?? 0;
-          if (message.isEmpty || count <= 0) {
+          if (message == null || message.isEmpty || count <= 0) {
             return null;
           }
           return _ValidationIssueGroup(message: message, count: count);
@@ -2040,6 +2043,21 @@ String _formatAttributeValue(Object? value) {
 bool _isUnknownFieldWarning(String message) =>
     message.startsWith(_unknownFieldWarningPrefix);
 
+String? _sanitizeImportValidationMessage(String? message) {
+  final trimmed = message?.trim() ?? '';
+  if (trimmed.isEmpty) {
+    return null;
+  }
+  final visibleFields = _parseUnknownFieldWarning(trimmed);
+  if (visibleFields == null) {
+    return trimmed;
+  }
+  if (visibleFields.isEmpty) {
+    return null;
+  }
+  return 'Attributes not defined in the project form were kept: ${visibleFields.join(', ')}';
+}
+
 List<String>? _parseUnknownFieldWarning(String message) {
   if (!_isUnknownFieldWarning(message)) {
     return null;
@@ -2111,6 +2129,34 @@ bool _isImportStillProcessing(String status) {
 }
 
 String _importFeatureTypeLabel(String geometryType) {
+  switch (geometryType) {
+    case 'Point':
+    case 'MultiPoint':
+      return 'Point feature';
+    case 'LineString':
+    case 'MultiLineString':
+      return 'Line feature';
+    case 'Polygon':
+    case 'MultiPolygon':
+      return 'Polygon feature';
+    default:
+      return geometryType;
+  }
+}
+
+String? _friendlyImportGeometryTypes(List<String> geometryTypes) {
+  final labels = geometryTypes
+      .map(_friendlyImportGeometryType)
+      .where((value) => value.trim().isNotEmpty)
+      .toSet()
+      .toList(growable: false);
+  if (labels.isEmpty) {
+    return null;
+  }
+  return labels.join(', ');
+}
+
+String _friendlyImportGeometryType(String geometryType) {
   switch (geometryType) {
     case 'Point':
     case 'MultiPoint':

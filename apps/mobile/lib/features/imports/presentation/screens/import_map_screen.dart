@@ -3293,12 +3293,14 @@ class _ImportFeatureDetailsSheet extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.md),
             ],
-            if (feature.validationWarnings.isNotEmpty) ...[
+            if (_sanitizedImportValidationMessages(feature.validationWarnings)
+                case final sanitizedWarnings
+                when sanitizedWarnings.isNotEmpty) ...[
               _ValidationIssueGroup(
                 title: 'Validation warnings',
                 icon: Icons.warning_amber_rounded,
                 toneColor: const Color(0xFFE67E22),
-                messages: feature.validationWarnings,
+                messages: sanitizedWarnings,
               ),
               const SizedBox(height: AppSpacing.md),
             ],
@@ -3737,6 +3739,39 @@ class _ValidationIssueGroup extends StatelessWidget {
       ),
     );
   }
+}
+
+const String _unknownImportFieldWarningPrefix =
+    'Attributes not defined in the project form were kept:';
+
+List<String> _sanitizedImportValidationMessages(List<String> messages) {
+  return messages
+      .map(_sanitizeImportValidationMessage)
+      .whereType<String>()
+      .toList(growable: false);
+}
+
+String? _sanitizeImportValidationMessage(String? message) {
+  final trimmed = message?.trim() ?? '';
+  if (trimmed.isEmpty) {
+    return null;
+  }
+  if (!trimmed.startsWith(_unknownImportFieldWarningPrefix)) {
+    return trimmed;
+  }
+  final suffix = trimmed.substring(_unknownImportFieldWarningPrefix.length).trim();
+  if (suffix.isEmpty) {
+    return null;
+  }
+  final visibleFields = suffix
+      .split(',')
+      .map((part) => part.trim())
+      .where((part) => part.isNotEmpty && !_shouldHideImportAttributeKey(part))
+      .toList(growable: false);
+  if (visibleFields.isEmpty) {
+    return null;
+  }
+  return 'Attributes not defined in the project form were kept: ${visibleFields.join(', ')}';
 }
 
 class _ImportFeatureStatusChip extends StatelessWidget {
