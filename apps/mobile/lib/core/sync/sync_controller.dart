@@ -99,8 +99,14 @@ class SyncController extends StateNotifier<SyncState> {
     try {
       await _localStore.initialize();
       await _refreshPendingCount();
+      if (!mounted) {
+        return;
+      }
       state = state.copyWith(lastError: state.lastError);
     } catch (error) {
+      if (!mounted) {
+        return;
+      }
       state = state.copyWith(
         lastError: 'Saved offline changes are not available yet.',
       );
@@ -131,6 +137,9 @@ class SyncController extends StateNotifier<SyncState> {
       await _localStore.initialize();
       final summary = await _syncEngine.syncPending();
       await _refreshPendingCount();
+      if (!mounted) {
+        return;
+      }
 
       final statusParts = <String>[];
       if (summary.failed > 0) {
@@ -152,6 +161,9 @@ class SyncController extends StateNotifier<SyncState> {
       );
     } catch (error) {
       await _refreshPendingCount();
+      if (!mounted) {
+        return;
+      }
       state = state.copyWith(isSyncing: false, lastError: error.toString());
     }
   }
@@ -171,6 +183,9 @@ class SyncController extends StateNotifier<SyncState> {
         unawaited(syncNow(background: true));
       });
 
+      if (!mounted) {
+        return;
+      }
       state = state.copyWith(
         isReady: true,
         isInitializing: false,
@@ -178,6 +193,9 @@ class SyncController extends StateNotifier<SyncState> {
         lastError: null,
       );
     } catch (error) {
+      if (!mounted) {
+        return;
+      }
       state = state.copyWith(
         isReady: false,
         isInitializing: false,
@@ -190,6 +208,9 @@ class SyncController extends StateNotifier<SyncState> {
   Future<void> _refreshPendingCount() async {
     await _localStore.initialize();
     final stats = await _localStore.getSyncQueueStats();
+    if (!mounted) {
+      return;
+    }
     state = state.copyWith(
       pendingCount: stats.actionable,
       conflictCount: stats.conflict,

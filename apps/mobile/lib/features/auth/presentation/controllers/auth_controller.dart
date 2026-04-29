@@ -39,10 +39,16 @@ class AuthController extends StateNotifier<AuthState> {
     state = const AuthState.checking();
     try {
       final session = await _repository.restoreSession();
+      if (!mounted) {
+        return;
+      }
       state = session == null
           ? const AuthState.unauthenticated()
           : AuthState.authenticated(session);
     } catch (error) {
+      if (!mounted) {
+        return;
+      }
       state = AuthState(
         status: AuthStatus.unauthenticated,
         error: _messageFromError(error),
@@ -63,8 +69,14 @@ class AuthController extends StateNotifier<AuthState> {
         password: password,
         rememberMe: rememberMe,
       );
+      if (!mounted) {
+        return;
+      }
       state = AuthState.authenticated(session);
     } catch (error) {
+      if (!mounted) {
+        return;
+      }
       state = AuthState(
         status: AuthStatus.unauthenticated,
         error: _messageFromError(error),
@@ -85,8 +97,14 @@ class AuthController extends StateNotifier<AuthState> {
         password: password,
         rememberMe: rememberMe,
       );
+      if (!mounted) {
+        return;
+      }
       state = AuthState.authenticated(session);
     } catch (error) {
+      if (!mounted) {
+        return;
+      }
       state = AuthState(
         status: AuthStatus.unauthenticated,
         error: _messageFromError(error),
@@ -111,9 +129,15 @@ class AuthController extends StateNotifier<AuthState> {
         role: role,
         phone: phone,
       );
+      if (!mounted) {
+        return message;
+      }
       state = const AuthState.unauthenticated();
       return message;
     } catch (error) {
+      if (!mounted) {
+        return null;
+      }
       state = AuthState(
         status: AuthStatus.unauthenticated,
         error: _messageFromError(error),
@@ -125,6 +149,9 @@ class AuthController extends StateNotifier<AuthState> {
 
   Future<void> logout() async {
     await _repository.logout();
+    if (!mounted) {
+      return;
+    }
     state = const AuthState(
       status: AuthStatus.unauthenticated,
       errorCode: 'logged_out',
@@ -135,11 +162,17 @@ class AuthController extends StateNotifier<AuthState> {
     final previousSession = state.session;
     try {
       await _repository.selfDeactivate();
+      if (!mounted) {
+        return;
+      }
       state = const AuthState(
         status: AuthStatus.unauthenticated,
         errorCode: 'self_deactivated',
       );
     } catch (error) {
+      if (!mounted) {
+        rethrow;
+      }
       state = AuthState(
         status: previousSession == null
             ? AuthStatus.unauthenticated
@@ -197,6 +230,9 @@ class AuthController extends StateNotifier<AuthState> {
         fullName: fullName,
         phone: phone,
       );
+      if (!mounted) {
+        return;
+      }
       state = AuthState.authenticated(
         AuthSession(
           accessToken: session.accessToken,
@@ -205,6 +241,9 @@ class AuthController extends StateNotifier<AuthState> {
         ),
       );
     } catch (error) {
+      if (!mounted) {
+        rethrow;
+      }
       state = AuthState(
         status: AuthStatus.authenticated,
         session: session,

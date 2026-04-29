@@ -71,31 +71,46 @@ class NotificationsController
   final Uuid _uuid = const Uuid();
   static const int _pageSize = 20;
   bool? _currentIsReadFilter;
+  int _loadGeneration = 0;
+
+  bool _canPublish(int generation) => mounted && generation == _loadGeneration;
 
   Future<void> load({bool? isReadFilter}) async {
+    final generation = ++_loadGeneration;
     _currentIsReadFilter = isReadFilter;
     state = const AsyncLoading();
-    state = await AsyncValue.guard(() async {
+    try {
       final results = await Future.wait<dynamic>([
         _repository.fetchNotifications(limit: _pageSize, isRead: isReadFilter),
         _repository.fetchUnreadCount(),
       ]);
+      if (!_canPublish(generation)) {
+        return;
+      }
       final page = results[0] as NotificationPage;
       final unreadCount = results[1] as int;
-      return NotificationsViewState(
-        items: page.items,
-        page: page.page,
-        pageSize: page.limit,
-        total: page.total,
-        unreadCount: unreadCount,
-        isReadFilter: isReadFilter,
-        hasMore: page.hasMore,
-        isLoadingMore: false,
+      state = AsyncData(
+        NotificationsViewState(
+          items: page.items,
+          page: page.page,
+          pageSize: page.limit,
+          total: page.total,
+          unreadCount: unreadCount,
+          isReadFilter: isReadFilter,
+          hasMore: page.hasMore,
+          isLoadingMore: false,
+        ),
       );
-    });
+    } catch (error, stackTrace) {
+      if (!_canPublish(generation)) {
+        return;
+      }
+      state = AsyncError(error, stackTrace);
+    }
   }
 
   Future<void> loadMore() async {
+    final generation = ++_loadGeneration;
     final current = state.valueOrNull;
     if (current == null || current.isLoadingMore || !current.hasMore) {
       return;
@@ -110,6 +125,9 @@ class NotificationsController
         limit: current.pageSize,
         isRead: _currentIsReadFilter,
       );
+      if (!_canPublish(generation)) {
+        return;
+      }
       state = AsyncData(
         current.copyWith(
           items: <AppNotification>[...current.items, ...page.items],
@@ -122,6 +140,9 @@ class NotificationsController
         ),
       );
     } catch (_) {
+      if (!_canPublish(generation)) {
+        return;
+      }
       state = AsyncData(current.copyWith(isLoadingMore: false));
     }
   }
@@ -143,9 +164,7 @@ class NotificationsController
     final nextItems = current.isReadFilter == false
         ? current.items.where((item) => item.id != id).toList(growable: false)
         : current.items
-              .map(
-                (item) => item.id == id ? item.copyWith(isRead: true) : item,
-              )
+              .map((item) => item.id == id ? item.copyWith(isRead: true) : item)
               .toList(growable: false);
 
     state = AsyncData(
@@ -154,9 +173,7 @@ class NotificationsController
         total: current.isReadFilter == false
             ? (current.total > 0 ? current.total - 1 : 0)
             : current.total,
-        unreadCount: current.unreadCount > 0
-            ? current.unreadCount - 1
-            : 0,
+        unreadCount: current.unreadCount > 0 ? current.unreadCount - 1 : 0,
         hasMore: current.isReadFilter == false
             ? nextItems.length < (current.total > 0 ? current.total - 1 : 0)
             : current.hasMore,
@@ -240,6 +257,9 @@ class NotificationsController
   }
 
   void pushNotification({required String title, required String message}) {
+    if (!mounted) {
+      return;
+    }
     final notification = AppNotification(
       id: _uuid.v4(),
       title: title,

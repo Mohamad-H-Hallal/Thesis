@@ -74,13 +74,20 @@ class PaginatedListController<T>
 
   final PaginatedPageLoader<T> _loadPage;
   final int _pageSize;
+  int _loadGeneration = 0;
+
+  bool _canPublish(int generation) => mounted && generation == _loadGeneration;
 
   Future<void> load({bool silently = false}) async {
+    final generation = ++_loadGeneration;
     final current = state.valueOrNull;
     if (silently && current != null) {
       state = AsyncData(current.copyWith(isRefreshing: true));
       try {
         final page = await _loadPage(page: 1, limit: current.pageSize);
+        if (!_canPublish(generation)) {
+          return;
+        }
         state = AsyncData(
           PaginatedListState<T>(
             items: page.items,
@@ -93,24 +100,37 @@ class PaginatedListController<T>
           ),
         );
       } catch (_) {
+        if (!_canPublish(generation)) {
+          return;
+        }
         state = AsyncData(current.copyWith(isRefreshing: false));
       }
       return;
     }
 
     state = const AsyncLoading();
-    state = await AsyncValue.guard(() async {
+    try {
       final page = await _loadPage(page: 1, limit: _pageSize);
-      return PaginatedListState<T>(
-        items: page.items,
-        page: page.page,
-        pageSize: page.limit,
-        total: page.total,
-        hasMore: page.hasMore,
-        isLoadingMore: false,
-        isRefreshing: false,
+      if (!_canPublish(generation)) {
+        return;
+      }
+      state = AsyncData(
+        PaginatedListState<T>(
+          items: page.items,
+          page: page.page,
+          pageSize: page.limit,
+          total: page.total,
+          hasMore: page.hasMore,
+          isLoadingMore: false,
+          isRefreshing: false,
+        ),
       );
-    });
+    } catch (error, stackTrace) {
+      if (!_canPublish(generation)) {
+        return;
+      }
+      state = AsyncError(error, stackTrace);
+    }
   }
 
   Future<void> refresh() => load();
@@ -118,6 +138,7 @@ class PaginatedListController<T>
   Future<void> refreshSilently() => load(silently: true);
 
   Future<void> loadMore() async {
+    final generation = ++_loadGeneration;
     final current = state.valueOrNull;
     if (current == null || current.isLoadingMore || !current.hasMore) {
       return;
@@ -130,6 +151,9 @@ class PaginatedListController<T>
         page: nextPageNumber,
         limit: current.pageSize,
       );
+      if (!_canPublish(generation)) {
+        return;
+      }
       state = AsyncData(
         current.copyWith(
           items: <T>[...current.items, ...page.items],
@@ -142,6 +166,9 @@ class PaginatedListController<T>
         ),
       );
     } catch (_) {
+      if (!_canPublish(generation)) {
+        return;
+      }
       state = AsyncData(current.copyWith(isLoadingMore: false));
     }
   }

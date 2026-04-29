@@ -62,6 +62,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
   bool _isSearchOpen = false;
   bool _showApprovedProjectContext = true;
   bool _isFeatureBrowserOpen = false;
+  bool _useClusteredMarkers = false;
   LebanonBasemapStyle _basemapStyle = LebanonBasemapStyle.street;
   MapCamera? _latestMapCamera;
   String? _selectedFeatureTypeChip;
@@ -215,6 +216,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
         visibleStagedFeatures.length + mapData.approvedProjectFeatures.length >
             1800 ||
         currentZoom < 9.75;
+    _useClusteredMarkers = useLightweightRender;
     final renderDetailedShapes = !useLightweightRender && currentZoom >= 10.5;
     final viewportStagedFeatures = _featuresInBounds(
       visibleStagedFeatures,
@@ -228,6 +230,18 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
       visibleStagedFeatures,
       _showApprovedProjectContext ? mapData.approvedProjectFeatures : const [],
     );
+    final stagedClusters = useLightweightRender
+        ? _buildStagedClusters(viewportStagedFeatures, currentZoom)
+        : const <_StagedFeatureCluster>[];
+    final projectClusters = useLightweightRender && _showApprovedProjectContext
+        ? _buildProjectContextClusters(viewportApprovedFeatures, currentZoom)
+        : const <_ProjectFeatureCluster>[];
+    final lightweightClusterPlacements = useLightweightRender
+        ? _buildLightweightClusterPlacements(stagedClusters, projectClusters)
+        : const _LightweightClusterPlacements(
+            stagedPoints: <String, LatLng>{},
+            projectPoints: <String, LatLng>{},
+          );
     final selectedFeature = _findImportedFeature(
       mapData.stagedFeatures,
       _focusedFeatureId ?? widget.initialFeatureId,
@@ -287,10 +301,10 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
                         ),
                       ),
                     if (useLightweightRender)
-                      CircleLayer(
-                        circles: _projectContextCircles(
-                          mapData.approvedProjectFeatures,
-                          markerPlacements.projectPoints,
+                      MarkerLayer(
+                        markers: _projectContextClusterMarkers(
+                          projectClusters,
+                          lightweightClusterPlacements.projectPoints,
                         ),
                       )
                     else
@@ -337,10 +351,11 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
                       ],
                     ),
                   if (useLightweightRender)
-                    CircleLayer(
-                      circles: _stagedCircles(
-                        visibleStagedFeatures,
-                        markerPlacements.stagedPoints,
+                    MarkerLayer(
+                      markers: _stagedClusterMarkers(
+                        stagedClusters,
+                        canModerateImport,
+                        lightweightClusterPlacements.stagedPoints,
                       ),
                     )
                   else
@@ -871,6 +886,10 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
         _isPanelExpanded = false;
       });
       _searchFocusNode.unfocus();
+      return;
+    }
+
+    if (_useClusteredMarkers) {
       return;
     }
 
@@ -1482,54 +1501,266 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
     return markers;
   }
 
-  List<CircleMarker> _stagedCircles(
+  List<_StagedFeatureCluster> _buildStagedClusters(
     List<ImportedFeature> features,
-    Map<String, LatLng> markerPoints,
+    double zoom,
   ) {
-    return features
-        .map((feature) {
-          final geometry = feature.geometry;
-          final point =
-              markerPoints[feature.id] ??
-              (geometry == null ? null : _featureFocusPoint(geometry));
-          if (point == null) {
-            return null;
-          }
-          return CircleMarker(
-            point: point,
-            radius: _focusedFeatureId == feature.id ? 8.5 : 7,
-            color: _statusColor(feature.status),
-            borderColor: _focusedFeatureId == feature.id
-                ? Colors.black87
-                : Colors.white,
-            borderStrokeWidth: _focusedFeatureId == feature.id ? 2.2 : 1.6,
+    final cellSize = _clusterCellSizeDegrees(zoom);
+    final grouped = <String, List<(ImportedFeature, LatLng)>>{};
+    for (final feature in features) {
+      final geometry = feature.geometry;
+      final point = geometry == null ? null : _featureFocusPoint(geometry);
+      if (point == null) {
+        continue;
+      }
+      final latBucket = (point.latitude / cellSize).floor();
+      final lonBucket = (point.longitude / cellSize).floor();
+      final key = '${feature.status}:$latBucket:$lonBucket';
+      grouped.putIfAbsent(key, () => <(ImportedFeature, LatLng)>[]).add((
+        feature,
+        point,
+      ));
+    }
+
+    return grouped.values
+        .map((entries) {
+          final features = entries
+              .map((entry) => entry.$1)
+              .toList(growable: false);
+          final points = entries
+              .map((entry) => entry.$2)
+              .toList(growable: false);
+          final latitude =
+              points.fold<double>(0, (sum, point) => sum + point.latitude) /
+              points.length;
+          final longitude =
+              points.fold<double>(0, (sum, point) => sum + point.longitude) /
+              points.length;
+          return _StagedFeatureCluster(
+            id: features.length == 1
+                ? features.first.id
+                : 'cluster:${features.first.status}:${features.first.id}:${points.length}',
+            status: features.first.status,
+            features: features,
+            points: points,
+            point: LatLng(latitude, longitude),
           );
         })
-        .whereType<CircleMarker>()
         .toList(growable: false);
   }
 
-  List<CircleMarker> _projectContextCircles(
+  List<_ProjectFeatureCluster> _buildProjectContextClusters(
     List<MapFeatureSummary> features,
-    Map<String, LatLng> markerPoints,
+    double zoom,
   ) {
-    return features
-        .map((feature) {
-          final point =
-              markerPoints[feature.id] ?? _featureFocusPoint(feature.geometry);
-          if (point == null) {
-            return null;
-          }
-          return CircleMarker(
-            point: point,
-            radius: 7,
-            color: _projectContextColor,
-            borderColor: Colors.white,
-            borderStrokeWidth: 1.6,
+    final cellSize = _clusterCellSizeDegrees(zoom);
+    final grouped = <String, List<(MapFeatureSummary, LatLng)>>{};
+    for (final feature in features) {
+      final point = _featureFocusPoint(feature.geometry);
+      if (point == null) {
+        continue;
+      }
+      final latBucket = (point.latitude / cellSize).floor();
+      final lonBucket = (point.longitude / cellSize).floor();
+      final key = '$latBucket:$lonBucket';
+      grouped.putIfAbsent(key, () => <(MapFeatureSummary, LatLng)>[]).add((
+        feature,
+        point,
+      ));
+    }
+
+    return grouped.values
+        .map((entries) {
+          final features = entries
+              .map((entry) => entry.$1)
+              .toList(growable: false);
+          final points = entries
+              .map((entry) => entry.$2)
+              .toList(growable: false);
+          final latitude =
+              points.fold<double>(0, (sum, point) => sum + point.latitude) /
+              points.length;
+          final longitude =
+              points.fold<double>(0, (sum, point) => sum + point.longitude) /
+              points.length;
+          return _ProjectFeatureCluster(
+            id: features.length == 1
+                ? features.first.id
+                : 'project:${features.first.id}:${points.length}',
+            features: features,
+            points: points,
+            point: LatLng(latitude, longitude),
           );
         })
-        .whereType<CircleMarker>()
         .toList(growable: false);
+  }
+
+  double _clusterCellSizeDegrees(double zoom) {
+    if (zoom < 7.5) {
+      return 0.18;
+    }
+    if (zoom < 8.5) {
+      return 0.12;
+    }
+    if (zoom < 9.5) {
+      return 0.08;
+    }
+    if (zoom < 10.5) {
+      return 0.05;
+    }
+    return 0.03;
+  }
+
+  _LightweightClusterPlacements _buildLightweightClusterPlacements(
+    List<_StagedFeatureCluster> stagedClusters,
+    List<_ProjectFeatureCluster> projectClusters,
+  ) {
+    final grouped = <String, List<_LightweightPlacementSeed>>{};
+    for (final cluster in stagedClusters) {
+      final key =
+          '${cluster.point.latitude.toStringAsFixed(6)}:${cluster.point.longitude.toStringAsFixed(6)}';
+      grouped
+          .putIfAbsent(key, () => <_LightweightPlacementSeed>[])
+          .add(
+            _LightweightPlacementSeed.staged(
+              id: cluster.id,
+              point: cluster.point,
+            ),
+          );
+    }
+    for (final cluster in projectClusters) {
+      final key =
+          '${cluster.point.latitude.toStringAsFixed(6)}:${cluster.point.longitude.toStringAsFixed(6)}';
+      grouped
+          .putIfAbsent(key, () => <_LightweightPlacementSeed>[])
+          .add(
+            _LightweightPlacementSeed.project(
+              id: cluster.id,
+              point: cluster.point,
+            ),
+          );
+    }
+
+    final stagedPoints = <String, LatLng>{};
+    final projectPoints = <String, LatLng>{};
+
+    for (final entries in grouped.values) {
+      for (var index = 0; index < entries.length; index++) {
+        final seed = entries[index];
+        final point = entries.length == 1
+            ? seed.point
+            : _spreadDuplicateMarkerPoint(
+                seed.point,
+                duplicateIndex: index,
+                duplicateCount: entries.length,
+              );
+        if (seed.kind == _MarkerSeedKind.staged) {
+          stagedPoints[seed.id] = point;
+        } else {
+          projectPoints[seed.id] = point;
+        }
+      }
+    }
+
+    return _LightweightClusterPlacements(
+      stagedPoints: stagedPoints,
+      projectPoints: projectPoints,
+    );
+  }
+
+  List<Marker> _stagedClusterMarkers(
+    List<_StagedFeatureCluster> clusters,
+    bool canModerateImport,
+    Map<String, LatLng> clusterPoints,
+  ) {
+    return clusters
+        .map((cluster) {
+          final markerPoint = clusterPoints[cluster.id] ?? cluster.point;
+          final feature = cluster.primaryFeature;
+          final count = cluster.count;
+          final color = _statusColor(cluster.status);
+          return Marker(
+            point: markerPoint,
+            width: 54,
+            height: 54,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: () {
+                if (count == 1) {
+                  _focusImportedFeature(feature);
+                  _openImportedFeatureDetails(
+                    feature,
+                    canModerateImport: canModerateImport,
+                  );
+                  return;
+                }
+                _focusPointGroup(cluster.points);
+              },
+              child: _ImportClusterPin(
+                color: color,
+                icon: _statusIcon(cluster.status),
+                count: count,
+                isFocused: count == 1 && _focusedFeatureId == feature.id,
+              ),
+            ),
+          );
+        })
+        .toList(growable: false);
+  }
+
+  List<Marker> _projectContextClusterMarkers(
+    List<_ProjectFeatureCluster> clusters,
+    Map<String, LatLng> clusterPoints,
+  ) {
+    return clusters
+        .map((cluster) {
+          final markerPoint = clusterPoints[cluster.id] ?? cluster.point;
+          return Marker(
+            point: markerPoint,
+            width: 54,
+            height: 54,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: () {
+                if (cluster.count == 1) {
+                  final feature = cluster.primaryFeature;
+                  _focusProjectContextFeature(feature);
+                  _openApprovedProjectFeatureDetails(feature);
+                  return;
+                }
+                _focusPointGroup(cluster.points);
+              },
+              child: _ImportClusterPin(
+                color: _projectContextColor,
+                icon: Icons.check,
+                count: cluster.count,
+                isFocused: false,
+              ),
+            ),
+          );
+        })
+        .toList(growable: false);
+  }
+
+  void _focusPointGroup(List<LatLng> points) {
+    if (points.isEmpty) {
+      return;
+    }
+    _runMapAction(() {
+      if (points.length == 1) {
+        _mapController.move(
+          points.first,
+          math.max((_latestMapCamera?.zoom ?? _defaultMapZoom) + 1.4, 13),
+        );
+        return;
+      }
+      _mapController.fitCamera(
+        CameraFit.bounds(
+          bounds: LatLngBounds.fromPoints(points),
+          padding: const EdgeInsets.all(64),
+        ),
+      );
+    }, queueUntilReady: true);
   }
 
   List<ImportedFeature> _featuresInBounds(
@@ -3710,6 +3941,52 @@ class _ImportMarkerPlacements {
   final Map<String, LatLng> projectPoints;
 }
 
+class _LightweightClusterPlacements {
+  const _LightweightClusterPlacements({
+    required this.stagedPoints,
+    required this.projectPoints,
+  });
+
+  final Map<String, LatLng> stagedPoints;
+  final Map<String, LatLng> projectPoints;
+}
+
+class _StagedFeatureCluster {
+  const _StagedFeatureCluster({
+    required this.id,
+    required this.status,
+    required this.features,
+    required this.points,
+    required this.point,
+  });
+
+  final String id;
+  final String status;
+  final List<ImportedFeature> features;
+  final List<LatLng> points;
+  final LatLng point;
+
+  int get count => features.length;
+  ImportedFeature get primaryFeature => features.first;
+}
+
+class _ProjectFeatureCluster {
+  const _ProjectFeatureCluster({
+    required this.id,
+    required this.features,
+    required this.points,
+    required this.point,
+  });
+
+  final String id;
+  final List<MapFeatureSummary> features;
+  final List<LatLng> points;
+  final LatLng point;
+
+  int get count => features.length;
+  MapFeatureSummary get primaryFeature => features.first;
+}
+
 enum _MarkerSeedKind { staged, project }
 
 class _MarkerPlacementSeed {
@@ -3718,6 +3995,22 @@ class _MarkerPlacementSeed {
 
   const _MarkerPlacementSeed.project({required this.id, required this.point})
     : kind = _MarkerSeedKind.project;
+
+  final _MarkerSeedKind kind;
+  final String id;
+  final LatLng point;
+}
+
+class _LightweightPlacementSeed {
+  const _LightweightPlacementSeed.staged({
+    required this.id,
+    required this.point,
+  }) : kind = _MarkerSeedKind.staged;
+
+  const _LightweightPlacementSeed.project({
+    required this.id,
+    required this.point,
+  }) : kind = _MarkerSeedKind.project;
 
   final _MarkerSeedKind kind;
   final String id;
@@ -3835,6 +4128,77 @@ class _MapFloatingActionButton extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ImportClusterPin extends StatelessWidget {
+  const _ImportClusterPin({
+    required this.color,
+    required this.icon,
+    required this.count,
+    required this.isFocused,
+  });
+
+  final Color color;
+  final IconData icon;
+  final int count;
+  final bool isFocused;
+
+  @override
+  Widget build(BuildContext context) {
+    final borderColor = isFocused ? Colors.black87 : Colors.white;
+    final borderWidth = isFocused ? 2.4 : 1.8;
+    return Center(
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+              border: Border.all(color: borderColor, width: borderWidth),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x33000000),
+                  blurRadius: 6,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Icon(icon, color: Colors.white, size: 14),
+          ),
+          if (count > 1)
+            Positioned(
+              right: -8,
+              top: -8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: color, width: 1.5),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x24000000),
+                      blurRadius: 4,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
+                ),
+                child: Text(
+                  '$count',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: color,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

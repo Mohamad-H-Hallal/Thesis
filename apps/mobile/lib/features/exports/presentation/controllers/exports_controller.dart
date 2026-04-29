@@ -8,20 +8,14 @@ typedef ExportNotificationEmitter =
     void Function({required String title, required String message});
 
 class ExportsState {
-  const ExportsState({
-    required this.isSubmitting,
-    this.error,
-  });
+  const ExportsState({required this.isSubmitting, this.error});
 
   const ExportsState.initial() : this(isSubmitting: false);
 
   final bool isSubmitting;
   final String? error;
 
-  ExportsState copyWith({
-    bool? isSubmitting,
-    String? error,
-  }) {
+  ExportsState copyWith({bool? isSubmitting, String? error}) {
     return ExportsState(
       isSubmitting: isSubmitting ?? this.isSubmitting,
       error: error,
@@ -58,6 +52,9 @@ class ExportsController extends StateNotifier<ExportsState> {
         format: format,
         exportParameters: exportParameters,
       );
+      if (!mounted) {
+        return false;
+      }
       state = state.copyWith(isSubmitting: false, error: null);
       _emitNotification(
         title: 'Export queued',
@@ -66,6 +63,9 @@ class ExportsController extends StateNotifier<ExportsState> {
       );
       return true;
     } catch (error) {
+      if (!mounted) {
+        return false;
+      }
       state = state.copyWith(isSubmitting: false, error: error.toString());
       return false;
     }
@@ -77,6 +77,9 @@ class ExportsController extends StateNotifier<ExportsState> {
         requestedByUserId: _session.user.id,
         exportId: exportId,
       );
+      if (!mounted) {
+        return updated;
+      }
       if (updated == null) {
         throw StateError('Export file is not ready for download.');
       }
@@ -87,6 +90,9 @@ class ExportsController extends StateNotifier<ExportsState> {
       );
       return updated;
     } catch (error) {
+      if (!mounted) {
+        return null;
+      }
       state = state.copyWith(error: error.toString());
       return null;
     }
@@ -98,12 +104,18 @@ class ExportsController extends StateNotifier<ExportsState> {
         requestedByUserId: _session.user.id,
         exportId: exportId,
       );
+      if (!mounted) {
+        return;
+      }
       state = state.copyWith(error: null);
       _emitNotification(
         title: 'Export retried',
         message: 'Failed export has been re-queued.',
       );
     } catch (error) {
+      if (!mounted) {
+        return;
+      }
       state = state.copyWith(error: error.toString());
     }
   }
