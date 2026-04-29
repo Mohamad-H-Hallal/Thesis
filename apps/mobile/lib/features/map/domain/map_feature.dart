@@ -58,12 +58,14 @@ class ProjectFeatureBrowserQuery {
     this.search,
     this.status,
     this.geometryType,
+    this.featureType,
   });
 
   final String projectId;
   final String? search;
   final String? status;
   final String? geometryType;
+  final String? featureType;
 
   @override
   bool operator ==(Object other) {
@@ -71,11 +73,13 @@ class ProjectFeatureBrowserQuery {
         other.projectId == projectId &&
         other.search == search &&
         other.status == status &&
-        other.geometryType == geometryType;
+        other.geometryType == geometryType &&
+        other.featureType == featureType;
   }
 
   @override
-  int get hashCode => Object.hash(projectId, search, status, geometryType);
+  int get hashCode =>
+      Object.hash(projectId, search, status, geometryType, featureType);
 }
 
 class ProjectMapViewportQuery {

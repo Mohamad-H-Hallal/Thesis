@@ -561,6 +561,10 @@ const getProjectFeatures = async (req, res) => {
     typeof req.query.geometry_type === 'string'
       ? req.query.geometry_type.trim()
       : '';
+  const featureType =
+    typeof req.query.feature_type === 'string'
+      ? req.query.feature_type.trim()
+      : '';
   const page = Math.max(1, Number.parseInt(String(req.query.page ?? '1'), 10) || 1);
   const limit = Math.min(
     Math.max(1, Number.parseInt(String(req.query.limit ?? '50'), 10) || 50),
@@ -616,6 +620,25 @@ const getProjectFeatures = async (req, res) => {
     paramIndex++;
   }
 
+  if (featureType) {
+    queryText += `
+      AND EXISTS (
+        SELECT 1
+        FROM jsonb_each_text(COALESCE(sf.attributes, '{}'::jsonb)) AS attr(key, value)
+        WHERE (
+          LOWER(attr.key) LIKE '%type%'
+          OR LOWER(attr.key) LIKE '%species%'
+          OR LOWER(attr.key) LIKE '%crop%'
+          OR LOWER(attr.key) LIKE '%tree%'
+          OR LOWER(attr.key) LIKE '%orchard%'
+        )
+          AND LOWER(BTRIM(attr.value)) = LOWER($${paramIndex})
+      )
+    `;
+    params.push(featureType);
+    paramIndex++;
+  }
+
   if (searchQuery) {
     queryText += `
       AND (
@@ -666,6 +689,25 @@ const getProjectFeatures = async (req, res) => {
   if (geometryType) {
     countQuery += ` AND GeometryType(sf.geom) = $${countParamIndex}`;
     countParams.push(geometryType);
+    countParamIndex++;
+  }
+
+  if (featureType) {
+    countQuery += `
+      AND EXISTS (
+        SELECT 1
+        FROM jsonb_each_text(COALESCE(sf.attributes, '{}'::jsonb)) AS attr(key, value)
+        WHERE (
+          LOWER(attr.key) LIKE '%type%'
+          OR LOWER(attr.key) LIKE '%species%'
+          OR LOWER(attr.key) LIKE '%crop%'
+          OR LOWER(attr.key) LIKE '%tree%'
+          OR LOWER(attr.key) LIKE '%orchard%'
+        )
+          AND LOWER(BTRIM(attr.value)) = LOWER($${countParamIndex})
+      )
+    `;
+    countParams.push(featureType);
     countParamIndex++;
   }
 

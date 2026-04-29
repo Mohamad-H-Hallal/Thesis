@@ -528,7 +528,7 @@ const featureTitleFromAttributes = (
 
   const featureType = attributes['feature_type'];
   if (typeof featureType === 'string' && featureType.trim().length > 0) {
-    return `${featureType.trim()} ${geometryType ?? 'feature'}`;
+    return featureType.trim();
   }
 
   switch (geometryType) {
@@ -2160,6 +2160,8 @@ const listImportFeatures = async (req: Request, res: Response): Promise<void> =>
   const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
   const geometryType =
     typeof req.query.geometry_type === 'string' ? req.query.geometry_type.trim() : '';
+  const featureType =
+    typeof req.query.feature_type === 'string' ? req.query.feature_type.trim() : '';
 
   const whereClauses = ['gif.import_job_id = $1'];
   const params: unknown[] = [importId];
@@ -2205,6 +2207,24 @@ const listImportFeatures = async (req: Request, res: Response): Promise<void> =>
         paramIndex += 1;
         break;
     }
+  }
+  if (featureType) {
+    whereClauses.push(
+      `EXISTS (
+        SELECT 1
+        FROM jsonb_each_text(COALESCE(gif.attributes, '{}'::jsonb)) AS attr(key, value)
+        WHERE (
+          LOWER(attr.key) LIKE '%type%'
+          OR LOWER(attr.key) LIKE '%species%'
+          OR LOWER(attr.key) LIKE '%crop%'
+          OR LOWER(attr.key) LIKE '%tree%'
+          OR LOWER(attr.key) LIKE '%orchard%'
+        )
+          AND LOWER(BTRIM(attr.value)) = LOWER($${paramIndex})
+      )`,
+    );
+    params.push(featureType);
+    paramIndex += 1;
   }
   if (search) {
     whereClauses.push(

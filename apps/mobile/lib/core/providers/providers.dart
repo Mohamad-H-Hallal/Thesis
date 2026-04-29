@@ -510,6 +510,7 @@ final paginatedProjectFeatureBrowserProvider = StateNotifierProvider.autoDispose
                 search: query.search,
                 status: query.status,
                 geometryType: query.geometryType,
+                featureType: query.featureType,
                 page: page,
                 limit: limit,
               );

@@ -20,6 +20,7 @@ import '../../../map/domain/current_location_service.dart';
 import '../../../map/domain/lebanon_map.dart';
 import '../../../map/domain/map_feature.dart';
 import '../../../map/domain/map_geometry.dart';
+import '../../../projects/domain/project.dart';
 import '../../domain/import_models.dart';
 import '../import_providers.dart';
 
@@ -217,6 +218,14 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
           stagedFeatures: <ImportedFeature>[],
           approvedProjectFeatures: <MapFeatureSummary>[],
         );
+    final importFeatureTypeChips = _deriveImportFeatureTypeChips(
+      project,
+      mapData.stagedFeatures,
+    );
+    final approvedProjectFeatureTypeChips = _deriveProjectFeatureTypeChips(
+      project,
+      mapData.approvedProjectFeatures,
+    );
     final canModerateImport = _canModerateImport(session.user, details);
     final visibleStagedFeatures = _filteredStagedFeatures(
       mapData.stagedFeatures,
@@ -450,9 +459,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
                               searchController: _searchController,
                               searchFocusNode: _searchFocusNode,
                               visibleStatuses: _visibleStatuses,
-                              visibleFeatureTypes: _availableFeatureTypeChips(
-                                mapData.stagedFeatures,
-                              ),
+                              visibleFeatureTypes: importFeatureTypeChips,
                               selectedFeatureType: _selectedFeatureTypeChip,
                               basemapStyle: _basemapStyle,
                               isExpanded: _isPanelExpanded,
@@ -534,11 +541,13 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
               context,
               projectId: widget.projectId,
               projectName: projectLabel,
+              featureTypeOptions: approvedProjectFeatureTypeChips,
             ),
             onOpenFeatures: () => _openFeatureBrowser(
               context,
               projectName: projectLabel,
               canModerateImport: canModerateImport,
+              featureTypeOptions: importFeatureTypeChips,
             ),
             onCenterCurrentLocation: _centerOnCurrentLocation,
             onFitWorkspace: _focusLebanonWorkspace,
@@ -587,19 +596,12 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
     if (selected == null) {
       return true;
     }
-    final geometryType =
-        feature.geometryType ?? feature.geometry?['type']?.toString() ?? '';
-    switch (selected) {
-      case 'point':
-        return geometryType == 'Point' || geometryType == 'MultiPoint';
-      case 'line':
-        return geometryType == 'LineString' ||
-            geometryType == 'MultiLineString';
-      case 'polygon':
-        return geometryType == 'Polygon' || geometryType == 'MultiPolygon';
-      default:
-        return true;
+    final values = _featureTypeAttributeValues(feature.attributes);
+    if (values.isEmpty) {
+      return false;
     }
+    final normalizedSelected = selected.trim().toLowerCase();
+    return values.any((value) => value.toLowerCase() == normalizedSelected);
   }
 
   String _featureSearchBlob(ImportedFeature feature) {
@@ -652,13 +654,83 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
     if (selected == null) {
       return null;
     }
-    return '${_featureTypeFilterLabel(selected)} only';
+    return selected;
   }
 
-  List<String> _availableFeatureTypeChips(List<ImportedFeature> features) {
-    return _importGeometryQuickFilters
-        .map((filter) => filter.id)
-        .toList(growable: false);
+  List<String> _deriveImportFeatureTypeChips(
+    ProjectSummary? project,
+    List<ImportedFeature> features,
+  ) {
+    final chips = <String>{};
+    if (project != null) {
+      for (final field in project.collectionFormSchema.fields) {
+        if (field.type == CollectionFieldType.select &&
+            _looksLikeFeatureTypeField(field.key, field.label)) {
+          chips.addAll(
+            field.options
+                .map((option) => option.trim())
+                .where((option) => option.isNotEmpty),
+          );
+        }
+      }
+    }
+
+    if (chips.isEmpty) {
+      final counts = <String, int>{};
+      for (final feature in features) {
+        for (final value in _featureTypeAttributeValues(feature.attributes)) {
+          if (value.length > 36) {
+            continue;
+          }
+          counts[value] = (counts[value] ?? 0) + 1;
+        }
+      }
+      final ranked = counts.entries.toList(growable: false)
+        ..sort((left, right) => right.value.compareTo(left.value));
+      chips.addAll(ranked.take(8).map((entry) => entry.key));
+    }
+
+    return chips.take(8).toList(growable: false);
+  }
+
+  List<String> _deriveProjectFeatureTypeChips(
+    ProjectSummary? project,
+    List<MapFeatureSummary> features,
+  ) {
+    final chips = <String>{};
+    if (project != null) {
+      for (final field in project.collectionFormSchema.fields) {
+        if (field.type == CollectionFieldType.select &&
+            _looksLikeFeatureTypeField(field.key, field.label)) {
+          chips.addAll(
+            field.options
+                .map((option) => option.trim())
+                .where((option) => option.isNotEmpty),
+          );
+        }
+      }
+    }
+
+    if (chips.isEmpty) {
+      final counts = <String, int>{};
+      for (final feature in features) {
+        for (final entry in feature.attributes.entries) {
+          if (!_looksLikeFeatureTypeField(entry.key, entry.key)) {
+            continue;
+          }
+          final value = '${entry.value}'.trim();
+          if (value.isEmpty || value.length > 36) {
+            continue;
+          }
+          counts[value] = (counts[value] ?? 0) + 1;
+        }
+      }
+      final ranked = counts.entries.toList(growable: false)
+        ..sort((left, right) => right.value.compareTo(left.value));
+      chips.addAll(ranked.take(8).map((entry) => entry.key));
+    }
+
+    return chips.take(8).toList(growable: false);
   }
 
   void _toggleSearch() {
@@ -1091,6 +1163,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
     BuildContext context, {
     required String projectName,
     required bool canModerateImport,
+    required List<String> featureTypeOptions,
   }) async {
     if (_isFeatureBrowserOpen) {
       return;
@@ -1109,7 +1182,8 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
           initialStatus: _visibleStatuses.length == 1
               ? _visibleStatuses.first
               : null,
-          initialGeometryType: _selectedGeometryTypeForSheet(),
+          initialFeatureType: _selectedFeatureTypeForSheet(),
+          featureTypeOptions: featureTypeOptions,
           onSelectFeature: (feature) {
             Navigator.of(sheetContext).pop();
             _focusImportedFeature(feature);
@@ -1133,6 +1207,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
     BuildContext context, {
     required String projectId,
     required String projectName,
+    required List<String> featureTypeOptions,
   }) async {
     if (_isFeatureBrowserOpen) {
       return;
@@ -1147,6 +1222,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
         builder: (sheetContext) => _ApprovedProjectFeatureBrowserSheet(
           projectId: projectId,
           projectName: projectName,
+          featureTypeOptions: featureTypeOptions,
           onSelectFeature: (feature) {
             Navigator.of(sheetContext).pop();
             _focusProjectContextFeature(feature);
@@ -1163,7 +1239,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
     }
   }
 
-  String? _selectedGeometryTypeForSheet() {
+  String? _selectedFeatureTypeForSheet() {
     return _selectedFeatureTypeChip;
   }
 
@@ -1982,27 +2058,6 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
   }
 }
 
-class _ImportGeometryQuickFilter {
-  const _ImportGeometryQuickFilter({required this.id, required this.label});
-
-  final String id;
-  final String label;
-}
-
-const List<_ImportGeometryQuickFilter> _importGeometryQuickFilters =
-    <_ImportGeometryQuickFilter>[
-      _ImportGeometryQuickFilter(id: 'point', label: 'Point'),
-      _ImportGeometryQuickFilter(id: 'line', label: 'Line'),
-      _ImportGeometryQuickFilter(id: 'polygon', label: 'Polygon'),
-    ];
-
-const List<_ImportGeometryQuickFilter> _projectGeometryQuickFilters =
-    <_ImportGeometryQuickFilter>[
-      _ImportGeometryQuickFilter(id: 'Point', label: 'Point'),
-      _ImportGeometryQuickFilter(id: 'LineString', label: 'Line'),
-      _ImportGeometryQuickFilter(id: 'Polygon', label: 'Polygon'),
-    ];
-
 const Color _projectContextColor = Color(0xFF546E7A);
 
 class _ImportMapFloatingPanel extends StatelessWidget {
@@ -2296,9 +2351,7 @@ class _ImportMapFloatingPanel extends StatelessWidget {
                             for (final featureType in visibleFeatureTypes) ...[
                               const SizedBox(width: 8),
                               ChoiceChip(
-                                label: Text(
-                                  _featureTypeFilterLabel(featureType),
-                                ),
+                                label: Text(featureType),
                                 selected: selectedFeatureType == featureType,
                                 onSelected: (selected) => onSelectFeatureType(
                                   selected ? featureType : null,
@@ -2478,17 +2531,19 @@ class _ImportFeatureBrowserSheet extends ConsumerStatefulWidget {
   const _ImportFeatureBrowserSheet({
     required this.importId,
     required this.projectName,
+    required this.featureTypeOptions,
     required this.onSelectFeature,
     this.initialSearch,
     this.initialStatus,
-    this.initialGeometryType,
+    this.initialFeatureType,
   });
 
   final String importId;
   final String projectName;
+  final List<String> featureTypeOptions;
   final String? initialSearch;
   final String? initialStatus;
-  final String? initialGeometryType;
+  final String? initialFeatureType;
   final ValueChanged<ImportedFeature> onSelectFeature;
 
   @override
@@ -2507,14 +2562,14 @@ class _ImportFeatureBrowserSheetState
 
   late final TextEditingController _searchController;
   String? _statusFilter;
-  String? _geometryTypeFilter;
+  String? _featureTypeFilter;
 
   @override
   void initState() {
     super.initState();
     _searchController = TextEditingController(text: widget.initialSearch ?? '');
     _statusFilter = widget.initialStatus;
-    _geometryTypeFilter = widget.initialGeometryType;
+    _featureTypeFilter = widget.initialFeatureType;
   }
 
   @override
@@ -2531,7 +2586,7 @@ class _ImportFeatureBrowserSheetState
       search: _searchController.text.trim().isEmpty
           ? null
           : _searchController.text.trim(),
-      geometryType: _geometryTypeFilter,
+      featureType: _featureTypeFilter,
     );
     final featuresAsync = ref.watch(paginatedImportFeaturesProvider(query));
     final featuresController = ref.read(
@@ -2629,35 +2684,37 @@ class _ImportFeatureBrowserSheetState
                 ],
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  ChoiceChip(
-                    label: const Text('All'),
-                    selected: _geometryTypeFilter == null,
-                    onSelected: (_) {
-                      setState(() {
-                        _geometryTypeFilter = null;
-                      });
-                    },
-                  ),
-                  for (final filter in _importGeometryQuickFilters) ...[
-                    const SizedBox(width: 8),
+            if (widget.featureTypeOptions.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.sm),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
                     ChoiceChip(
-                      label: Text(filter.label),
-                      selected: _geometryTypeFilter == filter.id,
-                      onSelected: (selected) {
+                      label: const Text('All'),
+                      selected: _featureTypeFilter == null,
+                      onSelected: (_) {
                         setState(() {
-                          _geometryTypeFilter = selected ? filter.id : null;
+                          _featureTypeFilter = null;
                         });
                       },
                     ),
+                    for (final featureType in widget.featureTypeOptions) ...[
+                      const SizedBox(width: 8),
+                      ChoiceChip(
+                        label: Text(featureType),
+                        selected: _featureTypeFilter == featureType,
+                        onSelected: (selected) {
+                          setState(() {
+                            _featureTypeFilter = selected ? featureType : null;
+                          });
+                        },
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
+            ],
             const SizedBox(height: AppSpacing.md),
             if (featuresAsync.isLoading && displayedFeatures.isEmpty)
               const Padding(
@@ -2687,7 +2744,7 @@ class _ImportFeatureBrowserSheetState
                   setState(() {
                     _searchController.clear();
                     _statusFilter = null;
-                    _geometryTypeFilter = null;
+                    _featureTypeFilter = null;
                   });
                 },
               )
@@ -2721,12 +2778,16 @@ class _ImportFeatureBrowserSheetState
                               _importFeatureTitle(feature),
                               style: Theme.of(context).textTheme.titleMedium,
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              _importedFeatureSubtitle(feature),
-                              style: Theme.of(context).textTheme.bodySmall,
-                              softWrap: true,
-                            ),
+                            if (_importedFeatureSubtitle(feature)
+                                case final subtitle?)
+                              ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  subtitle,
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                  softWrap: true,
+                                ),
+                              ],
                             if (feature.validationWarnings.isNotEmpty ||
                                 feature.validationErrors.isNotEmpty) ...[
                               const SizedBox(height: 8),
@@ -2769,11 +2830,13 @@ class _ApprovedProjectFeatureBrowserSheet extends ConsumerStatefulWidget {
   const _ApprovedProjectFeatureBrowserSheet({
     required this.projectId,
     required this.projectName,
+    required this.featureTypeOptions,
     required this.onSelectFeature,
   });
 
   final String projectId;
   final String projectName;
+  final List<String> featureTypeOptions;
   final ValueChanged<MapFeatureSummary> onSelectFeature;
 
   @override
@@ -2784,7 +2847,7 @@ class _ApprovedProjectFeatureBrowserSheet extends ConsumerStatefulWidget {
 class _ApprovedProjectFeatureBrowserSheetState
     extends ConsumerState<_ApprovedProjectFeatureBrowserSheet> {
   late final TextEditingController _searchController;
-  String? _geometryTypeFilter;
+  String? _featureTypeFilter;
 
   @override
   void initState() {
@@ -2806,7 +2869,7 @@ class _ApprovedProjectFeatureBrowserSheetState
           ? null
           : _searchController.text.trim(),
       status: 'approved',
-      geometryType: _geometryTypeFilter,
+      featureType: _featureTypeFilter,
     );
     final featuresAsync = ref.watch(
       paginatedProjectFeatureBrowserProvider(query),
@@ -2877,35 +2940,37 @@ class _ApprovedProjectFeatureBrowserSheetState
               ),
               onChanged: (_) => setState(() {}),
             ),
-            const SizedBox(height: AppSpacing.sm),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  ChoiceChip(
-                    label: const Text('All'),
-                    selected: _geometryTypeFilter == null,
-                    onSelected: (_) {
-                      setState(() {
-                        _geometryTypeFilter = null;
-                      });
-                    },
-                  ),
-                  for (final filter in _projectGeometryQuickFilters) ...[
-                    const SizedBox(width: 8),
+            if (widget.featureTypeOptions.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.sm),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
                     ChoiceChip(
-                      label: Text(filter.label),
-                      selected: _geometryTypeFilter == filter.id,
-                      onSelected: (selected) {
+                      label: const Text('All'),
+                      selected: _featureTypeFilter == null,
+                      onSelected: (_) {
                         setState(() {
-                          _geometryTypeFilter = selected ? filter.id : null;
+                          _featureTypeFilter = null;
                         });
                       },
                     ),
+                    for (final featureType in widget.featureTypeOptions) ...[
+                      const SizedBox(width: 8),
+                      ChoiceChip(
+                        label: Text(featureType),
+                        selected: _featureTypeFilter == featureType,
+                        onSelected: (selected) {
+                          setState(() {
+                            _featureTypeFilter = selected ? featureType : null;
+                          });
+                        },
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
+            ],
             const SizedBox(height: AppSpacing.md),
             if (featuresAsync.isLoading && displayedFeatures.isEmpty)
               const Padding(
@@ -2933,7 +2998,7 @@ class _ApprovedProjectFeatureBrowserSheetState
                 onAction: () {
                   setState(() {
                     _searchController.clear();
-                    _geometryTypeFilter = null;
+                    _featureTypeFilter = null;
                   });
                 },
               )
@@ -3196,11 +3261,14 @@ class _ImportFeatureDetailsSheet extends StatelessWidget {
                         _importFeatureTitle(feature),
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _importedFeatureSubtitle(feature),
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
+                      if (_importedFeatureSubtitle(feature)
+                          case final subtitle?) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          subtitle,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -3248,11 +3316,6 @@ class _ImportFeatureDetailsSheet extends StatelessWidget {
                           'Unknown',
                     ),
                   ),
-                  if (feature.sourceFeatureName?.trim().isNotEmpty ?? false)
-                    _MapInfoPill(
-                      icon: Icons.badge_outlined,
-                      label: feature.sourceFeatureName!.trim(),
-                    ),
                 ],
               ),
             ),
@@ -3583,7 +3646,7 @@ class _ImportFeatureReviewReasonDialogState
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
-          child: const Text('Continue'),
+          child: const Text('Reject feature'),
         ),
       ],
     );
@@ -4336,18 +4399,37 @@ IconData _statusIcon(String status) {
   }
 }
 
-String _importedFeatureSubtitle(ImportedFeature feature) {
+String? _importedFeatureSubtitle(ImportedFeature feature) {
   final type = _featureTypeDisplayLabel(
     feature.geometryType ?? feature.geometry?['type']?.toString() ?? 'Unknown',
   );
-  final sourceName = feature.sourceFeatureName?.trim();
-  if (sourceName != null && sourceName.isNotEmpty) {
-    return '$type • $sourceName';
+  final title = _importFeatureTitle(feature).trim().toLowerCase();
+  if (title == type.trim().toLowerCase()) {
+    return null;
   }
   return type;
 }
 
 String _importFeatureTitle(ImportedFeature feature) {
+  const preferredKeys = <String>['name', 'title', 'label', 'feature_type'];
+  for (final key in preferredKeys) {
+    final raw = feature.attributes[key];
+    if (raw == null) {
+      continue;
+    }
+    final text = '$raw'.trim();
+    if (text.isNotEmpty) {
+      return text;
+    }
+  }
+
+  final sourceName = feature.sourceFeatureName?.trim();
+  if (sourceName != null &&
+      sourceName.isNotEmpty &&
+      !_looksLikeOpaqueSourceValue(sourceName)) {
+    return sourceName;
+  }
+
   final title = feature.displayTitle.trim();
   final lower = title.toLowerCase();
   final typeLabel = _featureTypeDisplayLabel(
@@ -4375,6 +4457,40 @@ String _importFeatureTitle(ImportedFeature feature) {
     }
   }
   return title;
+}
+
+Iterable<String> _featureTypeAttributeValues(Map<String, dynamic> attributes) sync* {
+  for (final entry in attributes.entries) {
+    if (!_looksLikeFeatureTypeField(entry.key, entry.key)) {
+      continue;
+    }
+    final value = '${entry.value}'.trim();
+    if (value.isEmpty) {
+      continue;
+    }
+    yield value;
+  }
+}
+
+bool _looksLikeFeatureTypeField(String key, String label) {
+  final normalized = '${key.toLowerCase()} ${label.toLowerCase()}';
+  return normalized.contains('type') ||
+      normalized.contains('species') ||
+      normalized.contains('crop') ||
+      normalized.contains('tree') ||
+      normalized.contains('orchard');
+}
+
+bool _looksLikeOpaqueSourceValue(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) {
+    return true;
+  }
+  final uuidLike = RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    caseSensitive: false,
+  );
+  return uuidLike.hasMatch(trimmed);
 }
 
 String _projectFeatureTitle(MapFeatureSummary feature) {

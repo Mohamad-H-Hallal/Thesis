@@ -1289,15 +1289,22 @@ class _ImportedFeatureCard extends StatelessWidget {
                       style: Theme.of(context).textTheme.titleMedium,
                       softWrap: true,
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _importFeatureTypeLabel(
-                        feature.geometryType ??
-                            feature.geometry?['type']?.toString() ??
-                            'Unknown',
+                    if (_importFeatureDisplayTitle(feature).trim().toLowerCase() !=
+                        _importFeatureTypeLabel(
+                          feature.geometryType ??
+                              feature.geometry?['type']?.toString() ??
+                              'Unknown',
+                        ).trim().toLowerCase()) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _importFeatureTypeLabel(
+                          feature.geometryType ??
+                              feature.geometry?['type']?.toString() ??
+                              'Unknown',
+                        ),
+                        softWrap: true,
                       ),
-                      softWrap: true,
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -2120,6 +2127,25 @@ String _importFeatureTypeLabel(String geometryType) {
 }
 
 String _importFeatureDisplayTitle(ImportedFeature feature) {
+  const preferredKeys = <String>['name', 'title', 'label', 'feature_type'];
+  for (final key in preferredKeys) {
+    final raw = feature.attributes[key];
+    if (raw == null) {
+      continue;
+    }
+    final text = '$raw'.trim();
+    if (text.isNotEmpty) {
+      return text;
+    }
+  }
+
+  final sourceName = feature.sourceFeatureName?.trim();
+  if (sourceName != null &&
+      sourceName.isNotEmpty &&
+      !_looksLikeOpaqueSourceValue(sourceName)) {
+    return sourceName;
+  }
+
   final title = feature.displayTitle.trim();
   final lower = title.toLowerCase();
   final typeLabel = _importFeatureTypeLabel(
@@ -2147,6 +2173,18 @@ String _importFeatureDisplayTitle(ImportedFeature feature) {
     }
   }
   return title;
+}
+
+bool _looksLikeOpaqueSourceValue(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) {
+    return true;
+  }
+  final uuidLike = RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    caseSensitive: false,
+  );
+  return uuidLike.hasMatch(trimmed);
 }
 
 Map<String, dynamic> _filteredImportAttributes(

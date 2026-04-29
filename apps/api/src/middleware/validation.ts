@@ -366,6 +366,11 @@ const importValidation = {
       .trim()
       .isLength({ max: 200 })
       .withMessage('search must be 200 characters or fewer'),
+    queryParam('feature_type')
+      .optional()
+      .trim()
+      .isLength({ max: 100 })
+      .withMessage('feature_type must be 100 characters or fewer'),
   ] as ValidationChain[],
   review: [
     param('importId').isUUID().withMessage('Valid import ID is required'),

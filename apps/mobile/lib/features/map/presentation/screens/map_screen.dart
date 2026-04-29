@@ -2829,6 +2829,34 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     };
   }
 
+  String _projectFeatureSubtitle(MapFeatureSummary feature) {
+    final details = <String>[
+      _projectFeatureTypeLabel(
+        feature.sourceGeometryType ?? feature.geometry['type']?.toString() ?? 'Unknown',
+      ),
+    ];
+    if (feature.photoCount > 0) {
+      details.add('${feature.photoCount} photo${feature.photoCount == 1 ? '' : 's'}');
+    }
+    return details.join(' • ');
+  }
+
+  String _projectFeatureTypeLabel(String geometryType) {
+    switch (geometryType.toLowerCase()) {
+      case 'point':
+      case 'multipoint':
+        return 'Point feature';
+      case 'linestring':
+      case 'multilinestring':
+        return 'Line feature';
+      case 'polygon':
+      case 'multipolygon':
+        return 'Polygon feature';
+      default:
+        return geometryType;
+    }
+  }
+
   Future<_OfflineTileAssets> _loadOfflineTileAssets(
     OfflineMapPackage package,
     LebanonBasemapStyle basemapStyle,
@@ -3233,10 +3261,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     VoidCallback? onSuccess,
   }) async {
     final note = await _promptNote(
-      title: status == 'approved' ? 'Approval note' : 'Rejection note',
-      hint: status == 'approved'
-          ? 'Optional context for the contributor.'
-          : 'Optional context for the contributor.',
+      title: status == 'approved' ? 'Approve feature' : 'Reject feature',
+      hint: 'Optional context for the contributor.',
+      submitLabel: status == 'approved' ? 'Approve feature' : 'Reject feature',
     );
     if (note == null) {
       return;
@@ -3327,10 +3354,15 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Future<String?> _promptNote({
     required String title,
     required String hint,
+    required String submitLabel,
   }) async {
     return showDialog<String>(
       context: context,
-      builder: (_) => _MapReviewNoteDialog(title: title, hint: hint),
+      builder: (_) => _MapReviewNoteDialog(
+        title: title,
+        hint: hint,
+        submitLabel: submitLabel,
+      ),
     );
   }
 
@@ -3403,59 +3435,101 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           controller: controller,
           padding: EdgeInsets.fromLTRB(
             AppSpacing.md,
-            AppSpacing.md,
+            AppSpacing.sm,
             AppSpacing.md,
             bottomInset,
           ),
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    _featureDisplayTitle(feature),
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
+            Center(
+              child: Container(
+                width: 44,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                  borderRadius: BorderRadius.circular(999),
                 ),
-                StatusChip(status: feature.status),
-              ],
+              ),
             ),
             const SizedBox(height: AppSpacing.sm),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Chip(
-                  label: Text(
-                    'Geometry: ${feature.sourceGeometryType ?? feature.geometry['type'] ?? 'Unknown'}',
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _featureDisplayTitle(feature),
+                        style: Theme.of(context).textTheme.titleLarge,
+                        softWrap: true,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _projectFeatureSubtitle(feature),
+                        style: Theme.of(context).textTheme.bodySmall,
+                        softWrap: true,
+                      ),
+                    ],
                   ),
                 ),
-                if (feature.collectedBy != null)
-                  Chip(label: Text('Collector: ${feature.collectedBy}')),
-                if (feature.reviewedBy != null)
-                  Chip(label: Text('Reviewed by: ${feature.reviewedBy}')),
+                const SizedBox(width: AppSpacing.sm),
+                StatusChip(status: feature.status),
               ],
             ),
             const SizedBox(height: AppSpacing.md),
             _DetailSection(
-              title: 'Geometry summary',
-              child: Text(_geometrySummary(feature.geometry)),
+              title: 'Feature details',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _MapInfoPill(
+                        icon: Icons.category_outlined,
+                        label: _projectFeatureTypeLabel(
+                          feature.sourceGeometryType ??
+                              feature.geometry['type']?.toString() ??
+                              'Unknown',
+                        ),
+                      ),
+                      if (feature.collectedBy?.trim().isNotEmpty ?? false)
+                        _MapInfoPill(
+                          icon: Icons.person_outline,
+                          label: 'Collected by ${feature.collectedBy!.trim()}',
+                        ),
+                      if (feature.reviewedBy?.trim().isNotEmpty ?? false)
+                        _MapInfoPill(
+                          icon: Icons.verified_outlined,
+                          label: 'Reviewed by ${feature.reviewedBy!.trim()}',
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Text(_geometrySummary(feature.geometry), softWrap: true),
+                ],
+              ),
             ),
             _DetailSection(
-              title: 'Lifecycle',
+              title: 'Timeline',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (feature.collectedAt != null)
-                    Text(
-                      'Collected: ${_formatDateTime(feature.collectedAt!)}',
+                    _TimelineRow(
+                      label: 'Collected',
+                      value: _formatDateTime(feature.collectedAt!),
                     ),
                   if (feature.submittedAt != null)
-                    Text(
-                      'Submitted: ${_formatDateTime(feature.submittedAt!)}',
+                    _TimelineRow(
+                      label: 'Submitted',
+                      value: _formatDateTime(feature.submittedAt!),
                     ),
                   if (feature.reviewedAt != null)
-                    Text(
-                      'Reviewed: ${_formatDateTime(feature.reviewedAt!)}',
+                    _TimelineRow(
+                      label: 'Reviewed',
+                      value: _formatDateTime(feature.reviewedAt!),
                     ),
                 ],
               ),
@@ -3463,22 +3537,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             if (feature.attributes.isNotEmpty)
               _DetailSection(
                 title: 'Attributes',
-                child: Column(
-                  children: feature.attributes.entries
-                      .map(
-                        (entry) => ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(entry.key),
-                          subtitle: Text('${entry.value}'),
-                        ),
-                      )
-                      .toList(growable: false),
-                ),
+                child: _FeatureAttributesGrid(attributes: feature.attributes),
               ),
             if (feature.reviewNotes?.trim().isNotEmpty == true)
               _DetailSection(
                 title: 'Review notes',
-                child: Text(feature.reviewNotes!),
+                child: Text(feature.reviewNotes!, softWrap: true),
               ),
             _DetailSection(
               title: 'Photos',
@@ -3533,7 +3597,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     ),
                   ],
                 ),
-              ),
+                    ),
             if (canReview && feature.status != 'draft')
               Padding(
                 padding: const EdgeInsets.only(top: AppSpacing.md),
@@ -3550,11 +3614,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           onSuccess: () => Navigator.of(sheetContext).pop(),
                         ),
                         icon: const Icon(Icons.check_circle_outline),
-                        label: Text(
-                          feature.status == 'rejected'
-                              ? 'Re-approve'
-                              : 'Approve',
-                        ),
+                        label: const Text('Approve feature'),
                       ),
                     if (feature.status == 'pending_review' ||
                         feature.status == 'approved')
@@ -3565,7 +3625,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           onSuccess: () => Navigator.of(sheetContext).pop(),
                         ),
                         icon: const Icon(Icons.cancel_outlined),
-                        label: const Text('Reject'),
+                        label: const Text('Reject feature'),
                       ),
                   ],
                 ),
@@ -5702,10 +5762,15 @@ class _OfflineTileAssets {
 }
 
 class _MapReviewNoteDialog extends StatefulWidget {
-  const _MapReviewNoteDialog({required this.title, required this.hint});
+  const _MapReviewNoteDialog({
+    required this.title,
+    required this.hint,
+    required this.submitLabel,
+  });
 
   final String title;
   final String hint;
+  final String submitLabel;
 
   @override
   State<_MapReviewNoteDialog> createState() => _MapReviewNoteDialogState();
@@ -5748,7 +5813,7 @@ class _MapReviewNoteDialogState extends State<_MapReviewNoteDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
-        FilledButton(onPressed: _submit, child: const Text('Save')),
+        FilledButton(onPressed: _submit, child: Text(widget.submitLabel)),
       ],
     );
   }
@@ -5881,14 +5946,143 @@ class _DetailSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.md),
-      child: Column(
+      child: AppCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TimelineRow extends StatelessWidget {
+  const _TimelineRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: AppSpacing.xs),
-          child,
+          SizedBox(
+            width: 82,
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              value,
+              style: Theme.of(context).textTheme.bodyMedium,
+              softWrap: true,
+            ),
+          ),
         ],
       ),
     );
   }
+}
+
+class _FeatureAttributesGrid extends StatelessWidget {
+  const _FeatureAttributesGrid({required this.attributes});
+
+  final Map<String, dynamic> attributes;
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = attributes.entries.toList(growable: false)
+      ..sort((left, right) => left.key.compareTo(right.key));
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 520 ? 2 : 1;
+        final itemWidth = columns == 1
+            ? constraints.maxWidth
+            : (constraints.maxWidth - 12) / 2;
+        return Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            for (final entry in entries)
+              SizedBox(
+                width: itemWidth,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.outlineVariant.withValues(alpha: 0.36),
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _projectMapLabelizeAttributeKey(entry.key),
+                          style: Theme.of(context).textTheme.labelMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                          softWrap: true,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _projectMapFormatAttributeValue(entry.value),
+                          style: Theme.of(context).textTheme.bodyMedium,
+                          softWrap: true,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+String _projectMapLabelizeAttributeKey(String key) {
+  return key
+      .replaceAll('_', ' ')
+      .split(' ')
+      .where((part) => part.isNotEmpty)
+      .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
+      .join(' ');
+}
+
+String _projectMapFormatAttributeValue(Object? value) {
+  if (value == null) {
+    return 'Not provided';
+  }
+  if (value is List) {
+    return value.map((item) => item.toString()).join(', ');
+  }
+  if (value is Map) {
+    return value.entries.map((entry) => '${entry.key}: ${entry.value}').join(', ');
+  }
+  return value.toString();
 }

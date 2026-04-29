@@ -132,6 +132,7 @@ class ApiMapRepository {
     String? search,
     String? status,
     String? geometryType,
+    String? featureType,
     int page = 1,
     int limit = 20,
   }) async {
@@ -145,6 +146,8 @@ class ApiMapRepository {
           if (status?.trim().isNotEmpty ?? false) 'status': status!.trim(),
           if (geometryType?.trim().isNotEmpty ?? false)
             'geometry_type': geometryType!.trim(),
+          if (featureType?.trim().isNotEmpty ?? false)
+            'feature_type': featureType!.trim(),
         },
       );
 

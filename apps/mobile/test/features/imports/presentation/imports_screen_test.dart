@@ -192,6 +192,7 @@ class _FakeImportsRepository implements ImportsRepository {
     String? status,
     String? issue,
     String? search,
+    String? featureType,
     String? geometryType,
     int page = 1,
     int limit = 20,

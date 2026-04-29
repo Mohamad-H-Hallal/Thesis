@@ -26,6 +26,7 @@ class ImportedFeatureListQuery {
     this.issue,
     this.search,
     this.geometryType,
+    this.featureType,
   });
 
   final String importId;
@@ -33,6 +34,7 @@ class ImportedFeatureListQuery {
   final String? issue;
   final String? search;
   final String? geometryType;
+  final String? featureType;
 
   @override
   bool operator ==(Object other) {
@@ -41,12 +43,13 @@ class ImportedFeatureListQuery {
         other.status == status &&
         other.issue == issue &&
         other.search == search &&
-        other.geometryType == geometryType;
+        other.geometryType == geometryType &&
+        other.featureType == featureType;
   }
 
   @override
   int get hashCode =>
-      Object.hash(importId, status, issue, search, geometryType);
+      Object.hash(importId, status, issue, search, geometryType, featureType);
 }
 
 class GisImportJob {

@@ -249,6 +249,7 @@ class MockImportsRepository implements ImportsRepository {
     String? issue,
     String? search,
     String? geometryType,
+    String? featureType,
     int page = 1,
     int limit = 20,
   }) async {
@@ -276,6 +277,18 @@ class MockImportsRepository implements ImportsRepository {
               _ => itemType == normalized,
             };
             if (!matches) {
+              return false;
+            }
+          }
+          if (featureType != null && featureType.trim().isNotEmpty) {
+            final normalizedFeatureType = featureType.trim().toLowerCase();
+            final matchingValues = item.attributes.entries
+                .where(
+                  (entry) => _looksLikeFeatureTypeField(entry.key, entry.key),
+                )
+                .map((entry) => '${entry.value}'.trim().toLowerCase())
+                .where((value) => value.isNotEmpty);
+            if (!matchingValues.contains(normalizedFeatureType)) {
               return false;
             }
           }
@@ -486,4 +499,13 @@ class MockImportsRepository implements ImportsRepository {
   @override
   Future<String> downloadImport(String importId) async =>
       '/mock/imports/$importId.zip';
+}
+
+bool _looksLikeFeatureTypeField(String key, String label) {
+  final normalized = '${key.toLowerCase()} ${label.toLowerCase()}';
+  return normalized.contains('type') ||
+      normalized.contains('species') ||
+      normalized.contains('crop') ||
+      normalized.contains('tree') ||
+      normalized.contains('orchard');
 }

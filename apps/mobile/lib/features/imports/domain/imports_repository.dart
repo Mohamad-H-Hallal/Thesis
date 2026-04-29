@@ -57,6 +57,7 @@ abstract class ImportsRepository {
     String? issue,
     String? search,
     String? geometryType,
+    String? featureType,
     int page = 1,
     int limit = 20,
   });

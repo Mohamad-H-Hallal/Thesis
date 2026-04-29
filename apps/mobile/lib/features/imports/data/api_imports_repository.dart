@@ -337,6 +337,7 @@ class ApiImportsRepository implements ImportsRepository {
     String? issue,
     String? search,
     String? geometryType,
+    String? featureType,
     int page = 1,
     int limit = 20,
   }) async {
@@ -351,6 +352,8 @@ class ApiImportsRepository implements ImportsRepository {
           if (search?.trim().isNotEmpty ?? false) 'search': search!.trim(),
           if (geometryType?.trim().isNotEmpty ?? false)
             'geometry_type': geometryType!.trim(),
+          if (featureType?.trim().isNotEmpty ?? false)
+            'feature_type': featureType!.trim(),
         },
       );
       final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
