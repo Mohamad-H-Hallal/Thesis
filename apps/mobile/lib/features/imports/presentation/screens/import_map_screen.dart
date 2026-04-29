@@ -4188,55 +4188,70 @@ class _ImportClusterPin extends StatelessWidget {
   Widget build(BuildContext context) {
     final borderColor = isFocused ? Colors.black87 : Colors.white;
     final borderWidth = isFocused ? 2.4 : 1.8;
+    final isGrouped = count > 1;
     return Center(
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-              border: Border.all(color: borderColor, width: borderWidth),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x33000000),
-                  blurRadius: 6,
-                  offset: Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Icon(icon, color: Colors.white, size: 14),
-          ),
-          if (count > 1)
-            Positioned(
-              right: -8,
-              top: -8,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      child: SizedBox(
+        width: 38,
+        height: 38,
+        child: Stack(
+          alignment: Alignment.center,
+          clipBehavior: Clip.none,
+          children: [
+            if (isGrouped)
+              Container(
+                width: 36,
+                height: 36,
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surface,
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: color, width: 1.5),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x24000000),
-                      blurRadius: 4,
-                      offset: Offset(0, 1),
-                    ),
-                  ],
-                ),
-                child: Text(
-                  '$count',
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: color,
-                    fontWeight: FontWeight.w700,
+                  shape: BoxShape.circle,
+                  color: color.withValues(alpha: 0.16),
+                  border: Border.all(
+                    color: color.withValues(alpha: 0.42),
+                    width: 1.8,
                   ),
                 ),
               ),
+            if (isGrouped)
+              Container(
+                width: 31,
+                height: 31,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: color.withValues(alpha: 0.11),
+                ),
+              ),
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+                border: Border.all(color: borderColor, width: borderWidth),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x33000000),
+                    blurRadius: 6,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Icon(icon, color: Colors.white, size: 14),
             ),
-        ],
+            if (isGrouped)
+              Positioned(
+                right: 1,
+                top: 1,
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: color, width: 1.4),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

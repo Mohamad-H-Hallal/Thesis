@@ -1,6 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const rateLimit = require('express-rate-limit');
 const importController = require('../controllers/import.controller');
 const { authenticate } = require('../middleware/auth');
 const {
@@ -14,24 +13,11 @@ const {
 const { asyncHandler } = require('../middleware/error');
 const { uploadImportFile } = require('../config/upload');
 import { auditAction, auditDynamicAction } from '../middleware/audit';
-import { validateEnv } from '../config/env';
-
-const env = validateEnv();
-
-const importReadLimiter = rateLimit({
-  windowMs: env.RATE_LIMIT_WINDOW_MS,
-  max: env.RATE_LIMIT_MAP_READ_MAX_REQUESTS,
-  message: 'Too many import read requests, please slow down',
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => req.user?.id ?? req.ip,
-});
 
 router.use(authenticate);
 
 router.get(
   '/',
-  importReadLimiter,
   importValidation.list,
   paginationValidation,
   validate,
@@ -53,7 +39,6 @@ router.post(
 
 router.get(
   '/:importId',
-  importReadLimiter,
   uuidValidation('importId'),
   validate,
   asyncHandler(importController.getImportDetails),
@@ -61,7 +46,6 @@ router.get(
 
 router.get(
   '/:importId/map',
-  importReadLimiter,
   uuidValidation('importId'),
   bboxValidation,
   validate,
@@ -70,7 +54,6 @@ router.get(
 
 router.get(
   '/:importId/tiles/:z/:x/:y',
-  importReadLimiter,
   uuidValidation('importId'),
   tileParamValidation,
   validate,
@@ -79,7 +62,6 @@ router.get(
 
 router.get(
   '/:importId/download',
-  importReadLimiter,
   uuidValidation('importId'),
   validate,
   asyncHandler(importController.downloadImport),
@@ -87,7 +69,6 @@ router.get(
 
 router.get(
   '/:importId/comments',
-  importReadLimiter,
   uuidValidation('importId'),
   validate,
   asyncHandler(importController.listImportComments),
@@ -95,7 +76,6 @@ router.get(
 
 router.get(
   '/:importId/features/:featureId',
-  importReadLimiter,
   uuidValidation('importId'),
   uuidValidation('featureId'),
   validate,
@@ -120,7 +100,6 @@ router.post(
 
 router.get(
   '/:importId/features',
-  importReadLimiter,
   uuidValidation('importId'),
   importValidation.listFeatures,
   paginationValidation,

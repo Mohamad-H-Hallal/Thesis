@@ -3,6 +3,8 @@ const bcrypt = require('bcryptjs');
 const request = require('supertest');
 const { Pool } = require('pg');
 const { applyTestEnvDefaults } = require('../../src/config/testEnv');
+applyTestEnvDefaults();
+
 const { buildApp } = require('../../src/app');
 const { closePool } = require('../../src/config/database');
 const { validateEnv } = require('../../src/config/env');
@@ -12,7 +14,6 @@ const {
 } = require('../../src/controllers/import.controller');
 
 const API_PREFIX = process.env.API_PREFIX || '/api/v1';
-applyTestEnvDefaults();
 
 const testEnv = {
   ...validateEnv(),
