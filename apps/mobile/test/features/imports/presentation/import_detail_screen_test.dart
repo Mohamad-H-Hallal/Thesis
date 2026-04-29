@@ -137,6 +137,7 @@ class _FakeImportsRepository implements ImportsRepository {
     required double maxLon,
     required double maxLat,
     required double zoom,
+    int cacheRevision = 0,
   }) async => const ImportMapData(
     stagedFeatures: <ImportedFeature>[],
     approvedProjectFeatures: <MapFeatureSummary>[],

@@ -8,6 +8,7 @@ const {
   paginationValidation,
   uuidValidation,
   bboxValidation,
+  tileParamValidation,
 } = require('../middleware/validation');
 const { asyncHandler } = require('../middleware/error');
 const { uploadImportFile } = require('../config/upload');
@@ -49,6 +50,14 @@ router.get(
   bboxValidation,
   validate,
   asyncHandler(importController.getImportMapData),
+);
+
+router.get(
+  '/:importId/tiles/:z/:x/:y',
+  uuidValidation('importId'),
+  tileParamValidation,
+  validate,
+  asyncHandler(importController.getImportMapTileData),
 );
 
 router.get(

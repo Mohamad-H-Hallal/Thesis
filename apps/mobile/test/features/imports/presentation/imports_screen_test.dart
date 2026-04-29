@@ -157,6 +157,7 @@ class _FakeImportsRepository implements ImportsRepository {
     required double maxLon,
     required double maxLat,
     required double zoom,
+    int cacheRevision = 0,
   }) {
     throw UnimplementedError();
   }

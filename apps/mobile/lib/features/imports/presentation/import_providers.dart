@@ -69,7 +69,7 @@ final paginatedImportFeaturesProvider = StateNotifierProvider.autoDispose
 
 final importMapDataProvider = FutureProvider.autoDispose
     .family<ImportMapData, ImportMapQuery>((ref, query) async {
-      ref.watch(workflowRefreshTickProvider);
+      final refreshTick = ref.watch(workflowRefreshTickProvider);
       return ref
           .read(importsRepositoryProvider)
           .fetchImportMapData(
@@ -80,6 +80,7 @@ final importMapDataProvider = FutureProvider.autoDispose
             maxLon: query.maxLon,
             maxLat: query.maxLat,
             zoom: query.zoom,
+            cacheRevision: refreshTick,
           );
     });
 

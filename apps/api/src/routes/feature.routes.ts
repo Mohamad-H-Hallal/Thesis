@@ -8,6 +8,8 @@ const {
   paginationValidation,
   bboxValidation,
   bboxPaginationValidation,
+  tileParamValidation,
+  tileFeatureQueryValidation,
   uuidValidation,
 } = require('../middleware/validation');
 const { asyncHandler } = require('../middleware/error');
@@ -29,6 +31,9 @@ router.get('/nearby', asyncHandler(featureController.findFeaturesNearby));
 
 // Spatial query: BBOX for map rendering
 router.get('/bbox', bboxValidation, bboxPaginationValidation, validate, asyncHandler(featureController.findFeaturesByBbox));
+
+// Spatial query: XYZ tile delivery for map rendering
+router.get('/tiles/:z/:x/:y', tileParamValidation, tileFeatureQueryValidation, validate, asyncHandler(featureController.findFeaturesTile));
 
 // Create new feature
 router.post(

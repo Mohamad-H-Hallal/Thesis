@@ -94,6 +94,26 @@ const parseViewportBounds = (input: {
   return { minLon, minLat, maxLon, maxLat };
 };
 
+const getTileBounds = (zRaw: unknown, xRaw: unknown, yRaw: unknown) => {
+  const z = Math.max(0, Math.min(22, Number.parseInt(String(zRaw ?? '0'), 10) || 0));
+  const tilesPerAxis = 2 ** z;
+  const x = Math.max(0, Math.min(tilesPerAxis - 1, Number.parseInt(String(xRaw ?? '0'), 10) || 0));
+  const y = Math.max(0, Math.min(tilesPerAxis - 1, Number.parseInt(String(yRaw ?? '0'), 10) || 0));
+
+  const lonFromX = (tileX: number): number => (tileX / tilesPerAxis) * 360 - 180;
+  const latFromY = (tileY: number): number => {
+    const mercator = Math.PI * (1 - (2 * tileY) / tilesPerAxis);
+    return (180 / Math.PI) * Math.atan(Math.sinh(mercator));
+  };
+
+  return {
+    minLon: lonFromX(x),
+    minLat: latFromY(y + 1),
+    maxLon: lonFromX(x + 1),
+    maxLat: latFromY(y),
+  };
+};
+
 const mapRenderGeometrySql = (
   geometrySql: string,
   zoom: number,
@@ -1986,6 +2006,30 @@ const getImportMapData = async (req: Request, res: Response): Promise<void> => {
     maxLat: req.query.maxLat,
   });
   const zoom = normalizeMapZoom(req.query.zoom, 11);
+  const mapData = await fetchImportMapLayerData({
+    importId,
+    projectId: job.project_id,
+    bounds,
+    zoom,
+  });
+
+  res.json({
+    success: true,
+    data: mapData,
+  });
+};
+
+const fetchImportMapLayerData = async ({
+  importId,
+  projectId,
+  bounds,
+  zoom,
+}: {
+  importId: string;
+  projectId: string;
+  bounds: { minLon: number; minLat: number; maxLon: number; maxLat: number };
+  zoom: number;
+}) => {
   const simplifyTolerance = mapSimplifyTolerance(zoom);
   const stagedGeometrySql = mapRenderGeometrySql('gif.geom', zoom, simplifyTolerance);
   const projectGeometrySql = mapRenderGeometrySql('sf.geom', zoom, simplifyTolerance);
@@ -2046,7 +2090,7 @@ const getImportMapData = async (req: Request, res: Response): Promise<void> => {
        AND sf.geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
      ORDER BY sf.reviewed_at DESC NULLS LAST, sf.submitted_at DESC NULLS LAST, sf.id ASC`,
     [
-      job.project_id,
+      projectId,
       bounds.minLon,
       bounds.minLat,
       bounds.maxLon,
@@ -2054,14 +2098,29 @@ const getImportMapData = async (req: Request, res: Response): Promise<void> => {
     ],
   );
 
+  return {
+    staged_features: stagedResult.rows.map((row) =>
+      mapImportMapFeatureRow(row as ImportFeatureRow),
+    ),
+    approved_project_features: approvedProjectResult.rows.map(mapImportMapProjectFeatureRow),
+  };
+};
+
+const getImportMapTileData = async (req: Request, res: Response): Promise<void> => {
+  const importId = req.params.importId;
+  const job = await fetchImportJobWithAccess(importId, req.user as Express.UserContext);
+  const zoom = normalizeMapZoom(req.params.z, 11);
+  const bounds = getTileBounds(req.params.z, req.params.x, req.params.y);
+  const data = await fetchImportMapLayerData({
+    importId,
+    projectId: job.project_id,
+    bounds,
+    zoom,
+  });
+
   res.json({
     success: true,
-    data: {
-      staged_features: stagedResult.rows.map((row) =>
-        mapImportMapFeatureRow(row as ImportFeatureRow),
-      ),
-      approved_project_features: approvedProjectResult.rows.map(mapImportMapProjectFeatureRow),
-    },
+    data,
   });
 };
 
@@ -2661,6 +2720,7 @@ module.exports = {
   listImports,
   getImportDetails,
   getImportMapData,
+  getImportMapTileData,
   getImportFeatureDetails,
   listImportFeatures,
   uploadImport,

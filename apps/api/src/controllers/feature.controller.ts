@@ -23,6 +23,13 @@ interface Pagination {
   offset: number;
 }
 
+interface TileBounds {
+  minLon: number;
+  minLat: number;
+  maxLon: number;
+  maxLat: number;
+}
+
 interface FormSchemaField {
   key?: string;
   name?: string;
@@ -69,6 +76,26 @@ const getBboxPagination = (pageRaw: unknown, limitRaw: unknown): Pagination => {
   const limit = Math.min(requestedLimit, MAX_BBOX_PAGE_LIMIT);
   const offset = (page - 1) * limit;
   return { page, limit, offset };
+};
+
+const getTileBounds = (zRaw: unknown, xRaw: unknown, yRaw: unknown): TileBounds => {
+  const z = Math.max(0, Math.min(22, Number.parseInt(String(zRaw ?? '0'), 10) || 0));
+  const tilesPerAxis = 2 ** z;
+  const x = Math.max(0, Math.min(tilesPerAxis - 1, Number.parseInt(String(xRaw ?? '0'), 10) || 0));
+  const y = Math.max(0, Math.min(tilesPerAxis - 1, Number.parseInt(String(yRaw ?? '0'), 10) || 0));
+
+  const lonFromX = (tileX: number): number => (tileX / tilesPerAxis) * 360 - 180;
+  const latFromY = (tileY: number): number => {
+    const mercator = Math.PI * (1 - (2 * tileY) / tilesPerAxis);
+    return (180 / Math.PI) * Math.atan(Math.sinh(mercator));
+  };
+
+  return {
+    minLon: lonFromX(x),
+    minLat: latFromY(y + 1),
+    maxLon: lonFromX(x + 1),
+    maxLat: latFromY(y),
+  };
 };
 
 const mapRenderGeometrySql = (
@@ -182,6 +209,20 @@ const hasProjectAccess = async (projectId: string, user: Express.UserContext): P
   );
 
   return accessCheck.rows.length > 0;
+};
+
+const hasViewerProjectAccess = async (projectId: string): Promise<boolean> => {
+  const result = await query(
+    `SELECT 1
+     FROM project
+     WHERE id = $1
+       AND visible_to_viewers = TRUE
+       AND status != 'archived'
+     LIMIT 1`,
+    [projectId]
+  );
+
+  return result.rows.length > 0;
 };
 
 const hasProjectAdminAccess = async (projectId: string, user: Express.UserContext): Promise<boolean> => {
@@ -969,7 +1010,8 @@ const findFeaturesByBbox = async (req: Request, res: Response): Promise<void> =>
   const maxLon = Number.parseFloat(String(req.query.maxLon));
   const maxLat = Number.parseFloat(String(req.query.maxLat));
   const projectId = req.query.project_id ? String(req.query.project_id) : null;
-  const status = req.query.status ? String(req.query.status) : null;
+  const requestedStatus = req.query.status ? String(req.query.status) : null;
+  const status = req.user?.role === 'viewer' ? 'approved' : requestedStatus;
   const zoom = normalizeMapZoom(req.query.zoom, 11);
   const simplifyTolerance = mapSimplifyTolerance(zoom);
   const { page, limit, offset } = getBboxPagination(req.query.page, req.query.limit);
@@ -982,10 +1024,17 @@ const findFeaturesByBbox = async (req: Request, res: Response): Promise<void> =>
     throw new AppError('Invalid BBOX boundaries: min values must be less than max values', 400);
   }
 
-  if (projectId && req.user?.role !== 'admin') {
-    const canAccessProject = await hasProjectAccess(projectId, req.user as Express.UserContext);
-    if (!canAccessProject) {
-      throw new AppError('You do not have access to this project', 403);
+  if (projectId) {
+    if (req.user?.role === 'viewer') {
+      const canAccessProject = await hasViewerProjectAccess(projectId);
+      if (!canAccessProject) {
+        throw new AppError('You do not have access to this project', 403);
+      }
+    } else if (req.user?.role !== 'admin') {
+      const canAccessProject = await hasProjectAccess(projectId, req.user as Express.UserContext);
+      if (!canAccessProject) {
+        throw new AppError('You do not have access to this project', 403);
+      }
     }
   }
 
@@ -1097,6 +1146,113 @@ const findFeaturesByBbox = async (req: Request, res: Response): Promise<void> =>
   });
 };
 
+const findFeaturesTile = async (req: Request, res: Response): Promise<void> => {
+  const projectId = String(req.query.project_id ?? '');
+  const requestedStatus = req.query.status ? String(req.query.status) : null;
+  const status = req.user?.role === 'viewer' ? 'approved' : requestedStatus;
+  const zoom = normalizeMapZoom(req.params.z, 11);
+  const simplifyTolerance = mapSimplifyTolerance(zoom);
+  const bounds = getTileBounds(req.params.z, req.params.x, req.params.y);
+
+  if (req.user?.role === 'viewer') {
+    const canAccessProject = await hasViewerProjectAccess(projectId);
+    if (!canAccessProject) {
+      throw new AppError('You do not have access to this project', 403);
+    }
+  } else if (req.user?.role !== 'admin') {
+    const canAccessProject = await hasProjectAccess(projectId, req.user as Express.UserContext);
+    if (!canAccessProject) {
+      throw new AppError('You do not have access to this project', 403);
+    }
+  }
+
+  const whereClauses: string[] = [
+    'sf.geom && ST_MakeEnvelope($1, $2, $3, $4, 4326)',
+    'sf.project_id = $5',
+  ];
+  const params: unknown[] = [
+    bounds.minLon,
+    bounds.minLat,
+    bounds.maxLon,
+    bounds.maxLat,
+    projectId,
+  ];
+  let paramIndex = 6;
+
+  if (status) {
+    whereClauses.push(`sf.status = $${paramIndex}`);
+    params.push(status);
+    paramIndex += 1;
+  }
+
+  if (req.user?.role === 'contributor') {
+    whereClauses.push(`
+      EXISTS (
+        SELECT 1
+        FROM project_assignment pa
+        WHERE pa.project_id = sf.project_id
+          AND pa.user_id = $${paramIndex}
+          AND pa.status = 'approved'
+      )
+    `);
+    params.push(req.user.id);
+  }
+
+  const geometrySql = mapRenderGeometrySql('sf.geom', zoom, simplifyTolerance);
+  const result = await query(
+    `SELECT sf.id,
+            sf.project_id,
+            sf.status,
+            sf.attributes,
+            GeometryType(sf.geom) AS source_geometry_type,
+            sf.collected_at,
+            sf.submitted_at,
+            sf.reviewed_at,
+            sf.review_notes,
+            sf.version,
+            collector.full_name AS collected_by,
+            reviewer.full_name AS reviewed_by,
+            (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) AS photo_count,
+            ${geometrySql} AS geometry
+     FROM spatial_feature sf
+     LEFT JOIN "user" collector ON collector.id = sf.collected_by_user_id
+     LEFT JOIN "user" reviewer ON reviewer.id = sf.reviewed_by_user_id
+     WHERE ${whereClauses.join(' AND ')}
+     ORDER BY sf.collected_at DESC`,
+    params,
+  );
+
+  const features = result.rows.map((row: any) => ({
+    type: 'Feature',
+    id: row.id,
+    geometry: JSON.parse(row.geometry),
+    properties: {
+      project_id: row.project_id,
+      status: row.status,
+      attributes: row.attributes,
+      source_geometry_type: row.source_geometry_type,
+      collected_at: row.collected_at,
+      submitted_at: row.submitted_at,
+      reviewed_at: row.reviewed_at,
+      review_notes: row.review_notes,
+      collected_by: row.collected_by,
+      reviewed_by: row.reviewed_by,
+      photo_count: Number(row.photo_count ?? 0),
+      version: row.version,
+      is_summary: true,
+    },
+  }));
+
+  res.json({
+    success: true,
+    data: {
+      type: 'FeatureCollection',
+      bbox: [bounds.minLon, bounds.minLat, bounds.maxLon, bounds.maxLat],
+      features,
+    },
+  });
+};
+
 const batchCreateFeatures = async (req: Request, res: Response): Promise<void> => {
   const { features } = req.body;
 
@@ -1198,6 +1354,7 @@ module.exports = {
   reviewFeature,
   findFeaturesNearby,
   findFeaturesByBbox,
+  findFeaturesTile,
   batchCreateFeatures,
 };
 

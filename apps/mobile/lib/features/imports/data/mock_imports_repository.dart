@@ -159,6 +159,7 @@ class MockImportsRepository implements ImportsRepository {
     required double maxLon,
     required double maxLat,
     required double zoom,
+    int cacheRevision = 0,
   }) async {
     return ImportMapData(
       stagedFeatures: (_features[importId] ?? const <ImportedFeature>[])

@@ -33,6 +33,7 @@ abstract class ImportsRepository {
     required double maxLon,
     required double maxLat,
     required double zoom,
+    int cacheRevision = 0,
   });
 
   Future<ImportedFeature> fetchImportFeatureById({

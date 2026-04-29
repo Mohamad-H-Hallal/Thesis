@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -7,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../../../core/config/app_env.dart';
+import '../../../core/maps/tile_query.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_error_message.dart';
 import '../../../core/pagination/paginated_result.dart';
@@ -18,6 +20,10 @@ class ApiImportsRepository implements ImportsRepository {
   ApiImportsRepository(this._apiClient);
 
   final ApiClient _apiClient;
+  final LinkedHashMap<String, ImportMapData> _importTileCache =
+      LinkedHashMap<String, ImportMapData>();
+  static const int _importTileCacheMaxEntries = 192;
+  int _importTileCacheRevision = 0;
 
   String get _basePath => '${AppEnv.apiVersionPrefix}/imports';
 
@@ -163,37 +169,44 @@ class ApiImportsRepository implements ImportsRepository {
     required double maxLon,
     required double maxLat,
     required double zoom,
+    int cacheRevision = 0,
   }) async {
+    if (_importTileCacheRevision != cacheRevision) {
+      _importTileCacheRevision = cacheRevision;
+      _importTileCache.clear();
+    }
     try {
-      final response = await _apiClient.dio.get<Map<String, dynamic>>(
-        '$_basePath/$importId/map',
-        queryParameters: <String, dynamic>{
-          'project_id': projectId,
-          'minLon': minLon,
-          'minLat': minLat,
-          'maxLon': maxLon,
-          'maxLat': maxLat,
-          'zoom': zoom,
-        },
+      final tiles = buildVisibleTileQueries(
+        minLon: minLon,
+        minLat: minLat,
+        maxLon: maxLon,
+        maxLat: maxLat,
+        zoom: zoom,
       );
-      final data = Map<String, dynamic>.from(
-        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      final tileResults = await Future.wait(
+        tiles.map(
+          (tile) => _fetchImportMapTile(
+            importId: importId,
+            projectId: projectId,
+            z: tile.z,
+            x: tile.x,
+            y: tile.y,
+          ),
+        ),
       );
-      final stagedRows = (data['staged_features'] as List? ?? const <dynamic>[])
-          .map(
-            (row) => _toImportedFeature(Map<String, dynamic>.from(row as Map)),
-          )
-          .toList(growable: false);
-      final approvedRows =
-          (data['approved_project_features'] as List? ?? const <dynamic>[])
-              .map(
-                (row) =>
-                    _toProjectFeature(Map<String, dynamic>.from(row as Map)),
-              )
-              .toList(growable: false);
+      final stagedRows = <String, ImportedFeature>{};
+      final approvedRows = <String, MapFeatureSummary>{};
+      for (final tile in tileResults) {
+        for (final feature in tile.stagedFeatures) {
+          stagedRows.putIfAbsent(feature.id, () => feature);
+        }
+        for (final feature in tile.approvedProjectFeatures) {
+          approvedRows.putIfAbsent(feature.id, () => feature);
+        }
+      }
       return ImportMapData(
-        stagedFeatures: stagedRows,
-        approvedProjectFeatures: approvedRows,
+        stagedFeatures: stagedRows.values.toList(growable: false),
+        approvedProjectFeatures: approvedRows.values.toList(growable: false),
       );
     } on DioException catch (error) {
       throw userFacingDioMessage(
@@ -201,6 +214,41 @@ class ApiImportsRepository implements ImportsRepository {
         fallback: 'Unable to load the import map right now.',
       );
     }
+  }
+
+  Future<ImportMapData> _fetchImportMapTile({
+    required String importId,
+    required String projectId,
+    required int z,
+    required int x,
+    required int y,
+  }) async {
+    final cacheKey = '$importId:$projectId:$z:$x:$y';
+    final cached = _importTileCache.remove(cacheKey);
+    if (cached != null) {
+      _importTileCache[cacheKey] = cached;
+      return cached;
+    }
+    final response = await _apiClient.dio.get<Map<String, dynamic>>(
+      '$_basePath/$importId/tiles/$z/$x/$y',
+      queryParameters: <String, dynamic>{'project_id': projectId},
+    );
+    final data = Map<String, dynamic>.from(
+      response.data?['data'] as Map? ?? const <String, dynamic>{},
+    );
+    final stagedRows = (data['staged_features'] as List? ?? const <dynamic>[])
+        .map((row) => _toImportedFeature(Map<String, dynamic>.from(row as Map)))
+        .toList(growable: false);
+    final approvedRows =
+        (data['approved_project_features'] as List? ?? const <dynamic>[])
+            .map((row) => _toProjectFeature(Map<String, dynamic>.from(row as Map)))
+            .toList(growable: false);
+    final tileData = ImportMapData(
+      stagedFeatures: stagedRows,
+      approvedProjectFeatures: approvedRows,
+    );
+    _rememberImportTile(cacheKey, tileData);
+    return tileData;
   }
 
   @override
@@ -630,5 +678,12 @@ class ApiImportsRepository implements ImportsRepository {
     }
 
     return null;
+  }
+
+  void _rememberImportTile(String cacheKey, ImportMapData data) {
+    _importTileCache[cacheKey] = data;
+    while (_importTileCache.length > _importTileCacheMaxEntries) {
+      _importTileCache.remove(_importTileCache.keys.first);
+    }
   }
 }

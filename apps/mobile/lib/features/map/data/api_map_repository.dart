@@ -1,5 +1,8 @@
+import 'dart:collection';
+
 import 'package:dio/dio.dart';
 
+import '../../../core/maps/tile_query.dart';
 import '../../../core/offline/local_models.dart';
 import '../../../core/config/app_env.dart';
 import '../../../core/network/api_error_message.dart';
@@ -11,6 +14,10 @@ class ApiMapRepository {
   ApiMapRepository(this._apiClient);
 
   final ApiClient _apiClient;
+  final LinkedHashMap<String, List<MapFeatureSummary>> _projectTileCache =
+      LinkedHashMap<String, List<MapFeatureSummary>>();
+  static const int _projectTileCacheMaxEntries = 192;
+  int _projectTileCacheRevision = 0;
 
   Future<List<MapFeatureSummary>> fetchProjectFeatures(String projectId) async {
     final page = await fetchProjectFeaturesPage(projectId: projectId, limit: 100);
@@ -24,35 +31,37 @@ class ApiMapRepository {
     required double maxLon,
     required double maxLat,
     required double zoom,
+    int cacheRevision = 0,
   }) async {
+    if (_projectTileCacheRevision != cacheRevision) {
+      _projectTileCacheRevision = cacheRevision;
+      _projectTileCache.clear();
+    }
     try {
-      final response = await _apiClient.dio.get<Map<String, dynamic>>(
-        '${AppEnv.apiVersionPrefix}/features/bbox',
-        queryParameters: <String, dynamic>{
-          'project_id': projectId,
-          'minLon': minLon,
-          'minLat': minLat,
-          'maxLon': maxLon,
-          'maxLat': maxLat,
-          'zoom': zoom,
-          'page': 1,
-          'limit': 20000,
-        },
+      final tiles = buildVisibleTileQueries(
+        minLon: minLon,
+        minLat: minLat,
+        maxLon: maxLon,
+        maxLat: maxLat,
+        zoom: zoom,
       );
-      final payload = response.data ?? const <String, dynamic>{};
-      final featureCollection = Map<String, dynamic>.from(
-        payload['data'] as Map? ?? const <String, dynamic>{},
+      final tileResults = await Future.wait(
+        tiles.map(
+          (tile) => fetchProjectFeatureTile(
+            projectId: projectId,
+            z: tile.z,
+            x: tile.x,
+            y: tile.y,
+          ),
+        ),
       );
-      final rows =
-          (featureCollection['features'] as List? ?? const <dynamic>[])
-              .cast<Map>();
-      return rows
-          .map(
-            (row) => _toViewportFeature(
-              Map<String, dynamic>.from(row),
-            ),
-          )
-          .toList(growable: false);
+      final merged = <String, MapFeatureSummary>{};
+      for (final features in tileResults) {
+        for (final feature in features) {
+          merged.putIfAbsent(feature.id, () => feature);
+        }
+      }
+      return merged.values.toList(growable: false);
     } on DioException catch (error) {
       throw userFacingDioMessage(
         error,
@@ -60,6 +69,40 @@ class ApiMapRepository {
             'Unable to load project map features right now. Please try again.',
       );
     }
+  }
+
+  Future<List<MapFeatureSummary>> fetchProjectFeatureTile({
+    required String projectId,
+    required int z,
+    required int x,
+    required int y,
+  }) async {
+    final cacheKey = '$projectId:$z:$x:$y';
+    final cached = _projectTileCache.remove(cacheKey);
+    if (cached != null) {
+      _projectTileCache[cacheKey] = cached;
+      return cached;
+    }
+    final response = await _apiClient.dio.get<Map<String, dynamic>>(
+      '${AppEnv.apiVersionPrefix}/features/tiles/$z/$x/$y',
+      queryParameters: <String, dynamic>{'project_id': projectId},
+    );
+    final payload = response.data ?? const <String, dynamic>{};
+    final featureCollection = Map<String, dynamic>.from(
+      payload['data'] as Map? ?? const <String, dynamic>{},
+    );
+    final rows =
+        (featureCollection['features'] as List? ?? const <dynamic>[])
+            .cast<Map>();
+    final items = rows
+        .map(
+          (row) => _toViewportFeature(
+            Map<String, dynamic>.from(row),
+          ),
+        )
+        .toList(growable: false);
+    _rememberProjectTile(cacheKey, items);
+    return items;
   }
 
   Future<PaginatedResult<MapFeatureSummary>> fetchProjectFeaturesPage({
@@ -264,5 +307,12 @@ class ApiMapRepository {
       return DateTime.tryParse(value);
     }
     return value is DateTime ? value : null;
+  }
+
+  void _rememberProjectTile(String cacheKey, List<MapFeatureSummary> items) {
+    _projectTileCache[cacheKey] = items;
+    while (_projectTileCache.length > _projectTileCacheMaxEntries) {
+      _projectTileCache.remove(_projectTileCache.keys.first);
+    }
   }
 }

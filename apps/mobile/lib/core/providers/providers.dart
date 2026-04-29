@@ -448,7 +448,7 @@ final projectMapFeaturesProvider =
 
 final projectMapViewportFeaturesProvider = FutureProvider.autoDispose
     .family<List<MapFeatureSummary>, ProjectMapViewportQuery>((ref, query) async {
-      ref.watch(workflowRefreshTickProvider);
+      final refreshTick = ref.watch(workflowRefreshTickProvider);
       if (query.projectId.isEmpty) {
         return const <MapFeatureSummary>[];
       }
@@ -476,6 +476,7 @@ final projectMapViewportFeaturesProvider = FutureProvider.autoDispose
               maxLon: query.maxLon,
               maxLat: query.maxLat,
               zoom: query.zoom,
+              cacheRevision: refreshTick,
             );
         return _mergeProjectFeatures(remoteFeatures, projectDrafts);
       } catch (error) {

@@ -458,6 +458,20 @@ const bboxPaginationValidation: ValidationChain[] = [
     .withMessage('Limit must be between 1 and 20000'),
 ];
 
+const tileParamValidation: ValidationChain[] = [
+  param('z').isInt({ min: 0, max: 22 }).withMessage('z must be between 0 and 22'),
+  param('x').isInt({ min: 0 }).withMessage('x must be a non-negative integer'),
+  param('y').isInt({ min: 0 }).withMessage('y must be a non-negative integer'),
+];
+
+const tileFeatureQueryValidation: ValidationChain[] = [
+  queryParam('project_id').isUUID().withMessage('project_id must be a valid UUID'),
+  queryParam('status')
+    .optional()
+    .isIn(['draft', 'pending_review', 'approved', 'rejected'])
+    .withMessage('Invalid status value'),
+];
+
 const bboxValidation: ValidationChain[] = [
   queryParam('minLon')
     .exists()
@@ -514,6 +528,8 @@ export {
   exportValidation,
   paginationValidation,
   bboxPaginationValidation,
+  tileParamValidation,
+  tileFeatureQueryValidation,
   bboxValidation,
   uuidValidation,
 };
