@@ -430,6 +430,60 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('import section shortcuts scroll to mounted sections', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(500, 900);
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final repository = _FakeImportsRepository(
+      details: GisImportDetails(
+        job: _job(
+          status: 'processing',
+          processingMessage: 'Processing imported features 10/13249',
+        ),
+        previewFeatures: const <ImportedFeature>[],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 0,
+          previewFeatureCount: 0,
+          outsideWorkspaceFeatureCount: 0,
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(
+            (_) => _AuthenticatedAuthController(_session()),
+          ),
+          importsRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(body: ImportDetailScreen(importId: 'import-1')),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    final scrollableState = tester.state<ScrollableState>(
+      find.byType(Scrollable).first,
+    );
+    expect(scrollableState.position.pixels, 0);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Features (1)'));
+    await tester.pumpAndSettle();
+
+    expect(scrollableState.position.pixels, greaterThan(0));
+    expect(find.text('Staged features (1)'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('contributors do not see reviewer file actions', (tester) async {
     final repository = _FakeImportsRepository(
       details: GisImportDetails(

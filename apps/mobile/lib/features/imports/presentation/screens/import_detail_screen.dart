@@ -206,171 +206,177 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
     final canDownloadImport = canModerateImport;
     final downloadedImportPath = _downloadedImportPath;
 
-    return ListView(
+    return SingleChildScrollView(
       controller: _scrollController,
-      children: [
-        _ImportSummaryCard(job: details.job),
-        const SizedBox(height: AppSpacing.md),
-        _ImportSectionNavCard(
-          commentsCount: details.comments.length,
-          stagedCount: featureState?.total ?? details.job.geometryCount,
-          onWorkspace: () => _scrollToSection(_workspaceKey),
-          onValidation: () => _scrollToSection(_validationKey),
-          onComments: () => _scrollToSection(_commentsKey),
-          onFeatures: () => _scrollToSection(_featuresKey),
-        ),
-        const SizedBox(height: AppSpacing.md),
-        _ImportWorkspaceCard(
-          key: _workspaceKey,
-          importId: widget.importId,
-          projectId: details.job.projectId,
-          job: details.job,
-          isProcessing: _isImportStillProcessing(details.job.status),
-          canDownload: canDownloadImport,
-          canComment: canModerateImport,
-          isDownloading: _isDownloading,
-          isSavingComment: _isSavingComment,
-          onDownload: _downloadImport,
-          onAddComment: canModerateImport ? _addComment : null,
-          onOpenDownloadedFile:
-              downloadedImportPath?.trim().isNotEmpty == true
-              ? () => _openDownloadedImport(downloadedImportPath!)
-              : null,
-          onShareDownloadedFile:
-              downloadedImportPath?.trim().isNotEmpty == true
-              ? () => _shareDownloadedImport(downloadedImportPath!, details)
-              : null,
-          onCopyDownloadedPath: downloadedImportPath?.trim().isNotEmpty == true
-              ? () => _copyDownloadedImportPath(downloadedImportPath!)
-              : null,
-        ),
-        const SizedBox(height: AppSpacing.md),
-        _ImportValidationCard(key: _validationKey, job: details.job),
-        const SizedBox(height: AppSpacing.md),
-        if (_isImportStillProcessing(details.job.status))
-          _ImportProcessingCard(job: details.job)
-        else
-          _ImportPreviewMapCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _ImportSummaryCard(job: details.job),
+          const SizedBox(height: AppSpacing.md),
+          _ImportSectionNavCard(
+            commentsCount: details.comments.length,
+            stagedCount: featureState?.total ?? details.job.geometryCount,
+            onWorkspace: () => _scrollToSection(_workspaceKey),
+            onValidation: () => _scrollToSection(_validationKey),
+            onComments: () => _scrollToSection(_commentsKey),
+            onFeatures: () => _scrollToSection(_featuresKey),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          _ImportWorkspaceCard(
+            key: _workspaceKey,
             importId: widget.importId,
             projectId: details.job.projectId,
-            features: details.previewFeatures,
-            previewSummary: details.previewSummary,
+            job: details.job,
+            isProcessing: _isImportStillProcessing(details.job.status),
+            canDownload: canDownloadImport,
+            canComment: canModerateImport,
+            isDownloading: _isDownloading,
+            isSavingComment: _isSavingComment,
+            onDownload: _downloadImport,
+            onAddComment: canModerateImport ? _addComment : null,
+            onOpenDownloadedFile:
+                downloadedImportPath?.trim().isNotEmpty == true
+                ? () => _openDownloadedImport(downloadedImportPath!)
+                : null,
+            onShareDownloadedFile:
+                downloadedImportPath?.trim().isNotEmpty == true
+                ? () => _shareDownloadedImport(downloadedImportPath!, details)
+                : null,
+            onCopyDownloadedPath:
+                downloadedImportPath?.trim().isNotEmpty == true
+                ? () => _copyDownloadedImportPath(downloadedImportPath!)
+                : null,
           ),
-        const SizedBox(height: AppSpacing.md),
-        if (canModerateImport && actionableFeatures.isNotEmpty)
-          _buildReviewActions(
-            context,
-            details: details,
-            selectedFeatureCount: _selectedFeatureIds.length,
-            selectedApprovableIds: selectedApprovableIds,
-            selectedRejectableIds: selectedRejectableIds,
-          ),
-        if (canModerateImport && actionableFeatures.isNotEmpty)
           const SizedBox(height: AppSpacing.md),
-        _ImportCommentsCard(
-          key: _commentsKey,
-          importId: widget.importId,
-          projectId: details.job.projectId,
-          comments: details.comments,
-        ),
-        const SizedBox(height: AppSpacing.md),
-        KeyedSubtree(
-          key: _featuresKey,
-          child: Text(
-            'Staged features (${featureState?.total ?? details.job.geometryCount})',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        if (!shouldLoadFeatures)
-          const AppCard(
-            child: Text(
-              'Staged features will appear here after processing finishes.',
-              softWrap: true,
+          _ImportValidationCard(key: _validationKey, job: details.job),
+          const SizedBox(height: AppSpacing.md),
+          if (_isImportStillProcessing(details.job.status))
+            _ImportProcessingCard(job: details.job)
+          else
+            _ImportPreviewMapCard(
+              importId: widget.importId,
+              projectId: details.job.projectId,
+              features: details.previewFeatures,
+              previewSummary: details.previewSummary,
             ),
-          )
-        else ...[
-          _ImportFeatureFiltersCard(
-            selectedStatus: _selectedStatusFilter,
-            selectedIssue: _selectedIssueFilter,
-            issueFilters: issueFilters,
-            onStatusChanged: (value) {
-              setState(() {
-                _selectedStatusFilter = value;
-                _selectedFeatureIds.clear();
-              });
-            },
-            onIssueChanged: (value) {
-              setState(() {
-                _selectedIssueFilter = value;
-                _selectedFeatureIds.clear();
-              });
-            },
+          const SizedBox(height: AppSpacing.md),
+          if (canModerateImport && actionableFeatures.isNotEmpty)
+            _buildReviewActions(
+              context,
+              details: details,
+              selectedFeatureCount: _selectedFeatureIds.length,
+              selectedApprovableIds: selectedApprovableIds,
+              selectedRejectableIds: selectedRejectableIds,
+            ),
+          if (canModerateImport && actionableFeatures.isNotEmpty)
+            const SizedBox(height: AppSpacing.md),
+          _ImportCommentsCard(
+            key: _commentsKey,
+            importId: widget.importId,
+            projectId: details.job.projectId,
+            comments: details.comments,
+          ),
+          const SizedBox(height: AppSpacing.md),
+          KeyedSubtree(
+            key: _featuresKey,
+            child: Text(
+              'Staged features (${featureState?.total ?? details.job.geometryCount})',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
           ),
           const SizedBox(height: AppSpacing.sm),
-          if (features.isEmpty)
-            AppEmptyState(
-              icon: Icons.map_outlined,
-              title:
-                  _selectedIssueFilter == null && _selectedStatusFilter == null
-                  ? 'No preview features available'
-                  : 'No staged features match the current filters',
-              message:
-                  _selectedIssueFilter == null && _selectedStatusFilter == null
-                  ? 'This import does not currently expose preview geometries.'
-                  : 'No staged features currently match the selected status or validation issue.',
+          if (!shouldLoadFeatures)
+            const AppCard(
+              child: Text(
+                'Staged features will appear here after processing finishes.',
+                softWrap: true,
+              ),
             )
-          else
-            ProgressiveListSection<ImportedFeature>(
-              items: features,
-              resetKey: Object.hash(
-                widget.importId,
-                details.job.updatedAt,
-                _selectedStatusFilter,
-                _selectedIssueFilter,
-                features.length,
-                featureState?.total ?? 0,
-              ),
-              hasMore: featureState?.hasMore ?? false,
-              isLoadingMore: featureState?.isLoadingMore ?? false,
-              onLoadMore: featuresController!.loadMore,
-              itemBuilder: (context, feature, _) => _ImportedFeatureCard(
-                feature: feature,
-                selectable: canModerateImport && feature.isActionable,
-                selected: _selectedFeatureIds.contains(feature.id),
-                onOpenMap: feature.geometry == null
-                    ? null
-                    : () => context.push(
-                        AppRoutes.importMap(
-                          widget.importId,
-                          projectId: details.job.projectId,
-                          featureId: feature.id,
-                        ),
-                      ),
-                onAddComment: canModerateImport
-                    ? () => _addComment(context, feature: feature)
-                    : null,
-                onToggleSelected: () {
-                  setState(() {
-                    if (_selectedFeatureIds.contains(feature.id)) {
-                      _selectedFeatureIds.remove(feature.id);
-                    } else {
-                      _selectedFeatureIds.add(feature.id);
-                    }
-                  });
-                },
-              ),
+          else ...[
+            _ImportFeatureFiltersCard(
+              selectedStatus: _selectedStatusFilter,
+              selectedIssue: _selectedIssueFilter,
+              issueFilters: issueFilters,
+              onStatusChanged: (value) {
+                setState(() {
+                  _selectedStatusFilter = value;
+                  _selectedFeatureIds.clear();
+                });
+              },
+              onIssueChanged: (value) {
+                setState(() {
+                  _selectedIssueFilter = value;
+                  _selectedFeatureIds.clear();
+                });
+              },
             ),
-          if ((featureState?.total ?? details.job.geometryCount) >
-              features.length) ...[
             const SizedBox(height: AppSpacing.sm),
-            Text(
-              'Showing ${features.length} of ${featureState?.total ?? details.job.geometryCount} staged feature(s) for this import.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+            if (features.isEmpty)
+              AppEmptyState(
+                icon: Icons.map_outlined,
+                title:
+                    _selectedIssueFilter == null &&
+                        _selectedStatusFilter == null
+                    ? 'No preview features available'
+                    : 'No staged features match the current filters',
+                message:
+                    _selectedIssueFilter == null &&
+                        _selectedStatusFilter == null
+                    ? 'This import does not currently expose preview geometries.'
+                    : 'No staged features currently match the selected status or validation issue.',
+              )
+            else
+              ProgressiveListSection<ImportedFeature>(
+                items: features,
+                resetKey: Object.hash(
+                  widget.importId,
+                  details.job.updatedAt,
+                  _selectedStatusFilter,
+                  _selectedIssueFilter,
+                  features.length,
+                  featureState?.total ?? 0,
+                ),
+                hasMore: featureState?.hasMore ?? false,
+                isLoadingMore: featureState?.isLoadingMore ?? false,
+                onLoadMore: featuresController!.loadMore,
+                itemBuilder: (context, feature, _) => _ImportedFeatureCard(
+                  feature: feature,
+                  selectable: canModerateImport && feature.isActionable,
+                  selected: _selectedFeatureIds.contains(feature.id),
+                  onOpenMap: feature.geometry == null
+                      ? null
+                      : () => context.push(
+                          AppRoutes.importMap(
+                            widget.importId,
+                            projectId: details.job.projectId,
+                            featureId: feature.id,
+                          ),
+                        ),
+                  onAddComment: canModerateImport
+                      ? () => _addComment(context, feature: feature)
+                      : null,
+                  onToggleSelected: () {
+                    setState(() {
+                      if (_selectedFeatureIds.contains(feature.id)) {
+                        _selectedFeatureIds.remove(feature.id);
+                      } else {
+                        _selectedFeatureIds.add(feature.id);
+                      }
+                    });
+                  },
+                ),
+              ),
+            if ((featureState?.total ?? details.job.geometryCount) >
+                features.length) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                'Showing ${features.length} of ${featureState?.total ?? details.job.geometryCount} staged feature(s) for this import.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
           ],
         ],
-      ],
+      ),
     );
   }
 
@@ -934,7 +940,10 @@ class _ImportSectionNavCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Import sections', style: Theme.of(context).textTheme.titleMedium),
+          Text(
+            'Import sections',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
           const SizedBox(height: AppSpacing.sm),
           Wrap(
             spacing: 8,
@@ -1290,10 +1299,7 @@ class _ImportCommentsCard extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: Text(
-                  'Comments',
-                  style: theme.textTheme.titleMedium,
-                ),
+                child: Text('Comments', style: theme.textTheme.titleMedium),
               ),
               if (comments.isNotEmpty)
                 Chip(
@@ -1477,7 +1483,9 @@ class _ImportedFeatureCard extends StatelessWidget {
                       style: Theme.of(context).textTheme.titleMedium,
                       softWrap: true,
                     ),
-                    if (_importFeatureDisplayTitle(feature).trim().toLowerCase() !=
+                    if (_importFeatureDisplayTitle(
+                          feature,
+                        ).trim().toLowerCase() !=
                         _importFeatureTypeLabel(
                           feature.geometryType ??
                               feature.geometry?['type']?.toString() ??
@@ -1711,7 +1719,9 @@ List<_ValidationIssueGroup> _issueGroups(Object? value) {
   if (value is Map) {
     return value.entries
         .map((entry) {
-          final message = _sanitizeImportValidationMessage(entry.key.toString());
+          final message = _sanitizeImportValidationMessage(
+            entry.key.toString(),
+          );
           final count = (entry.value as num?)?.toInt() ?? 0;
           if (message == null || message.isEmpty || count <= 0) {
             return null;
