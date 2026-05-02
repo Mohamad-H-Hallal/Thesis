@@ -85,55 +85,8 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       issue: _selectedIssueFilter,
     );
     final detailsAsync = ref.watch(importDetailsProvider(widget.importId));
-    _refreshImportDetails = () async {
-      if (_isRefreshingImportDetails) {
-        return;
-      }
-      _isRefreshingImportDetails = true;
-      try {
-        final refreshedDetails = await ref
-            .read(importsRepositoryProvider)
-            .fetchImportDetails(widget.importId);
-        if (!mounted) {
-          return;
-        }
-        final current = _liveDetails;
-        final hasMeaningfulChange =
-            current == null ||
-            refreshedDetails.job.status != current.job.status ||
-            refreshedDetails.job.pendingFeatureCount !=
-                current.job.pendingFeatureCount ||
-            refreshedDetails.job.approvedFeatureCount !=
-                current.job.approvedFeatureCount ||
-            refreshedDetails.job.rejectedFeatureCount !=
-                current.job.rejectedFeatureCount ||
-            refreshedDetails.job.failedFeatureCount !=
-                current.job.failedFeatureCount ||
-            refreshedDetails.previewSummary.previewFeatureCount !=
-                current.previewSummary.previewFeatureCount ||
-            refreshedDetails.previewSummary.outsideWorkspaceFeatureCount !=
-                current.previewSummary.outsideWorkspaceFeatureCount ||
-            refreshedDetails.job.rejectionReason !=
-                current.job.rejectionReason ||
-            refreshedDetails.comments.length != current.comments.length;
-        if (hasMeaningfulChange) {
-          setState(() {
-            _liveDetails = refreshedDetails;
-          });
-          if (!_isImportStillProcessing(refreshedDetails.job.status)) {
-            await ref
-                .read(paginatedImportFeaturesProvider(featureQuery).notifier)
-                .refreshSilently();
-          }
-        }
-      } catch (_) {
-        if (!mounted) {
-          return;
-        }
-      } finally {
-        _isRefreshingImportDetails = false;
-      }
-    };
+    _refreshImportDetails = () =>
+        _refreshCurrentImportDetails(featureQuery: featureQuery, force: false);
 
     final providerDetails = detailsAsync.valueOrNull;
     final details = _latestDetails(providerDetails);
@@ -405,6 +358,96 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       curve: Curves.easeOutCubic,
       alignment: 0.08,
     );
+  }
+
+  Future<void> _refreshCurrentImportDetails({
+    required ImportedFeatureListQuery featureQuery,
+    required bool force,
+  }) async {
+    if (_isRefreshingImportDetails && !force) {
+      return;
+    }
+    _isRefreshingImportDetails = true;
+    try {
+      final refreshedDetails = await ref
+          .read(importsRepositoryProvider)
+          .fetchImportDetails(widget.importId);
+      if (!mounted) {
+        return;
+      }
+      final current = _liveDetails;
+      final shouldUpdate =
+          force ||
+          current == null ||
+          _importDetailsDisplayChanged(refreshedDetails, current);
+      if (shouldUpdate) {
+        setState(() {
+          _liveDetails = refreshedDetails;
+        });
+      }
+      if (force) {
+        ref.invalidate(importDetailsProvider(widget.importId));
+      }
+      if ((force || shouldUpdate) &&
+          !_isImportStillProcessing(refreshedDetails.job.status)) {
+        await ref
+            .read(paginatedImportFeaturesProvider(featureQuery).notifier)
+            .refreshSilently();
+      }
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+    } finally {
+      _isRefreshingImportDetails = false;
+    }
+  }
+
+  bool _importDetailsDisplayChanged(
+    GisImportDetails refreshedDetails,
+    GisImportDetails current,
+  ) {
+    return refreshedDetails.job.status != current.job.status ||
+        refreshedDetails.job.pendingFeatureCount !=
+            current.job.pendingFeatureCount ||
+        refreshedDetails.job.approvedFeatureCount !=
+            current.job.approvedFeatureCount ||
+        refreshedDetails.job.rejectedFeatureCount !=
+            current.job.rejectedFeatureCount ||
+        refreshedDetails.job.failedFeatureCount !=
+            current.job.failedFeatureCount ||
+        refreshedDetails.job.warningCount != current.job.warningCount ||
+        refreshedDetails.job.errorCount != current.job.errorCount ||
+        refreshedDetails.job.rejectionReason != current.job.rejectionReason ||
+        refreshedDetails.job.reviewedAt != current.job.reviewedAt ||
+        refreshedDetails.job.updatedAt != current.job.updatedAt ||
+        refreshedDetails.previewSummary.geometryFeatureCount !=
+            current.previewSummary.geometryFeatureCount ||
+        refreshedDetails.previewSummary.previewFeatureCount !=
+            current.previewSummary.previewFeatureCount ||
+        refreshedDetails.previewSummary.outsideWorkspaceFeatureCount !=
+            current.previewSummary.outsideWorkspaceFeatureCount ||
+        refreshedDetails.previewFeatures.length !=
+            current.previewFeatures.length ||
+        refreshedDetails.comments.length != current.comments.length ||
+        !_sameImportCommentIds(refreshedDetails.comments, current.comments);
+  }
+
+  bool _sameImportCommentIds(
+    List<ImportComment> left,
+    List<ImportComment> right,
+  ) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (var index = 0; index < left.length; index += 1) {
+      if (left[index].id != right[index].id ||
+          left[index].commentText != right[index].commentText ||
+          left[index].importFeatureId != right[index].importFeatureId) {
+        return false;
+      }
+    }
+    return true;
   }
 
   GisImportDetails? _latestDetails(GisImportDetails? providerDetails) {
@@ -688,7 +731,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       _isSavingComment = true;
     });
     try {
-      await ref
+      final savedComment = await ref
           .read(importsRepositoryProvider)
           .addImportComment(
             importId: widget.importId,
@@ -698,10 +741,15 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       if (!mounted) {
         return;
       }
-      await _refreshImportDetails?.call();
+      _mergeCommentIntoLiveDetails(savedComment);
+      await _refreshCurrentImportDetails(
+        featureQuery: _currentFeatureQuery(),
+        force: true,
+      );
       if (!mounted) {
         return;
       }
+      bumpWorkflowRefresh(ref);
       AppSnackbar.showSuccess(
         this.context,
         feature == null
@@ -754,7 +802,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       _isSubmitting = true;
     });
     try {
-      await ref
+      final reviewedJob = await ref
           .read(importsRepositoryProvider)
           .reviewImport(
             importId: widget.importId,
@@ -762,6 +810,14 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
             reason: reason,
             featureIds: featureIds.isEmpty ? null : featureIds,
           );
+      if (!mounted || !context.mounted) {
+        return;
+      }
+      _mergeReviewedJobIntoLiveDetails(reviewedJob);
+      await _refreshCurrentImportDetails(
+        featureQuery: _currentFeatureQuery(),
+        force: true,
+      );
       if (!mounted || !context.mounted) {
         return;
       }
@@ -791,6 +847,45 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
         ),
       );
     }
+  }
+
+  ImportedFeatureListQuery _currentFeatureQuery() {
+    return ImportedFeatureListQuery(
+      importId: widget.importId,
+      status: _selectedStatusFilter,
+      issue: _selectedIssueFilter,
+    );
+  }
+
+  void _mergeCommentIntoLiveDetails(ImportComment comment) {
+    final current = _liveDetails;
+    if (current == null ||
+        current.comments.any((item) => item.id == comment.id)) {
+      return;
+    }
+    setState(() {
+      _liveDetails = GisImportDetails(
+        job: current.job,
+        previewFeatures: current.previewFeatures,
+        previewSummary: current.previewSummary,
+        comments: <ImportComment>[...current.comments, comment],
+      );
+    });
+  }
+
+  void _mergeReviewedJobIntoLiveDetails(GisImportJob job) {
+    final current = _liveDetails;
+    if (current == null) {
+      return;
+    }
+    setState(() {
+      _liveDetails = GisImportDetails(
+        job: job,
+        previewFeatures: current.previewFeatures,
+        previewSummary: current.previewSummary,
+        comments: current.comments,
+      );
+    });
   }
 
   Future<String?> _promptReason(BuildContext context) {

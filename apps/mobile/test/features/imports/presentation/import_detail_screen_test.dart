@@ -98,12 +98,17 @@ class _FakeImportsRepository implements ImportsRepository {
   _FakeImportsRepository({
     required this.details,
     this.features = const <ImportedFeature>[],
+    this.reviewedDetails,
+    this.reviewedFeatures,
   });
 
-  final GisImportDetails details;
-  final List<ImportedFeature> features;
+  GisImportDetails details;
+  List<ImportedFeature> features;
+  final GisImportDetails? reviewedDetails;
+  final List<ImportedFeature>? reviewedFeatures;
   final List<String?> requestedIssues = <String?>[];
   int featurePageRequests = 0;
+  int detailRequests = 0;
 
   @override
   Future<List<GisImportJob>> fetchImports({
@@ -126,7 +131,10 @@ class _FakeImportsRepository implements ImportsRepository {
   }
 
   @override
-  Future<GisImportDetails> fetchImportDetails(String importId) async => details;
+  Future<GisImportDetails> fetchImportDetails(String importId) async {
+    detailRequests += 1;
+    return details;
+  }
 
   @override
   Future<ImportMapData> fetchImportMapData({
@@ -206,8 +214,14 @@ class _FakeImportsRepository implements ImportsRepository {
     required String status,
     String? reason,
     List<String>? featureIds,
-  }) {
-    throw UnimplementedError();
+  }) async {
+    if (reviewedDetails != null) {
+      details = reviewedDetails!;
+    }
+    if (reviewedFeatures != null) {
+      features = reviewedFeatures!;
+    }
+    return details.job;
   }
 
   @override
@@ -223,13 +237,41 @@ class _FakeImportsRepository implements ImportsRepository {
     required String importId,
     required String comment,
     String? featureId,
-  }) {
-    throw UnimplementedError();
+  }) async {
+    final nextComment = ImportComment(
+      id: 'comment-${details.comments.length + 1}',
+      importJobId: importId,
+      authorUserId: 'admin-1',
+      authorName: 'GIS Super Administrator',
+      authorRole: 'admin',
+      commentText: comment,
+      importFeatureId: featureId,
+      featureDisplayTitle: featureId == null
+          ? null
+          : _featureTitleForComment(featureId),
+      createdAt: DateTime(2026, 5, 3, 12),
+    );
+    details = GisImportDetails(
+      job: details.job,
+      previewFeatures: details.previewFeatures,
+      previewSummary: details.previewSummary,
+      comments: <ImportComment>[...details.comments, nextComment],
+    );
+    return nextComment;
   }
 
   @override
   Future<String> downloadImport(String importId) async =>
       '/mock/imports/$importId.geojson';
+
+  String? _featureTitleForComment(String featureId) {
+    for (final feature in features) {
+      if (feature.id == featureId) {
+        return feature.displayTitle;
+      }
+    }
+    return null;
+  }
 }
 
 AuthSession _session() {
@@ -263,6 +305,14 @@ GisImportJob _job({
   Map<String, dynamic> validationSummary = const <String, dynamic>{},
   String? processingMessage,
   List<String> geometryTypes = const <String>['Point'],
+  int geometryCount = 1,
+  int pendingFeatureCount = 0,
+  int approvedFeatureCount = 0,
+  int rejectedFeatureCount = 0,
+  int? failedFeatureCount,
+  int warningCount = 0,
+  int? errorCount,
+  DateTime? updatedAt,
 }) {
   return GisImportJob(
     id: 'import-1',
@@ -276,13 +326,13 @@ GisImportJob _job({
     fileChecksumSha256: 'a' * 64,
     fileType: 'geojson',
     status: status,
-    geometryCount: 1,
-    pendingFeatureCount: 0,
-    approvedFeatureCount: 0,
-    rejectedFeatureCount: 0,
-    failedFeatureCount: status == 'failed' ? 1 : 0,
-    warningCount: 0,
-    errorCount: status == 'failed' ? 1 : 0,
+    geometryCount: geometryCount,
+    pendingFeatureCount: pendingFeatureCount,
+    approvedFeatureCount: approvedFeatureCount,
+    rejectedFeatureCount: rejectedFeatureCount,
+    failedFeatureCount: failedFeatureCount ?? (status == 'failed' ? 1 : 0),
+    warningCount: warningCount,
+    errorCount: errorCount ?? (status == 'failed' ? 1 : 0),
     geometryTypes: geometryTypes,
     fileMetadata: const <String, dynamic>{},
     validationSummary: validationSummary,
@@ -290,7 +340,7 @@ GisImportJob _job({
     reviewScope: 'admin',
     uploadedAt: DateTime(2026, 4, 25),
     createdAt: DateTime(2026, 4, 25),
-    updatedAt: DateTime(2026, 4, 25),
+    updatedAt: updatedAt ?? DateTime(2026, 4, 25),
   );
 }
 
@@ -375,6 +425,30 @@ ImportedFeature _hiddenAccuracyWarningFeature() {
     validationErrors: const <String>[
       'Missing required attribute: feature_type',
     ],
+    validationReport: const <String, dynamic>{},
+    createdAt: DateTime(2026, 4, 25),
+    updatedAt: DateTime(2026, 4, 25),
+  );
+}
+
+ImportedFeature _reviewableFeature({required String status}) {
+  return ImportedFeature(
+    id: 'feature-review-1',
+    importJobId: 'import-1',
+    sourceIndex: 0,
+    displayTitle: 'Mountain',
+    geometryType: 'Point',
+    geometry: const <String, dynamic>{
+      'type': 'Point',
+      'coordinates': <double>[35.48, 33.89],
+    },
+    attributes: const <String, dynamic>{
+      'feature_type': 'Mountain',
+      'name': 'Mountain',
+    },
+    status: status,
+    validationWarnings: const <String>[],
+    validationErrors: const <String>[],
     validationReport: const <String, dynamic>{},
     createdAt: DateTime(2026, 4, 25),
     updatedAt: DateTime(2026, 4, 25),
@@ -831,6 +905,143 @@ void main() {
     expect(find.text('Mountain LineString'), findsNothing);
     expect(find.text('Meadow LineString'), findsNothing);
     expect(find.text('Open on map'), findsNWidgets(2));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('adding an import comment refreshes the page immediately', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1200, 2200);
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final repository = _FakeImportsRepository(
+      details: GisImportDetails(
+        job: _job(status: 'failed'),
+        previewFeatures: const <ImportedFeature>[],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 0,
+          previewFeatureCount: 0,
+          outsideWorkspaceFeatureCount: 0,
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(
+            (_) => _AuthenticatedAuthController(_session()),
+          ),
+          importsRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(body: ImportDetailScreen(importId: 'import-1')),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('Comments (0)'), findsOneWidget);
+    expect(find.text('Please fix the feature type.'), findsNothing);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Add comment'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byType(TextFormField).last,
+      'Please fix the feature type.',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+
+    expect(repository.detailRequests, greaterThan(1));
+    expect(find.text('Comments (1)'), findsOneWidget);
+    expect(find.text('Please fix the feature type.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('review action refreshes displayed counts and staged features', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1200, 2200);
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final pendingFeature = _reviewableFeature(status: 'pending_review');
+    final approvedFeature = _reviewableFeature(status: 'approved');
+    final repository = _FakeImportsRepository(
+      details: GisImportDetails(
+        job: _job(
+          status: 'pending_review',
+          geometryCount: 1,
+          pendingFeatureCount: 1,
+          approvedFeatureCount: 0,
+          failedFeatureCount: 0,
+          errorCount: 0,
+        ),
+        previewFeatures: <ImportedFeature>[pendingFeature],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 1,
+          previewFeatureCount: 1,
+          outsideWorkspaceFeatureCount: 0,
+        ),
+      ),
+      features: <ImportedFeature>[pendingFeature],
+      reviewedDetails: GisImportDetails(
+        job: _job(
+          status: 'approved',
+          geometryCount: 1,
+          pendingFeatureCount: 0,
+          approvedFeatureCount: 1,
+          failedFeatureCount: 0,
+          errorCount: 0,
+          updatedAt: DateTime(2026, 4, 25, 1),
+        ),
+        previewFeatures: <ImportedFeature>[approvedFeature],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 1,
+          previewFeatureCount: 1,
+          outsideWorkspaceFeatureCount: 0,
+        ),
+      ),
+      reviewedFeatures: <ImportedFeature>[approvedFeature],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(
+            (_) => _AuthenticatedAuthController(_session()),
+          ),
+          importsRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(body: ImportDetailScreen(importId: 'import-1')),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 pending review'), findsWidgets);
+    expect(find.text('0 approved'), findsWidgets);
+
+    await tester.tap(
+      find.widgetWithText(FilledButton, 'Approve all reviewable'),
+    );
+    await tester.pumpAndSettle();
+
+    expect(repository.detailRequests, greaterThan(1));
+    expect(find.text('0 pending review'), findsWidgets);
+    expect(find.text('1 approved'), findsWidgets);
+    expect(find.text('approved'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 
