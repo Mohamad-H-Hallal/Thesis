@@ -122,7 +122,12 @@ GisImportJob _job() {
   );
 }
 
-ImportedFeature _importedFeature(String id, String status, double lon, double lat) {
+ImportedFeature _importedFeature(
+  String id,
+  String status,
+  double lon,
+  double lat,
+) {
   return ImportedFeature(
     id: id,
     importJobId: 'import-1',
@@ -169,7 +174,69 @@ AuthSession _session() {
 }
 
 void main() {
-  testWidgets('import map shows staged and approved context layers separately', (
+  testWidgets(
+    'import map shows staged and approved context layers separately',
+    (tester) async {
+      const query = ImportMapQuery(
+        importId: 'import-1',
+        projectId: 'project-1',
+        minLon: 35.094,
+        minLat: 33.045,
+        maxLon: 36.645,
+        maxLat: 34.695,
+        zoom: 8,
+      );
+      final details = GisImportDetails(
+        job: _job(),
+        previewFeatures: const <ImportedFeature>[],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 2,
+          previewFeatureCount: 2,
+          outsideWorkspaceFeatureCount: 0,
+        ),
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWith(
+              (_) => _AuthenticatedAuthController(_session()),
+            ),
+            importDetailsProvider(
+              'import-1',
+            ).overrideWith((ref) async => details),
+            importMapDataProvider(query).overrideWith(
+              (ref) async => ImportMapData(
+                stagedFeatures: <ImportedFeature>[
+                  _importedFeature('feature-1', 'pending_review', 35.5, 33.9),
+                  _importedFeature('feature-2', 'approved', 35.55, 33.95),
+                ],
+                approvedProjectFeatures: <MapFeatureSummary>[
+                  _approvedFeature(),
+                ],
+              ),
+            ),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(
+              body: ImportMapScreen(
+                importId: 'import-1',
+                projectId: 'project-1',
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('Import Project'), findsOneWidget);
+      expect(find.textContaining('2 imported features'), findsOneWidget);
+      expect(find.byType(FlutterMap), findsOneWidget);
+    },
+  );
+
+  testWidgets('import feature details show only comments for that feature', (
     tester,
   ) async {
     const query = ImportMapQuery(
@@ -189,6 +256,39 @@ void main() {
         previewFeatureCount: 2,
         outsideWorkspaceFeatureCount: 0,
       ),
+      comments: <ImportComment>[
+        ImportComment(
+          id: 'comment-1',
+          importJobId: 'import-1',
+          authorUserId: 'admin-1',
+          authorName: 'Admin Reviewer',
+          authorRole: 'admin',
+          commentText: 'This comment belongs to feature one.',
+          importFeatureId: 'feature-1',
+          featureDisplayTitle: 'Feature one',
+          createdAt: DateTime(2026, 5, 3, 12),
+        ),
+        ImportComment(
+          id: 'comment-2',
+          importJobId: 'import-1',
+          authorUserId: 'admin-1',
+          authorName: 'Admin Reviewer',
+          authorRole: 'admin',
+          commentText: 'This comment belongs to feature two.',
+          importFeatureId: 'feature-2',
+          featureDisplayTitle: 'Feature two',
+          createdAt: DateTime(2026, 5, 3, 12, 1),
+        ),
+        ImportComment(
+          id: 'comment-3',
+          importJobId: 'import-1',
+          authorUserId: 'admin-1',
+          authorName: 'Admin Reviewer',
+          authorRole: 'admin',
+          commentText: 'This import-level comment is not feature-specific.',
+          createdAt: DateTime(2026, 5, 3, 12, 2),
+        ),
+      ],
     );
 
     await tester.pumpWidget(
@@ -197,7 +297,9 @@ void main() {
           authControllerProvider.overrideWith(
             (_) => _AuthenticatedAuthController(_session()),
           ),
-          importDetailsProvider('import-1').overrideWith((ref) async => details),
+          importDetailsProvider(
+            'import-1',
+          ).overrideWith((ref) async => details),
           importMapDataProvider(query).overrideWith(
             (ref) async => ImportMapData(
               stagedFeatures: <ImportedFeature>[
@@ -210,7 +312,11 @@ void main() {
         ],
         child: const MaterialApp(
           home: Scaffold(
-            body: ImportMapScreen(importId: 'import-1', projectId: 'project-1'),
+            body: ImportMapScreen(
+              importId: 'import-1',
+              projectId: 'project-1',
+              initialFeatureId: 'feature-1',
+            ),
           ),
         ),
       ),
@@ -218,8 +324,13 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Import Project'), findsOneWidget);
-    expect(find.textContaining('2 imported features'), findsOneWidget);
-    expect(find.byType(FlutterMap), findsOneWidget);
+    expect(find.text('Feature comments'), findsOneWidget);
+    expect(find.text('This comment belongs to feature one.'), findsOneWidget);
+    expect(find.text('This comment belongs to feature two.'), findsNothing);
+    expect(
+      find.text('This import-level comment is not feature-specific.'),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
   });
 }

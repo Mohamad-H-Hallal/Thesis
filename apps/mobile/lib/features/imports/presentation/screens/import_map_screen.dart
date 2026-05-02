@@ -131,13 +131,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
               zoom: _defaultMapZoom,
             );
         final mapData =
-            ref
-                .read(
-                  importMapDataProvider(
-                    viewportQuery,
-                  ),
-                )
-                .valueOrNull ??
+            ref.read(importMapDataProvider(viewportQuery)).valueOrNull ??
             const ImportMapData(
               stagedFeatures: <ImportedFeature>[],
               approvedProjectFeatures: <MapFeatureSummary>[],
@@ -181,10 +175,11 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
     final projectAsync = ref.watch(projectByIdProvider(widget.projectId));
     final viewportQuery =
         _viewportQuery ??
-        _buildViewportQuery(bounds: LebanonMapConfig.bounds, zoom: _defaultMapZoom);
-    final mapDataAsync = ref.watch(
-      importMapDataProvider(viewportQuery),
-    );
+        _buildViewportQuery(
+          bounds: LebanonMapConfig.bounds,
+          zoom: _defaultMapZoom,
+        );
+    final mapDataAsync = ref.watch(importMapDataProvider(viewportQuery));
     if (mapDataAsync.valueOrNull != null) {
       _lastViewportData = mapDataAsync.valueOrNull;
     }
@@ -1261,6 +1256,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
               onReject: _reviewFeatureFromMap,
             )
           : _ImportFeatureDetailsSheet(
+              importId: widget.importId,
               feature: feature,
               canComment: canModerateImport,
               canReview: canModerateImport,
@@ -2779,15 +2775,14 @@ class _ImportFeatureBrowserSheetState
                               style: Theme.of(context).textTheme.titleMedium,
                             ),
                             if (_importedFeatureSubtitle(feature)
-                                case final subtitle?)
-                              ...[
-                                const SizedBox(height: 4),
-                                Text(
-                                  subtitle,
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                  softWrap: true,
-                                ),
-                              ],
+                                case final subtitle?) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                subtitle,
+                                style: Theme.of(context).textTheme.bodySmall,
+                                softWrap: true,
+                              ),
+                            ],
                             if (feature.validationWarnings.isNotEmpty ||
                                 feature.validationErrors.isNotEmpty) ...[
                               const SizedBox(height: 8),
@@ -3109,6 +3104,7 @@ class _ImportFeatureDetailsLoaderSheet extends ConsumerWidget {
 
     return featureAsync.when(
       data: (feature) => _ImportFeatureDetailsSheet(
+        importId: importId,
         feature: feature,
         canComment: canModerateImport,
         canReview: canModerateImport,
@@ -3203,8 +3199,9 @@ class _ImportFeatureDetailsLoadingSheet extends StatelessWidget {
   }
 }
 
-class _ImportFeatureDetailsSheet extends StatelessWidget {
+class _ImportFeatureDetailsSheet extends ConsumerWidget {
   const _ImportFeatureDetailsSheet({
+    required this.importId,
     required this.feature,
     required this.canComment,
     required this.canReview,
@@ -3213,6 +3210,7 @@ class _ImportFeatureDetailsSheet extends StatelessWidget {
     this.onReject,
   });
 
+  final String importId;
   final ImportedFeature feature;
   final bool canComment;
   final bool canReview;
@@ -3221,9 +3219,14 @@ class _ImportFeatureDetailsSheet extends StatelessWidget {
   final Future<void> Function()? onReject;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final bottomInset =
         MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
+    final details = ref.watch(importDetailsProvider(importId)).valueOrNull;
+    final featureComments = _commentsForImportFeature(
+      details?.comments ?? const <ImportComment>[],
+      feature.id,
+    );
     return DraggableScrollableSheet(
       expand: false,
       initialChildSize: 0.64,
@@ -3328,6 +3331,13 @@ class _ImportFeatureDetailsSheet extends StatelessWidget {
                   ? const Text('No attributes were imported for this feature.')
                   : _AttributesGrid(attributes: feature.attributes),
             ),
+            if (featureComments.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.md),
+              _DetailSection(
+                title: 'Feature comments',
+                child: _ImportFeatureCommentsList(comments: featureComments),
+              ),
+            ],
             if (canReview || (canComment && onAddComment != null)) ...[
               const SizedBox(height: AppSpacing.md),
               Wrap(
@@ -3535,6 +3545,65 @@ class _AttributesGrid extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _ImportFeatureCommentsList extends StatelessWidget {
+  const _ImportFeatureCommentsList({required this.comments});
+
+  final List<ImportComment> comments;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final comment in comments) ...[
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: scheme.outlineVariant.withValues(alpha: 0.48),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.comment_outlined, size: 18, color: scheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${comment.authorName} • ${_formatImportCommentDateTime(comment.createdAt)}',
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                          softWrap: true,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          comment.commentText,
+                          style: theme.textTheme.bodyMedium,
+                          softWrap: true,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (comment != comments.last) const SizedBox(height: AppSpacing.sm),
+        ],
+      ],
     );
   }
 }
@@ -3759,7 +3828,9 @@ String? _sanitizeImportValidationMessage(String? message) {
   if (!trimmed.startsWith(_unknownImportFieldWarningPrefix)) {
     return trimmed;
   }
-  final suffix = trimmed.substring(_unknownImportFieldWarningPrefix.length).trim();
+  final suffix = trimmed
+      .substring(_unknownImportFieldWarningPrefix.length)
+      .trim();
   if (suffix.isEmpty) {
     return null;
   }
@@ -3772,6 +3843,24 @@ String? _sanitizeImportValidationMessage(String? message) {
     return null;
   }
   return 'Attributes not defined in the project form were kept: ${visibleFields.join(', ')}';
+}
+
+List<ImportComment> _commentsForImportFeature(
+  List<ImportComment> comments,
+  String featureId,
+) {
+  return comments
+      .where((comment) => comment.importFeatureId?.trim() == featureId)
+      .toList(growable: false);
+}
+
+String _formatImportCommentDateTime(DateTime value) {
+  final local = value.toLocal();
+  final month = local.month.toString().padLeft(2, '0');
+  final day = local.day.toString().padLeft(2, '0');
+  final hour = local.hour.toString().padLeft(2, '0');
+  final minute = local.minute.toString().padLeft(2, '0');
+  return '${local.year}-$month-$day $hour:$minute';
 }
 
 class _ImportFeatureStatusChip extends StatelessWidget {
@@ -4494,7 +4583,9 @@ String _importFeatureTitle(ImportedFeature feature) {
   return title;
 }
 
-Iterable<String> _featureTypeAttributeValues(Map<String, dynamic> attributes) sync* {
+Iterable<String> _featureTypeAttributeValues(
+  Map<String, dynamic> attributes,
+) sync* {
   for (final entry in attributes.entries) {
     if (!_looksLikeFeatureTypeField(entry.key, entry.key)) {
       continue;

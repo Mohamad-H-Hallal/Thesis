@@ -294,6 +294,10 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
                 onLoadMore: featuresController!.loadMore,
                 itemBuilder: (context, feature, _) => _ImportedFeatureCard(
                   feature: feature,
+                  comments: _commentsForImportFeature(
+                    details.comments,
+                    feature.id,
+                  ),
                   selectable: canModerateImport && feature.isActionable,
                   selected: _selectedFeatureIds.contains(feature.id),
                   onOpenMap: feature.geometry == null
@@ -1541,9 +1545,19 @@ String? _friendlyCommentFeatureTitle(String? rawTitle) {
   return title;
 }
 
+List<ImportComment> _commentsForImportFeature(
+  List<ImportComment> comments,
+  String featureId,
+) {
+  return comments
+      .where((comment) => comment.importFeatureId?.trim() == featureId)
+      .toList(growable: false);
+}
+
 class _ImportedFeatureCard extends StatelessWidget {
   const _ImportedFeatureCard({
     required this.feature,
+    required this.comments,
     required this.selectable,
     required this.selected,
     required this.onOpenMap,
@@ -1552,6 +1566,7 @@ class _ImportedFeatureCard extends StatelessWidget {
   });
 
   final ImportedFeature feature;
+  final List<ImportComment> comments;
   final bool selectable;
   final bool selected;
   final VoidCallback? onOpenMap;
@@ -1633,6 +1648,10 @@ class _ImportedFeatureCard extends StatelessWidget {
                 softWrap: true,
               ),
             ),
+          if (comments.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.sm),
+            _ImportFeatureCommentsBlock(comments: comments),
+          ],
           if (feature.attributes.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.sm),
             Text('Attributes', style: Theme.of(context).textTheme.titleSmall),
@@ -1661,6 +1680,70 @@ class _ImportedFeatureCard extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _ImportFeatureCommentsBlock extends StatelessWidget {
+  const _ImportFeatureCommentsBlock({required this.comments});
+
+  final List<ImportComment> comments;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.36),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.6)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.sm),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Feature comments',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            for (final comment in comments) ...[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.comment_outlined, size: 18, color: scheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${comment.authorName} • ${_formatDateTime(comment.createdAt)}',
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                          softWrap: true,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(comment.commentText, softWrap: true),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              if (comment != comments.last)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                  child: Divider(height: 1),
+                ),
+            ],
+          ],
+        ),
       ),
     );
   }
