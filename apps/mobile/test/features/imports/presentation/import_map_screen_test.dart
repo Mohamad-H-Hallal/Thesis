@@ -126,8 +126,9 @@ ImportedFeature _importedFeature(
   String id,
   String status,
   double lon,
-  double lat,
-) {
+  double lat, {
+  String? approvedFeatureId,
+}) {
   return ImportedFeature(
     id: id,
     importJobId: 'import-1',
@@ -143,6 +144,7 @@ ImportedFeature _importedFeature(
     validationWarnings: const <String>[],
     validationErrors: const <String>[],
     validationReport: const <String, dynamic>{},
+    approvedFeatureId: approvedFeatureId,
     createdAt: DateTime(2026, 4, 25),
     updatedAt: DateTime(2026, 4, 25),
   );
@@ -233,6 +235,76 @@ void main() {
       expect(find.text('Import Project'), findsOneWidget);
       expect(find.textContaining('2 imported features'), findsOneWidget);
       expect(find.byType(FlutterMap), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'import map hides approved project context duplicate from same import',
+    (tester) async {
+      const query = ImportMapQuery(
+        importId: 'import-1',
+        projectId: 'project-1',
+        minLon: 35.094,
+        minLat: 33.045,
+        maxLon: 36.645,
+        maxLat: 34.695,
+        zoom: 8,
+      );
+      final details = GisImportDetails(
+        job: _job(),
+        previewFeatures: const <ImportedFeature>[],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 1,
+          previewFeatureCount: 1,
+          outsideWorkspaceFeatureCount: 0,
+        ),
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWith(
+              (_) => _AuthenticatedAuthController(_session()),
+            ),
+            importDetailsProvider(
+              'import-1',
+            ).overrideWith((ref) async => details),
+            importMapDataProvider(query).overrideWith(
+              (ref) async => ImportMapData(
+                stagedFeatures: <ImportedFeature>[
+                  _importedFeature(
+                    'feature-2',
+                    'approved',
+                    35.52,
+                    33.91,
+                    approvedFeatureId: 'approved-1',
+                  ),
+                ],
+                approvedProjectFeatures: <MapFeatureSummary>[
+                  _approvedFeature(),
+                ],
+              ),
+            ),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(
+              body: ImportMapScreen(
+                importId: 'import-1',
+                projectId: 'project-1',
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Show quick filters'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('1 imported feature'), findsWidgets);
+      expect(find.text('0 project context features'), findsOneWidget);
+      expect(find.text('1 project context feature'), findsNothing);
+      expect(tester.takeException(), isNull);
     },
   );
 

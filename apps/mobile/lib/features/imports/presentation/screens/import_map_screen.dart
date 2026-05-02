@@ -136,11 +136,16 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
               stagedFeatures: <ImportedFeature>[],
               approvedProjectFeatures: <MapFeatureSummary>[],
             );
+        final approvedProjectContextFeatures =
+            _deduplicateApprovedProjectContext(
+              mapData.approvedProjectFeatures,
+              mapData.stagedFeatures,
+            );
         _handleMapTap(
           point,
           stagedFeatures: _filteredStagedFeatures(mapData.stagedFeatures),
           approvedFeatures: _showApprovedProjectContext
-              ? mapData.approvedProjectFeatures
+              ? approvedProjectContextFeatures
               : const <MapFeatureSummary>[],
           canModerateImport: session != null
               ? _canModerateImport(session.user, details)
@@ -213,13 +218,17 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
           stagedFeatures: <ImportedFeature>[],
           approvedProjectFeatures: <MapFeatureSummary>[],
         );
+    final approvedProjectContextFeatures = _deduplicateApprovedProjectContext(
+      mapData.approvedProjectFeatures,
+      mapData.stagedFeatures,
+    );
     final importFeatureTypeChips = _deriveImportFeatureTypeChips(
       project,
       mapData.stagedFeatures,
     );
     final approvedProjectFeatureTypeChips = _deriveProjectFeatureTypeChips(
       project,
-      mapData.approvedProjectFeatures,
+      approvedProjectContextFeatures,
     );
     final canModerateImport = _canModerateImport(session.user, details);
     final visibleStagedFeatures = _filteredStagedFeatures(
@@ -229,7 +238,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
         _latestMapCamera?.visibleBounds ?? LebanonMapConfig.bounds;
     final currentZoom = _latestMapCamera?.zoom ?? _defaultMapZoom;
     final useLightweightRender =
-        visibleStagedFeatures.length + mapData.approvedProjectFeatures.length >
+        visibleStagedFeatures.length + approvedProjectContextFeatures.length >
             1800 ||
         currentZoom < 9.75;
     _useClusteredMarkers = useLightweightRender;
@@ -239,12 +248,12 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
       cameraBounds,
     );
     final viewportApprovedFeatures = _projectFeaturesInBounds(
-      mapData.approvedProjectFeatures,
+      approvedProjectContextFeatures,
       cameraBounds,
     );
     final markerPlacements = _buildMarkerPlacements(
       visibleStagedFeatures,
-      _showApprovedProjectContext ? mapData.approvedProjectFeatures : const [],
+      _showApprovedProjectContext ? approvedProjectContextFeatures : const [],
     );
     final stagedClusters = useLightweightRender
         ? _buildStagedClusters(viewportStagedFeatures, currentZoom)
@@ -326,7 +335,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
                     else
                       MarkerLayer(
                         markers: _projectContextMarkers(
-                          mapData.approvedProjectFeatures,
+                          approvedProjectContextFeatures,
                           markerPlacements.projectPoints,
                         ),
                       ),
@@ -450,7 +459,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
                               categoryLabel: categoryLabel,
                               visibleFeatureCount: visibleStagedFeatures.length,
                               approvedContextCount:
-                                  mapData.approvedProjectFeatures.length,
+                                  approvedProjectContextFeatures.length,
                               searchController: _searchController,
                               searchFocusNode: _searchFocusNode,
                               visibleStatuses: _visibleStatuses,
@@ -531,7 +540,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
           bottom: AppSpacing.lg,
           child: _ImportMapControlRail(
             featureCount: visibleStagedFeatures.length,
-            approvedContextCount: mapData.approvedProjectFeatures.length,
+            approvedContextCount: approvedProjectContextFeatures.length,
             onOpenApprovedFeatures: () => _openApprovedFeatureBrowser(
               context,
               projectId: widget.projectId,
@@ -564,6 +573,25 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
       return true;
     }
     return user.isSuperAdmin;
+  }
+
+  List<MapFeatureSummary> _deduplicateApprovedProjectContext(
+    List<MapFeatureSummary> approvedFeatures,
+    List<ImportedFeature> stagedFeatures,
+  ) {
+    final approvedFeatureIdsFromThisImport = stagedFeatures
+        .map((feature) => feature.approvedFeatureId?.trim())
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    if (approvedFeatureIdsFromThisImport.isEmpty) {
+      return approvedFeatures;
+    }
+    return approvedFeatures
+        .where(
+          (feature) => !approvedFeatureIdsFromThisImport.contains(feature.id),
+        )
+        .toList(growable: false);
   }
 
   List<ImportedFeature> _filteredStagedFeatures(

@@ -40,14 +40,19 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
   final GlobalKey _validationKey = GlobalKey();
   final GlobalKey _commentsKey = GlobalKey();
   final GlobalKey _featuresKey = GlobalKey();
+  final GlobalKey _focusedLinkedFeatureCardKey = GlobalKey();
+  final Map<String, GlobalKey> _featureCardKeys = <String, GlobalKey>{};
   final Set<String> _selectedFeatureIds = <String>{};
   static const Duration _refreshInterval = Duration(seconds: 15);
   bool _isSubmitting = false;
   bool _isDownloading = false;
   bool _isSavingComment = false;
+  bool _isLoadingLinkedFeature = false;
   bool _isRefreshingImportDetails = false;
   GisImportDetails? _liveDetails;
+  ImportedFeature? _focusedLinkedFeature;
   String? _downloadedImportPath;
+  String? _focusedLinkedFeatureId;
   String? _selectedStatusFilter;
   String? _selectedIssueFilter;
   Timer? _refreshTimer;
@@ -133,6 +138,10 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
         (_selectedIssueFilter == null
             ? details.previewFeatures
             : const <ImportedFeature>[]);
+    final focusedLinkedFeature = _focusedLinkedFeature;
+    final focusedLinkedFeatureAlreadyVisible =
+        focusedLinkedFeature != null &&
+        features.any((feature) => feature.id == focusedLinkedFeature.id);
     final issueFilters = _issueFilterOptions(details.job.validationSummary);
     if (_selectedIssueFilter != null &&
         !issueFilters.any((option) => option.message == _selectedIssueFilter)) {
@@ -228,6 +237,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
             importId: widget.importId,
             projectId: details.job.projectId,
             comments: details.comments,
+            onOpenFeatureInList: _focusCommentFeature,
           ),
           const SizedBox(height: AppSpacing.md),
           KeyedSubtree(
@@ -264,7 +274,65 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
               },
             ),
             const SizedBox(height: AppSpacing.sm),
-            if (features.isEmpty)
+            if (_isLoadingLinkedFeature) ...[
+              const AppCard(
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: AppSpacing.sm),
+                    Expanded(child: Text('Loading linked feature...')),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+            ] else if (focusedLinkedFeature != null &&
+                !focusedLinkedFeatureAlreadyVisible) ...[
+              KeyedSubtree(
+                key: _focusedLinkedFeatureCardKey,
+                child: _ImportedFeatureCard(
+                  feature: focusedLinkedFeature,
+                  selectable:
+                      canModerateImport && focusedLinkedFeature.isActionable,
+                  selected: _selectedFeatureIds.contains(
+                    focusedLinkedFeature.id,
+                  ),
+                  highlighted: true,
+                  isPinnedFromComment: true,
+                  onOpenMap: focusedLinkedFeature.geometry == null
+                      ? null
+                      : () => context.push(
+                          AppRoutes.importMap(
+                            widget.importId,
+                            projectId: details.job.projectId,
+                            featureId: focusedLinkedFeature.id,
+                          ),
+                        ),
+                  onAddComment: canModerateImport
+                      ? () =>
+                            _addComment(context, feature: focusedLinkedFeature)
+                      : null,
+                  onToggleSelected: () {
+                    setState(() {
+                      if (_selectedFeatureIds.contains(
+                        focusedLinkedFeature.id,
+                      )) {
+                        _selectedFeatureIds.remove(focusedLinkedFeature.id);
+                      } else {
+                        _selectedFeatureIds.add(focusedLinkedFeature.id);
+                      }
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+            ],
+            if (features.isEmpty &&
+                focusedLinkedFeature == null &&
+                !_isLoadingLinkedFeature)
               AppEmptyState(
                 icon: Icons.map_outlined,
                 title:
@@ -278,7 +346,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
                     ? 'This import does not currently expose preview geometries.'
                     : 'No staged features currently match the selected status or validation issue.',
               )
-            else
+            else if (features.isNotEmpty)
               ProgressiveListSection<ImportedFeature>(
                 items: features,
                 resetKey: Object.hash(
@@ -292,35 +360,36 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
                 hasMore: featureState?.hasMore ?? false,
                 isLoadingMore: featureState?.isLoadingMore ?? false,
                 onLoadMore: featuresController!.loadMore,
-                itemBuilder: (context, feature, _) => _ImportedFeatureCard(
-                  feature: feature,
-                  comments: _commentsForImportFeature(
-                    details.comments,
-                    feature.id,
-                  ),
-                  selectable: canModerateImport && feature.isActionable,
-                  selected: _selectedFeatureIds.contains(feature.id),
-                  onOpenMap: feature.geometry == null
-                      ? null
-                      : () => context.push(
-                          AppRoutes.importMap(
-                            widget.importId,
-                            projectId: details.job.projectId,
-                            featureId: feature.id,
+                itemBuilder: (context, feature, _) => KeyedSubtree(
+                  key: _featureCardKey(feature.id),
+                  child: _ImportedFeatureCard(
+                    feature: feature,
+                    selectable: canModerateImport && feature.isActionable,
+                    selected: _selectedFeatureIds.contains(feature.id),
+                    highlighted: _focusedLinkedFeatureId == feature.id,
+                    isPinnedFromComment: false,
+                    onOpenMap: feature.geometry == null
+                        ? null
+                        : () => context.push(
+                            AppRoutes.importMap(
+                              widget.importId,
+                              projectId: details.job.projectId,
+                              featureId: feature.id,
+                            ),
                           ),
-                        ),
-                  onAddComment: canModerateImport
-                      ? () => _addComment(context, feature: feature)
-                      : null,
-                  onToggleSelected: () {
-                    setState(() {
-                      if (_selectedFeatureIds.contains(feature.id)) {
-                        _selectedFeatureIds.remove(feature.id);
-                      } else {
-                        _selectedFeatureIds.add(feature.id);
-                      }
-                    });
-                  },
+                    onAddComment: canModerateImport
+                        ? () => _addComment(context, feature: feature)
+                        : null,
+                    onToggleSelected: () {
+                      setState(() {
+                        if (_selectedFeatureIds.contains(feature.id)) {
+                          _selectedFeatureIds.remove(feature.id);
+                        } else {
+                          _selectedFeatureIds.add(feature.id);
+                        }
+                      });
+                    },
+                  ),
                 ),
               ),
             if ((featureState?.total ?? details.job.geometryCount) >
@@ -362,6 +431,76 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       curve: Curves.easeOutCubic,
       alignment: 0.08,
     );
+  }
+
+  GlobalKey _featureCardKey(String featureId) {
+    return _featureCardKeys.putIfAbsent(featureId, GlobalKey.new);
+  }
+
+  void _scrollToFocusedFeature(String featureId) {
+    final targetContext =
+        _featureCardKeys[featureId]?.currentContext ??
+        _focusedLinkedFeatureCardKey.currentContext ??
+        _featuresKey.currentContext;
+    if (targetContext == null) {
+      return;
+    }
+    Scrollable.ensureVisible(
+      targetContext,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+      alignment: 0.08,
+    );
+  }
+
+  Future<void> _focusCommentFeature(String featureId) async {
+    final cleanFeatureId = featureId.trim();
+    if (cleanFeatureId.isEmpty || _isLoadingLinkedFeature) {
+      return;
+    }
+
+    setState(() {
+      _focusedLinkedFeatureId = cleanFeatureId;
+      _isLoadingLinkedFeature = true;
+    });
+
+    try {
+      final feature = await ref
+          .read(importsRepositoryProvider)
+          .fetchImportFeatureById(
+            importId: widget.importId,
+            featureId: cleanFeatureId,
+          );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _focusedLinkedFeature = feature;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        _scrollToFocusedFeature(cleanFeatureId);
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        userFacingErrorMessage(
+          error,
+          fallback: 'Unable to load the linked staged feature right now.',
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingLinkedFeature = false;
+        });
+      }
+    }
   }
 
   Future<void> _refreshCurrentImportDetails({
@@ -1381,11 +1520,13 @@ class _ImportCommentsCard extends StatelessWidget {
     required this.importId,
     required this.projectId,
     required this.comments,
+    required this.onOpenFeatureInList,
   });
 
   final String importId;
   final String projectId;
   final List<ImportComment> comments;
+  final ValueChanged<String> onOpenFeatureInList;
 
   @override
   Widget build(BuildContext context) {
@@ -1485,12 +1626,16 @@ class _ImportCommentsCard extends StatelessWidget {
                             runSpacing: 8,
                             crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
-                              Chip(
+                              ActionChip(
                                 avatar: const Icon(
                                   Icons.layers_outlined,
                                   size: 18,
                                 ),
                                 label: Text(featureTitle),
+                                tooltip: 'Show this feature in the staged list',
+                                onPressed: () => onOpenFeatureInList(
+                                  comment.importFeatureId!.trim(),
+                                ),
                               ),
                               TextButton.icon(
                                 onPressed: () => context.push(
@@ -1545,30 +1690,23 @@ String? _friendlyCommentFeatureTitle(String? rawTitle) {
   return title;
 }
 
-List<ImportComment> _commentsForImportFeature(
-  List<ImportComment> comments,
-  String featureId,
-) {
-  return comments
-      .where((comment) => comment.importFeatureId?.trim() == featureId)
-      .toList(growable: false);
-}
-
 class _ImportedFeatureCard extends StatelessWidget {
   const _ImportedFeatureCard({
     required this.feature,
-    required this.comments,
     required this.selectable,
     required this.selected,
+    required this.highlighted,
+    required this.isPinnedFromComment,
     required this.onOpenMap,
     required this.onAddComment,
     required this.onToggleSelected,
   });
 
   final ImportedFeature feature;
-  final List<ImportComment> comments;
   final bool selectable;
   final bool selected;
+  final bool highlighted;
+  final bool isPinnedFromComment;
   final VoidCallback? onOpenMap;
   final VoidCallback? onAddComment;
   final VoidCallback onToggleSelected;
@@ -1579,6 +1717,28 @@ class _ImportedFeatureCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (highlighted) ...[
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                Chip(
+                  avatar: const Icon(Icons.comment_outlined, size: 18),
+                  label: Text(
+                    isPinnedFromComment
+                        ? 'Linked feature from comment'
+                        : 'Feature linked from comment',
+                  ),
+                ),
+                if (isPinnedFromComment)
+                  const Chip(
+                    avatar: Icon(Icons.filter_alt_outlined, size: 18),
+                    label: Text('Shown even if filters hide it'),
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1648,10 +1808,6 @@ class _ImportedFeatureCard extends StatelessWidget {
                 softWrap: true,
               ),
             ),
-          if (comments.isNotEmpty) ...[
-            const SizedBox(height: AppSpacing.sm),
-            _ImportFeatureCommentsBlock(comments: comments),
-          ],
           if (feature.attributes.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.sm),
             Text('Attributes', style: Theme.of(context).textTheme.titleSmall),
@@ -1680,70 +1836,6 @@ class _ImportedFeatureCard extends StatelessWidget {
             ),
           ],
         ],
-      ),
-    );
-  }
-}
-
-class _ImportFeatureCommentsBlock extends StatelessWidget {
-  const _ImportFeatureCommentsBlock({required this.comments});
-
-  final List<ImportComment> comments;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.36),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.6)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.sm),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Feature comments',
-              style: theme.textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.xs),
-            for (final comment in comments) ...[
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.comment_outlined, size: 18, color: scheme.primary),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${comment.authorName} • ${_formatDateTime(comment.createdAt)}',
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                          softWrap: true,
-                        ),
-                        const SizedBox(height: 2),
-                        Text(comment.commentText, softWrap: true),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              if (comment != comments.last)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: AppSpacing.xs),
-                  child: Divider(height: 1),
-                ),
-            ],
-          ],
-        ),
       ),
     );
   }

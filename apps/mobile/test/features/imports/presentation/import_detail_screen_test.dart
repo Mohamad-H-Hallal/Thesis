@@ -98,16 +98,19 @@ class _FakeImportsRepository implements ImportsRepository {
   _FakeImportsRepository({
     required this.details,
     this.features = const <ImportedFeature>[],
+    this.pageFeatures,
     this.reviewedDetails,
     this.reviewedFeatures,
   });
 
   GisImportDetails details;
   List<ImportedFeature> features;
+  List<ImportedFeature>? pageFeatures;
   final GisImportDetails? reviewedDetails;
   final List<ImportedFeature>? reviewedFeatures;
   final List<String?> requestedIssues = <String?>[];
   int featurePageRequests = 0;
+  int featureByIdRequests = 0;
   int detailRequests = 0;
 
   @override
@@ -156,6 +159,7 @@ class _FakeImportsRepository implements ImportsRepository {
     required String importId,
     required String featureId,
   }) async {
+    featureByIdRequests += 1;
     return features.firstWhere((item) => item.id == featureId);
   }
 
@@ -185,9 +189,10 @@ class _FakeImportsRepository implements ImportsRepository {
   }) async {
     featurePageRequests += 1;
     requestedIssues.add(issue);
+    final sourceFeatures = pageFeatures ?? features;
     final filtered = status == null
-        ? features
-        : features
+        ? sourceFeatures
+        : sourceFeatures
               .where((item) => item.status == status)
               .toList(growable: false);
     final issueFiltered = issue == null
@@ -908,7 +913,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('staged feature cards show their own feature comments', (
+  testWidgets('comment feature chip focuses linked staged feature in list', (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
@@ -943,6 +948,7 @@ void main() {
         ],
       ),
       features: <ImportedFeature>[feature],
+      pageFeatures: const <ImportedFeature>[],
     );
 
     await tester.pumpWidget(
@@ -961,8 +967,18 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Feature comments'), findsOneWidget);
-    expect(find.text('This feature needs a clearer type.'), findsWidgets);
+    expect(find.text('This feature needs a clearer type.'), findsOneWidget);
+    expect(find.text('Linked feature from comment'), findsNothing);
+
+    await tester.tap(find.widgetWithText(ActionChip, feature.displayTitle));
+    await tester.pumpAndSettle();
+
+    expect(repository.featureByIdRequests, 1);
+    expect(find.text('Linked feature from comment'), findsOneWidget);
+    expect(find.text('Shown even if filters hide it'), findsOneWidget);
+    expect(find.text(feature.displayTitle), findsWidgets);
+    expect(find.text('Feature comments'), findsNothing);
+    expect(find.text('This feature needs a clearer type.'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
