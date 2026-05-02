@@ -706,6 +706,80 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('comments are separated and use readable feature labels', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1200, 2200);
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final repository = _FakeImportsRepository(
+      details: GisImportDetails(
+        job: _job(status: 'failed'),
+        previewFeatures: const <ImportedFeature>[],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 0,
+          previewFeatureCount: 0,
+          outsideWorkspaceFeatureCount: 0,
+        ),
+        comments: <ImportComment>[
+          ImportComment(
+            id: 'comment-1',
+            importJobId: 'import-1',
+            authorUserId: 'admin-1',
+            authorName: 'GIS Super Administrator',
+            authorRole: 'super_admin',
+            commentText: 'change the feature type',
+            importFeatureId: 'feature-1',
+            featureDisplayTitle: 'Mountain LineString',
+            createdAt: DateTime(2026, 5, 2, 22, 59),
+          ),
+          ImportComment(
+            id: 'comment-2',
+            importJobId: 'import-1',
+            authorUserId: 'admin-1',
+            authorName: 'GIS Super Administrator',
+            authorRole: 'super_admin',
+            commentText: 'where this comment appear',
+            importFeatureId: 'feature-2',
+            featureDisplayTitle: 'Meadow LineString',
+            createdAt: DateTime(2026, 5, 2, 23),
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(
+            (_) => _AuthenticatedAuthController(_session()),
+          ),
+          importsRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(body: ImportDetailScreen(importId: 'import-1')),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('Comments'), findsOneWidget);
+    expect(find.text('2'), findsOneWidget);
+    expect(find.text('change the feature type'), findsOneWidget);
+    expect(find.text('where this comment appear'), findsOneWidget);
+    expect(find.text('Mountain'), findsOneWidget);
+    expect(find.text('Meadow'), findsOneWidget);
+    expect(find.text('Mountain LineString'), findsNothing);
+    expect(find.text('Meadow LineString'), findsNothing);
+    expect(find.text('Open on map'), findsNWidgets(2));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('import warnings hide accuracy_meters but keep real fields', (
     tester,
   ) async {

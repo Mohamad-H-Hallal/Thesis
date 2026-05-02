@@ -35,6 +35,11 @@ class ImportDetailScreen extends ConsumerStatefulWidget {
 }
 
 class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _workspaceKey = GlobalKey();
+  final GlobalKey _validationKey = GlobalKey();
+  final GlobalKey _commentsKey = GlobalKey();
+  final GlobalKey _featuresKey = GlobalKey();
   final Set<String> _selectedFeatureIds = <String>{};
   static const Duration _refreshInterval = Duration(seconds: 15);
   bool _isSubmitting = false;
@@ -62,6 +67,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -201,40 +207,45 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
     final downloadedImportPath = _downloadedImportPath;
 
     return ListView(
+      controller: _scrollController,
       children: [
         _ImportSummaryCard(job: details.job),
         const SizedBox(height: AppSpacing.md),
-        _ImportMapActionCard(
-          importId: widget.importId,
-          projectId: details.job.projectId,
-          isProcessing: _isImportStillProcessing(details.job.status),
+        _ImportSectionNavCard(
+          commentsCount: details.comments.length,
+          stagedCount: featureState?.total ?? details.job.geometryCount,
+          onWorkspace: () => _scrollToSection(_workspaceKey),
+          onValidation: () => _scrollToSection(_validationKey),
+          onComments: () => _scrollToSection(_commentsKey),
+          onFeatures: () => _scrollToSection(_featuresKey),
         ),
         const SizedBox(height: AppSpacing.md),
-        if (canDownloadImport || canModerateImport) ...[
-          _ImportActionCard(
-            job: details.job,
-            canDownload: canDownloadImport,
-            canComment: canModerateImport,
-            isDownloading: _isDownloading,
-            isSavingComment: _isSavingComment,
-            onDownload: _downloadImport,
-            onAddComment: canModerateImport ? _addComment : null,
-            onOpenDownloadedFile:
-                downloadedImportPath?.trim().isNotEmpty == true
-                ? () => _openDownloadedImport(downloadedImportPath!)
-                : null,
-            onShareDownloadedFile:
-                downloadedImportPath?.trim().isNotEmpty == true
-                ? () => _shareDownloadedImport(downloadedImportPath!, details)
-                : null,
-            onCopyDownloadedPath:
-                downloadedImportPath?.trim().isNotEmpty == true
-                ? () => _copyDownloadedImportPath(downloadedImportPath!)
-                : null,
-          ),
-          const SizedBox(height: AppSpacing.md),
-        ],
-        _ImportValidationCard(job: details.job),
+        _ImportWorkspaceCard(
+          key: _workspaceKey,
+          importId: widget.importId,
+          projectId: details.job.projectId,
+          job: details.job,
+          isProcessing: _isImportStillProcessing(details.job.status),
+          canDownload: canDownloadImport,
+          canComment: canModerateImport,
+          isDownloading: _isDownloading,
+          isSavingComment: _isSavingComment,
+          onDownload: _downloadImport,
+          onAddComment: canModerateImport ? _addComment : null,
+          onOpenDownloadedFile:
+              downloadedImportPath?.trim().isNotEmpty == true
+              ? () => _openDownloadedImport(downloadedImportPath!)
+              : null,
+          onShareDownloadedFile:
+              downloadedImportPath?.trim().isNotEmpty == true
+              ? () => _shareDownloadedImport(downloadedImportPath!, details)
+              : null,
+          onCopyDownloadedPath: downloadedImportPath?.trim().isNotEmpty == true
+              ? () => _copyDownloadedImportPath(downloadedImportPath!)
+              : null,
+        ),
+        const SizedBox(height: AppSpacing.md),
+        _ImportValidationCard(key: _validationKey, job: details.job),
         const SizedBox(height: AppSpacing.md),
         if (_isImportStillProcessing(details.job.status))
           _ImportProcessingCard(job: details.job)
@@ -257,14 +268,18 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
         if (canModerateImport && actionableFeatures.isNotEmpty)
           const SizedBox(height: AppSpacing.md),
         _ImportCommentsCard(
+          key: _commentsKey,
           importId: widget.importId,
           projectId: details.job.projectId,
           comments: details.comments,
         ),
         const SizedBox(height: AppSpacing.md),
-        Text(
-          'Staged features (${featureState?.total ?? details.job.geometryCount})',
-          style: Theme.of(context).textTheme.titleMedium,
+        KeyedSubtree(
+          key: _featuresKey,
+          child: Text(
+            'Staged features (${featureState?.total ?? details.job.geometryCount})',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
         ),
         const SizedBox(height: AppSpacing.sm),
         if (!shouldLoadFeatures)
@@ -371,6 +386,19 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       }
       unawaited(_refreshImportDetails?.call());
     });
+  }
+
+  void _scrollToSection(GlobalKey key) {
+    final targetContext = key.currentContext;
+    if (targetContext == null) {
+      return;
+    }
+    Scrollable.ensureVisible(
+      targetContext,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+      alignment: 0.08,
+    );
   }
 
   GisImportDetails? _latestDetails(GisImportDetails? providerDetails) {
@@ -883,9 +911,91 @@ class _ImportProcessingCard extends StatelessWidget {
   }
 }
 
-class _ImportActionCard extends StatelessWidget {
-  const _ImportActionCard({
+class _ImportSectionNavCard extends StatelessWidget {
+  const _ImportSectionNavCard({
+    required this.commentsCount,
+    required this.stagedCount,
+    required this.onWorkspace,
+    required this.onValidation,
+    required this.onComments,
+    required this.onFeatures,
+  });
+
+  final int commentsCount;
+  final int stagedCount;
+  final VoidCallback onWorkspace;
+  final VoidCallback onValidation;
+  final VoidCallback onComments;
+  final VoidCallback onFeatures;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Import sections', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: AppSpacing.sm),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _SectionShortcutButton(
+                icon: Icons.map_outlined,
+                label: 'Map and file',
+                onPressed: onWorkspace,
+              ),
+              _SectionShortcutButton(
+                icon: Icons.fact_check_outlined,
+                label: 'Validation',
+                onPressed: onValidation,
+              ),
+              _SectionShortcutButton(
+                icon: Icons.comment_outlined,
+                label: 'Comments ($commentsCount)',
+                onPressed: onComments,
+              ),
+              _SectionShortcutButton(
+                icon: Icons.layers_outlined,
+                label: 'Features ($stagedCount)',
+                onPressed: onFeatures,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionShortcutButton extends StatelessWidget {
+  const _SectionShortcutButton({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 18),
+      label: Text(label),
+    );
+  }
+}
+
+class _ImportWorkspaceCard extends StatelessWidget {
+  const _ImportWorkspaceCard({
+    super.key,
+    required this.importId,
+    required this.projectId,
     required this.job,
+    required this.isProcessing,
     required this.canDownload,
     required this.canComment,
     required this.isDownloading,
@@ -897,7 +1007,10 @@ class _ImportActionCard extends StatelessWidget {
     this.onCopyDownloadedPath,
   });
 
+  final String importId;
+  final String projectId;
   final GisImportJob job;
+  final bool isProcessing;
   final bool canDownload;
   final bool canComment;
   final bool isDownloading;
@@ -914,14 +1027,23 @@ class _ImportActionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('File actions', style: Theme.of(context).textTheme.titleMedium),
+          Text('Map and file', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: AppSpacing.sm),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
+              FilledButton.icon(
+                onPressed: isProcessing
+                    ? null
+                    : () => context.push(
+                        AppRoutes.importMap(importId, projectId: projectId),
+                      ),
+                icon: const Icon(Icons.map_outlined),
+                label: const Text('Open import map'),
+              ),
               if (canDownload)
-                FilledButton.icon(
+                OutlinedButton.icon(
                   onPressed: isDownloading ? null : () => onDownload(context),
                   icon: const Icon(Icons.download_outlined),
                   label: Text(
@@ -965,40 +1087,6 @@ class _ImportActionCard extends StatelessWidget {
               softWrap: true,
             ),
           ],
-        ],
-      ),
-    );
-  }
-}
-
-class _ImportMapActionCard extends StatelessWidget {
-  const _ImportMapActionCard({
-    required this.importId,
-    required this.projectId,
-    required this.isProcessing,
-  });
-
-  final String importId;
-  final String projectId;
-  final bool isProcessing;
-
-  @override
-  Widget build(BuildContext context) {
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Import map', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: AppSpacing.sm),
-          FilledButton.icon(
-            onPressed: isProcessing
-                ? null
-                : () => context.push(
-                    AppRoutes.importMap(importId, projectId: projectId),
-                  ),
-            icon: const Icon(Icons.map_outlined),
-            label: const Text('Open import map'),
-          ),
         ],
       ),
     );
@@ -1087,7 +1175,7 @@ class _ImportFeatureFiltersCard extends StatelessWidget {
 }
 
 class _ImportValidationCard extends StatelessWidget {
-  const _ImportValidationCard({required this.job});
+  const _ImportValidationCard({super.key, required this.job});
 
   final GisImportJob job;
 
@@ -1181,6 +1269,7 @@ class _ImportValidationCard extends StatelessWidget {
 
 class _ImportCommentsCard extends StatelessWidget {
   const _ImportCommentsCard({
+    super.key,
     required this.importId,
     required this.projectId,
     required this.comments,
@@ -1192,11 +1281,27 @@ class _ImportCommentsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Comments', style: Theme.of(context).textTheme.titleMedium),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Comments',
+                  style: theme.textTheme.titleMedium,
+                ),
+              ),
+              if (comments.isNotEmpty)
+                Chip(
+                  label: Text('${comments.length}'),
+                  visualDensity: VisualDensity.compact,
+                ),
+            ],
+          ),
           const SizedBox(height: AppSpacing.sm),
           if (comments.isEmpty)
             const Text(
@@ -1204,53 +1309,135 @@ class _ImportCommentsCard extends StatelessWidget {
               softWrap: true,
             )
           else
-            ...comments.map(
-              (comment) => Padding(
+            ...comments.map((comment) {
+              final featureTitle = _friendlyCommentFeatureTitle(
+                comment.featureDisplayTitle,
+              );
+              return Padding(
                 padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '${comment.authorName} • ${_formatDateTime(comment.createdAt)}',
-                      style: Theme.of(context).textTheme.labelMedium,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHighest.withValues(
+                      alpha: 0.42,
                     ),
-                    const SizedBox(height: 4),
-                    Text(comment.commentText, softWrap: true),
-                    if (comment.featureDisplayTitle?.trim().isNotEmpty ??
-                        false) ...[
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          Chip(
-                            label: Text(
-                              'Feature: ${comment.featureDisplayTitle}',
-                            ),
-                          ),
-                          TextButton.icon(
-                            onPressed: () => context.push(
-                              AppRoutes.importMap(
-                                importId,
-                                projectId: projectId,
-                                featureId: comment.importFeatureId,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: scheme.outlineVariant.withValues(alpha: 0.7),
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(AppSpacing.sm),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            CircleAvatar(
+                              radius: 17,
+                              backgroundColor: scheme.primaryContainer,
+                              child: Icon(
+                                Icons.person_outline,
+                                size: 18,
+                                color: scheme.onPrimaryContainer,
                               ),
                             ),
-                            icon: const Icon(Icons.map_outlined, size: 18),
-                            label: const Text('Open on map'),
+                            const SizedBox(width: AppSpacing.sm),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    comment.authorName,
+                                    style: theme.textTheme.labelLarge?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                    softWrap: true,
+                                  ),
+                                  Text(
+                                    _formatDateTime(comment.createdAt),
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: scheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        Text(
+                          comment.commentText,
+                          style: theme.textTheme.bodyMedium,
+                          softWrap: true,
+                        ),
+                        if (featureTitle != null &&
+                            (comment.importFeatureId?.trim().isNotEmpty ??
+                                false)) ...[
+                          const SizedBox(height: AppSpacing.sm),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Chip(
+                                avatar: const Icon(
+                                  Icons.layers_outlined,
+                                  size: 18,
+                                ),
+                                label: Text(featureTitle),
+                              ),
+                              TextButton.icon(
+                                onPressed: () => context.push(
+                                  AppRoutes.importMap(
+                                    importId,
+                                    projectId: projectId,
+                                    featureId: comment.importFeatureId,
+                                  ),
+                                ),
+                                icon: const Icon(Icons.map_outlined, size: 18),
+                                label: const Text('Open on map'),
+                              ),
+                            ],
                           ),
                         ],
-                      ),
-                    ],
-                  ],
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-            ),
+              );
+            }),
         ],
       ),
     );
   }
+}
+
+String? _friendlyCommentFeatureTitle(String? rawTitle) {
+  final title = rawTitle?.trim();
+  if (title == null || title.isEmpty) {
+    return null;
+  }
+
+  final geometrySuffixes = <String, String>{
+    ' multipoint': ' Point feature',
+    ' point': ' Point feature',
+    ' multilinestring': ' Line feature',
+    ' linestring': ' Line feature',
+    ' multipolygon': ' Polygon feature',
+    ' polygon': ' Polygon feature',
+  };
+  final lower = title.toLowerCase();
+  for (final entry in geometrySuffixes.entries) {
+    if (lower.endsWith(entry.key)) {
+      final prefix = title.substring(0, title.length - entry.key.length).trim();
+      if (prefix.isEmpty) {
+        return entry.value.trim();
+      }
+      return prefix;
+    }
+  }
+  return title;
 }
 
 class _ImportedFeatureCard extends StatelessWidget {
