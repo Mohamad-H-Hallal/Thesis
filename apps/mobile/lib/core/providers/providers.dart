@@ -511,6 +511,7 @@ final paginatedProjectFeatureBrowserProvider = StateNotifierProvider.autoDispose
                 status: query.status,
                 geometryType: query.geometryType,
                 featureType: query.featureType,
+                excludeImportId: query.excludeImportId,
                 page: page,
                 limit: limit,
               );

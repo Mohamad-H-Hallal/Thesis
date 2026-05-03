@@ -459,6 +459,23 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       return;
     }
 
+    final visibleCardContext = _featureCardKeys[cleanFeatureId]?.currentContext;
+    if (visibleCardContext != null) {
+      setState(() {
+        _focusedLinkedFeatureId = cleanFeatureId;
+      });
+      _scrollToFocusedFeature(cleanFeatureId);
+      return;
+    }
+
+    if (_focusedLinkedFeature?.id == cleanFeatureId) {
+      setState(() {
+        _focusedLinkedFeatureId = cleanFeatureId;
+      });
+      _scrollToFocusedFeature(cleanFeatureId);
+      return;
+    }
+
     setState(() {
       _focusedLinkedFeatureId = cleanFeatureId;
       _isLoadingLinkedFeature = true;

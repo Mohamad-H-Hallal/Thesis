@@ -982,6 +982,68 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'comment feature chip scrolls visible staged feature without fetch',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1200, 2200);
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final feature = _missingFeatureTypeFeature();
+      final repository = _FakeImportsRepository(
+        details: GisImportDetails(
+          job: _job(status: 'failed'),
+          previewFeatures: const <ImportedFeature>[],
+          previewSummary: const ImportPreviewSummary(
+            geometryFeatureCount: 1,
+            previewFeatureCount: 0,
+            outsideWorkspaceFeatureCount: 0,
+          ),
+          comments: <ImportComment>[
+            ImportComment(
+              id: 'comment-1',
+              importJobId: 'import-1',
+              authorUserId: 'admin-1',
+              authorName: 'GIS Super Administrator',
+              authorRole: 'super_admin',
+              commentText: 'This feature is already visible.',
+              importFeatureId: feature.id,
+              featureDisplayTitle: feature.displayTitle,
+              createdAt: DateTime(2026, 5, 3, 12),
+            ),
+          ],
+        ),
+        features: <ImportedFeature>[feature],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWith(
+              (_) => _AuthenticatedAuthController(_session()),
+            ),
+            importsRepositoryProvider.overrideWithValue(repository),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(body: ImportDetailScreen(importId: 'import-1')),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(ActionChip, feature.displayTitle));
+      await tester.pumpAndSettle();
+
+      expect(repository.featureByIdRequests, 0);
+      expect(find.text('Feature linked from comment'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('adding an import comment refreshes the page immediately', (
     tester,
   ) async {

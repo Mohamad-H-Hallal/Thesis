@@ -13,6 +13,7 @@ import { normalizeCollectionFormSchema } from '../lib/projectSchema';
 
 const projectAccessScopes = ['public', 'assigned', 'all'] as const;
 type ProjectAccessScope = (typeof projectAccessScopes)[number];
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const publicVisibilityColumnForRole = (role: string): 'visible_to_viewers' | 'visible_to_contributors' =>
   role === 'viewer' ? 'visible_to_viewers' : 'visible_to_contributors';
@@ -566,6 +567,13 @@ const getProjectFeatures = async (req, res) => {
     typeof req.query.feature_type === 'string'
       ? req.query.feature_type.trim()
       : '';
+  const excludeImportId =
+    typeof req.query.exclude_import_id === 'string'
+      ? req.query.exclude_import_id.trim()
+      : '';
+  if (excludeImportId && !uuidPattern.test(excludeImportId)) {
+    throw new AppError('exclude_import_id must be a valid UUID', 400);
+  }
   const page = Math.max(1, Number.parseInt(String(req.query.page ?? '1'), 10) || 1);
   const limit = Math.min(
     Math.max(1, Number.parseInt(String(req.query.limit ?? '50'), 10) || 50),
@@ -640,6 +648,19 @@ const getProjectFeatures = async (req, res) => {
     paramIndex++;
   }
 
+  if (excludeImportId) {
+    queryText += `
+      AND NOT EXISTS (
+        SELECT 1
+        FROM gis_import_feature gif
+        WHERE gif.import_job_id = $${paramIndex}
+          AND gif.approved_feature_id = sf.id
+      )
+    `;
+    params.push(excludeImportId);
+    paramIndex++;
+  }
+
   if (searchQuery) {
     queryText += `
       AND (
@@ -709,6 +730,19 @@ const getProjectFeatures = async (req, res) => {
       )
     `;
     countParams.push(featureType);
+    countParamIndex++;
+  }
+
+  if (excludeImportId) {
+    countQuery += `
+      AND NOT EXISTS (
+        SELECT 1
+        FROM gis_import_feature gif
+        WHERE gif.import_job_id = $${countParamIndex}
+          AND gif.approved_feature_id = sf.id
+      )
+    `;
+    countParams.push(excludeImportId);
     countParamIndex++;
   }
 

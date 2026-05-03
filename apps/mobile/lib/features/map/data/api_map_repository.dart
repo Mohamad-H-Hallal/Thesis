@@ -133,6 +133,7 @@ class ApiMapRepository {
     String? status,
     String? geometryType,
     String? featureType,
+    String? excludeImportId,
     int page = 1,
     int limit = 20,
   }) async {
@@ -148,6 +149,8 @@ class ApiMapRepository {
             'geometry_type': geometryType!.trim(),
           if (featureType?.trim().isNotEmpty ?? false)
             'feature_type': featureType!.trim(),
+          if (excludeImportId?.trim().isNotEmpty ?? false)
+            'exclude_import_id': excludeImportId!.trim(),
         },
       );
 

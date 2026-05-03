@@ -480,6 +480,14 @@ describe('GIS import workflow', () => {
 
     expect(projectMapResponse.body.data).toHaveLength(1);
     expect(projectMapResponse.body.data[0].status).toBe('approved');
+
+    const importContextProjectFeaturesResponse = await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/features?limit=100&exclude_import_id=${importId}`)
+      .set(authHeader(admin.token))
+      .expect(200);
+
+    expect(importContextProjectFeaturesResponse.body.data).toHaveLength(0);
+    expect(importContextProjectFeaturesResponse.body.pagination.total).toBe(0);
   });
 
   test('approved staged features can be rejected later and are removed from official project features', async () => {

@@ -1244,6 +1244,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
         isScrollControlled: true,
         builder: (sheetContext) => _ApprovedProjectFeatureBrowserSheet(
           projectId: projectId,
+          importId: widget.importId,
           projectName: projectName,
           featureTypeOptions: featureTypeOptions,
           onSelectFeature: (feature) {
@@ -1277,7 +1278,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
           ? _ImportFeatureDetailsLoaderSheet(
               importId: widget.importId,
               featureId: feature.id,
-              fallbackTitle: _importFeatureTitle(feature),
+              fallbackTitle: _cleanFeatureTitle(_importFeatureTitle(feature)),
               canModerateImport: canModerateImport,
               onAddComment: _addFeatureComment,
               onApprove: _reviewFeatureFromMap,
@@ -2852,12 +2853,14 @@ class _ImportFeatureBrowserSheetState
 class _ApprovedProjectFeatureBrowserSheet extends ConsumerStatefulWidget {
   const _ApprovedProjectFeatureBrowserSheet({
     required this.projectId,
+    required this.importId,
     required this.projectName,
     required this.featureTypeOptions,
     required this.onSelectFeature,
   });
 
   final String projectId;
+  final String importId;
   final String projectName;
   final List<String> featureTypeOptions;
   final ValueChanged<MapFeatureSummary> onSelectFeature;
@@ -2893,6 +2896,7 @@ class _ApprovedProjectFeatureBrowserSheetState
           : _searchController.text.trim(),
       status: 'approved',
       featureType: _featureTypeFilter,
+      excludeImportId: widget.importId,
     );
     final featuresAsync = ref.watch(
       paginatedProjectFeatureBrowserProvider(query),
@@ -4571,7 +4575,7 @@ String _importFeatureTitle(ImportedFeature feature) {
     }
     final text = '$raw'.trim();
     if (text.isNotEmpty) {
-      return text;
+      return _cleanFeatureTitle(text);
     }
   }
 
@@ -4579,7 +4583,7 @@ String _importFeatureTitle(ImportedFeature feature) {
   if (sourceName != null &&
       sourceName.isNotEmpty &&
       !_looksLikeOpaqueSourceValue(sourceName)) {
-    return sourceName;
+    return _cleanFeatureTitle(sourceName);
   }
 
   final title = feature.displayTitle.trim();
@@ -4605,8 +4609,40 @@ String _importFeatureTitle(ImportedFeature feature) {
   };
   for (final entry in replacements.entries) {
     if (lower.startsWith(entry.key)) {
-      return '${entry.value}${title.substring(entry.key.length)}'.trim();
+      return _cleanFeatureTitle(
+        '${entry.value}${title.substring(entry.key.length)}'.trim(),
+      );
     }
+  }
+  return _cleanFeatureTitle(title);
+}
+
+String _cleanFeatureTitle(String rawTitle) {
+  var title = rawTitle.trim();
+  if (title.isEmpty) {
+    return title;
+  }
+  const geometrySuffixes = <String>[
+    'multipoint',
+    'point',
+    'multilinestring',
+    'linestring',
+    'multipolygon',
+    'polygon',
+  ];
+  for (final suffix in geometrySuffixes) {
+    final lower = title.toLowerCase();
+    final suffixWithSpace = ' $suffix';
+    if (!lower.endsWith(suffixWithSpace)) {
+      continue;
+    }
+    final withoutSuffix = title
+        .substring(0, title.length - suffixWithSpace.length)
+        .trim();
+    if (withoutSuffix.isNotEmpty) {
+      title = withoutSuffix;
+    }
+    break;
   }
   return title;
 }
