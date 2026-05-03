@@ -8,6 +8,7 @@ import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
+import '../../domain/app_tile_provider.dart';
 import '../../domain/lebanon_map.dart';
 import '../../domain/map_feature.dart';
 import '../../domain/map_geometry.dart';
@@ -155,9 +156,7 @@ class _ProjectQuickMapCardState extends ConsumerState<ProjectQuickMapCard> {
                                             LebanonMapConfig.basemapUrlTemplate(
                                               _previewBasemapStyle,
                                             ),
-                                        tileProvider: NetworkTileProvider(
-                                          silenceExceptions: true,
-                                        ),
+                                        tileProvider: appNetworkTileProvider(),
                                         userAgentPackageName:
                                             'lb.gov.gis_collector',
                                       ),
@@ -172,9 +171,7 @@ class _ProjectQuickMapCardState extends ConsumerState<ProjectQuickMapCard> {
                                             LebanonMapConfig.referenceLabelUrlTemplate(
                                               _previewBasemapStyle,
                                             )!,
-                                        tileProvider: NetworkTileProvider(
-                                          silenceExceptions: true,
-                                        ),
+                                        tileProvider: appNetworkTileProvider(),
                                         userAgentPackageName:
                                             'lb.gov.gis_collector',
                                       ),

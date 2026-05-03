@@ -324,31 +324,47 @@ class _ProjectAssignmentsScreenState
               };
 
         final currentError = switch (effectiveSection) {
-          _AssignmentSection.assigned => assignedAsync.hasError
-              ? userFacingErrorMessage(
-                  assignedAsync.asError!.error,
-                  fallback: 'Unable to load assigned contributors right now.',
-                )
-              : null,
-          _AssignmentSection.available => availableAsync.hasError
-              ? userFacingErrorMessage(
-                  availableAsync.asError!.error,
-                  fallback:
-                      'Unable to load available contributors right now.',
-                )
-              : null,
-          _AssignmentSection.pendingRequests => pendingAsync.hasError
-              ? userFacingErrorMessage(
-                  pendingAsync.asError!.error,
-                  fallback: 'Unable to load pending requests right now.',
-                )
-              : null,
-          _AssignmentSection.rejectedRequests => rejectedAsync.hasError
-              ? userFacingErrorMessage(
-                  rejectedAsync.asError!.error,
-                  fallback: 'Unable to load rejected requests right now.',
-                )
-              : null,
+          _AssignmentSection.assigned =>
+            assignedAsync.hasError
+                ? userFacingErrorMessage(
+                    assignedAsync.asError?.error ??
+                        StateError(
+                          'Assigned contributors failed without an error payload.',
+                        ),
+                    fallback: 'Unable to load assigned contributors right now.',
+                  )
+                : null,
+          _AssignmentSection.available =>
+            availableAsync.hasError
+                ? userFacingErrorMessage(
+                    availableAsync.asError?.error ??
+                        StateError(
+                          'Available contributors failed without an error payload.',
+                        ),
+                    fallback:
+                        'Unable to load available contributors right now.',
+                  )
+                : null,
+          _AssignmentSection.pendingRequests =>
+            pendingAsync.hasError
+                ? userFacingErrorMessage(
+                    pendingAsync.asError?.error ??
+                        StateError(
+                          'Pending requests failed without an error payload.',
+                        ),
+                    fallback: 'Unable to load pending requests right now.',
+                  )
+                : null,
+          _AssignmentSection.rejectedRequests =>
+            rejectedAsync.hasError
+                ? userFacingErrorMessage(
+                    rejectedAsync.asError?.error ??
+                        StateError(
+                          'Rejected requests failed without an error payload.',
+                        ),
+                    fallback: 'Unable to load rejected requests right now.',
+                  )
+                : null,
         };
         final isCurrentLoading = switch (effectiveSection) {
           _AssignmentSection.assigned =>
@@ -385,32 +401,34 @@ class _ProjectAssignmentsScreenState
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
-                      children: _AssignmentSection.values.map((section) {
-                        final (label, count) = switch (section) {
-                          _AssignmentSection.assigned => (
-                            'Assigned',
-                            assignedState.total,
-                          ),
-                          _AssignmentSection.available => (
-                            'Available',
-                            availableState.total,
-                          ),
-                          _AssignmentSection.pendingRequests => (
-                            'Pending requests',
-                            pendingState.total,
-                          ),
-                          _AssignmentSection.rejectedRequests => (
-                            'Rejected requests',
-                            rejectedState.total,
-                          ),
-                        };
-                        return ChoiceChip(
-                          label: Text('$label ($count)'),
-                          selected: effectiveSection == section,
-                          onSelected: (_) =>
-                              setState(() => _selectedSection = section),
-                        );
-                      }).toList(growable: false),
+                      children: _AssignmentSection.values
+                          .map((section) {
+                            final (label, count) = switch (section) {
+                              _AssignmentSection.assigned => (
+                                'Assigned',
+                                assignedState.total,
+                              ),
+                              _AssignmentSection.available => (
+                                'Available',
+                                availableState.total,
+                              ),
+                              _AssignmentSection.pendingRequests => (
+                                'Pending requests',
+                                pendingState.total,
+                              ),
+                              _AssignmentSection.rejectedRequests => (
+                                'Rejected requests',
+                                rejectedState.total,
+                              ),
+                            };
+                            return ChoiceChip(
+                              label: Text('$label ($count)'),
+                              selected: effectiveSection == section,
+                              onSelected: (_) =>
+                                  setState(() => _selectedSection = section),
+                            );
+                          })
+                          .toList(growable: false),
                     ),
                 ],
               ),
@@ -457,9 +475,7 @@ class _ProjectAssignmentsScreenState
                   children: assignedState.items
                       .map(
                         (assignment) => Padding(
-                          padding: const EdgeInsets.only(
-                            bottom: AppSpacing.sm,
-                          ),
+                          padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                           child: _AssignedContributorCard(
                             assignment: assignment,
                             isSaving: _isSaving,
@@ -483,9 +499,7 @@ class _ProjectAssignmentsScreenState
                   children: availableState.items
                       .map(
                         (user) => Padding(
-                          padding: const EdgeInsets.only(
-                            bottom: AppSpacing.sm,
-                          ),
+                          padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                           child: _AvailableContributorCard(
                             user: user,
                             isSaving: _isSaving,
@@ -508,9 +522,7 @@ class _ProjectAssignmentsScreenState
                   children: pendingState.items
                       .map(
                         (assignment) => Padding(
-                          padding: const EdgeInsets.only(
-                            bottom: AppSpacing.sm,
-                          ),
+                          padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                           child: _PendingRequestCard(
                             assignment: assignment,
                             isSaving: _isSaving,
@@ -542,9 +554,7 @@ class _ProjectAssignmentsScreenState
                   children: rejectedState.items
                       .map(
                         (assignment) => Padding(
-                          padding: const EdgeInsets.only(
-                            bottom: AppSpacing.sm,
-                          ),
+                          padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                           child: _PendingRequestCard(
                             assignment: assignment,
                             isSaving: _isSaving,

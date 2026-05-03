@@ -20,6 +20,7 @@ import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/widgets/section_header.dart';
 import '../../../projects/domain/project.dart';
+import '../../domain/app_tile_provider.dart';
 import '../../domain/current_location_service.dart';
 import '../../domain/field_collection_validation.dart';
 import '../../domain/lebanon_map.dart';
@@ -1698,6 +1699,7 @@ class _GeometryCaptureMapCard extends StatelessWidget {
                         urlTemplate: LebanonMapConfig.basemapUrlTemplate(
                           basemapStyle,
                         ),
+                        tileProvider: appNetworkTileProvider(),
                         userAgentPackageName: 'lb.gov.gis_collector',
                       ),
                     if (LebanonMapConfig.shouldRenderTileLayers &&
@@ -1709,6 +1711,7 @@ class _GeometryCaptureMapCard extends StatelessWidget {
                         urlTemplate: LebanonMapConfig.referenceLabelUrlTemplate(
                           basemapStyle,
                         )!,
+                        tileProvider: appNetworkTileProvider(),
                         userAgentPackageName: 'lb.gov.gis_collector',
                       ),
                     if (polygonPoints.isNotEmpty)

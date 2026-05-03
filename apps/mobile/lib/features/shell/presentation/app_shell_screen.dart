@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -83,6 +84,8 @@ class AppShellScreen extends ConsumerWidget {
           logoutAction,
         ];
 
+        final shellBody = _ShellBody(path: selectedItem.path, child: body);
+
         if (useSideNav) {
           return Scaffold(
             body: Row(
@@ -128,15 +131,7 @@ class AppShellScreen extends ConsumerWidget {
                       session.user,
                       selectedItem.path,
                     ),
-                    body: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 280),
-                      switchInCurve: Curves.easeOutCubic,
-                      switchOutCurve: Curves.easeInCubic,
-                      child: KeyedSubtree(
-                        key: ValueKey<String>(selectedItem.path),
-                        child: body,
-                      ),
-                    ),
+                    body: shellBody,
                   ),
                 ),
               ],
@@ -189,15 +184,7 @@ class AppShellScreen extends ConsumerWidget {
               ],
             ),
           ),
-          body: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 280),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            child: KeyedSubtree(
-              key: ValueKey<String>(selectedItem.path),
-              child: body,
-            ),
-          ),
+          body: shellBody,
           bottomNavigationBar: ColoredBox(
             color: Theme.of(context).colorScheme.surface,
             child: SafeArea(
@@ -250,37 +237,40 @@ class AppShellScreen extends ConsumerWidget {
         : syncState.isSyncing
         ? 'Syncing saved changes'
         : 'Sync saved changes';
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        IconButton(
-          tooltip: tooltip,
-          onPressed: isDisabled
-              ? null
-              : () => ref.read(syncControllerProvider.notifier).syncNow(),
-          icon: const Icon(Icons.sync),
-        ),
-        if (attentionCount > 0)
-          Positioned(
-            right: 8,
-            top: 7,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.error,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                '$attentionCount',
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onError,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
+    return SizedBox.square(
+      dimension: kToolbarHeight,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          IconButton(
+            tooltip: tooltip,
+            onPressed: isDisabled
+                ? null
+                : () => ref.read(syncControllerProvider.notifier).syncNow(),
+            icon: const Icon(Icons.sync),
+          ),
+          if (attentionCount > 0)
+            Positioned(
+              right: 8,
+              top: 7,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.error,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '$attentionCount',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onError,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -625,6 +615,32 @@ class AppShellScreen extends ConsumerWidget {
       ),
       ...base,
     ];
+  }
+}
+
+class _ShellBody extends StatelessWidget {
+  const _ShellBody({required this.path, required this.child});
+
+  final String path;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final keyedChild = KeyedSubtree(key: ValueKey<String>(path), child: child);
+
+    if (kIsWeb) {
+      // Chrome keeps old and new route bodies alive during AnimatedSwitcher
+      // transitions. With scrollable pages, that can surface transient sliver
+      // assertions during navigation/resizing, so web uses a direct swap.
+      return keyedChild;
+    }
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 280),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      child: keyedChild,
+    );
   }
 }
 

@@ -16,6 +16,7 @@ import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../auth/domain/auth_models.dart';
+import '../../../map/domain/app_tile_provider.dart';
 import '../../../map/domain/current_location_service.dart';
 import '../../../map/domain/lebanon_map.dart';
 import '../../../map/domain/map_feature.dart';
@@ -201,7 +202,8 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
         icon: Icons.map_outlined,
         title: 'Import map unavailable',
         message: userFacingErrorMessage(
-          mapDataAsync.asError!.error,
+          mapDataAsync.asError?.error ??
+              StateError('Import map data failed without an error payload.'),
           fallback: 'Unable to load imported features right now.',
         ),
         actionLabel: 'Retry',
@@ -293,9 +295,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
                       urlTemplate: LebanonMapConfig.basemapUrlTemplate(
                         _basemapStyle,
                       ),
-                      tileProvider: NetworkTileProvider(
-                        silenceExceptions: true,
-                      ),
+                      tileProvider: appNetworkTileProvider(),
                       userAgentPackageName: 'lb.gov.gis_collector',
                     ),
                   if (LebanonMapConfig.shouldRenderTileLayers &&
@@ -307,9 +307,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
                       urlTemplate: LebanonMapConfig.referenceLabelUrlTemplate(
                         _basemapStyle,
                       )!,
-                      tileProvider: NetworkTileProvider(
-                        silenceExceptions: true,
-                      ),
+                      tileProvider: appNetworkTileProvider(),
                       userAgentPackageName: 'lb.gov.gis_collector',
                     ),
                   if (_showApprovedProjectContext) ...[
@@ -2751,7 +2749,10 @@ class _ImportFeatureBrowserSheetState
                 icon: Icons.error_outline,
                 title: 'Imported features unavailable',
                 message: userFacingErrorMessage(
-                  featuresAsync.asError!.error,
+                  featuresAsync.asError?.error ??
+                      StateError(
+                        'Imported features failed without an error payload.',
+                      ),
                   fallback:
                       'Unable to load imported features right now. Please try again.',
                 ),
@@ -3009,7 +3010,10 @@ class _ApprovedProjectFeatureBrowserSheetState
                 icon: Icons.error_outline,
                 title: 'Approved features unavailable',
                 message: userFacingErrorMessage(
-                  featuresAsync.asError!.error,
+                  featuresAsync.asError?.error ??
+                      StateError(
+                        'Approved features failed without an error payload.',
+                      ),
                   fallback:
                       'Unable to load approved project features right now. Please try again.',
                 ),

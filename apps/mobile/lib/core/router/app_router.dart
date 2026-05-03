@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -561,7 +562,13 @@ Set<String> _allowedPathsForUser(AppUser user) {
   }
 }
 
-CustomTransitionPage<void> _buildPage(GoRouterState state, Widget child) {
+Page<void> _buildPage(GoRouterState state, Widget child) {
+  if (kIsWeb) {
+    // Browser route transitions can overlap full-page scrollables/maps long
+    // enough to trip transient render/sliver assertions. Keep web swaps direct.
+    return NoTransitionPage<void>(key: state.pageKey, child: child);
+  }
+
   return CustomTransitionPage<void>(
     key: state.pageKey,
     child: child,

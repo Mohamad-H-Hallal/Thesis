@@ -20,6 +20,7 @@ import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../../exports/presentation/export_file_actions.dart';
+import '../../../map/domain/app_tile_provider.dart';
 import '../../../map/domain/lebanon_map.dart';
 import '../../../map/domain/map_geometry.dart';
 import '../../domain/import_models.dart';
@@ -2184,9 +2185,7 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
                                       LebanonMapConfig.basemapUrlTemplate(
                                         _style,
                                       ),
-                                  tileProvider: NetworkTileProvider(
-                                    silenceExceptions: true,
-                                  ),
+                                  tileProvider: appNetworkTileProvider(),
                                   userAgentPackageName: 'lb.gov.gis_collector',
                                 ),
                               if (LebanonMapConfig.shouldRenderTileLayers &&
@@ -2199,9 +2198,7 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
                                       LebanonMapConfig.referenceLabelUrlTemplate(
                                         _style,
                                       )!,
-                                  tileProvider: NetworkTileProvider(
-                                    silenceExceptions: true,
-                                  ),
+                                  tileProvider: appNetworkTileProvider(),
                                   userAgentPackageName: 'lb.gov.gis_collector',
                                 ),
                               PolygonLayer(polygons: _polygons(drawable)),

@@ -24,6 +24,7 @@ import '../../../../core/widgets/status_chip.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../../projects/domain/project.dart';
+import '../../domain/app_tile_provider.dart';
 import '../../domain/current_location_service.dart';
 import '../../domain/lebanon_map.dart';
 import '../../domain/map_feature.dart';
@@ -1071,8 +1072,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           requestedProjectId: widget.initialProjectId,
         );
         _selectedProjectId ??= project.id;
-        final viewportQuery = _projectViewportQuery ?? _buildProjectViewportQuery(project.id);
-        final featuresAsync = ref.watch(projectMapViewportFeaturesProvider(viewportQuery));
+        final viewportQuery =
+            _projectViewportQuery ?? _buildProjectViewportQuery(project.id);
+        final featuresAsync = ref.watch(
+          projectMapViewportFeaturesProvider(viewportQuery),
+        );
         if (featuresAsync.valueOrNull != null) {
           _lastViewportFeatures = featuresAsync.valueOrNull;
         }
@@ -1118,7 +1122,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         _selectedFeatureChip = null;
                         _searchController.clear();
                         _lastAutoFrameKey = null;
-                        _projectViewportQuery = _buildProjectViewportQuery(value);
+                        _projectViewportQuery = _buildProjectViewportQuery(
+                          value,
+                        );
                         _lastViewportFeatures = null;
                       });
                       _clearTileNotice();
@@ -1270,8 +1276,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           Widget buildLoadedWorkspace(List<MapFeatureSummary> features) {
             final scopedFeatures = isUserRole
                 ? features
-                    .where((feature) => feature.status == 'approved')
-                    .toList(growable: false)
+                      .where((feature) => feature.status == 'approved')
+                      .toList(growable: false)
                 : features;
             final quickFeatureChips = _deriveFeatureChips(
               project,
@@ -2014,7 +2020,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   'project_map_live_basemap_${_basemapStyle.name}',
                 ),
                 urlTemplate: liveBasemapUrl,
-                tileProvider: NetworkTileProvider(silenceExceptions: true),
+                tileProvider: appNetworkTileProvider(),
                 tileDisplay: const TileDisplay.fadeIn(
                   duration: Duration(milliseconds: 180),
                   startOpacity: 0,
@@ -2037,7 +2043,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   'project_map_label_overlay_${_basemapStyle.name}',
                 ),
                 urlTemplate: labelOverlayUrl,
-                tileProvider: NetworkTileProvider(silenceExceptions: true),
+                tileProvider: appNetworkTileProvider(),
                 tileDisplay: const TileDisplay.fadeIn(
                   duration: Duration(milliseconds: 220),
                   startOpacity: 0,
@@ -2222,9 +2228,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         urlTemplate: LebanonMapConfig.basemapUrlTemplate(
                           _basemapStyle,
                         ),
-                        tileProvider: NetworkTileProvider(
-                          silenceExceptions: true,
-                        ),
+                        tileProvider: appNetworkTileProvider(),
                         tileDisplay: const TileDisplay.fadeIn(
                           duration: Duration(milliseconds: 180),
                           startOpacity: 0,
@@ -2247,9 +2251,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           'preview_label_overlay_${_basemapStyle.name}',
                         ),
                         urlTemplate: labelOverlayUrl,
-                        tileProvider: NetworkTileProvider(
-                          silenceExceptions: true,
-                        ),
+                        tileProvider: appNetworkTileProvider(),
                         tileDisplay: const TileDisplay.fadeIn(
                           duration: Duration(milliseconds: 220),
                           startOpacity: 0,
@@ -2817,11 +2819,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     if (typeValue != null) {
       return typeValue;
     }
-    return switch (
-      (feature.sourceGeometryType ?? feature.geometry['type'] ?? '')
-          .toString()
-          .toLowerCase()
-    ) {
+    return switch ((feature.sourceGeometryType ??
+            feature.geometry['type'] ??
+            '')
+        .toString()
+        .toLowerCase()) {
       'linestring' || 'multilinestring' => 'Line feature',
       'polygon' || 'multipolygon' => 'Polygon feature',
       _ => 'Point feature',
@@ -2831,11 +2833,15 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   String _projectFeatureSubtitle(MapFeatureSummary feature) {
     final details = <String>[
       _projectFeatureTypeLabel(
-        feature.sourceGeometryType ?? feature.geometry['type']?.toString() ?? 'Unknown',
+        feature.sourceGeometryType ??
+            feature.geometry['type']?.toString() ??
+            'Unknown',
       ),
     ];
     if (feature.photoCount > 0) {
-      details.add('${feature.photoCount} photo${feature.photoCount == 1 ? '' : 's'}');
+      details.add(
+        '${feature.photoCount} photo${feature.photoCount == 1 ? '' : 's'}',
+      );
     }
     return details.join(' • ');
   }
@@ -3392,8 +3398,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       fallback:
                           'Unable to load this project feature right now.',
                     ),
-                    onRetry: () =>
-                        ref.invalidate(projectFeatureDetailsProvider(feature.id)),
+                    onRetry: () => ref.invalidate(
+                      projectFeatureDetailsProvider(feature.id),
+                    ),
                   ),
                   data: (loadedFeature) => _buildProjectFeatureDetailsSheet(
                     sheetContext,
@@ -3596,7 +3603,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     ),
                   ],
                 ),
-                    ),
+              ),
             if (canReview && feature.status != 'draft')
               Padding(
                 padding: const EdgeInsets.only(top: AppSpacing.md),
@@ -5274,7 +5281,10 @@ class _ProjectFeatureBrowserSheetState
                 icon: Icons.error_outline,
                 title: 'Project features unavailable',
                 message: userFacingErrorMessage(
-                  featuresAsync.asError!.error,
+                  featuresAsync.asError?.error ??
+                      StateError(
+                        'Project features failed without an error payload.',
+                      ),
                   fallback:
                       'Unable to load project features right now. Please try again.',
                 ),
@@ -5983,9 +5993,9 @@ class _TimelineRow extends StatelessWidget {
             width: 82,
             child: Text(
               label,
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w700),
             ),
           ),
           const SizedBox(width: 8),
@@ -6083,7 +6093,9 @@ String _projectMapFormatAttributeValue(Object? value) {
     return value.map((item) => item.toString()).join(', ');
   }
   if (value is Map) {
-    return value.entries.map((entry) => '${entry.key}: ${entry.value}').join(', ');
+    return value.entries
+        .map((entry) => '${entry.key}: ${entry.value}')
+        .join(', ');
   }
   return value.toString();
 }
