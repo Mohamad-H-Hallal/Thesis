@@ -87,7 +87,17 @@ export const startWorkflowChangeListener = async (): Promise<() => void> => {
       if (payload.originInstanceId === instanceId) {
         return;
       }
-      const { originInstanceId: _originInstanceId, ...event } = payload;
+      const event: WorkflowChangeEvent = {
+        type: payload.type,
+        id: payload.id,
+        occurredAt: payload.occurredAt,
+        method: payload.method,
+        path: payload.path,
+        actorUserId: payload.actorUserId,
+        requestId: payload.requestId,
+        targetUserId: payload.targetUserId,
+        targetAction: payload.targetAction,
+      };
       emitWorkflowChange(event);
     } catch (error) {
       logger.warn('Invalid workflow realtime notification payload', {
