@@ -5,10 +5,11 @@ import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/pagination/paginated_list_controller.dart';
 import '../../../../core/providers/providers.dart';
+import '../../../../core/widgets/app_action_buttons.dart';
+import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
-import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/utils/lebanese_phone.dart';
 import '../../domain/admin_models.dart';
 
@@ -33,7 +34,9 @@ class _ProjectAssignmentsScreenState
     extends ConsumerState<ProjectAssignmentsScreen> {
   final TextEditingController _searchController = TextEditingController();
   bool _isSaving = false;
+  bool _showFilters = false;
   _AssignmentSection _selectedSection = _AssignmentSection.assigned;
+  bool _appliedInitialSection = false;
 
   @override
   void dispose() {
@@ -50,13 +53,15 @@ class _ProjectAssignmentsScreenState
           'Assign ${user.fullName} to this project as a contributor?',
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Assign'),
+          AppDialogActions(
+            cancel: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            confirm: FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Assign'),
+            ),
           ),
         ],
       ),
@@ -108,13 +113,15 @@ class _ProjectAssignmentsScreenState
           'Remove ${assignment.fullName} from this project? They can be reassigned later.',
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Unassign'),
+          AppDialogActions(
+            cancel: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            confirm: FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Unassign'),
+            ),
           ),
         ],
       ),
@@ -168,13 +175,15 @@ class _ProjectAssignmentsScreenState
               : 'Reject ${assignment.fullName} for this project? They will remain outside this project until an admin re-accepts the request.',
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(isApprove ? 'Approve' : 'Reject'),
+          AppDialogActions(
+            cancel: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            confirm: FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(isApprove ? 'Approve' : 'Reject'),
+            ),
           ),
         ],
       ),
@@ -311,17 +320,23 @@ class _ProjectAssignmentsScreenState
             availableAsync.valueOrNull ??
             const PaginatedListState<ManagedUserSummary>.initial();
 
+        if (!_appliedInitialSection &&
+            !isViewOnlyProject &&
+            !assignedAsync.isLoading &&
+            !availableAsync.isLoading) {
+          _appliedInitialSection = true;
+          if (assignedState.total == 0 && availableState.total > 0) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && _selectedSection == _AssignmentSection.assigned) {
+                setState(() => _selectedSection = _AssignmentSection.available);
+              }
+            });
+          }
+        }
+
         final effectiveSection = isViewOnlyProject
             ? _AssignmentSection.assigned
-            : switch (_selectedSection) {
-                _AssignmentSection.pendingRequests
-                    when pendingState.total == 0 && rejectedState.total > 0 =>
-                  _AssignmentSection.rejectedRequests,
-                _AssignmentSection.rejectedRequests
-                    when rejectedState.total == 0 && pendingState.total > 0 =>
-                  _AssignmentSection.pendingRequests,
-                _ => _selectedSection,
-              };
+            : _selectedSection;
 
         final currentError = switch (effectiveSection) {
           _AssignmentSection.assigned =>
@@ -383,21 +398,62 @@ class _ProjectAssignmentsScreenState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SearchBar(
-                    controller: _searchController,
-                    hintText: isViewOnlyProject
-                        ? 'Search assigned contributors'
-                        : 'Search contributors and project requests',
-                    leading: const Icon(Icons.search),
-                    onChanged: (_) => setState(() {}),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final searchBar = SearchBar(
+                        controller: _searchController,
+                        hintText: constraints.maxWidth < 420
+                            ? 'Search contributors'
+                            : isViewOnlyProject
+                            ? 'Search assigned contributors'
+                            : 'Search contributors and project requests',
+                        leading: const Icon(Icons.search),
+                        onChanged: (_) => setState(() {}),
+                      );
+                      final filterButton = OutlinedButton.icon(
+                        onPressed: isViewOnlyProject
+                            ? null
+                            : () =>
+                                  setState(() => _showFilters = !_showFilters),
+                        icon: Icon(
+                          _showFilters
+                              ? Icons.filter_alt_off_outlined
+                              : Icons.filter_alt_outlined,
+                        ),
+                        label: Text(_showFilters ? 'Hide filters' : 'Filter'),
+                      );
+
+                      if (isViewOnlyProject) {
+                        return searchBar;
+                      }
+
+                      if (constraints.maxWidth < 720) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            searchBar,
+                            const SizedBox(height: AppSpacing.sm),
+                            filterButton,
+                          ],
+                        );
+                      }
+
+                      return Row(
+                        children: [
+                          Expanded(child: searchBar),
+                          const SizedBox(width: AppSpacing.sm),
+                          SizedBox(width: 180, child: filterButton),
+                        ],
+                      );
+                    },
                   ),
-                  const SizedBox(height: AppSpacing.sm),
                   if (isViewOnlyProject)
                     Text(
                       'Assignment changes are disabled for completed and archived projects.',
                       style: Theme.of(context).textTheme.bodySmall,
                     )
-                  else
+                  else if (_showFilters) ...[
+                    const SizedBox(height: AppSpacing.sm),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
@@ -430,6 +486,7 @@ class _ProjectAssignmentsScreenState
                           })
                           .toList(growable: false),
                     ),
+                  ],
                 ],
               ),
             ),
@@ -474,14 +531,11 @@ class _ProjectAssignmentsScreenState
                   onLoadMore: assignedController.loadMore,
                   children: assignedState.items
                       .map(
-                        (assignment) => Padding(
-                          padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                          child: _AssignedContributorCard(
-                            assignment: assignment,
-                            isSaving: _isSaving,
-                            isViewOnly: isViewOnlyProject,
-                            onUnassign: () => _removeAssignment(assignment),
-                          ),
+                        (assignment) => _AssignedContributorCard(
+                          assignment: assignment,
+                          isSaving: _isSaving,
+                          isViewOnly: isViewOnlyProject,
+                          onUnassign: () => _removeAssignment(assignment),
                         ),
                       )
                       .toList(growable: false),
@@ -498,13 +552,10 @@ class _ProjectAssignmentsScreenState
                   onLoadMore: availableController.loadMore,
                   children: availableState.items
                       .map(
-                        (user) => Padding(
-                          padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                          child: _AvailableContributorCard(
-                            user: user,
-                            isSaving: _isSaving,
-                            onAssign: () => _assignContributor(user),
-                          ),
+                        (user) => _AvailableContributorCard(
+                          user: user,
+                          isSaving: _isSaving,
+                          onAssign: () => _assignContributor(user),
                         ),
                       )
                       .toList(growable: false),
@@ -521,21 +572,18 @@ class _ProjectAssignmentsScreenState
                   onLoadMore: pendingController.loadMore,
                   children: pendingState.items
                       .map(
-                        (assignment) => Padding(
-                          padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                          child: _PendingRequestCard(
-                            assignment: assignment,
-                            isSaving: _isSaving,
-                            approveLabel: 'Approve',
-                            rejectLabel: 'Reject',
-                            onApprove: () => _updateAssignmentRequest(
-                              assignment,
-                              status: 'approved',
-                            ),
-                            onReject: () => _updateAssignmentRequest(
-                              assignment,
-                              status: 'rejected',
-                            ),
+                        (assignment) => _PendingRequestCard(
+                          assignment: assignment,
+                          isSaving: _isSaving,
+                          approveLabel: 'Approve',
+                          rejectLabel: 'Reject',
+                          onApprove: () => _updateAssignmentRequest(
+                            assignment,
+                            status: 'approved',
+                          ),
+                          onReject: () => _updateAssignmentRequest(
+                            assignment,
+                            status: 'rejected',
                           ),
                         ),
                       )
@@ -553,19 +601,16 @@ class _ProjectAssignmentsScreenState
                   onLoadMore: rejectedController.loadMore,
                   children: rejectedState.items
                       .map(
-                        (assignment) => Padding(
-                          padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                          child: _PendingRequestCard(
-                            assignment: assignment,
-                            isSaving: _isSaving,
-                            approveLabel: 'Re-accept',
-                            rejectLabel: 'Keep rejected',
-                            onApprove: () => _updateAssignmentRequest(
-                              assignment,
-                              status: 'approved',
-                            ),
-                            onReject: null,
+                        (assignment) => _PendingRequestCard(
+                          assignment: assignment,
+                          isSaving: _isSaving,
+                          approveLabel: 'Re-accept',
+                          rejectLabel: 'Keep rejected',
+                          onApprove: () => _updateAssignmentRequest(
+                            assignment,
+                            status: 'approved',
                           ),
+                          onReject: null,
                         ),
                       )
                       .toList(growable: false),
@@ -603,6 +648,7 @@ class _AssignmentListSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final _ = resetKey;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -618,17 +664,100 @@ class _AssignmentListSection extends StatelessWidget {
             message: emptyMessage,
           )
         else
-          ProgressiveListSection<Widget>(
-            items: children,
-            resetKey: resetKey,
-            padding: EdgeInsets.zero,
-            hasMore: hasMore,
-            isLoadingMore: isLoadingMore,
-            onLoadMore: onLoadMore,
-            itemBuilder: (context, child, _) => child,
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final columns = constraints.maxWidth >= 1120
+                  ? 3
+                  : constraints.maxWidth >= 720
+                  ? 2
+                  : 1;
+              const gap = AppSpacing.sm;
+              if (columns == 1) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (var index = 0; index < children.length; index++) ...[
+                      children[index],
+                      if (index != children.length - 1)
+                        const SizedBox(height: gap),
+                    ],
+                    if (hasMore) ...[
+                      const SizedBox(height: AppSpacing.md),
+                      Center(
+                        child: OutlinedButton.icon(
+                          onPressed: isLoadingMore ? null : onLoadMore,
+                          icon: isLoadingMore
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.expand_more_outlined),
+                          label: const Text('Show more'),
+                        ),
+                      ),
+                    ],
+                  ],
+                );
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ..._buildResponsiveRows(children, columns: columns),
+                  if (hasMore) ...[
+                    const SizedBox(height: AppSpacing.md),
+                    Center(
+                      child: OutlinedButton.icon(
+                        onPressed: isLoadingMore ? null : onLoadMore,
+                        icon: isLoadingMore
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.expand_more_outlined),
+                        label: const Text('Show more'),
+                      ),
+                    ),
+                  ],
+                ],
+              );
+            },
           ),
       ],
     );
+  }
+
+  List<Widget> _buildResponsiveRows(
+    List<Widget> cards, {
+    required int columns,
+  }) {
+    const gap = AppSpacing.sm;
+    final rows = <Widget>[];
+    for (var start = 0; start < cards.length; start += columns) {
+      final end = (start + columns).clamp(0, cards.length);
+      rows.add(
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var index = start; index < start + columns; index++) ...[
+              if (index > start) const SizedBox(width: gap),
+              Expanded(
+                child: index < end ? cards[index] : const SizedBox.shrink(),
+              ),
+            ],
+          ],
+        ),
+      );
+      if (end < cards.length) {
+        rows.add(const SizedBox(height: gap));
+      }
+    }
+    return rows;
   }
 }
 
@@ -668,13 +797,16 @@ class _AssignedContributorCard extends StatelessWidget {
           ),
           if (!isViewOnly) ...[
             const SizedBox(height: AppSpacing.sm),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
-                onPressed: isSaving ? null : onUnassign,
-                icon: const Icon(Icons.person_remove_outlined),
-                label: const Text('Unassign'),
-              ),
+            AppActionButtons(
+              maxColumns: 1,
+              maxItemWidth: 190,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: isSaving ? null : onUnassign,
+                  icon: const Icon(Icons.person_remove_outlined),
+                  label: const Text('Unassign'),
+                ),
+              ],
             ),
           ],
         ],
@@ -714,13 +846,16 @@ class _AvailableContributorCard extends StatelessWidget {
             children: [Chip(label: Text(user.accountStateLabel))],
           ),
           const SizedBox(height: AppSpacing.sm),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: FilledButton.icon(
-              onPressed: isSaving ? null : onAssign,
-              icon: const Icon(Icons.person_add_alt_1_outlined),
-              label: const Text('Assign contributor'),
-            ),
+          AppActionButtons(
+            maxColumns: 1,
+            maxItemWidth: 240,
+            children: [
+              FilledButton.icon(
+                onPressed: isSaving ? null : onAssign,
+                icon: const Icon(Icons.person_add_alt_1_outlined),
+                label: const Text('Assign contributor'),
+              ),
+            ],
           ),
         ],
       ),
@@ -769,9 +904,9 @@ class _PendingRequestCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          AppActionButtons(
+            maxColumns: 2,
+            maxItemWidth: 190,
             children: [
               if (onReject != null)
                 FilledButton.tonal(

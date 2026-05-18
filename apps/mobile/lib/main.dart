@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/config/app_branding.dart';
 import 'core/providers/providers.dart';
+import 'core/realtime/workflow_realtime_coordinator.dart';
 import 'core/theme/theme.dart';
 import 'core/widgets/app_system_ui_scope.dart';
 import 'features/notifications/presentation/widgets/push_notification_coordinator.dart';
@@ -43,8 +44,10 @@ class LebanonGisCollectorApp extends ConsumerWidget {
       scrollBehavior: const AppScrollBehavior(),
       routerConfig: router,
       builder: (context, child) => AppSystemUiScope(
-        child: PushNotificationCoordinator(
-          child: child ?? const SizedBox.shrink(),
+        child: WorkflowRealtimeCoordinator(
+          child: PushNotificationCoordinator(
+            child: child ?? const SizedBox.shrink(),
+          ),
         ),
       ),
     );

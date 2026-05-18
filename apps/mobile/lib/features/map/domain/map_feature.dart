@@ -33,6 +33,8 @@ class MapFeatureSummary {
     this.photoCount = 0,
     this.photos = const <MapFeaturePhoto>[],
     this.isSummary = false,
+    this.isAggregate = false,
+    this.clusterCount = 1,
   });
 
   final String id;
@@ -50,6 +52,8 @@ class MapFeatureSummary {
   final int photoCount;
   final List<MapFeaturePhoto> photos;
   final bool isSummary;
+  final bool isAggregate;
+  final int clusterCount;
 }
 
 class ProjectFeatureBrowserQuery {
@@ -91,6 +95,60 @@ class ProjectFeatureBrowserQuery {
   );
 }
 
+class ProjectFeatureCountQuery {
+  const ProjectFeatureCountQuery({
+    required this.projectId,
+    this.search,
+    this.statuses,
+    this.geometryType,
+    this.featureType,
+    this.excludeImportId,
+  });
+
+  final String projectId;
+  final String? search;
+  final List<String>? statuses;
+  final String? geometryType;
+  final String? featureType;
+  final String? excludeImportId;
+
+  @override
+  bool operator ==(Object other) {
+    return other is ProjectFeatureCountQuery &&
+        other.projectId == projectId &&
+        other.search == search &&
+        _sameStatusList(other.statuses, statuses) &&
+        other.geometryType == geometryType &&
+        other.featureType == featureType &&
+        other.excludeImportId == excludeImportId;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    projectId,
+    search,
+    statuses == null ? null : Object.hashAll(statuses!),
+    geometryType,
+    featureType,
+    excludeImportId,
+  );
+}
+
+bool _sameStatusList(List<String>? a, List<String>? b) {
+  if (identical(a, b)) {
+    return true;
+  }
+  if (a == null || b == null || a.length != b.length) {
+    return false;
+  }
+  for (var index = 0; index < a.length; index++) {
+    if (a[index] != b[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 class ProjectMapViewportQuery {
   const ProjectMapViewportQuery({
     required this.projectId,
@@ -120,12 +178,6 @@ class ProjectMapViewportQuery {
   }
 
   @override
-  int get hashCode => Object.hash(
-    projectId,
-    minLon,
-    minLat,
-    maxLon,
-    maxLat,
-    zoom,
-  );
+  int get hashCode =>
+      Object.hash(projectId, minLon, minLat, maxLon, maxLat, zoom);
 }

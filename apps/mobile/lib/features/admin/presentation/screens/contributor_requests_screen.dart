@@ -5,7 +5,9 @@ import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/pagination/paginated_list_controller.dart';
 import '../../../../core/providers/providers.dart';
+import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
@@ -31,6 +33,7 @@ class _ContributorRequestsScreenState
   _RequestGroup _selectedGroup = _RequestGroup.contributor;
   _RequestStateTab _selectedState = _RequestStateTab.pending;
   bool _isMutating = false;
+  bool _showFilters = false;
 
   @override
   void dispose() {
@@ -99,13 +102,15 @@ class _ContributorRequestsScreenState
         title: Text(dialogTitle),
         content: Text(dialogMessage),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(confirmLabel),
+          AppDialogActions(
+            cancel: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            confirm: FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(confirmLabel),
+            ),
           ),
         ],
       ),
@@ -153,9 +158,7 @@ class _ContributorRequestsScreenState
               ),
             ),
           )
-        : const AsyncValue<
-            PaginatedListState<ManagedUserSummary>
-          >.data(
+        : const AsyncValue<PaginatedListState<ManagedUserSummary>>.data(
             PaginatedListState<ManagedUserSummary>.initial(),
           );
     final contributorController = ref.read(
@@ -179,9 +182,7 @@ class _ContributorRequestsScreenState
               ),
             ),
           )
-        : const AsyncValue<
-            PaginatedListState<ManagedAssignmentSummary>
-          >.data(
+        : const AsyncValue<PaginatedListState<ManagedAssignmentSummary>>.data(
             PaginatedListState<ManagedAssignmentSummary>.initial(),
           );
     final assignmentsController = ref.read(
@@ -198,65 +199,99 @@ class _ContributorRequestsScreenState
     return ListView(
       children: [
         AppCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SearchBar(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final searchBar = SearchBar(
                 controller: _searchController,
                 hintText: _selectedGroup == _RequestGroup.contributor
                     ? 'Search contributor name, email, or phone'
                     : 'Search project, contributor, or email',
                 leading: const Icon(Icons.search),
                 onChanged: (_) => setState(() {}),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                'Request type',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _RequestGroup.values
-                    .map(
-                      (group) => ChoiceChip(
-                        label: Text(
-                          group == _RequestGroup.contributor
-                              ? 'Contributor'
-                              : 'Projects',
-                        ),
-                        selected: _selectedGroup == group,
-                        onSelected: (_) =>
-                            setState(() => _selectedGroup = group),
-                      ),
+              );
+              final filterButton = OutlinedButton.icon(
+                onPressed: () => setState(() => _showFilters = !_showFilters),
+                icon: Icon(
+                  _showFilters
+                      ? Icons.filter_alt_off_outlined
+                      : Icons.filter_alt_outlined,
+                ),
+                label: Text(_showFilters ? 'Hide filters' : 'Filter'),
+              );
+              final searchAndAction = constraints.maxWidth < 720
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        searchBar,
+                        const SizedBox(height: AppSpacing.sm),
+                        filterButton,
+                      ],
                     )
-                    .toList(growable: false),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                'Workflow state',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _RequestStateTab.values
-                    .map(
-                      (tab) => ChoiceChip(
-                        label: Text(
-                          tab == _RequestStateTab.pending
-                              ? 'Pending'
-                              : 'Rejected',
-                        ),
-                        selected: _selectedState == tab,
-                        onSelected: (_) => setState(() => _selectedState = tab),
-                      ),
-                    )
-                    .toList(growable: false),
-              ),
-            ],
+                  : Row(
+                      children: [
+                        Expanded(child: searchBar),
+                        const SizedBox(width: AppSpacing.sm),
+                        SizedBox(width: 180, child: filterButton),
+                      ],
+                    );
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  searchAndAction,
+                  if (_showFilters) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    Text(
+                      'Request type',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _RequestGroup.values
+                          .map(
+                            (group) => ChoiceChip(
+                              label: Text(
+                                group == _RequestGroup.contributor
+                                    ? 'Contributor'
+                                    : 'Projects',
+                              ),
+                              selected: _selectedGroup == group,
+                              onSelected: (_) =>
+                                  setState(() => _selectedGroup = group),
+                            ),
+                          )
+                          .toList(growable: false),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    Text(
+                      'Workflow state',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _RequestStateTab.values
+                          .map(
+                            (tab) => ChoiceChip(
+                              label: Text(
+                                tab == _RequestStateTab.pending
+                                    ? 'Pending'
+                                    : 'Rejected',
+                              ),
+                              selected: _selectedState == tab,
+                              onSelected: (_) =>
+                                  setState(() => _selectedState = tab),
+                            ),
+                          )
+                          .toList(growable: false),
+                    ),
+                  ],
+                ],
+              );
+            },
           ),
         ),
         const SizedBox(height: AppSpacing.md),
@@ -318,6 +353,7 @@ class _ContributorRequestsScreenState
               hasMore: requestsState.hasMore,
               isLoadingMore: requestsState.isLoadingMore,
               onLoadMore: controller.loadMore,
+              gridMinItemWidth: 380,
               itemBuilder: (context, request, _) => _RequestCard(
                 title: request.fullName,
                 subtitle: request.email,
@@ -409,6 +445,7 @@ class _ContributorRequestsScreenState
               hasMore: assignmentsState.hasMore,
               isLoadingMore: assignmentsState.isLoadingMore,
               onLoadMore: controller.loadMore,
+              gridMinItemWidth: 380,
               itemBuilder: (context, assignment, _) => _RequestCard(
                 title: assignment.projectName,
                 subtitle: assignment.fullName,
@@ -488,7 +525,7 @@ class _RequestCard extends StatelessWidget {
           Wrap(spacing: 8, runSpacing: 8, children: chips),
           if (actions.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.sm),
-            Wrap(spacing: 8, runSpacing: 8, children: actions),
+            AppActionButtons(maxColumns: 2, children: actions),
           ],
         ],
       ),

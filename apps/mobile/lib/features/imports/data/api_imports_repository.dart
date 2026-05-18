@@ -1,18 +1,16 @@
 import 'dart:collection';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import '../../../core/config/app_env.dart';
 import '../../../core/maps/tile_query.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_error_message.dart';
 import '../../../core/pagination/paginated_result.dart';
+import '../../../core/platform/downloaded_file_saver.dart';
 import '../../map/domain/map_feature.dart';
 import '../domain/import_models.dart';
 import '../domain/imports_repository.dart';
@@ -263,7 +261,9 @@ class ApiImportsRepository implements ImportsRepository {
         .toList(growable: false);
     final approvedRows =
         (data['approved_project_features'] as List? ?? const <dynamic>[])
-            .map((row) => _toProjectFeature(Map<String, dynamic>.from(row as Map)))
+            .map(
+              (row) => _toProjectFeature(Map<String, dynamic>.from(row as Map)),
+            )
             .toList(growable: false);
     final tileData = ImportMapData(
       stagedFeatures: stagedRows,
@@ -544,6 +544,8 @@ class ApiImportsRepository implements ImportsRepository {
       approvedAt: _toOptionalDate(row['approved_at']),
       reviewReason: row['review_reason'] as String?,
       isSummary: row['is_summary'] as bool? ?? false,
+      isAggregate: row['is_aggregate'] as bool? ?? false,
+      clusterCount: math.max(1, _toInt(row['cluster_count'])),
       createdAt: _toDate(row['created_at']),
       updatedAt: _toDate(row['updated_at']),
     );
@@ -594,6 +596,8 @@ class ApiImportsRepository implements ImportsRepository {
       photoCount: _toInt(item['photo_count']),
       photos: const <MapFeaturePhoto>[],
       isSummary: item['is_summary'] as bool? ?? false,
+      isAggregate: item['is_aggregate'] as bool? ?? false,
+      clusterCount: math.max(1, _toInt(item['cluster_count'])),
     );
   }
 
@@ -660,24 +664,13 @@ class ApiImportsRepository implements ImportsRepository {
     required List<int> bytes,
     required Headers headers,
   }) async {
-    final baseDir = await _resolveImportDirectory();
-    await baseDir.create(recursive: true);
-
     final fileName = _fileNameFromHeaders(headers) ?? 'import_$importId.zip';
     final safeFileName = fileName.replaceAll(RegExp(r'[<>:\"/\\\\|?*]+'), '_');
-    final target = File(p.join(baseDir.path, safeFileName));
-    await target.writeAsBytes(bytes, flush: true);
-    return target.path;
-  }
-
-  Future<Directory> _resolveImportDirectory() async {
-    final externalDir = await getExternalStorageDirectory();
-    if (externalDir != null) {
-      return Directory(p.join(externalDir.path, 'imports'));
-    }
-
-    final documentsDir = await getApplicationDocumentsDirectory();
-    return Directory(p.join(documentsDir.path, 'imports'));
+    return saveDownloadedBytes(
+      bytes: bytes,
+      fileName: safeFileName,
+      directoryName: 'imports',
+    );
   }
 
   String? _fileNameFromHeaders(Headers headers) {

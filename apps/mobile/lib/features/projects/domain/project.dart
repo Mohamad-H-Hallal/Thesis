@@ -180,6 +180,8 @@ class ProjectSummary {
     this.categoryId,
     required this.status,
     this.approvedFeatures = 0,
+    this.rejectedFeatures = 0,
+    this.draftFeatures = 0,
     required this.assignedCollectors,
     required this.pendingReviews,
     this.pendingAssignmentRequests = 0,
@@ -207,6 +209,8 @@ class ProjectSummary {
   final String? categoryId;
   final String status;
   final int approvedFeatures;
+  final int rejectedFeatures;
+  final int draftFeatures;
   final int assignedCollectors;
   final int pendingReviews;
   final int pendingAssignmentRequests;

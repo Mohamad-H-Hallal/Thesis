@@ -8,6 +8,7 @@ import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/animated_reveal.dart';
 import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/section_header.dart';
@@ -119,13 +120,15 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
           'Send a contributor access request for this project?',
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Send request'),
+          AppDialogActions(
+            cancel: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            confirm: FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Send request'),
+            ),
           ),
         ],
       ),
@@ -173,13 +176,16 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
           'Cancel your pending contributor access request for this project?',
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Keep request'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Cancel request'),
+          AppDialogActions(
+            buttonWidth: 150,
+            cancel: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Keep request'),
+            ),
+            confirm: FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Cancel request'),
+            ),
           ),
         ],
       ),

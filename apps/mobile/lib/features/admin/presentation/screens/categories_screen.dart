@@ -72,23 +72,45 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(),
             children: [
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton.icon(
-                  onPressed: () => context.push(AppRoutes.categoryCreate),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Create'),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.md),
               Padding(
                 padding: const EdgeInsets.only(bottom: AppSpacing.md),
                 child: AppCard(
-                  child: SearchBar(
-                    controller: _searchController,
-                    hintText: 'Search category name or description',
-                    leading: const Icon(Icons.search),
-                    onChanged: (_) => setState(() {}),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final createButton = FilledButton.icon(
+                        onPressed: () => context.push(AppRoutes.categoryCreate),
+                        icon: const Icon(Icons.add),
+                        label: const Text('Create'),
+                      );
+                      final searchBar = SearchBar(
+                        controller: _searchController,
+                        hintText: 'Search category name or description',
+                        leading: const Icon(Icons.search),
+                        onChanged: (_) => setState(() {}),
+                      );
+
+                      if (constraints.maxWidth < 560) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            searchBar,
+                            const SizedBox(height: AppSpacing.sm),
+                            SizedBox(
+                              width: double.infinity,
+                              child: createButton,
+                            ),
+                          ],
+                        );
+                      }
+
+                      return Row(
+                        children: [
+                          Expanded(child: searchBar),
+                          const SizedBox(width: AppSpacing.sm),
+                          SizedBox(width: 180, child: createButton),
+                        ],
+                      );
+                    },
                   ),
                 ),
               ),
@@ -106,7 +128,9 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                   message: categoriesState.total == 0
                       ? 'Create your first category before provisioning projects from mobile.'
                       : 'Try a different search term or clear the active category filter.',
-                  actionLabel: categoriesState.total == 0 ? 'Create category' : null,
+                  actionLabel: categoriesState.total == 0
+                      ? 'Create category'
+                      : null,
                   onAction: categoriesState.total == 0
                       ? () => context.push(AppRoutes.categoryCreate)
                       : null,
@@ -121,6 +145,7 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                   hasMore: categoriesState.hasMore,
                   isLoadingMore: categoriesState.isLoadingMore,
                   onLoadMore: categoriesController.loadMore,
+                  gridMinItemWidth: 380,
                   itemBuilder: (context, category, _) => AppCard(
                     child: LayoutBuilder(
                       builder: (context, constraints) {

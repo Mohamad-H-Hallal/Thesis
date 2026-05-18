@@ -22,7 +22,10 @@ class ApiMapRepository {
   int _projectTileCacheRevision = 0;
 
   Future<List<MapFeatureSummary>> fetchProjectFeatures(String projectId) async {
-    final page = await fetchProjectFeaturesPage(projectId: projectId, limit: 100);
+    final page = await fetchProjectFeaturesPage(
+      projectId: projectId,
+      limit: 100,
+    );
     return page.items;
   }
 
@@ -50,7 +53,11 @@ class ApiMapRepository {
       );
       final tileResults = <List<MapFeatureSummary>>[];
       Object? firstError;
-      for (var start = 0; start < tiles.length; start += _projectTileBatchSize) {
+      for (
+        var start = 0;
+        start < tiles.length;
+        start += _projectTileBatchSize
+      ) {
         final end = math.min(start + _projectTileBatchSize, tiles.length);
         final batch = tiles.sublist(start, end);
         final batchResults = await Future.wait(
@@ -113,15 +120,10 @@ class ApiMapRepository {
     final featureCollection = Map<String, dynamic>.from(
       payload['data'] as Map? ?? const <String, dynamic>{},
     );
-    final rows =
-        (featureCollection['features'] as List? ?? const <dynamic>[])
-            .cast<Map>();
+    final rows = (featureCollection['features'] as List? ?? const <dynamic>[])
+        .cast<Map>();
     final items = rows
-        .map(
-          (row) => _toViewportFeature(
-            Map<String, dynamic>.from(row),
-          ),
-        )
+        .map((row) => _toViewportFeature(Map<String, dynamic>.from(row)))
         .toList(growable: false);
     _rememberProjectTile(cacheKey, items);
     return items;
@@ -184,6 +186,27 @@ class ApiMapRepository {
             'Unable to load project features right now. Please try again.',
       );
     }
+  }
+
+  Future<int> fetchProjectFeaturesCount({
+    required String projectId,
+    String? search,
+    String? status,
+    String? geometryType,
+    String? featureType,
+    String? excludeImportId,
+  }) async {
+    final page = await fetchProjectFeaturesPage(
+      projectId: projectId,
+      search: search,
+      status: status,
+      geometryType: geometryType,
+      featureType: featureType,
+      excludeImportId: excludeImportId,
+      page: 1,
+      limit: 1,
+    );
+    return page.total;
   }
 
   Future<OfflineMapPackage?> fetchCurrentOfflineMapPackage() async {
@@ -276,6 +299,8 @@ class ApiMapRepository {
           .map((raw) => _toPhoto(Map<String, dynamic>.from(raw as Map)))
           .toList(growable: false),
       isSummary: item['is_summary'] as bool? ?? false,
+      isAggregate: item['is_aggregate'] as bool? ?? false,
+      clusterCount: math.max(1, _toInt(item['cluster_count']) ?? 1),
     );
   }
 
@@ -301,6 +326,8 @@ class ApiMapRepository {
       reviewedAt: _toDateTime(properties['reviewed_at']),
       photoCount: _toInt(properties['photo_count']) ?? 0,
       isSummary: true,
+      isAggregate: properties['is_aggregate'] as bool? ?? false,
+      clusterCount: math.max(1, _toInt(properties['cluster_count']) ?? 1),
     );
   }
 

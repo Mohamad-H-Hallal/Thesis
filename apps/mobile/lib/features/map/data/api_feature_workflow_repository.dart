@@ -67,19 +67,41 @@ class ApiFeatureWorkflowRepository implements FeatureWorkflowRepository {
   }
 
   @override
+  Future<void> deleteDraft(String featureId) async {
+    try {
+      await _apiClient.dio.delete<Map<String, dynamic>>(
+        '$_featuresBasePath/$featureId',
+      );
+    } on DioException catch (error) {
+      throw Exception(_messageFrom(error, 'Feature draft deletion failed.'));
+    }
+  }
+
+  @override
   Future<void> uploadPhotos({
     required String featureId,
-    required List<String> filePaths,
+    required List<FeaturePhotoUpload> photos,
   }) async {
-    if (filePaths.isEmpty) {
+    if (photos.isEmpty) {
       return;
     }
 
     try {
       final files = await Future.wait(
-        filePaths.map(
-          (filePath) async =>
-              MultipartFile.fromFile(filePath, filename: p.basename(filePath)),
+        photos.map(
+          (photo) async => photo.bytes == null
+              ? MultipartFile.fromFile(
+                  photo.filePath,
+                  filename: photo.fileName.isEmpty
+                      ? p.basename(photo.filePath)
+                      : photo.fileName,
+                )
+              : MultipartFile.fromBytes(
+                  photo.bytes!,
+                  filename: photo.fileName.isEmpty
+                      ? p.basename(photo.filePath)
+                      : photo.fileName,
+                ),
         ),
       );
 

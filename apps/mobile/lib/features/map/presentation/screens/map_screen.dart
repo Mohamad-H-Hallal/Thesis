@@ -15,7 +15,9 @@ import '../../../../core/pagination/paginated_list_controller.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/sync/sync_controller.dart';
+import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
@@ -59,6 +61,7 @@ class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({
     this.initialProjectId,
     this.initialFeatureId,
+    this.initialFeatureSource,
     this.startCaptureOnOpen = false,
     this.lockProjectSelection = false,
     super.key,
@@ -66,6 +69,7 @@ class MapScreen extends ConsumerStatefulWidget {
 
   final String? initialProjectId;
   final String? initialFeatureId;
+  final String? initialFeatureSource;
   final bool startCaptureOnOpen;
   final bool lockProjectSelection;
 
@@ -96,6 +100,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   String? _tileFailureMessage;
   String? _locationNoticeMessage;
   String? _autoOpenedFeatureId;
+  String? _focusedFeatureId;
   String? _offlineDownloadProgressLabel;
   String? _offlineDownloadResultLabel;
   double? _offlineDownloadProgressValue;
@@ -137,17 +142,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   ProjectMapViewportQuery? _projectViewportQuery;
   List<MapFeatureSummary>? _lastViewportFeatures;
 
-  LatLng get _defaultMapCenter => widget.lockProjectSelection
-      ? LebanonMapConfig.projectWorkspaceCenter
-      : LebanonMapConfig.center;
+  LatLng get _defaultMapCenter => LebanonMapConfig.center;
 
-  double get _defaultMapZoom => widget.lockProjectSelection
-      ? LebanonMapConfig.projectWorkspaceZoom
-      : LebanonMapConfig.fullscreenInitialZoom;
+  double get _defaultMapZoom => LebanonMapConfig.fullscreenInitialZoom;
 
-  double get _mapMinZoom => widget.lockProjectSelection
-      ? LebanonMapConfig.projectWorkspaceZoom
-      : LebanonMapConfig.fullscreenMinZoom;
+  double get _mapMinZoom => LebanonMapConfig.fullscreenMinZoom;
 
   double get _mapMaxZoom => LebanonMapConfig.fullscreenMaxZoom;
 
@@ -158,6 +157,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     _mainMapOptions = MapOptions(
       initialCenter: _defaultMapCenter,
       initialZoom: _defaultMapZoom,
+      initialCameraFit: widget.lockProjectSelection
+          ? LebanonMapConfig.fullscreenFit
+          : null,
       minZoom: _mapMinZoom,
       maxZoom: _mapMaxZoom,
       cameraConstraint: widget.lockProjectSelection
@@ -167,6 +169,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       onPositionChanged: _handleMainMapPositionChanged,
       onTap: _handleMainMapTap,
     );
+  }
+
+  @override
+  void didUpdateWidget(covariant MapScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final previousTarget = oldWidget.initialFeatureId?.trim();
+    final nextTarget = widget.initialFeatureId?.trim();
+    if (previousTarget != nextTarget ||
+        oldWidget.initialFeatureSource != widget.initialFeatureSource) {
+      _autoOpenedFeatureId = null;
+      _focusedFeatureId = (nextTarget?.isEmpty ?? true) ? null : nextTarget;
+      _lastAutoFrameKey = null;
+    }
   }
 
   bool get _isProjectMapSecondaryOverlayOpen =>
@@ -191,7 +206,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     _lastVisibleTileRecoveryKey = null;
     _projectMapTileFailureCount = 0;
     _projectMapTileFailureBurstKey = null;
-    _mapController.move(_defaultMapCenter, _defaultMapZoom);
+    _mapController.fitCamera(LebanonMapConfig.fullscreenFit);
   }
 
   bool _hasSavedOfflineImagery(OfflineMapPackage? package) =>
@@ -246,10 +261,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     return 'Using saved map imagery for this area while live tiles reconnect.';
   }
 
-  String _liveTilesUnavailableNotice() {
-    return 'Live map tiles are temporarily unavailable. Project features remain available.';
-  }
-
   void _notifyProjectMapTileFailure({
     required OfflineMapPackage? offlinePackage,
     required bool hasSavedOfflineImagery,
@@ -280,12 +291,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       if (!mounted || _tileFailureMessage != null) {
         return;
       }
-      _showTileNotice(
-        hasSavedOfflineImagery
-            ? _savedImageryFallbackNotice()
-            : _liveTilesUnavailableNotice(),
-        usesSavedImagery: hasSavedOfflineImagery,
-      );
+      _showTileNotice(_savedImageryFallbackNotice(), usesSavedImagery: true);
     });
   }
 
@@ -510,12 +516,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           final hasSavedOfflineImagery = _hasSavedOfflineImagery(
             offlinePackage,
           );
-          _showTileNotice(
-            hasSavedOfflineImagery
-                ? _savedImageryFallbackNotice()
-                : _liveTilesUnavailableNotice(),
-            usesSavedImagery: hasSavedOfflineImagery,
-          );
+          if (hasSavedOfflineImagery) {
+            _showTileNotice(
+              _savedImageryFallbackNotice(),
+              usesSavedImagery: true,
+            );
+          }
         }
       } finally {
         _isPrimingProjectMapTiles = false;
@@ -603,22 +609,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           return;
         }
         if (summary.downloadedTiles > 0 || summary.skippedTiles > 0) {
-          _showTileNotice(
-            _savedImageryFallbackNotice(),
-            usesSavedImagery: true,
-          );
+          _clearTileNotice();
         }
       } catch (_) {
         if (mounted) {
           final hasSavedOfflineImagery = _hasSavedOfflineImagery(
             offlinePackage,
           );
-          _showTileNotice(
-            hasSavedOfflineImagery
-                ? _savedImageryFallbackNotice()
-                : _liveTilesUnavailableNotice(),
-            usesSavedImagery: hasSavedOfflineImagery,
-          );
+          if (hasSavedOfflineImagery) {
+            _showTileNotice(
+              _savedImageryFallbackNotice(),
+              usesSavedImagery: true,
+            );
+          }
         }
       } finally {
         _isRecoveringProjectMapVisibleTiles = false;
@@ -694,6 +697,17 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   bool get _hasAllVisibleStatusesSelected =>
       _visibleStatuses.length == _projectMapStatusOrder.length;
+
+  bool get _hasInitialFeatureTarget =>
+      _initialFeatureId?.trim().isNotEmpty == true;
+
+  String? get _initialFeatureId {
+    final featureId = widget.initialFeatureId?.trim();
+    if (featureId == null || featureId.isEmpty) {
+      return null;
+    }
+    return featureId;
+  }
 
   void _focusLebanonWorkspace({bool queueUntilReady = false}) {
     if (!_isMainMapReady) {
@@ -994,7 +1008,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   void _runMainMapAction(VoidCallback action, {bool queueUntilReady = false}) {
-    if (!_isMainMapReady && !queueUntilReady) {
+    if (!_isMainMapReady) {
+      if (queueUntilReady) {
+        _pendingMainMapAction = action;
+        return;
+      }
       AppSnackbar.showError(
         context,
         'Map is still preparing. Please try again in a moment.',
@@ -1028,6 +1046,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       }
       rethrow;
     }
+  }
+
+  void _scheduleMainMapCameraAction(VoidCallback action) {
+    if (!_isMainMapReady) {
+      _pendingMainMapAction = action;
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _runMainMapAction(action, queueUntilReady: true);
+    });
   }
 
   @override
@@ -1086,6 +1117,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             project.hasApprovedCurrentUserAssignment;
         final canCollectOnMap =
             hasContributorAssignment && project.status == 'active';
+        final canUseOfflineMap = hasContributorAssignment;
         final canReview = role == UserRole.admin;
         _maybeStartProjectMapCaptureOnOpen(
           project: project,
@@ -1225,7 +1257,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     ),
                   ],
                 ),
-                if (!isUserRole) ...[
+                if (canUseOfflineMap) ...[
                   const SizedBox(height: AppSpacing.sm),
                   offlineMapPackageAsync.when(
                     loading: () =>
@@ -1296,6 +1328,29 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   ),
                 )
                 .toList(growable: false);
+            final countStatuses = isUserRole || _hasAllVisibleStatusesSelected
+                ? null
+                : _projectMapStatusOrder
+                      .where(_visibleStatuses.contains)
+                      .toList(growable: false);
+            final countQuery = ProjectFeatureCountQuery(
+              projectId: project.id,
+              search: _searchController.text.trim().isEmpty
+                  ? null
+                  : _searchController.text.trim(),
+              statuses: countStatuses,
+              featureType: _selectedFeatureChip,
+            );
+            final featureCountAsync = ref.watch(
+              projectFeatureCountProvider(countQuery),
+            );
+            final fallbackFeatureCount = _projectMapFeatureTotal(
+              project,
+              filteredFeatures,
+              canFilterStatuses: !isUserRole,
+            );
+            final totalFeatureCount =
+                featureCountAsync.valueOrNull ?? fallbackFeatureCount;
             _maybeOpenInitialFeatureDetails(
               project: project,
               features: filteredFeatures,
@@ -1307,10 +1362,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               context,
               project: project,
               features: filteredFeatures,
+              totalFeatureCount: totalFeatureCount,
               quickFeatureChips: quickFeatureChips,
               offlinePackageAsync: offlineMapPackageAsync,
               hasCollectionAccess: hasContributorAssignment,
               canCollectOnMap: canCollectOnMap,
+              canUseOfflineMap: canUseOfflineMap,
               canReview: canReview,
               canFilterStatuses: !isUserRole,
               embeddedControls: embeddedControls,
@@ -1383,10 +1440,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     BuildContext context, {
     required ProjectSummary project,
     required List<MapFeatureSummary> features,
+    required int totalFeatureCount,
     required List<String> quickFeatureChips,
     required AsyncValue<OfflineMapPackage?> offlinePackageAsync,
     required bool hasCollectionAccess,
     required bool canCollectOnMap,
+    required bool canUseOfflineMap,
     required bool canReview,
     required bool canFilterStatuses,
     Widget? embeddedControls,
@@ -1397,6 +1456,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           context,
           project: project,
           features: features,
+          totalFeatureCount: totalFeatureCount,
           quickFeatureChips: quickFeatureChips,
           offlinePackage: offlinePackageAsync.valueOrNull,
           canCollectOnMap: canCollectOnMap,
@@ -1428,7 +1488,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Project Features (${features.length})',
+                    'Project Features ($totalFeatureCount)',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: AppSpacing.sm),
@@ -1488,7 +1548,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                   ),
                                 TextButton.icon(
                                   onPressed: () {
-                                    _focusFeature(feature);
+                                    _focusFeature(
+                                      feature,
+                                      detailsSheetAware: true,
+                                    );
                                     _openFeatureDetails(
                                       project: project,
                                       feature: feature,
@@ -1546,10 +1609,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               context,
               project: project,
               features: features,
+              totalFeatureCount: totalFeatureCount,
               quickFeatureChips: quickFeatureChips,
               offlinePackage: offlinePackageAsync.valueOrNull,
               hasCollectionAccess: hasCollectionAccess,
               canCollectOnMap: canCollectOnMap,
+              canUseOfflineMap: canUseOfflineMap,
               canReview: canReview,
               canFilterStatuses: canFilterStatuses,
             );
@@ -1665,10 +1730,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     BuildContext context, {
     required ProjectSummary project,
     required List<MapFeatureSummary> features,
+    required int totalFeatureCount,
     required List<String> quickFeatureChips,
     required OfflineMapPackage? offlinePackage,
     required bool hasCollectionAccess,
     required bool canCollectOnMap,
+    required bool canUseOfflineMap,
     required bool canReview,
     required bool canFilterStatuses,
   }) {
@@ -1700,7 +1767,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         _projectMapSearchOpen || keyboardVisible;
     final addFeatureBottom = _isProjectMapCaptureMode ? 102.0 : 18.0;
     final rightRailBottom = _isProjectMapCaptureMode
-        ? 116.0
+        ? 188.0
         : hasCollectionAccess
         ? addFeatureBottom + 68
         : 22.0;
@@ -1787,7 +1854,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                   width: double.infinity,
                                   child: _ProjectMapFloatingPanel(
                                     project: project,
-                                    featureCount: features.length,
+                                    featureCount: totalFeatureCount,
                                     searchController: _searchController,
                                     searchFocusNode: _projectMapSearchFocusNode,
                                     quickFeatureChips: quickFeatureChips,
@@ -1824,7 +1891,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                         _visibleStatusSummaryLabel(),
                                     onBasemapStyleChanged:
                                         _setProjectMapBasemapStyle,
-                                    onOpenOfflineTools: canFilterStatuses
+                                    onOpenOfflineTools: canUseOfflineMap
                                         ? () => _openOfflineToolsSheet(
                                             offlinePackage: offlinePackage,
                                             hasCollectionAccess:
@@ -1885,12 +1952,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             right: 14,
             bottom: rightRailBottom,
             child: _MapControlRail(
-              featureCount: features.length,
+              featureCount: totalFeatureCount,
               onOpenFeatures: _isProjectMapCaptureMode
                   ? null
                   : () => _openFeatureBrowser(
                       project: project,
                       features: features,
+                      totalFeatureCount: totalFeatureCount,
                       canCollectOnMap: canCollectOnMap,
                       canReview: canReview,
                       canFilterStatuses: canFilterStatuses,
@@ -1953,7 +2021,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         if (_isProjectMapCaptureMode)
           Positioned(
             left: 12,
-            right: 72,
+            right: 12,
             bottom: 8,
             child: _ProjectMapCaptureActionBar(
               geometryType: _captureGeometryType ?? 'Point',
@@ -2174,6 +2242,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     BuildContext context, {
     required ProjectSummary project,
     required List<MapFeatureSummary> features,
+    required int totalFeatureCount,
     required List<String> quickFeatureChips,
     required OfflineMapPackage? offlinePackage,
     required bool canCollectOnMap,
@@ -2313,7 +2382,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                '${project.category} • ${features.length} visible feature(s)',
+                                '${project.category} • ${_featureCountLabel(totalFeatureCount)}',
                                 style: Theme.of(context).textTheme.bodySmall,
                               ),
                             ],
@@ -2420,7 +2489,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   onPressed: _isMainMapReady
                       ? () => _runMainMapAction(
                           () => _mapController.fitCamera(
-                            LebanonMapConfig.lebanonFit(),
+                            LebanonMapConfig.fullscreenFit,
                           ),
                           queueUntilReady: true,
                         )
@@ -2588,7 +2657,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   void _scheduleProjectAutoFrame({required ProjectSummary project}) {
-    if (widget.lockProjectSelection) {
+    if (widget.lockProjectSelection || _hasInitialFeatureTarget) {
       return;
     }
     final frameKey = project.id;
@@ -2607,6 +2676,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Future<void> _openFeatureBrowser({
     required ProjectSummary project,
     required List<MapFeatureSummary> features,
+    required int totalFeatureCount,
     required bool canCollectOnMap,
     required bool canReview,
     required bool canFilterStatuses,
@@ -2623,6 +2693,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         builder: (sheetContext) => _ProjectFeatureBrowserSheet(
           project: project,
           features: features,
+          initialTotalCount: totalFeatureCount,
           canCollectOnMap: canCollectOnMap,
           featureTitleBuilder: _featureBrowserTitle,
           featureSubtitleBuilder: _featureBrowserSubtitle,
@@ -2642,7 +2713,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               : null,
           onSelectFeature: (feature) {
             Navigator.of(sheetContext).pop();
-            _focusFeature(feature);
+            if (feature.isAggregate) {
+              _focusFeatureAggregate(feature);
+              return;
+            }
+            _focusFeature(feature, detailsSheetAware: true);
             _openFeatureDetails(
               project: project,
               feature: feature,
@@ -2672,16 +2747,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       await showModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
-        isDismissible: false,
-        enableDrag: false,
+        isDismissible: true,
+        enableDrag: true,
         backgroundColor: Colors.transparent,
+        constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width),
         builder: (context) => _OfflineMapSheet(
           basemapStyle: _basemapStyle,
           initialOfflinePackage: offlinePackage,
           hasCollectionAccess: hasCollectionAccess,
           uiStateListenable: _offlineSheetUiState,
           canDownloadVisible: offlinePackage != null && _isMainMapReady,
-          onClose: () => Navigator.of(context).pop(),
           onDownloadOverview: _downloadLebanonOverview,
           onDownloadVisible: _downloadVisibleRegion,
           onRefreshSavedImagery: _refreshSavedOfflineImagery,
@@ -2804,6 +2879,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   String _featureDisplayTitle(MapFeatureSummary feature) {
+    if (feature.isAggregate) {
+      final count = math.max(1, feature.clusterCount);
+      return count == 1 ? 'Project feature' : '$count project features';
+    }
     final nameValue = _featureAttributeValue(
       feature,
       _looksLikeFeatureNameField,
@@ -2831,6 +2910,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   String _projectFeatureSubtitle(MapFeatureSummary feature) {
+    if (feature.isAggregate) {
+      return 'Zoom in to review individual features';
+    }
     final details = <String>[
       _projectFeatureTypeLabel(
         feature.sourceGeometryType ??
@@ -2844,6 +2926,53 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       );
     }
     return details.join(' • ');
+  }
+
+  int _representedProjectFeatureCount(List<MapFeatureSummary> features) {
+    return features.fold<int>(
+      0,
+      (total, feature) => total + math.max(1, feature.clusterCount),
+    );
+  }
+
+  int _projectMapFeatureTotal(
+    ProjectSummary project,
+    List<MapFeatureSummary> renderedFeatures, {
+    required bool canFilterStatuses,
+  }) {
+    final hasLocalFeatureFilter =
+        _searchController.text.trim().isNotEmpty ||
+        _selectedFeatureChip != null;
+    if (hasLocalFeatureFilter) {
+      return _representedProjectFeatureCount(renderedFeatures);
+    }
+    if (!canFilterStatuses) {
+      return math.max(
+        project.approvedFeatures,
+        _representedProjectFeatureCount(renderedFeatures),
+      );
+    }
+
+    var total = 0;
+    if (_visibleStatuses.contains('approved')) {
+      total += project.approvedFeatures;
+    }
+    if (_visibleStatuses.contains('pending_review')) {
+      total += project.pendingReviews;
+    }
+    if (_visibleStatuses.contains('rejected')) {
+      total += project.rejectedFeatures;
+    }
+    if (_visibleStatuses.contains('draft')) {
+      total += project.draftFeatures;
+    }
+    return total > 0
+        ? total
+        : _representedProjectFeatureCount(renderedFeatures);
+  }
+
+  String _featureCountLabel(int count) {
+    return count == 1 ? '1 feature' : '$count features';
   }
 
   String _projectFeatureTypeLabel(String geometryType) {
@@ -3083,13 +3212,15 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           'This removes the saved ${LebanonMapConfig.basemapLabel(_basemapStyle).toLowerCase()} imagery from this device for the signed-in user.',
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Delete'),
+          AppDialogActions(
+            cancel: TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            confirm: FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Delete'),
+            ),
           ),
         ],
       ),
@@ -3268,7 +3399,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final note = await _promptNote(
       title: status == 'approved' ? 'Approve feature' : 'Reject feature',
       hint: 'Optional context for the contributor.',
-      submitLabel: status == 'approved' ? 'Approve feature' : 'Reject feature',
+      submitLabel: status == 'approved' ? 'Approve' : 'Reject',
     );
     if (note == null) {
       return;
@@ -3315,13 +3446,15 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         title: const Text('Submit draft'),
         content: const Text('Submit this draft for admin review now?'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Submit'),
+          AppDialogActions(
+            cancel: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            confirm: FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Submit'),
+            ),
           ),
         ],
       ),
@@ -3356,6 +3489,56 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     }
   }
 
+  Future<void> _deleteDraftFeature({
+    required MapFeatureSummary feature,
+    VoidCallback? onSuccess,
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete draft'),
+        content: const Text(
+          'Delete this draft feature? This cannot be undone.',
+        ),
+        actions: [
+          AppDialogActions(
+            cancel: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            confirm: FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete'),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    try {
+      await ref.read(featureWorkflowRepositoryProvider).deleteDraft(feature.id);
+      bumpWorkflowRefresh(ref);
+      if (mounted) {
+        onSuccess?.call();
+        AppSnackbar.showSuccess(context, 'Draft deleted successfully.');
+      }
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to delete this draft right now.',
+          ),
+        );
+      }
+    }
+  }
+
   Future<String?> _promptNote({
     required String title,
     required String hint,
@@ -3377,7 +3560,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required bool canCollectOnMap,
     required bool canReview,
   }) {
-    _focusFeature(feature);
+    _focusFeature(feature, detailsSheetAware: true);
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -3576,9 +3759,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             if (canCollectOnMap && feature.status == 'draft')
               Padding(
                 padding: const EdgeInsets.only(top: AppSpacing.md),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                child: AppActionButtons(
+                  maxColumns: 2,
+                  compactBreakpoint: 360,
+                  fillRows: true,
                   children: [
                     OutlinedButton.icon(
                       onPressed: () {
@@ -3601,15 +3785,24 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       icon: const Icon(Icons.send_outlined),
                       label: const Text('Submit Draft'),
                     ),
+                    FilledButton.tonalIcon(
+                      onPressed: () => _deleteDraftFeature(
+                        feature: feature,
+                        onSuccess: () => Navigator.of(sheetContext).pop(),
+                      ),
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('Delete Draft'),
+                    ),
                   ],
                 ),
               ),
             if (canReview && feature.status != 'draft')
               Padding(
                 padding: const EdgeInsets.only(top: AppSpacing.md),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                child: AppActionButtons(
+                  maxColumns: 2,
+                  compactBreakpoint: 360,
+                  fillRows: true,
                   children: [
                     if (feature.status == 'pending_review' ||
                         feature.status == 'rejected')
@@ -3648,22 +3841,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required bool canCollectOnMap,
     required bool canReview,
   }) {
-    final targetFeatureId = widget.initialFeatureId;
+    final targetFeatureId = _initialFeatureId;
     if (targetFeatureId == null ||
         targetFeatureId.isEmpty ||
         _autoOpenedFeatureId == targetFeatureId) {
       return;
     }
 
-    MapFeatureSummary? feature;
+    MapFeatureSummary? fallbackFeature;
     for (final item in features) {
       if (item.id == targetFeatureId) {
-        feature = item;
+        fallbackFeature = item;
         break;
       }
-    }
-    if (feature == null) {
-      return;
     }
 
     _autoOpenedFeatureId = targetFeatureId;
@@ -3671,24 +3861,78 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       if (!mounted) {
         return;
       }
-      _openFeatureDetails(
-        project: project,
-        feature: feature!,
-        canCollectOnMap: canCollectOnMap,
-        canReview: canReview,
+      unawaited(
+        ref
+            .read(projectFeatureDetailsProvider(targetFeatureId).future)
+            .then((target) {
+              if (!mounted) {
+                return;
+              }
+              _openFeatureDetails(
+                project: project,
+                feature: target,
+                canCollectOnMap: canCollectOnMap,
+                canReview: canReview,
+              );
+            })
+            .catchError((_) {
+              if (!mounted) {
+                return;
+              }
+              if (fallbackFeature != null) {
+                _openFeatureDetails(
+                  project: project,
+                  feature: fallbackFeature,
+                  canCollectOnMap: canCollectOnMap,
+                  canReview: canReview,
+                );
+                return;
+              }
+              if (mounted) {
+                _autoOpenedFeatureId = null;
+              }
+            }),
       );
     });
   }
 
-  void _focusFeature(MapFeatureSummary feature) {
-    final point = _pointFromGeometry(feature.geometry);
-    if (point == null) {
+  void _focusFeature(
+    MapFeatureSummary feature, {
+    bool detailsSheetAware = false,
+  }) {
+    if (mounted && _focusedFeatureId != feature.id) {
+      setState(() {
+        _focusedFeatureId = feature.id;
+      });
+    }
+    final points = geometryPoints(feature.geometry);
+    if (points.isEmpty) {
       return;
     }
-    _runMainMapAction(
-      () => _mapController.move(point, 15),
-      queueUntilReady: true,
-    );
+    _scheduleMainMapCameraAction(() {
+      if (geometryPointsCollapseToSingleLocation(points)) {
+        final target = geometryPointsCenter(points);
+        if (target == null) {
+          return;
+        }
+        final targetZoom = detailsSheetAware
+            ? math.max(_latestMapCamera?.zoom ?? 17, 17)
+            : 15.0;
+        _mapController.move(
+          target,
+          targetZoom.clamp(_mapMinZoom, _mapMaxZoom).toDouble(),
+        );
+        return;
+      }
+      _mapController.fitCamera(
+        CameraFit.bounds(
+          bounds: LatLngBounds.fromPoints(points),
+          padding: detailsSheetAware
+              ? const EdgeInsets.fromLTRB(72, 72, 72, 300)
+              : const EdgeInsets.all(48),
+        ),
+      );
+    });
   }
 
   ProjectSummary _resolveSelectedProject(
@@ -3719,9 +3963,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           final color = _statusColor(feature.status);
           return Polygon(
             points: points,
-            color: color.withValues(alpha: 0.18),
-            borderStrokeWidth: 2.5,
-            borderColor: color,
+            color: color.withValues(
+              alpha: _focusedFeatureId == feature.id ? 0.26 : 0.18,
+            ),
+            borderStrokeWidth: _focusedFeatureId == feature.id ? 3.6 : 2.5,
+            borderColor: _focusedFeatureId == feature.id
+                ? Colors.black87
+                : color,
           );
         })
         .whereType<Polygon>()
@@ -3739,7 +3987,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           return Polyline(
             points: points,
             color: _statusColor(feature.status),
-            strokeWidth: 4,
+            strokeWidth: _focusedFeatureId == feature.id ? 5.6 : 4,
           );
         })
         .whereType<Polyline>()
@@ -3781,17 +4029,22 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 duplicateCount: entries.length,
               );
         final color = _statusColor(feature.status);
+        final isFocused = _focusedFeatureId == feature.id;
         markers.add(
           Marker(
             point: markerPoint,
-            width: 34,
-            height: 34,
+            width: isFocused ? 42 : 34,
+            height: isFocused ? 42 : 34,
             child: GestureDetector(
               behavior: HitTestBehavior.translucent,
               onTap: !interactive
                   ? null
                   : () {
-                      _focusFeature(feature);
+                      if (feature.isAggregate) {
+                        _focusFeatureAggregate(feature);
+                        return;
+                      }
+                      _focusFeature(feature, detailsSheetAware: true);
                       _openFeatureDetails(
                         project: project,
                         feature: feature,
@@ -3806,7 +4059,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   decoration: BoxDecoration(
                     color: color,
                     shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 1.8),
+                    border: Border.all(
+                      color: isFocused ? Colors.black87 : Colors.white,
+                      width: isFocused ? 2.4 : 1.8,
+                    ),
                     boxShadow: const [
                       BoxShadow(
                         color: Color(0x33000000),
@@ -3833,6 +4089,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     }
 
     return markers;
+  }
+
+  void _focusFeatureAggregate(MapFeatureSummary feature) {
+    final point = _pointFromGeometry(feature.geometry);
+    if (point == null) {
+      return;
+    }
+    _runMainMapAction(() {
+      _mapController.move(
+        point,
+        math.max((_latestMapCamera?.zoom ?? _defaultMapZoom) + 1.6, 11),
+      );
+    }, queueUntilReady: true);
   }
 
   LatLng _spreadDuplicateMarkerPoint(
@@ -4448,11 +4717,10 @@ class _ProjectMapCaptureActionBar extends StatelessWidget {
       borderRadius: BorderRadius.circular(24),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          alignment: WrapAlignment.spaceBetween,
-          crossAxisAlignment: WrapCrossAlignment.center,
+        child: AppActionButtons(
+          maxColumns: 2,
+          compactBreakpoint: 340,
+          fillRows: true,
           children: [
             OutlinedButton.icon(
               onPressed: onBack,
@@ -4472,9 +4740,7 @@ class _ProjectMapCaptureActionBar extends StatelessWidget {
             FilledButton.icon(
               onPressed: canContinue ? onContinue : null,
               icon: const Icon(Icons.arrow_forward_outlined),
-              label: Text(
-                geometryType == 'Point' ? 'Continue' : 'Continue to details',
-              ),
+              label: const Text('Continue'),
             ),
           ],
         ),
@@ -4499,63 +4765,60 @@ class _InlineProjectMapGeometryTypeSheet extends StatelessWidget {
     final theme = Theme.of(context);
     final bottomInset =
         MediaQuery.viewPaddingOf(context).bottom + AppSpacing.md;
-    return Material(
-      elevation: 10,
-      color: theme.colorScheme.surface,
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(16, 12, 16, bottomInset),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Center(
-                    child: Container(
-                      width: 44,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.outlineVariant,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    ),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onVerticalDragEnd: (details) {
+        final velocity = details.primaryVelocity ?? 0;
+        if (velocity > 240) {
+          onClose();
+        }
+      },
+      child: Material(
+        elevation: 10,
+        color: theme.colorScheme.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(16, 12, 16, bottomInset),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 44,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.outlineVariant,
+                    borderRadius: BorderRadius.circular(999),
                   ),
                 ),
-                Tooltip(
-                  message: 'Close geometry chooser',
-                  child: IconButton(
-                    onPressed: onClose,
-                    icon: const Icon(Icons.close_rounded),
-                  ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Choose geometry',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
                 ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Start the feature directly on this project map.',
+                style: theme.textTheme.bodySmall,
+              ),
+              const SizedBox(height: 12),
+              for (final geometryType in geometryTypes) ...[
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(_geometryTypeIcon(geometryType)),
+                  title: Text(_geometryTypeLabel(geometryType)),
+                  subtitle: Text(_geometryTypeDescription(geometryType)),
+                  onTap: () => onSelected(geometryType),
+                ),
+                if (geometryType != geometryTypes.last)
+                  const Divider(height: 1),
               ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Choose geometry',
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Start the feature directly on this project map.',
-              style: theme.textTheme.bodySmall,
-            ),
-            const SizedBox(height: 12),
-            for (final geometryType in geometryTypes) ...[
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(_geometryTypeIcon(geometryType)),
-                title: Text(_geometryTypeLabel(geometryType)),
-                subtitle: Text(_geometryTypeDescription(geometryType)),
-                onTap: () => onSelected(geometryType),
-              ),
-              if (geometryType != geometryTypes.last) const Divider(height: 1),
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -5043,6 +5306,7 @@ class _ProjectFeatureBrowserSheet extends ConsumerStatefulWidget {
   const _ProjectFeatureBrowserSheet({
     required this.project,
     required this.features,
+    required this.initialTotalCount,
     required this.canCollectOnMap,
     required this.canFilterStatuses,
     required this.featureTitleBuilder,
@@ -5056,6 +5320,7 @@ class _ProjectFeatureBrowserSheet extends ConsumerStatefulWidget {
 
   final ProjectSummary project;
   final List<MapFeatureSummary> features;
+  final int initialTotalCount;
   final bool canCollectOnMap;
   final bool canFilterStatuses;
   final String Function(MapFeatureSummary feature) featureTitleBuilder;
@@ -5144,8 +5409,9 @@ class _ProjectFeatureBrowserSheetState
     final displayedFeatures = useSeedFeatures
         ? widget.features
         : featureState.items;
+    final displayedRepresentedCount = _representedCount(displayedFeatures);
     final displayedTotal = useSeedFeatures
-        ? widget.features.length
+        ? math.max(widget.initialTotalCount, displayedRepresentedCount)
         : featureState.total;
     final geometryTypes = _geometryTypes;
 
@@ -5183,7 +5449,7 @@ class _ProjectFeatureBrowserSheetState
             ),
             const SizedBox(height: 4),
             Text(
-              'Showing ${displayedFeatures.length} of $displayedTotal item(s) in ${widget.project.name}',
+              'Showing $displayedRepresentedCount of $displayedTotal item(s) in ${widget.project.name}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: AppSpacing.md),
@@ -5310,6 +5576,7 @@ class _ProjectFeatureBrowserSheetState
                 onLoadMore: useSeedFeatures
                     ? null
                     : featuresController.loadMore,
+                gridMinItemWidth: 360,
                 itemBuilder: (context, feature, _) => AppCard(
                   onTap: () => widget.onSelectFeature(feature),
                   child: Row(
@@ -5355,6 +5622,13 @@ class _ProjectFeatureBrowserSheetState
       },
     );
   }
+
+  int _representedCount(List<MapFeatureSummary> features) {
+    return features.fold<int>(
+      0,
+      (total, feature) => total + math.max(1, feature.clusterCount),
+    );
+  }
 }
 
 class _OfflineMapSheet extends ConsumerWidget {
@@ -5364,7 +5638,6 @@ class _OfflineMapSheet extends ConsumerWidget {
     required this.hasCollectionAccess,
     required this.uiStateListenable,
     required this.canDownloadVisible,
-    required this.onClose,
     required this.onDownloadOverview,
     required this.onDownloadVisible,
     required this.onRefreshSavedImagery,
@@ -5376,7 +5649,6 @@ class _OfflineMapSheet extends ConsumerWidget {
   final bool hasCollectionAccess;
   final ValueListenable<_OfflineSheetUiState> uiStateListenable;
   final bool canDownloadVisible;
-  final VoidCallback onClose;
   final Future<void> Function(OfflineMapPackage package)? onDownloadOverview;
   final Future<void> Function(OfflineMapPackage package)? onDownloadVisible;
   final Future<void> Function(OfflineMapPackage package)? onRefreshSavedImagery;
@@ -5395,9 +5667,9 @@ class _OfflineMapSheet extends ConsumerWidget {
       builder: (context, uiState, _) {
         return DraggableScrollableSheet(
           expand: false,
-          initialChildSize: 0.44,
-          minChildSize: 0.28,
-          maxChildSize: 0.88,
+          initialChildSize: 0.72,
+          minChildSize: 0.38,
+          maxChildSize: 0.94,
           builder: (context, controller) {
             return DecoratedBox(
               decoration: BoxDecoration(
@@ -5455,12 +5727,6 @@ class _OfflineMapSheet extends ConsumerWidget {
                                   ),
                                 ],
                               ),
-                            ),
-                            const SizedBox(width: AppSpacing.sm),
-                            IconButton(
-                              tooltip: 'Close offline map',
-                              onPressed: uiState.isDownloading ? null : onClose,
-                              icon: const Icon(Icons.close_rounded),
                             ),
                           ],
                         ),
@@ -5739,19 +6005,23 @@ class _OfflineActionCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: filled
-                  ? FilledButton.tonalIcon(
-                      onPressed: onPressed,
-                      icon: const Icon(Icons.download_outlined),
-                      label: Text(actionLabel),
-                    )
-                  : OutlinedButton.icon(
-                      onPressed: onPressed,
-                      icon: const Icon(Icons.download_outlined),
-                      label: Text(actionLabel),
-                    ),
+            AppActionButtons(
+              maxColumns: 1,
+              fillRows: true,
+              children: [
+                if (filled)
+                  FilledButton.tonalIcon(
+                    onPressed: onPressed,
+                    icon: const Icon(Icons.download_outlined),
+                    label: Text(actionLabel),
+                  )
+                else
+                  OutlinedButton.icon(
+                    onPressed: onPressed,
+                    icon: const Icon(Icons.download_outlined),
+                    label: Text(actionLabel),
+                  ),
+              ],
             ),
           ],
         ),
@@ -5820,11 +6090,16 @@ class _MapReviewNoteDialogState extends State<_MapReviewNoteDialog> {
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+        AppDialogActions(
+          cancel: TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          confirm: FilledButton(
+            onPressed: _submit,
+            child: Text(widget.submitLabel),
+          ),
         ),
-        FilledButton(onPressed: _submit, child: Text(widget.submitLabel)),
       ],
     );
   }

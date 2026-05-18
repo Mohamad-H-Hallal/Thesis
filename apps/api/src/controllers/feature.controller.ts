@@ -3,7 +3,7 @@ const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
 import { sanitizeManagedFeatureAttributes } from '../lib/featureAttributes';
-import { synchronizeProjectStatuses } from '../lib/projectLifecycle';
+import { publicVisibleStatuses, synchronizeProjectStatuses } from '../lib/projectLifecycle';
 
 type GeometryType = 'Point' | 'LineString' | 'Polygon';
 
@@ -40,8 +40,15 @@ interface FormSchemaField {
   enum?: unknown[];
 }
 
+type ProjectReadScope = 'admin' | 'project_admin' | 'assigned' | 'public' | 'none';
+
+const publicVisibilityColumnForRole = (role: string): 'visible_to_viewers' | 'visible_to_contributors' =>
+  role === 'viewer' ? 'visible_to_viewers' : 'visible_to_contributors';
+
 const MAX_PAGE_LIMIT = 500;
 const MAX_BBOX_PAGE_LIMIT = 20000;
+const MAP_TILE_LOW_ZOOM_LIMIT = 300;
+const MAP_TILE_HIGH_ZOOM_LIMIT = 3500;
 
 const normalizeMapZoom = (zoomRaw: unknown, fallback = 11): number => {
   const parsed = Number.parseFloat(String(zoomRaw ?? fallback));
@@ -65,6 +72,22 @@ const mapSimplifyTolerance = (zoom: number): number => {
     return 0.0005;
   }
   return 0;
+};
+
+const mapClusterCellSizeDegrees = (zoom: number): number => {
+  if (zoom < 7.5) {
+    return 0.18;
+  }
+  if (zoom < 8.5) {
+    return 0.12;
+  }
+  if (zoom < 9.5) {
+    return 0.08;
+  }
+  if (zoom < 10.5) {
+    return 0.05;
+  }
+  return 0.03;
 };
 
 const getBboxPagination = (pageRaw: unknown, limitRaw: unknown): Pagination => {
@@ -197,33 +220,143 @@ const validateGeoJsonGeometry = (geom: unknown): GeoJsonGeometry => {
   return geometry;
 };
 
-const hasProjectAccess = async (projectId: string, user: Express.UserContext): Promise<boolean> => {
+const getProjectReadScope = async (
+  projectId: string,
+  user: Express.UserContext,
+): Promise<ProjectReadScope> => {
   if (user.role === 'admin') {
-    return true;
+    return 'admin';
   }
 
+  const visibilityColumn = publicVisibilityColumnForRole(user.role);
   const accessCheck = await query(
-    `SELECT 1 FROM project_assignment
-     WHERE project_id = $1 AND user_id = $2 AND status = 'approved'
-     LIMIT 1`,
-    [projectId, user.id]
+    `SELECT
+       (
+         SELECT role
+         FROM project_assignment
+         WHERE project_id = $1
+           AND user_id = $2
+           AND status = 'approved'
+         LIMIT 1
+       ) AS assignment_role,
+       EXISTS (
+         SELECT 1
+         FROM project
+         WHERE id = $1
+           AND ${visibilityColumn} = TRUE
+           AND status::text = ANY($3::text[])
+       ) AS is_public_project`,
+    [projectId, user.id, publicVisibleStatuses]
   );
 
-  return accessCheck.rows.length > 0;
+  const assignmentRole = accessCheck.rows[0]?.assignment_role;
+  if (assignmentRole === 'admin') {
+    return 'project_admin';
+  }
+  if (assignmentRole) {
+    return 'assigned';
+  }
+  if (accessCheck.rows[0]?.is_public_project === true) {
+    return 'public';
+  }
+  return 'none';
 };
 
-const hasViewerProjectAccess = async (projectId: string): Promise<boolean> => {
-  const result = await query(
-    `SELECT 1
-     FROM project
-     WHERE id = $1
-       AND visible_to_viewers = TRUE
-       AND status != 'archived'
-     LIMIT 1`,
-    [projectId]
-  );
+const assertProjectReadable = async (
+  projectId: string,
+  user: Express.UserContext,
+): Promise<ProjectReadScope> => {
+  const scope = await getProjectReadScope(projectId, user);
+  if (scope === 'none') {
+    throw new AppError('You do not have access to this project', 403);
+  }
+  return scope;
+};
 
-  return result.rows.length > 0;
+const appendProjectReadVisibility = (
+  whereClauses: string[],
+  params: unknown[],
+  paramIndex: number,
+  user: Express.UserContext | undefined,
+  scope?: ProjectReadScope,
+): number => {
+  if (!user || user.role === 'admin' || scope === 'admin') {
+    return paramIndex;
+  }
+
+  if (user.role === 'viewer') {
+    whereClauses.push(`sf.status = 'approved'`);
+    return paramIndex;
+  }
+
+  if (scope === 'project_admin') {
+    return paramIndex;
+  }
+
+  if (scope === 'assigned') {
+    whereClauses.push(`(sf.status = 'approved' OR sf.collected_by_user_id = $${paramIndex})`);
+    params.push(user.id);
+    return paramIndex + 1;
+  }
+
+  whereClauses.push(`sf.status = 'approved'`);
+  return paramIndex;
+};
+
+const appendGlobalReadVisibility = (
+  whereClauses: string[],
+  params: unknown[],
+  paramIndex: number,
+  user: Express.UserContext | undefined,
+): number => {
+  if (!user || user.role === 'admin') {
+    return paramIndex;
+  }
+
+  const visibilityColumn = publicVisibilityColumnForRole(user.role);
+  if (user.role === 'viewer') {
+    whereClauses.push(`
+      sf.status = 'approved'
+      AND EXISTS (
+        SELECT 1
+        FROM project p_access
+        WHERE p_access.id = sf.project_id
+          AND p_access.${visibilityColumn} = TRUE
+          AND p_access.status::text = ANY($${paramIndex}::text[])
+      )
+    `);
+    params.push(publicVisibleStatuses);
+    return paramIndex + 1;
+  }
+
+  whereClauses.push(`
+    (
+      (
+        sf.status = 'approved'
+        AND EXISTS (
+          SELECT 1
+          FROM project p_access
+          WHERE p_access.id = sf.project_id
+            AND p_access.${visibilityColumn} = TRUE
+            AND p_access.status::text = ANY($${paramIndex}::text[])
+        )
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM project_assignment pa_access
+        WHERE pa_access.project_id = sf.project_id
+          AND pa_access.user_id = $${paramIndex + 1}
+          AND pa_access.status = 'approved'
+          AND (
+            pa_access.role = 'admin'
+            OR sf.status = 'approved'
+            OR sf.collected_by_user_id = $${paramIndex + 1}
+          )
+      )
+    )
+  `);
+  params.push(publicVisibleStatuses, user.id);
+  return paramIndex + 2;
 };
 
 const hasProjectAdminAccess = async (projectId: string, user: Express.UserContext): Promise<boolean> => {
@@ -247,15 +380,19 @@ const hasProjectAdminAccess = async (projectId: string, user: Express.UserContex
 const canAccessFeatureForUser = ({
   featureStatus,
   collectedByUserId,
-  projectId,
+  projectReadScope,
   user,
 }: {
   featureStatus: string;
   collectedByUserId: string;
-  projectId: string;
+  projectReadScope: ProjectReadScope;
   user: Express.UserContext;
 }): Promise<boolean> | boolean => {
-  if (user.role === 'admin') {
+  if (
+    user.role === 'admin' ||
+    projectReadScope === 'admin' ||
+    projectReadScope === 'project_admin'
+  ) {
     return true;
   }
 
@@ -267,11 +404,11 @@ const canAccessFeatureForUser = ({
     return true;
   }
 
-  if (collectedByUserId === user.id) {
+  if (projectReadScope === 'assigned' && collectedByUserId === user.id) {
     return true;
   }
 
-  return hasProjectAdminAccess(projectId, user);
+  return false;
 };
 
 const ensureAttributesObject = (attributes: unknown): Record<string, unknown> => {
@@ -417,12 +554,13 @@ const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
   const { project_id, status } = req.query;
   const searchQuery = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   const { page, limit, offset } = getPagination(req.query.page, req.query.limit);
+  let projectReadScope: ProjectReadScope | undefined;
 
   if (project_id && req.user?.role !== 'admin') {
-    const canAccessProject = await hasProjectAccess(String(project_id), req.user as Express.UserContext);
-    if (!canAccessProject) {
-      throw new AppError('You do not have access to this project', 403);
-    }
+    projectReadScope = await assertProjectReadable(
+      String(project_id),
+      req.user as Express.UserContext,
+    );
   }
 
   let queryText = `
@@ -465,17 +603,62 @@ const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
   }
 
   if (req.user?.role !== 'admin') {
-    queryText += `
-      AND EXISTS (
-        SELECT 1 FROM project_assignment pa
-        WHERE pa.project_id = sf.project_id
-          AND pa.user_id = $${paramIndex}
-          AND pa.status = 'approved'
-      )
-      AND (sf.status = 'approved' OR sf.collected_by_user_id = $${paramIndex})
-    `;
-    params.push(req.user?.id);
-    paramIndex += 1;
+    if (project_id) {
+      if (req.user?.role === 'viewer') {
+        queryText += ` AND sf.status = 'approved'`;
+      } else if (projectReadScope === 'assigned') {
+        queryText += ` AND (sf.status = 'approved' OR sf.collected_by_user_id = $${paramIndex})`;
+        params.push(req.user?.id);
+        paramIndex += 1;
+      } else if (projectReadScope !== 'project_admin') {
+        queryText += ` AND sf.status = 'approved'`;
+      }
+    } else {
+      const visibilityColumn = publicVisibilityColumnForRole(req.user?.role ?? 'viewer');
+      if (req.user?.role === 'viewer') {
+        queryText += `
+          AND sf.status = 'approved'
+          AND EXISTS (
+            SELECT 1
+            FROM project p_access
+            WHERE p_access.id = sf.project_id
+              AND p_access.${visibilityColumn} = TRUE
+              AND p_access.status::text = ANY($${paramIndex}::text[])
+          )
+        `;
+        params.push(publicVisibleStatuses);
+        paramIndex += 1;
+      } else {
+        queryText += `
+        AND (
+          (
+            sf.status = 'approved'
+            AND EXISTS (
+              SELECT 1
+              FROM project p_access
+              WHERE p_access.id = sf.project_id
+                AND p_access.${visibilityColumn} = TRUE
+                AND p_access.status::text = ANY($${paramIndex}::text[])
+            )
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM project_assignment pa_access
+            WHERE pa_access.project_id = sf.project_id
+              AND pa_access.user_id = $${paramIndex + 1}
+              AND pa_access.status = 'approved'
+              AND (
+                pa_access.role = 'admin'
+                OR sf.status = 'approved'
+                OR sf.collected_by_user_id = $${paramIndex + 1}
+              )
+          )
+        )
+      `;
+        params.push(publicVisibleStatuses, req.user?.id);
+        paramIndex += 2;
+      }
+    }
   }
 
   queryText += ` ORDER BY sf.collected_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
@@ -487,6 +670,7 @@ const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
     SELECT COUNT(*)::int AS total
     FROM spatial_feature sf
     JOIN project p ON sf.project_id = p.id
+    LEFT JOIN "user" u ON sf.collected_by_user_id = u.id
     WHERE 1=1
   `;
   const countParams: unknown[] = [];
@@ -517,17 +701,62 @@ const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
   }
 
   if (req.user?.role !== 'admin') {
-    countQuery += `
-      AND EXISTS (
-        SELECT 1 FROM project_assignment pa
-        WHERE pa.project_id = sf.project_id
-          AND pa.user_id = $${countParamIndex}
-          AND pa.status = 'approved'
-      )
-      AND (sf.status = 'approved' OR sf.collected_by_user_id = $${countParamIndex})
-    `;
-    countParams.push(req.user?.id);
-    countParamIndex += 1;
+    if (project_id) {
+      if (req.user?.role === 'viewer') {
+        countQuery += ` AND sf.status = 'approved'`;
+      } else if (projectReadScope === 'assigned') {
+        countQuery += ` AND (sf.status = 'approved' OR sf.collected_by_user_id = $${countParamIndex})`;
+        countParams.push(req.user?.id);
+        countParamIndex += 1;
+      } else if (projectReadScope !== 'project_admin') {
+        countQuery += ` AND sf.status = 'approved'`;
+      }
+    } else {
+      const visibilityColumn = publicVisibilityColumnForRole(req.user?.role ?? 'viewer');
+      if (req.user?.role === 'viewer') {
+        countQuery += `
+          AND sf.status = 'approved'
+          AND EXISTS (
+            SELECT 1
+            FROM project p_access
+            WHERE p_access.id = sf.project_id
+              AND p_access.${visibilityColumn} = TRUE
+              AND p_access.status::text = ANY($${countParamIndex}::text[])
+          )
+        `;
+        countParams.push(publicVisibleStatuses);
+        countParamIndex += 1;
+      } else {
+        countQuery += `
+        AND (
+          (
+            sf.status = 'approved'
+            AND EXISTS (
+              SELECT 1
+              FROM project p_access
+              WHERE p_access.id = sf.project_id
+                AND p_access.${visibilityColumn} = TRUE
+                AND p_access.status::text = ANY($${countParamIndex}::text[])
+            )
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM project_assignment pa_access
+            WHERE pa_access.project_id = sf.project_id
+              AND pa_access.user_id = $${countParamIndex + 1}
+              AND pa_access.status = 'approved'
+              AND (
+                pa_access.role = 'admin'
+                OR sf.status = 'approved'
+                OR sf.collected_by_user_id = $${countParamIndex + 1}
+              )
+          )
+        )
+      `;
+        countParams.push(publicVisibleStatuses, req.user?.id);
+        countParamIndex += 2;
+      }
+    }
   }
 
   const countResult = await query(countQuery, countParams);
@@ -592,15 +821,18 @@ const getFeature = async (req: Request, res: Response): Promise<void> => {
     throw new AppError('Feature not found', 404);
   }
 
-  const canAccessProject = await hasProjectAccess(result.rows[0].project_id, req.user as Express.UserContext);
-  if (!canAccessProject) {
+  const projectReadScope = await getProjectReadScope(
+    result.rows[0].project_id,
+    req.user as Express.UserContext,
+  );
+  if (projectReadScope === 'none') {
     throw new AppError('You do not have access to this feature', 403);
   }
 
   const canAccessFeature = await canAccessFeatureForUser({
     featureStatus: result.rows[0].status,
     collectedByUserId: result.rows[0].collected_by_user_id,
-    projectId: result.rows[0].project_id,
+    projectReadScope,
     user: req.user as Express.UserContext,
   });
   if (!canAccessFeature) {
@@ -964,10 +1196,7 @@ const findFeaturesNearby = async (req: Request, res: Response): Promise<void> =>
 
   if (projectId) {
     if (req.user?.role !== 'admin') {
-      const canAccessProject = await hasProjectAccess(projectId, req.user as Express.UserContext);
-      if (!canAccessProject) {
-        throw new AppError('You do not have access to this project', 403);
-      }
+      await assertProjectReadable(projectId, req.user as Express.UserContext);
     }
 
     queryText += ` AND sf.project_id = $${paramIndex}`;
@@ -975,17 +1204,27 @@ const findFeaturesNearby = async (req: Request, res: Response): Promise<void> =>
     paramIndex += 1;
   }
 
-  if (req.user?.role !== 'admin') {
+  if (req.user?.role !== 'admin' && !projectId) {
+    const visibilityColumn = publicVisibilityColumnForRole(req.user?.role ?? 'viewer');
     queryText += `
-      AND EXISTS (
-        SELECT 1 FROM project_assignment pa
-        WHERE pa.project_id = sf.project_id
-          AND pa.user_id = $${paramIndex}
-          AND pa.status = 'approved'
+      AND (
+        EXISTS (
+          SELECT 1
+          FROM project p_access
+          WHERE p_access.id = sf.project_id
+            AND p_access.${visibilityColumn} = TRUE
+            AND p_access.status::text = ANY($${paramIndex}::text[])
+        )
+        OR EXISTS (
+          SELECT 1 FROM project_assignment pa
+          WHERE pa.project_id = sf.project_id
+            AND pa.user_id = $${paramIndex + 1}
+            AND pa.status = 'approved'
+        )
       )
     `;
-    params.push(req.user?.id);
-    paramIndex += 1;
+    params.push(publicVisibleStatuses, req.user?.id);
+    paramIndex += 2;
   }
 
   queryText += ` ORDER BY distance_meters LIMIT $${paramIndex}`;
@@ -1019,6 +1258,7 @@ const findFeaturesByBbox = async (req: Request, res: Response): Promise<void> =>
   const zoom = normalizeMapZoom(req.query.zoom, 11);
   const simplifyTolerance = mapSimplifyTolerance(zoom);
   const { page, limit, offset } = getBboxPagination(req.query.page, req.query.limit);
+  let projectReadScope: ProjectReadScope | undefined;
 
   if (!Number.isFinite(minLon) || !Number.isFinite(minLat) || !Number.isFinite(maxLon) || !Number.isFinite(maxLat)) {
     throw new AppError('Bounding box coordinates must be valid numbers', 400);
@@ -1029,16 +1269,8 @@ const findFeaturesByBbox = async (req: Request, res: Response): Promise<void> =>
   }
 
   if (projectId) {
-    if (req.user?.role === 'viewer') {
-      const canAccessProject = await hasViewerProjectAccess(projectId);
-      if (!canAccessProject) {
-        throw new AppError('You do not have access to this project', 403);
-      }
-    } else if (req.user?.role !== 'admin') {
-      const canAccessProject = await hasProjectAccess(projectId, req.user as Express.UserContext);
-      if (!canAccessProject) {
-        throw new AppError('You do not have access to this project', 403);
-      }
+    if (req.user?.role !== 'admin') {
+      projectReadScope = await assertProjectReadable(projectId, req.user as Express.UserContext);
     }
   }
 
@@ -1061,17 +1293,20 @@ const findFeaturesByBbox = async (req: Request, res: Response): Promise<void> =>
   }
 
   if (req.user?.role !== 'admin') {
-    whereClauses.push(`
-      EXISTS (
-        SELECT 1
-        FROM project_assignment pa
-        WHERE pa.project_id = sf.project_id
-          AND pa.user_id = $${paramIndex}
-          AND pa.status = 'approved'
-      )
-    `);
-    params.push(req.user?.id);
-    paramIndex += 1;
+    paramIndex = projectId
+      ? appendProjectReadVisibility(
+          whereClauses,
+          params,
+          paramIndex,
+          req.user as Express.UserContext,
+          projectReadScope,
+        )
+      : appendGlobalReadVisibility(
+          whereClauses,
+          params,
+          paramIndex,
+          req.user as Express.UserContext,
+        );
   }
 
   const whereSql = whereClauses.join(' AND ');
@@ -1157,17 +1392,10 @@ const findFeaturesTile = async (req: Request, res: Response): Promise<void> => {
   const zoom = normalizeMapZoom(req.params.z, 11);
   const simplifyTolerance = mapSimplifyTolerance(zoom);
   const bounds = getTileBounds(req.params.z, req.params.x, req.params.y);
+  let projectReadScope: ProjectReadScope | undefined;
 
-  if (req.user?.role === 'viewer') {
-    const canAccessProject = await hasViewerProjectAccess(projectId);
-    if (!canAccessProject) {
-      throw new AppError('You do not have access to this project', 403);
-    }
-  } else if (req.user?.role !== 'admin') {
-    const canAccessProject = await hasProjectAccess(projectId, req.user as Express.UserContext);
-    if (!canAccessProject) {
-      throw new AppError('You do not have access to this project', 403);
-    }
+  if (req.user?.role !== 'admin') {
+    projectReadScope = await assertProjectReadable(projectId, req.user as Express.UserContext);
   }
 
   const whereClauses: string[] = [
@@ -1189,42 +1417,122 @@ const findFeaturesTile = async (req: Request, res: Response): Promise<void> => {
     paramIndex += 1;
   }
 
-  if (req.user?.role === 'contributor') {
-    whereClauses.push(`
-      EXISTS (
-        SELECT 1
-        FROM project_assignment pa
-        WHERE pa.project_id = sf.project_id
-          AND pa.user_id = $${paramIndex}
-          AND pa.status = 'approved'
-      )
-    `);
-    params.push(req.user.id);
+  if (req.user?.role !== 'admin') {
+    paramIndex = appendProjectReadVisibility(
+      whereClauses,
+      params,
+      paramIndex,
+      req.user as Express.UserContext,
+      projectReadScope,
+    );
   }
 
   const geometrySql = mapRenderGeometrySql('sf.geom', zoom, simplifyTolerance);
-  const result = await query(
-    `SELECT sf.id,
-            sf.project_id,
-            sf.status,
-            sf.attributes,
-            GeometryType(sf.geom) AS source_geometry_type,
-            sf.collected_at,
-            sf.submitted_at,
-            sf.reviewed_at,
-            sf.review_notes,
-            sf.version,
-            collector.full_name AS collected_by,
-            reviewer.full_name AS reviewed_by,
-            (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) AS photo_count,
-            ${geometrySql} AS geometry
-     FROM spatial_feature sf
-     LEFT JOIN "user" collector ON collector.id = sf.collected_by_user_id
-     LEFT JOIN "user" reviewer ON reviewer.id = sf.reviewed_by_user_id
-     WHERE ${whereClauses.join(' AND ')}
-     ORDER BY sf.collected_at DESC`,
-    params,
-  );
+  const tileFeatureLimit =
+    zoom < 10.5 ? MAP_TILE_LOW_ZOOM_LIMIT : MAP_TILE_HIGH_ZOOM_LIMIT;
+  const lowZoom = zoom < 10.5;
+  const result = lowZoom
+    ? await query(
+        `WITH visible AS (
+           SELECT sf.id,
+                  sf.project_id,
+                  sf.status,
+                  sf.attributes,
+                  GeometryType(sf.geom) AS source_geometry_type,
+                  sf.collected_at,
+                  sf.submitted_at,
+                  sf.reviewed_at,
+                  sf.review_notes,
+                  sf.version,
+                  collector.full_name AS collected_by,
+                  reviewer.full_name AS reviewed_by,
+                  (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) AS photo_count,
+                  CASE
+                    WHEN GeometryType(sf.geom) IN ('POLYGON', 'MULTIPOLYGON') THEN ST_PointOnSurface(sf.geom)
+                    WHEN GeometryType(sf.geom) IN ('LINESTRING', 'MULTILINESTRING') THEN ST_Centroid(sf.geom)
+                    ELSE sf.geom
+                  END AS marker_geom
+           FROM spatial_feature sf
+           LEFT JOIN "user" collector ON collector.id = sf.collected_by_user_id
+           LEFT JOIN "user" reviewer ON reviewer.id = sf.reviewed_by_user_id
+           WHERE ${whereClauses.join(' AND ')}
+         ),
+         marker_filtered AS (
+           SELECT *
+           FROM visible
+           WHERE marker_geom && ST_MakeEnvelope($1, $2, $3, $4, 4326)
+         ),
+         bucketed AS (
+           SELECT *,
+                  FLOOR(ST_Y(marker_geom) / $${paramIndex})::int AS lat_bucket,
+                  FLOOR(ST_X(marker_geom) / $${paramIndex})::int AS lon_bucket
+            FROM marker_filtered
+         )
+         SELECT CASE
+                  WHEN COUNT(*) = 1 THEN (ARRAY_AGG(id::text ORDER BY collected_at DESC NULLS LAST, id ASC))[1]
+                  ELSE CONCAT('project-cluster:', status, ':', lat_bucket::text, ':', lon_bucket::text)
+                END AS id,
+                MIN(project_id::text) AS project_id,
+                status,
+                CASE
+                  WHEN COUNT(*) = 1 THEN (ARRAY_AGG(attributes ORDER BY collected_at DESC NULLS LAST, id ASC))[1]
+                  ELSE jsonb_build_object('cluster_count', COUNT(*))
+                END AS attributes,
+                CASE
+                  WHEN COUNT(DISTINCT source_geometry_type) = 1 THEN MIN(source_geometry_type)
+                  ELSE 'Geometry'
+                END AS source_geometry_type,
+                MIN(collected_at) AS collected_at,
+                MAX(submitted_at) AS submitted_at,
+                MAX(reviewed_at) AS reviewed_at,
+                CASE
+                  WHEN COUNT(*) = 1 THEN (ARRAY_AGG(review_notes ORDER BY collected_at DESC NULLS LAST, id ASC))[1]
+                  ELSE NULL
+                END AS review_notes,
+                NULL::int AS version,
+                CASE
+                  WHEN COUNT(*) = 1 THEN (ARRAY_AGG(collected_by ORDER BY collected_at DESC NULLS LAST, id ASC))[1]
+                  ELSE NULL
+                END AS collected_by,
+                CASE
+                  WHEN COUNT(*) = 1 THEN (ARRAY_AGG(reviewed_by ORDER BY collected_at DESC NULLS LAST, id ASC))[1]
+                  ELSE NULL
+                END AS reviewed_by,
+                SUM(photo_count)::int AS photo_count,
+                ST_AsGeoJSON(ST_Centroid(ST_Collect(marker_geom))) AS geometry,
+                (COUNT(*) > 1) AS is_aggregate,
+                COUNT(*)::int AS cluster_count
+         FROM bucketed
+         GROUP BY status, lat_bucket, lon_bucket
+         ORDER BY MIN(collected_at) DESC NULLS LAST
+         LIMIT $${paramIndex + 1}`,
+        [...params, mapClusterCellSizeDegrees(zoom), tileFeatureLimit],
+      )
+    : await query(
+        `SELECT sf.id,
+                sf.project_id,
+                sf.status,
+                sf.attributes,
+                GeometryType(sf.geom) AS source_geometry_type,
+                sf.collected_at,
+                sf.submitted_at,
+                sf.reviewed_at,
+                sf.review_notes,
+                sf.version,
+                collector.full_name AS collected_by,
+                reviewer.full_name AS reviewed_by,
+                (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) AS photo_count,
+                ${geometrySql} AS geometry,
+                false AS is_aggregate,
+                1 AS cluster_count
+         FROM spatial_feature sf
+         LEFT JOIN "user" collector ON collector.id = sf.collected_by_user_id
+         LEFT JOIN "user" reviewer ON reviewer.id = sf.reviewed_by_user_id
+         WHERE ${whereClauses.join(' AND ')}
+         ORDER BY sf.collected_at DESC
+         LIMIT $${paramIndex}`,
+        [...params, tileFeatureLimit],
+      );
 
   const features = result.rows.map((row: any) => ({
     type: 'Feature',
@@ -1244,6 +1552,8 @@ const findFeaturesTile = async (req: Request, res: Response): Promise<void> => {
       photo_count: Number(row.photo_count ?? 0),
       version: row.version,
       is_summary: true,
+      is_aggregate: row.is_aggregate ?? false,
+      cluster_count: Number(row.cluster_count ?? 1),
     },
   }));
 

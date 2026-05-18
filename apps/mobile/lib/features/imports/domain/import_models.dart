@@ -188,6 +188,8 @@ class ImportedFeature {
     this.approvedAt,
     this.reviewReason,
     this.isSummary = false,
+    this.isAggregate = false,
+    this.clusterCount = 1,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -213,6 +215,8 @@ class ImportedFeature {
   final DateTime? approvedAt;
   final String? reviewReason;
   final bool isSummary;
+  final bool isAggregate;
+  final int clusterCount;
   final DateTime createdAt;
   final DateTime updatedAt;
 

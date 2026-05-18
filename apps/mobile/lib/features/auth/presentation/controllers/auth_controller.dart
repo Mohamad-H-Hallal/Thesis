@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/auth_failure.dart';
@@ -148,7 +150,6 @@ class AuthController extends StateNotifier<AuthState> {
   }
 
   Future<void> logout() async {
-    await _repository.logout();
     if (!mounted) {
       return;
     }
@@ -156,6 +157,19 @@ class AuthController extends StateNotifier<AuthState> {
       status: AuthStatus.unauthenticated,
       errorCode: 'logged_out',
     );
+    unawaited(_repository.logout());
+  }
+
+  Future<void> forceLogout({String? message, String? code}) async {
+    if (!mounted) {
+      return;
+    }
+    state = AuthState(
+      status: AuthStatus.unauthenticated,
+      error: message,
+      errorCode: code ?? 'logged_out',
+    );
+    unawaited(_repository.logout());
   }
 
   Future<void> selfDeactivate() async {

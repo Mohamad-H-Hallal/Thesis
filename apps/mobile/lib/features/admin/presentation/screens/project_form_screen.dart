@@ -6,6 +6,7 @@ import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
+import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_button.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
@@ -623,7 +624,10 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                           ).textTheme.titleMedium,
                                         ),
                                         const SizedBox(height: AppSpacing.sm),
-                                        action,
+                                        SizedBox(
+                                          width: double.infinity,
+                                          child: action,
+                                        ),
                                       ],
                                     );
                                   }
@@ -668,9 +672,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                           ),
                         ),
                         const SizedBox(height: AppSpacing.md),
-                        Wrap(
-                          spacing: AppSpacing.sm,
-                          runSpacing: AppSpacing.sm,
+                        AppActionButtons(
                           children: [
                             AppButton(
                               label: widget.isEditing
@@ -678,7 +680,7 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                   : 'Create project',
                               icon: Icons.save_outlined,
                               isLoading: _isSaving,
-                              expand: false,
+                              expand: true,
                               onPressed: _isSaving ? null : _save,
                             ),
                             OutlinedButton(
@@ -741,7 +743,7 @@ class _DateCard extends StatelessWidget {
                 children: [
                   summary,
                   const SizedBox(height: AppSpacing.sm),
-                  action,
+                  SizedBox(width: double.infinity, child: action),
                 ],
               );
             }

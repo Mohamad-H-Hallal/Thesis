@@ -390,6 +390,8 @@ void main() {
 
     expect(find.text('Import review queue'), findsOneWidget);
     expect(find.text('Submit new import'), findsOneWidget);
+    await tester.tap(find.text('Filter'));
+    await tester.pumpAndSettle();
     expect(find.text('Category filter'), findsOneWidget);
     expect(find.text('Project filter'), findsOneWidget);
     expect(find.text('No imports match this filter'), findsNothing);

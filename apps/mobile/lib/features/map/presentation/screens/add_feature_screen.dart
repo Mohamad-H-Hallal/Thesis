@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,6 +15,7 @@ import '../../../../core/network/api_error_message.dart';
 import '../../../../core/offline/local_models.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
+import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
@@ -25,6 +27,7 @@ import '../../domain/current_location_service.dart';
 import '../../domain/field_collection_validation.dart';
 import '../../domain/lebanon_map.dart';
 import '../../domain/map_feature.dart';
+import '../../domain/feature_workflow_repository.dart';
 import '../widgets/feature_photo_gallery.dart';
 
 class AddFeatureCaptureSeed {
@@ -99,7 +102,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
   final ImagePicker _imagePicker = ImagePicker();
   final MapController _geometryMapController = MapController();
 
-  int _currentStep = 0;
+  late int _currentStep;
   bool _isSaving = false;
   bool _isGeometryMapReady = false;
 
@@ -133,6 +136,16 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     onTap: _handleGeometryMapTap,
   );
 
+  @override
+  void initState() {
+    super.initState();
+    // Map-launched collection already has geometry, so never flash the legacy
+    // geometry form before the workflow hydrates the selected project/draft.
+    _currentStep = (widget.captureSeed != null || widget.draftFeatureId != null)
+        ? 1
+        : 0;
+  }
+
   bool get _isEditingDraft =>
       (widget.draftFeatureId?.isNotEmpty ?? false) ||
       (_currentDraftFeatureId?.isNotEmpty ?? false);
@@ -143,7 +156,11 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       return;
     }
     context.go(
-      AppRoutes.mapForProject(projectId, featureId: result?.featureId),
+      AppRoutes.mapForProject(
+        projectId,
+        featureId: result?.featureId,
+        focusSource: AppRoutes.focusSourceProjectFeature,
+      ),
     );
   }
 
@@ -332,7 +349,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       _geometryVertices
         ..clear()
         ..addAll(geometryVertices);
-      _currentStep = captureSeed == null ? 0 : 1;
+      _currentStep = (captureSeed == null && draftFeature == null) ? 0 : 1;
       _currentDraftFeatureId = draftFeature?.id;
       _hydratedDraftId = draftFeature?.id;
     });
@@ -586,6 +603,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
             id: _uuid.v4(),
             filePath: file.path,
             fileName: file.name,
+            bytes: kIsWeb ? await file.readAsBytes() : null,
             sizeBytes: size,
             createdAt: DateTime.now(),
           );
@@ -751,8 +769,14 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       if (_pendingPhotos.isNotEmpty) {
         await repository.uploadPhotos(
           featureId: featureId,
-          filePaths: _pendingPhotos
-              .map((photo) => photo.filePath)
+          photos: _pendingPhotos
+              .map(
+                (photo) => FeaturePhotoUpload(
+                  filePath: photo.filePath,
+                  fileName: photo.fileName,
+                  bytes: photo.bytes,
+                ),
+              )
               .toList(growable: false),
         );
       }
@@ -805,6 +829,71 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
         setState(() {
           _isSaving = false;
         });
+      }
+    }
+  }
+
+  Future<void> _deleteCurrentDraft(ProjectSummary project) async {
+    final featureId = _currentDraftFeatureId;
+    if (featureId == null || featureId.isEmpty) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete draft'),
+        content: const Text(
+          'Delete this draft feature? This cannot be undone.',
+        ),
+        actions: [
+          AppActionButtons(
+            maxColumns: 2,
+            fillRows: true,
+            children: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    try {
+      await ref.read(featureWorkflowRepositoryProvider).deleteDraft(featureId);
+      bumpWorkflowRefresh(ref);
+      if (!mounted) {
+        return;
+      }
+      _returnToProjectMap(
+        project.id,
+        result: const AddFeatureFlowResult.completed(
+          featureId: null,
+          successMessage: 'Draft deleted successfully.',
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to delete this draft right now.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
       }
     }
   }
@@ -1253,9 +1342,10 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
         ),
         const SizedBox(height: AppSpacing.sm),
         AppCard(
-          child: Wrap(
-            spacing: 10,
-            runSpacing: 10,
+          child: AppActionButtons(
+            maxColumns: 2,
+            compactBreakpoint: 360,
+            fillRows: true,
             children: [
               if (_currentStep > 0)
                 OutlinedButton(
@@ -1287,6 +1377,14 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                       : () => _saveFeature(selectedProject, submit: true),
                   icon: const Icon(Icons.send_outlined),
                   label: const Text('Submit for Review'),
+                ),
+              if (_isEditingDraft)
+                FilledButton.tonalIcon(
+                  onPressed: _isSaving
+                      ? null
+                      : () => _deleteCurrentDraft(selectedProject),
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('Delete Draft'),
                 ),
             ],
           ),
@@ -1446,10 +1544,6 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: AppSpacing.xs),
-              Text(
-                'Form schema ${selectedProject.collectionFormSchema.version} with ${selectedProject.collectionFormSchema.fields.length} field(s).',
-              ),
-              const SizedBox(height: AppSpacing.sm),
               if (selectedProject.collectionFormSchema.fields.isEmpty)
                 const Text('No dynamic fields are configured for this project.')
               else
@@ -1480,6 +1574,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
               (photo) => FeaturePhotoGalleryItem(
                 id: photo.id,
                 imagePath: photo.filePath,
+                imageBytes: photo.bytes,
                 label: photo.fileName,
                 subtitle: '${_formatBytes(photo.sizeBytes)} • Pending upload',
                 isLocalFile: true,
@@ -1553,11 +1648,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 runSpacing: 8,
                 children: [
                   Chip(label: Text(selectedProject.name)),
-                  Chip(
-                    label: Text(
-                      'Geometry: ${_selectedGeometryType ?? 'Point'}',
-                    ),
-                  ),
+                  Chip(label: Text(_geometryDisplayLabel())),
                   if (_geometryVertices.isNotEmpty)
                     Chip(label: Text(_geometrySummary())),
                   Chip(
@@ -1610,6 +1701,18 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     }
   }
 
+  String _geometryDisplayLabel() {
+    switch (_selectedGeometryType ?? 'Point') {
+      case 'LineString':
+        return 'Line feature';
+      case 'Polygon':
+        return 'Polygon feature';
+      case 'Point':
+      default:
+        return 'Point feature';
+    }
+  }
+
   String _photoLabel(String path) {
     final normalized = path.replaceAll('\\', '/');
     final segments = normalized.split('/');
@@ -1631,6 +1734,7 @@ class _PendingPhoto {
     required this.id,
     required this.filePath,
     required this.fileName,
+    required this.bytes,
     required this.sizeBytes,
     required this.createdAt,
   });
@@ -1638,6 +1742,7 @@ class _PendingPhoto {
   final String id;
   final String filePath;
   final String fileName;
+  final List<int>? bytes;
   final int sizeBytes;
   final DateTime createdAt;
 }

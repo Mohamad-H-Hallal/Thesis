@@ -1,6 +1,11 @@
 class AppRoutes {
   const AppRoutes._();
 
+  static const focusSourceProjectFeature = 'projectFeature';
+  static const focusSourceReviewFeature = 'reviewFeature';
+  static const focusSourceImportFeature = 'importFeature';
+  static const focusSourceApprovedContext = 'approvedProjectContext';
+
   static const splash = '/splash';
   static const login = '/login';
   static const signup = '/signup';
@@ -42,12 +47,14 @@ class AppRoutes {
     String id, {
     required String projectId,
     String? featureId,
+    String? focusSource,
   }) {
     final uri = Uri(
       path: '/app/imports/$id/map',
       queryParameters: {
         'projectId': projectId,
         if (featureId?.trim().isNotEmpty ?? false) 'featureId': featureId,
+        if (focusSource?.trim().isNotEmpty ?? false) 'focusSource': focusSource,
       },
     );
     return uri.toString();
@@ -75,11 +82,15 @@ class AppRoutes {
   static String mapForProject(
     String projectId, {
     String? featureId,
+    String? focusSource,
     bool startCapture = false,
   }) {
     final queryParameters = <String, String>{};
-    if (featureId != null) {
-      queryParameters['featureId'] = featureId;
+    if (featureId?.trim().isNotEmpty ?? false) {
+      queryParameters['featureId'] = featureId!.trim();
+    }
+    if (focusSource?.trim().isNotEmpty ?? false) {
+      queryParameters['focusSource'] = focusSource!.trim();
     }
     if (startCapture) {
       queryParameters['startCapture'] = '1';

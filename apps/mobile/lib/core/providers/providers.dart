@@ -53,6 +53,7 @@ import '../offline/local_store.dart';
 import '../offline/local_store_factory.dart';
 import '../pagination/paginated_list_controller.dart';
 import '../pagination/paginated_result.dart';
+import '../realtime/workflow_realtime_service.dart';
 import '../router/app_router.dart';
 import '../sync/sync_controller.dart';
 import '../sync/sync_engine.dart';
@@ -157,6 +158,14 @@ final workflowRefreshTickProvider = StateProvider<int>((ref) => 0);
 void bumpWorkflowRefresh(WidgetRef ref) {
   ref.read(workflowRefreshTickProvider.notifier).state++;
 }
+
+final workflowRealtimeServiceProvider = Provider<WorkflowRealtimeService>((
+  ref,
+) {
+  final service = WorkflowRealtimeService();
+  ref.onDispose(service.dispose);
+  return service;
+});
 
 final adminRepositoryProvider = Provider<AdminRepository>((ref) {
   return ApiAdminRepository(ref.watch(apiClientProvider));
@@ -447,29 +456,36 @@ final projectMapFeaturesProvider =
     });
 
 final projectMapViewportFeaturesProvider = FutureProvider.autoDispose
-    .family<List<MapFeatureSummary>, ProjectMapViewportQuery>((ref, query) async {
+    .family<List<MapFeatureSummary>, ProjectMapViewportQuery>((
+      ref,
+      query,
+    ) async {
       final refreshTick = ref.watch(workflowRefreshTickProvider);
       if (query.projectId.isEmpty) {
         return const <MapFeatureSummary>[];
       }
       final localDrafts = await ref.watch(localDraftFeaturesProvider.future);
-      final projectDrafts = localDrafts.where((draft) {
-        if (draft.projectId != query.projectId) {
-          return false;
-        }
-        final geometry = _decodeJsonMap(draft.geometryJson);
-        final points = geometryPoints(geometry);
-        return points.any(
-          (point) =>
-              point.longitude >= query.minLon &&
-              point.longitude <= query.maxLon &&
-              point.latitude >= query.minLat &&
-              point.latitude <= query.maxLat,
-        );
-      }).toList(growable: false);
+      final projectDrafts = localDrafts
+          .where((draft) {
+            if (draft.projectId != query.projectId) {
+              return false;
+            }
+            final geometry = _decodeJsonMap(draft.geometryJson);
+            final points = geometryPoints(geometry);
+            return points.any(
+              (point) =>
+                  point.longitude >= query.minLon &&
+                  point.longitude <= query.maxLon &&
+                  point.latitude >= query.minLat &&
+                  point.latitude <= query.maxLat,
+            );
+          })
+          .toList(growable: false);
 
       try {
-        final remoteFeatures = await ref.read(mapRepositoryProvider).fetchProjectFeaturesViewport(
+        final remoteFeatures = await ref
+            .read(mapRepositoryProvider)
+            .fetchProjectFeaturesViewport(
               projectId: query.projectId,
               minLon: query.minLon,
               minLat: query.minLat,
@@ -490,8 +506,60 @@ final projectMapViewportFeaturesProvider = FutureProvider.autoDispose
       }
     });
 
-final projectFeatureDetailsProvider =
-    FutureProvider.autoDispose.family<MapFeatureSummary, String>((ref, featureId) async {
+final projectFeatureCountProvider = FutureProvider.autoDispose
+    .family<int, ProjectFeatureCountQuery>((ref, query) async {
+      ref.watch(workflowRefreshTickProvider);
+      if (query.projectId.isEmpty) {
+        return 0;
+      }
+
+      final localDrafts = await ref.watch(localDraftFeaturesProvider.future);
+      final includeLocalDrafts =
+          query.statuses == null || query.statuses!.contains('draft');
+      final localDraftCount = includeLocalDrafts
+          ? localDrafts
+                .where((draft) => draft.projectId == query.projectId)
+                .length
+          : 0;
+
+      final statuses = query.statuses
+          ?.where((status) => status.trim().isNotEmpty)
+          .map((status) => status.trim())
+          .toSet()
+          .toList(growable: false);
+      if (statuses != null && statuses.isEmpty) {
+        return localDraftCount;
+      }
+
+      final repository = ref.read(mapRepositoryProvider);
+      if (statuses == null) {
+        final total = await repository.fetchProjectFeaturesCount(
+          projectId: query.projectId,
+          search: query.search,
+          geometryType: query.geometryType,
+          featureType: query.featureType,
+          excludeImportId: query.excludeImportId,
+        );
+        return total + localDraftCount;
+      }
+
+      final totals = await Future.wait(
+        statuses.map(
+          (status) => repository.fetchProjectFeaturesCount(
+            projectId: query.projectId,
+            search: query.search,
+            status: status,
+            geometryType: query.geometryType,
+            featureType: query.featureType,
+            excludeImportId: query.excludeImportId,
+          ),
+        ),
+      );
+      return totals.fold<int>(localDraftCount, (total, value) => total + value);
+    });
+
+final projectFeatureDetailsProvider = FutureProvider.autoDispose
+    .family<MapFeatureSummary, String>((ref, featureId) async {
       ref.watch(workflowRefreshTickProvider);
       return ref.read(mapRepositoryProvider).fetchProjectFeatureById(featureId);
     });
@@ -505,7 +573,9 @@ final paginatedProjectFeatureBrowserProvider = StateNotifierProvider.autoDispose
       ref.watch(workflowRefreshTickProvider);
       return PaginatedListController<MapFeatureSummary>(
         loadPage: ({required page, required limit}) {
-          return ref.read(mapRepositoryProvider).fetchProjectFeaturesPage(
+          return ref
+              .read(mapRepositoryProvider)
+              .fetchProjectFeaturesPage(
                 projectId: query.projectId,
                 search: query.search,
                 status: query.status,
@@ -762,7 +832,9 @@ final paginatedManagedUsersProvider = StateNotifierProvider.autoDispose
       AsyncValue<PaginatedListState<ManagedUserSummary>>,
       ManagedUsersQuery
     >((ref, query) {
-      ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+      ref.watch(
+        authControllerProvider.select((state) => state.session?.user.id),
+      );
       ref.watch(workflowRefreshTickProvider);
       return PaginatedListController<ManagedUserSummary>(
         loadPage: ({required page, required limit}) {
@@ -786,7 +858,9 @@ final paginatedContributorRequestsProvider = StateNotifierProvider.autoDispose
       AsyncValue<PaginatedListState<ManagedUserSummary>>,
       ContributorRequestsQuery
     >((ref, query) {
-      ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+      ref.watch(
+        authControllerProvider.select((state) => state.session?.user.id),
+      );
       ref.watch(workflowRefreshTickProvider);
       return PaginatedListController<ManagedUserSummary>(
         loadPage: ({required page, required limit}) {
@@ -808,7 +882,9 @@ final paginatedManagedAssignmentsProvider = StateNotifierProvider.autoDispose
       AsyncValue<PaginatedListState<ManagedAssignmentSummary>>,
       ManagedAssignmentsQuery
     >((ref, query) {
-      ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+      ref.watch(
+        authControllerProvider.select((state) => state.session?.user.id),
+      );
       ref.watch(workflowRefreshTickProvider);
       return PaginatedListController<ManagedAssignmentSummary>(
         loadPage: ({required page, required limit}) {
@@ -830,7 +906,9 @@ final paginatedProjectAssignmentsProvider = StateNotifierProvider.autoDispose
       AsyncValue<PaginatedListState<ManagedAssignmentSummary>>,
       ProjectAssignmentsQuery
     >((ref, query) {
-      ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+      ref.watch(
+        authControllerProvider.select((state) => state.session?.user.id),
+      );
       ref.watch(workflowRefreshTickProvider);
       return PaginatedListController<ManagedAssignmentSummary>(
         loadPage: ({required page, required limit}) {
@@ -853,7 +931,9 @@ final paginatedAvailableContributorsProvider = StateNotifierProvider.autoDispose
       AsyncValue<PaginatedListState<ManagedUserSummary>>,
       AvailableContributorsQuery
     >((ref, query) {
-      ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+      ref.watch(
+        authControllerProvider.select((state) => state.session?.user.id),
+      );
       ref.watch(workflowRefreshTickProvider);
       return PaginatedListController<ManagedUserSummary>(
         loadPage: ({required page, required limit}) {
@@ -875,7 +955,9 @@ final paginatedProjectCategoriesProvider = StateNotifierProvider.autoDispose
       AsyncValue<PaginatedListState<ProjectCategorySummary>>,
       ProjectCategoriesQuery
     >((ref, query) {
-      ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+      ref.watch(
+        authControllerProvider.select((state) => state.session?.user.id),
+      );
       ref.watch(workflowRefreshTickProvider);
       return PaginatedListController<ProjectCategorySummary>(
         loadPage: ({required page, required limit}) {
@@ -896,7 +978,9 @@ final paginatedReviewQueueProvider = StateNotifierProvider.autoDispose
       AsyncValue<PaginatedListState<ReviewQueueItem>>,
       ReviewQueueQuery
     >((ref, query) {
-      ref.watch(authControllerProvider.select((state) => state.session?.user.id));
+      ref.watch(
+        authControllerProvider.select((state) => state.session?.user.id),
+      );
       ref.watch(workflowRefreshTickProvider);
       return PaginatedListController<ReviewQueueItem>(
         loadPage: ({required page, required limit}) {
@@ -957,7 +1041,9 @@ final paginatedExportJobsProvider = StateNotifierProvider.autoDispose
       ref.watch(workflowRefreshTickProvider);
       return PaginatedListController<ExportJob>(
         loadPage: ({required page, required limit}) {
-          return ref.read(exportsRepositoryProvider).fetchJobsPage(
+          return ref
+              .read(exportsRepositoryProvider)
+              .fetchJobsPage(
                 requestedByUserId: session.user.id,
                 categoryId: query.categoryId,
                 projectId: query.projectId,
@@ -986,7 +1072,9 @@ final exportJobsSummaryProvider =
         );
       }
       ref.watch(workflowRefreshTickProvider);
-      return ref.read(exportsRepositoryProvider).fetchSummary(
+      return ref
+          .read(exportsRepositoryProvider)
+          .fetchSummary(
             requestedByUserId: session.user.id,
             categoryId: query.categoryId,
             projectId: query.projectId,

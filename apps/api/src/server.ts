@@ -12,6 +12,8 @@ const {
 const { runNotificationMaintenance } = require('./jobs/notificationMaintenance');
 const { buildApp } = require('./app');
 import { ensureSuperAdminExists } from './lib/userWorkflow';
+import { attachWorkflowSocket } from './realtime/workflowSocket';
+import { startWorkflowChangeListener } from './realtime/workflowEvents';
 
 const env = validateEnv();
 const app = buildApp(env);
@@ -20,6 +22,8 @@ const apiPrefix = String(env.API_VERSION_PREFIX || '/api/v1').replace(/\/+$/, ''
 let server;
 let exportCleanupInterval;
 let notificationMaintenanceInterval;
+let closeWorkflowSocket;
+let closeWorkflowChangeListener;
 let isShuttingDown = false;
 
 const startServer = async () => {
@@ -61,6 +65,7 @@ const startServer = async () => {
       env.NOTIFICATION_MAINTENANCE_INTERVAL_MINUTES * 60 * 1000,
     );
     startImportProcessingLoop();
+    closeWorkflowChangeListener = await startWorkflowChangeListener();
 
     server = app.listen(env.PORT, env.HOST, () => {
       logger.info(`Server running in ${env.NODE_ENV} mode`);
@@ -69,6 +74,7 @@ const startServer = async () => {
       logger.info(`API root: http://${env.HOST}:${env.PORT}${apiPrefix}`);
       logger.info(`API documentation: http://${env.HOST}:${env.PORT}/docs/openapi.yaml`);
     });
+    closeWorkflowSocket = attachWorkflowSocket(server, apiPrefix);
   } catch (error) {
     logger.error('Failed to start server:', error);
     process.exit(1);
@@ -90,6 +96,12 @@ const shutdown = async (signal) => {
     clearInterval(notificationMaintenanceInterval);
   }
   stopImportProcessingLoop();
+  if (closeWorkflowSocket) {
+    closeWorkflowSocket();
+  }
+  if (closeWorkflowChangeListener) {
+    closeWorkflowChangeListener();
+  }
 
   await new Promise<void>((resolve) => {
     if (!server) {

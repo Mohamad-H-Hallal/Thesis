@@ -15,6 +15,7 @@ import {
   readinessHandler,
   assertMetricsConfig,
 } from './middleware/observability';
+import { broadcastWorkflowMutations } from './middleware/workflowBroadcast';
 
 // Import routes
 const authRoutes = require('./routes/auth.routes');
@@ -96,6 +97,7 @@ const buildApp = (env) => {
 
   app.use(attachRequestContext);
   app.use(collectRequestMetrics);
+  app.use(broadcastWorkflowMutations);
 
   app.use((req, res, next) => {
     if (!env.ENFORCE_HTTPS || env.NODE_ENV !== 'production') {

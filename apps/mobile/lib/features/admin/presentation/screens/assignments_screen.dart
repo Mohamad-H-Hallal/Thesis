@@ -22,6 +22,7 @@ class AssignmentsScreen extends ConsumerStatefulWidget {
 class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _statusFilter = 'all';
+  bool _showFilters = false;
 
   @override
   void dispose() {
@@ -56,63 +57,61 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
         onAction: projectsController.load,
       ),
       data: (projectsState) {
-          const statusOptions = <String>[
-            'all',
-            'draft',
-            'active',
-            'paused',
-            'completed',
-            'archived',
-          ];
+        const statusOptions = <String>[
+          'all',
+          'draft',
+          'active',
+          'paused',
+          'completed',
+          'archived',
+        ];
 
-          return ListView(
-            children: [
-              AppCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        final searchBar = SearchBar(
-                          controller: _searchController,
-                          hintText: 'Search assignment projects',
-                          leading: const Icon(Icons.search),
-                          onChanged: (_) => setState(() {}),
-                        );
+        return ListView(
+          children: [
+            AppCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final searchBar = SearchBar(
+                        controller: _searchController,
+                        hintText: 'Search assignment projects',
+                        leading: const Icon(Icons.search),
+                        onChanged: (_) => setState(() {}),
+                      );
+                      final filterButton = OutlinedButton.icon(
+                        onPressed: () =>
+                            setState(() => _showFilters = !_showFilters),
+                        icon: Icon(
+                          _showFilters
+                              ? Icons.filter_alt_off_outlined
+                              : Icons.filter_alt_outlined,
+                        ),
+                        label: Text(_showFilters ? 'Hide filters' : 'Filter'),
+                      );
+                      final searchAndAction = constraints.maxWidth < 720
+                          ? Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                searchBar,
+                                const SizedBox(height: AppSpacing.sm),
+                                filterButton,
+                              ],
+                            )
+                          : Row(
+                              children: [
+                                Expanded(child: searchBar),
+                                const SizedBox(width: AppSpacing.sm),
+                                SizedBox(width: 180, child: filterButton),
+                              ],
+                            );
 
-                        if (constraints.maxWidth < 560) {
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              searchBar,
-                              const SizedBox(height: AppSpacing.sm),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: statusOptions
-                                    .map(
-                                      (status) => ChoiceChip(
-                                        label: Text(
-                                          status == 'all'
-                                              ? 'All projects'
-                                              : '${status[0].toUpperCase()}${status.substring(1)}',
-                                        ),
-                                        selected: _statusFilter == status,
-                                        onSelected: (_) => setState(
-                                          () => _statusFilter = status,
-                                        ),
-                                      ),
-                                    )
-                                    .toList(growable: false),
-                              ),
-                            ],
-                          );
-                        }
-
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            searchBar,
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          searchAndAction,
+                          if (_showFilters) ...[
                             const SizedBox(height: AppSpacing.sm),
                             Wrap(
                               spacing: 8,
@@ -134,98 +133,99 @@ class _AssignmentsScreenState extends ConsumerState<AssignmentsScreen> {
                                   .toList(growable: false),
                             ),
                           ],
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              Text(
-                '${projectsState.total} project${projectsState.total == 1 ? '' : 's'}',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              if (projectsState.items.isEmpty)
-                AppEmptyState(
-                  icon: Icons.assignment_outlined,
-                  title: 'No projects found',
-                  message:
-                      'No projects match the current search and status filter.',
-                )
-              else
-                ProgressiveListSection<ProjectSummary>(
-                  items: projectsState.items,
-                  resetKey: Object.hash(
-                    _searchController.text,
-                    _statusFilter,
-                    projectsState.total,
-                  ),
-                  hasMore: projectsState.hasMore,
-                  isLoadingMore: projectsState.isLoadingMore,
-                  onLoadMore: projectsController.loadMore,
-                  itemBuilder: (context, project, _) {
-                    return AppCard(
-                      onTap: () => context.push(
-                        AppRoutes.projectAssignments(project.id),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      project.name,
-                                      style: Theme.of(
-                                        context,
-                                      ).textTheme.titleMedium,
-                                      softWrap: true,
-                                    ),
-                                    const SizedBox(height: AppSpacing.xs),
-                                    Text(project.description, softWrap: true),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: AppSpacing.sm),
-                              StatusChip(status: project.status),
-                            ],
-                          ),
-                          const SizedBox(height: AppSpacing.sm),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              Chip(label: Text(project.category)),
-                              Chip(
-                                label: Text(
-                                  '${project.assignedCollectors} assigned',
-                                ),
-                              ),
-                              Chip(
-                                label: Text(
-                                  '${project.pendingAssignmentRequests} pending requests',
-                                ),
-                              ),
-                              if (project.rejectedAssignmentRequests > 0)
-                                Chip(
-                                  label: Text(
-                                    '${project.rejectedAssignmentRequests} rejected requests',
-                                  ),
-                                ),
-                            ],
-                          ),
                         ],
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Text(
+              '${projectsState.total} project${projectsState.total == 1 ? '' : 's'}',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            if (projectsState.items.isEmpty)
+              AppEmptyState(
+                icon: Icons.assignment_outlined,
+                title: 'No projects found',
+                message:
+                    'No projects match the current search and status filter.',
+              )
+            else
+              ProgressiveListSection<ProjectSummary>(
+                items: projectsState.items,
+                resetKey: Object.hash(
+                  _searchController.text,
+                  _statusFilter,
+                  projectsState.total,
                 ),
-            ],
-          );
+                hasMore: projectsState.hasMore,
+                isLoadingMore: projectsState.isLoadingMore,
+                onLoadMore: projectsController.loadMore,
+                gridMinItemWidth: 420,
+                itemBuilder: (context, project, _) {
+                  return AppCard(
+                    onTap: () =>
+                        context.push(AppRoutes.projectAssignments(project.id)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    project.name,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.titleMedium,
+                                    softWrap: true,
+                                  ),
+                                  const SizedBox(height: AppSpacing.xs),
+                                  Text(project.description, softWrap: true),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                            StatusChip(status: project.status),
+                          ],
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            Chip(label: Text(project.category)),
+                            Chip(
+                              label: Text(
+                                '${project.assignedCollectors} assigned',
+                              ),
+                            ),
+                            Chip(
+                              label: Text(
+                                '${project.pendingAssignmentRequests} pending requests',
+                              ),
+                            ),
+                            if (project.rejectedAssignmentRequests > 0)
+                              Chip(
+                                label: Text(
+                                  '${project.rejectedAssignmentRequests} rejected requests',
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+          ],
+        );
       },
     );
   }

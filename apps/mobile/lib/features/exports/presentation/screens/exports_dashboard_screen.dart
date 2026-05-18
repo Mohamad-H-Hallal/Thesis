@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/pagination/paginated_list_controller.dart';
 import '../../../../core/providers/providers.dart';
+import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
@@ -59,7 +61,9 @@ class _ExportsDashboardScreenState
         return;
       }
       final query = _currentJobsQuery();
-      final jobsState = ref.read(paginatedExportJobsProvider(query)).valueOrNull;
+      final jobsState = ref
+          .read(paginatedExportJobsProvider(query))
+          .valueOrNull;
       if (jobsState == null) {
         return;
       }
@@ -156,7 +160,9 @@ class _ExportsDashboardScreenState
         final jobsState =
             jobsAsync.valueOrNull ??
             const PaginatedListState<ExportJob>.initial();
-        final jobsError = jobsAsync.hasError ? jobsAsync.error.toString() : null;
+        final jobsError = jobsAsync.hasError
+            ? jobsAsync.error.toString()
+            : null;
         final scopedMetrics =
             ref.watch(exportJobsSummaryProvider(jobsQuery)).valueOrNull ??
             const ExportDashboardMetrics(
@@ -512,35 +518,15 @@ class _ExportsDashboardScreenState
               ),
             ),
             const SizedBox(height: AppSpacing.md),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final title = Text(
-                  'Export jobs (${jobsState.total})',
-                  style: Theme.of(context).textTheme.titleMedium,
-                );
-                final filter = _ExportListFilter(
-                  selected: _jobFormatFilter,
-                  onChanged: (value) {
-                    setState(() => _jobFormatFilter = value);
-                  },
-                );
-                if (constraints.maxWidth < 520) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      title,
-                      const SizedBox(height: AppSpacing.sm),
-                      filter,
-                    ],
-                  );
-                }
-                return Row(
-                  children: [
-                    Expanded(child: title),
-                    const SizedBox(width: AppSpacing.sm),
-                    Flexible(child: filter),
-                  ],
-                );
+            Text(
+              'Export jobs (${jobsState.total})',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            _ExportListFilter(
+              selected: _jobFormatFilter,
+              onChanged: (value) {
+                setState(() => _jobFormatFilter = value);
               },
             ),
             const SizedBox(height: AppSpacing.sm),
@@ -570,13 +556,11 @@ class _ExportsDashboardScreenState
             else
               ProgressiveListSection<ExportJob>(
                 items: jobsState.items,
-                resetKey: Object.hash(
-                  jobsQuery,
-                  jobsState.total,
-                ),
+                resetKey: Object.hash(jobsQuery, jobsState.total),
                 hasMore: jobsState.hasMore,
                 isLoadingMore: jobsState.isLoadingMore,
                 onLoadMore: jobsController.loadMore,
+                gridMinItemWidth: 380,
                 itemBuilder: (context, job, _) => _ExportJobCard(
                   job: job,
                   onRefresh: () => _refreshJobs(jobsQuery),
@@ -779,13 +763,22 @@ class _ExportsDashboardScreenState
     final savedPath = downloaded.localFilePath;
     AppSnackbar.showSuccess(
       context,
-      savedPath == null || savedPath.isEmpty
+      kIsWeb
+          ? 'Export downloaded by the browser.'
+          : savedPath == null || savedPath.isEmpty
           ? 'Export downloaded.'
           : 'Export downloaded. Use Open, Share, or Copy path.',
     );
   }
 
   Future<void> _openDownloadedFile(String path) async {
+    if (kIsWeb) {
+      AppSnackbar.showError(
+        context,
+        'Use the browser downloads list to open this file.',
+      );
+      return;
+    }
     final file = File(path);
     if (!await file.exists()) {
       if (!mounted) {
@@ -817,6 +810,13 @@ class _ExportsDashboardScreenState
   Future<void> _shareDownloadedFile(ExportJob job) async {
     final path = job.localFilePath;
     if (path == null || path.trim().isEmpty) {
+      return;
+    }
+    if (kIsWeb) {
+      AppSnackbar.showError(
+        context,
+        'Use the browser downloads list to share this file.',
+      );
       return;
     }
     final file = File(path);
@@ -1000,17 +1000,17 @@ class _ExportJobCard extends StatelessWidget {
                 Chip(label: Text('Records ${job.recordCount}')),
               if (job.fileSizeBytes != null)
                 Chip(label: Text('Size ${_formatBytes(job.fileSizeBytes!)}')),
-              if (job.completedAt != null)
-                Chip(
-                  avatar: const Icon(Icons.task_alt, size: 16),
-                  label: Text('Ready ${_formatDateTime(job.completedAt!)}'),
-                ),
               if (job.downloadedAt != null)
                 Chip(
                   avatar: const Icon(Icons.download_done, size: 16),
                   label: Text(
                     'Downloaded ${_formatDateTime(job.downloadedAt!)}',
                   ),
+                )
+              else if (job.completedAt != null)
+                Chip(
+                  avatar: const Icon(Icons.task_alt, size: 16),
+                  label: Text('Ready ${_formatDateTime(job.completedAt!)}'),
                 ),
             ],
           ),
@@ -1022,9 +1022,10 @@ class _ExportJobCard extends StatelessWidget {
             ),
           ],
           const SizedBox(height: AppSpacing.sm),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          AppActionButtons(
+            maxColumns: 2,
+            compactBreakpoint: 360,
+            fillRows: true,
             children: [
               OutlinedButton.icon(
                 onPressed: onRefresh,

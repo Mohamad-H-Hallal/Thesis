@@ -12,6 +12,7 @@ class FeaturePhotoGalleryItem {
     required this.id,
     required this.imagePath,
     required this.label,
+    this.imageBytes,
     this.subtitle,
     this.isLocalFile = false,
     this.onRemove,
@@ -20,6 +21,7 @@ class FeaturePhotoGalleryItem {
   final String id;
   final String imagePath;
   final String label;
+  final List<int>? imageBytes;
   final String? subtitle;
   final bool isLocalFile;
   final VoidCallback? onRemove;
@@ -150,6 +152,11 @@ class _PhotoImage extends StatelessWidget {
   }
 
   ImageProvider<Object>? _resolveImageProvider(FeaturePhotoGalleryItem item) {
+    final bytes = item.imageBytes;
+    if (bytes != null && bytes.isNotEmpty) {
+      return MemoryImage(Uint8List.fromList(bytes));
+    }
+
     if (item.imagePath.trim().isEmpty) {
       return null;
     }

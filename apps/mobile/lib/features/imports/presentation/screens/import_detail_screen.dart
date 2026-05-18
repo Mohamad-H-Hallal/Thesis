@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -12,7 +13,9 @@ import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
+import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
@@ -310,6 +313,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
                             widget.importId,
                             projectId: details.job.projectId,
                             featureId: focusedLinkedFeature.id,
+                            focusSource: AppRoutes.focusSourceImportFeature,
                           ),
                         ),
                   onAddComment: canModerateImport
@@ -361,6 +365,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
                 hasMore: featureState?.hasMore ?? false,
                 isLoadingMore: featureState?.isLoadingMore ?? false,
                 onLoadMore: featuresController!.loadMore,
+                gridMinItemWidth: 380,
                 itemBuilder: (context, feature, _) => KeyedSubtree(
                   key: _featureCardKey(feature.id),
                   child: _ImportedFeatureCard(
@@ -376,6 +381,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
                               widget.importId,
                               projectId: details.job.projectId,
                               featureId: feature.id,
+                              focusSource: AppRoutes.focusSourceImportFeature,
                             ),
                           ),
                     onAddComment: canModerateImport
@@ -704,9 +710,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
             softWrap: true,
           ),
           const SizedBox(height: AppSpacing.sm),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          AppActionButtons(
             children: [
               FilledButton.icon(
                 onPressed:
@@ -783,7 +787,9 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       });
       AppSnackbar.showSuccess(
         context,
-        'Import file downloaded. Use Open, Share, or Copy path.',
+        kIsWeb
+            ? 'Import file downloaded by the browser.'
+            : 'Import file downloaded. Use Open, Share, or Copy path.',
       );
     } catch (error) {
       if (!mounted || !context.mounted) {
@@ -806,6 +812,13 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
   }
 
   Future<void> _openDownloadedImport(String path) async {
+    if (kIsWeb) {
+      AppSnackbar.showError(
+        context,
+        'Use the browser downloads list to open this file.',
+      );
+      return;
+    }
     final file = File(path);
     if (!await file.exists()) {
       if (!mounted) {
@@ -837,6 +850,13 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
     String path,
     GisImportDetails details,
   ) async {
+    if (kIsWeb) {
+      AppSnackbar.showError(
+        context,
+        'Use the browser downloads list to share this file.',
+      );
+      return;
+    }
     final file = File(path);
     if (!await file.exists()) {
       if (!mounted) {
@@ -1201,9 +1221,7 @@ class _ImportSectionNavCard extends StatelessWidget {
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: AppSpacing.sm),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          AppActionButtons(
             children: [
               _SectionShortcutButton(
                 icon: Icons.map_outlined,
@@ -1294,9 +1312,10 @@ class _ImportWorkspaceCard extends StatelessWidget {
         children: [
           Text('Map and file', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: AppSpacing.sm),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          AppActionButtons(
+            maxColumns: 2,
+            compactBreakpoint: 360,
+            fillRows: true,
             children: [
               FilledButton.icon(
                 onPressed: isProcessing
@@ -1498,6 +1517,7 @@ class _ImportValidationCard extends StatelessWidget {
             const SizedBox(height: AppSpacing.sm),
             Text(
               'File-wide issues',
+              key: const ValueKey('import-validation-file-wide-issues-title'),
               style: Theme.of(context).textTheme.titleSmall,
             ),
             const SizedBox(height: AppSpacing.xs),
@@ -1661,6 +1681,8 @@ class _ImportCommentsCard extends StatelessWidget {
                                     importId,
                                     projectId: projectId,
                                     featureId: comment.importFeatureId,
+                                    focusSource:
+                                        AppRoutes.focusSourceImportFeature,
                                   ),
                                 ),
                                 icon: const Icon(Icons.map_outlined, size: 18),
@@ -1834,18 +1856,19 @@ class _ImportedFeatureCard extends StatelessWidget {
           ],
           if (onOpenMap != null || onAddComment != null) ...[
             const SizedBox(height: AppSpacing.sm),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
+            AppActionButtons(
+              maxColumns: 2,
+              compactBreakpoint: 340,
+              fillRows: true,
               children: [
                 if (onOpenMap != null)
-                  TextButton.icon(
+                  OutlinedButton.icon(
                     onPressed: onOpenMap,
                     icon: const Icon(Icons.map_outlined),
                     label: const Text('Open on map'),
                   ),
                 if (onAddComment != null)
-                  TextButton.icon(
+                  OutlinedButton.icon(
                     onPressed: onAddComment,
                     icon: const Icon(Icons.comment_outlined),
                     label: const Text('Comment on feature'),
@@ -2105,6 +2128,7 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
             builder: (context, constraints) {
               final title = Text(
                 'Import map',
+                key: const ValueKey('import-preview-map-title'),
                 style: theme.textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.w700,
                 ),
@@ -2422,13 +2446,15 @@ class _ImportReasonDialogState extends State<_ImportReasonDialog> {
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
-          child: const Text('Save'),
+        AppDialogActions(
+          cancel: TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          confirm: FilledButton(
+            onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
+            child: const Text('Save'),
+          ),
         ),
       ],
     );
@@ -2475,13 +2501,15 @@ class _ImportCommentDialogState extends State<_ImportCommentDialog> {
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
-          child: const Text('Save'),
+        AppDialogActions(
+          cancel: TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          confirm: FilledButton(
+            onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
+            child: const Text('Save'),
+          ),
         ),
       ],
     );

@@ -8,6 +8,7 @@ import '../../../core/constants/design_tokens.dart';
 import '../../../core/providers/providers.dart';
 import '../../../core/router/route_paths.dart';
 import '../../../core/sync/sync_controller.dart';
+import '../../../core/widgets/app_dialog_actions.dart';
 import '../../../core/widgets/app_logo.dart';
 import '../../../core/widgets/app_scaffold.dart';
 import '../../admin/presentation/screens/admin_creation_screen.dart';
@@ -27,13 +28,19 @@ import '../../projects/domain/project.dart';
 import '../../projects/presentation/screens/home_projects_screen.dart';
 import '../../review/presentation/screens/review_queue_screen.dart';
 
-class AppShellScreen extends ConsumerWidget {
+class AppShellScreen extends ConsumerStatefulWidget {
   const AppShellScreen({required this.location, super.key});
 
   final String location;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AppShellScreen> createState() => _AppShellScreenState();
+}
+
+class _AppShellScreenState extends ConsumerState<AppShellScreen> {
+  @override
+  Widget build(BuildContext context) {
+    final location = widget.location;
     final authState = ref.watch(authControllerProvider);
     final syncState = ref.watch(syncControllerProvider);
     final attentionCount =
@@ -432,13 +439,15 @@ class AppShellScreen extends ConsumerWidget {
         title: const Text('Logout'),
         content: const Text('Do you want to logout?'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Logout'),
+          AppDialogActions(
+            cancel: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            confirm: FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Logout'),
+            ),
           ),
         ],
       ),

@@ -39,13 +39,7 @@ Future<void> showDraftWorkflowSheet(
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               const SizedBox(height: 6),
-              Row(
-                children: [
-                  StatusChip(status: snapshot.status),
-                  const SizedBox(width: 8),
-                  Text('#${draft.id.substring(0, 8)}'),
-                ],
-              ),
+              Row(children: [StatusChip(status: snapshot.status)]),
               const SizedBox(height: 14),
               Text(
                 'Workflow Timeline',

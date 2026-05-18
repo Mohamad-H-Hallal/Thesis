@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
@@ -7,6 +8,7 @@ import '../../../../core/config/app_env.dart';
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
+import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_button.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
@@ -78,18 +80,24 @@ class _CategoryFormScreenState extends ConsumerState<CategoryFormScreen> {
         await repository.updateCategory(
           categoryId: widget.categoryId!,
           name: AuthFormValidators.normalize(_nameController.text),
-          description: AuthFormValidators.normalize(_descriptionController.text),
+          description: AuthFormValidators.normalize(
+            _descriptionController.text,
+          ),
           iconUrl: AuthFormValidators.normalize(_iconUrlController.text),
         );
       } else {
         await repository.createCategory(
           name: AuthFormValidators.normalize(_nameController.text),
-          description: AuthFormValidators.normalize(_descriptionController.text),
+          description: AuthFormValidators.normalize(
+            _descriptionController.text,
+          ),
           iconUrl: AuthFormValidators.normalize(_iconUrlController.text),
         );
       }
 
       ref.invalidate(projectCategoriesProvider);
+      ref.invalidate(paginatedProjectCategoriesProvider);
+      bumpWorkflowRefresh(ref);
       if (!mounted) {
         return;
       }
@@ -125,16 +133,22 @@ class _CategoryFormScreenState extends ConsumerState<CategoryFormScreen> {
   }
 
   Future<void> _pickAndUploadIcon(ImageSource source) async {
-    final pickedFile = await _imagePicker.pickImage(source: source, imageQuality: 88);
+    final pickedFile = await _imagePicker.pickImage(
+      source: source,
+      imageQuality: 88,
+    );
     if (pickedFile == null) {
       return;
     }
 
     setState(() => _isUploadingIcon = true);
     try {
-      final iconUrl = await ref.read(adminRepositoryProvider).uploadCategoryIcon(
+      final iconUrl = await ref
+          .read(adminRepositoryProvider)
+          .uploadCategoryIcon(
             filePath: pickedFile.path,
             fileName: pickedFile.name,
+            bytes: kIsWeb ? await pickedFile.readAsBytes() : null,
           );
       if (!mounted) {
         return;
@@ -270,51 +284,60 @@ class _CategoryFormScreenState extends ConsumerState<CategoryFormScreen> {
                                       height: 160,
                                       width: double.infinity,
                                       fit: BoxFit.cover,
-                                      errorBuilder: (context, error, stackTrace) => Container(
-                                        height: 120,
-                                        alignment: Alignment.center,
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .surfaceContainerHighest,
-                                        child: const Text('Icon preview unavailable'),
-                                      ),
+                                      errorBuilder:
+                                          (context, error, stackTrace) =>
+                                              Container(
+                                                height: 120,
+                                                alignment: Alignment.center,
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .surfaceContainerHighest,
+                                                child: const Text(
+                                                  'Icon preview unavailable',
+                                                ),
+                                              ),
                                     ),
                                   )
                                 else
                                   Container(
                                     width: double.infinity,
-                                    padding: const EdgeInsets.all(AppSpacing.md),
+                                    padding: const EdgeInsets.all(
+                                      AppSpacing.md,
+                                    ),
                                     decoration: BoxDecoration(
                                       borderRadius: AppRadii.md,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .surfaceContainerHighest,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.surfaceContainerHighest,
                                     ),
                                     child: const Text(
                                       'Optional. Add an icon using camera or gallery to help users recognize this category quickly.',
                                     ),
                                   ),
                                 const SizedBox(height: AppSpacing.sm),
-                                Wrap(
-                                  spacing: AppSpacing.sm,
-                                  runSpacing: AppSpacing.sm,
+                                AppActionButtons(
                                   children: [
                                     AppButton(
-                                      label: _iconUrlController.text.trim().isEmpty
+                                      label:
+                                          _iconUrlController.text.trim().isEmpty
                                           ? 'Add icon'
                                           : 'Change icon',
                                       icon: Icons.image_outlined,
                                       isLoading: _isUploadingIcon,
-                                      expand: false,
-                                      onPressed: _isUploadingIcon ? null : _manageIcon,
+                                      expand: true,
+                                      onPressed: _isUploadingIcon
+                                          ? null
+                                          : _manageIcon,
                                     ),
-                                    if (_iconUrlController.text.trim().isNotEmpty)
+                                    if (_iconUrlController.text
+                                        .trim()
+                                        .isNotEmpty)
                                       OutlinedButton.icon(
                                         onPressed: _isUploadingIcon
                                             ? null
                                             : () => setState(() {
-                                                  _iconUrlController.clear();
-                                                }),
+                                                _iconUrlController.clear();
+                                              }),
                                         icon: const Icon(Icons.delete_outline),
                                         label: const Text('Remove'),
                                       ),
@@ -324,16 +347,15 @@ class _CategoryFormScreenState extends ConsumerState<CategoryFormScreen> {
                             ),
                           ),
                           const SizedBox(height: AppSpacing.md),
-                          Wrap(
-                            spacing: AppSpacing.sm,
-                            runSpacing: AppSpacing.sm,
+                          AppActionButtons(
                             children: [
                               AppButton(
-                                label:
-                                    widget.isEditing ? 'Save Changes' : 'Create',
+                                label: widget.isEditing
+                                    ? 'Save Changes'
+                                    : 'Create',
                                 icon: Icons.save_outlined,
                                 isLoading: _isSaving,
-                                expand: false,
+                                expand: true,
                                 onPressed: _isSaving ? null : _save,
                               ),
                               OutlinedButton(

@@ -22,6 +22,16 @@ const LEBANON_BOUNDS = {
 };
 const LEBANON_BUFFER_DEGREES = 0.2;
 const IMPORT_PREVIEW_LIMIT = 500;
+const IMPORT_MAP_TILE_LOW_ZOOM_LIMIT = 300;
+const IMPORT_MAP_TILE_HIGH_ZOOM_LIMIT = 3500;
+const IMPORT_MAP_LAYER_CACHE_MAX_ENTRIES = Number.parseInt(
+  process.env.IMPORT_MAP_LAYER_CACHE_MAX_ENTRIES ?? '512',
+  10,
+);
+const IMPORT_MAP_LAYER_CACHE_TTL_MS = Number.parseInt(
+  process.env.IMPORT_MAP_LAYER_CACHE_TTL_MS ?? '60000',
+  10,
+);
 const PAGE_MAX_LIMIT = 200;
 const IMPORT_INSERT_BATCH_SIZE = 250;
 const IMPORT_PROCESSING_POLL_INTERVAL_MS = Number.parseInt(
@@ -56,6 +66,22 @@ const mapSimplifyTolerance = (zoom: number): number => {
     return 0.0005;
   }
   return 0;
+};
+
+const mapClusterCellSizeDegrees = (zoom: number): number => {
+  if (zoom < 7.5) {
+    return 0.18;
+  }
+  if (zoom < 8.5) {
+    return 0.12;
+  }
+  if (zoom < 9.5) {
+    return 0.08;
+  }
+  if (zoom < 10.5) {
+    return 0.05;
+  }
+  return 0.03;
 };
 
 const parseViewportBounds = (input: {
@@ -240,6 +266,8 @@ type ImportFeatureRow = {
   approved_at: string | null;
   review_reason: string | null;
   is_summary?: boolean;
+  is_aggregate?: boolean;
+  cluster_count?: number;
   created_at: string;
   updated_at: string;
 };
@@ -254,6 +282,11 @@ type ImportCommentRow = {
   author_role: string;
   comment_text: string;
   created_at: string;
+};
+
+type ImportMapLayerData = {
+  staged_features: ReturnType<typeof mapImportMapFeatureRow>[];
+  approved_project_features: ReturnType<typeof mapImportMapProjectFeatureRow>[];
 };
 
 type StagedImportInsertRow = {
@@ -277,6 +310,10 @@ let importProcessingLoop: NodeJS.Timeout | null = null;
 let importProcessingDrainScheduled = false;
 let importProcessingDrainRunning = false;
 let importProcessingDrainTimeout: NodeJS.Timeout | null = null;
+const importMapLayerCache = new Map<
+  string,
+  { expiresAt: number; data: ImportMapLayerData }
+>();
 
 const getPagination = (pageRaw: unknown, limitRaw: unknown) => {
   const page = Math.max(1, Number.parseInt(String(pageRaw ?? '1'), 10) || 1);
@@ -287,6 +324,61 @@ const getPagination = (pageRaw: unknown, limitRaw: unknown) => {
     limit,
     offset: (page - 1) * limit,
   };
+};
+
+const importMapLayerCacheKey = ({
+  importId,
+  projectId,
+  bounds,
+  zoom,
+  cacheVersion,
+}: {
+  importId: string;
+  projectId: string;
+  bounds: { minLon: number; minLat: number; maxLon: number; maxLat: number };
+  zoom: number;
+  cacheVersion: string | null;
+}): string =>
+  [
+    importId,
+    projectId,
+    cacheVersion ?? 'no-version',
+    bounds.minLon.toFixed(6),
+    bounds.minLat.toFixed(6),
+    bounds.maxLon.toFixed(6),
+    bounds.maxLat.toFixed(6),
+    zoom.toFixed(2),
+  ].join(':');
+
+const getCachedImportMapLayer = (key: string): ImportMapLayerData | null => {
+  const cached = importMapLayerCache.get(key);
+  if (!cached) {
+    return null;
+  }
+  if (cached.expiresAt <= Date.now()) {
+    importMapLayerCache.delete(key);
+    return null;
+  }
+  importMapLayerCache.delete(key);
+  importMapLayerCache.set(key, cached);
+  return cached.data;
+};
+
+const rememberImportMapLayer = (
+  key: string,
+  data: ImportMapLayerData,
+): void => {
+  importMapLayerCache.set(key, {
+    data,
+    expiresAt: Date.now() + IMPORT_MAP_LAYER_CACHE_TTL_MS,
+  });
+  while (importMapLayerCache.size > IMPORT_MAP_LAYER_CACHE_MAX_ENTRIES) {
+    const oldestKey = importMapLayerCache.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    importMapLayerCache.delete(oldestKey);
+  }
 };
 
 const inferImportFileType = (filename: string): ImportFileType => {
@@ -1268,6 +1360,8 @@ const mapImportFeatureRow = (row: ImportFeatureRow) => ({
   approved_at: row.approved_at,
   review_reason: row.review_reason,
   is_summary: row.is_summary ?? false,
+  is_aggregate: row.is_aggregate ?? false,
+  cluster_count: row.cluster_count ?? 1,
   created_at: row.created_at,
   updated_at: row.updated_at,
 });
@@ -1294,6 +1388,8 @@ const mapImportMapFeatureRow = (row: ImportFeatureRow) => ({
   approved_at: row.approved_at,
   review_reason: row.review_reason,
   is_summary: true,
+  is_aggregate: row.is_aggregate ?? false,
+  cluster_count: row.cluster_count ?? 1,
   created_at: row.created_at,
   updated_at: row.updated_at,
 });
@@ -1324,6 +1420,8 @@ const mapImportMapProjectFeatureRow = (row: any) => ({
   reviewed_at: row.reviewed_at ?? null,
   photo_count: row.photo_count ?? 0,
   is_summary: true,
+  is_aggregate: row.is_aggregate ?? false,
+  cluster_count: row.cluster_count ?? 1,
 });
 
 const insertStagedImportFeaturesBatch = async (
@@ -2023,6 +2121,7 @@ const getImportMapData = async (req: Request, res: Response): Promise<void> => {
     projectId: job.project_id,
     bounds,
     zoom,
+    cacheVersion: job.updated_at,
   });
 
   res.json({
@@ -2036,85 +2135,293 @@ const fetchImportMapLayerData = async ({
   projectId,
   bounds,
   zoom,
+  cacheVersion,
 }: {
   importId: string;
   projectId: string;
   bounds: { minLon: number; minLat: number; maxLon: number; maxLat: number };
   zoom: number;
-}) => {
+  cacheVersion: string | null;
+}): Promise<ImportMapLayerData> => {
+  const cacheKey = importMapLayerCacheKey({
+    importId,
+    projectId,
+    bounds,
+    zoom,
+    cacheVersion,
+  });
+  const cached = getCachedImportMapLayer(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const simplifyTolerance = mapSimplifyTolerance(zoom);
   const stagedGeometrySql = mapRenderGeometrySql('gif.geom', zoom, simplifyTolerance);
   const projectGeometrySql = mapRenderGeometrySql('sf.geom', zoom, simplifyTolerance);
+  const tileFeatureLimit =
+    zoom < 10.5 ? IMPORT_MAP_TILE_LOW_ZOOM_LIMIT : IMPORT_MAP_TILE_HIGH_ZOOM_LIMIT;
 
-  const stagedResult = await query(
-    `SELECT gif.id,
-            gif.import_job_id,
-            gif.source_index,
-            gif.source_identifier,
-            gif.display_title,
-            gif.source_feature_name,
-            gif.geometry_type,
-            gif.status,
-            gif.duplicate_feature_id,
-            gif.approved_feature_id,
-            gif.reviewed_by_user_id,
-            reviewer.full_name AS reviewed_by_name,
-            gif.reviewed_at,
-            gif.approved_at,
-            gif.review_reason,
-            gif.created_at,
-            gif.updated_at,
-            ${stagedGeometrySql} AS geometry
-     FROM gis_import_feature gif
-     LEFT JOIN "user" reviewer ON reviewer.id = gif.reviewed_by_user_id
-     WHERE gif.import_job_id = $1
-       AND gif.geom IS NOT NULL
-       AND gif.geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
-     ORDER BY gif.source_index ASC`,
-    [
-      importId,
-      bounds.minLon,
-      bounds.minLat,
-      bounds.maxLon,
-      bounds.maxLat,
-    ],
-  );
+  const stagedResult =
+    zoom < 10.5
+      ? await query(
+          `WITH prepared AS (
+             SELECT gif.id,
+                    gif.import_job_id,
+                    gif.source_index,
+                    gif.source_identifier,
+                    gif.display_title,
+                    gif.source_feature_name,
+                    gif.geometry_type,
+                    gif.status,
+                    gif.approved_feature_id,
+                    gif.reviewed_at,
+                    gif.approved_at,
+                    gif.review_reason,
+                    gif.created_at,
+                    gif.updated_at,
+                    CASE
+                      WHEN GeometryType(gif.geom) IN ('POLYGON', 'MULTIPOLYGON') THEN ST_PointOnSurface(gif.geom)
+                      WHEN GeometryType(gif.geom) IN ('LINESTRING', 'MULTILINESTRING') THEN ST_Centroid(gif.geom)
+                      ELSE gif.geom
+                    END AS marker_geom
+             FROM gis_import_feature gif
+             WHERE gif.import_job_id = $1
+               AND gif.geom IS NOT NULL
+               AND gif.geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
+           ),
+           marker_filtered AS (
+             SELECT *
+             FROM prepared
+             WHERE marker_geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
+           ),
+           bucketed AS (
+             SELECT *,
+                    FLOOR(ST_Y(marker_geom) / $6) AS lat_bucket,
+                    FLOOR(ST_X(marker_geom) / $6) AS lon_bucket
+             FROM marker_filtered
+           )
+           SELECT CASE
+                    WHEN COUNT(*) = 1 THEN (ARRAY_AGG(id::text ORDER BY source_index))[1]
+                    ELSE CONCAT('cluster:', status, ':', lat_bucket, ':', lon_bucket)
+                  END AS id,
+                  (ARRAY_AGG(import_job_id::text ORDER BY source_index))[1] AS import_job_id,
+                  MIN(source_index) AS source_index,
+                  CASE
+                    WHEN COUNT(*) = 1 THEN (ARRAY_AGG(source_identifier ORDER BY source_index))[1]
+                    ELSE NULL
+                  END AS source_identifier,
+                  CASE
+                    WHEN COUNT(*) = 1 THEN (ARRAY_AGG(display_title ORDER BY source_index))[1]
+                    ELSE CONCAT(COUNT(*)::text, ' imported features')
+                  END AS display_title,
+                  CASE
+                    WHEN COUNT(*) = 1 THEN (ARRAY_AGG(source_feature_name ORDER BY source_index))[1]
+                    ELSE NULL
+                  END AS source_feature_name,
+                  CASE
+                    WHEN COUNT(DISTINCT geometry_type) = 1 THEN MIN(geometry_type)
+                    ELSE NULL
+                  END AS geometry_type,
+                  status,
+                  NULL::text AS duplicate_feature_id,
+                  CASE
+                    WHEN COUNT(*) = 1 THEN (ARRAY_AGG(approved_feature_id::text ORDER BY source_index))[1]
+                    ELSE NULL
+                  END AS approved_feature_id,
+                  NULL::text AS reviewed_by_user_id,
+                  NULL::text AS reviewed_by_name,
+                  CASE
+                    WHEN COUNT(*) = 1 THEN (ARRAY_AGG(reviewed_at ORDER BY source_index))[1]
+                    ELSE NULL
+                  END AS reviewed_at,
+                  CASE
+                    WHEN COUNT(*) = 1 THEN (ARRAY_AGG(approved_at ORDER BY source_index))[1]
+                    ELSE NULL
+                  END AS approved_at,
+                  CASE
+                    WHEN COUNT(*) = 1 THEN (ARRAY_AGG(review_reason ORDER BY source_index))[1]
+                    ELSE NULL
+                  END AS review_reason,
+                  MIN(created_at) AS created_at,
+                  MAX(updated_at) AS updated_at,
+                  ST_AsGeoJSON(ST_Centroid(ST_Collect(marker_geom))) AS geometry,
+                  (COUNT(*) > 1) AS is_aggregate,
+                  COUNT(*)::int AS cluster_count
+           FROM bucketed
+           GROUP BY status, lat_bucket, lon_bucket
+           ORDER BY MIN(source_index) ASC`,
+          [
+            importId,
+            bounds.minLon,
+            bounds.minLat,
+            bounds.maxLon,
+            bounds.maxLat,
+            mapClusterCellSizeDegrees(zoom),
+          ],
+        )
+      : await query(
+          `SELECT gif.id,
+                  gif.import_job_id,
+                  gif.source_index,
+                  gif.source_identifier,
+                  gif.display_title,
+                  gif.source_feature_name,
+                  gif.geometry_type,
+                  gif.status,
+                  gif.duplicate_feature_id,
+                  gif.approved_feature_id,
+                  gif.reviewed_by_user_id,
+                  reviewer.full_name AS reviewed_by_name,
+                  gif.reviewed_at,
+                  gif.approved_at,
+                  gif.review_reason,
+                  gif.created_at,
+                  gif.updated_at,
+                  ${stagedGeometrySql} AS geometry,
+                  false AS is_aggregate,
+                  1 AS cluster_count
+           FROM gis_import_feature gif
+           LEFT JOIN "user" reviewer ON reviewer.id = gif.reviewed_by_user_id
+           WHERE gif.import_job_id = $1
+             AND gif.geom IS NOT NULL
+             AND gif.geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
+           ORDER BY gif.source_index ASC
+           LIMIT $6`,
+          [
+            importId,
+            bounds.minLon,
+            bounds.minLat,
+            bounds.maxLon,
+            bounds.maxLat,
+            tileFeatureLimit,
+          ],
+        );
 
-  const approvedProjectResult = await query(
-    `SELECT sf.id,
-            sf.status,
-            GeometryType(sf.geom) AS source_geometry_type,
-            ${projectGeometrySql} AS geometry,
-            sf.attributes,
-            collector.full_name AS collected_by,
-            reviewer.full_name AS reviewed_by,
-            sf.review_notes,
-            sf.collected_at,
-            sf.submitted_at,
-            sf.reviewed_at,
-            (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) AS photo_count
-     FROM spatial_feature sf
-     LEFT JOIN "user" collector ON collector.id = sf.collected_by_user_id
-     LEFT JOIN "user" reviewer ON reviewer.id = sf.reviewed_by_user_id
-     WHERE sf.project_id = $1
-       AND sf.status = 'approved'
-       AND sf.geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
-     ORDER BY sf.reviewed_at DESC NULLS LAST, sf.submitted_at DESC NULLS LAST, sf.id ASC`,
-    [
-      projectId,
-      bounds.minLon,
-      bounds.minLat,
-      bounds.maxLon,
-      bounds.maxLat,
-    ],
-  );
+  const approvedProjectResult =
+    zoom < 10.5
+      ? await query(
+          `WITH visible AS (
+             SELECT sf.id,
+                    sf.status,
+                    GeometryType(sf.geom) AS source_geometry_type,
+                    sf.attributes,
+                    collector.full_name AS collected_by,
+                    reviewer.full_name AS reviewed_by,
+                    sf.review_notes,
+                    sf.collected_at,
+                    sf.submitted_at,
+                    sf.reviewed_at,
+                    (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) AS photo_count,
+                    CASE
+                      WHEN GeometryType(sf.geom) IN ('POLYGON', 'MULTIPOLYGON') THEN ST_PointOnSurface(sf.geom)
+                      WHEN GeometryType(sf.geom) IN ('LINESTRING', 'MULTILINESTRING') THEN ST_Centroid(sf.geom)
+                      ELSE sf.geom
+                    END AS marker_geom
+             FROM spatial_feature sf
+             LEFT JOIN "user" collector ON collector.id = sf.collected_by_user_id
+             LEFT JOIN "user" reviewer ON reviewer.id = sf.reviewed_by_user_id
+             WHERE sf.project_id = $1
+               AND sf.status = 'approved'
+               AND sf.geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
+           ),
+           marker_filtered AS (
+             SELECT *
+             FROM visible
+             WHERE marker_geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
+           ),
+           bucketed AS (
+             SELECT *,
+                    FLOOR(ST_Y(marker_geom) / $6)::int AS lat_bucket,
+                    FLOOR(ST_X(marker_geom) / $6)::int AS lon_bucket
+             FROM marker_filtered
+           )
+           SELECT CASE
+                    WHEN COUNT(*) = 1 THEN (ARRAY_AGG(id::text ORDER BY reviewed_at DESC NULLS LAST, submitted_at DESC NULLS LAST, id ASC))[1]
+                    ELSE CONCAT('project-context-cluster:', lat_bucket::text, ':', lon_bucket::text)
+                  END AS id,
+                  'approved'::text AS status,
+                  CASE
+                    WHEN COUNT(DISTINCT source_geometry_type) = 1 THEN MIN(source_geometry_type)
+                    ELSE 'Geometry'
+                  END AS source_geometry_type,
+                  ST_AsGeoJSON(ST_Centroid(ST_Collect(marker_geom))) AS geometry,
+                  CASE
+                    WHEN COUNT(*) = 1 THEN (ARRAY_AGG(attributes ORDER BY reviewed_at DESC NULLS LAST, submitted_at DESC NULLS LAST, id ASC))[1]
+                    ELSE jsonb_build_object('cluster_count', COUNT(*))
+                  END AS attributes,
+                  CASE
+                    WHEN COUNT(*) = 1 THEN (ARRAY_AGG(collected_by ORDER BY reviewed_at DESC NULLS LAST, submitted_at DESC NULLS LAST, id ASC))[1]
+                    ELSE NULL
+                  END AS collected_by,
+                  CASE
+                    WHEN COUNT(*) = 1 THEN (ARRAY_AGG(reviewed_by ORDER BY reviewed_at DESC NULLS LAST, submitted_at DESC NULLS LAST, id ASC))[1]
+                    ELSE NULL
+                  END AS reviewed_by,
+                  CASE
+                    WHEN COUNT(*) = 1 THEN (ARRAY_AGG(review_notes ORDER BY reviewed_at DESC NULLS LAST, submitted_at DESC NULLS LAST, id ASC))[1]
+                    ELSE NULL
+                  END AS review_notes,
+                  MIN(collected_at) AS collected_at,
+                  MAX(submitted_at) AS submitted_at,
+                  MAX(reviewed_at) AS reviewed_at,
+                  SUM(photo_count)::int AS photo_count,
+                  (COUNT(*) > 1) AS is_aggregate,
+                  COUNT(*)::int AS cluster_count
+           FROM bucketed
+           GROUP BY lat_bucket, lon_bucket
+           ORDER BY MAX(reviewed_at) DESC NULLS LAST, MAX(submitted_at) DESC NULLS LAST
+           LIMIT $7`,
+          [
+            projectId,
+            bounds.minLon,
+            bounds.minLat,
+            bounds.maxLon,
+            bounds.maxLat,
+            mapClusterCellSizeDegrees(zoom),
+            tileFeatureLimit,
+          ],
+        )
+      : await query(
+          `SELECT sf.id,
+                  sf.status,
+                  GeometryType(sf.geom) AS source_geometry_type,
+                  ${projectGeometrySql} AS geometry,
+                  sf.attributes,
+                  collector.full_name AS collected_by,
+                  reviewer.full_name AS reviewed_by,
+                  sf.review_notes,
+                  sf.collected_at,
+                  sf.submitted_at,
+                  sf.reviewed_at,
+                  (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) AS photo_count,
+                  false AS is_aggregate,
+                  1 AS cluster_count
+           FROM spatial_feature sf
+           LEFT JOIN "user" collector ON collector.id = sf.collected_by_user_id
+           LEFT JOIN "user" reviewer ON reviewer.id = sf.reviewed_by_user_id
+           WHERE sf.project_id = $1
+             AND sf.status = 'approved'
+             AND sf.geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
+           ORDER BY sf.reviewed_at DESC NULLS LAST, sf.submitted_at DESC NULLS LAST, sf.id ASC
+           LIMIT $6`,
+          [
+            projectId,
+            bounds.minLon,
+            bounds.minLat,
+            bounds.maxLon,
+            bounds.maxLat,
+            tileFeatureLimit,
+          ],
+        );
 
-  return {
+  const data = {
     staged_features: stagedResult.rows.map((row) =>
       mapImportMapFeatureRow(row as ImportFeatureRow),
     ),
     approved_project_features: approvedProjectResult.rows.map(mapImportMapProjectFeatureRow),
   };
+  rememberImportMapLayer(cacheKey, data);
+  return data;
 };
 
 const getImportMapTileData = async (req: Request, res: Response): Promise<void> => {
@@ -2127,6 +2434,7 @@ const getImportMapTileData = async (req: Request, res: Response): Promise<void> 
     projectId: job.project_id,
     bounds,
     zoom,
+    cacheVersion: job.updated_at,
   });
 
   res.json({

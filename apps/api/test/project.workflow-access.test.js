@@ -129,6 +129,11 @@ describe('Project workflow access and feature visibility', () => {
       fullName: 'Feature Contributor B',
       emailPrefix: 'feature-contributor-b',
     });
+    const contributorC = await registerUser({
+      role: 'contributor',
+      fullName: 'Feature Contributor C',
+      emailPrefix: 'feature-contributor-c',
+    });
 
     await approveContributorRequest({
       token: admin.token,
@@ -137,6 +142,10 @@ describe('Project workflow access and feature visibility', () => {
     await approveContributorRequest({
       token: admin.token,
       userId: contributorB.user.id,
+    });
+    await approveContributorRequest({
+      token: admin.token,
+      userId: contributorC.user.id,
     });
 
     const category = await createCategory({
@@ -153,7 +162,11 @@ describe('Project workflow access and feature visibility', () => {
     await request(app)
       .put(`${API_PREFIX}/projects/${project.id}`)
       .set(authHeader(admin.token))
-      .send({ status: 'active', visible_to_viewers: true })
+      .send({
+        status: 'active',
+        visible_to_viewers: true,
+        visible_to_contributors: true,
+      })
       .expect(200);
 
     const assignmentA = await createAssignment({
@@ -281,6 +294,10 @@ describe('Project workflow access and feature visibility', () => {
       email: contributorA.email,
       password: contributorA.password,
     });
+    const contributorCLogin = await loginUser({
+      email: contributorC.email,
+      password: contributorC.password,
+    });
 
     const viewerResponse = await request(app)
       .get(`${API_PREFIX}/projects/${project.id}/features`)
@@ -292,6 +309,33 @@ describe('Project workflow access and feature visibility', () => {
       .get(`${API_PREFIX}/features`)
       .query({ project_id: project.id })
       .set(authHeader(contributorALogin.token));
+    const contributorBboxResponse = await request(app)
+      .get(`${API_PREFIX}/features/bbox`)
+      .query({
+        project_id: project.id,
+        minLon: 35,
+        minLat: 33,
+        maxLon: 36,
+        maxLat: 34,
+      })
+      .set(authHeader(contributorALogin.token));
+    const unassignedContributorFeatures = await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/features`)
+      .set(authHeader(contributorCLogin.token));
+    const unassignedContributorGlobalFeatures = await request(app)
+      .get(`${API_PREFIX}/features`)
+      .query({ project_id: project.id })
+      .set(authHeader(contributorCLogin.token));
+    const unassignedContributorBbox = await request(app)
+      .get(`${API_PREFIX}/features/bbox`)
+      .query({
+        project_id: project.id,
+        minLon: 35,
+        minLat: 33,
+        maxLon: 36,
+        maxLat: 34,
+      })
+      .set(authHeader(contributorCLogin.token));
     const adminResponse = await request(app)
       .get(`${API_PREFIX}/projects/${project.id}/features`)
       .set(authHeader(admin.token));
@@ -327,6 +371,27 @@ describe('Project workflow access and feature visibility', () => {
     ).not.toEqual(
       expect.arrayContaining([pendingOtherId, rejectedOtherId, draftOtherId]),
     );
+    expect(contributorBboxResponse.status).toBe(200);
+    expect(
+      contributorBboxResponse.body.data.features.map((item) => item.id),
+    ).toEqual(expect.arrayContaining([approvedId, pendingId, rejectedOwnId]));
+    expect(
+      contributorBboxResponse.body.data.features.map((item) => item.id),
+    ).not.toEqual(
+      expect.arrayContaining([pendingOtherId, rejectedOtherId, draftOtherId]),
+    );
+    expect(unassignedContributorFeatures.status).toBe(200);
+    expect(unassignedContributorFeatures.body.data.map((item) => item.id)).toEqual([
+      approvedId,
+    ]);
+    expect(unassignedContributorGlobalFeatures.status).toBe(200);
+    expect(
+      unassignedContributorGlobalFeatures.body.data.map((item) => item.id),
+    ).toEqual([approvedId]);
+    expect(unassignedContributorBbox.status).toBe(200);
+    expect(
+      unassignedContributorBbox.body.data.features.map((item) => item.id),
+    ).toEqual([approvedId]);
     expect(contributorApprovedFeature.status).toBe(200);
     expect(contributorOwnRejectedFeature.status).toBe(200);
     expect(contributorOtherPendingFeature.status).toBe(403);

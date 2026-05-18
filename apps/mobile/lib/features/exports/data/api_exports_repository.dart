@@ -1,13 +1,10 @@
-import 'dart:io';
-
 import 'package:dio/dio.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import '../../../core/config/app_env.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_error_message.dart';
 import '../../../core/pagination/paginated_result.dart';
+import '../../../core/platform/downloaded_file_saver.dart';
 import '../domain/export_job.dart';
 import '../domain/exports_repository.dart';
 
@@ -47,7 +44,8 @@ class ApiExportsRepository implements ExportsRepository {
           'limit': limit,
           if (categoryId?.trim().isNotEmpty ?? false)
             'category_id': categoryId!.trim(),
-          if (projectId?.trim().isNotEmpty ?? false) 'project_id': projectId!.trim(),
+          if (projectId?.trim().isNotEmpty ?? false)
+            'project_id': projectId!.trim(),
           if (status != null) 'status': status.name,
           if (format != null) 'format': format.name,
         },
@@ -104,7 +102,8 @@ class ApiExportsRepository implements ExportsRepository {
           'limit': 1,
           if (categoryId?.trim().isNotEmpty ?? false)
             'category_id': categoryId!.trim(),
-          if (projectId?.trim().isNotEmpty ?? false) 'project_id': projectId!.trim(),
+          if (projectId?.trim().isNotEmpty ?? false)
+            'project_id': projectId!.trim(),
           if (status != null) 'status': status.name,
           if (format != null) 'format': format.name,
         },
@@ -343,24 +342,13 @@ class ApiExportsRepository implements ExportsRepository {
     required List<int> bytes,
     required Headers headers,
   }) async {
-    final baseDir = await _resolveExportDirectory();
-    await baseDir.create(recursive: true);
-
     final fileName = _fileNameFromHeaders(headers) ?? 'export_$exportId.zip';
     final safeFileName = fileName.replaceAll(RegExp(r'[<>:"/\\|?*]+'), '_');
-    final target = File(p.join(baseDir.path, safeFileName));
-    await target.writeAsBytes(bytes, flush: true);
-    return target.path;
-  }
-
-  Future<Directory> _resolveExportDirectory() async {
-    final externalDir = await getExternalStorageDirectory();
-    if (externalDir != null) {
-      return Directory(p.join(externalDir.path, 'exports'));
-    }
-
-    final documentsDir = await getApplicationDocumentsDirectory();
-    return Directory(p.join(documentsDir.path, 'exports'));
+    return saveDownloadedBytes(
+      bytes: bytes,
+      fileName: safeFileName,
+      directoryName: 'exports',
+    );
   }
 
   String? _fileNameFromHeaders(Headers headers) {

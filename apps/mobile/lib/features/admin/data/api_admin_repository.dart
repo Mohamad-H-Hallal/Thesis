@@ -237,7 +237,8 @@ class ApiAdminRepository implements AdminRepository {
   }
 
   @override
-  Future<PaginatedResult<ManagedAssignmentSummary>> fetchManagedAssignmentsPage({
+  Future<PaginatedResult<ManagedAssignmentSummary>>
+  fetchManagedAssignmentsPage({
     String? status,
     String? query,
     int page = 1,
@@ -347,16 +348,16 @@ class ApiAdminRepository implements AdminRepository {
   Future<String> uploadCategoryIcon({
     required String filePath,
     String? fileName,
+    List<int>? bytes,
   }) async {
     return _run(() async {
+      final resolvedFileName = fileName ?? p.basename(filePath);
+      final iconFile = bytes == null
+          ? await MultipartFile.fromFile(filePath, filename: resolvedFileName)
+          : MultipartFile.fromBytes(bytes, filename: resolvedFileName);
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '$_categoriesBasePath/icon',
-        data: FormData.fromMap(<String, dynamic>{
-          'icon': await MultipartFile.fromFile(
-            filePath,
-            filename: fileName ?? p.basename(filePath),
-          ),
-        }),
+        data: FormData.fromMap(<String, dynamic>{'icon': iconFile}),
       );
       final row = Map<String, dynamic>.from(
         response.data?['data'] as Map? ?? const <String, dynamic>{},
@@ -486,7 +487,8 @@ class ApiAdminRepository implements AdminRepository {
   }
 
   @override
-  Future<PaginatedResult<ManagedAssignmentSummary>> fetchProjectAssignmentsPage({
+  Future<PaginatedResult<ManagedAssignmentSummary>>
+  fetchProjectAssignmentsPage({
     required String projectId,
     required String status,
     String? query,
@@ -760,6 +762,12 @@ class ApiAdminRepository implements AdminRepository {
           _toInt(row['approved_features']) ??
           _toInt(row['approvedFeatures']) ??
           0,
+      rejectedFeatures:
+          _toInt(row['rejected_features']) ??
+          _toInt(row['rejectedFeatures']) ??
+          0,
+      draftFeatures:
+          _toInt(row['draft_features']) ?? _toInt(row['draftFeatures']) ?? 0,
       assignedCollectors:
           _toInt(row['contributor_count']) ??
           _toInt(row['assigned_collectors']) ??
@@ -773,8 +781,7 @@ class ApiAdminRepository implements AdminRepository {
           _toInt(row['pending_assignments']) ??
           0,
       rejectedAssignmentRequests:
-          _toInt(row['rejected_assignment_requests']) ??
-          0,
+          _toInt(row['rejected_assignment_requests']) ?? 0,
       description: (row['description'] as String?) ?? '',
       objectives: row['objectives'] as String?,
       startDate: _toDateTime(row['start_date']),

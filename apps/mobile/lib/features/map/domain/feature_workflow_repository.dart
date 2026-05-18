@@ -1,5 +1,17 @@
 import 'feature_workflow.dart';
 
+class FeaturePhotoUpload {
+  const FeaturePhotoUpload({
+    required this.filePath,
+    required this.fileName,
+    this.bytes,
+  });
+
+  final String filePath;
+  final String fileName;
+  final List<int>? bytes;
+}
+
 abstract class FeatureWorkflowRepository {
   Future<CreatedFeatureDraft> createDraft({
     required String projectId,
@@ -14,9 +26,11 @@ abstract class FeatureWorkflowRepository {
     required Map<String, dynamic> attributes,
   });
 
+  Future<void> deleteDraft(String featureId);
+
   Future<void> uploadPhotos({
     required String featureId,
-    required List<String> filePaths,
+    required List<FeaturePhotoUpload> photos,
   });
 
   Future<void> submitForReview(String featureId);

@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
+import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../admin/domain/admin_models.dart';
@@ -68,13 +70,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           'Deactivate your account? You will be signed out until an administrator restores access.',
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Deactivate'),
+          AppDialogActions(
+            cancel: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            confirm: FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Deactivate'),
+            ),
           ),
         ],
       ),
@@ -234,42 +238,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final editButton = OutlinedButton.icon(
-                      onPressed: _isMutating ? null : _editSupportSettings,
-                      icon: const Icon(Icons.edit_outlined),
-                      label: const Text('Edit'),
-                    );
-
-                    if (constraints.maxWidth < 420) {
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Help & Support',
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                          if (widget.isSuperAdmin) ...[
-                            const SizedBox(height: AppSpacing.sm),
-                            editButton,
-                          ],
-                        ],
-                      );
-                    }
-
-                    return Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Help & Support',
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                        ),
-                        if (widget.isSuperAdmin) editButton,
-                      ],
-                    );
-                  },
+                Text(
+                  'Help & Support',
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 if (!settings.isConfigured)
@@ -307,6 +278,28 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         ),
                     ],
                   ),
+                if (widget.isSuperAdmin) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final buttonWidth = constraints.maxWidth < 600
+                          ? double.infinity
+                          : 224.0;
+
+                      return SizedBox(
+                        width: buttonWidth,
+                        child: OutlinedButton.icon(
+                          onPressed: _isMutating ? null : _editSupportSettings,
+                          icon: const Icon(Icons.edit_outlined),
+                          label: const Text(
+                            'Edit',
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
               ],
             ),
           ),
@@ -318,10 +311,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             children: [
               Text('Security', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: AppSpacing.sm),
-              OutlinedButton.icon(
-                onPressed: _isMutating ? null : _showChangePasswordDialog,
-                icon: const Icon(Icons.password_outlined),
-                label: const Text('Change password'),
+              AppActionButtons(
+                maxColumns: 1,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _isMutating ? null : _showChangePasswordDialog,
+                    icon: const Icon(Icons.password_outlined),
+                    label: const Text('Change password'),
+                  ),
+                ],
               ),
             ],
           ),
@@ -351,20 +349,30 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   ),
                 ],
                 const SizedBox(height: AppSpacing.sm),
-                OutlinedButton.icon(
-                  onPressed: _isMutating ? null : _selfDeactivate,
-                  icon: const Icon(Icons.person_off_outlined),
-                  label: const Text('Deactivate my account'),
+                AppActionButtons(
+                  maxColumns: 1,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _isMutating ? null : _selfDeactivate,
+                      icon: const Icon(Icons.person_off_outlined),
+                      label: const Text('Deactivate my account'),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
         ],
         const SizedBox(height: AppSpacing.md),
-        FilledButton.icon(
-          onPressed: widget.onLogout,
-          icon: const Icon(Icons.logout),
-          label: const Text('Logout'),
+        AppActionButtons(
+          maxColumns: 1,
+          children: [
+            FilledButton.icon(
+              onPressed: widget.onLogout,
+              icon: const Icon(Icons.logout),
+              label: const Text('Logout'),
+            ),
+          ],
         ),
       ],
     );
@@ -480,13 +488,15 @@ class _EditPhoneDialogState extends ConsumerState<_EditPhoneDialog> {
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: _isSubmitting ? null : _submit,
-          child: Text(_isSubmitting ? 'Saving...' : 'Save'),
+        AppDialogActions(
+          cancel: TextButton(
+            onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          confirm: FilledButton(
+            onPressed: _isSubmitting ? null : _submit,
+            child: Text(_isSubmitting ? 'Saving...' : 'Save'),
+          ),
         ),
       ],
     );
@@ -650,13 +660,15 @@ class _ChangePasswordDialogState extends ConsumerState<_ChangePasswordDialog> {
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: _isSubmitting ? null : _submit,
-          child: Text(_isSubmitting ? 'Saving...' : 'Save'),
+        AppDialogActions(
+          cancel: TextButton(
+            onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          confirm: FilledButton(
+            onPressed: _isSubmitting ? null : _submit,
+            child: Text(_isSubmitting ? 'Saving...' : 'Save'),
+          ),
         ),
       ],
     );
@@ -821,13 +833,15 @@ class _SupportSettingsDialogState
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: _isSubmitting ? null : _submit,
-          child: Text(_isSubmitting ? 'Saving...' : 'Save'),
+        AppDialogActions(
+          cancel: TextButton(
+            onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          confirm: FilledButton(
+            onPressed: _isSubmitting ? null : _submit,
+            child: Text(_isSubmitting ? 'Saving...' : 'Save'),
+          ),
         ),
       ],
     );

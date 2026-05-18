@@ -61,6 +61,14 @@ const getAllProjects = async (req, res) => {
             WHERE sf.project_id = p.id
               AND sf.status = 'pending_review') as pending_features,
            (SELECT COUNT(*)
+            FROM spatial_feature sf
+            WHERE sf.project_id = p.id
+              AND sf.status = 'rejected') as rejected_features,
+           (SELECT COUNT(*)
+            FROM spatial_feature sf
+            WHERE sf.project_id = p.id
+              AND sf.status = 'draft') as draft_features,
+           (SELECT COUNT(*)
             FROM project_assignment pac
             WHERE pac.project_id = p.id
               AND pac.role = 'contributor'
@@ -220,6 +228,8 @@ const getProject = async (req, res) => {
             u.full_name as created_by_name,
             (SELECT COUNT(*) FROM spatial_feature WHERE project_id = p.id AND status = 'approved') as approved_features,
             (SELECT COUNT(*) FROM spatial_feature WHERE project_id = p.id AND status = 'pending_review') as pending_features,
+            (SELECT COUNT(*) FROM spatial_feature WHERE project_id = p.id AND status = 'rejected') as rejected_features,
+            (SELECT COUNT(*) FROM spatial_feature WHERE project_id = p.id AND status = 'draft') as draft_features,
             (SELECT COUNT(*) FROM project_assignment WHERE project_id = p.id AND role = 'contributor' AND status = 'approved') as contributor_count,
             (SELECT COUNT(*) FROM project_assignment WHERE project_id = p.id AND role = 'contributor' AND status = 'pending') as pending_assignment_requests,
             (SELECT COUNT(*) FROM project_assignment WHERE project_id = p.id AND role = 'contributor' AND status = 'rejected') as rejected_assignment_requests,
@@ -679,13 +689,15 @@ const getProjectFeatures = async (req, res) => {
   } else if (req.user?.role !== 'admin') {
     if (req.projectRole === 'admin') {
       // Project admins can see every feature lifecycle state for this project.
-    } else {
+    } else if (req.projectRole === 'contributor') {
       queryText += ` AND (
         sf.status = 'approved'
         OR sf.collected_by_user_id = $${paramIndex}
       )`;
       params.push(req.user?.id);
       paramIndex++;
+    } else {
+      queryText += ` AND sf.status = 'approved'`;
     }
   }
 
@@ -769,13 +781,15 @@ const getProjectFeatures = async (req, res) => {
   } else if (req.user?.role !== 'admin') {
     if (req.projectRole === 'admin') {
       // Project admins can see every feature lifecycle state for this project.
-    } else {
+    } else if (req.projectRole === 'contributor') {
       countQuery += ` AND (
         sf.status = 'approved'
         OR sf.collected_by_user_id = $${countParamIndex}
       )`;
       countParams.push(req.user?.id);
       countParamIndex++;
+    } else {
+      countQuery += ` AND sf.status = 'approved'`;
     }
   }
 

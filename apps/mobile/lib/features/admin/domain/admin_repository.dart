@@ -55,7 +55,8 @@ abstract class AdminRepository {
     String? status,
   });
 
-  Future<PaginatedResult<ManagedAssignmentSummary>> fetchManagedAssignmentsPage({
+  Future<PaginatedResult<ManagedAssignmentSummary>>
+  fetchManagedAssignmentsPage({
     String? status,
     String? query,
     int page = 1,
@@ -79,6 +80,7 @@ abstract class AdminRepository {
   Future<String> uploadCategoryIcon({
     required String filePath,
     String? fileName,
+    List<int>? bytes,
   });
 
   Future<ProjectCategorySummary> updateCategory({
@@ -106,7 +108,8 @@ abstract class AdminRepository {
     String projectId,
   );
 
-  Future<PaginatedResult<ManagedAssignmentSummary>> fetchProjectAssignmentsPage({
+  Future<PaginatedResult<ManagedAssignmentSummary>>
+  fetchProjectAssignmentsPage({
     required String projectId,
     required String status,
     String? query,

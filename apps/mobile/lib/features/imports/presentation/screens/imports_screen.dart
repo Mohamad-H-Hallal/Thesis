@@ -10,6 +10,7 @@ import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
+import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
@@ -47,6 +48,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
   String? _selectedAdminProjectId;
   PlatformFile? _selectedFile;
   bool _isUploading = false;
+  bool _showFilters = false;
   String _statusFilter = 'all';
   Timer? _refreshTimer;
   Future<void> Function()? _refreshImports;
@@ -222,24 +224,53 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      ..._statusOptions.map(
-                        (option) => ChoiceChip(
-                          label: Text(option.label),
-                          selected: _statusFilter == option.value,
-                          onSelected: (_) {
-                            setState(() {
-                              _statusFilter = option.value;
-                            });
-                          },
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final filterButton = OutlinedButton.icon(
+                        onPressed: () =>
+                            setState(() => _showFilters = !_showFilters),
+                        icon: Icon(
+                          _showFilters
+                              ? Icons.filter_alt_off_outlined
+                              : Icons.filter_alt_outlined,
                         ),
-                      ),
-                    ],
+                        label: Text(_showFilters ? 'Hide filters' : 'Filter'),
+                      );
+
+                      if (constraints.maxWidth < 560) {
+                        return SizedBox(
+                          width: double.infinity,
+                          child: filterButton,
+                        );
+                      }
+
+                      return Align(
+                        alignment: Alignment.centerLeft,
+                        child: SizedBox(width: 180, child: filterButton),
+                      );
+                    },
                   ),
-                  if (user.role == UserRole.admin) ...[
+                  if (_showFilters) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ..._statusOptions.map(
+                          (option) => ChoiceChip(
+                            label: Text(option.label),
+                            selected: _statusFilter == option.value,
+                            onSelected: (_) {
+                              setState(() {
+                                _statusFilter = option.value;
+                              });
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  if (_showFilters && user.role == UserRole.admin) ...[
                     const SizedBox(height: AppSpacing.sm),
                     if (hasFixedProject && fixedProject != null) ...[
                       InputDecorator(
@@ -362,6 +393,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                 hasMore: jobsState?.hasMore ?? false,
                 isLoadingMore: jobsState?.isLoadingMore ?? false,
                 onLoadMore: jobsController.loadMore,
+                gridMinItemWidth: 380,
                 itemBuilder: (context, job, _) => _ImportJobCard(
                   job: job,
                   onTap: () => context.push(AppRoutes.importDetails(job.id)),
@@ -499,9 +531,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: AppSpacing.sm),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                  AppActionButtons(
                     children: [
                       OutlinedButton.icon(
                         onPressed: _isUploading ? null : _pickFile,

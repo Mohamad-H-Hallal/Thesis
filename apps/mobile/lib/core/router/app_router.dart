@@ -29,6 +29,7 @@ import '../widgets/app_scaffold.dart';
 import 'route_paths.dart';
 
 const _selfDeactivatedNotice = 'Your account was deactivated successfully.';
+const _accountBlockedNotice = 'Your account has been blocked.';
 
 GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
   // On web, project details/map and other pushed routes need real shareable
@@ -53,6 +54,18 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
       }
 
       if (!auth.isAuthenticated || user == null) {
+        if (auth.errorCode == 'account_blocked') {
+          final notice = Uri.encodeComponent(
+            auth.error?.trim().isNotEmpty == true
+                ? auth.error!.trim()
+                : _accountBlockedNotice,
+          );
+          final target = '${AppRoutes.login}?notice=$notice';
+          if (state.uri.toString() == target) {
+            return null;
+          }
+          return target;
+        }
         if (auth.errorCode == 'self_deactivated') {
           final notice = Uri.encodeComponent(_selfDeactivatedNotice);
           final target = '${AppRoutes.login}?notice=$notice&success=true';
@@ -252,7 +265,11 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
                 projectId: projectId,
                 projectName: projectName,
                 onOpenMap: (item) => context.push(
-                  AppRoutes.mapForProject(item.projectId, featureId: item.id),
+                  AppRoutes.mapForProject(
+                    item.projectId,
+                    featureId: item.id,
+                    focusSource: AppRoutes.focusSourceReviewFeature,
+                  ),
                 ),
                 onReject: (item) async {
                   try {
@@ -347,6 +364,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
           final importId = state.pathParameters['importId'] ?? '';
           final projectId = state.uri.queryParameters['projectId'] ?? '';
           final featureId = state.uri.queryParameters['featureId'];
+          final focusSource = state.uri.queryParameters['focusSource'];
           return _buildPage(
             state,
             Scaffold(
@@ -356,6 +374,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
                 importId: importId,
                 projectId: projectId,
                 initialFeatureId: featureId,
+                initialFeatureSource: focusSource,
               ),
             ),
           );
@@ -381,6 +400,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         pageBuilder: (_, state) {
           final projectId = state.pathParameters['projectId'] ?? '';
           final featureId = state.uri.queryParameters['featureId'];
+          final focusSource = state.uri.queryParameters['focusSource'];
           final startCapture = state.uri.queryParameters['startCapture'] == '1';
           return _buildPage(
             state,
@@ -390,6 +410,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
               body: MapScreen(
                 initialProjectId: projectId,
                 initialFeatureId: featureId,
+                initialFeatureSource: focusSource,
                 startCaptureOnOpen: startCapture,
                 lockProjectSelection: true,
               ),
@@ -459,6 +480,14 @@ String _postAuthRedirectTarget({
   required Uri currentUri,
   required AppUser user,
 }) {
+  if (currentUri.path == AppRoutes.login ||
+      currentUri.path == AppRoutes.signup ||
+      currentUri.path == AppRoutes.splash ||
+      currentUri.path == AppRoutes.forgotPassword ||
+      currentUri.path == AppRoutes.resetPassword) {
+    return _defaultHomeForUser(user);
+  }
+
   final requested = _requestedTargetFromUri(currentUri);
   if (requested == null || requested.isEmpty) {
     return _defaultHomeForUser(user);

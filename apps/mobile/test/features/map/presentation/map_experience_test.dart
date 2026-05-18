@@ -247,6 +247,8 @@ AuthSession _session(UserRole role) {
 ProjectSummary _projectSummary({
   String name = 'Olive Tree Census',
   String id = 'project-1',
+  int approvedFeatures = 1,
+  int pendingReviews = 1,
 }) {
   return ProjectSummary(
     id: id,
@@ -254,8 +256,8 @@ ProjectSummary _projectSummary({
     category: 'Fruit Trees',
     status: 'active',
     assignedCollectors: 2,
-    pendingReviews: 1,
-    approvedFeatures: 4,
+    pendingReviews: pendingReviews,
+    approvedFeatures: approvedFeatures,
     description: 'Lebanon field collection project.',
     currentUserAssignmentRole: ProjectAssignmentRole.contributor,
     currentUserAssignmentStatus: ProjectAssignmentStatus.approved,
@@ -329,6 +331,29 @@ Widget _wrapWithScope({
     overrides: <Override>[
       projectMapViewportFeaturesProvider.overrideWith((ref, query) async {
         return ref.watch(projectMapFeaturesProvider(query.projectId).future);
+      }),
+      projectFeatureDetailsProvider.overrideWith((ref, featureId) async {
+        return _projectFeatures().firstWhere(
+          (feature) => feature.id == featureId,
+        );
+      }),
+      projectFeatureCountProvider.overrideWith((ref, query) async {
+        final session = ref.watch(authControllerProvider).session;
+        final allFeatures = await ref.watch(
+          projectMapFeaturesProvider(query.projectId).future,
+        );
+        final features = session?.user.role == UserRole.viewer
+            ? allFeatures
+                  .where((feature) => feature.status == 'approved')
+                  .toList(growable: false)
+            : allFeatures;
+        final statuses = query.statuses;
+        if (statuses == null) {
+          return features.length;
+        }
+        return features
+            .where((feature) => statuses.contains(feature.status))
+            .length;
       }),
       ...overrides,
     ],
@@ -598,7 +623,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Offline map'), findsOneWidget);
-      expect(find.byTooltip('Close offline map'), findsOneWidget);
+      expect(find.byTooltip('Close offline map'), findsNothing);
       expect(find.byTooltip('Current location'), findsNothing);
       expect(
         find.textContaining('stays readable without signal'),
@@ -623,13 +648,7 @@ void main() {
         findsOneWidget,
       );
 
-      await tester.dragUntilVisible(
-        find.byTooltip('Close offline map'),
-        find.byType(ListView).last,
-        const Offset(0, 220),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Close offline map'));
+      await tester.tapAt(const Offset(20, 20));
       await tester.pumpAndSettle();
 
       expect(find.text('Offline map'), findsNothing);
@@ -700,6 +719,59 @@ void main() {
       expect(find.textContaining('Rana'), findsWidgets);
     },
   );
+
+  testWidgets('project map opens and focuses routed feature details', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(430, 932));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    var detailFetchCount = 0;
+
+    await tester.pumpWidget(
+      _wrapWithScope(
+        overrides: <Override>[
+          authControllerProvider.overrideWith(
+            (ref) => _AuthenticatedAuthController(_session(UserRole.admin)),
+          ),
+          syncControllerProvider.overrideWith((ref) => _buildSyncController()),
+          currentLocationServiceProvider.overrideWithValue(
+            _FakeCurrentLocationService(
+              const CurrentLocationSnapshot(
+                position: LatLng(33.8938, 35.5018),
+                accuracyMeters: 6,
+              ),
+            ),
+          ),
+          mapProjectsProvider.overrideWith(
+            (ref) async => <ProjectSummary>[_projectSummary()],
+          ),
+          projectMapFeaturesProvider.overrideWith(
+            (ref, projectId) async => _projectFeatures(),
+          ),
+          projectFeatureDetailsProvider.overrideWith((ref, featureId) async {
+            detailFetchCount += 1;
+            return _projectFeatures().firstWhere(
+              (feature) => feature.id == featureId,
+            );
+          }),
+          offlineMapPackageProvider.overrideWith((ref) async => null),
+        ],
+        child: const MapScreen(
+          initialProjectId: 'project-1',
+          initialFeatureId: 'feature-line-002',
+          lockProjectSelection: true,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Orchard'), findsWidgets);
+    expect(find.text('Feature details'), findsWidgets);
+    expect(detailFetchCount, 1);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('map screen handles out-of-lebanon current location gracefully', (
     tester,
@@ -782,7 +854,9 @@ void main() {
             ),
           ),
           mapProjectsProvider.overrideWith(
-            (ref) async => <ProjectSummary>[_projectSummary()],
+            (ref) async => <ProjectSummary>[
+              _projectSummary(approvedFeatures: 0, pendingReviews: 0),
+            ],
           ),
           projectMapFeaturesProvider.overrideWith(
             (ref, projectId) async => const <MapFeatureSummary>[],
@@ -829,7 +903,9 @@ void main() {
             ),
           ),
           mapProjectsProvider.overrideWith(
-            (ref) async => <ProjectSummary>[_projectSummary()],
+            (ref) async => <ProjectSummary>[
+              _projectSummary(approvedFeatures: 0, pendingReviews: 0),
+            ],
           ),
           projectMapFeaturesProvider.overrideWith(
             (ref, projectId) async => const <MapFeatureSummary>[],

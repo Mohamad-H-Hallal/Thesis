@@ -20,6 +20,13 @@ class AppButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final hasIcon = icon != null || isLoading;
 
+    final labelText = Text(
+      label,
+      textAlign: TextAlign.center,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+    );
+
     final content = Row(
       mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
       mainAxisAlignment: MainAxisAlignment.center,
@@ -39,20 +46,19 @@ class AppButton extends StatelessWidget {
             ),
           ),
         if (hasIcon) const SizedBox(width: 8),
-        Flexible(
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
+        if (expand) Flexible(child: labelText) else labelText,
       ],
     );
 
-    return FilledButton(
+    final button = FilledButton(
       onPressed: isLoading ? null : onPressed,
       child: content,
     );
+
+    if (!expand) {
+      return button;
+    }
+
+    return SizedBox(width: double.infinity, child: button);
   }
 }

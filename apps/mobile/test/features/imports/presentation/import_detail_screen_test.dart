@@ -651,7 +651,13 @@ void main() {
 
       await tester.pumpAndSettle();
 
-      await tester.scrollUntilVisible(find.text('File-wide issues'), 300);
+      await tester.scrollUntilVisible(
+        find
+            .byKey(const ValueKey('import-validation-file-wide-issues-title'))
+            .first,
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
       await tester.pumpAndSettle();
 
       expect(find.text('File-wide issues'), findsOneWidget);
@@ -716,7 +722,11 @@ void main() {
 
       await tester.pumpAndSettle();
 
-      await tester.scrollUntilVisible(find.text('Import map').last, 300);
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('import-preview-map-title')).first,
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
       await tester.pumpAndSettle();
 
       expect(find.byType(FlutterMap), findsOneWidget);
@@ -1224,7 +1234,13 @@ void main() {
     );
 
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text('File-wide issues'), 300);
+    await tester.scrollUntilVisible(
+      find
+          .byKey(const ValueKey('import-validation-file-wide-issues-title'))
+          .first,
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
 
     expect(find.textContaining('feat_id'), findsWidgets);

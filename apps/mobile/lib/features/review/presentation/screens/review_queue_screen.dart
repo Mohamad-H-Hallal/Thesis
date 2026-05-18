@@ -6,7 +6,9 @@ import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
+import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
@@ -29,6 +31,7 @@ class ReviewQueueScreen extends ConsumerStatefulWidget {
 class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
   final TextEditingController _searchController = TextEditingController();
   _ReviewFilter _filter = _ReviewFilter.pending;
+  bool _showFilters = false;
 
   @override
   void dispose() {
@@ -69,7 +72,7 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
             Text(
               hasFixedProject
                   ? _filter == _ReviewFilter.pending
-                  ? '${itemsState.total} feature(s) awaiting review for ${widget.projectName ?? 'this project'}'
+                        ? '${itemsState.total} feature(s) awaiting review for ${widget.projectName ?? 'this project'}'
                         : '${itemsState.total} rejected feature(s) for ${widget.projectName ?? 'this project'}'
                   : _filter == _ReviewFilter.pending
                   ? '${itemsState.total} feature(s) awaiting admin review'
@@ -78,37 +81,73 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
             ),
             const SizedBox(height: AppSpacing.sm),
             AppCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SearchBar(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final searchBar = SearchBar(
                     controller: _searchController,
                     hintText: hasFixedProject
                         ? 'Search reviews by collector or feature ID'
                         : 'Search reviews by project, collector, or ID',
                     leading: const Icon(Icons.search),
                     onChanged: (_) => setState(() {}),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                  );
+                  final filterButton = OutlinedButton.icon(
+                    onPressed: () =>
+                        setState(() => _showFilters = !_showFilters),
+                    icon: Icon(
+                      _showFilters
+                          ? Icons.filter_alt_off_outlined
+                          : Icons.filter_alt_outlined,
+                    ),
+                    label: Text(_showFilters ? 'Hide filters' : 'Filter'),
+                  );
+                  final searchAndAction = constraints.maxWidth < 720
+                      ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            searchBar,
+                            const SizedBox(height: AppSpacing.sm),
+                            filterButton,
+                          ],
+                        )
+                      : Row(
+                          children: [
+                            Expanded(child: searchBar),
+                            const SizedBox(width: AppSpacing.sm),
+                            SizedBox(width: 180, child: filterButton),
+                          ],
+                        );
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      ChoiceChip(
-                        label: const Text('Pending'),
-                        selected: _filter == _ReviewFilter.pending,
-                        onSelected: (_) =>
-                            setState(() => _filter = _ReviewFilter.pending),
-                      ),
-                      ChoiceChip(
-                        label: const Text('Rejected'),
-                        selected: _filter == _ReviewFilter.rejected,
-                        onSelected: (_) =>
-                            setState(() => _filter = _ReviewFilter.rejected),
-                      ),
+                      searchAndAction,
+                      if (_showFilters) ...[
+                        const SizedBox(height: AppSpacing.sm),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            ChoiceChip(
+                              label: const Text('Pending'),
+                              selected: _filter == _ReviewFilter.pending,
+                              onSelected: (_) => setState(
+                                () => _filter = _ReviewFilter.pending,
+                              ),
+                            ),
+                            ChoiceChip(
+                              label: const Text('Rejected'),
+                              selected: _filter == _ReviewFilter.rejected,
+                              onSelected: (_) => setState(
+                                () => _filter = _ReviewFilter.rejected,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
-                  ),
-                ],
+                  );
+                },
               ),
             ),
             const SizedBox(height: AppSpacing.md),
@@ -145,10 +184,15 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
                 hasMore: itemsState.hasMore,
                 isLoadingMore: itemsState.isLoadingMore,
                 onLoadMore: controller.loadMore,
+                gridMinItemWidth: 420,
                 itemBuilder: (context, item, _) => _ReviewItemCard(
                   item: item,
                   onOpenMap: () => context.push(
-                    AppRoutes.mapForProject(item.projectId, featureId: item.id),
+                    AppRoutes.mapForProject(
+                      item.projectId,
+                      featureId: item.id,
+                      focusSource: AppRoutes.focusSourceReviewFeature,
+                    ),
                   ),
                   onApprove: () =>
                       _review(context, ref, item: item, status: 'approved'),
@@ -264,11 +308,13 @@ class _ReviewNoteDialogState extends State<_ReviewNoteDialog> {
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+        AppDialogActions(
+          cancel: TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          confirm: FilledButton(onPressed: _submit, child: const Text('Save')),
         ),
-        FilledButton(onPressed: _submit, child: const Text('Save')),
       ],
     );
   }
@@ -307,7 +353,7 @@ class _ReviewItemCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '${item.geometryType} • ${item.collectedBy ?? 'Unknown collector'}',
+                      item.collectedBy ?? 'Unknown collector',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     if (item.collectedAt != null)
@@ -327,20 +373,29 @@ class _ReviewItemCard extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              Chip(label: Text('Feature ${item.id.substring(0, 8)}')),
+              Chip(label: Text(_friendlyGeometryType(item.geometryType))),
               Chip(label: Text('${item.photoCount} photo(s)')),
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          AppActionButtons(
+            maxColumns: 1,
+            compactBreakpoint: 360,
+            fillRows: true,
             children: [
               OutlinedButton.icon(
                 onPressed: onOpenMap,
                 icon: const Icon(Icons.map_outlined, size: 18),
                 label: const Text('Open on map'),
               ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          AppActionButtons(
+            maxColumns: 2,
+            compactBreakpoint: 360,
+            fillRows: true,
+            children: [
               FilledButton.icon(
                 onPressed: onApprove,
                 icon: const Icon(Icons.check_circle_outline, size: 18),
@@ -472,6 +527,7 @@ class _ApprovedReviewList extends StatelessWidget {
             hasMore: hasMore,
             isLoadingMore: isLoadingMore,
             onLoadMore: onLoadMore,
+            gridMinItemWidth: 420,
             itemBuilder: (context, item, _) => AppCard(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -489,7 +545,7 @@ class _ApprovedReviewList extends StatelessWidget {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              '${item.geometryType} • ${item.collectedBy ?? 'Unknown collector'}',
+                              item.collectedBy ?? 'Unknown collector',
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                           ],
@@ -504,20 +560,31 @@ class _ApprovedReviewList extends StatelessWidget {
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      Chip(label: Text('Feature ${item.id.substring(0, 8)}')),
+                      Chip(
+                        label: Text(_friendlyGeometryType(item.geometryType)),
+                      ),
                       Chip(label: Text('${item.photoCount} photo(s)')),
                     ],
                   ),
                   const SizedBox(height: AppSpacing.sm),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                  AppActionButtons(
+                    maxColumns: 1,
+                    compactBreakpoint: 360,
+                    fillRows: true,
                     children: [
                       OutlinedButton.icon(
                         onPressed: () => onOpenMap(item),
                         icon: const Icon(Icons.map_outlined, size: 18),
                         label: const Text('Open on map'),
                       ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  AppActionButtons(
+                    maxColumns: 2,
+                    compactBreakpoint: 360,
+                    fillRows: true,
+                    children: [
                       FilledButton.tonalIcon(
                         onPressed: () => onReject(item),
                         icon: const Icon(Icons.cancel_outlined, size: 18),
@@ -531,5 +598,25 @@ class _ApprovedReviewList extends StatelessWidget {
           ),
       ],
     );
+  }
+}
+
+String _friendlyGeometryType(String rawType) {
+  switch (rawType) {
+    case 'LineString':
+      return 'Line';
+    case 'MultiLineString':
+      return 'Multi-line';
+    case 'MultiPoint':
+      return 'Multi-point';
+    case 'MultiPolygon':
+      return 'Multi-polygon';
+    case 'Point':
+    case 'Polygon':
+      return rawType;
+    default:
+      return rawType.replaceAll('_', ' ').trim().isEmpty
+          ? 'Geometry'
+          : rawType.replaceAll('_', ' ');
   }
 }

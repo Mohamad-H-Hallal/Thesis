@@ -6,7 +6,9 @@ import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
+import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
@@ -40,13 +42,15 @@ class _ProjectsManagementScreenState
         title: Text(dialogTitle),
         content: Text(dialogMessage),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(dialogTitle),
+          AppDialogActions(
+            cancel: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            confirm: FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(dialogTitle),
+            ),
           ),
         ],
       ),
@@ -108,21 +112,18 @@ class _ProjectsManagementScreenState
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(),
             children: [
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton.icon(
-                  onPressed: () => context.push(AppRoutes.projectCreate),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Create'),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
               AppCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     LayoutBuilder(
                       builder: (context, constraints) {
+                        final createButton = FilledButton.icon(
+                          onPressed: () =>
+                              context.push(AppRoutes.projectCreate),
+                          icon: const Icon(Icons.add),
+                          label: const Text('Create'),
+                        );
                         final filterButton = OutlinedButton.icon(
                           onPressed: () =>
                               setState(() => _showFilters = !_showFilters),
@@ -131,7 +132,7 @@ class _ProjectsManagementScreenState
                                 ? Icons.filter_alt_off_outlined
                                 : Icons.filter_alt_outlined,
                           ),
-                          label: Text(_showFilters ? 'Hide' : 'Filter'),
+                          label: Text(_showFilters ? 'Hide filters' : 'Filter'),
                         );
 
                         final searchBar = SearchBar(
@@ -150,7 +151,15 @@ class _ProjectsManagementScreenState
                             children: [
                               searchBar,
                               const SizedBox(height: AppSpacing.sm),
-                              filterButton,
+                              SizedBox(
+                                width: double.infinity,
+                                child: createButton,
+                              ),
+                              const SizedBox(height: AppSpacing.sm),
+                              SizedBox(
+                                width: double.infinity,
+                                child: filterButton,
+                              ),
                             ],
                           );
                         }
@@ -159,7 +168,9 @@ class _ProjectsManagementScreenState
                           children: [
                             Expanded(child: searchBar),
                             const SizedBox(width: AppSpacing.sm),
-                            filterButton,
+                            SizedBox(width: 180, child: createButton),
+                            const SizedBox(width: AppSpacing.sm),
+                            SizedBox(width: 160, child: filterButton),
                           ],
                         );
                       },
@@ -208,7 +219,9 @@ class _ProjectsManagementScreenState
                   message: projectsState.total == 0
                       ? 'Create your first project to start the mobile-first workflow.'
                       : 'No projects match the current search and status filter.',
-                  actionLabel: projectsState.total == 0 ? 'Create project' : null,
+                  actionLabel: projectsState.total == 0
+                      ? 'Create project'
+                      : null,
                   onAction: projectsState.total == 0
                       ? () => context.push(AppRoutes.projectCreate)
                       : null,
@@ -216,10 +229,15 @@ class _ProjectsManagementScreenState
               else
                 ProgressiveListSection<ProjectSummary>(
                   items: filtered,
-                  resetKey: Object.hash(_query, _statusFilter, projectsState.total),
+                  resetKey: Object.hash(
+                    _query,
+                    _statusFilter,
+                    projectsState.total,
+                  ),
                   hasMore: projectsState.hasMore,
                   isLoadingMore: projectsState.isLoadingMore,
                   onLoadMore: projectsController.loadMore,
+                  gridMinItemWidth: 420,
                   itemBuilder: (context, project, _) => AppCard(
                     child: LayoutBuilder(
                       builder: (context, constraints) {
@@ -407,9 +425,7 @@ class _ProjectsManagementScreenState
                               ],
                             ),
                             const SizedBox(height: AppSpacing.sm),
-                            Wrap(
-                              spacing: AppSpacing.sm,
-                              runSpacing: AppSpacing.sm,
+                            AppActionButtons(
                               children: [
                                 OutlinedButton.icon(
                                   onPressed: () => context.push(

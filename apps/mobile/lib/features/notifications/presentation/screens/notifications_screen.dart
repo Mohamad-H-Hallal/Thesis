@@ -82,7 +82,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                         children: [
                           summary,
                           const SizedBox(height: AppSpacing.sm),
-                          action,
+                          SizedBox(width: double.infinity, child: action),
                         ],
                       );
                     }
@@ -162,20 +162,53 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                 message: _filter == _NotificationFilter.unread
                     ? 'You have no unread updates right now.'
                     : _filter == _NotificationFilter.read
-                    ? 'You have no read notifications right now.'
-                    : 'Contributor requests, project requests, review outcomes, and export updates will appear here.',
+                  ? 'You have no read notifications right now.'
+                  : 'Contributor requests, project requests, review outcomes, and export updates will appear here.',
               )
             else
-              ...List<Widget>.generate(filtered.length, (index) {
-                final item = filtered[index];
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                  child: AnimatedReveal(
-                    delay: Duration(milliseconds: index * 45),
-                    child: _NotificationCard(item: item),
-                  ),
-                );
-              }),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final canGrid = constraints.maxWidth >= 760;
+                  if (!canGrid) {
+                    return Column(
+                      children: List<Widget>.generate(filtered.length, (index) {
+                        final item = filtered[index];
+                        return Padding(
+                          padding: const EdgeInsets.only(
+                            bottom: AppSpacing.sm,
+                          ),
+                          child: AnimatedReveal(
+                            delay: Duration(milliseconds: index * 45),
+                            child: _NotificationCard(item: item),
+                          ),
+                        );
+                      }),
+                    );
+                  }
+
+                  const gap = AppSpacing.sm;
+                  final columns = (constraints.maxWidth / 380)
+                      .floor()
+                      .clamp(2, 3);
+                  final itemWidth =
+                      (constraints.maxWidth - (gap * (columns - 1))) /
+                      columns;
+                  return Wrap(
+                    spacing: gap,
+                    runSpacing: gap,
+                    children: List<Widget>.generate(filtered.length, (index) {
+                      final item = filtered[index];
+                      return SizedBox(
+                        width: itemWidth,
+                        child: AnimatedReveal(
+                          delay: Duration(milliseconds: index * 45),
+                          child: _NotificationCard(item: item),
+                        ),
+                      );
+                    }),
+                  );
+                },
+              ),
             if (notifications.isLoadingMore) ...[
               const SizedBox(height: AppSpacing.sm),
               const Center(child: CircularProgressIndicator()),

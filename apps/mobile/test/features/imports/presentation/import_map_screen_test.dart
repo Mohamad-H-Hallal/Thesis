@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:lebanese_gis_mobile/core/providers/providers.dart';
+import 'package:lebanese_gis_mobile/core/router/route_paths.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_models.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_repository.dart';
 import 'package:lebanese_gis_mobile/features/auth/presentation/controllers/auth_controller.dart';
@@ -92,7 +93,13 @@ class _AuthenticatedAuthController extends AuthController {
   }
 }
 
-GisImportJob _job() {
+GisImportJob _job({
+  int geometryCount = 2,
+  int pendingFeatureCount = 1,
+  int approvedFeatureCount = 1,
+  int rejectedFeatureCount = 0,
+  int failedFeatureCount = 0,
+}) {
   return GisImportJob(
     id: 'import-1',
     projectId: 'project-1',
@@ -105,11 +112,11 @@ GisImportJob _job() {
     fileChecksumSha256: 'a' * 64,
     fileType: 'geojson',
     status: 'pending_review',
-    geometryCount: 2,
-    pendingFeatureCount: 1,
-    approvedFeatureCount: 1,
-    rejectedFeatureCount: 0,
-    failedFeatureCount: 0,
+    geometryCount: geometryCount,
+    pendingFeatureCount: pendingFeatureCount,
+    approvedFeatureCount: approvedFeatureCount,
+    rejectedFeatureCount: rejectedFeatureCount,
+    failedFeatureCount: failedFeatureCount,
     warningCount: 0,
     errorCount: 0,
     geometryTypes: const <String>['Point'],
@@ -186,7 +193,7 @@ void main() {
         minLat: 33.045,
         maxLon: 36.645,
         maxLat: 34.695,
-        zoom: 8,
+        zoom: 7.4,
       );
       final details = GisImportDetails(
         job: _job(),
@@ -248,10 +255,14 @@ void main() {
         minLat: 33.045,
         maxLon: 36.645,
         maxLat: 34.695,
-        zoom: 8,
+        zoom: 7.4,
       );
       final details = GisImportDetails(
-        job: _job(),
+        job: _job(
+          geometryCount: 1,
+          pendingFeatureCount: 0,
+          approvedFeatureCount: 1,
+        ),
         previewFeatures: const <ImportedFeature>[],
         previewSummary: const ImportPreviewSummary(
           geometryFeatureCount: 1,
@@ -311,6 +322,7 @@ void main() {
   testWidgets('import feature details show only comments for that feature', (
     tester,
   ) async {
+    var featureFetchCount = 0;
     const query = ImportMapQuery(
       importId: 'import-1',
       projectId: 'project-1',
@@ -318,7 +330,7 @@ void main() {
       minLat: 33.045,
       maxLon: 36.645,
       maxLat: 34.695,
-      zoom: 8,
+      zoom: 7.4,
     );
     final details = GisImportDetails(
       job: _job(),
@@ -381,6 +393,15 @@ void main() {
               approvedProjectFeatures: <MapFeatureSummary>[_approvedFeature()],
             ),
           ),
+          importFeatureProvider.overrideWith((ref, query) async {
+            featureFetchCount += 1;
+            return _importedFeature(
+              query.featureId,
+              'pending_review',
+              35.5,
+              33.9,
+            );
+          }),
         ],
         child: const MaterialApp(
           home: Scaffold(
@@ -403,6 +424,80 @@ void main() {
       find.text('This import-level comment is not feature-specific.'),
       findsNothing,
     );
+    expect(featureFetchCount, 1);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'import map can focus approved project context from a route target',
+    (tester) async {
+      var projectFeatureFetchCount = 0;
+      const query = ImportMapQuery(
+        importId: 'import-1',
+        projectId: 'project-1',
+        minLon: 35.094,
+        minLat: 33.045,
+        maxLon: 36.645,
+        maxLat: 34.695,
+        zoom: 7.4,
+      );
+      final details = GisImportDetails(
+        job: _job(),
+        previewFeatures: const <ImportedFeature>[],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 1,
+          previewFeatureCount: 1,
+          outsideWorkspaceFeatureCount: 0,
+        ),
+        comments: const <ImportComment>[],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWith(
+              (_) => _AuthenticatedAuthController(_session()),
+            ),
+            importDetailsProvider(
+              'import-1',
+            ).overrideWith((ref) async => details),
+            importMapDataProvider(query).overrideWith(
+              (ref) async => ImportMapData(
+                stagedFeatures: <ImportedFeature>[
+                  _importedFeature('feature-1', 'pending_review', 35.5, 33.9),
+                ],
+                approvedProjectFeatures: <MapFeatureSummary>[
+                  _approvedFeature(),
+                ],
+              ),
+            ),
+            projectFeatureDetailsProvider.overrideWith((ref, featureId) async {
+              projectFeatureFetchCount += 1;
+              return _approvedFeature();
+            }),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(
+              body: ImportMapScreen(
+                importId: 'import-1',
+                projectId: 'project-1',
+                initialFeatureId: 'approved-1',
+                initialFeatureSource: AppRoutes.focusSourceApprovedContext,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Approved project feature shown only as map context.'),
+        findsOneWidget,
+      );
+      expect(find.text('Approved context feature'), findsWidgets);
+      expect(projectFeatureFetchCount, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

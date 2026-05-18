@@ -194,6 +194,12 @@ class ApiProjectsRepository implements ProjectsRepository {
           _toInt(row['approved_features']) ??
           _toInt(row['approvedFeatures']) ??
           0,
+      rejectedFeatures:
+          _toInt(row['rejected_features']) ??
+          _toInt(row['rejectedFeatures']) ??
+          0,
+      draftFeatures:
+          _toInt(row['draft_features']) ?? _toInt(row['draftFeatures']) ?? 0,
       assignedCollectors:
           _toInt(row['contributor_count']) ??
           _toInt(row['assigned_collectors']) ??
@@ -207,8 +213,7 @@ class ApiProjectsRepository implements ProjectsRepository {
           _toInt(row['pending_assignments']) ??
           0,
       rejectedAssignmentRequests:
-          _toInt(row['rejected_assignment_requests']) ??
-          0,
+          _toInt(row['rejected_assignment_requests']) ?? 0,
       description:
           (row['description'] as String?) ??
           (row['objectives'] as String?) ??

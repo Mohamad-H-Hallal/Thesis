@@ -5,6 +5,8 @@ import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_action_buttons.dart';
+import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
@@ -52,18 +54,21 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
               : 'Promote ${user.fullName} to admin?',
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(
-              user.role == UserRole.admin
-                  ? 'Revert'
-                  : hasAssignments
-                  ? 'Promote and Unassign'
-                  : 'Promote',
+          AppDialogActions(
+            buttonWidth: 168,
+            cancel: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            confirm: FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(
+                user.role == UserRole.admin
+                    ? 'Revert'
+                    : hasAssignments
+                    ? 'Promote and Unassign'
+                    : 'Promote',
+              ),
             ),
           ),
         ],
@@ -108,13 +113,15 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
               : 'Unblock ${user.fullName}? Their previous access state will be restored.',
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(shouldBlock ? 'Block' : 'Unblock'),
+          AppDialogActions(
+            cancel: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            confirm: FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(shouldBlock ? 'Block' : 'Unblock'),
+            ),
           ),
         ],
       ),
@@ -231,7 +238,10 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
                           children: [
                             searchBar,
                             const SizedBox(height: AppSpacing.sm),
-                            filterButton,
+                            SizedBox(
+                              width: double.infinity,
+                              child: filterButton,
+                            ),
                           ],
                         );
                       }
@@ -316,6 +326,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
                 hasMore: usersState.hasMore,
                 isLoadingMore: usersState.isLoadingMore,
                 onLoadMore: usersController.loadMore,
+                gridMinItemWidth: 380,
                 itemBuilder: (context, user, _) => _UserCard(
                   user: user,
                   isSuperAdmin: isSuperAdmin,
@@ -443,9 +454,7 @@ class _UserCard extends StatelessWidget {
           if (isSuperAdmin && onToggleAdmin != null ||
               onToggleBlock != null) ...[
             const SizedBox(height: AppSpacing.sm),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
+            AppActionButtons(
               children: [
                 if (isSuperAdmin && onToggleAdmin != null)
                   FilledButton.tonalIcon(

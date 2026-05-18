@@ -110,6 +110,7 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
                     hasMore: projectsState.hasMore,
                     isLoadingMore: projectsState.isLoadingMore,
                     onLoadMore: projectsController.loadMore,
+                    gridMinItemWidth: 420,
                     itemBuilder: (context, project, index) {
                       final contributorReadOnly =
                           role == UserRole.contributor &&
