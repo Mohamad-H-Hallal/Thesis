@@ -1840,10 +1840,18 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           transitionBuilder: (child, animation) =>
                               FadeTransition(
                                 opacity: animation,
-                                child: SizeTransition(
-                                  sizeFactor: animation,
-                                  axisAlignment: -1,
+                                child: AnimatedBuilder(
+                                  animation: animation,
                                   child: child,
+                                  builder: (context, child) => ClipRect(
+                                    child: Align(
+                                      alignment: AlignmentDirectional.topStart,
+                                      heightFactor: animation.value
+                                          .clamp(0.0, 1.0)
+                                          .toDouble(),
+                                      child: child,
+                                    ),
+                                  ),
                                 ),
                               ),
                           child: _isProjectMapPanelVisible
