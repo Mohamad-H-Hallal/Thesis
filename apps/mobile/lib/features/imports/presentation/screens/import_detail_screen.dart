@@ -1686,7 +1686,7 @@ class _ImportCommentsCard extends StatelessWidget {
                                   ),
                                 ),
                                 icon: const Icon(Icons.map_outlined, size: 18),
-                                label: const Text('Open on map'),
+                                label: const Text('Open map'),
                               ),
                             ],
                           ),
@@ -1865,13 +1865,13 @@ class _ImportedFeatureCard extends StatelessWidget {
                   OutlinedButton.icon(
                     onPressed: onOpenMap,
                     icon: const Icon(Icons.map_outlined),
-                    label: const Text('Open on map'),
+                    label: const Text('Open map'),
                   ),
                 if (onAddComment != null)
                   OutlinedButton.icon(
                     onPressed: onAddComment,
                     icon: const Icon(Icons.comment_outlined),
-                    label: const Text('Comment on feature'),
+                    label: const Text('Comment'),
                   ),
               ],
             ),

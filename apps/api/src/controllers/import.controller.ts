@@ -1977,8 +1977,9 @@ const listImports = async (req: Request, res: Response): Promise<void> => {
   }
 
   if (status) {
-    whereClauses.push(`gij.status = $${paramIndex}`);
-    params.push(status);
+    const statusFilter = status === 'processing' ? ['uploaded', 'processing'] : [status];
+    whereClauses.push(`gij.status = ANY($${paramIndex}::gis_import_status[])`);
+    params.push(statusFilter);
     paramIndex += 1;
   }
 

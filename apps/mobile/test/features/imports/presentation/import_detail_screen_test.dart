@@ -919,7 +919,7 @@ void main() {
     expect(find.text('Meadow'), findsOneWidget);
     expect(find.text('Mountain LineString'), findsNothing);
     expect(find.text('Meadow LineString'), findsNothing);
-    expect(find.text('Open on map'), findsNWidgets(2));
+    expect(find.text('Open map'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
   });
 

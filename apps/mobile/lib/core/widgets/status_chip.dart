@@ -12,16 +12,20 @@ class StatusChip extends StatelessWidget {
 
     late final Color bg;
     late final Color fg;
+    late final String label;
     switch (normalized) {
       case 'active':
       case 'approved':
       case 'completed':
         bg = Colors.green.withValues(alpha: 0.14);
         fg = Colors.green.shade800;
+        label = normalized.replaceAll('_', ' ');
         break;
+      case 'uploaded':
       case 'processing':
         bg = Colors.blue.withValues(alpha: 0.14);
         fg = Colors.blue.shade800;
+        label = 'processing';
         break;
       case 'pending_review':
       case 'pending':
@@ -30,15 +34,20 @@ class StatusChip extends StatelessWidget {
       case 'paused':
         bg = Colors.orange.withValues(alpha: 0.18);
         fg = Colors.orange.shade900;
+        label = normalized == 'pending_review'
+            ? 'pending'
+            : normalized.replaceAll('_', ' ');
         break;
       case 'rejected':
       case 'failed':
         bg = Colors.red.withValues(alpha: 0.16);
         fg = Colors.red.shade800;
+        label = normalized.replaceAll('_', ' ');
         break;
       default:
         bg = theme.colorScheme.surfaceContainerHighest;
         fg = theme.colorScheme.onSurfaceVariant;
+        label = normalized.replaceAll('_', ' ');
     }
 
     return Container(
@@ -48,7 +57,7 @@ class StatusChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
-        status.replaceAll('_', ' '),
+        label,
         style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: fg),
       ),
     );

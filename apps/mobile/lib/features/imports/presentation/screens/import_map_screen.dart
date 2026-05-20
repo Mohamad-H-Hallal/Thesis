@@ -3643,19 +3643,19 @@ class _ImportFeatureDetailsSheet extends ConsumerWidget {
                     FilledButton.icon(
                       onPressed: onApprove,
                       icon: const Icon(Icons.check_circle_outline),
-                      label: const Text('Approve feature'),
+                      label: const Text('Approve'),
                     ),
                   if (canReview && onReject != null)
                     OutlinedButton.icon(
                       onPressed: onReject,
                       icon: const Icon(Icons.cancel_outlined),
-                      label: const Text('Reject feature'),
+                      label: const Text('Reject'),
                     ),
                   if (canComment && onAddComment != null)
                     FilledButton.tonalIcon(
                       onPressed: onAddComment,
                       icon: const Icon(Icons.comment_outlined),
-                      label: const Text('Comment on feature'),
+                      label: const Text('Comment'),
                     ),
                 ],
               ),

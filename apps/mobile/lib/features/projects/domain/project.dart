@@ -123,13 +123,34 @@ class CollectionFormFieldSchema {
   }
 
   factory CollectionFormFieldSchema.fromMap(Map<String, dynamic> map) {
+    final key = (map['key'] as String?)?.trim() ?? '';
+    final label = (map['label'] as String?)?.trim();
+    final rawType = (map['type'] as String?)?.trim();
+    final normalizedType = CollectionFieldType.values.firstWhere(
+      (candidate) => candidate.name == rawType,
+      orElse: () {
+        if (rawType == 'textarea') {
+          return CollectionFieldType.multiline;
+        }
+        if (rawType == 'float' || rawType == 'int') {
+          return CollectionFieldType.number;
+        }
+        return CollectionFieldType.text;
+      },
+    );
+
     return CollectionFormFieldSchema(
-      key: map['key'] as String,
-      label: map['label'] as String,
-      type: CollectionFieldType.values.byName(map['type'] as String),
+      key: key,
+      label: label?.isNotEmpty == true
+          ? label!
+          : key.isNotEmpty
+          ? key
+          : 'Field',
+      type: normalizedType,
       required: (map['required'] as bool?) ?? false,
       options: ((map['options'] as List?) ?? const <dynamic>[])
-          .cast<String>()
+          .map((value) => value.toString().trim())
+          .where((value) => value.isNotEmpty)
           .toList(growable: false),
       hint: map['hint'] as String?,
       min: map['min'] as num?,
@@ -162,9 +183,10 @@ class CollectionFormSchema {
     return CollectionFormSchema(
       version: (map['version'] as String?) ?? 'v0.0',
       fields: rawFields
+          .whereType<Map>()
           .map(
             (field) => CollectionFormFieldSchema.fromMap(
-              Map<String, dynamic>.from(field as Map),
+              Map<String, dynamic>.from(field),
             ),
           )
           .toList(growable: false),

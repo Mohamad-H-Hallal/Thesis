@@ -709,7 +709,6 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
 
   List<_StatusOption> get _statusOptions => const <_StatusOption>[
     _StatusOption('all', 'All'),
-    _StatusOption('uploaded', 'Uploaded'),
     _StatusOption('processing', 'Processing'),
     _StatusOption('pending_review', 'Pending'),
     _StatusOption('approved', 'Approved'),

@@ -317,9 +317,10 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
           _attributeValues[field.key] = value is bool ? value : false;
           break;
         case CollectionFieldType.select:
+          final options = _safeSelectOptions(field);
           _attributeValues[field.key] = value?.toString().isNotEmpty == true
               ? value.toString()
-              : (field.options.isEmpty ? null : field.options.first);
+              : (options.isEmpty ? null : options.first);
           break;
         case CollectionFieldType.date:
           _attributeValues[field.key] = value?.toString();
@@ -1046,41 +1047,58 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
   }
 
   Widget _buildSchemaField(CollectionFormFieldSchema field) {
-    final errorText = _fieldErrors[field.key];
+    final fieldKey = field.key;
+    final label = _safeSchemaFieldLabel(field);
+    final errorText = _fieldErrors[fieldKey];
     switch (field.type) {
       case CollectionFieldType.text:
       case CollectionFieldType.multiline:
         return AppTextField(
-          label: field.required ? '${field.label} *' : field.label,
-          controller: _attributeControllers[field.key]!,
+          label: field.required ? '$label *' : label,
+          controller: _textControllerForField(field),
           hint: field.hint,
           minLines: field.type == CollectionFieldType.multiline ? 3 : null,
           maxLines: field.type == CollectionFieldType.multiline ? 6 : 1,
           validator: (_) => errorText,
           onChanged: (_) {
-            if (_fieldErrors.remove(field.key) != null) {
+            if (_fieldErrors.remove(fieldKey) != null) {
               setState(() {});
             }
           },
         );
       case CollectionFieldType.number:
         return AppTextField(
-          label: field.required ? '${field.label} *' : field.label,
-          controller: _attributeControllers[field.key]!,
+          label: field.required ? '$label *' : label,
+          controller: _textControllerForField(field),
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           hint: field.unit == null ? field.hint : 'Unit: ${field.unit}',
           validator: (_) => errorText,
           onChanged: (_) {
-            if (_fieldErrors.remove(field.key) != null) {
+            if (_fieldErrors.remove(fieldKey) != null) {
               setState(() {});
             }
           },
         );
       case CollectionFieldType.select:
+        final options = _safeSelectOptions(field);
+        if (options.isEmpty) {
+          return InputDecorator(
+            decoration: InputDecoration(
+              labelText: field.required ? '$label *' : label,
+              errorText: errorText,
+            ),
+            child: Text(
+              'No choices configured for this field.',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          );
+        }
+        final rawValue = _attributeValues[fieldKey]?.toString();
+        final selectedValue = options.contains(rawValue) ? rawValue : null;
         return DropdownButtonFormField<String>(
-          initialValue: _attributeValues[field.key] as String?,
+          initialValue: selectedValue,
           isExpanded: true,
-          items: field.options
+          items: options
               .map(
                 (option) =>
                     DropdownMenuItem(value: option, child: Text(option)),
@@ -1088,38 +1106,41 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
               .toList(growable: false),
           onChanged: (value) {
             setState(() {
-              _attributeValues[field.key] = value;
-              _fieldErrors.remove(field.key);
+              _attributeValues[fieldKey] = value;
+              _fieldErrors.remove(fieldKey);
             });
           },
           decoration: InputDecoration(
-            labelText: field.required ? '${field.label} *' : field.label,
+            labelText: field.required ? '$label *' : label,
             errorText: errorText,
           ),
         );
       case CollectionFieldType.boolean:
-        final value = (_attributeValues[field.key] as bool?) ?? false;
+        final rawValue = _attributeValues[fieldKey];
+        final value = rawValue is bool
+            ? rawValue
+            : rawValue?.toString().toLowerCase() == 'true';
         return SwitchListTile(
-          title: Text(field.label),
+          title: Text(label),
           value: value,
           onChanged: (nextValue) {
             setState(() {
-              _attributeValues[field.key] = nextValue;
-              _fieldErrors.remove(field.key);
+              _attributeValues[fieldKey] = nextValue;
+              _fieldErrors.remove(fieldKey);
             });
           },
           subtitle: errorText == null ? null : Text(errorText),
           contentPadding: EdgeInsets.zero,
         );
       case CollectionFieldType.date:
-        final rawDate = _attributeValues[field.key] as String?;
+        final rawDate = _attributeValues[fieldKey]?.toString();
         return AppCard(
           child: LayoutBuilder(
             builder: (context, constraints) {
               final dateSummary = Text(
                 rawDate == null || rawDate.isEmpty
-                    ? '${field.label}${field.required ? ' *' : ''}: Not selected'
-                    : '${field.label}: $rawDate',
+                    ? '$label${field.required ? ' *' : ''}: Not selected'
+                    : '$label: $rawDate',
               );
               final pickButton = OutlinedButton.icon(
                 onPressed: () async {
@@ -1134,7 +1155,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                     return;
                   }
                   setState(() {
-                    _attributeValues[field.key] =
+                    _attributeValues[fieldKey] =
                         '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
                   });
                 },
@@ -1164,6 +1185,41 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
           ),
         );
     }
+  }
+
+  TextEditingController _textControllerForField(
+    CollectionFormFieldSchema field,
+  ) {
+    final fieldKey = field.key;
+    return _attributeControllers.putIfAbsent(
+      fieldKey,
+      () => TextEditingController(
+        text: _attributeValues[fieldKey]?.toString() ?? '',
+      ),
+    );
+  }
+
+  String _safeSchemaFieldLabel(CollectionFormFieldSchema field) {
+    final label = field.label.trim();
+    if (label.isNotEmpty) {
+      return label;
+    }
+    final key = field.key.trim();
+    if (key.isNotEmpty) {
+      return key
+          .replaceAll(RegExp(r'[_\-]+'), ' ')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+    }
+    return 'Field';
+  }
+
+  List<String> _safeSelectOptions(CollectionFormFieldSchema field) {
+    final seen = <String>{};
+    return field.options
+        .map((option) => option.trim())
+        .where((option) => option.isNotEmpty && seen.add(option))
+        .toList(growable: false);
   }
 
   String _formatBytes(int bytes) {

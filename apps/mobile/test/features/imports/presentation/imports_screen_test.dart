@@ -106,7 +106,12 @@ class _FakeImportsRepository implements ImportsRepository {
   }) async {
     return jobs
         .where((job) {
-          if (status != null && job.status != status) {
+          final statusMatches =
+              status == null ||
+              (status == 'processing'
+                  ? job.status == 'processing' || job.status == 'uploaded'
+                  : job.status == status);
+          if (!statusMatches) {
             return false;
           }
           if (projectId != null && job.projectId != projectId) {
@@ -394,6 +399,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Category filter'), findsOneWidget);
     expect(find.text('Project filter'), findsOneWidget);
+    expect(find.text('Uploaded'), findsNothing);
+    expect(find.text('Processing'), findsOneWidget);
     expect(find.text('No imports match this filter'), findsNothing);
   });
 

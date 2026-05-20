@@ -3813,7 +3813,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           onSuccess: () => Navigator.of(sheetContext).pop(),
                         ),
                         icon: const Icon(Icons.check_circle_outline),
-                        label: const Text('Approve feature'),
+                        label: const Text('Approve'),
                       ),
                     if (feature.status == 'pending_review' ||
                         feature.status == 'approved')
@@ -3824,7 +3824,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           onSuccess: () => Navigator.of(sheetContext).pop(),
                         ),
                         icon: const Icon(Icons.cancel_outlined),
-                        label: const Text('Reject feature'),
+                        label: const Text('Reject'),
                       ),
                   ],
                 ),

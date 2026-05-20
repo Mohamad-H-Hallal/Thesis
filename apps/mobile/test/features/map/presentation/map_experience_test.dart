@@ -249,6 +249,7 @@ ProjectSummary _projectSummary({
   String id = 'project-1',
   int approvedFeatures = 1,
   int pendingReviews = 1,
+  CollectionFormSchema? collectionFormSchema,
 }) {
   return ProjectSummary(
     id: id,
@@ -263,18 +264,20 @@ ProjectSummary _projectSummary({
     currentUserAssignmentStatus: ProjectAssignmentStatus.approved,
     visibleToViewers: true,
     allowedGeometryTypes: const <String>['Point', 'LineString', 'Polygon'],
-    collectionFormSchema: const CollectionFormSchema(
-      version: 'v1.0',
-      fields: <CollectionFormFieldSchema>[
-        CollectionFormFieldSchema(
-          key: 'tree_type',
-          label: 'Tree type',
-          type: CollectionFieldType.select,
-          required: true,
-          options: <String>['Olive', 'Citrus'],
+    collectionFormSchema:
+        collectionFormSchema ??
+        const CollectionFormSchema(
+          version: 'v1.0',
+          fields: <CollectionFormFieldSchema>[
+            CollectionFormFieldSchema(
+              key: 'tree_type',
+              label: 'Tree type',
+              type: CollectionFieldType.select,
+              required: true,
+              options: <String>['Olive', 'Citrus'],
+            ),
+          ],
         ),
-      ],
-    ),
   );
 }
 
@@ -1086,6 +1089,85 @@ void main() {
         ),
         findsNothing,
       );
+    },
+  );
+
+  testWidgets(
+    'add feature attributes handle malformed schema fields without crashing',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(430, 932));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final malformedSchema = CollectionFormSchema.fromMap(<String, dynamic>{
+        'version': null,
+        'fields': <dynamic>[
+          <String, dynamic>{
+            'key': 'name',
+            'label': null,
+            'type': 'text',
+            'required': true,
+          },
+          <String, dynamic>{
+            'key': 'kind',
+            'label': 'Kind',
+            'type': 'select',
+            'options': null,
+            'required': true,
+          },
+          <String, dynamic>{'label': null, 'type': 'unknown'},
+          null,
+          'not a field',
+        ],
+      });
+      final project = _projectSummary(collectionFormSchema: malformedSchema);
+
+      await tester.pumpWidget(
+        _wrapWithScope(
+          overrides: <Override>[
+            authControllerProvider.overrideWith(
+              (ref) =>
+                  _AuthenticatedAuthController(_session(UserRole.contributor)),
+            ),
+            currentLocationServiceProvider.overrideWithValue(
+              _FakeCurrentLocationService(
+                const CurrentLocationSnapshot(
+                  position: LatLng(33.901, 35.511),
+                  accuracyMeters: 5.2,
+                ),
+              ),
+            ),
+            projectListProvider.overrideWith(
+              (ref, scope) async => <ProjectSummary>[project],
+            ),
+            projectMapFeaturesProvider.overrideWith(
+              (ref, projectId) async => const <MapFeatureSummary>[],
+            ),
+            localDraftFeaturesProvider.overrideWith(
+              (ref) async => const <LocalDraftFeature>[],
+            ),
+          ],
+          child: AddFeatureScreen(
+            initialProjectId: 'project-1',
+            captureSeed: const AddFeatureCaptureSeed(
+              projectId: 'project-1',
+              geometryType: 'Point',
+              vertices: <LatLng>[LatLng(33.901, 35.511)],
+              gpsAccuracyMeters: 4.7,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Collection form'), findsOneWidget);
+      expect(find.text('name *'), findsOneWidget);
+      expect(
+        find.text('No choices configured for this field.'),
+        findsOneWidget,
+      );
+      expect(find.text('Field'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     },
   );
 

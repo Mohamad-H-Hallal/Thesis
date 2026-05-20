@@ -386,7 +386,7 @@ class _ReviewItemCard extends StatelessWidget {
               OutlinedButton.icon(
                 onPressed: onOpenMap,
                 icon: const Icon(Icons.map_outlined, size: 18),
-                label: const Text('Open on map'),
+                label: const Text('Open map'),
               ),
             ],
           ),
@@ -575,7 +575,7 @@ class _ApprovedReviewList extends StatelessWidget {
                       OutlinedButton.icon(
                         onPressed: () => onOpenMap(item),
                         icon: const Icon(Icons.map_outlined, size: 18),
-                        label: const Text('Open on map'),
+                        label: const Text('Open map'),
                       ),
                     ],
                   ),
