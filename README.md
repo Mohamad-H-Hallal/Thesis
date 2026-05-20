@@ -266,6 +266,7 @@ bash ./scripts/restore.sh ./backups/gis_app_YYYYMMDD_HHMMSS.dump
 
 ## Handover Documentation
 
+- `docs/FINAL_HANDOVER_AND_DEPLOYMENT_GUIDE.md`
 - `docs/handover/03-ops-runbook.md`
 - `docs/handover/04-release-checklist.md`
 - `docs/handover/05-user-guide.md`

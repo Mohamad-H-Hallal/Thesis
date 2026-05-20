@@ -1,7 +1,8 @@
 # Monorepo Docs
 
-- `project-plan.md`: phased delivery plan (no AI pipeline).
-- `phase-1/01-scope-baseline.md`: scope baseline for non-AI MVP.
+- `FINAL_HANDOVER_AND_DEPLOYMENT_GUIDE.md`: consolidated final handover, deployment, audit, and manual-testing guide.
+- `project-plan.md`: phased delivery plan for the delivered non-AI MVP; AI/GEE classification remains future thesis or production integration scope.
+- `phase-1/01-scope-baseline.md`: scope baseline for the delivered non-AI MVP.
 - `phase-1/02-rbac-matrix.md`: role/permission matrix.
 - `phase-1/03-data-dictionary-v0.1.md`: pilot data dictionary draft.
 - `phase-1/04-form-schema-versioning.md`: schema change/versioning policy.
@@ -18,3 +19,5 @@
 - `phase-11/03-training-materials-and-sops.md`: training packs and SOP framework.
 - `phase-11/04-go-live-support-and-release-cycle.md`: go-live/hypercare and monthly release cycle.
 - `phase-11/05-operations-checklists.md`: deployment and incident checklists.
+
+Tracked files under `handover/evidence/` are historical verification artifacts from earlier release checks. Treat them as evidence of the run they were captured from, not as current runtime failures unless a current validation report explicitly says so.
