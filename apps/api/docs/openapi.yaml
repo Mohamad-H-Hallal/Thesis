@@ -788,6 +788,48 @@ paths:
       summary: Request project export
       parameters:
         - $ref: '#/components/parameters/projectId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                format:
+                  type: string
+                  enum: [geojson, shapefile]
+                  default: geojson
+                status_filter:
+                  type: array
+                  items:
+                    type: string
+                    enum: [draft, submitted, approved, rejected]
+                  default: [approved]
+                date_from:
+                  type: string
+                  format: date
+                date_to:
+                  type: string
+                  format: date
+                bbox:
+                  type: string
+                  description: minLon,minLat,maxLon,maxLat
+                export_polygon:
+                  description: GeoJSON Polygon in EPSG:4326, sent as an object or JSON string.
+                  oneOf:
+                    - type: object
+                    - type: string
+                feature_type:
+                  type: string
+                  description: Feature type value stored in feature_type, type, or class attributes.
+                include_photos:
+                  type: boolean
+                  default: true
+                geometry_types:
+                  type: array
+                  items:
+                    type: string
+                    enum: [Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon]
       responses:
         '202':
           description: Export queued
@@ -851,6 +893,7 @@ paths:
       security:
         - bearerAuth: []
       summary: Upload a staged GIS import file for a project
+      description: Supports GeoJSON, zipped Shapefile, KML, KMZ, CSV, and Excel .xlsx uploads. Photo reference attributes are preserved as feature metadata; binary photo files are not automatically imported into app photo storage.
       parameters:
         - $ref: '#/components/parameters/projectId'
       requestBody:

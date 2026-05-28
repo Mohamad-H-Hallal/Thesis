@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
+import vm from 'node:vm';
 
 const AdmZip = require('adm-zip');
 const { DOMParser } = require('@xmldom/xmldom');
@@ -164,7 +165,7 @@ const mapRenderGeometrySql = (
 `;
 };
 
-type ImportFileType = 'geojson' | 'shapefile_zip' | 'kml' | 'kmz';
+type ImportFileType = 'geojson' | 'shapefile_zip' | 'kml' | 'kmz' | 'csv' | 'xlsx';
 type GeometryType =
   | 'Point'
   | 'MultiPoint'
@@ -395,8 +396,14 @@ const inferImportFileType = (filename: string): ImportFileType => {
   if (lower.endsWith('.zip')) {
     return 'shapefile_zip';
   }
+  if (lower.endsWith('.csv')) {
+    return 'csv';
+  }
+  if (lower.endsWith('.xlsx')) {
+    return 'xlsx';
+  }
   throw new AppError(
-    'Unsupported GIS file type. Upload GeoJSON, zipped shapefile, KML, or KMZ.',
+    'Unsupported GIS file type. Upload GeoJSON, zipped shapefile, KML, KMZ, CSV, or Excel .xlsx.',
     400,
   );
 };
@@ -411,6 +418,93 @@ const ensureAttributesObject = (attributes: unknown): Record<string, unknown> =>
     return {};
   }
   return Object.fromEntries(Object.entries(attributes as PlainObject));
+};
+
+const PHOTO_REFERENCE_KEYS = new Set([
+  'photo',
+  'photos',
+  'photourl',
+  'photourls',
+  'image',
+  'imageurl',
+  'imageurls',
+  'picture',
+  'pictureurl',
+  'attachment',
+  'attachments',
+  'media',
+  'mediaurl',
+  'file',
+  'filepath',
+]);
+
+const sanitizeImportedText = (value: string): string => {
+  const withoutControlCharacters = Array.from(value)
+    .map((character) => {
+      const code = character.charCodeAt(0);
+      return (code >= 0 && code <= 8) ||
+        code === 11 ||
+        code === 12 ||
+        (code >= 14 && code <= 31) ||
+        code === 127
+        ? ' '
+        : character;
+    })
+    .join('')
+    .trim();
+  const csvSafe = /^[=+\-@]/.test(withoutControlCharacters)
+    ? `'${withoutControlCharacters}`
+    : withoutControlCharacters;
+  return csvSafe.slice(0, 4096);
+};
+
+const sanitizePhotoReferenceValue = (value: unknown): unknown => {
+  if (typeof value === 'string') {
+    return sanitizeImportedText(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(sanitizePhotoReferenceValue);
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, nestedValue]) => [
+        sanitizeImportedText(key),
+        sanitizePhotoReferenceValue(nestedValue),
+      ]),
+    );
+  }
+  return value;
+};
+
+const sanitizeImportedAttributes = (
+  attributes: Record<string, unknown>,
+): Record<string, unknown> => {
+  const sanitized: Record<string, unknown> = {};
+  for (const [rawKey, value] of Object.entries(attributes)) {
+    const key = sanitizeImportedText(rawKey);
+    if (!key) {
+      continue;
+    }
+    const normalizedKey = normalizeHeaderKey(key);
+    sanitized[key] = PHOTO_REFERENCE_KEYS.has(normalizedKey)
+      ? sanitizePhotoReferenceValue(value)
+      : value;
+  }
+  return sanitized;
+};
+
+const normalizeImportedAttributeAliases = (
+  attributes: Record<string, unknown>,
+): Record<string, unknown> => {
+  if (attributes.feature_type === undefined) {
+    const featureTypeAlias = Object.keys(attributes).find(
+      (key) => ['featuretyp', 'featurety'].includes(normalizeHeaderKey(key)),
+    );
+    if (featureTypeAlias) {
+      attributes.feature_type = attributes[featureTypeAlias];
+    }
+  }
+  return attributes;
 };
 
 const isPosition = (value: unknown): value is [number, number] => {
@@ -523,6 +617,43 @@ const transformGeometryCoordinates = (
   }
 };
 
+const stripPositionDimensions = (position: unknown): unknown => {
+  if (!Array.isArray(position) || position.length < 2) {
+    return position;
+  }
+  return [Number(position[0]), Number(position[1])];
+};
+
+const stripGeometryCoordinateDimensions = (
+  geometryType: GeometryType,
+  coordinates: unknown,
+): unknown => {
+  switch (geometryType) {
+    case 'Point':
+      return stripPositionDimensions(coordinates);
+    case 'MultiPoint':
+    case 'LineString':
+      return Array.isArray(coordinates) ? coordinates.map(stripPositionDimensions) : coordinates;
+    case 'MultiLineString':
+    case 'Polygon':
+      return Array.isArray(coordinates)
+        ? coordinates.map((line) =>
+            Array.isArray(line) ? line.map(stripPositionDimensions) : line,
+          )
+        : coordinates;
+    case 'MultiPolygon':
+      return Array.isArray(coordinates)
+        ? coordinates.map((polygon) =>
+            Array.isArray(polygon)
+              ? polygon.map((ring) =>
+                  Array.isArray(ring) ? ring.map(stripPositionDimensions) : ring,
+                )
+              : polygon,
+          )
+        : coordinates;
+  }
+};
+
 const normalizeCrsName = (raw: unknown): string | null => {
   const normalized = String(raw ?? '').trim();
   return normalized.length > 0 ? normalized.toUpperCase() : null;
@@ -577,7 +708,7 @@ const normalizeGeoJsonGeometry = (
     };
   }
 
-  let coordinates = geometry.coordinates;
+  let coordinates = stripGeometryCoordinateDimensions(geometryType, geometry.coordinates);
   if (sourceCrs === 'EPSG:3857' || sourceCrs === 'URN:OGC:DEF:CRS:EPSG::3857') {
     coordinates = transformGeometryCoordinates(geometryType, coordinates, mercatorToWgs84);
   }
@@ -663,7 +794,9 @@ const parseGeoJson = async (filePath: string): Promise<ParsedImportPayload> => {
   }
 
   const normalized = features.map((feature, index) => {
-    const properties = ensureAttributesObject(feature?.properties);
+    const properties = normalizeImportedAttributeAliases(
+      sanitizeImportedAttributes(ensureAttributesObject(feature?.properties)),
+    );
     const geometryResult = normalizeGeoJsonGeometry(
       feature?.geometry as PlainObject | null,
       sourceCrs,
@@ -716,9 +849,45 @@ const flattenShpParsed = (parsed: any): { layerName: string | null; features: an
   return { layerName: null, features: [] };
 };
 
+let cachedShapefileParser: ((buffer: Buffer) => Promise<any>) | null = null;
+
+const loadShapefileParser = async (): Promise<(buffer: Buffer) => Promise<any>> => {
+  if (cachedShapefileParser) {
+    return cachedShapefileParser;
+  }
+
+  const bundlePath = require.resolve('shpjs');
+  const source = await fs.readFile(bundlePath, 'utf8');
+  const sandbox: Record<string, unknown> = {
+    module: { exports: {} },
+    exports: {},
+    self: globalThis,
+    TextDecoder,
+    TextEncoder,
+    DecompressionStream: (globalThis as typeof globalThis & { DecompressionStream?: unknown })
+      .DecompressionStream,
+    console,
+  };
+
+  vm.runInNewContext(source, sandbox, { filename: bundlePath });
+
+  const parser = (sandbox.module as { exports?: unknown }).exports;
+  if (typeof parser !== 'function') {
+    throw new Error('Shapefile parser could not be loaded.');
+  }
+
+  cachedShapefileParser = parser as (buffer: Buffer) => Promise<any>;
+  return cachedShapefileParser;
+};
+
 const parseShapefileZip = async (filePath: string): Promise<ParsedImportPayload> => {
   const buffer = await fs.readFile(filePath);
-  const zip = new AdmZip(buffer);
+  let zip: any;
+  try {
+    zip = new AdmZip(buffer);
+  } catch (_error) {
+    throw new AppError('The Shapefile ZIP could not be read. Upload a valid zipped shapefile.', 400);
+  }
   const entries = zip.getEntries().map((entry: any) => entry.entryName.toLowerCase());
   const hasShp = entries.some((entry: string) => entry.endsWith('.shp'));
   const hasShx = entries.some((entry: string) => entry.endsWith('.shx'));
@@ -727,11 +896,13 @@ const parseShapefileZip = async (filePath: string): Promise<ParsedImportPayload>
     throw new AppError('A zipped shapefile must include .shp, .shx, and .dbf files.', 400);
   }
 
-  const shpModule = await import('shpjs');
-  const parsed = await (shpModule.default as any)(buffer);
+  const parseShapefile = await loadShapefileParser();
+  const parsed = await parseShapefile(buffer);
   const flattened = flattenShpParsed(parsed);
   const normalized = flattened.features.map((feature: any, index: number) => {
-    const properties = ensureAttributesObject(feature?.properties);
+    const properties = normalizeImportedAttributeAliases(
+      sanitizeImportedAttributes(ensureAttributesObject(feature?.properties)),
+    );
     const geometryResult = normalizeGeoJsonGeometry(
       feature?.geometry as PlainObject | null,
       'EPSG:4326',
@@ -764,11 +935,49 @@ const parseShapefileZip = async (filePath: string): Promise<ParsedImportPayload>
 };
 
 const parseKmlDocument = (xml: string, fileType: ImportFileType): ParsedImportPayload => {
-  const document = new DOMParser().parseFromString(xml, 'text/xml');
-  const featureCollection = toGeoJSON.kml(document);
+  let document: any;
+  try {
+    document = new DOMParser().parseFromString(xml, 'text/xml');
+  } catch (_error) {
+    throw new AppError('The KML file could not be parsed.', 400);
+  }
+  if (document.getElementsByTagName('parsererror')?.length > 0) {
+    throw new AppError('The KML file could not be parsed.', 400);
+  }
+  let featureCollection: any;
+  try {
+    featureCollection = toGeoJSON.kml(document);
+  } catch (_error) {
+    throw new AppError('The KML file could not be parsed.', 400);
+  }
   const features = Array.isArray(featureCollection?.features) ? featureCollection.features : [];
+  const placemarks = Array.from(document.getElementsByTagName('Placemark') ?? []) as any[];
+  const extendedDataByFeature = placemarks.map((placemark) => {
+    const attributes: Record<string, unknown> = {};
+    const dataNodes = Array.from(placemark.getElementsByTagName('Data') ?? []) as any[];
+    for (const dataNode of dataNodes) {
+      const key = dataNode.getAttribute('name');
+      if (!key) {
+        continue;
+      }
+      const valueNode = dataNode.getElementsByTagName('value')?.[0];
+      attributes[key] = valueNode?.textContent ?? '';
+    }
+    const simpleDataNodes = Array.from(placemark.getElementsByTagName('SimpleData') ?? []) as any[];
+    for (const simpleDataNode of simpleDataNodes) {
+      const key = simpleDataNode.getAttribute('name');
+      if (!key) {
+        continue;
+      }
+      attributes[key] = simpleDataNode.textContent ?? '';
+    }
+    return attributes;
+  });
   const normalized = features.map((feature: any, index: number) => {
-    const properties = ensureAttributesObject(feature?.properties);
+    const properties = normalizeImportedAttributeAliases(sanitizeImportedAttributes({
+      ...extendedDataByFeature[index],
+      ...ensureAttributesObject(feature?.properties),
+    }));
     const geometryResult = normalizeGeoJsonGeometry(
       feature?.geometry as PlainObject | null,
       'EPSG:4326',
@@ -802,7 +1011,12 @@ const parseKml = async (filePath: string): Promise<ParsedImportPayload> => {
 
 const parseKmz = async (filePath: string): Promise<ParsedImportPayload> => {
   const buffer = await fs.readFile(filePath);
-  const zip = new AdmZip(buffer);
+  let zip: any;
+  try {
+    zip = new AdmZip(buffer);
+  } catch (_error) {
+    throw new AppError('The KMZ archive could not be read. Upload a valid KMZ file.', 400);
+  }
   const kmlEntry = zip
     .getEntries()
     .find((entry: any) => entry.entryName.toLowerCase().endsWith('.kml'));
@@ -821,6 +1035,392 @@ const parseKmz = async (filePath: string): Promise<ParsedImportPayload> => {
   };
 };
 
+const normalizeHeaderKey = (value: unknown): string =>
+  String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const parseDelimitedRows = (raw: string, delimiter = ','): string[][] => {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let inQuotes = false;
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index];
+    const next = raw[index + 1];
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        cell += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (char === delimiter && !inQuotes) {
+      row.push(cell);
+      cell = '';
+      continue;
+    }
+    if ((char === '\n' || char === '\r') && !inQuotes) {
+      if (char === '\r' && next === '\n') {
+        index += 1;
+      }
+      row.push(cell);
+      if (row.some((value) => value.trim().length > 0)) {
+        rows.push(row);
+      }
+      row = [];
+      cell = '';
+      continue;
+    }
+    cell += char;
+  }
+  row.push(cell);
+  if (row.some((value) => value.trim().length > 0)) {
+    rows.push(row);
+  }
+  return rows;
+};
+
+const detectCsvDelimiter = (raw: string): string => {
+  const sampleLine = raw
+    .split(/\r?\n/)
+    .find((line) => line.trim().length > 0) ?? '';
+  const candidates = [',', ';', '\t', '|'];
+  const scored = candidates.map((delimiter) => ({
+    delimiter,
+    columns: parseDelimitedRows(sampleLine, delimiter)[0]?.length ?? 0,
+  }));
+  return scored.sort((left, right) => right.columns - left.columns)[0]?.delimiter ?? ',';
+};
+
+const uniqueTabularHeaders = (rawHeaders: unknown[]): string[] => {
+  const seen = new Map<string, number>();
+  return rawHeaders.map((rawHeader, index) => {
+    const baseHeader =
+      String(rawHeader ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/[\s-]+/g, '_')
+        .replace(/[^a-z0-9_]/g, '')
+        .replace(/_+/g, '_')
+        .replace(/^_|_$/g, '') || `column_${index + 1}`;
+    const normalized = normalizeHeaderKey(baseHeader) || `column${index + 1}`;
+    const count = (seen.get(normalized) ?? 0) + 1;
+    seen.set(normalized, count);
+    return count === 1 ? baseHeader : `${baseHeader}_${count}`;
+  });
+};
+
+const cellValue = (row: Record<string, unknown>, key: string | null): string => {
+  if (!key) {
+    return '';
+  }
+  return String(row[key] ?? '').trim();
+};
+
+const parseNumberCell = (value: string): number | null => {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const normalizeTabularCellValue = (value: unknown): string => String(value ?? '').trim();
+
+const splitTopLevel = (value: string): string[] => {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const char of value) {
+    if (char === '(') {
+      depth += 1;
+    } else if (char === ')') {
+      depth -= 1;
+    }
+    if (char === ',' && depth === 0) {
+      parts.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim().length > 0) {
+    parts.push(current.trim());
+  }
+  return parts;
+};
+
+const parseWktPosition = (value: string): [number, number] | null => {
+  const parts = value.trim().split(/\s+/).map((part) => Number.parseFloat(part));
+  if (parts.length < 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) {
+    return null;
+  }
+  return [parts[0], parts[1]];
+};
+
+const stripOuterParens = (value: string): string => {
+  const trimmed = value.trim();
+  return trimmed.startsWith('(') && trimmed.endsWith(')') ? trimmed.slice(1, -1).trim() : trimmed;
+};
+
+const parseWktGeometry = (raw: string): PlainObject | null => {
+  const trimmed = raw.trim();
+  const match = /^([a-z]+)\s*(?:Z|M|ZM)?\s*\((.*)\)$/i.exec(trimmed);
+  if (!match) {
+    return null;
+  }
+  const type = match[1].toUpperCase();
+  const body = match[2].trim();
+  if (type === 'POINT') {
+    const position = parseWktPosition(body);
+    return position ? { type: 'Point', coordinates: position } : null;
+  }
+  if (type === 'LINESTRING') {
+    const coordinates = splitTopLevel(body).map(parseWktPosition);
+    return coordinates.every(Boolean)
+      ? { type: 'LineString', coordinates: coordinates as Array<[number, number]> }
+      : null;
+  }
+  if (type === 'POLYGON') {
+    const rings = splitTopLevel(body).map((ring) =>
+      splitTopLevel(stripOuterParens(ring)).map(parseWktPosition),
+    );
+    return rings.every((ring) => ring.every(Boolean))
+      ? { type: 'Polygon', coordinates: rings as Array<Array<[number, number]>> }
+      : null;
+  }
+  if (type === 'MULTIPOINT') {
+    const coordinates = splitTopLevel(body).map((point) => parseWktPosition(stripOuterParens(point)));
+    return coordinates.every(Boolean)
+      ? { type: 'MultiPoint', coordinates: coordinates as Array<[number, number]> }
+      : null;
+  }
+  if (type === 'MULTILINESTRING') {
+    const lines = splitTopLevel(body).map((line) =>
+      splitTopLevel(stripOuterParens(line)).map(parseWktPosition),
+    );
+    return lines.every((line) => line.every(Boolean))
+      ? { type: 'MultiLineString', coordinates: lines as Array<Array<[number, number]>> }
+      : null;
+  }
+  if (type === 'MULTIPOLYGON') {
+    const polygons = splitTopLevel(body).map((polygon) =>
+      splitTopLevel(stripOuterParens(polygon)).map((ring) =>
+        splitTopLevel(stripOuterParens(ring)).map(parseWktPosition),
+      ),
+    );
+    return polygons.every((polygon) => polygon.every((ring) => ring.every(Boolean)))
+      ? { type: 'MultiPolygon', coordinates: polygons as Array<Array<Array<[number, number]>>> }
+      : null;
+  }
+  return null;
+};
+
+const detectTabularGeometryColumns = (headers: string[]) => {
+  const byNormalized = new Map(headers.map((header) => [normalizeHeaderKey(header), header]));
+  const latLonPairs = [
+    ['latitude', 'longitude'],
+    ['latitude', 'long'],
+    ['lat', 'lon'],
+    ['lat', 'long'],
+    ['lat', 'lng'],
+    ['y', 'x'],
+  ];
+  for (const [latKey, lonKey] of latLonPairs) {
+    const latHeader = byNormalized.get(latKey);
+    const lonHeader = byNormalized.get(lonKey);
+    if (latHeader && lonHeader) {
+      return { mode: 'latlon' as const, latHeader, lonHeader, geometryHeader: null };
+    }
+  }
+  for (const key of ['geometry', 'geom', 'wkt']) {
+    const geometryHeader = byNormalized.get(key);
+    if (geometryHeader) {
+      return { mode: 'geometry' as const, latHeader: null, lonHeader: null, geometryHeader };
+    }
+  }
+  throw new AppError(
+    'No supported geometry columns found. Use lat/lon, WKT, or GeoJSON geometry.',
+    400,
+  );
+};
+
+const buildTabularFeatures = (
+  rows: Array<Record<string, unknown>>,
+  fileType: 'csv' | 'xlsx',
+  metadata: Record<string, unknown>,
+): ParsedImportPayload => {
+  if (rows.length === 0) {
+    throw new AppError('The uploaded CSV/Excel file is empty.', 400);
+  }
+  const headers = Object.keys(rows[0] ?? {});
+  const geometryColumns = detectTabularGeometryColumns(headers);
+  const features = rows.map((row, index) => {
+    let geometry: PlainObject | null = null;
+    let geometryType: GeometryType | null = null;
+    if (geometryColumns.mode === 'latlon') {
+      const lat = parseNumberCell(cellValue(row, geometryColumns.latHeader));
+      const lon = parseNumberCell(cellValue(row, geometryColumns.lonHeader));
+      if (lat !== null && lon !== null && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+        geometry = { type: 'Point', coordinates: [lon, lat] };
+        geometryType = 'Point';
+      }
+    } else {
+      const rawGeometry = cellValue(row, geometryColumns.geometryHeader);
+      if (rawGeometry.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(rawGeometry);
+          const normalized = normalizeGeoJsonGeometry(parsed, null);
+          geometry = normalized.geometry;
+          geometryType = normalized.geometryType;
+        } catch (_error) {
+          geometry = null;
+        }
+      } else {
+        const parsed = parseWktGeometry(rawGeometry);
+        const normalized = normalizeGeoJsonGeometry(parsed, null);
+        geometry = normalized.geometry;
+        geometryType = normalized.geometryType;
+      }
+    }
+    const attributes = normalizeImportedAttributeAliases(sanitizeImportedAttributes(Object.fromEntries(
+      Object.entries(row).filter(([key]) =>
+        key !== geometryColumns.latHeader &&
+        key !== geometryColumns.lonHeader &&
+        key !== geometryColumns.geometryHeader
+      ),
+    )));
+    return {
+      sourceIndex: index,
+      sourceIdentifier: cellValue(row, 'id') || null,
+      sourceFeatureName: cellValue(row, 'name') || null,
+      displayTitle: featureTitleFromAttributes(attributes, geometryType, index),
+      geometryType,
+      geometry,
+      attributes,
+    };
+  });
+  return {
+    fileType,
+    sourceCrs: 'EPSG:4326',
+    sourceLayerName: fileType === 'xlsx' ? String(metadata.sheet_name ?? 'Sheet 1') : null,
+    features,
+    fileMetadata: {
+      ...metadata,
+      headers,
+      geometry_detection: geometryColumns,
+      row_count: rows.length,
+    },
+  };
+};
+
+const parseCsv = async (filePath: string): Promise<ParsedImportPayload> => {
+  const raw = await fs.readFile(filePath, 'utf8');
+  const sanitizedRaw = raw.replace(/^\uFEFF/, '');
+  const delimiter = detectCsvDelimiter(sanitizedRaw);
+  const rows = parseDelimitedRows(sanitizedRaw, delimiter);
+  if (rows.length < 2) {
+    throw new AppError('The uploaded CSV file is empty or has no data rows.', 400);
+  }
+  const headers = uniqueTabularHeaders(rows[0]);
+  const dataRows = rows.slice(1).map((row) =>
+    Object.fromEntries(headers.map((header, index) => [header, normalizeTabularCellValue(row[index])])),
+  );
+  return buildTabularFeatures(dataRows, 'csv', { delimiter, header_row: 1 });
+};
+
+const firstXmlText = (node: any, tagName: string): string | null => {
+  const item = node.getElementsByTagName(tagName)?.[0];
+  return item?.textContent ?? null;
+};
+
+const parseXlsxWorksheetRows = ({
+  parser,
+  sheetEntry,
+  sharedStrings,
+}: {
+  parser: any;
+  sheetEntry: any;
+  sharedStrings: string[];
+}): string[][] => {
+  const sheet = parser.parseFromString(sheetEntry.getData().toString('utf8'), 'text/xml');
+  const rowNodes = Array.from(sheet.getElementsByTagName('row') ?? []) as any[];
+  return rowNodes.map((rowNode) => {
+    const values: string[] = [];
+    const cells = Array.from(rowNode.getElementsByTagName('c') ?? []) as any[];
+    for (const cell of cells) {
+      const ref = String(cell.getAttribute('r') ?? '');
+      const columnLetters = /^[A-Z]+/i.exec(ref)?.[0]?.toUpperCase() ?? '';
+      const columnIndex = columnLetters
+        .split('')
+        .reduce((sum, char) => sum * 26 + char.charCodeAt(0) - 64, 0) - 1;
+      const type = cell.getAttribute('t');
+      const rawValue = firstXmlText(cell, 'v') ?? firstXmlText(cell, 't') ?? '';
+      const value = type === 's' ? sharedStrings[Number.parseInt(rawValue, 10)] ?? '' : rawValue;
+      values[columnIndex >= 0 ? columnIndex : values.length] = value;
+    }
+    return values;
+  }).filter((row) => row.some((value) => String(value ?? '').trim().length > 0));
+};
+
+const parseXlsx = async (filePath: string): Promise<ParsedImportPayload> => {
+  const zip = new AdmZip(await fs.readFile(filePath));
+  if (zip.getEntries().some((entry: any) => entry.entryName.toLowerCase().endsWith('vbaProject.bin'.toLowerCase()))) {
+    throw new AppError('Macro-enabled Excel content is not supported for GIS imports.', 400);
+  }
+  const workbookEntry = zip.getEntry('xl/workbook.xml');
+  const relsEntry = zip.getEntry('xl/_rels/workbook.xml.rels');
+  const sharedEntry = zip.getEntry('xl/sharedStrings.xml');
+  if (!workbookEntry || !relsEntry) {
+    throw new AppError('The Excel workbook could not be read.', 400);
+  }
+  const parser = new DOMParser();
+  const workbook = parser.parseFromString(workbookEntry.getData().toString('utf8'), 'text/xml');
+  const sheets = Array.from(workbook.getElementsByTagName('sheet') ?? []) as any[];
+  const rels = parser.parseFromString(relsEntry.getData().toString('utf8'), 'text/xml');
+  const relationships = Array.from(rels.getElementsByTagName('Relationship') ?? []) as any[];
+  const sharedStrings = sharedEntry
+    ? (Array.from(parser.parseFromString(sharedEntry.getData().toString('utf8'), 'text/xml').getElementsByTagName('si') ?? []) as any[])
+        .map((si) => Array.from(si.getElementsByTagName('t') ?? []).map((t: any) => t.textContent ?? '').join(''))
+    : [];
+
+  let lastError: InstanceType<typeof AppError> | null = null;
+  for (const [sheetIndex, sheet] of sheets.entries()) {
+    const sheetName = sheet?.getAttribute('name') ?? `Sheet ${sheetIndex + 1}`;
+    const relId = sheet?.getAttribute('r:id');
+    const target = relationships.find((rel) => rel.getAttribute('Id') === relId)?.getAttribute('Target');
+    const sheetPath = target
+      ? `xl/${String(target).replace(/^\/?xl\//, '')}`
+      : `xl/worksheets/sheet${sheetIndex + 1}.xml`;
+    const sheetEntry = zip.getEntry(sheetPath);
+    if (!sheetEntry) {
+      lastError = new AppError(`Excel worksheet "${sheetName}" could not be read.`, 400);
+      continue;
+    }
+    const matrix = parseXlsxWorksheetRows({ parser, sheetEntry, sharedStrings });
+    if (matrix.length < 2) {
+      lastError = new AppError(`Excel worksheet "${sheetName}" is empty or has no data rows.`, 400);
+      continue;
+    }
+    const headers = uniqueTabularHeaders(matrix[0]);
+    const dataRows = matrix.slice(1).map((row) =>
+      Object.fromEntries(headers.map((header, index) => [header, normalizeTabularCellValue(row[index])])),
+    );
+    try {
+      return buildTabularFeatures(dataRows, 'xlsx', {
+        sheet_name: sheetName,
+        sheet_index: sheetIndex + 1,
+        header_row: 1,
+      });
+    } catch (error: unknown) {
+      if (error instanceof AppError) {
+        lastError = error;
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError ?? new AppError('The Excel workbook does not contain a readable worksheet.', 400);
+};
+
 const parseImportFile = async (
   filePath: string,
   fileType: ImportFileType,
@@ -834,6 +1434,10 @@ const parseImportFile = async (
       return parseKml(filePath);
     case 'kmz':
       return parseKmz(filePath);
+    case 'csv':
+      return parseCsv(filePath);
+    case 'xlsx':
+      return parseXlsx(filePath);
   }
 };
 
@@ -1609,9 +2213,16 @@ const processImportJob = async (importJobId: string): Promise<void> => {
   try {
     parsed = await parseImportFile(job.file_path, job.file_type);
   } catch (error) {
+    logger.warn('GIS import file parsing failed', {
+      importJobId,
+      fileType: job.file_type,
+      error: error instanceof Error ? error.message : String(error),
+    });
     const message =
       error instanceof AppError
         ? error.message
+        : error instanceof Error && error.message.trim().length > 0
+          ? error.message.trim()
         : 'The uploaded GIS file could not be processed.';
     await failImportJob(importJobId, {
       projectId: job.project_id,
@@ -2045,7 +2656,6 @@ const getImportDetails = async (req: Request, res: Response): Promise<void> => {
      FROM gis_import_feature gif
      LEFT JOIN "user" reviewer ON reviewer.id = gif.reviewed_by_user_id
      WHERE gif.import_job_id = $1
-       AND gif.geom IS NOT NULL
      ORDER BY gif.source_index ASC
      LIMIT $2`,
     [importId, IMPORT_PREVIEW_LIMIT],

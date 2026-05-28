@@ -1,5 +1,7 @@
 const fs = require('fs').promises;
 const path = require('path');
+const AdmZip = require('adm-zip');
+const shpwrite = require('@mapbox/shp-write');
 
 const {
   app,
@@ -19,6 +21,8 @@ const {
   loginUser,
 } = require('./helpers/api-test-helpers');
 
+jest.setTimeout(90000);
+
 const tempFiles = [];
 
 const createTempGeoJsonFile = async (name, payload) => {
@@ -31,6 +35,138 @@ const createTempGeoJsonFile = async (name, payload) => {
   return filePath;
 };
 
+const createTempTextFile = async (name, extension, content) => {
+  const filePath = path.join(
+    __dirname,
+    `${name}-${Date.now()}-${Math.random().toString(16).slice(2)}.${extension}`,
+  );
+  await fs.writeFile(filePath, content, 'utf8');
+  tempFiles.push(filePath);
+  return filePath;
+};
+
+const createTempBinaryFile = async (name, extension, content) => {
+  const filePath = path.join(
+    __dirname,
+    `${name}-${Date.now()}-${Math.random().toString(16).slice(2)}.${extension}`,
+  );
+  await fs.writeFile(filePath, Buffer.isBuffer(content) ? content : Buffer.from(content));
+  tempFiles.push(filePath);
+  return filePath;
+};
+
+const createTempXlsxFile = async (name, rowsOrSheets) => {
+  const filePath = path.join(
+    __dirname,
+    `${name}-${Date.now()}-${Math.random().toString(16).slice(2)}.xlsx`,
+  );
+  const sheets = Array.isArray(rowsOrSheets?.[0]?.rows)
+    ? rowsOrSheets
+    : [{ name: 'Sheet 1', rows: rowsOrSheets }];
+  const columnName = (index) => String.fromCharCode('A'.charCodeAt(0) + index);
+  const escapeXml = (value) =>
+    String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  const sheetXml = (rows) =>
+    rows
+      .map(
+        (row, rowIndex) =>
+          `<row r="${rowIndex + 1}">${row
+            .map(
+              (value, colIndex) =>
+                `<c r="${columnName(colIndex)}${rowIndex + 1}" t="inlineStr"><is><t>${escapeXml(
+                  value,
+                )}</t></is></c>`,
+            )
+            .join('')}</row>`,
+      )
+      .join('');
+  const zip = new AdmZip();
+  zip.addFile('[Content_Types].xml', Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  ${sheets
+    .map(
+      (_sheet, index) =>
+        `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`,
+    )
+    .join('\n  ')}
+</Types>`));
+  zip.addFile('_rels/.rels', Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`));
+  zip.addFile('xl/workbook.xml', Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>${sheets
+    .map(
+      (sheet, index) =>
+        `<sheet name="${escapeXml(sheet.name ?? `Sheet ${index + 1}`)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`,
+    )
+    .join('')}</sheets>
+</workbook>`));
+  zip.addFile('xl/_rels/workbook.xml.rels', Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  ${sheets
+    .map(
+      (_sheet, index) =>
+        `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`,
+    )
+    .join('\n  ')}
+</Relationships>`));
+  for (const [index, sheet] of sheets.entries()) {
+    zip.addFile(`xl/worksheets/sheet${index + 1}.xml`, Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>${sheetXml(sheet.rows)}</sheetData>
+</worksheet>`));
+  }
+  zip.writeZip(filePath);
+  tempFiles.push(filePath);
+  return filePath;
+};
+
+const createTempZipFile = async (name, entries, extension = 'zip') => {
+  const filePath = path.join(
+    __dirname,
+    `${name}-${Date.now()}-${Math.random().toString(16).slice(2)}.${extension}`,
+  );
+  const zip = new AdmZip();
+  for (const [entryName, content] of Object.entries(entries)) {
+    zip.addFile(entryName, Buffer.isBuffer(content) ? content : Buffer.from(String(content), 'utf8'));
+  }
+  zip.writeZip(filePath);
+  tempFiles.push(filePath);
+  return filePath;
+};
+
+const createTempShapefileZipFile = async (name, geojson) => {
+  const filePath = path.join(
+    __dirname,
+    `${name}-${Date.now()}-${Math.random().toString(16).slice(2)}.zip`,
+  );
+  const zipped = await shpwrite.zip(geojson);
+  await fs.writeFile(filePath, Buffer.from(zipped, 'base64'));
+  tempFiles.push(filePath);
+  return filePath;
+};
+
+const createTempShapefileZipWithout = async (name, geojson, omittedSuffixes) => {
+  const filePath = await createTempShapefileZipFile(name, geojson);
+  const zip = new AdmZip(filePath);
+  for (const entry of zip.getEntries()) {
+    if (omittedSuffixes.some((suffix) => entry.entryName.toLowerCase().endsWith(suffix))) {
+      zip.deleteFile(entry.entryName);
+    }
+  }
+  zip.writeZip(filePath);
+  return filePath;
+};
+
 const waitForImportStatus = async ({
   importId,
   token,
@@ -38,6 +174,8 @@ const waitForImportStatus = async ({
   attempts = 40,
   delayMs = 250,
 }) => {
+  let lastStatus = 'unknown';
+  let lastMessage = '';
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const response = await request(app)
       .get(`${API_PREFIX}/imports/${importId}`)
@@ -48,6 +186,8 @@ const waitForImportStatus = async ({
     }
 
     const status = response.body.data?.job?.status;
+    lastStatus = status ?? 'unknown';
+    lastMessage = response.body.data?.job?.processing_message ?? '';
     if (expectedStatuses.includes(status)) {
       return response;
     }
@@ -56,8 +196,69 @@ const waitForImportStatus = async ({
   }
 
   throw new Error(
-    `Import ${importId} did not reach one of [${expectedStatuses.join(', ')}] in time.`,
+    `Import ${importId} did not reach one of [${expectedStatuses.join(', ')}] in time. Last status: ${lastStatus}. Message: ${lastMessage}`,
   );
+};
+
+const createActiveImportProject = async (emailPrefix) => {
+  const safePrefix = emailPrefix.toLowerCase().replace(/[^a-z0-9-]+/g, '-');
+  const admin = await createAdminUser({
+    fullName: `${emailPrefix} Admin`,
+    emailPrefix: `${safePrefix}-admin`,
+  });
+  const contributorRegistration = await registerUser({
+    role: 'contributor',
+    fullName: `${emailPrefix} Contributor`,
+    emailPrefix: `${safePrefix}-contributor`,
+  });
+  await approveContributorRequest({
+    token: admin.token,
+    userId: contributorRegistration.user.id,
+  });
+  const contributorLogin = await loginUser({
+    email: contributorRegistration.email,
+    password: contributorRegistration.password,
+  });
+  const category = await createCategory({
+    token: admin.token,
+    name: `${emailPrefix} Category`,
+  });
+  const project = await createProject({
+    token: admin.token,
+    categoryId: category.id,
+    name: `${emailPrefix} Project`,
+    visibleToContributors: true,
+  });
+  await request(app)
+    .put(`${API_PREFIX}/projects/${project.id}`)
+    .set(authHeader(admin.token))
+    .send({ status: 'active' })
+    .expect(200);
+  const assignment = await createAssignment({
+    token: admin.token,
+    projectId: project.id,
+    userId: contributorRegistration.user.id,
+  });
+  await updateAssignmentStatus({
+    token: admin.token,
+    assignmentId: assignment.id,
+    status: 'approved',
+  });
+  return { admin, contributorLogin, project };
+};
+
+const uploadAndWaitForImport = async ({ token, reviewerToken, projectId, filePath, status = 'pending_review' }) => {
+  const uploadResponse = await request(app)
+    .post(`${API_PREFIX}/imports/project/${projectId}/upload`)
+    .set(authHeader(token))
+    .attach('file', filePath)
+    .expect(202);
+
+  return waitForImportStatus({
+    importId: uploadResponse.body.data.id,
+    token: reviewerToken,
+    expectedStatuses: [status],
+  });
 };
 
 describe('GIS import workflow', () => {
@@ -74,6 +275,571 @@ describe('GIS import workflow', () => {
       }
     }
     await shutdown();
+  });
+
+  test('stages CSV latitude and longitude imports for review', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('CSV LatLon Import');
+    const csvPath = await createTempTextFile(
+      'csv-latlon-import',
+      'csv',
+      'name,feature_type,latitude,longitude\nCSV point,olive,33.9001,35.5001\n',
+    );
+
+    const uploadResponse = await request(app)
+      .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+      .set(authHeader(contributorLogin.token))
+      .attach('file', csvPath)
+      .expect(202);
+
+    const detailResponse = await waitForImportStatus({
+      importId: uploadResponse.body.data.id,
+      token: admin.token,
+      expectedStatuses: ['pending_review'],
+    });
+
+    expect(detailResponse.body.data.job.file_type).toBe('csv');
+    expect(detailResponse.body.data.job.pending_feature_count).toBe(1);
+    expect(detailResponse.body.data.preview_features[0].geometry_type).toBe('Point');
+  });
+
+  test('stages CSV WKT imports for review', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('CSV WKT Import');
+    const csvPath = await createTempTextFile(
+      'csv-wkt-import',
+      'csv',
+      'name,feature_type,wkt\nWKT point,cedar,"POINT (35.5002 33.9002)"\n',
+    );
+
+    const uploadResponse = await request(app)
+      .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+      .set(authHeader(contributorLogin.token))
+      .attach('file', csvPath)
+      .expect(202);
+
+    const detailResponse = await waitForImportStatus({
+      importId: uploadResponse.body.data.id,
+      token: admin.token,
+      expectedStatuses: ['pending_review'],
+    });
+
+    expect(detailResponse.body.data.job.pending_feature_count).toBe(1);
+    expect(detailResponse.body.data.preview_features[0].display_title).toBe('WKT point');
+  });
+
+  test('stages XLSX latitude and longitude imports for review', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('XLSX LatLon Import');
+    const xlsxPath = await createTempXlsxFile('xlsx-latlon-import', [
+      ['name', 'feature_type', 'lat', 'lng'],
+      ['Excel point', 'olive', '33.9003', '35.5003'],
+    ]);
+
+    const uploadResponse = await request(app)
+      .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+      .set(authHeader(contributorLogin.token))
+      .attach('file', xlsxPath)
+      .expect(202);
+
+    const detailResponse = await waitForImportStatus({
+      importId: uploadResponse.body.data.id,
+      token: admin.token,
+      expectedStatuses: ['pending_review'],
+    });
+
+    expect(detailResponse.body.data.job.file_type).toBe('xlsx');
+    expect(detailResponse.body.data.job.pending_feature_count).toBe(1);
+    expect(detailResponse.body.data.preview_features[0].display_title).toBe('Excel point');
+  });
+
+  test('marks CSV imports without geometry columns as failed clearly', async () => {
+    const { contributorLogin, project } = await createActiveImportProject('CSV Missing Geometry');
+    const csvPath = await createTempTextFile(
+      'csv-missing-geometry',
+      'csv',
+      'name,feature_type\nNo geometry,olive\n',
+    );
+
+    const uploadResponse = await request(app)
+      .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+      .set(authHeader(contributorLogin.token))
+      .attach('file', csvPath)
+      .expect(202);
+
+    const detailResponse = await waitForImportStatus({
+      importId: uploadResponse.body.data.id,
+      token: contributorLogin.token,
+      expectedStatuses: ['failed'],
+    });
+
+    expect(detailResponse.body.data.job.processing_message).toContain(
+      'No supported geometry columns found',
+    );
+  });
+
+  test('keeps invalid CSV coordinates as failed staged rows', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('CSV Invalid Coordinates');
+    const csvPath = await createTempTextFile(
+      'csv-invalid-coordinates',
+      'csv',
+      'name,feature_type,lat,lon\nBad point,olive,200,35.5001\n',
+    );
+
+    const uploadResponse = await request(app)
+      .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+      .set(authHeader(contributorLogin.token))
+      .attach('file', csvPath)
+      .expect(202);
+
+    const detailResponse = await waitForImportStatus({
+      importId: uploadResponse.body.data.id,
+      token: admin.token,
+      expectedStatuses: ['failed'],
+    });
+
+    expect(detailResponse.body.data.job.failed_feature_count).toBe(1);
+    expect(detailResponse.body.data.preview_features[0].validation_errors).toEqual(
+      expect.arrayContaining(['Geometry is missing or unsupported.']),
+    );
+  });
+
+  test('preserves GeoJSON photo reference attributes through approval', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('GeoJSON Photo References');
+    const geojsonPath = await createTempGeoJsonFile('geojson-photo-references', {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: {
+            feature_type: 'olive',
+            name: 'Photo referenced feature',
+            photo_url: 'https://example.com/photos/olive.jpg',
+            image: '=not-a-formula.jpg',
+          },
+          geometry: { type: 'Point', coordinates: [35.5005, 33.9005] },
+        },
+      ],
+    });
+
+    const detailResponse = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: geojsonPath,
+    });
+
+    const stagedFeature = detailResponse.body.data.preview_features[0];
+    expect(stagedFeature.attributes.photo_url).toBe('https://example.com/photos/olive.jpg');
+    expect(stagedFeature.attributes.image).toBe("'=not-a-formula.jpg");
+
+    await request(app)
+      .post(`${API_PREFIX}/imports/${detailResponse.body.data.job.id}/review`)
+      .set(authHeader(admin.token))
+      .send({ status: 'approved', feature_ids: [stagedFeature.id] })
+      .expect(200);
+
+    const official = await pool.query(
+      `SELECT attributes
+       FROM spatial_feature
+       WHERE project_id = $1
+       LIMIT 1`,
+      [project.id],
+    );
+    expect(official.rows[0].attributes.photo_url).toBe('https://example.com/photos/olive.jpg');
+    expect(official.rows[0].attributes.image).toBe("'=not-a-formula.jpg");
+  });
+
+  test('preserves Shapefile DBF photo reference attributes', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('Shapefile Photo References');
+    const shapefilePath = await createTempShapefileZipFile('shapefile-photo-references', {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: {
+            feature_type: 'olive',
+            name: 'Shapefile photo',
+            photo_url: 'https://example.com/shp.jpg',
+          },
+          geometry: { type: 'Point', coordinates: [35.501, 33.901] },
+        },
+      ],
+    });
+
+    const detailResponse = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: shapefilePath,
+    });
+
+    expect(detailResponse.body.data.preview_features[0].attributes.photo_url).toBe(
+      'https://example.com/shp.jpg',
+    );
+  });
+
+  test('preserves KML and KMZ extended photo reference attributes', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('KML KMZ Photo References');
+    const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Placemark>
+      <name>KML photo</name>
+      <ExtendedData>
+        <Data name="feature_type"><value>olive</value></Data>
+        <Data name="photo_url"><value>https://example.com/kml.jpg</value></Data>
+      </ExtendedData>
+      <Point><coordinates>35.502,33.902,0</coordinates></Point>
+    </Placemark>
+  </Document>
+</kml>`;
+    const kmlPath = await createTempTextFile('kml-photo-references', 'kml', kml);
+    const kmzPath = await createTempZipFile('kmz-photo-references', { 'doc.kml': kml }, 'kmz');
+
+    const kmlDetail = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: kmlPath,
+    });
+    const kmzDetail = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: kmzPath,
+    });
+
+    expect(kmlDetail.body.data.preview_features[0].attributes.photo_url).toBe(
+      'https://example.com/kml.jpg',
+    );
+    expect(kmzDetail.body.data.preview_features[0].attributes.photo_url).toBe(
+      'https://example.com/kml.jpg',
+    );
+  });
+
+  test('handles malformed and unsupported GeoJSON content without backend errors', async () => {
+    const { contributorLogin, project } = await createActiveImportProject('GeoJSON Robust Failures');
+    const malformedPath = await createTempTextFile('geojson-malformed', 'geojson', '{"type":');
+    const malformedDetail = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: contributorLogin.token,
+      projectId: project.id,
+      filePath: malformedPath,
+      status: 'failed',
+    });
+    expect(malformedDetail.body.data.job.processing_message).toContain(
+      'The GeoJSON file could not be parsed.',
+    );
+
+    const nonGeoJsonPath = await createTempGeoJsonFile('geojson-non-feature', {
+      report: 'not a GIS feature collection',
+    });
+    const nonGeoJsonDetail = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: contributorLogin.token,
+      projectId: project.id,
+      filePath: nonGeoJsonPath,
+      status: 'failed',
+    });
+    expect(nonGeoJsonDetail.body.data.job.processing_message).toContain(
+      'GeoJSON must be a Feature or FeatureCollection.',
+    );
+  });
+
+  test('stages unsupported GeoJSON geometries as failed feature rows', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('GeoJSON Geometry Failures');
+    const geojsonPath = await createTempGeoJsonFile('geojson-geometry-failures', {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: { feature_type: 'olive', name: 'Lowercase point', photo_url: 'https://example.com/lower.jpg' },
+          geometry: { type: 'point', coordinates: [35.5, 33.9] },
+        },
+        {
+          type: 'Feature',
+          properties: { feature_type: 'olive', name: 'Null geometry' },
+          geometry: null,
+        },
+        {
+          type: 'Feature',
+          properties: { feature_type: 'olive', name: 'Geometry collection' },
+          geometry: {
+            type: 'GeometryCollection',
+            geometries: [{ type: 'Point', coordinates: [35.5, 33.9] }],
+          },
+        },
+      ],
+    });
+
+    const detailResponse = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: geojsonPath,
+      status: 'failed',
+    });
+
+    expect(detailResponse.body.data.job.failed_feature_count).toBe(3);
+    expect(detailResponse.body.data.preview_features).toHaveLength(3);
+    expect(detailResponse.body.data.preview_features[0].attributes.photo_url).toBe(
+      'https://example.com/lower.jpg',
+    );
+    expect(detailResponse.body.data.preview_features[0].validation_errors).toEqual(
+      expect.arrayContaining(['Geometry is missing or unsupported.']),
+    );
+  });
+
+  test('handles Shapefile ZIP edge cases without backend errors', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('Shapefile Robust Failures');
+    const baseGeoJson = {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: {
+            feature_type: 'olive',
+            name: 'No projection file',
+            photo_url: 'https://example.com/no-prj.jpg',
+          },
+          geometry: { type: 'Point', coordinates: [35.501, 33.901] },
+        },
+      ],
+    };
+
+    const noPrjPath = await createTempShapefileZipWithout('shapefile-no-prj', baseGeoJson, ['.prj']);
+    const noPrjDetail = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: noPrjPath,
+    });
+    expect(noPrjDetail.body.data.job.file_metadata.has_prj).toBe(false);
+    expect(noPrjDetail.body.data.preview_features[0].attributes.photo_url).toBe(
+      'https://example.com/no-prj.jpg',
+    );
+
+    const missingDbfPath = await createTempShapefileZipWithout('shapefile-missing-dbf', baseGeoJson, ['.dbf']);
+    const missingDbfDetail = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: missingDbfPath,
+      status: 'failed',
+    });
+    expect(missingDbfDetail.body.data.job.processing_message).toContain(
+      'A zipped shapefile must include .shp, .shx, and .dbf files.',
+    );
+
+    const unsafeZipPath = await createTempZipFile('shapefile-unsafe-names', {
+      '../escape.shp': 'not a shapefile',
+      'notes/readme.txt': 'hello',
+    });
+    const unsafeZipDetail = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: unsafeZipPath,
+      status: 'failed',
+    });
+    expect(unsafeZipDetail.body.data.job.processing_message).toContain(
+      'A zipped shapefile must include .shp, .shx, and .dbf files.',
+    );
+
+    const corruptedZipPath = await createTempBinaryFile('shapefile-corrupt', 'zip', 'not really a zip');
+    const corruptedZipDetail = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: corruptedZipPath,
+      status: 'failed',
+    });
+    expect(corruptedZipDetail.body.data.job.processing_message).toContain(
+      'The Shapefile ZIP could not be read.',
+    );
+  });
+
+  test('handles KML lines, polygons, malformed XML, and missing geometry safely', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('KML Robust Import');
+    const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Placemark>
+      <name>KML line</name>
+      <ExtendedData><Data name="feature_type"><value>olive</value></Data></ExtendedData>
+      <LineString><coordinates>35.50,33.90,0 35.51,33.91,0</coordinates></LineString>
+    </Placemark>
+    <Placemark>
+      <name>KML polygon</name>
+      <ExtendedData>
+        <Data name="feature_type"><value>cedar</value></Data>
+        <Data name="media_url"><value>https://example.com/kml-polygon.jpg</value></Data>
+      </ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>35.50,33.90,0 35.51,33.90,0 35.51,33.91,0 35.50,33.90,0</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>KML missing geometry</name>
+      <ExtendedData><Data name="feature_type"><value>olive</value></Data></ExtendedData>
+    </Placemark>
+  </Document>
+</kml>`;
+    const kmlPath = await createTempTextFile('kml-lines-polygons', 'kml', kml);
+    const detailResponse = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: kmlPath,
+    });
+    expect(detailResponse.body.data.job.pending_feature_count).toBe(2);
+    expect(detailResponse.body.data.job.failed_feature_count).toBe(1);
+    expect(
+      detailResponse.body.data.preview_features.find((feature) => feature.display_title === 'KML polygon')
+        .attributes.media_url,
+    ).toBe('https://example.com/kml-polygon.jpg');
+
+    const malformedPath = await createTempTextFile('kml-malformed', 'kml', '<kml><Placemark>');
+    const malformedDetail = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: malformedPath,
+      status: 'failed',
+    });
+    expect(malformedDetail.body.data.job.processing_message).toContain('The KML file could not be parsed.');
+  });
+
+  test('handles KMZ nested KML, embedded files, missing KML, and corrupted archives safely', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('KMZ Robust Import');
+    const nestedKml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Placemark>
+      <name>Nested KMZ KML</name>
+      <ExtendedData>
+        <Data name="feature_type"><value>olive</value></Data>
+        <Data name="picture"><value>images/photo.jpg</value></Data>
+      </ExtendedData>
+      <Point><coordinates>35.503,33.903,0</coordinates></Point>
+    </Placemark>
+  </Document>
+</kml>`;
+    const kmzPath = await createTempZipFile('kmz-nested-kml', {
+      'nested/doc.kml': nestedKml,
+      'images/photo.jpg': Buffer.from('fake image content'),
+    }, 'kmz');
+    const detailResponse = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: kmzPath,
+    });
+    expect(detailResponse.body.data.job.file_metadata.source_entry).toBe('nested/doc.kml');
+    expect(detailResponse.body.data.preview_features[0].attributes.picture).toBe('images/photo.jpg');
+
+    const missingKmlPath = await createTempZipFile('kmz-missing-kml', {
+      'images/photo.jpg': Buffer.from('fake image content'),
+    }, 'kmz');
+    const missingKmlDetail = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: missingKmlPath,
+      status: 'failed',
+    });
+    expect(missingKmlDetail.body.data.job.processing_message).toContain(
+      'KMZ archive does not contain a KML document.',
+    );
+
+    const corruptedKmzPath = await createTempBinaryFile('kmz-corrupt', 'kmz', 'not really a kmz');
+    const corruptedKmzDetail = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: corruptedKmzPath,
+      status: 'failed',
+    });
+    expect(corruptedKmzDetail.body.data.job.processing_message).toContain(
+      'The KMZ archive could not be read.',
+    );
+  });
+
+  test('handles real-world CSV headers, delimiters, blanks, and photo references', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('CSV Robust Import');
+    const csvPath = await createTempTextFile(
+      'csv-robust-import',
+      'csv',
+      ' Name ; Feature Type ; Latitude ; Long ; photo_url ; photo_url \n' +
+        ' Robust CSV ; olive ; " 33.9006 " ; " 35.5006 " ; https://example.com/csv.jpg ; duplicate-kept.jpg\n' +
+        '\n' +
+        ' Bad CSV ; olive ; 200 ; 35.5007 ; https://example.com/bad.jpg ; \n',
+    );
+
+    const detailResponse = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: csvPath,
+      status: 'pending_review',
+    });
+
+    expect(detailResponse.body.data.job.pending_feature_count).toBe(1);
+    expect(detailResponse.body.data.job.failed_feature_count).toBe(1);
+    const feature = detailResponse.body.data.preview_features.find(
+      (item) => item.display_title === 'Robust CSV',
+    );
+    expect(feature.attributes.photo_url).toBe('https://example.com/csv.jpg');
+    expect(feature.attributes.photo_url_2).toBe('duplicate-kept.jpg');
+  });
+
+  test('handles XLSX photo references, blank rows, and valid sheet auto-detection', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('XLSX Robust Import');
+    const xlsxPath = await createTempXlsxFile('xlsx-robust-import', [
+      {
+        name: 'Accounting',
+        rows: [
+          ['Invoice', 'Amount'],
+          ['A-1', '120'],
+        ],
+      },
+      {
+        name: 'GIS',
+        rows: [
+          ['Name', 'Feature Type', 'Y', 'X', 'picture_url'],
+          [],
+          ['Robust Excel', 'cedar', '33.9007', '35.5007', 'https://example.com/xlsx.jpg'],
+        ],
+      },
+    ]);
+
+    const detailResponse = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: xlsxPath,
+    });
+
+    expect(detailResponse.body.data.job.file_metadata.sheet_name).toBe('GIS');
+    expect(detailResponse.body.data.preview_features[0].attributes.picture_url).toBe(
+      'https://example.com/xlsx.jpg',
+    );
+  });
+
+  test('fails non-GIS XLSX files gracefully without crashing', async () => {
+    const { contributorLogin, project } = await createActiveImportProject('XLSX No Geometry');
+    const xlsxPath = await createTempXlsxFile('xlsx-no-geometry', [
+      ['Invoice', 'Amount'],
+      ['A-1', '120'],
+    ]);
+
+    const detailResponse = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: contributorLogin.token,
+      projectId: project.id,
+      filePath: xlsxPath,
+      status: 'failed',
+    });
+
+    expect(detailResponse.body.data.job.processing_message).toContain(
+      'No supported geometry columns found',
+    );
   });
 
   test('stages uploaded GeoJSON and supports selected approve/reject review', async () => {

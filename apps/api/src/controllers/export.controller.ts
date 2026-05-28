@@ -58,6 +58,86 @@ const parseBbox = (value: unknown) => {
   };
 };
 
+const sanitizeZipSegment = (value: unknown) =>
+  String(value ?? 'file').trim().replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'file';
+
+const parsePolygonFilter = (value: unknown) => {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  let parsed;
+  try {
+    parsed = typeof value === 'string' ? JSON.parse(value) : value;
+  } catch (_error) {
+    throw new AppError('export_polygon must be a valid GeoJSON Polygon.', 400);
+  }
+  if (!parsed || typeof parsed !== 'object' || parsed.type !== 'Polygon' || !Array.isArray(parsed.coordinates)) {
+    throw new AppError('export_polygon must be a GeoJSON Polygon in EPSG:4326.', 400);
+  }
+  return parsed;
+};
+
+const normalizeFeatureType = (value: unknown) => {
+  const normalized = normalizeOptionalString(value);
+  return normalized && normalized.toLowerCase() !== 'all' ? normalized : undefined;
+};
+
+const appendExportFilters = ({
+  sql,
+  params,
+  paramIndex,
+  filters,
+  tableAlias = 'sf',
+}) => {
+  let queryText = sql;
+  let nextParamIndex = paramIndex;
+  if (filters.status_filter && filters.status_filter.length > 0) {
+    queryText += ` AND ${tableAlias}.status = ANY($${nextParamIndex}::feature_status[])`;
+    params.push(filters.status_filter);
+    nextParamIndex++;
+  }
+  if (filters.date_from) {
+    queryText += ` AND ${tableAlias}.collected_at >= ($${nextParamIndex}::date)`;
+    params.push(filters.date_from);
+    nextParamIndex++;
+  }
+  if (filters.date_to) {
+    queryText += ` AND ${tableAlias}.collected_at < (($${nextParamIndex}::date) + INTERVAL '1 day')`;
+    params.push(filters.date_to);
+    nextParamIndex++;
+  }
+  if (filters.bbox) {
+    queryText += `
+      AND ST_Intersects(
+        ${tableAlias}.geom,
+        ST_MakeEnvelope($${nextParamIndex}, $${nextParamIndex + 1}, $${nextParamIndex + 2}, $${nextParamIndex + 3}, 4326)
+      )`;
+    params.push(filters.bbox.minLon, filters.bbox.minLat, filters.bbox.maxLon, filters.bbox.maxLat);
+    nextParamIndex += 4;
+  }
+  if (filters.export_polygon) {
+    queryText += `
+      AND ST_Intersects(
+        ${tableAlias}.geom,
+        ST_SetSRID(ST_GeomFromGeoJSON($${nextParamIndex}), 4326)
+      )`;
+    params.push(JSON.stringify(filters.export_polygon));
+    nextParamIndex++;
+  }
+  if (filters.feature_type) {
+    queryText += ` AND LOWER(BTRIM(COALESCE(${tableAlias}.attributes->>'feature_type', ${tableAlias}.attributes->>'type', ${tableAlias}.attributes->>'class', ''))) = LOWER($${nextParamIndex})`;
+    params.push(filters.feature_type);
+    nextParamIndex++;
+  }
+  if (filters.geometry_types && filters.geometry_types.length > 0) {
+    const geomTypes = filters.geometry_types.map((t) => `ST_${t}`);
+    queryText += ` AND ST_GeometryType(${tableAlias}.geom) = ANY($${nextParamIndex}::text[])`;
+    params.push(geomTypes);
+    nextParamIndex++;
+  }
+  return { sql: queryText, paramIndex: nextParamIndex };
+};
+
 const getPagination = (pageRaw: unknown, limitRaw: unknown) => {
   const page = Math.max(1, Number.parseInt(String(pageRaw ?? '1'), 10) || 1);
   const requestedLimit = Math.max(1, Number.parseInt(String(limitRaw ?? '20'), 10) || 20);
@@ -75,8 +155,10 @@ const requestExport = async (req, res) => {
     date_from,
     date_to,
     bbox,
+    export_polygon,
+    feature_type,
     geometry_types,
-    include_photos = false,
+    include_photos = true,
     coordinate_system = 'EPSG:4326',
     format = 'geojson', // Default to geojson
   } = req.body;
@@ -99,6 +181,8 @@ const requestExport = async (req, res) => {
   const normalizedDateFrom = normalizeOptionalString(date_from);
   const normalizedDateTo = normalizeOptionalString(date_to);
   const normalizedBbox = parseBbox(bbox);
+  const normalizedPolygon = parsePolygonFilter(export_polygon);
+  const normalizedFeatureType = normalizeFeatureType(feature_type);
 
   // Build export parameters
   const exportParams = {
@@ -106,6 +190,8 @@ const requestExport = async (req, res) => {
     date_from: normalizedDateFrom,
     date_to: normalizedDateTo,
     bbox: normalizedBbox,
+    export_polygon: normalizedPolygon,
+    feature_type: normalizedFeatureType,
     geometry_types,
     include_photos,
     coordinate_system,
@@ -120,44 +206,13 @@ const requestExport = async (req, res) => {
   const availabilityParams: unknown[] = [projectId];
   let availabilityParamIndex = 2;
 
-  if (exportParams.status_filter && exportParams.status_filter.length > 0) {
-    availabilityQuery += ` AND sf.status = ANY($${availabilityParamIndex}::feature_status[])`;
-    availabilityParams.push(exportParams.status_filter);
-    availabilityParamIndex++;
-  }
-
-  if (exportParams.date_from) {
-    availabilityQuery += ` AND sf.collected_at >= ($${availabilityParamIndex}::date)`;
-    availabilityParams.push(exportParams.date_from);
-    availabilityParamIndex++;
-  }
-
-  if (exportParams.date_to) {
-    availabilityQuery += ` AND sf.collected_at < (($${availabilityParamIndex}::date) + INTERVAL '1 day')`;
-    availabilityParams.push(exportParams.date_to);
-    availabilityParamIndex++;
-  }
-
-  if (exportParams.bbox) {
-    availabilityQuery += `
-      AND ST_Intersects(
-        sf.geom,
-        ST_MakeEnvelope($${availabilityParamIndex}, $${availabilityParamIndex + 1}, $${availabilityParamIndex + 2}, $${availabilityParamIndex + 3}, 4326)
-      )`;
-    availabilityParams.push(
-      exportParams.bbox.minLon,
-      exportParams.bbox.minLat,
-      exportParams.bbox.maxLon,
-      exportParams.bbox.maxLat,
-    );
-    availabilityParamIndex += 4;
-  }
-
-  if (exportParams.geometry_types && exportParams.geometry_types.length > 0) {
-    const geomTypes = exportParams.geometry_types.map((t) => `ST_${t}`);
-    availabilityQuery += ` AND ST_GeometryType(sf.geom) = ANY($${availabilityParamIndex}::text[])`;
-    availabilityParams.push(geomTypes);
-  }
+  const availabilityFilter = appendExportFilters({
+    sql: availabilityQuery,
+    params: availabilityParams,
+    paramIndex: availabilityParamIndex,
+    filters: exportParams,
+  });
+  availabilityQuery = availabilityFilter.sql;
 
   const availabilityResult = await query(availabilityQuery, availabilityParams);
   const featureCount = availabilityResult.rows[0]?.feature_count ?? 0;
@@ -237,57 +292,45 @@ const processExport = async (exportId, projectName) => {
         ST_GeometryType(sf.geom) as geometry_type,
         sf.attributes,
         sf.collected_at,
-        u.full_name as collected_by
+        u.full_name as collected_by,
+        COALESCE(photo_rollup.photo_count, 0)::int AS photo_count,
+        COALESCE(photo_rollup.photos, '[]'::json) AS photos
       FROM spatial_feature sf
       JOIN "user" u ON sf.collected_by_user_id = u.id
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*)::int AS photo_count,
+          json_agg(
+            json_build_object(
+              'id', ph.id,
+              'feature_id', ph.feature_id,
+              'file_path', ph.file_path,
+              'thumbnail_path', ph.thumbnail_path,
+              'status', ph.status,
+              'display_order', ph.display_order,
+              'taken_at', ph.taken_at,
+              'uploaded_at', ph.uploaded_at,
+              'file_size_bytes', ph.file_size_bytes
+            )
+            ORDER BY ph.display_order ASC, ph.uploaded_at ASC
+          ) AS photos
+        FROM photo ph
+        WHERE ph.feature_id = sf.id
+          AND ph.status <> 'rejected'
+      ) photo_rollup ON TRUE
       WHERE sf.project_id = $1
     `;
 
     const queryParams = [projectId];
     let paramIndex = 2;
 
-    // Filter by status
-    if (params.status_filter && params.status_filter.length > 0) {
-      featureQuery += ` AND sf.status = ANY($${paramIndex}::feature_status[])`;
-      queryParams.push(params.status_filter);
-      paramIndex++;
-    }
-
-    // Filter by date range
-    if (params.date_from) {
-      featureQuery += ` AND sf.collected_at >= ($${paramIndex}::date)`;
-      queryParams.push(params.date_from);
-      paramIndex++;
-    }
-
-    if (params.date_to) {
-      featureQuery += ` AND sf.collected_at < (($${paramIndex}::date) + INTERVAL '1 day')`;
-      queryParams.push(params.date_to);
-      paramIndex++;
-    }
-
-    if (params.bbox) {
-      featureQuery += `
-        AND ST_Intersects(
-          sf.geom,
-          ST_MakeEnvelope($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, 4326)
-        )`;
-      queryParams.push(
-        params.bbox.minLon,
-        params.bbox.minLat,
-        params.bbox.maxLon,
-        params.bbox.maxLat,
-      );
-      paramIndex += 4;
-    }
-
-    // Filter by geometry types
-    if (params.geometry_types && params.geometry_types.length > 0) {
-      const geomTypes = params.geometry_types.map((t) => `ST_${t}`);
-      featureQuery += ` AND ST_GeometryType(sf.geom) = ANY($${paramIndex}::text[])`;
-      queryParams.push(geomTypes);
-      paramIndex++;
-    }
+    const featureFilter = appendExportFilters({
+      sql: featureQuery,
+      params: queryParams,
+      paramIndex,
+      filters: params,
+    });
+    featureQuery = featureFilter.sql;
 
     logger.info('Querying features:', { exportId, format });
 
@@ -306,6 +349,10 @@ const processExport = async (exportId, projectName) => {
     await fs.mkdir(exportPath, { recursive: true });
 
     logger.info('Created export directory:', { exportId, path: exportPath });
+
+    const photoManifest = params.include_photos
+      ? await attachExportPhotos(exportPath, features.rows)
+      : [];
 
     // Group features by geometry type
     const featuresByType: Record<string, any[]> = {};
@@ -380,8 +427,12 @@ const processExport = async (exportId, projectName) => {
         date_from: params.date_from,
         date_to: params.date_to,
         bbox: params.bbox,
+        export_polygon: params.export_polygon ? 'GeoJSON Polygon filter applied' : null,
+        feature_type: params.feature_type,
+        include_photos: params.include_photos === true,
       },
       files: generatedFiles,
+      photo_manifest: photoManifest.length > 0 ? 'photos_manifest.json' : null,
       notes:
         format === 'shapefile'
           ? 'Shapefile format: Field names limited to 10 characters, strings to 254 characters (DBF limitations)'
@@ -389,6 +440,14 @@ const processExport = async (exportId, projectName) => {
     };
 
     await fs.writeFile(path.join(exportPath, 'metadata.json'), JSON.stringify(metadata, null, 2));
+    if (params.include_photos) {
+      await fs.writeFile(
+        path.join(exportPath, 'photos_manifest.json'),
+        JSON.stringify(photoManifest, null, 2),
+      );
+      await fs.writeFile(path.join(exportPath, 'photos_manifest.csv'), createPhotoManifestCsv(photoManifest));
+      await fs.writeFile(path.join(exportPath, 'README_PHOTOS.txt'), generatePhotoReadme(format));
+    }
 
     logger.info('Created metadata:', { exportId });
 
@@ -503,6 +562,8 @@ const createShapefile = async (outputDir, fileName, features, _geometryType) => 
       feat_id: f.id.substring(0, 10),
       collect_at: f.collected_at ? new Date(f.collected_at).toISOString().substring(0, 10) : '',
       collect_by: f.collected_by ? f.collected_by.substring(0, 50) : '',
+      photo_cnt: Number(f.photo_count ?? 0),
+      photo_ref: Array.isArray(f.photo_paths) && f.photo_paths.length > 0 ? String(f.photo_paths[0]).substring(0, 254) : '',
     };
 
     const sanitizedAttributes = sanitizeManagedFeatureAttributes(f.attributes);
@@ -578,12 +639,94 @@ const createGeoJSON = (features, projectName, geometryType) => {
           feature_id: f.id,
           collected_at: f.collected_at,
           collected_by: f.collected_by,
+          photo_count: Number(f.photo_count ?? 0),
+          primary_photo_path: Array.isArray(f.photo_paths) && f.photo_paths.length > 0 ? f.photo_paths[0] : null,
+          photo_paths: Array.isArray(f.photo_paths) ? f.photo_paths : [],
+          photo_manifest_ref: Number(f.photo_count ?? 0) > 0 ? 'photos_manifest.json' : null,
           ...sanitizeManagedFeatureAttributes(f.attributes),
         },
       };
     }),
   };
 };
+
+const normalizePhotoRows = (feature: any): any[] => {
+  if (Array.isArray(feature.photos)) {
+    return feature.photos;
+  }
+  return [];
+};
+
+const attachExportPhotos = async (exportPath: string, features: any[]) => {
+  const manifest: any[] = [];
+  for (const feature of features) {
+    const photoRows = normalizePhotoRows(feature);
+    const paths: string[] = [];
+    for (const photo of photoRows) {
+      const sourcePath = path.resolve(String(photo.file_path ?? ''));
+      const extension = path.extname(sourcePath).toLowerCase() || '.jpg';
+      const fileName = `${sanitizeZipSegment(photo.id)}${extension}`;
+      const relativePath = path.posix.join('photos', sanitizeZipSegment(feature.id), fileName);
+      const destinationPath = path.join(exportPath, 'photos', sanitizeZipSegment(feature.id), fileName);
+      try {
+        await fs.mkdir(path.dirname(destinationPath), { recursive: true });
+        await fs.copyFile(sourcePath, destinationPath);
+        paths.push(relativePath);
+        manifest.push({
+          feature_id: feature.id,
+          photo_id: photo.id,
+          path: relativePath,
+          status: photo.status,
+          display_order: photo.display_order,
+          taken_at: photo.taken_at,
+          uploaded_at: photo.uploaded_at,
+          file_size_bytes: photo.file_size_bytes,
+        });
+      } catch (error: any) {
+        logger.warn('Skipping export photo that could not be copied', {
+          featureId: feature.id,
+          photoId: photo.id,
+          error: error.message,
+        });
+      }
+    }
+    feature.photo_paths = paths;
+    feature.photo_count = paths.length;
+  }
+  return manifest;
+};
+
+const csvEscape = (value: unknown) => {
+  const raw = String(value ?? '');
+  return /[",\r\n]/.test(raw) ? `"${raw.replace(/"/g, '""')}"` : raw;
+};
+
+const createPhotoManifestCsv = (manifest: any[]) => {
+  const headers = ['feature_id', 'photo_id', 'path', 'status', 'display_order', 'taken_at', 'uploaded_at', 'file_size_bytes'];
+  return [
+    headers.join(','),
+    ...manifest.map((row) => headers.map((header) => csvEscape(row[header])).join(',')),
+  ].join('\n');
+};
+
+const generatePhotoReadme = (format: string) => `Exported Feature Photos
+=======================
+
+Photos are stored inside the photos/ folder using relative ZIP paths.
+
+Photo linkage files:
+- photos_manifest.json maps feature_id and photo_id to each exported photo path.
+- photos_manifest.csv contains the same mapping in spreadsheet-friendly form.
+
+GIS attributes:
+${
+  format === 'shapefile'
+    ? '- Shapefile DBF attributes include photo_cnt and photo_ref. Use the manifest for full photo mapping.'
+    : '- GeoJSON properties include photo_count, primary_photo_path, photo_paths, and photo_manifest_ref.'
+}
+
+The photo paths are relative to this extracted export package. In GIS software, inspect the attribute path or configure a hyperlink/action if you want one-click photo opening.
+`;
 
 // Generate README for export
 const generateReadme = (metadata, projectName, format) => {

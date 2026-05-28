@@ -95,14 +95,14 @@ const importFileFilter = (
   cb: FileFilterCallback,
 ): void => {
   const ext = path.extname(file.originalname).toLowerCase();
-  const allowedExt = new Set(['.geojson', '.json', '.zip', '.kml', '.kmz']);
+  const allowedExt = new Set(['.geojson', '.json', '.zip', '.kml', '.kmz', '.csv', '.xlsx']);
   if (allowedExt.has(ext)) {
     cb(null, true);
     return;
   }
   cb(
     new Error(
-      'Only GeoJSON, zipped shapefile, KML, and KMZ files are allowed for GIS imports',
+      'Only GeoJSON, zipped shapefile, KML, KMZ, CSV, and Excel .xlsx files are allowed for GIS imports',
     ),
   );
 };

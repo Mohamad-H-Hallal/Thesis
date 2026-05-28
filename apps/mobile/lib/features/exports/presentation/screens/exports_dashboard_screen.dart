@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/pagination/paginated_list_controller.dart';
@@ -16,6 +19,7 @@ import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../auth/domain/auth_models.dart';
+import '../../../map/domain/lebanon_map.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/export_job.dart';
 import '../export_file_actions.dart';
@@ -48,6 +52,8 @@ class _ExportsDashboardScreenState
   final TextEditingController _fromDateController = TextEditingController();
   final TextEditingController _toDateController = TextEditingController();
   final TextEditingController _bboxController = TextEditingController();
+  Map<String, dynamic>? _selectedExportPolygon;
+  String? _selectedFeatureType;
   Timer? _jobsRefreshTimer;
   String? _fromDateError;
   String? _toDateError;
@@ -152,6 +158,7 @@ class _ExportsDashboardScreenState
           (project) => project?.id == _selectedProjectId,
           orElse: () => null,
         );
+        final featureTypeOptions = _featureTypeOptions(selectedProject);
         final jobsQuery = _currentJobsQuery();
         final jobsAsync = ref.watch(paginatedExportJobsProvider(jobsQuery));
         final jobsController = ref.read(
@@ -339,6 +346,8 @@ class _ExportsDashboardScreenState
                               _selectedCategoryId = value;
                               _selectedProjectId = null;
                               _selectedProjectName = '';
+                              _selectedFeatureType = null;
+                              _selectedExportPolygon = null;
                             });
                           },
                         ),
@@ -366,10 +375,12 @@ class _ExportsDashboardScreenState
                           ],
                           onChanged: (value) {
                             if (value == null) {
-                              setState(() {
-                                _selectedProjectId = null;
-                                _selectedProjectName = '';
-                              });
+                            setState(() {
+                              _selectedProjectId = null;
+                              _selectedProjectName = '';
+                              _selectedFeatureType = null;
+                              _selectedExportPolygon = null;
+                            });
                               return;
                             }
                             final project = availableProjects.firstWhere(
@@ -378,6 +389,8 @@ class _ExportsDashboardScreenState
                             setState(() {
                               _selectedProjectId = project.id;
                               _selectedProjectName = project.name;
+                              _selectedFeatureType = null;
+                              _selectedExportPolygon = null;
                             });
                           },
                         ),
@@ -492,9 +505,65 @@ class _ExportsDashboardScreenState
                     decoration: InputDecoration(
                       labelText: 'BBOX',
                       hintText: exportBboxHint,
+                      helperText:
+                          'Drawn areas are combined with BBOX and date filters.',
                       errorText: _bboxError,
                     ),
                   ),
+                  const SizedBox(height: AppSpacing.sm),
+                  DropdownButtonFormField<String?>(
+                    initialValue: _selectedFeatureType,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Feature type',
+                    ),
+                    items: <DropdownMenuItem<String?>>[
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('All features'),
+                      ),
+                      ...featureTypeOptions.map(
+                        (value) => DropdownMenuItem<String?>(
+                          value: value,
+                          child: Text(value, overflow: TextOverflow.ellipsis),
+                        ),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      setState(() => _selectedFeatureType = value);
+                    },
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  AppActionButtons(
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _selectedProjectId == null
+                            ? null
+                            : _selectExportArea,
+                        icon: const Icon(Icons.polyline_outlined),
+                        label: Text(
+                          _selectedExportPolygon == null
+                              ? 'Draw area on map'
+                              : 'Change area',
+                        ),
+                      ),
+                      if (_selectedExportPolygon != null)
+                        OutlinedButton.icon(
+                          onPressed: () {
+                            setState(() => _selectedExportPolygon = null);
+                          },
+                          icon: const Icon(Icons.clear),
+                          label: const Text('Clear area'),
+                        ),
+                    ],
+                  ),
+                  if (_selectedExportPolygon != null) ...[
+                    const SizedBox(height: AppSpacing.xs),
+                    const Chip(
+                      avatar: Icon(Icons.polyline_outlined, size: 16),
+                      label: Text('Polygon area selected'),
+                    ),
+                  ],
                   const SizedBox(height: AppSpacing.md),
                   SizedBox(
                     width: double.infinity,
@@ -663,6 +732,11 @@ class _ExportsDashboardScreenState
         'date_from': fromDate,
         'date_to': toDate,
         'bbox': bbox,
+        'include_photos': true,
+        if (_selectedFeatureType?.trim().isNotEmpty ?? false)
+          'feature_type': _selectedFeatureType!.trim(),
+        if (_selectedExportPolygon != null)
+          'export_polygon': jsonEncode(_selectedExportPolygon),
       },
     );
     if (mounted && success) {
@@ -870,6 +944,40 @@ class _ExportsDashboardScreenState
     );
   }
 
+  Future<void> _selectExportArea() async {
+    final polygon = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => _ExportAreaPickerDialog(
+        initialPolygon: _selectedExportPolygon,
+      ),
+    );
+    if (!mounted || polygon == null) {
+      return;
+    }
+    setState(() => _selectedExportPolygon = polygon);
+  }
+
+  List<String> _featureTypeOptions(ProjectSummary? project) {
+    if (project == null) {
+      return const <String>[];
+    }
+    final values = <String>{};
+    for (final field in project.collectionFormSchema.fields) {
+      final normalizedKey = field.key.toLowerCase().replaceAll(
+        RegExp(r'[^a-z0-9]'),
+        '',
+      );
+      if (normalizedKey == 'featuretype' ||
+          normalizedKey == 'type' ||
+          normalizedKey == 'class') {
+        values.addAll(field.options.where((value) => value.trim().isNotEmpty));
+      }
+    }
+    final sorted = values.toList(growable: false);
+    sorted.sort();
+    return sorted;
+  }
+
   List<_CategoryOption> _deriveCategories(List<ProjectSummary> projects) {
     final byId = <String, _CategoryOption>{};
     for (final project in projects) {
@@ -937,6 +1045,151 @@ class _CategoryOption {
 
   final String id;
   final String name;
+}
+
+class _ExportAreaPickerDialog extends StatefulWidget {
+  const _ExportAreaPickerDialog({this.initialPolygon});
+
+  final Map<String, dynamic>? initialPolygon;
+
+  @override
+  State<_ExportAreaPickerDialog> createState() => _ExportAreaPickerDialogState();
+}
+
+class _ExportAreaPickerDialogState extends State<_ExportAreaPickerDialog> {
+  final List<LatLng> _points = <LatLng>[];
+
+  @override
+  void initState() {
+    super.initState();
+    final coordinates =
+        widget.initialPolygon?['coordinates'] is List
+            ? widget.initialPolygon!['coordinates'] as List
+            : null;
+    final ring = coordinates?.isNotEmpty == true && coordinates!.first is List
+        ? coordinates.first as List
+        : const <dynamic>[];
+    for (final raw in ring) {
+      if (raw is List && raw.length >= 2) {
+        final lon = (raw[0] as num?)?.toDouble();
+        final lat = (raw[1] as num?)?.toDouble();
+        if (lat != null && lon != null) {
+          _points.add(LatLng(lat, lon));
+        }
+      }
+    }
+    if (_points.length > 1 && _points.first == _points.last) {
+      _points.removeLast();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final polygonPoints = _points.length >= 3
+        ? <LatLng>[..._points, _points.first]
+        : _points;
+    return Dialog.fullscreen(
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Draw export area'),
+          actions: [
+            IconButton(
+              tooltip: 'Undo point',
+              onPressed: _points.isEmpty
+                  ? null
+                  : () => setState(() => _points.removeLast()),
+              icon: const Icon(Icons.undo),
+            ),
+            IconButton(
+              tooltip: 'Clear area',
+              onPressed: _points.isEmpty
+                  ? null
+                  : () => setState(() => _points.clear()),
+              icon: const Icon(Icons.delete_outline),
+            ),
+          ],
+        ),
+        body: Stack(
+          children: [
+            FlutterMap(
+              options: MapOptions(
+                initialCenter: LebanonMapConfig.center,
+                initialZoom: 8,
+                cameraConstraint: LebanonMapConfig.cameraConstraint,
+                onTap: (_, point) => setState(() => _points.add(point)),
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.example.lebanese_gis_mobile',
+                ),
+                if (polygonPoints.length >= 3)
+                  PolygonLayer(
+                    polygons: [
+                      Polygon(
+                        points: polygonPoints,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.primary.withValues(alpha: 0.20),
+                        borderColor: Theme.of(context).colorScheme.primary,
+                        borderStrokeWidth: 2,
+                      ),
+                    ],
+                  ),
+                MarkerLayer(
+                  markers: [
+                    for (var index = 0; index < _points.length; index += 1)
+                      Marker(
+                        point: _points[index],
+                        width: 34,
+                        height: 34,
+                        child: CircleAvatar(
+                          radius: 14,
+                          child: Text('${index + 1}'),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+            Positioned(
+              left: AppSpacing.md,
+              right: AppSpacing.md,
+              bottom: AppSpacing.md,
+              child: AppCard(
+                child: AppActionButtons(
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close),
+                      label: const Text('Cancel'),
+                    ),
+                    FilledButton.icon(
+                      onPressed: _points.length < 3
+                          ? null
+                          : () => Navigator.of(context).pop(_polygonGeoJson()),
+                      icon: const Icon(Icons.check),
+                      label: const Text('Use area'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Map<String, dynamic> _polygonGeoJson() {
+    final ring = <LatLng>[..._points, _points.first]
+        .map((point) => <double>[point.longitude, point.latitude])
+        .toList(growable: false);
+    return <String, dynamic>{
+      'type': 'Polygon',
+      'coordinates': <dynamic>[ring],
+    };
+  }
 }
 
 class _ExportJobCard extends StatelessWidget {
@@ -1074,6 +1327,8 @@ class _ExportJobCard extends StatelessWidget {
     final fromDate = job.exportParameters['date_from']?.toString().trim();
     final toDate = job.exportParameters['date_to']?.toString().trim();
     final bbox = job.exportParameters['bbox']?.toString().trim();
+    final featureType = job.exportParameters['feature_type']?.toString().trim();
+    final exportPolygon = job.exportParameters['export_polygon']?.toString().trim();
 
     if (fromDate != null && fromDate.isNotEmpty) {
       chips.add(Chip(label: Text('From $fromDate')));
@@ -1088,6 +1343,17 @@ class _ExportJobCard extends StatelessWidget {
           label: Text('Area filter'),
         ),
       );
+    }
+    if (exportPolygon != null && exportPolygon.isNotEmpty) {
+      chips.add(
+        const Chip(
+          avatar: Icon(Icons.polyline_outlined, size: 16),
+          label: Text('Drawn area'),
+        ),
+      );
+    }
+    if (featureType != null && featureType.isNotEmpty) {
+      chips.add(Chip(label: Text('Type $featureType')));
     }
 
     return chips;

@@ -424,6 +424,18 @@ const exportValidation = {
       .isIn(['Point', 'LineString', 'Polygon'])
       .withMessage('geometry_types contains invalid geometry type'),
     body('include_photos').optional().isBoolean(),
+    body('feature_type')
+      .optional({ values: 'falsy' })
+      .trim()
+      .isLength({ max: 120 })
+      .withMessage('feature_type must be 120 characters or fewer'),
+    body('export_polygon')
+      .optional({ values: 'falsy' })
+      .custom((value) => {
+        const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+        return parsed?.type === 'Polygon' && Array.isArray(parsed.coordinates);
+      })
+      .withMessage('export_polygon must be a GeoJSON Polygon'),
     body('coordinate_system').optional().isString(),
     body('format').optional().isIn(['geojson', 'shapefile']),
     body('bbox')
