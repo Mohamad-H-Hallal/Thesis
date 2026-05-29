@@ -317,6 +317,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Submit new import'), findsOneWidget);
+    expect(
+      find.text('Supported: GeoJSON, Shapefile ZIP, KML/KMZ, CSV, XLSX.'),
+      findsOneWidget,
+    );
     expect(find.text('Import history'), findsOneWidget);
     expect(find.text('GIS imports'), findsNothing);
     expect(find.text('No imports submitted yet'), findsNothing);

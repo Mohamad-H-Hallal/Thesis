@@ -1000,12 +1000,6 @@ final paginatedReviewQueueProvider = StateNotifierProvider.autoDispose
 final exportsControllerProvider =
     StateNotifierProvider.autoDispose<ExportsController, ExportsState>((ref) {
       final session = ref.watch(authControllerProvider).session;
-      if (session == null) {
-        throw StateError(
-          'Cannot initialize exports controller without a session.',
-        );
-      }
-
       final notifications = ref.read(notificationsControllerProvider.notifier);
       final controller = ExportsController(
         repository: ref.watch(exportsRepositoryProvider),

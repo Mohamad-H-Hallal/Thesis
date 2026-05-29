@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../constants/design_tokens.dart';
 import '../providers/providers.dart';
 import '../sync/sync_controller.dart';
+import '../utils/lebanon_time.dart';
 
 class OfflineBanner extends ConsumerWidget {
   const OfflineBanner({super.key});
@@ -118,10 +119,7 @@ class OfflineBanner extends ConsumerWidget {
   }
 
   static String _formatTime(DateTime value) {
-    final local = value.toLocal();
-    final hour = local.hour.toString().padLeft(2, '0');
-    final minute = local.minute.toString().padLeft(2, '0');
-    return '$hour:$minute';
+    return formatLebanonTime(value);
   }
 }
 

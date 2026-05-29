@@ -528,7 +528,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                   const SizedBox(height: AppSpacing.xs),
                   Text(
                     _selectedFile == null
-                        ? 'Supported formats: GeoJSON, zipped Shapefile, KML, KMZ, CSV, Excel. CSV/Excel can use latitude/longitude, lat/lon, lat/lng, y/x, or geometry/geom/wkt columns. Photo reference fields are preserved as attributes; photo files are uploaded through the app photo workflow.'
+                        ? 'Supported: GeoJSON, Shapefile ZIP, KML/KMZ, CSV, XLSX.'
                         : '${_selectedFile!.extension?.toUpperCase() ?? 'FILE'} • ${_formatBytes(_selectedFile!.size)}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),

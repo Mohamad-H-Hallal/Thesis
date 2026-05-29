@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/offline/local_models.dart';
+import '../../../../core/utils/lebanon_time.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../domain/review_workflow.dart';
@@ -97,10 +98,5 @@ Future<void> showDraftWorkflowSheet(
 }
 
 String _formatDate(DateTime dateTime) {
-  final d = dateTime.toLocal();
-  final month = d.month.toString().padLeft(2, '0');
-  final day = d.day.toString().padLeft(2, '0');
-  final hour = d.hour.toString().padLeft(2, '0');
-  final minute = d.minute.toString().padLeft(2, '0');
-  return '${d.year}-$month-$day $hour:$minute';
+  return formatLebanonDateTime(dateTime);
 }

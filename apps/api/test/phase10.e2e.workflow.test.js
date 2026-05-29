@@ -1,6 +1,7 @@
 const {
   API_PREFIX,
   app,
+  pool,
   request,
   authHeader,
   resetDb,
@@ -67,7 +68,9 @@ const getZipEntry = (zip, entryName) => {
 };
 
 const assertSafeRelativePhotoPath = (entryNames, relativePath) => {
-  expect(relativePath).toMatch(/^photos\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\.(png|jpg|jpeg|heic|heif)$/i);
+  expect(relativePath).toMatch(
+    /^photos\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\.(png|jpg|jpeg|heic|heif)$/i,
+  );
   expect(relativePath).not.toContain('..');
   expect(path.isAbsolute(relativePath)).toBe(false);
   expect(entryNames).toContain(relativePath);
@@ -120,6 +123,18 @@ const readDbf = (buffer) => {
   }
 
   return { fields, records };
+};
+
+const exportedGeojsonFeatures = (zip) =>
+  zip
+    .getEntries()
+    .filter((entry) => entry.entryName.toLowerCase().endsWith('.geojson'))
+    .flatMap((entry) => JSON.parse(entry.getData().toString('utf8')).features);
+
+const expectExportedFeatureNames = (features, expectedNames) => {
+  expect(features.map((feature) => feature.properties.site_name).sort()).toEqual(
+    [...expectedNames].sort(),
+  );
 };
 
 describe('Phase 10 E2E workflow', () => {
@@ -333,24 +348,49 @@ describe('Phase 10 E2E workflow', () => {
     expect(entryNames).toContain('photos_manifest.json');
     expect(entryNames).toContain('photos_manifest.csv');
 
-    const manifest = JSON.parse(getZipEntry(zip, 'photos_manifest.json').getData().toString('utf8'));
+    const manifest = JSON.parse(
+      getZipEntry(zip, 'photos_manifest.json').getData().toString('utf8'),
+    );
     expect(manifest).toHaveLength(2);
     const pointManifestRow = manifest.find((row) => row.feature_id === featureId);
     const polygonManifestRow = manifest.find((row) => row.feature_id === polygonFeatureId);
     expect(pointManifestRow).toBeTruthy();
     expect(polygonManifestRow).toBeTruthy();
+    expect(pointManifestRow).not.toHaveProperty('status');
+    expect(pointManifestRow.uploaded_at).toMatch(/Asia\/Beirut/);
+    expect(pointManifestRow.uploaded_at).not.toMatch(/\+00:00|Z$/);
+    if (pointManifestRow.taken_at) {
+      expect(pointManifestRow.taken_at).toMatch(/Asia\/Beirut/);
+      expect(pointManifestRow.taken_at).not.toMatch(/\+00:00|Z$/);
+    }
     assertSafeRelativePhotoPath(entryNames, pointManifestRow.path);
     assertSafeRelativePhotoPath(entryNames, polygonManifestRow.path);
     await assertZipImageIsOpenable(zip, pointManifestRow.path);
     await assertZipImageIsOpenable(zip, polygonManifestRow.path);
 
+    const photoReadme = getZipEntry(zip, 'README_PHOTOS.txt').getData().toString('utf8');
+    expect(photoReadme).toContain('All timestamps are in Lebanon time (Asia/Beirut)');
+    const manifestCsvHeader = getZipEntry(zip, 'photos_manifest.csv')
+      .getData()
+      .toString('utf8')
+      .split('\n')[0];
+    expect(manifestCsvHeader).toBe(
+      'feature_id,photo_id,path,display_order,taken_at,uploaded_at,file_size_bytes',
+    );
+
     const exportedFeatures = geojsonEntries.flatMap((entry) => {
       const geojson = JSON.parse(entry.getData().toString('utf8'));
       return geojson.features;
     });
-    const pointFeature = exportedFeatures.find((feature) => feature.properties.feature_id === featureId);
-    const polygonFeature = exportedFeatures.find((feature) => feature.properties.feature_id === polygonFeatureId);
-    const noPhotoFeature = exportedFeatures.find((feature) => feature.properties.feature_id === noPhotoFeatureId);
+    const pointFeature = exportedFeatures.find(
+      (feature) => feature.properties.feature_id === featureId,
+    );
+    const polygonFeature = exportedFeatures.find(
+      (feature) => feature.properties.feature_id === polygonFeatureId,
+    );
+    const noPhotoFeature = exportedFeatures.find(
+      (feature) => feature.properties.feature_id === noPhotoFeatureId,
+    );
     expect(pointFeature.properties.photo_count).toBe(1);
     expect(pointFeature.properties.primary_photo_path).toBe(pointManifestRow.path);
     expect(pointFeature.properties.photo_paths).toEqual([pointManifestRow.path]);
@@ -677,6 +717,249 @@ describe('Phase 10 E2E workflow', () => {
     expect(geojson.features[0].properties.site_name).toBe('Olive inside polygon');
   });
 
+  test('feature type export filter combines with bbox, date, polygon, photos, GeoJSON, and Shapefile', async () => {
+    const admin = await createAdminUser({
+      fullName: 'Phase10 Combined Filter Admin',
+      emailPrefix: 'phase10-combined-filter-admin',
+    });
+
+    const contributor = await registerUser({
+      role: 'contributor',
+      fullName: 'Phase10 Combined Filter Contributor',
+      emailPrefix: 'phase10-combined-filter-contributor',
+    });
+
+    await approveContributorRequest({
+      token: admin.token,
+      userId: contributor.user.id,
+    });
+
+    const category = await createCategory({
+      token: admin.token,
+      name: `Combined Filter Category ${Date.now()}`,
+    });
+
+    const project = await createProject({
+      token: admin.token,
+      categoryId: category.id,
+      name: `Combined Filter Project ${Date.now()}`,
+    });
+
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}`)
+      .set(authHeader(admin.token))
+      .send({ status: 'active' })
+      .expect(200);
+
+    const assignment = await createAssignment({
+      token: admin.token,
+      projectId: project.id,
+      userId: contributor.user.id,
+      role: 'contributor',
+    });
+
+    await updateAssignmentStatus({
+      token: admin.token,
+      assignmentId: assignment.id,
+      status: 'approved',
+    });
+
+    const contributorLogin = await loginUser({
+      email: contributor.email,
+      password: contributor.password,
+    });
+
+    const createApprovedFeature = async ({
+      name,
+      featureType,
+      coordinates,
+      collectedAt,
+      photo = false,
+    }) => {
+      const created = await request(app)
+        .post(`${API_PREFIX}/features`)
+        .set(authHeader(contributorLogin.token))
+        .send({
+          project_id: project.id,
+          geom: { type: 'Point', coordinates },
+          attributes: {
+            feature_type: featureType,
+            site_name: name,
+          },
+          accuracy_meters: 3,
+        })
+        .expect(201);
+
+      const featureId = created.body.data.id;
+      await pool.query('UPDATE spatial_feature SET collected_at = $1 WHERE id = $2', [
+        collectedAt,
+        featureId,
+      ]);
+
+      if (photo) {
+        await uploadFeaturePhoto({
+          token: contributorLogin.token,
+          featureId,
+          name: `combined-filter-${name.replace(/[^a-z0-9]/gi, '-').toLowerCase()}`,
+          background: { r: 60, g: 110, b: 180 },
+        });
+      }
+
+      await request(app)
+        .post(`${API_PREFIX}/features/${featureId}/submit`)
+        .set(authHeader(contributorLogin.token))
+        .send()
+        .expect(200);
+
+      await request(app)
+        .post(`${API_PREFIX}/features/${featureId}/review`)
+        .set(authHeader(admin.token))
+        .send({ status: 'approved', review_notes: 'Approved for combined filter export.' })
+        .expect(200);
+
+      return featureId;
+    };
+
+    const oliveInsideCurrentId = await createApprovedFeature({
+      name: 'Olive inside current',
+      featureType: 'olive',
+      coordinates: [35.5018, 33.8938],
+      collectedAt: '2024-05-10T09:00:00Z',
+      photo: true,
+    });
+    await createApprovedFeature({
+      name: 'Citrus inside current',
+      featureType: 'citrus',
+      coordinates: [35.503, 33.894],
+      collectedAt: '2024-05-10T10:00:00Z',
+    });
+    await createApprovedFeature({
+      name: 'Olive outside current',
+      featureType: 'olive',
+      coordinates: [36.05, 34.55],
+      collectedAt: '2024-05-10T11:00:00Z',
+    });
+    await createApprovedFeature({
+      name: 'Olive inside old',
+      featureType: 'olive',
+      coordinates: [35.504, 33.895],
+      collectedAt: '2020-01-10T09:00:00Z',
+    });
+    await createApprovedFeature({
+      name: 'Pine inside current',
+      featureType: 'pine',
+      coordinates: [35.506, 33.896],
+      collectedAt: '2024-05-11T09:00:00Z',
+    });
+
+    const bbox = '35.49,33.88,35.52,33.91';
+    const polygon = {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [35.49, 33.88],
+          [35.52, 33.88],
+          [35.52, 33.91],
+          [35.49, 33.91],
+          [35.49, 33.88],
+        ],
+      ],
+    };
+
+    const requestExport = async (format, params) => {
+      const response = await request(app)
+        .post(`${API_PREFIX}/exports/project/${project.id}`)
+        .set(authHeader(admin.token))
+        .send({
+          format,
+          ...params,
+        })
+        .expect(202);
+
+      const completed = await waitForExportCompletion({
+        token: admin.token,
+        exportId: response.body.data.export_id,
+        timeoutMs: 45000,
+      });
+      expect(completed.status).toBe('completed');
+      return completed;
+    };
+
+    const allWithBbox = await requestExport('geojson', { bbox });
+    expectExportedFeatureNames(exportedGeojsonFeatures(new AdmZip(allWithBbox.file_path)), [
+      'Olive inside current',
+      'Citrus inside current',
+      'Olive inside old',
+      'Pine inside current',
+    ]);
+
+    const oliveWithBbox = await requestExport('geojson', {
+      bbox,
+      feature_type: 'olive',
+    });
+    expectExportedFeatureNames(exportedGeojsonFeatures(new AdmZip(oliveWithBbox.file_path)), [
+      'Olive inside current',
+      'Olive inside old',
+    ]);
+
+    const oliveWithDate = await requestExport('geojson', {
+      feature_type: 'olive',
+      date_from: '2024-05-01',
+      date_to: '2024-05-31',
+    });
+    expectExportedFeatureNames(exportedGeojsonFeatures(new AdmZip(oliveWithDate.file_path)), [
+      'Olive inside current',
+      'Olive outside current',
+    ]);
+
+    const oliveWithPolygon = await requestExport('geojson', {
+      feature_type: 'olive',
+      export_polygon: JSON.stringify(polygon),
+    });
+    expectExportedFeatureNames(exportedGeojsonFeatures(new AdmZip(oliveWithPolygon.file_path)), [
+      'Olive inside current',
+      'Olive inside old',
+    ]);
+
+    const geojsonAllFilters = await requestExport('geojson', {
+      bbox,
+      feature_type: 'olive',
+      date_from: '2024-05-01',
+      date_to: '2024-05-31',
+      export_polygon: JSON.stringify(polygon),
+      include_photos: true,
+    });
+    const geojsonAllFiltersZip = new AdmZip(geojsonAllFilters.file_path);
+    const geojsonAllFilterFeatures = exportedGeojsonFeatures(geojsonAllFiltersZip);
+    expect(geojsonAllFilterFeatures).toHaveLength(1);
+    expect(geojsonAllFilterFeatures[0].properties.feature_id).toBe(oliveInsideCurrentId);
+    expect(geojsonAllFilterFeatures[0].properties.photo_count).toBe(1);
+    expect(getZipEntry(geojsonAllFiltersZip, 'photos_manifest.json')).toBeTruthy();
+
+    const shapefileAllFilters = await requestExport('shapefile', {
+      bbox,
+      feature_type: 'olive',
+      date_from: '2024-05-01',
+      date_to: '2024-05-31',
+      export_polygon: JSON.stringify(polygon),
+      include_photos: true,
+    });
+    expect(shapefileAllFilters.feature_count).toBe(1);
+    const shapefileZip = new AdmZip(shapefileAllFilters.file_path);
+    const manifest = JSON.parse(
+      getZipEntry(shapefileZip, 'photos_manifest.json').getData().toString('utf8'),
+    );
+    expect(manifest).toHaveLength(1);
+    expect(manifest[0].feature_id).toBe(oliveInsideCurrentId);
+    const dbfEntry = shapefileZip
+      .getEntries()
+      .find((entry) => entry.entryName.toLowerCase().endsWith('.dbf'));
+    expect(dbfEntry).toBeTruthy();
+    const dbf = readDbf(dbfEntry.getData());
+    expect(dbf.records).toHaveLength(1);
+    expect(Number(dbf.records[0].photo_cnt)).toBe(1);
+  });
+
   test('shapefile export completes with full component set for approved features', async () => {
     const admin = await createAdminUser({
       fullName: 'Phase10 Shapefile Admin',
@@ -844,11 +1127,20 @@ describe('Phase 10 E2E workflow', () => {
     );
     expect(manifest).toHaveLength(1);
     expect(manifest[0].feature_id).toBe(approvedFeature.body.data.id);
+    expect(manifest[0]).not.toHaveProperty('status');
+    expect(manifest[0].uploaded_at).toMatch(/Asia\/Beirut/);
+    expect(manifest[0].uploaded_at).not.toMatch(/\+00:00|Z$/);
+    if (manifest[0].taken_at) {
+      expect(manifest[0].taken_at).toMatch(/Asia\/Beirut/);
+      expect(manifest[0].taken_at).not.toMatch(/\+00:00|Z$/);
+    }
     assertSafeRelativePhotoPath(entryNames, manifest[0].path);
     await assertZipImageIsOpenable(zip, manifest[0].path);
     expect(manifest.some((row) => row.feature_id === pendingFeature.body.data.id)).toBe(false);
 
-    const dbfEntry = zip.getEntries().find((entry) => entry.entryName.toLowerCase().endsWith('.dbf'));
+    const dbfEntry = zip
+      .getEntries()
+      .find((entry) => entry.entryName.toLowerCase().endsWith('.dbf'));
     expect(dbfEntry).toBeTruthy();
     const dbf = readDbf(dbfEntry.getData());
     expect(dbf.fields.map((field) => field.name)).toEqual(

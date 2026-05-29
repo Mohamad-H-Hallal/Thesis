@@ -14,6 +14,7 @@ import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/offline/local_models.dart';
 import '../../../../core/providers/providers.dart';
+import '../../../../core/utils/lebanon_time.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
@@ -1776,12 +1777,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
   }
 
   String _formatDateTime(DateTime value) {
-    final local = value.toLocal();
-    final month = local.month.toString().padLeft(2, '0');
-    final day = local.day.toString().padLeft(2, '0');
-    final hour = local.hour.toString().padLeft(2, '0');
-    final minute = local.minute.toString().padLeft(2, '0');
-    return '${local.year}-$month-$day $hour:$minute';
+    return formatLebanonDateTime(value);
   }
 }
 

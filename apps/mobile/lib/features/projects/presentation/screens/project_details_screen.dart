@@ -6,6 +6,7 @@ import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
+import '../../../../core/utils/lebanon_time.dart';
 import '../../../../core/widgets/animated_reveal.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_dialog_actions.dart';
@@ -579,13 +580,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
   }
 
   String _formatDate(DateTime? value) {
-    if (value == null) {
-      return 'Not set';
-    }
-    final local = value.toLocal();
-    final month = local.month.toString().padLeft(2, '0');
-    final day = local.day.toString().padLeft(2, '0');
-    return '${local.year}-$month-$day';
+    return formatLebanonDate(value);
   }
 }
 

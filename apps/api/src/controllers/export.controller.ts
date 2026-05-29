@@ -59,7 +59,40 @@ const parseBbox = (value: unknown) => {
 };
 
 const sanitizeZipSegment = (value: unknown) =>
-  String(value ?? 'file').trim().replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'file';
+  String(value ?? 'file')
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .slice(0, 120) || 'file';
+
+const LEBANON_TIME_ZONE = 'Asia/Beirut';
+
+const lebanonDateTimeFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: LEBANON_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+  timeZoneName: 'shortOffset',
+});
+
+const formatLebanonDateTime = (value: unknown): string | null => {
+  if (!value) {
+    return null;
+  }
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  const parts = Object.fromEntries(
+    lebanonDateTimeFormatter.formatToParts(date).map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute} ${parts.timeZoneName} (${LEBANON_TIME_ZONE})`;
+};
+
+const formatLebanonDate = (value: unknown): string =>
+  formatLebanonDateTime(value)?.slice(0, 10) ?? '';
 
 const parsePolygonFilter = (value: unknown) => {
   if (value === null || value === undefined) {
@@ -71,7 +104,12 @@ const parsePolygonFilter = (value: unknown) => {
   } catch (_error) {
     throw new AppError('export_polygon must be a valid GeoJSON Polygon.', 400);
   }
-  if (!parsed || typeof parsed !== 'object' || parsed.type !== 'Polygon' || !Array.isArray(parsed.coordinates)) {
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    parsed.type !== 'Polygon' ||
+    !Array.isArray(parsed.coordinates)
+  ) {
     throw new AppError('export_polygon must be a GeoJSON Polygon in EPSG:4326.', 400);
   }
   return parsed;
@@ -82,13 +120,7 @@ const normalizeFeatureType = (value: unknown) => {
   return normalized && normalized.toLowerCase() !== 'all' ? normalized : undefined;
 };
 
-const appendExportFilters = ({
-  sql,
-  params,
-  paramIndex,
-  filters,
-  tableAlias = 'sf',
-}) => {
+const appendExportFilters = ({ sql, params, paramIndex, filters, tableAlias = 'sf' }) => {
   let queryText = sql;
   let nextParamIndex = paramIndex;
   if (filters.status_filter && filters.status_filter.length > 0) {
@@ -417,7 +449,8 @@ const processExport = async (exportId, projectName) => {
     // Create metadata file
     const metadata = {
       project_name: projectName,
-      export_date: new Date().toISOString(),
+      export_date: formatLebanonDateTime(new Date()),
+      time_zone: LEBANON_TIME_ZONE,
       feature_count: features.rows.length,
       geometry_types: Object.keys(featuresByType),
       coordinate_system: params.coordinate_system,
@@ -445,7 +478,10 @@ const processExport = async (exportId, projectName) => {
         path.join(exportPath, 'photos_manifest.json'),
         JSON.stringify(photoManifest, null, 2),
       );
-      await fs.writeFile(path.join(exportPath, 'photos_manifest.csv'), createPhotoManifestCsv(photoManifest));
+      await fs.writeFile(
+        path.join(exportPath, 'photos_manifest.csv'),
+        createPhotoManifestCsv(photoManifest),
+      );
       await fs.writeFile(path.join(exportPath, 'README_PHOTOS.txt'), generatePhotoReadme(format));
     }
 
@@ -560,10 +596,13 @@ const createShapefile = async (outputDir, fileName, features, _geometryType) => 
 
     const properties = {
       feat_id: f.id.substring(0, 10),
-      collect_at: f.collected_at ? new Date(f.collected_at).toISOString().substring(0, 10) : '',
+      collect_at: formatLebanonDate(f.collected_at),
       collect_by: f.collected_by ? f.collected_by.substring(0, 50) : '',
       photo_cnt: Number(f.photo_count ?? 0),
-      photo_ref: Array.isArray(f.photo_paths) && f.photo_paths.length > 0 ? String(f.photo_paths[0]).substring(0, 254) : '',
+      photo_ref:
+        Array.isArray(f.photo_paths) && f.photo_paths.length > 0
+          ? String(f.photo_paths[0]).substring(0, 254)
+          : '',
     };
 
     const sanitizedAttributes = sanitizeManagedFeatureAttributes(f.attributes);
@@ -637,10 +676,11 @@ const createGeoJSON = (features, projectName, geometryType) => {
         geometry: geom,
         properties: {
           feature_id: f.id,
-          collected_at: f.collected_at,
+          collected_at: formatLebanonDateTime(f.collected_at),
           collected_by: f.collected_by,
           photo_count: Number(f.photo_count ?? 0),
-          primary_photo_path: Array.isArray(f.photo_paths) && f.photo_paths.length > 0 ? f.photo_paths[0] : null,
+          primary_photo_path:
+            Array.isArray(f.photo_paths) && f.photo_paths.length > 0 ? f.photo_paths[0] : null,
           photo_paths: Array.isArray(f.photo_paths) ? f.photo_paths : [],
           photo_manifest_ref: Number(f.photo_count ?? 0) > 0 ? 'photos_manifest.json' : null,
           ...sanitizeManagedFeatureAttributes(f.attributes),
@@ -667,7 +707,12 @@ const attachExportPhotos = async (exportPath: string, features: any[]) => {
       const extension = path.extname(sourcePath).toLowerCase() || '.jpg';
       const fileName = `${sanitizeZipSegment(photo.id)}${extension}`;
       const relativePath = path.posix.join('photos', sanitizeZipSegment(feature.id), fileName);
-      const destinationPath = path.join(exportPath, 'photos', sanitizeZipSegment(feature.id), fileName);
+      const destinationPath = path.join(
+        exportPath,
+        'photos',
+        sanitizeZipSegment(feature.id),
+        fileName,
+      );
       try {
         await fs.mkdir(path.dirname(destinationPath), { recursive: true });
         await fs.copyFile(sourcePath, destinationPath);
@@ -676,10 +721,9 @@ const attachExportPhotos = async (exportPath: string, features: any[]) => {
           feature_id: feature.id,
           photo_id: photo.id,
           path: relativePath,
-          status: photo.status,
           display_order: photo.display_order,
-          taken_at: photo.taken_at,
-          uploaded_at: photo.uploaded_at,
+          taken_at: formatLebanonDateTime(photo.taken_at),
+          uploaded_at: formatLebanonDateTime(photo.uploaded_at),
           file_size_bytes: photo.file_size_bytes,
         });
       } catch (error: any) {
@@ -702,7 +746,15 @@ const csvEscape = (value: unknown) => {
 };
 
 const createPhotoManifestCsv = (manifest: any[]) => {
-  const headers = ['feature_id', 'photo_id', 'path', 'status', 'display_order', 'taken_at', 'uploaded_at', 'file_size_bytes'];
+  const headers = [
+    'feature_id',
+    'photo_id',
+    'path',
+    'display_order',
+    'taken_at',
+    'uploaded_at',
+    'file_size_bytes',
+  ];
   return [
     headers.join(','),
     ...manifest.map((row) => headers.map((header) => csvEscape(row[header])).join(',')),
@@ -717,6 +769,7 @@ Photos are stored inside the photos/ folder using relative ZIP paths.
 Photo linkage files:
 - photos_manifest.json maps feature_id and photo_id to each exported photo path.
 - photos_manifest.csv contains the same mapping in spreadsheet-friendly form.
+- All timestamps are in Lebanon time (${LEBANON_TIME_ZONE}) and are converted only for exported/user-facing files.
 
 GIS attributes:
 ${
@@ -795,6 +848,7 @@ METHOD 4: View Online
 
 Project: ${projectName}
 Export Date: ${metadata.export_date}
+Time Zone: ${metadata.time_zone}
 Total Features: ${metadata.feature_count}
 Format: ${format.toUpperCase()}
 

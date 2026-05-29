@@ -26,7 +26,7 @@ class ExportsState {
 class ExportsController extends StateNotifier<ExportsState> {
   ExportsController({
     required ExportsRepository repository,
-    required AuthSession session,
+    required AuthSession? session,
     required ExportNotificationEmitter emitNotification,
   }) : _repository = repository,
        _session = session,
@@ -34,8 +34,12 @@ class ExportsController extends StateNotifier<ExportsState> {
        super(const ExportsState.initial());
 
   final ExportsRepository _repository;
-  final AuthSession _session;
+  final AuthSession? _session;
   final ExportNotificationEmitter _emitNotification;
+
+  String? get _userId {
+    return _session?.user.id;
+  }
 
   Future<bool> requestExport({
     required String projectId,
@@ -43,10 +47,18 @@ class ExportsController extends StateNotifier<ExportsState> {
     required ExportFormat format,
     required Map<String, dynamic> exportParameters,
   }) async {
+    final userId = _userId;
+    if (userId == null) {
+      state = state.copyWith(
+        isSubmitting: false,
+        error: 'Sign in again to request exports.',
+      );
+      return false;
+    }
     state = state.copyWith(isSubmitting: true, error: null);
     try {
       await _repository.requestExport(
-        requestedByUserId: _session.user.id,
+        requestedByUserId: userId,
         projectId: projectId,
         projectName: projectName,
         format: format,
@@ -72,9 +84,14 @@ class ExportsController extends StateNotifier<ExportsState> {
   }
 
   Future<ExportJob?> downloadExport(String exportId) async {
+    final userId = _userId;
+    if (userId == null) {
+      state = state.copyWith(error: 'Sign in again to download exports.');
+      return null;
+    }
     try {
       final updated = await _repository.markDownloaded(
-        requestedByUserId: _session.user.id,
+        requestedByUserId: userId,
         exportId: exportId,
       );
       if (!mounted) {
@@ -99,9 +116,14 @@ class ExportsController extends StateNotifier<ExportsState> {
   }
 
   Future<void> retryFailedExport(String exportId) async {
+    final userId = _userId;
+    if (userId == null) {
+      state = state.copyWith(error: 'Sign in again to retry exports.');
+      return;
+    }
     try {
       await _repository.retryFailed(
-        requestedByUserId: _session.user.id,
+        requestedByUserId: userId,
         exportId: exportId,
       );
       if (!mounted) {

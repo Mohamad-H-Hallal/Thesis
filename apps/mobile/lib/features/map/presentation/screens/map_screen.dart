@@ -13,6 +13,7 @@ import '../../../../core/network/api_error_message.dart';
 import '../../../../core/offline/local_models.dart';
 import '../../../../core/pagination/paginated_list_controller.dart';
 import '../../../../core/providers/providers.dart';
+import '../../../../core/utils/lebanon_time.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/sync/sync_controller.dart';
 import '../../../../core/widgets/app_action_buttons.dart';
@@ -4194,12 +4195,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   String _formatDateTime(DateTime value) {
-    final local = value.toLocal();
-    final month = local.month.toString().padLeft(2, '0');
-    final day = local.day.toString().padLeft(2, '0');
-    final hour = local.hour.toString().padLeft(2, '0');
-    final minute = local.minute.toString().padLeft(2, '0');
-    return '${local.year}-$month-$day $hour:$minute';
+    return formatLebanonDateTime(value);
   }
 
   String _photoLabel(String path) {
@@ -5284,10 +5280,7 @@ class _SyncStatusLine extends StatelessWidget {
     } else if (state.lastSyncAt != null) {
       icon = Icons.cloud_done_outlined;
       color = scheme.primary;
-      final local = state.lastSyncAt!.toLocal();
-      final hour = local.hour.toString().padLeft(2, '0');
-      final minute = local.minute.toString().padLeft(2, '0');
-      text = 'Last sync $hour:$minute';
+      text = 'Last sync ${formatLebanonTime(state.lastSyncAt!)}';
     } else {
       icon = Icons.cloud_done_outlined;
       color = scheme.primary;
@@ -5821,7 +5814,7 @@ class _OfflineMapStatusCard extends StatelessWidget {
     final downloadedAt = package!.downloadedAt;
     final downloadedSummary = downloadedAt == null
         ? 'No saved offline areas for this account on this device yet'
-        : 'Last refreshed on ${downloadedAt.toLocal().year}-${downloadedAt.toLocal().month.toString().padLeft(2, '0')}-${downloadedAt.toLocal().day.toString().padLeft(2, '0')}';
+        : 'Last refreshed on ${formatLebanonDate(downloadedAt)}';
     final savedImageCount = package!.tileCount ?? 0;
     final hasSavedImagery = savedImageCount > 0;
 

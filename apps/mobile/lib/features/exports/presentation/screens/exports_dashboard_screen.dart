@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -12,6 +13,7 @@ import 'package:latlong2/latlong.dart';
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/pagination/paginated_list_controller.dart';
 import '../../../../core/providers/providers.dart';
+import '../../../../core/utils/lebanon_time.dart';
 import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
@@ -19,6 +21,8 @@ import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../auth/domain/auth_models.dart';
+import '../../../auth/presentation/controllers/auth_controller.dart';
+import '../../../map/domain/app_tile_provider.dart';
 import '../../../map/domain/lebanon_map.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/export_job.dart';
@@ -97,7 +101,12 @@ class _ExportsDashboardScreenState
 
   @override
   Widget build(BuildContext context) {
-    final session = ref.watch(authControllerProvider).session;
+    final authState = ref.watch(authControllerProvider);
+    if (authState.status == AuthStatus.checking ||
+        authState.status == AuthStatus.loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final session = authState.session;
     if (session?.user.role != UserRole.admin) {
       return const AppEmptyState(
         icon: Icons.lock_outline,
@@ -257,11 +266,9 @@ class _ExportsDashboardScreenState
                 children: [
                   LayoutBuilder(
                     builder: (context, constraints) {
-                      final refreshButton = IconButton(
-                        tooltip: 'Refresh export jobs',
-                        onPressed: jobsState.isRefreshing
-                            ? null
-                            : () => _refreshJobs(jobsQuery),
+                      final resetButton = IconButton(
+                        tooltip: 'Reset filters',
+                        onPressed: _resetExportFilters,
                         icon: const Icon(Icons.refresh),
                       );
                       if (constraints.maxWidth < 420) {
@@ -274,7 +281,7 @@ class _ExportsDashboardScreenState
                             ),
                             Align(
                               alignment: Alignment.centerRight,
-                              child: refreshButton,
+                              child: resetButton,
                             ),
                           ],
                         );
@@ -287,7 +294,7 @@ class _ExportsDashboardScreenState
                               style: Theme.of(context).textTheme.titleMedium,
                             ),
                           ),
-                          refreshButton,
+                          resetButton,
                         ],
                       );
                     },
@@ -375,12 +382,12 @@ class _ExportsDashboardScreenState
                           ],
                           onChanged: (value) {
                             if (value == null) {
-                            setState(() {
-                              _selectedProjectId = null;
-                              _selectedProjectName = '';
-                              _selectedFeatureType = null;
-                              _selectedExportPolygon = null;
-                            });
+                              setState(() {
+                                _selectedProjectId = null;
+                                _selectedProjectName = '';
+                                _selectedFeatureType = null;
+                                _selectedExportPolygon = null;
+                              });
                               return;
                             }
                             final project = availableProjects.firstWhere(
@@ -396,6 +403,29 @@ class _ExportsDashboardScreenState
                         ),
                       ],
                     ),
+                  const SizedBox(height: AppSpacing.sm),
+                  DropdownButtonFormField<String?>(
+                    initialValue: _selectedFeatureType,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Feature type',
+                    ),
+                    items: <DropdownMenuItem<String?>>[
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('All features'),
+                      ),
+                      ...featureTypeOptions.map(
+                        (value) => DropdownMenuItem<String?>(
+                          value: value,
+                          child: Text(value, overflow: TextOverflow.ellipsis),
+                        ),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      setState(() => _selectedFeatureType = value);
+                    },
+                  ),
                   const SizedBox(height: AppSpacing.sm),
                   Text('Format', style: Theme.of(context).textTheme.titleSmall),
                   const SizedBox(height: AppSpacing.sm),
@@ -505,33 +535,8 @@ class _ExportsDashboardScreenState
                     decoration: InputDecoration(
                       labelText: 'BBOX',
                       hintText: exportBboxHint,
-                      helperText:
-                          'Drawn areas are combined with BBOX and date filters.',
                       errorText: _bboxError,
                     ),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  DropdownButtonFormField<String?>(
-                    initialValue: _selectedFeatureType,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Feature type',
-                    ),
-                    items: <DropdownMenuItem<String?>>[
-                      const DropdownMenuItem<String?>(
-                        value: null,
-                        child: Text('All features'),
-                      ),
-                      ...featureTypeOptions.map(
-                        (value) => DropdownMenuItem<String?>(
-                          value: value,
-                          child: Text(value, overflow: TextOverflow.ellipsis),
-                        ),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      setState(() => _selectedFeatureType = value);
-                    },
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   AppActionButtons(
@@ -689,6 +694,20 @@ class _ExportsDashboardScreenState
     ref.invalidate(exportJobsSummaryProvider(query));
   }
 
+  void _resetExportFilters() {
+    setState(() {
+      _selectedFeatureType = null;
+      _selectedFormat = ExportFormat.geojson;
+      _fromDateController.clear();
+      _toDateController.clear();
+      _bboxController.clear();
+      _selectedExportPolygon = null;
+      _fromDateError = null;
+      _toDateError = null;
+      _bboxError = null;
+    });
+  }
+
   Future<void> _submit(
     ExportsController controller, {
     required ProjectSummary? selectedProject,
@@ -740,6 +759,7 @@ class _ExportsDashboardScreenState
       },
     );
     if (mounted && success) {
+      setState(() => _selectedExportPolygon = null);
       bumpWorkflowRefresh(ref);
       AppSnackbar.showSuccess(context, 'Export request added to queue.');
       return;
@@ -945,10 +965,10 @@ class _ExportsDashboardScreenState
   }
 
   Future<void> _selectExportArea() async {
-    final polygon = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (context) => _ExportAreaPickerDialog(
-        initialPolygon: _selectedExportPolygon,
+    final polygon = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute<Map<String, dynamic>>(
+        builder: (context) =>
+            _ExportAreaPickerDialog(initialPolygon: _selectedExportPolygon),
       ),
     );
     if (!mounted || polygon == null) {
@@ -1047,25 +1067,71 @@ class _CategoryOption {
   final String name;
 }
 
+@visibleForTesting
+Widget buildExportAreaPickerForTest({Map<String, dynamic>? initialPolygon}) {
+  return _ExportAreaPickerDialog(
+    initialPolygon: initialPolygon,
+    validateWorkspace: false,
+  );
+}
+
 class _ExportAreaPickerDialog extends StatefulWidget {
-  const _ExportAreaPickerDialog({this.initialPolygon});
+  const _ExportAreaPickerDialog({
+    this.initialPolygon,
+    this.validateWorkspace = true,
+  });
 
   final Map<String, dynamic>? initialPolygon;
+  final bool validateWorkspace;
 
   @override
-  State<_ExportAreaPickerDialog> createState() => _ExportAreaPickerDialogState();
+  State<_ExportAreaPickerDialog> createState() =>
+      _ExportAreaPickerDialogState();
 }
 
 class _ExportAreaPickerDialogState extends State<_ExportAreaPickerDialog> {
+  late final MapController _mapController;
+  late final MapOptions _mapOptions;
+  late final TileProvider _tileProvider;
+  final Key _mapKey = ValueKey<String>(
+    'export-area-map-${DateTime.now().microsecondsSinceEpoch}',
+  );
+  final GlobalKey _bottomPanelKey = GlobalKey();
   final List<LatLng> _points = <LatLng>[];
+  MapCamera? _latestCamera;
+  double _bottomPanelHeight = 0;
+  bool _isMapReady = false;
+  LebanonBasemapStyle _basemapStyle = LebanonBasemapStyle.street;
 
   @override
   void initState() {
     super.initState();
-    final coordinates =
-        widget.initialPolygon?['coordinates'] is List
-            ? widget.initialPolygon!['coordinates'] as List
-            : null;
+    _mapController = MapController();
+    _tileProvider = appNetworkTileProvider();
+    _mapOptions = MapOptions(
+      initialCenter: LebanonMapConfig.center,
+      initialZoom: LebanonMapConfig.drawingInitialZoom,
+      minZoom: LebanonMapConfig.drawingMinZoom,
+      maxZoom: LebanonMapConfig.drawingMaxZoom,
+      cameraConstraint: CameraConstraint.containCenter(
+        bounds: LebanonMapConfig.bounds,
+      ),
+      interactionOptions: const InteractionOptions(
+        flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+      ),
+      onMapReady: () {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _isMapReady = true);
+      },
+      onPositionChanged: (camera, _) {
+        _latestCamera = camera;
+      },
+    );
+    final coordinates = widget.initialPolygon?['coordinates'] is List
+        ? widget.initialPolygon!['coordinates'] as List
+        : null;
     final ring = coordinates?.isNotEmpty == true && coordinates!.first is List
         ? coordinates.first as List
         : const <dynamic>[];
@@ -1083,100 +1149,278 @@ class _ExportAreaPickerDialogState extends State<_ExportAreaPickerDialog> {
     }
   }
 
+  void _addPoint(LatLng point) {
+    if (widget.validateWorkspace && !LebanonMapConfig.contains(point)) {
+      AppSnackbar.showError(
+        context,
+        'Choose points inside the Lebanon workspace.',
+      );
+      return;
+    }
+    setState(() => _points.add(point));
+  }
+
+  void _addPointFromTap(TapUpDetails details) {
+    final camera = _latestCamera ?? _mapController.camera;
+    final point = camera.pointToLatLng(
+      math.Point<double>(details.localPosition.dx, details.localPosition.dy),
+    );
+    _addPoint(point);
+  }
+
+  void _undoPoint() {
+    if (_points.isEmpty) {
+      return;
+    }
+    setState(() => _points.removeLast());
+  }
+
+  void _clearPoints() {
+    if (_points.isEmpty) {
+      return;
+    }
+    setState(_points.clear);
+  }
+
+  void _fitWorkspace() {
+    if (!_isMapReady) {
+      return;
+    }
+    _mapController.fitCamera(LebanonMapConfig.drawingFit);
+  }
+
+  void _zoomBy(double delta) {
+    if (!_isMapReady) {
+      return;
+    }
+    final center = _latestCamera?.center ?? LebanonMapConfig.center;
+    final zoom =
+        ((_latestCamera?.zoom ?? LebanonMapConfig.drawingInitialZoom) + delta)
+            .clamp(
+              LebanonMapConfig.drawingMinZoom,
+              LebanonMapConfig.drawingMaxZoom,
+            )
+            .toDouble();
+    _mapController.move(center, zoom);
+  }
+
+  void _toggleBasemap() {
+    setState(() {
+      _basemapStyle = _basemapStyle == LebanonBasemapStyle.street
+          ? LebanonBasemapStyle.satellite
+          : LebanonBasemapStyle.street;
+    });
+  }
+
+  void _measureBottomPanel() {
+    final context = _bottomPanelKey.currentContext;
+    final box = context?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) {
+      return;
+    }
+    final height = box.size.height;
+    if ((height - _bottomPanelHeight).abs() < 0.5) {
+      return;
+    }
+    if (mounted) {
+      setState(() => _bottomPanelHeight = height);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final polygonPoints = _points.length >= 3
         ? <LatLng>[..._points, _points.first]
         : _points;
-    return Dialog.fullscreen(
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Draw export area'),
-          actions: [
-            IconButton(
-              tooltip: 'Undo point',
-              onPressed: _points.isEmpty
-                  ? null
-                  : () => setState(() => _points.removeLast()),
-              icon: const Icon(Icons.undo),
-            ),
-            IconButton(
-              tooltip: 'Clear area',
-              onPressed: _points.isEmpty
-                  ? null
-                  : () => setState(() => _points.clear()),
-              icon: const Icon(Icons.delete_outline),
-            ),
-          ],
-        ),
-        body: Stack(
-          children: [
-            FlutterMap(
-              options: MapOptions(
-                initialCenter: LebanonMapConfig.center,
-                initialZoom: 8,
-                cameraConstraint: LebanonMapConfig.cameraConstraint,
-                onTap: (_, point) => setState(() => _points.add(point)),
-              ),
-              children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.example.lebanese_gis_mobile',
-                ),
-                if (polygonPoints.length >= 3)
-                  PolygonLayer(
-                    polygons: [
-                      Polygon(
-                        points: polygonPoints,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.primary.withValues(alpha: 0.20),
-                        borderColor: Theme.of(context).colorScheme.primary,
-                        borderStrokeWidth: 2,
+    return Scaffold(
+      appBar: AppBar(
+        leading: const BackButton(),
+        title: const Text('Draw export area'),
+      ),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              _measureBottomPanel();
+            }
+          });
+          const overlayMargin = AppSpacing.sm;
+          const verticalRailHeight = 245.0;
+          final canShowTools = _bottomPanelHeight > 0;
+          final availableAbovePanel =
+              constraints.maxHeight - _bottomPanelHeight - overlayMargin * 2;
+          final useHorizontalTools =
+              availableAbovePanel < verticalRailHeight + overlayMargin;
+          final toolsBottom = _bottomPanelHeight + overlayMargin;
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              Positioned.fill(
+                child: ClipRRect(
+                  key: const ValueKey<String>('export_area_map_clip'),
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(18),
+                  ),
+                  child: FlutterMap(
+                    key: _mapKey,
+                    mapController: _mapController,
+                    options: _mapOptions,
+                    children: [
+                      if (LebanonMapConfig.shouldRenderTileLayers)
+                        TileLayer(
+                          key: ValueKey<String>(
+                            'export_area_basemap_${_basemapStyle.name}',
+                          ),
+                          urlTemplate: LebanonMapConfig.basemapUrlTemplate(
+                            _basemapStyle,
+                          ),
+                          tileProvider: _tileProvider,
+                          userAgentPackageName: 'lb.gov.gis_collector',
+                        ),
+                      if (LebanonMapConfig.shouldRenderTileLayers &&
+                          LebanonMapConfig.referenceLabelUrlTemplate(
+                                _basemapStyle,
+                              ) !=
+                              null)
+                        TileLayer(
+                          key: ValueKey<String>(
+                            'export_area_labels_${_basemapStyle.name}',
+                          ),
+                          urlTemplate:
+                              LebanonMapConfig.referenceLabelUrlTemplate(
+                                _basemapStyle,
+                              )!,
+                          tileProvider: _tileProvider,
+                          userAgentPackageName: 'lb.gov.gis_collector',
+                        ),
+                      if (polygonPoints.length >= 2)
+                        PolylineLayer(
+                          polylines: [
+                            Polyline(
+                              points: polygonPoints,
+                              color: Theme.of(context).colorScheme.primary,
+                              strokeWidth: 3,
+                            ),
+                          ],
+                        ),
+                      if (polygonPoints.length >= 4)
+                        PolygonLayer(
+                          polygons: [
+                            Polygon(
+                              points: polygonPoints,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.primary.withValues(alpha: 0.20),
+                              borderColor: Theme.of(
+                                context,
+                              ).colorScheme.primary,
+                              borderStrokeWidth: 2,
+                            ),
+                          ],
+                        ),
+                      MarkerLayer(
+                        markers: [
+                          for (
+                            var index = 0;
+                            index < _points.length;
+                            index += 1
+                          )
+                            Marker(
+                              point: _points[index],
+                              width: 34,
+                              height: 34,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Theme.of(context).colorScheme.primary,
+                                  border: Border.all(
+                                    color: Colors.white,
+                                    width: 2,
+                                  ),
+                                  boxShadow: const [
+                                    BoxShadow(
+                                      color: Color(0x33000000),
+                                      blurRadius: 8,
+                                      offset: Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    '${index + 1}',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelSmall
+                                        ?.copyWith(color: Colors.white),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ],
                   ),
-                MarkerLayer(
-                  markers: [
-                    for (var index = 0; index < _points.length; index += 1)
-                      Marker(
-                        point: _points[index],
-                        width: 34,
-                        height: 34,
-                        child: CircleAvatar(
-                          radius: 14,
-                          child: Text('${index + 1}'),
-                        ),
-                      ),
-                  ],
-                ),
-              ],
-            ),
-            Positioned(
-              left: AppSpacing.md,
-              right: AppSpacing.md,
-              bottom: AppSpacing.md,
-              child: AppCard(
-                child: AppActionButtons(
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close),
-                      label: const Text('Cancel'),
-                    ),
-                    FilledButton.icon(
-                      onPressed: _points.length < 3
-                          ? null
-                          : () => Navigator.of(context).pop(_polygonGeoJson()),
-                      icon: const Icon(Icons.check),
-                      label: const Text('Use area'),
-                    ),
-                  ],
                 ),
               ),
-            ),
-          ],
-        ),
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onTapUp: _addPointFromTap,
+                ),
+              ),
+              if (canShowTools)
+                if (useHorizontalTools)
+                  Positioned(
+                    left: AppSpacing.sm,
+                    right: AppSpacing.sm,
+                    bottom: toolsBottom,
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: _ExportAreaHorizontalToolbar(
+                        onFitWorkspace: _fitWorkspace,
+                        onZoomIn: () => _zoomBy(1),
+                        onZoomOut: () => _zoomBy(-1),
+                        basemapStyle: _basemapStyle,
+                        onToggleBasemap: _toggleBasemap,
+                        onUndo: _points.isEmpty ? null : _undoPoint,
+                        onClear: _points.isEmpty ? null : _clearPoints,
+                      ),
+                    ),
+                  )
+                else
+                  Positioned(
+                    right: AppSpacing.sm,
+                    bottom: toolsBottom,
+                    child: _ExportAreaControlRail(
+                      onFitWorkspace: _fitWorkspace,
+                      onZoomIn: () => _zoomBy(1),
+                      onZoomOut: () => _zoomBy(-1),
+                      basemapStyle: _basemapStyle,
+                      onToggleBasemap: _toggleBasemap,
+                      onUndo: _points.isEmpty ? null : _undoPoint,
+                      onClear: _points.isEmpty ? null : _clearPoints,
+                    ),
+                  ),
+              Positioned(
+                left: AppSpacing.sm,
+                right: AppSpacing.sm,
+                bottom: 0,
+                child: KeyedSubtree(
+                  key: _bottomPanelKey,
+                  child: SafeArea(
+                    top: false,
+                    minimum: const EdgeInsets.only(bottom: AppSpacing.sm),
+                    child: _ExportAreaActionPanel(
+                      onUseArea: _points.length < 3
+                          ? null
+                          : () => Navigator.of(context).pop(_polygonGeoJson()),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1189,6 +1433,278 @@ class _ExportAreaPickerDialogState extends State<_ExportAreaPickerDialog> {
       'type': 'Polygon',
       'coordinates': <dynamic>[ring],
     };
+  }
+}
+
+class _ExportAreaControlRail extends StatelessWidget {
+  const _ExportAreaControlRail({
+    required this.onFitWorkspace,
+    required this.onZoomIn,
+    required this.onZoomOut,
+    required this.basemapStyle,
+    required this.onToggleBasemap,
+    required this.onUndo,
+    required this.onClear,
+  });
+
+  final VoidCallback onFitWorkspace;
+  final VoidCallback onZoomIn;
+  final VoidCallback onZoomOut;
+  final LebanonBasemapStyle basemapStyle;
+  final VoidCallback onToggleBasemap;
+  final VoidCallback? onUndo;
+  final VoidCallback? onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      elevation: 6,
+      color: scheme.surface.withValues(alpha: 0.92),
+      borderRadius: BorderRadius.circular(18),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _MapControlButton(
+            tooltip: 'Fit workspace',
+            icon: Icons.center_focus_strong_outlined,
+            onPressed: onFitWorkspace,
+            isTop: true,
+          ),
+          const _MapRailDivider(),
+          _MapControlButton(
+            tooltip: 'Zoom in',
+            icon: Icons.add,
+            onPressed: onZoomIn,
+          ),
+          const _MapRailDivider(),
+          _MapControlButton(
+            tooltip: 'Zoom out',
+            icon: Icons.remove,
+            onPressed: onZoomOut,
+          ),
+          const _MapRailDivider(),
+          _MapControlButton(
+            tooltip: basemapStyle == LebanonBasemapStyle.street
+                ? 'Switch to Satellite'
+                : 'Switch to OSM',
+            icon: _exportBasemapStyleIcon(basemapStyle),
+            onPressed: onToggleBasemap,
+          ),
+          const _MapRailDivider(),
+          _MapControlButton(
+            tooltip: 'Undo last point',
+            icon: Icons.undo_outlined,
+            onPressed: onUndo,
+          ),
+          const _MapRailDivider(),
+          _MapControlButton(
+            tooltip: 'Clear polygon',
+            icon: Icons.clear_outlined,
+            onPressed: onClear,
+            isBottom: true,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ExportAreaHorizontalToolbar extends StatelessWidget {
+  const _ExportAreaHorizontalToolbar({
+    required this.onFitWorkspace,
+    required this.onZoomIn,
+    required this.onZoomOut,
+    required this.basemapStyle,
+    required this.onToggleBasemap,
+    required this.onUndo,
+    required this.onClear,
+  });
+
+  final VoidCallback onFitWorkspace;
+  final VoidCallback onZoomIn;
+  final VoidCallback onZoomOut;
+  final LebanonBasemapStyle basemapStyle;
+  final VoidCallback onToggleBasemap;
+  final VoidCallback? onUndo;
+  final VoidCallback? onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      elevation: 6,
+      color: scheme.surface.withValues(alpha: 0.92),
+      borderRadius: BorderRadius.circular(18),
+      clipBehavior: Clip.antiAlias,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _MapControlButton(
+            tooltip: 'Fit workspace',
+            icon: Icons.center_focus_strong_outlined,
+            onPressed: onFitWorkspace,
+            isStart: true,
+          ),
+          const _MapRailDivider(horizontal: true),
+          _MapControlButton(
+            tooltip: 'Zoom in',
+            icon: Icons.add,
+            onPressed: onZoomIn,
+          ),
+          const _MapRailDivider(horizontal: true),
+          _MapControlButton(
+            tooltip: 'Zoom out',
+            icon: Icons.remove,
+            onPressed: onZoomOut,
+          ),
+          const _MapRailDivider(horizontal: true),
+          _MapControlButton(
+            tooltip: basemapStyle == LebanonBasemapStyle.street
+                ? 'Switch to Satellite'
+                : 'Switch to OSM',
+            icon: _exportBasemapStyleIcon(basemapStyle),
+            onPressed: onToggleBasemap,
+          ),
+          const _MapRailDivider(horizontal: true),
+          _MapControlButton(
+            tooltip: 'Undo last point',
+            icon: Icons.undo_outlined,
+            onPressed: onUndo,
+          ),
+          const _MapRailDivider(horizontal: true),
+          _MapControlButton(
+            tooltip: 'Clear polygon',
+            icon: Icons.clear_outlined,
+            onPressed: onClear,
+            isEnd: true,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ExportAreaActionPanel extends StatelessWidget {
+  const _ExportAreaActionPanel({required this.onUseArea});
+
+  final VoidCallback? onUseArea;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: Material(
+          elevation: 8,
+          color: scheme.surface.withValues(alpha: 0.95),
+          borderRadius: BorderRadius.circular(24),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+            child: SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: onUseArea,
+                icon: const Icon(Icons.check),
+                label: const Text('Use area'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MapControlButton extends StatelessWidget {
+  const _MapControlButton({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+    this.isTop = false,
+    this.isBottom = false,
+    this.isStart = false,
+    this.isEnd = false,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final bool isTop;
+  final bool isBottom;
+  final bool isStart;
+  final bool isEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 40,
+      height: 40,
+      child: IconButton(
+        tooltip: tooltip,
+        onPressed: onPressed,
+        icon: Icon(icon, size: 19),
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        style: IconButton.styleFrom(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.only(
+              topLeft: (isTop || isStart)
+                  ? const Radius.circular(18)
+                  : Radius.zero,
+              topRight: (isTop || isEnd)
+                  ? const Radius.circular(18)
+                  : Radius.zero,
+              bottomLeft: (isBottom || isStart)
+                  ? const Radius.circular(18)
+                  : Radius.zero,
+              bottomRight: (isBottom || isEnd)
+                  ? const Radius.circular(18)
+                  : Radius.zero,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MapRailDivider extends StatelessWidget {
+  const _MapRailDivider({this.horizontal = false});
+
+  final bool horizontal;
+
+  @override
+  Widget build(BuildContext context) {
+    if (horizontal) {
+      return SizedBox(
+        width: 1,
+        height: 24,
+        child: VerticalDivider(
+          width: 1,
+          thickness: 1,
+          color: Theme.of(context).colorScheme.outlineVariant,
+        ),
+      );
+    }
+    return Divider(
+      height: 1,
+      indent: 10,
+      endIndent: 10,
+      color: Theme.of(context).colorScheme.outlineVariant,
+    );
+  }
+}
+
+IconData _exportBasemapStyleIcon(LebanonBasemapStyle style) {
+  switch (style) {
+    case LebanonBasemapStyle.street:
+      return Icons.map_outlined;
+    case LebanonBasemapStyle.satellite:
+      return Icons.satellite_alt_outlined;
   }
 }
 
@@ -1328,7 +1844,9 @@ class _ExportJobCard extends StatelessWidget {
     final toDate = job.exportParameters['date_to']?.toString().trim();
     final bbox = job.exportParameters['bbox']?.toString().trim();
     final featureType = job.exportParameters['feature_type']?.toString().trim();
-    final exportPolygon = job.exportParameters['export_polygon']?.toString().trim();
+    final exportPolygon = job.exportParameters['export_polygon']
+        ?.toString()
+        .trim();
 
     if (fromDate != null && fromDate.isNotEmpty) {
       chips.add(Chip(label: Text('From $fromDate')));
@@ -1574,12 +2092,7 @@ class _MetricCard extends StatelessWidget {
 }
 
 String _formatDateTime(DateTime value) {
-  final local = value.toLocal();
-  final month = local.month.toString().padLeft(2, '0');
-  final day = local.day.toString().padLeft(2, '0');
-  final hour = local.hour.toString().padLeft(2, '0');
-  final minute = local.minute.toString().padLeft(2, '0');
-  return '${local.year}-$month-$day $hour:$minute';
+  return formatLebanonDateTime(value);
 }
 
 String _formatBytes(int bytes) {
