@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import '../../../core/config/app_env.dart';
 import '../../../core/network/api_error_message.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/utils/lebanon_time.dart';
 import '../domain/app_notification.dart';
 import '../domain/notifications_repository.dart';
 
@@ -203,6 +204,6 @@ class ApiNotificationsRepository implements NotificationsRepository {
     if (diff.inDays < 7) {
       return '${diff.inDays}d ago';
     }
-    return '${value.year}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
+    return formatLebanonDate(value);
   }
 }
