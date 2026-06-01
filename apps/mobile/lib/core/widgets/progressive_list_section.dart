@@ -55,6 +55,14 @@ class _ProgressiveListSectionState<T> extends State<ProgressiveListSection<T>> {
       );
       return;
     }
+    if (widget.items.length > oldWidget.items.length &&
+        _visibleCount >= oldWidget.items.length) {
+      _visibleCount = _clampVisibleCount(
+        oldWidget.items.length + widget.step,
+        widget.items.length,
+      );
+      return;
+    }
     if (_visibleCount > widget.items.length) {
       _visibleCount = widget.items.length;
     }
@@ -62,16 +70,15 @@ class _ProgressiveListSectionState<T> extends State<ProgressiveListSection<T>> {
 
   @override
   Widget build(BuildContext context) {
+    final visibleCount = _visibleCount.clamp(0, widget.items.length);
+    final remaining = widget.items.length - visibleCount;
     if (widget.onLoadMore != null) {
       return _buildItems(
         context,
-        visibleCount: widget.items.length,
-        footer: _buildLoadMoreFooter(),
+        visibleCount: visibleCount,
+        footer: _buildLoadMoreFooter(hasLocalRemaining: remaining > 0),
       );
     }
-
-    final visibleCount = _visibleCount.clamp(0, widget.items.length);
-    final remaining = widget.items.length - visibleCount;
 
     return _buildItems(
       context,
@@ -173,17 +180,17 @@ class _ProgressiveListSectionState<T> extends State<ProgressiveListSection<T>> {
     );
   }
 
-  Widget? _buildLoadMoreFooter() {
+  Widget? _buildLoadMoreFooter({required bool hasLocalRemaining}) {
     if (widget.isLoadingMore) {
       return const Padding(
         padding: EdgeInsets.only(bottom: AppSpacing.sm),
         child: Center(child: CircularProgressIndicator()),
       );
     }
-    if (widget.hasMore ?? false) {
+    if (hasLocalRemaining || (widget.hasMore ?? false)) {
       return Center(
         child: OutlinedButton.icon(
-          onPressed: widget.onLoadMore,
+          onPressed: hasLocalRemaining ? _loadMore : widget.onLoadMore,
           icon: const Icon(Icons.expand_more),
           label: const Text('Show more'),
         ),

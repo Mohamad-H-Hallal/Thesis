@@ -56,6 +56,14 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
   ];
 
   final MapController _mapController = MapController();
+  final LayerHitNotifier<ImportedFeature> _stagedPolygonHitNotifier =
+      ValueNotifier(null);
+  final LayerHitNotifier<ImportedFeature> _stagedPolylineHitNotifier =
+      ValueNotifier(null);
+  final LayerHitNotifier<MapFeatureSummary> _projectContextPolygonHitNotifier =
+      ValueNotifier(null);
+  final LayerHitNotifier<MapFeatureSummary> _projectContextPolylineHitNotifier =
+      ValueNotifier(null);
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
   final Distance _distance = const Distance();
@@ -188,6 +196,10 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
   void dispose() {
     _basemapTransitionTimer?.cancel();
     _cameraRefreshTimer?.cancel();
+    _stagedPolygonHitNotifier.dispose();
+    _stagedPolylineHitNotifier.dispose();
+    _projectContextPolygonHitNotifier.dispose();
+    _projectContextPolylineHitNotifier.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
@@ -303,9 +315,9 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
     final useLightweightRender =
         visibleStagedFeatures.length + approvedProjectContextFeatures.length >
             1800 ||
-        currentZoom < 9.75;
+        currentZoom < 10.5;
     _useClusteredMarkers = useLightweightRender;
-    final renderDetailedShapes = !useLightweightRender && currentZoom >= 10.5;
+    final renderDetailedShapes = !useLightweightRender;
     final viewportStagedFeatures = _featuresInBounds(
       visibleStagedFeatures,
       cameraBounds,
@@ -377,17 +389,9 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
                     ),
                   if (_showApprovedProjectContext) ...[
                     if (renderDetailedShapes)
-                      PolygonLayer(
-                        polygons: _projectContextPolygons(
-                          viewportApprovedFeatures,
-                        ),
-                      ),
+                      _projectContextPolygonLayer(viewportApprovedFeatures),
                     if (renderDetailedShapes)
-                      PolylineLayer(
-                        polylines: _projectContextPolylines(
-                          viewportApprovedFeatures,
-                        ),
-                      ),
+                      _projectContextPolylineLayer(viewportApprovedFeatures),
                     if (useLightweightRender)
                       MarkerLayer(
                         markers: _projectContextClusterMarkers(
@@ -404,12 +408,14 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
                       ),
                   ],
                   if (renderDetailedShapes)
-                    PolygonLayer(
-                      polygons: _stagedPolygons(viewportStagedFeatures),
+                    _stagedPolygonLayer(
+                      viewportStagedFeatures,
+                      canModerateImport: canModerateImport,
                     ),
                   if (renderDetailedShapes)
-                    PolylineLayer(
-                      polylines: _stagedPolylines(viewportStagedFeatures),
+                    _stagedPolylineLayer(
+                      viewportStagedFeatures,
+                      canModerateImport: canModerateImport,
                     ),
                   if (_currentLocation != null)
                     MarkerLayer(
@@ -723,6 +729,23 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
         ..write('${entry.value}'.toLowerCase());
     }
     return buffer.toString();
+  }
+
+  bool _isPointImportedFeature(ImportedFeature feature) {
+    final sourceType = feature.geometryType?.trim().toLowerCase();
+    if (sourceType != null && sourceType.isNotEmpty) {
+      return sourceType == 'point' || sourceType == 'multipoint';
+    }
+    final geometry = feature.geometry;
+    return geometry != null && isPointGeometry(geometry);
+  }
+
+  bool _isPointProjectFeature(MapFeatureSummary feature) {
+    final sourceType = feature.sourceGeometryType?.trim().toLowerCase();
+    if (sourceType != null && sourceType.isNotEmpty) {
+      return sourceType == 'point' || sourceType == 'multipoint';
+    }
+    return isPointGeometry(feature.geometry);
   }
 
   String? _searchSummaryLabel(int visibleCount) {
@@ -1455,11 +1478,17 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
           featureTypeOptions: featureTypeOptions,
           onSelectFeature: (feature) {
             Navigator.of(sheetContext).pop();
-            _focusImportedFeature(feature);
-            _openImportedFeatureDetails(
-              feature,
-              canModerateImport: canModerateImport,
-            );
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) {
+                return;
+              }
+              unawaited(
+                _openSelectedImportedFeature(
+                  feature,
+                  canModerateImport: canModerateImport,
+                ),
+              );
+            });
           },
         ),
       );
@@ -1470,6 +1499,34 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
         });
       }
     }
+  }
+
+  Future<void> _openSelectedImportedFeature(
+    ImportedFeature feature, {
+    required bool canModerateImport,
+  }) async {
+    var target = feature;
+    if (target.geometry == null || target.isSummary) {
+      try {
+        target = await ref.read(
+          importFeatureProvider(
+            ImportFeatureQuery(
+              importId: widget.importId,
+              featureId: feature.id,
+            ),
+          ).future,
+        );
+      } catch (_) {
+        target = feature;
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    await _openImportedFeatureDetails(
+      target,
+      canModerateImport: canModerateImport,
+    );
   }
 
   Future<void> _openApprovedFeatureBrowser(
@@ -1659,28 +1716,136 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
     }
   }
 
-  List<Polygon> _stagedPolygons(List<ImportedFeature> features) {
-    final polygons = <Polygon>[];
+  Widget _stagedPolygonLayer(
+    List<ImportedFeature> features, {
+    required bool canModerateImport,
+  }) {
+    final layer = PolygonLayer<ImportedFeature>(
+      polygons: _stagedPolygons(features),
+      hitNotifier: _stagedPolygonHitNotifier,
+    );
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      hitTestBehavior: HitTestBehavior.deferToChild,
+      child: GestureDetector(
+        behavior: HitTestBehavior.deferToChild,
+        onTap: () => _handleStagedGeometryLayerHit(
+          _stagedPolygonHitNotifier,
+          canModerateImport: canModerateImport,
+        ),
+        child: layer,
+      ),
+    );
+  }
+
+  Widget _stagedPolylineLayer(
+    List<ImportedFeature> features, {
+    required bool canModerateImport,
+  }) {
+    final layer = PolylineLayer<ImportedFeature>(
+      polylines: _stagedPolylines(features),
+      hitNotifier: _stagedPolylineHitNotifier,
+      minimumHitbox: 12,
+    );
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      hitTestBehavior: HitTestBehavior.deferToChild,
+      child: GestureDetector(
+        behavior: HitTestBehavior.deferToChild,
+        onTap: () => _handleStagedGeometryLayerHit(
+          _stagedPolylineHitNotifier,
+          canModerateImport: canModerateImport,
+        ),
+        child: layer,
+      ),
+    );
+  }
+
+  Widget _projectContextPolygonLayer(List<MapFeatureSummary> features) {
+    final layer = PolygonLayer<MapFeatureSummary>(
+      polygons: _projectContextPolygons(features),
+      hitNotifier: _projectContextPolygonHitNotifier,
+    );
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      hitTestBehavior: HitTestBehavior.deferToChild,
+      child: GestureDetector(
+        behavior: HitTestBehavior.deferToChild,
+        onTap: () => _handleProjectContextGeometryLayerHit(
+          _projectContextPolygonHitNotifier,
+        ),
+        child: layer,
+      ),
+    );
+  }
+
+  Widget _projectContextPolylineLayer(List<MapFeatureSummary> features) {
+    final layer = PolylineLayer<MapFeatureSummary>(
+      polylines: _projectContextPolylines(features),
+      hitNotifier: _projectContextPolylineHitNotifier,
+      minimumHitbox: 12,
+    );
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      hitTestBehavior: HitTestBehavior.deferToChild,
+      child: GestureDetector(
+        behavior: HitTestBehavior.deferToChild,
+        onTap: () => _handleProjectContextGeometryLayerHit(
+          _projectContextPolylineHitNotifier,
+        ),
+        child: layer,
+      ),
+    );
+  }
+
+  void _handleStagedGeometryLayerHit(
+    LayerHitNotifier<ImportedFeature> notifier, {
+    required bool canModerateImport,
+  }) {
+    final hits = notifier.value?.hitValues;
+    if (hits == null || hits.isEmpty) {
+      return;
+    }
+    final feature = hits.first;
+    _focusImportedFeature(feature);
+    _openImportedFeatureDetails(feature, canModerateImport: canModerateImport);
+  }
+
+  void _handleProjectContextGeometryLayerHit(
+    LayerHitNotifier<MapFeatureSummary> notifier,
+  ) {
+    final hits = notifier.value?.hitValues;
+    if (hits == null || hits.isEmpty) {
+      return;
+    }
+    final feature = hits.first;
+    _focusProjectContextFeature(feature);
+    _openApprovedProjectFeatureDetails(feature);
+  }
+
+  List<Polygon<ImportedFeature>> _stagedPolygons(
+    List<ImportedFeature> features,
+  ) {
+    final polygons = <Polygon<ImportedFeature>>[];
     for (final feature in features) {
       final geometry = feature.geometry;
-      if (geometry == null) {
-        continue;
-      }
-      final type = geometry['type'];
-      if (type != 'Polygon' && type != 'MultiPolygon') {
+      if (geometry == null || !isPolygonGeometry(geometry)) {
         continue;
       }
       final color = _statusColor(feature.status);
-      for (final points in _polygonSegments(geometry)) {
+      for (final points in polygonGeometrySegments(geometry)) {
         if (points.isEmpty) {
           continue;
         }
         polygons.add(
-          Polygon(
+          Polygon<ImportedFeature>(
             points: points,
             borderStrokeWidth: _focusedFeatureId == feature.id ? 3 : 2,
-            borderColor: color,
+            borderColor: _focusedFeatureId == feature.id
+                ? Colors.black87
+                : color,
             color: color.withValues(alpha: 0.18),
+            hitValue: feature,
           ),
         );
       }
@@ -1688,27 +1853,26 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
     return polygons;
   }
 
-  List<Polyline> _stagedPolylines(List<ImportedFeature> features) {
-    final lines = <Polyline>[];
+  List<Polyline<ImportedFeature>> _stagedPolylines(
+    List<ImportedFeature> features,
+  ) {
+    final lines = <Polyline<ImportedFeature>>[];
     for (final feature in features) {
       final geometry = feature.geometry;
-      if (geometry == null) {
-        continue;
-      }
-      final type = geometry['type'];
-      if (type != 'LineString' && type != 'MultiLineString') {
+      if (geometry == null || !isLineGeometry(geometry)) {
         continue;
       }
       final color = _statusColor(feature.status);
-      for (final points in _polylineSegments(geometry)) {
+      for (final points in lineGeometrySegments(geometry)) {
         if (points.isEmpty) {
           continue;
         }
         lines.add(
-          Polyline(
+          Polyline<ImportedFeature>(
             points: points,
             strokeWidth: _focusedFeatureId == feature.id ? 4 : 3,
-            color: color,
+            color: _focusedFeatureId == feature.id ? Colors.black87 : color,
+            hitValue: feature,
           ),
         );
       }
@@ -1724,18 +1888,21 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
     final grouped = <String, List<(ImportedFeature, LatLng)>>{};
     for (final feature in features) {
       final geometry = feature.geometry;
-      final point =
-          markerPoints[feature.id] ??
-          (geometry == null ? null : _featureFocusPoint(geometry));
-      if (point == null) {
+      if (geometry == null || !_isPointImportedFeature(feature)) {
         continue;
       }
-      final key =
-          '${point.latitude.toStringAsFixed(7)}:${point.longitude.toStringAsFixed(7)}';
-      grouped.putIfAbsent(key, () => <(ImportedFeature, LatLng)>[]).add((
-        feature,
-        point,
-      ));
+      final points = pointGeometryPoints(geometry);
+      for (var index = 0; index < points.length; index++) {
+        final point = index == 0
+            ? markerPoints[feature.id] ?? points[index]
+            : points[index];
+        final key =
+            '${point.latitude.toStringAsFixed(7)}:${point.longitude.toStringAsFixed(7)}';
+        grouped.putIfAbsent(key, () => <(ImportedFeature, LatLng)>[]).add((
+          feature,
+          point,
+        ));
+      }
     }
 
     final markers = <Marker>[];
@@ -1795,47 +1962,47 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
     return markers;
   }
 
-  List<Polygon> _projectContextPolygons(List<MapFeatureSummary> features) {
+  List<Polygon<MapFeatureSummary>> _projectContextPolygons(
+    List<MapFeatureSummary> features,
+  ) {
     return features
-        .where((feature) {
-          final type = feature.geometry['type'];
-          return type == 'Polygon' || type == 'MultiPolygon';
-        })
+        .where((feature) => isPolygonGeometry(feature.geometry))
         .expand((feature) sync* {
-          for (final points in _polygonSegments(feature.geometry)) {
+          for (final points in polygonGeometrySegments(feature.geometry)) {
             if (points.isEmpty) {
               continue;
             }
             final isFocused = _focusedFeatureId == feature.id;
-            yield Polygon(
+            yield Polygon<MapFeatureSummary>(
               points: points,
               borderStrokeWidth: isFocused ? 3 : 1.6,
               borderColor: isFocused ? Colors.black87 : _projectContextColor,
               color: _projectContextColor.withValues(
                 alpha: isFocused ? 0.16 : 0.08,
               ),
+              hitValue: feature,
             );
           }
         })
         .toList(growable: false);
   }
 
-  List<Polyline> _projectContextPolylines(List<MapFeatureSummary> features) {
+  List<Polyline<MapFeatureSummary>> _projectContextPolylines(
+    List<MapFeatureSummary> features,
+  ) {
     return features
-        .where((feature) {
-          final type = feature.geometry['type'];
-          return type == 'LineString' || type == 'MultiLineString';
-        })
+        .where((feature) => isLineGeometry(feature.geometry))
         .expand((feature) sync* {
-          for (final points in _polylineSegments(feature.geometry)) {
+          for (final points in lineGeometrySegments(feature.geometry)) {
             if (points.isEmpty) {
               continue;
             }
             final isFocused = _focusedFeatureId == feature.id;
-            yield Polyline(
+            yield Polyline<MapFeatureSummary>(
               points: points,
               strokeWidth: isFocused ? 4 : 2,
               color: _projectContextColor,
+              hitValue: feature,
             );
           }
         })
@@ -1848,48 +2015,52 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
   ) {
     final markers = <Marker>[];
     for (final feature in features) {
-      final markerPoint =
-          markerPoints[feature.id] ?? _featureFocusPoint(feature.geometry);
-      if (markerPoint == null) {
+      if (!_isPointProjectFeature(feature)) {
         continue;
       }
-      final isFocused = _focusedFeatureId == feature.id;
-      markers.add(
-        Marker(
-          point: markerPoint,
-          width: isFocused ? 42 : 34,
-          height: isFocused ? 42 : 34,
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTap: () {
-              _focusProjectContextFeature(feature);
-              _openApprovedProjectFeatureDetails(feature);
-            },
-            child: Center(
-              child: Container(
-                width: 24,
-                height: 24,
-                decoration: BoxDecoration(
-                  color: _projectContextColor,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: isFocused ? Colors.black87 : Colors.white,
-                    width: isFocused ? 2.4 : 1.6,
-                  ),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x26000000),
-                      blurRadius: 6,
-                      offset: Offset(0, 2),
+      final points = pointGeometryPoints(feature.geometry);
+      for (var index = 0; index < points.length; index++) {
+        final markerPoint = index == 0
+            ? markerPoints[feature.id] ?? points[index]
+            : points[index];
+        final isFocused = _focusedFeatureId == feature.id;
+        markers.add(
+          Marker(
+            point: markerPoint,
+            width: isFocused ? 42 : 34,
+            height: isFocused ? 42 : 34,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: () {
+                _focusProjectContextFeature(feature);
+                _openApprovedProjectFeatureDetails(feature);
+              },
+              child: Center(
+                child: Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    color: _projectContextColor,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: isFocused ? Colors.black87 : Colors.white,
+                      width: isFocused ? 2.4 : 1.6,
                     ),
-                  ],
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x26000000),
+                        blurRadius: 6,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(Icons.check, color: Colors.white, size: 13),
                 ),
-                child: const Icon(Icons.check, color: Colors.white, size: 13),
               ),
             ),
           ),
-        ),
-      );
+        );
+      }
     }
     return markers;
   }
@@ -2202,10 +2373,14 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
 
     for (final feature in stagedFeatures) {
       final geometry = feature.geometry;
-      final point = geometry == null ? null : _featureFocusPoint(geometry);
-      if (point == null) {
+      if (geometry == null || !_isPointImportedFeature(feature)) {
         continue;
       }
+      final points = pointGeometryPoints(geometry);
+      if (points.isEmpty) {
+        continue;
+      }
+      final point = points.first;
       final key =
           '${point.latitude.toStringAsFixed(7)}:${point.longitude.toStringAsFixed(7)}';
       grouped
@@ -2214,10 +2389,14 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
     }
 
     for (final feature in approvedFeatures) {
-      final point = _featureFocusPoint(feature.geometry);
-      if (point == null) {
+      if (!_isPointProjectFeature(feature)) {
         continue;
       }
+      final points = pointGeometryPoints(feature.geometry);
+      if (points.isEmpty) {
+        continue;
+      }
+      final point = points.first;
       final key =
           '${point.latitude.toStringAsFixed(7)}:${point.longitude.toStringAsFixed(7)}';
       grouped
@@ -2267,75 +2446,6 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
       origin.latitude + (math.sin(angle) * radiusDegrees),
       origin.longitude + (math.cos(angle) * radiusDegrees),
     );
-  }
-
-  List<List<LatLng>> _polylineSegments(Map<String, dynamic> geometry) {
-    final type = geometry['type'];
-    if (type == 'LineString') {
-      final points = lineGeometryPoints(geometry);
-      return points.isEmpty ? const <List<LatLng>>[] : <List<LatLng>>[points];
-    }
-    if (type != 'MultiLineString') {
-      return const <List<LatLng>>[];
-    }
-    final coordinates = geometry['coordinates'];
-    if (coordinates is! List) {
-      return const <List<LatLng>>[];
-    }
-    return coordinates
-        .whereType<List>()
-        .map(
-          (segment) => segment
-              .map(_decodeCoordinatePair)
-              .whereType<LatLng>()
-              .toList(growable: false),
-        )
-        .where((points) => points.isNotEmpty)
-        .toList(growable: false);
-  }
-
-  List<List<LatLng>> _polygonSegments(Map<String, dynamic> geometry) {
-    final type = geometry['type'];
-    if (type == 'Polygon') {
-      final points = polygonGeometryPoints(geometry);
-      return points.isEmpty ? const <List<LatLng>>[] : <List<LatLng>>[points];
-    }
-    if (type != 'MultiPolygon') {
-      return const <List<LatLng>>[];
-    }
-    final coordinates = geometry['coordinates'];
-    if (coordinates is! List) {
-      return const <List<LatLng>>[];
-    }
-    return coordinates
-        .whereType<List>()
-        .map((polygon) {
-          if (polygon.isEmpty) {
-            return const <LatLng>[];
-          }
-          final firstRing = polygon.first;
-          if (firstRing is! List) {
-            return const <LatLng>[];
-          }
-          return firstRing
-              .map(_decodeCoordinatePair)
-              .whereType<LatLng>()
-              .toList(growable: false);
-        })
-        .where((points) => points.isNotEmpty)
-        .toList(growable: false);
-  }
-
-  LatLng? _decodeCoordinatePair(Object? raw) {
-    if (raw is! List || raw.length < 2) {
-      return null;
-    }
-    final lon = raw[0];
-    final lat = raw[1];
-    if (lon is! num || lat is! num) {
-      return null;
-    }
-    return LatLng(lat.toDouble(), lon.toDouble());
   }
 }
 
@@ -3590,12 +3700,13 @@ class _ImportFeatureDetailsSheet extends ConsumerWidget {
               ),
               const SizedBox(height: AppSpacing.md),
             ],
-            if (feature.validationErrors.isNotEmpty) ...[
+            if (_sanitizedImportValidationMessages(feature.validationErrors)
+                case final sanitizedErrors when sanitizedErrors.isNotEmpty) ...[
               _ValidationIssueGroup(
                 title: 'Validation errors',
                 icon: Icons.error_outline,
                 toneColor: Theme.of(context).colorScheme.error,
-                messages: feature.validationErrors,
+                messages: sanitizedErrors,
               ),
               const SizedBox(height: AppSpacing.md),
             ],
@@ -4132,6 +4243,14 @@ String? _sanitizeImportValidationMessage(String? message) {
   final trimmed = message?.trim() ?? '';
   if (trimmed.isEmpty) {
     return null;
+  }
+  final lower = trimmed.toLowerCase();
+  if (lower == 'missing required attribute: feature_type') {
+    return 'Missing required field: Feature type. Re-upload or reprocess the import to apply the current project schema labels.';
+  }
+  if (lower.contains('ring self-intersection') ||
+      lower.contains('self-intersection')) {
+    return 'Invalid polygon geometry: ring self-intersection. Fix the geometry in GIS software or exclude this feature.';
   }
   if (!trimmed.startsWith(_unknownImportFieldWarningPrefix)) {
     return trimmed;
@@ -4844,7 +4963,14 @@ String? _importedFeatureSubtitle(ImportedFeature feature) {
 }
 
 String _importFeatureTitle(ImportedFeature feature) {
-  const preferredKeys = <String>['name', 'title', 'label', 'feature_type'];
+  const preferredKeys = <String>[
+    'name',
+    'title',
+    'label',
+    'L4_descr',
+    'l4_descr',
+    'feature_type',
+  ];
   for (final key in preferredKeys) {
     final raw = feature.attributes[key];
     if (raw == null) {
@@ -4941,7 +5067,9 @@ Iterable<String> _featureTypeAttributeValues(
 
 bool _looksLikeFeatureTypeField(String key, String label) {
   final normalized = '${key.toLowerCase()} ${label.toLowerCase()}';
-  return normalized.contains('type') ||
+  final compact = _normalizedImportAttributeKey('$key $label');
+  return compact.contains('l4descr') ||
+      normalized.contains('type') ||
       normalized.contains('species') ||
       normalized.contains('crop') ||
       normalized.contains('tree') ||
@@ -4961,7 +5089,14 @@ bool _looksLikeOpaqueSourceValue(String value) {
 }
 
 String _projectFeatureTitle(MapFeatureSummary feature) {
-  const preferredKeys = <String>['name', 'title', 'label', 'feature_type'];
+  const preferredKeys = <String>[
+    'name',
+    'title',
+    'label',
+    'L4_descr',
+    'l4_descr',
+    'feature_type',
+  ];
   for (final key in preferredKeys) {
     final raw = feature.attributes[key];
     if (raw == null) {
@@ -4998,7 +5133,8 @@ Map<String, dynamic> _filteredImportAttributes(
 ) {
   final filtered = <String, dynamic>{};
   for (final entry in attributes.entries) {
-    if (_shouldHideImportAttributeKey(entry.key)) {
+    if (_shouldHideImportAttributeKey(entry.key) ||
+        _isDuplicateCanonicalImportAttribute(attributes, entry)) {
       continue;
     }
     filtered[entry.key] = entry.value;
@@ -5007,16 +5143,16 @@ Map<String, dynamic> _filteredImportAttributes(
 }
 
 bool _shouldHideImportAttributeKey(String key) {
-  final normalized = key.trim().toLowerCase().replaceAll(
-    RegExp(r'[^a-z0-9]'),
-    '',
-  );
+  final normalized = _normalizedImportAttributeKey(key);
   return normalized == 'accuracy' ||
       normalized == 'accuracymeter' ||
       normalized == 'accuracymeters';
 }
 
 String _labelize(String value) {
+  if (RegExp(r'^[A-Z0-9]+(?:_[A-Za-z0-9]+)+$').hasMatch(value)) {
+    return value;
+  }
   final normalized = value
       .replaceAllMapped(
         RegExp(r'([a-z0-9])([A-Z])'),
@@ -5037,6 +5173,34 @@ String _labelize(String value) {
       )
       .join(' ');
 }
+
+bool _isDuplicateCanonicalImportAttribute(
+  Map<String, dynamic> attributes,
+  MapEntry<String, dynamic> entry,
+) {
+  if (_normalizedImportAttributeKey(entry.key) != 'featuretype') {
+    return false;
+  }
+  final value = _normalizedImportAttributeValue(entry.value);
+  if (value.isEmpty) {
+    return false;
+  }
+  return attributes.entries.any((other) {
+    if (other.key == entry.key || _shouldHideImportAttributeKey(other.key)) {
+      return false;
+    }
+    if (_normalizedImportAttributeKey(other.key) == 'featuretype') {
+      return false;
+    }
+    return _normalizedImportAttributeValue(other.value) == value;
+  });
+}
+
+String _normalizedImportAttributeKey(String key) =>
+    key.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+String _normalizedImportAttributeValue(Object? value) =>
+    _formatAttributeValue(value).trim().toLowerCase();
 
 String _formatAttributeValue(Object? value) {
   if (value == null) {

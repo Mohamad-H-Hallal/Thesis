@@ -91,6 +91,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   final FocusNode _projectMapSearchFocusNode = FocusNode();
   final ValueNotifier<_OfflineSheetUiState> _offlineSheetUiState =
       ValueNotifier<_OfflineSheetUiState>(const _OfflineSheetUiState());
+  final LayerHitNotifier<MapFeatureSummary> _projectPolygonHitNotifier =
+      ValueNotifier(null);
+  final LayerHitNotifier<MapFeatureSummary> _projectPolylineHitNotifier =
+      ValueNotifier(null);
   final Set<String> _visibleStatuses = Set<String>.from(_projectMapStatusOrder);
   final List<LatLng> _captureVertices = <LatLng>[];
   final Map<String, Future<_OfflineTileAssets?>> _offlineTileAssetsFutureCache =
@@ -404,6 +408,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     _basemapTransitionTimer?.cancel();
     _viewportRefreshTimer?.cancel();
     _offlineSheetUiState.dispose();
+    _projectPolygonHitNotifier.dispose();
+    _projectPolylineHitNotifier.dispose();
     _searchController.dispose();
     _projectMapSearchFocusNode.dispose();
     super.dispose();
@@ -2130,8 +2136,20 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 keepBuffer: 3,
                 userAgentPackageName: 'lb.gov.gis_collector',
               ),
-            PolygonLayer(polygons: _polygonOverlays(features)),
-            PolylineLayer(polylines: _polylineOverlays(features)),
+            _projectPolygonLayer(
+              features: features,
+              project: project,
+              canCollectOnMap: canCollectOnMap,
+              canReview: canReview,
+              interactive: !_isProjectMapCaptureMode,
+            ),
+            _projectPolylineLayer(
+              features: features,
+              project: project,
+              canCollectOnMap: canCollectOnMap,
+              canReview: canReview,
+              interactive: !_isProjectMapCaptureMode,
+            ),
             if (_currentLocation != null)
               MarkerLayer(
                 markers: [
@@ -2339,8 +2357,18 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         keepBuffer: 3,
                         userAgentPackageName: 'lb.gov.gis_collector',
                       ),
-                    PolygonLayer(polygons: _polygonOverlays(features)),
-                    PolylineLayer(polylines: _polylineOverlays(features)),
+                    _projectPolygonLayer(
+                      features: features,
+                      project: project,
+                      canCollectOnMap: canCollectOnMap,
+                      canReview: canReview,
+                    ),
+                    _projectPolylineLayer(
+                      features: features,
+                      project: project,
+                      canCollectOnMap: canCollectOnMap,
+                      canReview: canReview,
+                    ),
                     if (_currentLocation != null)
                       MarkerLayer(
                         markers: [
@@ -3961,46 +3989,147 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     return projects.first;
   }
 
-  List<Polygon> _polygonOverlays(List<MapFeatureSummary> features) {
-    return features
-        .where((feature) => feature.geometry['type'] == 'Polygon')
-        .map((feature) {
-          final points = polygonGeometryPoints(feature.geometry);
-          if (points.isEmpty) {
-            return null;
-          }
-          final color = _statusColor(feature.status);
-          return Polygon(
-            points: points,
-            color: color.withValues(
-              alpha: _focusedFeatureId == feature.id ? 0.26 : 0.18,
-            ),
-            borderStrokeWidth: _focusedFeatureId == feature.id ? 3.6 : 2.5,
-            borderColor: _focusedFeatureId == feature.id
-                ? Colors.black87
-                : color,
-          );
-        })
-        .whereType<Polygon>()
-        .toList(growable: false);
+  Widget _projectPolygonLayer({
+    required List<MapFeatureSummary> features,
+    required ProjectSummary project,
+    required bool canCollectOnMap,
+    required bool canReview,
+    bool interactive = true,
+  }) {
+    final layer = PolygonLayer<MapFeatureSummary>(
+      polygons: _polygonOverlays(features),
+      hitNotifier: interactive ? _projectPolygonHitNotifier : null,
+    );
+    if (!interactive) {
+      return layer;
+    }
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      hitTestBehavior: HitTestBehavior.deferToChild,
+      child: GestureDetector(
+        behavior: HitTestBehavior.deferToChild,
+        onTap: () => _handleProjectGeometryLayerHit(
+          _projectPolygonHitNotifier,
+          project: project,
+          canCollectOnMap: canCollectOnMap,
+          canReview: canReview,
+        ),
+        child: layer,
+      ),
+    );
   }
 
-  List<Polyline> _polylineOverlays(List<MapFeatureSummary> features) {
-    return features
-        .where((feature) => feature.geometry['type'] == 'LineString')
-        .map((feature) {
-          final points = lineGeometryPoints(feature.geometry);
-          if (points.isEmpty) {
-            return null;
-          }
-          return Polyline(
+  Widget _projectPolylineLayer({
+    required List<MapFeatureSummary> features,
+    required ProjectSummary project,
+    required bool canCollectOnMap,
+    required bool canReview,
+    bool interactive = true,
+  }) {
+    final layer = PolylineLayer<MapFeatureSummary>(
+      polylines: _polylineOverlays(features),
+      hitNotifier: interactive ? _projectPolylineHitNotifier : null,
+      minimumHitbox: 12,
+    );
+    if (!interactive) {
+      return layer;
+    }
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      hitTestBehavior: HitTestBehavior.deferToChild,
+      child: GestureDetector(
+        behavior: HitTestBehavior.deferToChild,
+        onTap: () => _handleProjectGeometryLayerHit(
+          _projectPolylineHitNotifier,
+          project: project,
+          canCollectOnMap: canCollectOnMap,
+          canReview: canReview,
+        ),
+        child: layer,
+      ),
+    );
+  }
+
+  void _handleProjectGeometryLayerHit(
+    LayerHitNotifier<MapFeatureSummary> notifier, {
+    required ProjectSummary project,
+    required bool canCollectOnMap,
+    required bool canReview,
+  }) {
+    if (_isProjectMapCaptureMode) {
+      return;
+    }
+    final hits = notifier.value?.hitValues;
+    if (hits == null || hits.isEmpty) {
+      return;
+    }
+    final feature = hits.first;
+    if (feature.isAggregate) {
+      _focusFeatureAggregate(feature);
+      return;
+    }
+    _openFeatureDetails(
+      project: project,
+      feature: feature,
+      canCollectOnMap: canCollectOnMap,
+      canReview: canReview,
+    );
+  }
+
+  List<Polygon<MapFeatureSummary>> _polygonOverlays(
+    List<MapFeatureSummary> features,
+  ) {
+    final polygons = <Polygon<MapFeatureSummary>>[];
+    for (final feature in features) {
+      if (!isPolygonGeometry(feature.geometry)) {
+        continue;
+      }
+      final color = _statusColor(feature.status);
+      final focused = _focusedFeatureId == feature.id;
+      for (final points in polygonGeometrySegments(feature.geometry)) {
+        if (points.isEmpty) {
+          continue;
+        }
+        polygons.add(
+          Polygon<MapFeatureSummary>(
             points: points,
-            color: _statusColor(feature.status),
-            strokeWidth: _focusedFeatureId == feature.id ? 5.6 : 4,
-          );
-        })
-        .whereType<Polyline>()
-        .toList(growable: false);
+            color: color.withValues(alpha: focused ? 0.24 : 0.12),
+            borderStrokeWidth: focused ? 3.2 : 2,
+            borderColor: focused
+                ? Colors.black87
+                : color.withValues(alpha: 0.95),
+            hitValue: feature,
+          ),
+        );
+      }
+    }
+    return polygons;
+  }
+
+  List<Polyline<MapFeatureSummary>> _polylineOverlays(
+    List<MapFeatureSummary> features,
+  ) {
+    final polylines = <Polyline<MapFeatureSummary>>[];
+    for (final feature in features) {
+      if (!isLineGeometry(feature.geometry)) {
+        continue;
+      }
+      final focused = _focusedFeatureId == feature.id;
+      for (final points in lineGeometrySegments(feature.geometry)) {
+        if (points.isEmpty) {
+          continue;
+        }
+        polylines.add(
+          Polyline<MapFeatureSummary>(
+            points: points,
+            color: _statusColor(feature.status).withValues(alpha: 0.9),
+            strokeWidth: focused ? 5 : 3.2,
+            hitValue: feature,
+          ),
+        );
+      }
+    }
+    return polylines;
   }
 
   List<Marker> _markerOverlays(
@@ -4012,16 +4141,18 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }) {
     final grouped = <String, List<(MapFeatureSummary, LatLng)>>{};
     for (final feature in features) {
-      final point = _pointFromGeometry(feature.geometry);
-      if (point == null) {
+      final points = pointGeometryPoints(feature.geometry);
+      if (points.isEmpty) {
         continue;
       }
-      final key =
-          '${point.latitude.toStringAsFixed(7)}:${point.longitude.toStringAsFixed(7)}';
-      grouped.putIfAbsent(key, () => <(MapFeatureSummary, LatLng)>[]).add((
-        feature,
-        point,
-      ));
+      for (final point in points) {
+        final key =
+            '${point.latitude.toStringAsFixed(7)}:${point.longitude.toStringAsFixed(7)}';
+        grouped.putIfAbsent(key, () => <(MapFeatureSummary, LatLng)>[]).add((
+          feature,
+          point,
+        ));
+      }
     }
 
     final markers = <Marker>[];

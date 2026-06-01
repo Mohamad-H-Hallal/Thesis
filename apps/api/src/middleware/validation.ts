@@ -302,10 +302,7 @@ const notificationValidation = {
       .withMessage('Device token is required')
       .isLength({ min: 16, max: 4096 })
       .withMessage('Device token format is invalid'),
-    body('platform')
-      .trim()
-      .isIn(['android', 'ios'])
-      .withMessage('platform must be android or ios'),
+    body('platform').trim().isIn(['android', 'ios']).withMessage('platform must be android or ios'),
     body('device_label').optional().trim().isLength({ max: 120 }),
     body('app_version').optional().trim().isLength({ max: 60 }),
   ] as ValidationChain[],
@@ -333,14 +330,8 @@ const importValidation = {
         'failed',
       ])
       .withMessage('Invalid import status'),
-    queryParam('project_id')
-      .optional()
-      .isUUID()
-      .withMessage('project_id must be a valid UUID'),
-    queryParam('category_id')
-      .optional()
-      .isUUID()
-      .withMessage('category_id must be a valid UUID'),
+    queryParam('project_id').optional().isUUID().withMessage('project_id must be a valid UUID'),
+    queryParam('category_id').optional().isUUID().withMessage('category_id must be a valid UUID'),
   ] as ValidationChain[],
   listFeatures: [
     queryParam('status')
@@ -386,6 +377,43 @@ const importValidation = {
       .optional()
       .isUUID()
       .withMessage('feature_ids must contain valid UUID values'),
+    body('filters')
+      .optional({ nullable: true })
+      .isObject()
+      .withMessage('filters must be an object when provided'),
+    body('filters.status')
+      .optional({ nullable: true })
+      .isIn(['pending_review', 'approved', 'rejected', 'failed'])
+      .withMessage('filters.status must be a valid import feature status'),
+    body('filters.issue')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 1000 })
+      .withMessage('filters.issue must be 1000 characters or fewer'),
+    body('filters.search')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 200 })
+      .withMessage('filters.search must be 200 characters or fewer'),
+    body('filters.geometry_type')
+      .optional({ nullable: true })
+      .isIn([
+        'point',
+        'line',
+        'polygon',
+        'Point',
+        'LineString',
+        'Polygon',
+        'MultiPoint',
+        'MultiLineString',
+        'MultiPolygon',
+      ])
+      .withMessage('filters.geometry_type must be a valid geometry type'),
+    body('filters.feature_type')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 100 })
+      .withMessage('filters.feature_type must be 100 characters or fewer'),
   ] as ValidationChain[],
   comment: [
     param('importId').isUUID().withMessage('Valid import ID is required'),
@@ -483,6 +511,10 @@ const tileParamValidation: ValidationChain[] = [
 
 const tileFeatureQueryValidation: ValidationChain[] = [
   queryParam('project_id').isUUID().withMessage('project_id must be a valid UUID'),
+  queryParam('zoom')
+    .optional()
+    .isFloat({ min: 0, max: 24 })
+    .withMessage('zoom must be between 0 and 24'),
   queryParam('status')
     .optional()
     .isIn(['draft', 'pending_review', 'approved', 'rejected'])

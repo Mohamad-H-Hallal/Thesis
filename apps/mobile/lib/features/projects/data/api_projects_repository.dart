@@ -171,18 +171,7 @@ class ApiProjectsRepository implements ProjectsRepository {
   ProjectSummary _toProjectSummary(Map<String, dynamic> row) {
     final schemaRaw = row['collection_form_schema'];
     final schemaMap = _toMap(schemaRaw);
-    final fieldsRaw = (schemaMap['fields'] as List?) ?? const <dynamic>[];
-    final normalizedSchema = CollectionFormSchema(
-      version:
-          (schemaMap['version'] as String?) ??
-          (schemaMap['schemaVersion'] as String?) ??
-          'v0.0',
-      fields: fieldsRaw
-          .map(
-            (field) => _toFieldSchema(Map<String, dynamic>.from(field as Map)),
-          )
-          .toList(growable: false),
-    );
+    final normalizedSchema = CollectionFormSchema.fromMap(schemaMap);
 
     return ProjectSummary(
       id: (row['id'] as String?) ?? '',
@@ -236,37 +225,6 @@ class ApiProjectsRepository implements ProjectsRepository {
       ),
       allowedGeometryTypes: defaultProjectGeometryTypes,
       maxGpsAccuracyMeters: _toDouble(schemaMap['maxGpsAccuracyMeters']) ?? 25,
-    );
-  }
-
-  CollectionFormFieldSchema _toFieldSchema(Map<String, dynamic> raw) {
-    final typeRaw = (raw['type'] as String?) ?? 'text';
-    CollectionFieldType normalizedType = CollectionFieldType.text;
-    if (typeRaw == 'textarea') {
-      normalizedType = CollectionFieldType.multiline;
-    } else if (typeRaw == 'float' || typeRaw == 'int') {
-      normalizedType = CollectionFieldType.number;
-    } else {
-      for (final candidate in CollectionFieldType.values) {
-        if (candidate.name == typeRaw) {
-          normalizedType = candidate;
-          break;
-        }
-      }
-    }
-
-    return CollectionFormFieldSchema(
-      key: (raw['key'] as String?) ?? '',
-      label: (raw['label'] as String?) ?? (raw['key'] as String?) ?? 'Field',
-      type: normalizedType,
-      required: (raw['required'] as bool?) ?? false,
-      options: ((raw['options'] as List?) ?? const <dynamic>[])
-          .map((value) => value.toString())
-          .toList(growable: false),
-      hint: raw['hint'] as String?,
-      min: raw['min'] as num?,
-      max: raw['max'] as num?,
-      unit: raw['unit'] as String?,
     );
   }
 

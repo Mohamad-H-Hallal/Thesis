@@ -36,6 +36,10 @@ abstract class ImportsRepository {
     int cacheRevision = 0,
   });
 
+  Future<ImportQuickMapPreview> fetchImportQuickMapPreview({
+    required String importId,
+  });
+
   Future<ImportedFeature> fetchImportFeatureById({
     required String importId,
     required String featureId,
@@ -67,6 +71,11 @@ abstract class ImportsRepository {
     required String status,
     String? reason,
     List<String>? featureIds,
+    String? filterStatus,
+    String? filterIssue,
+    String? filterSearch,
+    String? filterGeometryType,
+    String? filterFeatureType,
   });
 
   Future<ImportComment> addImportComment({

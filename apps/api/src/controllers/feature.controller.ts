@@ -76,18 +76,18 @@ const mapSimplifyTolerance = (zoom: number): number => {
 
 const mapClusterCellSizeDegrees = (zoom: number): number => {
   if (zoom < 7.5) {
-    return 0.18;
+    return 0.1;
   }
   if (zoom < 8.5) {
-    return 0.12;
+    return 0.07;
   }
   if (zoom < 9.5) {
-    return 0.08;
+    return 0.045;
   }
   if (zoom < 10.5) {
-    return 0.05;
+    return 0.028;
   }
-  return 0.03;
+  return 0.02;
 };
 
 const getBboxPagination = (pageRaw: unknown, limitRaw: unknown): Pagination => {
@@ -1389,7 +1389,7 @@ const findFeaturesTile = async (req: Request, res: Response): Promise<void> => {
   const projectId = String(req.query.project_id ?? '');
   const requestedStatus = req.query.status ? String(req.query.status) : null;
   const status = req.user?.role === 'viewer' ? 'approved' : requestedStatus;
-  const zoom = normalizeMapZoom(req.params.z, 11);
+  const zoom = normalizeMapZoom(req.query.zoom ?? req.params.z, 11);
   const simplifyTolerance = mapSimplifyTolerance(zoom);
   const bounds = getTileBounds(req.params.z, req.params.x, req.params.y);
   let projectReadScope: ProjectReadScope | undefined;

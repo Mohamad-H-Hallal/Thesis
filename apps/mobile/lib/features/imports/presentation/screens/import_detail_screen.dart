@@ -7,7 +7,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:latlong2/latlong.dart';
 
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
@@ -54,6 +53,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
   bool _isSavingComment = false;
   bool _isLoadingLinkedFeature = false;
   bool _isRefreshingImportDetails = false;
+  String? _reviewProgressLabel;
   GisImportDetails? _liveDetails;
   ImportedFeature? _focusedLinkedFeature;
   String? _downloadedImportPath;
@@ -138,11 +138,16 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
         ? ref.read(paginatedImportFeaturesProvider(featureQuery).notifier)
         : null;
     final featureState = featuresAsync?.valueOrNull;
-    final features =
-        featureState?.items ??
-        (_selectedIssueFilter == null
-            ? details.previewFeatures
-            : const <ImportedFeature>[]);
+    final features = featureState?.items ?? const <ImportedFeature>[];
+    final isFeatureInitialLoading =
+        shouldLoadFeatures &&
+        (featuresAsync?.isLoading ?? false) &&
+        featureState == null;
+    final hasFeatureInitialError =
+        shouldLoadFeatures &&
+        (featuresAsync?.hasError ?? false) &&
+        featureState == null;
+    final isFeatureRefreshing = featureState?.isRefreshing ?? false;
     final focusedLinkedFeature = _focusedLinkedFeature;
     final focusedLinkedFeatureAlreadyVisible =
         focusedLinkedFeature != null &&
@@ -171,6 +176,10 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
         (details.job.reviewScope != 'protected_super_admin' ||
             isProtectedSuperAdmin);
     final canDownloadImport = canModerateImport;
+    final hasReviewableFeatures =
+        details.job.pendingFeatureCount > 0 ||
+        details.job.approvedFeatureCount > 0 ||
+        details.job.rejectedFeatureCount > 0;
     final downloadedImportPath = _downloadedImportPath;
 
     return SingleChildScrollView(
@@ -223,11 +232,10 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
             _ImportPreviewMapCard(
               importId: widget.importId,
               projectId: details.job.projectId,
-              features: details.previewFeatures,
               previewSummary: details.previewSummary,
             ),
           const SizedBox(height: AppSpacing.md),
-          if (canModerateImport && actionableFeatures.isNotEmpty)
+          if (canModerateImport && hasReviewableFeatures)
             _buildReviewActions(
               context,
               details: details,
@@ -235,7 +243,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
               selectedApprovableIds: selectedApprovableIds,
               selectedRejectableIds: selectedRejectableIds,
             ),
-          if (canModerateImport && actionableFeatures.isNotEmpty)
+          if (canModerateImport && hasReviewableFeatures)
             const SizedBox(height: AppSpacing.md),
           _ImportCommentsCard(
             key: _commentsKey,
@@ -307,7 +315,11 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
                   ),
                   highlighted: true,
                   isPinnedFromComment: true,
-                  onOpenMap: focusedLinkedFeature.geometry == null
+                  onViewDetails: () => _showFeatureDetails(
+                    focusedLinkedFeature,
+                    canModerateImport: canModerateImport,
+                  ),
+                  onOpenMap: !_canOpenImportedFeatureMap(focusedLinkedFeature)
                       ? null
                       : () => context.push(
                           AppRoutes.importMap(
@@ -336,7 +348,43 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
               ),
               const SizedBox(height: AppSpacing.sm),
             ],
-            if (features.isEmpty &&
+            if (isFeatureInitialLoading) ...[
+              const AppCard(
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: AppSpacing.sm),
+                    Expanded(child: Text('Loading staged feature page...')),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+            ] else if (hasFeatureInitialError) ...[
+              AppEmptyState(
+                icon: Icons.error_outline,
+                title: 'Staged features unavailable',
+                message: userFacingErrorMessage(
+                  featuresAsync!.asError?.error ??
+                      StateError('Staged feature loading failed.'),
+                  fallback:
+                      'Unable to load this feature page right now. Please try again.',
+                ),
+                actionLabel: 'Retry',
+                onAction: featuresController!.refresh,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+            ],
+            if (isFeatureRefreshing && features.isNotEmpty) ...[
+              const LinearProgressIndicator(minHeight: 2),
+              const SizedBox(height: AppSpacing.sm),
+            ],
+            if (!isFeatureInitialLoading &&
+                !hasFeatureInitialError &&
+                features.isEmpty &&
                 focusedLinkedFeature == null &&
                 !_isLoadingLinkedFeature)
               AppEmptyState(
@@ -360,7 +408,6 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
                   details.job.updatedAt,
                   _selectedStatusFilter,
                   _selectedIssueFilter,
-                  features.length,
                   featureState?.total ?? 0,
                 ),
                 hasMore: featureState?.hasMore ?? false,
@@ -375,7 +422,11 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
                     selected: _selectedFeatureIds.contains(feature.id),
                     highlighted: _focusedLinkedFeatureId == feature.id,
                     isPinnedFromComment: false,
-                    onOpenMap: feature.geometry == null
+                    onViewDetails: () => _showFeatureDetails(
+                      feature,
+                      canModerateImport: canModerateImport,
+                    ),
+                    onOpenMap: !_canOpenImportedFeatureMap(feature)
                         ? null
                         : () => context.push(
                             AppRoutes.importMap(
@@ -400,8 +451,10 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
                   ),
                 ),
               ),
-            if ((featureState?.total ?? details.job.geometryCount) >
-                features.length) ...[
+            if (!isFeatureInitialLoading &&
+                !hasFeatureInitialError &&
+                (featureState?.total ?? details.job.geometryCount) >
+                    features.length) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
                 'Showing ${features.length} of ${featureState?.total ?? details.job.geometryCount} staged feature(s) for this import.',
@@ -526,6 +579,51 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
         });
       }
     }
+  }
+
+  Future<void> _showFeatureDetails(
+    ImportedFeature feature, {
+    required bool canModerateImport,
+  }) async {
+    var detailFeature = feature;
+    if (feature.isSummary) {
+      try {
+        detailFeature = await ref
+            .read(importsRepositoryProvider)
+            .fetchImportFeatureById(
+              importId: widget.importId,
+              featureId: feature.id,
+            );
+      } catch (error) {
+        if (!mounted) {
+          return;
+        }
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to load this staged feature right now.',
+          ),
+        );
+        return;
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => _ImportedFeatureDetailsSheet(
+        feature: detailFeature,
+        onAddComment: canModerateImport
+            ? () {
+                Navigator.of(sheetContext).pop();
+                _addComment(context, feature: detailFeature);
+              }
+            : null,
+      ),
+    );
   }
 
   Future<void> _refreshCurrentImportDetails({
@@ -679,6 +777,24 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
     required List<String> selectedApprovableIds,
     required List<String> selectedRejectableIds,
   }) {
+    final statusFilter = _selectedStatusFilter;
+    final approveFilteredAllowedByStatus =
+        statusFilter == null ||
+        statusFilter == 'pending_review' ||
+        statusFilter == 'rejected';
+    final rejectFilteredAllowedByStatus =
+        statusFilter == null ||
+        statusFilter == 'pending_review' ||
+        statusFilter == 'approved';
+    final canApproveFiltered =
+        approveFilteredAllowedByStatus &&
+        (details.job.pendingFeatureCount > 0 ||
+            details.job.rejectedFeatureCount > 0);
+    final canRejectFiltered =
+        rejectFilteredAllowedByStatus &&
+        (details.job.pendingFeatureCount > 0 ||
+            details.job.approvedFeatureCount > 0);
+    final progressLabel = _reviewProgressLabel;
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -705,40 +821,60 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
           const SizedBox(height: AppSpacing.xs),
           Text(
             selectedFeatureCount == 0
-                ? 'Selection applies to the currently visible filtered features on this page.'
+                ? 'Selected actions apply to loaded visible features. All filtered actions run server-side across every matching reviewable feature.'
                 : '$selectedFeatureCount feature(s) selected on the current filtered page.',
             style: Theme.of(context).textTheme.bodySmall,
             softWrap: true,
           ),
+          if (_isSubmitting && progressLabel != null) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Row(
+              children: [
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text(
+                    progressLabel,
+                    style: Theme.of(context).textTheme.bodySmall,
+                    softWrap: true,
+                  ),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: AppSpacing.sm),
           AppActionButtons(
             children: [
               FilledButton.icon(
-                onPressed:
-                    _isSubmitting ||
-                        (details.job.pendingFeatureCount == 0 &&
-                            details.job.rejectedFeatureCount == 0)
+                onPressed: _isSubmitting || !canApproveFiltered
                     ? null
                     : () => _runReviewAction(
                         context,
                         status: 'approved',
                         featureIds: const <String>[],
+                        applyCurrentFilters: true,
+                        progressLabel:
+                            'Approving all filtered reviewable features...',
                       ),
                 icon: const Icon(Icons.check_circle_outline),
-                label: const Text('Approve all reviewable'),
+                label: const Text('Approve all filtered'),
               ),
               OutlinedButton.icon(
-                onPressed:
-                    _isSubmitting ||
-                        (details.job.pendingFeatureCount == 0 &&
-                            details.job.approvedFeatureCount == 0)
+                onPressed: _isSubmitting || !canRejectFiltered
                     ? null
                     : () => _runRejectWithReason(
                         context,
                         featureIds: const <String>[],
+                        applyCurrentFilters: true,
+                        progressLabel:
+                            'Rejecting all filtered reviewable features...',
                       ),
                 icon: const Icon(Icons.cancel_outlined),
-                label: const Text('Reject all reviewable'),
+                label: const Text('Reject all filtered'),
               ),
               FilledButton.tonalIcon(
                 onPressed: _isSubmitting || selectedApprovableIds.isEmpty
@@ -747,6 +883,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
                         context,
                         status: 'approved',
                         featureIds: selectedApprovableIds,
+                        progressLabel: 'Approving selected features...',
                       ),
                 icon: const Icon(Icons.done_all),
                 label: Text(
@@ -759,6 +896,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
                     : () => _runRejectWithReason(
                         context,
                         featureIds: selectedRejectableIds,
+                        progressLabel: 'Rejecting selected features...',
                       ),
                 icon: const Icon(Icons.remove_circle_outline),
                 label: Text(
@@ -961,6 +1099,8 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
   Future<void> _runRejectWithReason(
     BuildContext context, {
     required List<String> featureIds,
+    bool applyCurrentFilters = false,
+    String? progressLabel,
   }) async {
     final reason = await _promptReason(context);
     if (reason == null || !mounted || !context.mounted) {
@@ -971,6 +1111,8 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       status: 'rejected',
       reason: reason,
       featureIds: featureIds,
+      applyCurrentFilters: applyCurrentFilters,
+      progressLabel: progressLabel,
     );
   }
 
@@ -979,9 +1121,16 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
     required String status,
     required List<String> featureIds,
     String? reason,
+    bool applyCurrentFilters = false,
+    String? progressLabel,
   }) async {
     setState(() {
       _isSubmitting = true;
+      _reviewProgressLabel =
+          progressLabel ??
+          (status == 'approved'
+              ? 'Approving imported features...'
+              : 'Rejecting imported features...');
     });
     try {
       final reviewedJob = await ref
@@ -991,6 +1140,8 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
             status: status,
             reason: reason,
             featureIds: featureIds.isEmpty ? null : featureIds,
+            filterStatus: applyCurrentFilters ? _selectedStatusFilter : null,
+            filterIssue: applyCurrentFilters ? _selectedIssueFilter : null,
           );
       if (!mounted || !context.mounted) {
         return;
@@ -1005,6 +1156,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       }
       setState(() {
         _isSubmitting = false;
+        _reviewProgressLabel = null;
         _selectedFeatureIds.clear();
       });
       bumpWorkflowRefresh(ref);
@@ -1020,6 +1172,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       }
       setState(() {
         _isSubmitting = false;
+        _reviewProgressLabel = null;
       });
       AppSnackbar.showError(
         context,
@@ -1444,7 +1597,7 @@ class _ImportFeatureFiltersCard extends StatelessWidget {
                   (option) => DropdownMenuItem<String?>(
                     value: option.message,
                     child: Text(
-                      '${option.message} (${option.count})',
+                      '${option.displayMessage} (${option.count})',
                       maxLines: 3,
                     ),
                   ),
@@ -1738,6 +1891,7 @@ class _ImportedFeatureCard extends StatelessWidget {
     required this.selected,
     required this.highlighted,
     required this.isPinnedFromComment,
+    required this.onViewDetails,
     required this.onOpenMap,
     required this.onAddComment,
     required this.onToggleSelected,
@@ -1748,12 +1902,19 @@ class _ImportedFeatureCard extends StatelessWidget {
   final bool selected;
   final bool highlighted;
   final bool isPinnedFromComment;
+  final VoidCallback onViewDetails;
   final VoidCallback? onOpenMap;
   final VoidCallback? onAddComment;
   final VoidCallback onToggleSelected;
 
   @override
   Widget build(BuildContext context) {
+    final title = _importFeatureDisplayTitle(feature);
+    final cardAttributes = _summaryAttributesForCard(feature);
+    final filteredCardAttributes = _filteredImportAttributes(
+      cardAttributes,
+      titleValue: title,
+    );
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1790,13 +1951,11 @@ class _ImportedFeatureCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      _importFeatureDisplayTitle(feature),
+                      title,
                       style: Theme.of(context).textTheme.titleMedium,
                       softWrap: true,
                     ),
-                    if (_importFeatureDisplayTitle(
-                          feature,
-                        ).trim().toLowerCase() !=
+                    if (title.trim().toLowerCase() !=
                         _importFeatureTypeLabel(
                           feature.geometryType ??
                               feature.geometry?['type']?.toString() ??
@@ -1820,8 +1979,30 @@ class _ImportedFeatureCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
+          if (feature.validationWarnings.isNotEmpty ||
+              feature.validationErrors.isNotEmpty) ...[
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (feature.validationWarnings.isNotEmpty)
+                  _SmallInfoPill(
+                    icon: Icons.warning_amber_rounded,
+                    label:
+                        '${feature.validationWarnings.length} warning${feature.validationWarnings.length == 1 ? '' : 's'}',
+                  ),
+                if (feature.validationErrors.isNotEmpty)
+                  _SmallInfoPill(
+                    icon: Icons.error_outline,
+                    label:
+                        '${feature.validationErrors.length} error${feature.validationErrors.length == 1 ? '' : 's'}',
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
           if (feature.validationWarnings.isNotEmpty)
-            ...feature.validationWarnings
+            ..._sanitizedImportValidationMessages(feature.validationWarnings)
                 .where((warning) => !_isUnknownFieldWarning(warning))
                 .map(
                   (warning) => Padding(
@@ -1831,7 +2012,7 @@ class _ImportedFeatureCard extends StatelessWidget {
                 ),
           ..._buildUnknownFieldWarningBlocks(feature.validationReport),
           if (feature.validationErrors.isNotEmpty)
-            ...feature.validationErrors.map(
+            ..._sanitizedImportValidationMessages(feature.validationErrors).map(
               (error) => Padding(
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Text(
@@ -1849,50 +2030,312 @@ class _ImportedFeatureCard extends StatelessWidget {
                 softWrap: true,
               ),
             ),
-          if (feature.attributes.isNotEmpty) ...[
+          if (filteredCardAttributes.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.sm),
-            Text('Attributes', style: Theme.of(context).textTheme.titleSmall),
+            Text(
+              'Required attributes',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
             const SizedBox(height: 6),
-            _ImportAttributeGrid(attributes: feature.attributes),
-          ],
-          if (onOpenMap != null || onAddComment != null) ...[
-            const SizedBox(height: AppSpacing.sm),
-            AppActionButtons(
-              maxColumns: 2,
-              compactBreakpoint: 340,
-              fillRows: true,
-              children: [
-                if (onOpenMap != null)
-                  OutlinedButton.icon(
-                    onPressed: onOpenMap,
-                    icon: const Icon(Icons.map_outlined),
-                    label: const Text('Open map'),
-                  ),
-                if (onAddComment != null)
-                  OutlinedButton.icon(
-                    onPressed: onAddComment,
-                    icon: const Icon(Icons.comment_outlined),
-                    label: const Text('Comment'),
-                  ),
-              ],
+            _ImportAttributeGrid(
+              attributes: filteredCardAttributes,
+              filterAttributes: false,
             ),
           ],
+          const SizedBox(height: AppSpacing.sm),
+          _ImportedFeatureCardActions(
+            onViewDetails: onViewDetails,
+            onOpenMap: onOpenMap,
+            onAddComment: onAddComment,
+          ),
         ],
       ),
     );
   }
 }
 
-class _ImportAttributeGrid extends StatelessWidget {
-  const _ImportAttributeGrid({required this.attributes});
+class _ImportedFeatureCardActions extends StatelessWidget {
+  const _ImportedFeatureCardActions({
+    required this.onViewDetails,
+    required this.onOpenMap,
+    required this.onAddComment,
+  });
 
-  final Map<String, dynamic> attributes;
+  final VoidCallback onViewDetails;
+  final VoidCallback? onOpenMap;
+  final VoidCallback? onAddComment;
 
   @override
   Widget build(BuildContext context) {
-    final entries = _filteredImportAttributes(
-      attributes,
-    ).entries.toList(growable: false);
+    final secondaryButtons = <Widget>[
+      if (onOpenMap != null)
+        _featureActionButton(
+          onPressed: onOpenMap,
+          icon: Icons.map_outlined,
+          label: 'Open map',
+        ),
+      if (onAddComment != null)
+        _featureActionButton(
+          onPressed: onAddComment,
+          icon: Icons.comment_outlined,
+          label: 'Comment',
+        ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final narrow =
+            constraints.maxWidth.isFinite && constraints.maxWidth < 360;
+        final detailsButton = _featureActionButton(
+          onPressed: onViewDetails,
+          icon: Icons.info_outline,
+          label: 'View details',
+        );
+
+        if (narrow || secondaryButtons.length <= 1) {
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(width: double.infinity, child: detailsButton),
+              for (final button in secondaryButtons) ...[
+                const SizedBox(height: AppSpacing.sm),
+                SizedBox(width: double.infinity, child: button),
+              ],
+            ],
+          );
+        }
+
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(width: double.infinity, child: detailsButton),
+            const SizedBox(height: AppSpacing.sm),
+            Row(
+              children: [
+                for (
+                  var index = 0;
+                  index < secondaryButtons.length;
+                  index += 1
+                ) ...[
+                  if (index > 0) const SizedBox(width: AppSpacing.sm),
+                  Expanded(child: secondaryButtons[index]),
+                ],
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _featureActionButton({
+    required VoidCallback? onPressed,
+    required IconData icon,
+    required String label,
+  }) {
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon),
+      label: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        softWrap: false,
+      ),
+    );
+  }
+}
+
+class _ImportedFeatureDetailsSheet extends StatelessWidget {
+  const _ImportedFeatureDetailsSheet({
+    required this.feature,
+    required this.onAddComment,
+  });
+
+  final ImportedFeature feature;
+  final VoidCallback? onAddComment;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final geometryLabel = _importFeatureTypeLabel(
+      feature.geometryType ??
+          feature.geometry?['type']?.toString() ??
+          'Unknown',
+    );
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.72,
+      minChildSize: 0.42,
+      maxChildSize: 0.95,
+      builder: (context, scrollController) {
+        return SafeArea(
+          child: ListView(
+            controller: scrollController,
+            padding: const EdgeInsets.all(AppSpacing.lg),
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      _importFeatureDisplayTitle(feature),
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                      softWrap: true,
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  StatusChip(status: feature.status),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _SmallInfoPill(
+                    icon: Icons.category_outlined,
+                    label: geometryLabel,
+                  ),
+                  _SmallInfoPill(
+                    icon: Icons.numbers_outlined,
+                    label: 'Source row ${feature.sourceIndex + 1}',
+                  ),
+                  if (feature.validationWarnings.isNotEmpty)
+                    _SmallInfoPill(
+                      icon: Icons.warning_amber_rounded,
+                      label:
+                          '${feature.validationWarnings.length} warning${feature.validationWarnings.length == 1 ? '' : 's'}',
+                    ),
+                  if (feature.validationErrors.isNotEmpty)
+                    _SmallInfoPill(
+                      icon: Icons.error_outline,
+                      label:
+                          '${feature.validationErrors.length} error${feature.validationErrors.length == 1 ? '' : 's'}',
+                    ),
+                ],
+              ),
+              if (feature.validationWarnings.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.md),
+                Text('Warnings', style: theme.textTheme.titleSmall),
+                const SizedBox(height: 6),
+                ..._sanitizedImportValidationMessages(
+                      feature.validationWarnings,
+                    )
+                    .where((warning) => !_isUnknownFieldWarning(warning))
+                    .map(
+                      (warning) => Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Text(warning, softWrap: true),
+                      ),
+                    ),
+                ..._buildUnknownFieldWarningBlocks(feature.validationReport),
+              ],
+              if (feature.validationErrors.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.md),
+                Text('Errors', style: theme.textTheme.titleSmall),
+                const SizedBox(height: 6),
+                ..._sanitizedImportValidationMessages(
+                  feature.validationErrors,
+                ).map(
+                  (error) => Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      error,
+                      style: TextStyle(color: theme.colorScheme.error),
+                      softWrap: true,
+                    ),
+                  ),
+                ),
+              ],
+              if (feature.reviewReason?.trim().isNotEmpty ?? false) ...[
+                const SizedBox(height: AppSpacing.md),
+                Text('Review note', style: theme.textTheme.titleSmall),
+                const SizedBox(height: 6),
+                Text(feature.reviewReason!, softWrap: true),
+              ],
+              const SizedBox(height: AppSpacing.md),
+              Text('Imported attributes', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 6),
+              if (feature.attributes.isEmpty)
+                const Text('No imported attributes are available.')
+              else
+                _ImportAttributeGrid(
+                  attributes: feature.attributes,
+                  filterAttributes: false,
+                ),
+              if (onAddComment != null) ...[
+                const SizedBox(height: AppSpacing.lg),
+                OutlinedButton.icon(
+                  onPressed: onAddComment,
+                  icon: const Icon(Icons.comment_outlined),
+                  label: const Text('Comment'),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SmallInfoPill extends StatelessWidget {
+  const _SmallInfoPill({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 260),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: scheme.outlineVariant),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                label,
+                style: Theme.of(context).textTheme.labelMedium,
+                softWrap: true,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ImportAttributeGrid extends StatelessWidget {
+  const _ImportAttributeGrid({
+    required this.attributes,
+    this.filterAttributes = true,
+  });
+
+  final Map<String, dynamic> attributes;
+  final bool filterAttributes;
+
+  @override
+  Widget build(BuildContext context) {
+    final displayAttributes = filterAttributes
+        ? _filteredImportAttributes(attributes)
+        : attributes;
+    final entries = displayAttributes.entries.toList(growable: false);
     return LayoutBuilder(
       builder: (context, constraints) {
         final useTwoColumns = constraints.maxWidth >= 520;
@@ -1928,13 +2371,13 @@ class _ImportIssueSummaryBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final extraFields = _parseUnknownFieldWarning(issue.message);
+    final extraFields = _parseUnknownFieldWarning(issue.displayMessage);
     final color = isError ? Theme.of(context).colorScheme.error : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          '${issue.count} feature(s): ${extraFields == null ? issue.message : 'Extra source attributes were kept.'}',
+          '${issue.count} feature(s): ${extraFields == null ? issue.displayMessage : 'Extra source attributes were kept.'}',
           style: color == null ? null : TextStyle(color: color),
           softWrap: true,
         ),
@@ -1982,9 +2425,14 @@ class _MetadataField extends StatelessWidget {
 }
 
 class _ValidationIssueGroup {
-  const _ValidationIssueGroup({required this.message, required this.count});
+  const _ValidationIssueGroup({
+    required this.message,
+    required this.displayMessage,
+    required this.count,
+  });
 
   final String message;
+  final String displayMessage;
   final int count;
 }
 
@@ -2004,7 +2452,7 @@ List<_ValidationIssueGroup> _issueFilterOptions(Map<String, dynamic> summary) {
     if (right.count != left.count) {
       return right.count.compareTo(left.count);
     }
-    return left.message.compareTo(right.message);
+    return left.displayMessage.compareTo(right.displayMessage);
   });
 }
 
@@ -2016,14 +2464,20 @@ List<_ValidationIssueGroup> _issueGroups(Object? value) {
             return null;
           }
           final row = Map<String, dynamic>.from(item);
-          final message = _sanitizeImportValidationMessage(
-            row['message']?.toString(),
-          );
+          final rawMessage = row['message']?.toString().trim() ?? '';
+          final message = _sanitizeImportValidationMessage(rawMessage);
           final count = (row['count'] as num?)?.toInt() ?? 0;
-          if (message == null || message.isEmpty || count <= 0) {
+          if (rawMessage.isEmpty ||
+              message == null ||
+              message.isEmpty ||
+              count <= 0) {
             return null;
           }
-          return _ValidationIssueGroup(message: message, count: count);
+          return _ValidationIssueGroup(
+            message: rawMessage,
+            displayMessage: message,
+            count: count,
+          );
         })
         .whereType<_ValidationIssueGroup>()
         .toList(growable: false);
@@ -2031,14 +2485,20 @@ List<_ValidationIssueGroup> _issueGroups(Object? value) {
   if (value is Map) {
     return value.entries
         .map((entry) {
-          final message = _sanitizeImportValidationMessage(
-            entry.key.toString(),
-          );
+          final rawMessage = entry.key.toString().trim();
+          final message = _sanitizeImportValidationMessage(rawMessage);
           final count = (entry.value as num?)?.toInt() ?? 0;
-          if (message == null || message.isEmpty || count <= 0) {
+          if (rawMessage.isEmpty ||
+              message == null ||
+              message.isEmpty ||
+              count <= 0) {
             return null;
           }
-          return _ValidationIssueGroup(message: message, count: count);
+          return _ValidationIssueGroup(
+            message: rawMessage,
+            displayMessage: message,
+            count: count,
+          );
         })
         .whereType<_ValidationIssueGroup>()
         .toList(growable: false);
@@ -2046,49 +2506,101 @@ List<_ValidationIssueGroup> _issueGroups(Object? value) {
   return const <_ValidationIssueGroup>[];
 }
 
-class _ImportPreviewMapCard extends StatefulWidget {
+class _ImportPreviewMapCard extends ConsumerStatefulWidget {
   const _ImportPreviewMapCard({
     required this.importId,
     required this.projectId,
-    required this.features,
     required this.previewSummary,
   });
 
   final String importId;
   final String projectId;
-  final List<ImportedFeature> features;
   final ImportPreviewSummary previewSummary;
 
   @override
-  State<_ImportPreviewMapCard> createState() => _ImportPreviewMapCardState();
+  ConsumerState<_ImportPreviewMapCard> createState() =>
+      _ImportPreviewMapCardState();
 }
 
-class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
+class _ImportPreviewMapCardState extends ConsumerState<_ImportPreviewMapCard> {
   LebanonBasemapStyle _style = LebanonBasemapStyle.street;
 
   @override
   Widget build(BuildContext context) {
-    final drawable = widget.features
-        .where((feature) => feature.geometry != null)
-        .toList(growable: false);
-    final previewFeatureCount = widget.previewSummary.previewFeatureCount;
+    final previewAsync = ref.watch(
+      importQuickMapPreviewProvider(widget.importId),
+    );
     final outsideWorkspaceCount =
         widget.previewSummary.outsideWorkspaceFeatureCount;
-    if (previewFeatureCount == 0 || drawable.isEmpty) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final quickPreview = previewAsync.valueOrNull;
+    final allMappedFeaturesAreOutside =
+        quickPreview != null &&
+        quickPreview.geometryFeatureCount > 0 &&
+        outsideWorkspaceCount >= quickPreview.geometryFeatureCount;
+    final drawable = allMappedFeaturesAreOutside
+        ? const <ImportedFeature>[]
+        : quickPreview?.features
+                  .where((feature) => feature.geometry != null)
+                  .toList(growable: false) ??
+              const <ImportedFeature>[];
+    if (previewAsync.isLoading && quickPreview == null) {
       return AppCard(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Spatial preview',
-              style: Theme.of(context).textTheme.titleMedium,
+              'Import map',
+              key: const ValueKey('import-preview-map-title'),
+              style: theme.textTheme.titleMedium,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            const Row(
+              children: [
+                SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: AppSpacing.sm),
+                Expanded(child: Text('Loading import distribution...')),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (quickPreview == null || drawable.isEmpty) {
+      return AppCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Import map',
+              key: const ValueKey('import-preview-map-title'),
+              style: theme.textTheme.titleMedium,
             ),
             const SizedBox(height: AppSpacing.sm),
             Text(
-              outsideWorkspaceCount > 0
+              previewAsync.hasError
+                  ? 'The import distribution preview is unavailable. Open the full import map to inspect staged data directly.'
+                  : outsideWorkspaceCount > 0
                   ? 'No preview geometry is available yet. Open the import map to inspect the staged data directly.'
                   : 'This import does not include previewable geometries yet.',
               softWrap: true,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            OutlinedButton.icon(
+              onPressed: () => context.push(
+                AppRoutes.importMap(
+                  widget.importId,
+                  projectId: widget.projectId,
+                ),
+              ),
+              icon: const Icon(Icons.map_outlined),
+              label: const Text('Open full map'),
             ),
           ],
         ),
@@ -2096,10 +2608,8 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
     }
 
     final mapKey = ValueKey<String>(
-      'import-preview-${_style.name}-$previewFeatureCount-$outsideWorkspaceCount-${drawable.length}',
+      'import-preview-${_style.name}-${quickPreview.totalFeatureCount}-${quickPreview.renderedFeatureCount}-${quickPreview.isClustered}',
     );
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
     final basemapToggle = SegmentedButton<LebanonBasemapStyle>(
       showSelectedIcon: false,
       style: SegmentedButton.styleFrom(
@@ -2196,8 +2706,8 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
                             key: mapKey,
                             options: MapOptions(
                               initialCenter: LebanonMapConfig.center,
-                              initialZoom:
-                                  LebanonMapConfig.quickInitialZoom - 0.15,
+                              initialZoom: LebanonMapConfig.quickInitialZoom,
+                              initialCameraFit: LebanonMapConfig.quickFit,
                               minZoom: LebanonMapConfig.quickMinZoom,
                               maxZoom: LebanonMapConfig.quickMaxZoom,
                               cameraConstraint:
@@ -2267,26 +2777,23 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
   }
 
   List<Marker> _markers(List<ImportedFeature> features) {
-    return features
-        .map((feature) {
-          final geometry = feature.geometry;
-          if (geometry == null) {
-            return null;
-          }
-          final point = geometryFocusPoint(geometry);
-          if (point == null ||
-              (geometry['type'] != 'Point' &&
-                  geometry['type'] != 'MultiPoint')) {
-            return null;
-          }
-          return Marker(
+    final markers = <Marker>[];
+    for (final feature in features) {
+      final geometry = feature.geometry;
+      if (geometry == null || !isPointGeometry(geometry)) {
+        continue;
+      }
+      final color = _statusColor(feature.status);
+      for (final point in pointGeometryPoints(geometry)) {
+        markers.add(
+          Marker(
             point: point,
             width: 20,
             height: 20,
             child: Container(
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: _statusColor(feature.status),
+                color: color,
                 border: Border.all(color: Colors.white, width: 1.5),
                 boxShadow: const [
                   BoxShadow(
@@ -2297,35 +2804,34 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
                 ],
               ),
               child: Icon(
-                _statusIcon(feature.status),
+                _importPreviewStatusIcon(feature.status),
                 color: Colors.white,
                 size: 10,
               ),
             ),
-          );
-        })
-        .whereType<Marker>()
-        .toList(growable: false);
+          ),
+        );
+      }
+    }
+    return markers;
   }
 
   List<Polyline> _polylines(List<ImportedFeature> features) {
     final polylines = <Polyline>[];
     for (final feature in features) {
       final geometry = feature.geometry;
-      if (geometry == null ||
-          (geometry['type'] != 'LineString' &&
-              geometry['type'] != 'MultiLineString')) {
+      if (geometry == null || !isLineGeometry(geometry)) {
         continue;
       }
-      for (final points in _polylineSegments(geometry)) {
+      for (final points in lineGeometrySegments(geometry)) {
         if (points.isEmpty) {
           continue;
         }
         polylines.add(
           Polyline(
             points: points,
-            strokeWidth: 3,
-            color: _statusColor(feature.status),
+            strokeWidth: 2.5,
+            color: _statusColor(feature.status).withValues(alpha: 0.9),
           ),
         );
       }
@@ -2337,13 +2843,11 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
     final polygons = <Polygon>[];
     for (final feature in features) {
       final geometry = feature.geometry;
-      if (geometry == null ||
-          (geometry['type'] != 'Polygon' &&
-              geometry['type'] != 'MultiPolygon')) {
+      if (geometry == null || !isPolygonGeometry(geometry)) {
         continue;
       }
       final color = _statusColor(feature.status);
-      for (final points in _polygonSegments(geometry)) {
+      for (final points in polygonGeometrySegments(geometry)) {
         if (points.isEmpty) {
           continue;
         }
@@ -2351,68 +2855,13 @@ class _ImportPreviewMapCardState extends State<_ImportPreviewMapCard> {
           Polygon(
             points: points,
             borderStrokeWidth: 2,
-            borderColor: color,
-            color: color.withValues(alpha: 0.18),
+            borderColor: color.withValues(alpha: 0.95),
+            color: color.withValues(alpha: 0.12),
           ),
         );
       }
     }
     return polygons;
-  }
-
-  List<List<LatLng>> _polylineSegments(Map<String, dynamic> geometry) {
-    if (geometry['type'] == 'LineString') {
-      final points = lineGeometryPoints(geometry);
-      return points.isEmpty ? const <List<LatLng>>[] : <List<LatLng>>[points];
-    }
-    if (geometry['type'] != 'MultiLineString') {
-      return const <List<LatLng>>[];
-    }
-    final coordinates = geometry['coordinates'];
-    if (coordinates is! List) {
-      return const <List<LatLng>>[];
-    }
-    return coordinates
-        .whereType<List>()
-        .map(
-          (segment) => segment
-              .map(_decodePreviewCoordinatePair)
-              .whereType<LatLng>()
-              .toList(growable: false),
-        )
-        .where((points) => points.isNotEmpty)
-        .toList(growable: false);
-  }
-
-  List<List<LatLng>> _polygonSegments(Map<String, dynamic> geometry) {
-    if (geometry['type'] == 'Polygon') {
-      final points = polygonGeometryPoints(geometry);
-      return points.isEmpty ? const <List<LatLng>>[] : <List<LatLng>>[points];
-    }
-    if (geometry['type'] != 'MultiPolygon') {
-      return const <List<LatLng>>[];
-    }
-    final coordinates = geometry['coordinates'];
-    if (coordinates is! List) {
-      return const <List<LatLng>>[];
-    }
-    return coordinates
-        .whereType<List>()
-        .map((polygon) {
-          if (polygon.isEmpty) {
-            return const <LatLng>[];
-          }
-          final firstRing = polygon.first;
-          if (firstRing is! List) {
-            return const <LatLng>[];
-          }
-          return firstRing
-              .map(_decodePreviewCoordinatePair)
-              .whereType<LatLng>()
-              .toList(growable: false);
-        })
-        .where((points) => points.isNotEmpty)
-        .toList(growable: false);
   }
 }
 
@@ -2522,6 +2971,9 @@ String _formatDateTime(DateTime value) {
 }
 
 String _labelize(String key) {
+  if (RegExp(r'^[A-Z0-9]+(?:_[A-Za-z0-9]+)+$').hasMatch(key)) {
+    return key;
+  }
   return key
       .replaceAll('_', ' ')
       .split(' ')
@@ -2548,10 +3000,25 @@ String _formatAttributeValue(Object? value) {
 bool _isUnknownFieldWarning(String message) =>
     message.startsWith(_unknownFieldWarningPrefix);
 
+List<String> _sanitizedImportValidationMessages(List<String> messages) {
+  return messages
+      .map(_sanitizeImportValidationMessage)
+      .whereType<String>()
+      .toList(growable: false);
+}
+
 String? _sanitizeImportValidationMessage(String? message) {
   final trimmed = message?.trim() ?? '';
   if (trimmed.isEmpty) {
     return null;
+  }
+  final lower = trimmed.toLowerCase();
+  if (lower == 'missing required attribute: feature_type') {
+    return 'Missing required field: Feature type. Re-upload or reprocess the import to apply the current project schema labels.';
+  }
+  if (lower.contains('ring self-intersection') ||
+      lower.contains('self-intersection')) {
+    return 'Invalid polygon geometry: ring self-intersection. Fix the geometry in GIS software or exclude this feature.';
   }
   final visibleFields = _parseUnknownFieldWarning(trimmed);
   if (visibleFields == null) {
@@ -2616,18 +3083,6 @@ List<Widget> _buildUnknownFieldWarningBlocks(
   ];
 }
 
-LatLng? _decodePreviewCoordinatePair(Object? raw) {
-  if (raw is! List || raw.length < 2) {
-    return null;
-  }
-  final lon = raw[0];
-  final lat = raw[1];
-  if (lon is! num || lat is! num) {
-    return null;
-  }
-  return LatLng(lat.toDouble(), lon.toDouble());
-}
-
 bool _isImportStillProcessing(String status) {
   final normalized = status.trim().toLowerCase();
   return normalized == 'uploaded' || normalized == 'processing';
@@ -2677,19 +3132,17 @@ String _friendlyImportGeometryType(String geometryType) {
   }
 }
 
-String _importFeatureDisplayTitle(ImportedFeature feature) {
-  const preferredKeys = <String>['name', 'title', 'label', 'feature_type'];
-  for (final key in preferredKeys) {
-    final raw = feature.attributes[key];
-    if (raw == null) {
-      continue;
-    }
-    final text = '$raw'.trim();
-    if (text.isNotEmpty) {
-      return text;
-    }
+Map<String, dynamic> _summaryAttributesForCard(ImportedFeature feature) {
+  if (feature.summaryAttributes.isNotEmpty) {
+    return feature.summaryAttributes;
   }
+  if (feature.isSummary) {
+    return feature.attributes;
+  }
+  return const <String, dynamic>{};
+}
 
+String _importFeatureDisplayTitle(ImportedFeature feature) {
   final sourceName = feature.sourceFeatureName?.trim();
   if (sourceName != null &&
       sourceName.isNotEmpty &&
@@ -2702,28 +3155,59 @@ String _importFeatureDisplayTitle(ImportedFeature feature) {
   final typeLabel = _importFeatureTypeLabel(
     feature.geometryType ?? feature.geometry?['type']?.toString() ?? 'Feature',
   );
-  if (lower == 'point' ||
-      lower == 'multipoint' ||
-      lower == 'linestring' ||
-      lower == 'multilinestring' ||
-      lower == 'polygon' ||
-      lower == 'multipolygon') {
-    return typeLabel;
+  if (title.isNotEmpty &&
+      lower != 'point' &&
+      lower != 'multipoint' &&
+      lower != 'linestring' &&
+      lower != 'multilinestring' &&
+      lower != 'polygon' &&
+      lower != 'multipolygon') {
+    final replacements = <String, String>{
+      'imported point ': 'Point feature ',
+      'imported points ': 'Point feature ',
+      'imported line ': 'Line feature ',
+      'imported lines ': 'Line feature ',
+      'imported area ': 'Polygon feature ',
+      'imported areas ': 'Polygon feature ',
+    };
+    for (final entry in replacements.entries) {
+      if (lower.startsWith(entry.key)) {
+        return '${entry.value}${title.substring(entry.key.length)}'.trim();
+      }
+    }
+    return title;
   }
-  final replacements = <String, String>{
-    'imported point ': 'Point feature ',
-    'imported points ': 'Point feature ',
-    'imported line ': 'Line feature ',
-    'imported lines ': 'Line feature ',
-    'imported area ': 'Polygon feature ',
-    'imported areas ': 'Polygon feature ',
-  };
-  for (final entry in replacements.entries) {
-    if (lower.startsWith(entry.key)) {
-      return '${entry.value}${title.substring(entry.key.length)}'.trim();
+
+  const preferredKeys = <String>[
+    'name',
+    'title',
+    'label',
+    'L4_descr',
+    'l4_descr',
+    'L3_descr',
+    'l3_descr',
+    'feature_type',
+    'crop_type',
+  ];
+  final summaryAttributes = _summaryAttributesForCard(feature);
+  for (final key in preferredKeys) {
+    final raw = summaryAttributes[key] ?? feature.attributes[key];
+    if (raw == null) {
+      continue;
+    }
+    final text = '$raw'.trim();
+    if (text.isNotEmpty) {
+      return text;
     }
   }
-  return title;
+  return typeLabel;
+}
+
+bool _canOpenImportedFeatureMap(ImportedFeature feature) {
+  if (feature.geometry != null) {
+    return true;
+  }
+  return feature.geometryType?.trim().isNotEmpty ?? false;
 }
 
 bool _looksLikeOpaqueSourceValue(String value) {
@@ -2739,11 +3223,17 @@ bool _looksLikeOpaqueSourceValue(String value) {
 }
 
 Map<String, dynamic> _filteredImportAttributes(
-  Map<String, dynamic> attributes,
-) {
+  Map<String, dynamic> attributes, {
+  String? titleValue,
+}) {
   final filtered = <String, dynamic>{};
+  final normalizedTitle = _normalizedImportAttributeValue(titleValue);
   for (final entry in attributes.entries) {
-    if (_shouldHideImportAttributeKey(entry.key)) {
+    if (_shouldHideImportAttributeKey(entry.key) ||
+        _isDuplicateCanonicalImportAttribute(attributes, entry) ||
+        (normalizedTitle.isNotEmpty &&
+            _isTitleLikeImportAttributeKey(entry.key) &&
+            _normalizedImportAttributeValue(entry.value) == normalizedTitle)) {
       continue;
     }
     filtered[entry.key] = entry.value;
@@ -2752,13 +3242,66 @@ Map<String, dynamic> _filteredImportAttributes(
 }
 
 bool _shouldHideImportAttributeKey(String key) {
-  final normalized = key.trim().toLowerCase().replaceAll(
-    RegExp(r'[^a-z0-9]'),
-    '',
-  );
+  final normalized = _normalizedImportAttributeKey(key);
   return normalized == 'accuracy' ||
       normalized == 'accuracymeter' ||
       normalized == 'accuracymeters';
+}
+
+bool _isTitleLikeImportAttributeKey(String key) {
+  final normalized = _normalizedImportAttributeKey(key);
+  return normalized == 'name' ||
+      normalized == 'title' ||
+      normalized == 'label' ||
+      normalized == 'featuretype' ||
+      normalized == 'croptype';
+}
+
+bool _isDuplicateCanonicalImportAttribute(
+  Map<String, dynamic> attributes,
+  MapEntry<String, dynamic> entry,
+) {
+  const priority = <String, int>{'l4descr': 0, 'featuretype': 1, 'croptype': 2};
+  final normalizedKey = _normalizedImportAttributeKey(entry.key);
+  final entryPriority = priority[normalizedKey];
+  if (entryPriority == null) {
+    return false;
+  }
+  final value = _normalizedImportAttributeValue(entry.value);
+  if (value.isEmpty) {
+    return false;
+  }
+  return attributes.entries.any((other) {
+    if (other.key == entry.key || _shouldHideImportAttributeKey(other.key)) {
+      return false;
+    }
+    final otherPriority = priority[_normalizedImportAttributeKey(other.key)];
+    if (otherPriority == null || otherPriority >= entryPriority) {
+      return false;
+    }
+    return _normalizedImportAttributeValue(other.value) == value;
+  });
+}
+
+String _normalizedImportAttributeKey(String key) =>
+    key.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+String _normalizedImportAttributeValue(Object? value) =>
+    _formatAttributeValue(value).trim().toLowerCase();
+
+IconData _importPreviewStatusIcon(String status) {
+  switch (status.toLowerCase()) {
+    case 'approved':
+      return Icons.check;
+    case 'rejected':
+    case 'failed':
+      return Icons.close;
+    case 'pending_review':
+    case 'partially_approved':
+      return Icons.pending_outlined;
+    default:
+      return Icons.circle;
+  }
 }
 
 Color _statusColor(String status) {
@@ -2774,21 +3317,5 @@ Color _statusColor(String status) {
       return const Color(0xFF7B1FA2);
     default:
       return Colors.blueGrey.shade600;
-  }
-}
-
-IconData _statusIcon(String status) {
-  switch (status.toLowerCase()) {
-    case 'approved':
-      return Icons.check;
-    case 'rejected':
-      return Icons.close;
-    case 'failed':
-      return Icons.priority_high_rounded;
-    case 'pending_review':
-    case 'partially_approved':
-      return Icons.schedule;
-    default:
-      return Icons.circle;
   }
 }

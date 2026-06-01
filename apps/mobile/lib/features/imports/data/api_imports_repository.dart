@@ -198,6 +198,7 @@ class ApiImportsRepository implements ImportsRepository {
                 z: tile.z,
                 x: tile.x,
                 y: tile.y,
+                renderZoom: zoom,
               );
             } catch (error) {
               firstError ??= error;
@@ -242,8 +243,10 @@ class ApiImportsRepository implements ImportsRepository {
     required int z,
     required int x,
     required int y,
+    required double renderZoom,
   }) async {
-    final cacheKey = '$importId:$projectId:$z:$x:$y';
+    final zoomKey = renderZoom.toStringAsFixed(2);
+    final cacheKey = '$importId:$projectId:$z:$x:$y:$zoomKey';
     final cached = _importTileCache.remove(cacheKey);
     if (cached != null) {
       _importTileCache[cacheKey] = cached;
@@ -251,7 +254,10 @@ class ApiImportsRepository implements ImportsRepository {
     }
     final response = await _apiClient.dio.get<Map<String, dynamic>>(
       '$_basePath/$importId/tiles/$z/$x/$y',
-      queryParameters: <String, dynamic>{'project_id': projectId},
+      queryParameters: <String, dynamic>{
+        'project_id': projectId,
+        'zoom': zoomKey,
+      },
     );
     final data = Map<String, dynamic>.from(
       response.data?['data'] as Map? ?? const <String, dynamic>{},
@@ -271,6 +277,44 @@ class ApiImportsRepository implements ImportsRepository {
     );
     _rememberImportTile(cacheKey, tileData);
     return tileData;
+  }
+
+  @override
+  Future<ImportQuickMapPreview> fetchImportQuickMapPreview({
+    required String importId,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_basePath/$importId/quick-map',
+      );
+      final data = Map<String, dynamic>.from(
+        response.data?['data'] as Map? ?? const <String, dynamic>{},
+      );
+      final rows = (data['features'] as List? ?? const <dynamic>[])
+          .map(
+            (row) => _toImportedFeature(Map<String, dynamic>.from(row as Map)),
+          )
+          .toList(growable: false);
+      final rawStatusCounts = Map<String, dynamic>.from(
+        data['status_counts'] as Map? ?? const <String, dynamic>{},
+      );
+      return ImportQuickMapPreview(
+        totalFeatureCount: _toInt(data['total_feature_count']),
+        geometryFeatureCount: _toInt(data['geometry_feature_count']),
+        renderedFeatureCount: _toInt(data['rendered_feature_count']),
+        isClustered: data['is_clustered'] as bool? ?? false,
+        bounds: _toImportMapBounds(data['bounds']),
+        statusCounts: rawStatusCounts.map(
+          (key, value) => MapEntry(key, _toInt(value)),
+        ),
+        features: rows,
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load this import map preview right now.',
+      );
+    }
   }
 
   @override
@@ -390,8 +434,25 @@ class ApiImportsRepository implements ImportsRepository {
     required String status,
     String? reason,
     List<String>? featureIds,
+    String? filterStatus,
+    String? filterIssue,
+    String? filterSearch,
+    String? filterGeometryType,
+    String? filterFeatureType,
   }) async {
     try {
+      final filters = <String, dynamic>{
+        if (filterStatus?.trim().isNotEmpty ?? false)
+          'status': filterStatus!.trim(),
+        if (filterIssue?.trim().isNotEmpty ?? false)
+          'issue': filterIssue!.trim(),
+        if (filterSearch?.trim().isNotEmpty ?? false)
+          'search': filterSearch!.trim(),
+        if (filterGeometryType?.trim().isNotEmpty ?? false)
+          'geometry_type': filterGeometryType!.trim(),
+        if (filterFeatureType?.trim().isNotEmpty ?? false)
+          'feature_type': filterFeatureType!.trim(),
+      };
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '$_basePath/$importId/review',
         data: <String, dynamic>{
@@ -399,6 +460,8 @@ class ApiImportsRepository implements ImportsRepository {
           if (reason?.trim().isNotEmpty ?? false) 'reason': reason!.trim(),
           if (featureIds != null && featureIds.isNotEmpty)
             'feature_ids': featureIds,
+          if ((featureIds == null || featureIds.isEmpty) && filters.isNotEmpty)
+            'filters': filters,
         },
       );
       final row = Map<String, dynamic>.from(
@@ -526,6 +589,8 @@ class ApiImportsRepository implements ImportsRepository {
           ? Map<String, dynamic>.from(row['geometry'] as Map)
           : null,
       attributes: _toMap(row['attributes']),
+      summaryAttributes: _toMap(row['summary_attributes']),
+      attributeCount: _toInt(row['attribute_count']),
       status: (row['status'] as String?) ?? 'pending_review',
       validationWarnings:
           ((row['validation_warnings'] as List?) ?? const <dynamic>[])
@@ -558,6 +623,19 @@ class ApiImportsRepository implements ImportsRepository {
       outsideWorkspaceFeatureCount: _toInt(
         row['outside_workspace_feature_count'],
       ),
+    );
+  }
+
+  ImportMapBounds? _toImportMapBounds(Object? raw) {
+    if (raw is! Map) {
+      return null;
+    }
+    final row = Map<String, dynamic>.from(raw);
+    return ImportMapBounds(
+      minLon: _toDouble(row['min_lon']) ?? 0,
+      minLat: _toDouble(row['min_lat']) ?? 0,
+      maxLon: _toDouble(row['max_lon']) ?? 0,
+      maxLat: _toDouble(row['max_lat']) ?? 0,
     );
   }
 

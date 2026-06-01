@@ -85,7 +85,9 @@ const createTempXlsxFile = async (name, rowsOrSheets) => {
       )
       .join('');
   const zip = new AdmZip();
-  zip.addFile('[Content_Types].xml', Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+  zip.addFile(
+    '[Content_Types].xml',
+    Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
@@ -96,12 +98,18 @@ const createTempXlsxFile = async (name, rowsOrSheets) => {
         `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`,
     )
     .join('\n  ')}
-</Types>`));
-  zip.addFile('_rels/.rels', Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+</Types>`),
+  );
+  zip.addFile(
+    '_rels/.rels',
+    Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
-</Relationships>`));
-  zip.addFile('xl/workbook.xml', Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+</Relationships>`),
+  );
+  zip.addFile(
+    'xl/workbook.xml',
+    Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <sheets>${sheets
     .map(
@@ -109,8 +117,11 @@ const createTempXlsxFile = async (name, rowsOrSheets) => {
         `<sheet name="${escapeXml(sheet.name ?? `Sheet ${index + 1}`)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`,
     )
     .join('')}</sheets>
-</workbook>`));
-  zip.addFile('xl/_rels/workbook.xml.rels', Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+</workbook>`),
+  );
+  zip.addFile(
+    'xl/_rels/workbook.xml.rels',
+    Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   ${sheets
     .map(
@@ -118,12 +129,16 @@ const createTempXlsxFile = async (name, rowsOrSheets) => {
         `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`,
     )
     .join('\n  ')}
-</Relationships>`));
+</Relationships>`),
+  );
   for (const [index, sheet] of sheets.entries()) {
-    zip.addFile(`xl/worksheets/sheet${index + 1}.xml`, Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+    zip.addFile(
+      `xl/worksheets/sheet${index + 1}.xml`,
+      Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <sheetData>${sheetXml(sheet.rows)}</sheetData>
-</worksheet>`));
+</worksheet>`),
+    );
   }
   zip.writeZip(filePath);
   tempFiles.push(filePath);
@@ -137,7 +152,10 @@ const createTempZipFile = async (name, entries, extension = 'zip') => {
   );
   const zip = new AdmZip();
   for (const [entryName, content] of Object.entries(entries)) {
-    zip.addFile(entryName, Buffer.isBuffer(content) ? content : Buffer.from(String(content), 'utf8'));
+    zip.addFile(
+      entryName,
+      Buffer.isBuffer(content) ? content : Buffer.from(String(content), 'utf8'),
+    );
   }
   zip.writeZip(filePath);
   tempFiles.push(filePath);
@@ -200,7 +218,62 @@ const waitForImportStatus = async ({
   );
 };
 
-const createActiveImportProject = async (emailPrefix) => {
+const l4DescriptorOptions = ['Olives', 'Fruit Trees', 'Citrus Fruit Trees', 'Vineyards'];
+
+const l4DescriptorSchema = () => ({
+  version: 'import-test-v1',
+  fields: [
+    {
+      key: 'L4_descr',
+      label: 'L4_descr',
+      type: 'select',
+      required: true,
+      options: l4DescriptorOptions,
+    },
+  ],
+});
+
+const labeledFeatureTypeSchema = () => ({
+  version: 'import-test-v1',
+  fields: [
+    {
+      key: 'feature_type',
+      label: 'L4_descr',
+      type: 'select',
+      required: true,
+      options: l4DescriptorOptions,
+    },
+  ],
+});
+
+const schemaWithField = (field) => ({
+  version: 'import-test-v1',
+  fields: [field],
+});
+
+const pointFeatureCollection = (properties, coordinates = [35.5009, 33.9009]) => ({
+  type: 'FeatureCollection',
+  features: [
+    {
+      type: 'Feature',
+      properties,
+      geometry: { type: 'Point', coordinates },
+    },
+  ],
+});
+
+const kmlPoint = ({ title, fieldName, value }) => `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Placemark>
+      <name>${title}</name>
+      <ExtendedData><Data name="${fieldName}"><value>${value}</value></Data></ExtendedData>
+      <Point><coordinates>35.501,33.901,0</coordinates></Point>
+    </Placemark>
+  </Document>
+</kml>`;
+
+const createActiveImportProject = async (emailPrefix, options = {}) => {
   const safePrefix = emailPrefix.toLowerCase().replace(/[^a-z0-9-]+/g, '-');
   const admin = await createAdminUser({
     fullName: `${emailPrefix} Admin`,
@@ -229,6 +302,12 @@ const createActiveImportProject = async (emailPrefix) => {
     name: `${emailPrefix} Project`,
     visibleToContributors: true,
   });
+  if (options.collectionFormSchema) {
+    await pool.query('UPDATE project SET collection_form_schema = $1::jsonb WHERE id = $2', [
+      JSON.stringify(options.collectionFormSchema),
+      project.id,
+    ]);
+  }
   await request(app)
     .put(`${API_PREFIX}/projects/${project.id}`)
     .set(authHeader(admin.token))
@@ -244,10 +323,16 @@ const createActiveImportProject = async (emailPrefix) => {
     assignmentId: assignment.id,
     status: 'approved',
   });
-  return { admin, contributorLogin, project };
+  return { admin, contributorLogin, contributorRegistration, project };
 };
 
-const uploadAndWaitForImport = async ({ token, reviewerToken, projectId, filePath, status = 'pending_review' }) => {
+const uploadAndWaitForImport = async ({
+  token,
+  reviewerToken,
+  projectId,
+  filePath,
+  status = 'pending_review',
+}) => {
   const uploadResponse = await request(app)
     .post(`${API_PREFIX}/imports/project/${projectId}/upload`)
     .set(authHeader(token))
@@ -259,6 +344,103 @@ const uploadAndWaitForImport = async ({ token, reviewerToken, projectId, filePat
     token: reviewerToken,
     expectedStatuses: [status],
   });
+};
+
+const createStagedImportJob = async ({
+  projectId,
+  uploadedByUserId,
+  originalFilename = 'direct-staged-import.geojson',
+  features,
+}) => {
+  const jobResult = await pool.query(
+    `INSERT INTO gis_import_job (
+       project_id,
+       uploaded_by_user_id,
+       original_filename,
+       stored_filename,
+       file_path,
+       file_size_bytes,
+       file_checksum_sha256,
+       file_type,
+       status,
+       file_metadata,
+       validation_summary,
+       processed_at
+     ) VALUES (
+       $1,
+       $2,
+       $3,
+       $4,
+       $5,
+       $6,
+       repeat('a', 64),
+       'geojson',
+       'pending_review',
+       '{}'::jsonb,
+       '{}'::jsonb,
+       CURRENT_TIMESTAMP
+     )
+     RETURNING id`,
+    [
+      projectId,
+      uploadedByUserId,
+      originalFilename,
+      `${originalFilename}-${Date.now()}`,
+      `/tmp/${originalFilename}`,
+      1024,
+    ],
+  );
+  const importId = jobResult.rows[0].id;
+  const batchSize = 250;
+  for (let index = 0; index < features.length; index += batchSize) {
+    const batch = features.slice(index, index + batchSize);
+    const values = [];
+    const params = [];
+    for (const [batchIndex, feature] of batch.entries()) {
+      const base = params.length;
+      params.push(
+        importId,
+        index + batchIndex,
+        feature.displayTitle,
+        feature.geometryType ?? null,
+        feature.geometry ? JSON.stringify(feature.geometry) : null,
+        JSON.stringify(feature.attributes ?? {}),
+        feature.status ?? 'pending_review',
+        JSON.stringify(feature.validationWarnings ?? []),
+        JSON.stringify(feature.validationErrors ?? []),
+      );
+      values.push(
+        `(
+          $${base + 1},
+          $${base + 2},
+          $${base + 3},
+          $${base + 4},
+          CASE WHEN $${base + 5}::text IS NULL THEN NULL ELSE ST_SetSRID(ST_GeomFromGeoJSON($${base + 5}), 4326) END,
+          $${base + 6}::jsonb,
+          $${base + 7}::gis_import_feature_status,
+          $${base + 8}::jsonb,
+          $${base + 9}::jsonb,
+          '{}'::jsonb
+        )`,
+      );
+    }
+    await pool.query(
+      `INSERT INTO gis_import_feature (
+         import_job_id,
+         source_index,
+         display_title,
+         geometry_type,
+         geom,
+         attributes,
+         status,
+         validation_warnings,
+         validation_errors,
+         validation_report
+       ) VALUES ${values.join(',')}`,
+      params,
+    );
+  }
+  return importId;
 };
 
 describe('GIS import workflow', () => {
@@ -278,7 +460,8 @@ describe('GIS import workflow', () => {
   });
 
   test('stages CSV latitude and longitude imports for review', async () => {
-    const { admin, contributorLogin, project } = await createActiveImportProject('CSV LatLon Import');
+    const { admin, contributorLogin, project } =
+      await createActiveImportProject('CSV LatLon Import');
     const csvPath = await createTempTextFile(
       'csv-latlon-import',
       'csv',
@@ -327,7 +510,8 @@ describe('GIS import workflow', () => {
   });
 
   test('stages XLSX latitude and longitude imports for review', async () => {
-    const { admin, contributorLogin, project } = await createActiveImportProject('XLSX LatLon Import');
+    const { admin, contributorLogin, project } =
+      await createActiveImportProject('XLSX LatLon Import');
     const xlsxPath = await createTempXlsxFile('xlsx-latlon-import', [
       ['name', 'feature_type', 'lat', 'lng'],
       ['Excel point', 'olive', '33.9003', '35.5003'],
@@ -348,6 +532,499 @@ describe('GIS import workflow', () => {
     expect(detailResponse.body.data.job.file_type).toBe('xlsx');
     expect(detailResponse.body.data.job.pending_feature_count).toBe(1);
     expect(detailResponse.body.data.preview_features[0].display_title).toBe('Excel point');
+  });
+
+  test('validates dynamic L4_descr required fields across supported import file types', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject(
+      'Dynamic Required Field Imports',
+      { collectionFormSchema: l4DescriptorSchema() },
+    );
+
+    const fixtures = [
+      {
+        label: 'GeoJSON',
+        expectedFileType: 'geojson',
+        value: 'Olives',
+        createFile: () =>
+          createTempGeoJsonFile(
+            'dynamic-l4-geojson',
+            pointFeatureCollection({ name: 'Dynamic GeoJSON', L4_descr: 'Olives' }),
+          ),
+      },
+      {
+        label: 'Shapefile ZIP',
+        expectedFileType: 'shapefile_zip',
+        value: 'Fruit Trees',
+        createFile: () =>
+          createTempShapefileZipFile(
+            'dynamic-l4-shapefile',
+            pointFeatureCollection({ name: 'Dynamic Shapefile', L4_descr: 'Fruit Trees' }),
+          ),
+      },
+      {
+        label: 'KML',
+        expectedFileType: 'kml',
+        value: 'Citrus Fruit Trees',
+        createFile: () =>
+          createTempTextFile(
+            'dynamic-l4-kml',
+            'kml',
+            kmlPoint({
+              title: 'Dynamic KML',
+              fieldName: 'L4_descr',
+              value: 'Citrus Fruit Trees',
+            }),
+          ),
+      },
+      {
+        label: 'KMZ',
+        expectedFileType: 'kmz',
+        value: 'Vineyards',
+        createFile: () =>
+          createTempZipFile(
+            'dynamic-l4-kmz',
+            {
+              'doc.kml': kmlPoint({
+                title: 'Dynamic KMZ',
+                fieldName: 'L4_descr',
+                value: 'Vineyards',
+              }),
+            },
+            'kmz',
+          ),
+      },
+      {
+        label: 'CSV',
+        expectedFileType: 'csv',
+        value: 'Olives',
+        createFile: () =>
+          createTempTextFile(
+            'dynamic-l4-csv',
+            'csv',
+            'name,L4_descr,lat,lon\nDynamic CSV,Olives,33.902,35.502\n',
+          ),
+      },
+      {
+        label: 'XLSX',
+        expectedFileType: 'xlsx',
+        value: 'Fruit Trees',
+        createFile: () =>
+          createTempXlsxFile('dynamic-l4-xlsx', [
+            ['name', 'L4_descr', 'lat', 'lon'],
+            ['Dynamic XLSX', 'Fruit Trees', '33.903', '35.503'],
+          ]),
+      },
+    ];
+
+    for (const fixture of fixtures) {
+      const detailResponse = await uploadAndWaitForImport({
+        token: contributorLogin.token,
+        reviewerToken: admin.token,
+        projectId: project.id,
+        filePath: await fixture.createFile(),
+      });
+
+      expect(detailResponse.body.data.job.file_type).toBe(fixture.expectedFileType);
+      expect(detailResponse.body.data.job.pending_feature_count).toBe(1);
+      expect(detailResponse.body.data.job.failed_feature_count).toBe(0);
+      expect(detailResponse.body.data.preview_features[0].validation_errors).toEqual([]);
+      expect(detailResponse.body.data.preview_features[0].attributes.L4_descr).toBe(fixture.value);
+    }
+  });
+
+  test('matches field labels and stores canonical project field keys', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject(
+      'Labeled Feature Type Import',
+      { collectionFormSchema: labeledFeatureTypeSchema() },
+    );
+    const geojsonPath = await createTempGeoJsonFile(
+      'label-matched-feature-type',
+      pointFeatureCollection({ name: 'Label matched feature', L4_descr: 'Olives' }),
+    );
+
+    const detailResponse = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: geojsonPath,
+    });
+
+    const attributes = detailResponse.body.data.preview_features[0].attributes;
+    expect(detailResponse.body.data.job.pending_feature_count).toBe(1);
+    expect(detailResponse.body.data.preview_features[0].validation_errors).toEqual([]);
+    expect(attributes.L4_descr).toBe('Olives');
+    expect(attributes.feature_type).toBe('Olives');
+  });
+
+  test('reports missing dynamic required fields clearly', async () => {
+    const { contributorLogin, project } = await createActiveImportProject(
+      'Missing Dynamic Required Field',
+      { collectionFormSchema: l4DescriptorSchema() },
+    );
+    const geojsonPath = await createTempGeoJsonFile(
+      'missing-l4-descr',
+      pointFeatureCollection({ name: 'Missing L4 descriptor' }),
+    );
+
+    const uploadResponse = await request(app)
+      .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+      .set(authHeader(contributorLogin.token))
+      .attach('file', geojsonPath)
+      .expect(202);
+
+    const detailResponse = await waitForImportStatus({
+      importId: uploadResponse.body.data.id,
+      token: contributorLogin.token,
+      expectedStatuses: ['failed'],
+    });
+
+    expect(detailResponse.body.data.job.failed_feature_count).toBe(1);
+    expect(detailResponse.body.data.preview_features[0].validation_errors).toEqual(
+      expect.arrayContaining(['Missing required field: L4_descr']),
+    );
+  });
+
+  test('reports invalid dynamic select values per feature', async () => {
+    const { contributorLogin, project } = await createActiveImportProject(
+      'Invalid Dynamic Select Value',
+      { collectionFormSchema: l4DescriptorSchema() },
+    );
+    const geojsonPath = await createTempGeoJsonFile(
+      'invalid-l4-descr',
+      pointFeatureCollection({ name: 'Invalid L4 descriptor', L4_descr: 'Bananas' }),
+    );
+
+    const uploadResponse = await request(app)
+      .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+      .set(authHeader(contributorLogin.token))
+      .attach('file', geojsonPath)
+      .expect(202);
+
+    const detailResponse = await waitForImportStatus({
+      importId: uploadResponse.body.data.id,
+      token: contributorLogin.token,
+      expectedStatuses: ['failed'],
+    });
+
+    expect(detailResponse.body.data.job.failed_feature_count).toBe(1);
+    expect(detailResponse.body.data.preview_features[0].validation_errors).toEqual(
+      expect.arrayContaining([
+        'Invalid value for L4_descr: Bananas. Allowed values: Olives, Fruit Trees, Citrus Fruit Trees, Vineyards.',
+      ]),
+    );
+  });
+
+  test('accepts arbitrary required text values across supported import file types', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('ReqText', {
+      collectionFormSchema: schemaWithField({
+        key: 'notes',
+        label: 'Notes',
+        type: 'text',
+        required: true,
+        options: ['Not a real constraint'],
+      }),
+    });
+    const randomText = 'any random text that is not in options';
+    const fixtures = [
+      {
+        expectedFileType: 'geojson',
+        createFile: () =>
+          createTempGeoJsonFile(
+            'required-text-geojson',
+            pointFeatureCollection({ name: 'Text GeoJSON', notes: randomText }),
+          ),
+      },
+      {
+        expectedFileType: 'shapefile_zip',
+        createFile: () =>
+          createTempShapefileZipFile(
+            'required-text-shapefile',
+            pointFeatureCollection({ name: 'Text Shapefile', notes: randomText }),
+          ),
+      },
+      {
+        expectedFileType: 'kml',
+        createFile: () =>
+          createTempTextFile(
+            'required-text-kml',
+            'kml',
+            kmlPoint({ title: 'Text KML', fieldName: 'notes', value: randomText }),
+          ),
+      },
+      {
+        expectedFileType: 'kmz',
+        createFile: () =>
+          createTempZipFile(
+            'required-text-kmz',
+            {
+              'doc.kml': kmlPoint({
+                title: 'Text KMZ',
+                fieldName: 'notes',
+                value: randomText,
+              }),
+            },
+            'kmz',
+          ),
+      },
+      {
+        expectedFileType: 'csv',
+        createFile: () =>
+          createTempTextFile(
+            'required-text-csv',
+            'csv',
+            `name,notes,lat,lon\nText CSV,"${randomText}",33.902,35.502\n`,
+          ),
+      },
+      {
+        expectedFileType: 'xlsx',
+        createFile: () =>
+          createTempXlsxFile('required-text-xlsx', [
+            ['name', 'notes', 'lat', 'lon'],
+            ['Text XLSX', randomText, '33.903', '35.503'],
+          ]),
+      },
+    ];
+
+    for (const fixture of fixtures) {
+      const detailResponse = await uploadAndWaitForImport({
+        token: contributorLogin.token,
+        reviewerToken: admin.token,
+        projectId: project.id,
+        filePath: await fixture.createFile(),
+      });
+
+      expect(detailResponse.body.data.job.file_type).toBe(fixture.expectedFileType);
+      expect(detailResponse.body.data.job.pending_feature_count).toBe(1);
+      expect(detailResponse.body.data.job.failed_feature_count).toBe(0);
+      expect(detailResponse.body.data.preview_features[0].validation_errors).toEqual([]);
+      expect(detailResponse.body.data.preview_features[0].attributes.notes).toBe(randomText);
+    }
+  });
+
+  test('reports missing required text fields clearly', async () => {
+    const { contributorLogin, project } = await createActiveImportProject('MissText', {
+      collectionFormSchema: schemaWithField({
+        key: 'notes',
+        label: 'Notes',
+        type: 'textarea',
+        required: true,
+      }),
+    });
+    const geojsonPath = await createTempGeoJsonFile(
+      'missing-required-text',
+      pointFeatureCollection({ name: 'Missing text notes' }),
+    );
+
+    const detailResponse = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: contributorLogin.token,
+      projectId: project.id,
+      filePath: geojsonPath,
+      status: 'failed',
+    });
+
+    expect(detailResponse.body.data.job.failed_feature_count).toBe(1);
+    expect(detailResponse.body.data.preview_features[0].validation_errors).toEqual(
+      expect.arrayContaining(['Missing required field: Notes']),
+    );
+  });
+
+  test('validates boolean import values with readable failures', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('BoolField', {
+      collectionFormSchema: schemaWithField({
+        key: 'is_active',
+        label: 'Active',
+        type: 'boolean',
+        required: true,
+      }),
+    });
+    const values = [
+      ['Boolean true', true],
+      ['Boolean false', false],
+      ['Boolean yes', 'yes'],
+      ['Boolean no', 'no'],
+      ['Boolean one', '1'],
+      ['Boolean zero', '0'],
+      ['Boolean maybe', 'maybe'],
+    ];
+    const geojsonPath = await createTempGeoJsonFile('boolean-field-import', {
+      type: 'FeatureCollection',
+      features: values.map(([name, value], index) => ({
+        type: 'Feature',
+        properties: { name, is_active: value },
+        geometry: {
+          type: 'Point',
+          coordinates: [35.501 + index * 0.001, 33.901],
+        },
+      })),
+    });
+
+    const detailResponse = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: geojsonPath,
+    });
+
+    expect(detailResponse.body.data.job.pending_feature_count).toBe(6);
+    expect(detailResponse.body.data.job.failed_feature_count).toBe(1);
+    const failedFeature = detailResponse.body.data.preview_features.find(
+      (feature) => feature.attributes.name === 'Boolean maybe',
+    );
+    expect(failedFeature.validation_errors).toEqual(
+      expect.arrayContaining([
+        'Invalid boolean for Active: maybe. Use true/false, yes/no, or 1/0.',
+      ]),
+    );
+  });
+
+  test('validates number fields and min/max only when configured', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('NumField', {
+      collectionFormSchema: schemaWithField({
+        key: 'sample_count',
+        label: 'Sample Count',
+        type: 'number',
+        required: true,
+        min: 0,
+        max: 100,
+      }),
+    });
+    const geojsonPath = await createTempGeoJsonFile('number-field-import', {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: { name: 'Valid number string', sample_count: '42' },
+          geometry: { type: 'Point', coordinates: [35.501, 33.901] },
+        },
+        {
+          type: 'Feature',
+          properties: { name: 'Invalid number text', sample_count: 'many' },
+          geometry: { type: 'Point', coordinates: [35.502, 33.901] },
+        },
+        {
+          type: 'Feature',
+          properties: { name: 'Too high number', sample_count: '101' },
+          geometry: { type: 'Point', coordinates: [35.503, 33.901] },
+        },
+      ],
+    });
+
+    const detailResponse = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: geojsonPath,
+    });
+
+    expect(detailResponse.body.data.job.pending_feature_count).toBe(1);
+    expect(detailResponse.body.data.job.failed_feature_count).toBe(2);
+    const invalidText = detailResponse.body.data.preview_features.find(
+      (feature) => feature.attributes.name === 'Invalid number text',
+    );
+    const tooHigh = detailResponse.body.data.preview_features.find(
+      (feature) => feature.attributes.name === 'Too high number',
+    );
+    expect(invalidText.validation_errors).toEqual(
+      expect.arrayContaining(['Invalid number for Sample Count: many.']),
+    );
+    expect(tooHigh.validation_errors).toEqual(
+      expect.arrayContaining(['Invalid value for Sample Count: 101. Maximum value is 100.']),
+    );
+  });
+
+  test('validates date fields only for parseable dates', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('DateField', {
+      collectionFormSchema: schemaWithField({
+        key: 'observed_at',
+        label: 'Observation Date',
+        type: 'date',
+        required: true,
+      }),
+    });
+    const geojsonPath = await createTempGeoJsonFile('date-field-import', {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: { name: 'Valid date', observed_at: '2026-05-31' },
+          geometry: { type: 'Point', coordinates: [35.501, 33.901] },
+        },
+        {
+          type: 'Feature',
+          properties: { name: 'Invalid date', observed_at: 'not-a-date' },
+          geometry: { type: 'Point', coordinates: [35.502, 33.901] },
+        },
+      ],
+    });
+
+    const detailResponse = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: geojsonPath,
+    });
+
+    expect(detailResponse.body.data.job.pending_feature_count).toBe(1);
+    expect(detailResponse.body.data.job.failed_feature_count).toBe(1);
+    const failedFeature = detailResponse.body.data.preview_features.find(
+      (feature) => feature.attributes.name === 'Invalid date',
+    );
+    expect(failedFeature.validation_errors).toEqual(
+      expect.arrayContaining(['Invalid date for Observation Date: not-a-date.']),
+    );
+  });
+
+  test('handles unknown field types as open unless explicit options are present', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('UnkOpen', {
+      collectionFormSchema: schemaWithField({
+        key: 'misc_note',
+        label: 'Misc Note',
+        type: 'legacy-open-field',
+        required: true,
+      }),
+    });
+    const openPath = await createTempGeoJsonFile(
+      'unknown-open-field',
+      pointFeatureCollection({ name: 'Unknown open', misc_note: 'free text value' }),
+    );
+
+    const openDetail = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: openPath,
+    });
+
+    expect(openDetail.body.data.job.pending_feature_count).toBe(1);
+    expect(openDetail.body.data.preview_features[0].validation_errors).toEqual([]);
+
+    const constrained = await createActiveImportProject('UnkOpt', {
+      collectionFormSchema: schemaWithField({
+        key: 'legacy_code',
+        label: 'Legacy Code',
+        type: 'legacy-code',
+        required: true,
+        options: ['A', 'B'],
+      }),
+    });
+    const constrainedPath = await createTempGeoJsonFile(
+      'unknown-option-field',
+      pointFeatureCollection({ name: 'Unknown option', legacy_code: 'C' }),
+    );
+
+    const constrainedDetail = await uploadAndWaitForImport({
+      token: constrained.contributorLogin.token,
+      reviewerToken: constrained.admin.token,
+      projectId: constrained.project.id,
+      filePath: constrainedPath,
+      status: 'failed',
+    });
+
+    expect(constrainedDetail.body.data.job.failed_feature_count).toBe(1);
+    expect(constrainedDetail.body.data.preview_features[0].validation_errors).toEqual(
+      expect.arrayContaining(['Invalid value for Legacy Code: C. Allowed values: A, B.']),
+    );
   });
 
   test('marks CSV imports without geometry columns as failed clearly', async () => {
@@ -376,7 +1053,8 @@ describe('GIS import workflow', () => {
   });
 
   test('keeps invalid CSV coordinates as failed staged rows', async () => {
-    const { admin, contributorLogin, project } = await createActiveImportProject('CSV Invalid Coordinates');
+    const { admin, contributorLogin, project } =
+      await createActiveImportProject('CSV Invalid Coordinates');
     const csvPath = await createTempTextFile(
       'csv-invalid-coordinates',
       'csv',
@@ -402,7 +1080,9 @@ describe('GIS import workflow', () => {
   });
 
   test('preserves GeoJSON photo reference attributes through approval', async () => {
-    const { admin, contributorLogin, project } = await createActiveImportProject('GeoJSON Photo References');
+    const { admin, contributorLogin, project } = await createActiveImportProject(
+      'GeoJSON Photo References',
+    );
     const geojsonPath = await createTempGeoJsonFile('geojson-photo-references', {
       type: 'FeatureCollection',
       features: [
@@ -448,7 +1128,9 @@ describe('GIS import workflow', () => {
   });
 
   test('preserves Shapefile DBF photo reference attributes', async () => {
-    const { admin, contributorLogin, project } = await createActiveImportProject('Shapefile Photo References');
+    const { admin, contributorLogin, project } = await createActiveImportProject(
+      'Shapefile Photo References',
+    );
     const shapefilePath = await createTempShapefileZipFile('shapefile-photo-references', {
       type: 'FeatureCollection',
       features: [
@@ -477,7 +1159,9 @@ describe('GIS import workflow', () => {
   });
 
   test('preserves KML and KMZ extended photo reference attributes', async () => {
-    const { admin, contributorLogin, project } = await createActiveImportProject('KML KMZ Photo References');
+    const { admin, contributorLogin, project } = await createActiveImportProject(
+      'KML KMZ Photo References',
+    );
     const kml = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
@@ -516,7 +1200,8 @@ describe('GIS import workflow', () => {
   });
 
   test('handles malformed and unsupported GeoJSON content without backend errors', async () => {
-    const { contributorLogin, project } = await createActiveImportProject('GeoJSON Robust Failures');
+    const { contributorLogin, project } =
+      await createActiveImportProject('GeoJSON Robust Failures');
     const malformedPath = await createTempTextFile('geojson-malformed', 'geojson', '{"type":');
     const malformedDetail = await uploadAndWaitForImport({
       token: contributorLogin.token,
@@ -545,13 +1230,19 @@ describe('GIS import workflow', () => {
   });
 
   test('stages unsupported GeoJSON geometries as failed feature rows', async () => {
-    const { admin, contributorLogin, project } = await createActiveImportProject('GeoJSON Geometry Failures');
+    const { admin, contributorLogin, project } = await createActiveImportProject(
+      'GeoJSON Geometry Failures',
+    );
     const geojsonPath = await createTempGeoJsonFile('geojson-geometry-failures', {
       type: 'FeatureCollection',
       features: [
         {
           type: 'Feature',
-          properties: { feature_type: 'olive', name: 'Lowercase point', photo_url: 'https://example.com/lower.jpg' },
+          properties: {
+            feature_type: 'olive',
+            name: 'Lowercase point',
+            photo_url: 'https://example.com/lower.jpg',
+          },
           geometry: { type: 'point', coordinates: [35.5, 33.9] },
         },
         {
@@ -588,8 +1279,72 @@ describe('GIS import workflow', () => {
     );
   });
 
+  test('reports ring self-intersections without approving invalid polygons', async () => {
+    const { admin, contributorLogin, project } = await createActiveImportProject('SelfX Polygon', {
+      collectionFormSchema: l4DescriptorSchema(),
+    });
+    const geojsonPath = await createTempGeoJsonFile('geojson-ring-self-intersection', {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          id: 'source-parcel-123',
+          properties: {
+            name: 'Self-intersecting polygon',
+            OBJECTID_1: '123',
+            L4_descr: 'Olives',
+          },
+          geometry: {
+            type: 'Polygon',
+            coordinates: [
+              [
+                [35.5, 33.9],
+                [35.6, 34.0],
+                [35.6, 33.9],
+                [35.5, 34.0],
+                [35.5, 33.9],
+              ],
+            ],
+          },
+        },
+      ],
+    });
+
+    const detailResponse = await uploadAndWaitForImport({
+      token: contributorLogin.token,
+      reviewerToken: admin.token,
+      projectId: project.id,
+      filePath: geojsonPath,
+      status: 'failed',
+    });
+
+    expect(detailResponse.body.data.job.failed_feature_count).toBe(1);
+    expect(detailResponse.body.data.job.pending_feature_count).toBe(0);
+    expect(detailResponse.body.data.preview_features[0]).toEqual(
+      expect.objectContaining({
+        source_identifier: 'source-parcel-123',
+        source_feature_name: 'Self-intersecting polygon',
+      }),
+    );
+    expect(detailResponse.body.data.preview_features[0].validation_errors).toEqual(
+      expect.arrayContaining([
+        'Invalid polygon geometry: ring self-intersection. Fix the geometry in GIS software or exclude this feature.',
+      ]),
+    );
+
+    const approvedFeatures = await pool.query(
+      `SELECT id
+       FROM spatial_feature
+       WHERE project_id = $1`,
+      [project.id],
+    );
+    expect(approvedFeatures.rows).toHaveLength(0);
+  });
+
   test('handles Shapefile ZIP edge cases without backend errors', async () => {
-    const { admin, contributorLogin, project } = await createActiveImportProject('Shapefile Robust Failures');
+    const { admin, contributorLogin, project } = await createActiveImportProject(
+      'Shapefile Robust Failures',
+    );
     const baseGeoJson = {
       type: 'FeatureCollection',
       features: [
@@ -605,7 +1360,9 @@ describe('GIS import workflow', () => {
       ],
     };
 
-    const noPrjPath = await createTempShapefileZipWithout('shapefile-no-prj', baseGeoJson, ['.prj']);
+    const noPrjPath = await createTempShapefileZipWithout('shapefile-no-prj', baseGeoJson, [
+      '.prj',
+    ]);
     const noPrjDetail = await uploadAndWaitForImport({
       token: contributorLogin.token,
       reviewerToken: admin.token,
@@ -617,7 +1374,11 @@ describe('GIS import workflow', () => {
       'https://example.com/no-prj.jpg',
     );
 
-    const missingDbfPath = await createTempShapefileZipWithout('shapefile-missing-dbf', baseGeoJson, ['.dbf']);
+    const missingDbfPath = await createTempShapefileZipWithout(
+      'shapefile-missing-dbf',
+      baseGeoJson,
+      ['.dbf'],
+    );
     const missingDbfDetail = await uploadAndWaitForImport({
       token: contributorLogin.token,
       reviewerToken: admin.token,
@@ -644,7 +1405,11 @@ describe('GIS import workflow', () => {
       'A zipped shapefile must include .shp, .shx, and .dbf files.',
     );
 
-    const corruptedZipPath = await createTempBinaryFile('shapefile-corrupt', 'zip', 'not really a zip');
+    const corruptedZipPath = await createTempBinaryFile(
+      'shapefile-corrupt',
+      'zip',
+      'not really a zip',
+    );
     const corruptedZipDetail = await uploadAndWaitForImport({
       token: contributorLogin.token,
       reviewerToken: admin.token,
@@ -658,7 +1423,8 @@ describe('GIS import workflow', () => {
   });
 
   test('handles KML lines, polygons, malformed XML, and missing geometry safely', async () => {
-    const { admin, contributorLogin, project } = await createActiveImportProject('KML Robust Import');
+    const { admin, contributorLogin, project } =
+      await createActiveImportProject('KML Robust Import');
     const kml = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
@@ -691,8 +1457,9 @@ describe('GIS import workflow', () => {
     expect(detailResponse.body.data.job.pending_feature_count).toBe(2);
     expect(detailResponse.body.data.job.failed_feature_count).toBe(1);
     expect(
-      detailResponse.body.data.preview_features.find((feature) => feature.display_title === 'KML polygon')
-        .attributes.media_url,
+      detailResponse.body.data.preview_features.find(
+        (feature) => feature.display_title === 'KML polygon',
+      ).attributes.media_url,
     ).toBe('https://example.com/kml-polygon.jpg');
 
     const malformedPath = await createTempTextFile('kml-malformed', 'kml', '<kml><Placemark>');
@@ -703,11 +1470,14 @@ describe('GIS import workflow', () => {
       filePath: malformedPath,
       status: 'failed',
     });
-    expect(malformedDetail.body.data.job.processing_message).toContain('The KML file could not be parsed.');
+    expect(malformedDetail.body.data.job.processing_message).toContain(
+      'The KML file could not be parsed.',
+    );
   });
 
   test('handles KMZ nested KML, embedded files, missing KML, and corrupted archives safely', async () => {
-    const { admin, contributorLogin, project } = await createActiveImportProject('KMZ Robust Import');
+    const { admin, contributorLogin, project } =
+      await createActiveImportProject('KMZ Robust Import');
     const nestedKml = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
@@ -721,10 +1491,14 @@ describe('GIS import workflow', () => {
     </Placemark>
   </Document>
 </kml>`;
-    const kmzPath = await createTempZipFile('kmz-nested-kml', {
-      'nested/doc.kml': nestedKml,
-      'images/photo.jpg': Buffer.from('fake image content'),
-    }, 'kmz');
+    const kmzPath = await createTempZipFile(
+      'kmz-nested-kml',
+      {
+        'nested/doc.kml': nestedKml,
+        'images/photo.jpg': Buffer.from('fake image content'),
+      },
+      'kmz',
+    );
     const detailResponse = await uploadAndWaitForImport({
       token: contributorLogin.token,
       reviewerToken: admin.token,
@@ -732,11 +1506,17 @@ describe('GIS import workflow', () => {
       filePath: kmzPath,
     });
     expect(detailResponse.body.data.job.file_metadata.source_entry).toBe('nested/doc.kml');
-    expect(detailResponse.body.data.preview_features[0].attributes.picture).toBe('images/photo.jpg');
+    expect(detailResponse.body.data.preview_features[0].attributes.picture).toBe(
+      'images/photo.jpg',
+    );
 
-    const missingKmlPath = await createTempZipFile('kmz-missing-kml', {
-      'images/photo.jpg': Buffer.from('fake image content'),
-    }, 'kmz');
+    const missingKmlPath = await createTempZipFile(
+      'kmz-missing-kml',
+      {
+        'images/photo.jpg': Buffer.from('fake image content'),
+      },
+      'kmz',
+    );
     const missingKmlDetail = await uploadAndWaitForImport({
       token: contributorLogin.token,
       reviewerToken: admin.token,
@@ -762,7 +1542,8 @@ describe('GIS import workflow', () => {
   });
 
   test('handles real-world CSV headers, delimiters, blanks, and photo references', async () => {
-    const { admin, contributorLogin, project } = await createActiveImportProject('CSV Robust Import');
+    const { admin, contributorLogin, project } =
+      await createActiveImportProject('CSV Robust Import');
     const csvPath = await createTempTextFile(
       'csv-robust-import',
       'csv',
@@ -790,7 +1571,8 @@ describe('GIS import workflow', () => {
   });
 
   test('handles XLSX photo references, blank rows, and valid sheet auto-detection', async () => {
-    const { admin, contributorLogin, project } = await createActiveImportProject('XLSX Robust Import');
+    const { admin, contributorLogin, project } =
+      await createActiveImportProject('XLSX Robust Import');
     const xlsxPath = await createTempXlsxFile('xlsx-robust-import', [
       {
         name: 'Accounting',
@@ -991,6 +1773,271 @@ describe('GIS import workflow', () => {
     expect(notificationCheck.rows).toHaveLength(1);
     expect(notificationCheck.rows[0].title).toContain('Import partially approved');
     expect(notificationCheck.rows[0].message).toContain('Duplicate field survey already exists.');
+  });
+
+  test('approves supported single and multi geometries without geom constraint failures', async () => {
+    const { admin, contributorRegistration, project } = await createActiveImportProject(
+      'Import Multi Geometry Approval',
+    );
+    const importId = await createStagedImportJob({
+      projectId: project.id,
+      uploadedByUserId: contributorRegistration.user.id,
+      features: [
+        {
+          displayTitle: 'Point feature',
+          geometryType: 'Point',
+          geometry: { type: 'Point', coordinates: [35.501, 33.901] },
+        },
+        {
+          displayTitle: 'MultiPoint feature',
+          geometryType: 'MultiPoint',
+          geometry: {
+            type: 'MultiPoint',
+            coordinates: [
+              [35.502, 33.902],
+              [35.503, 33.903],
+            ],
+          },
+        },
+        {
+          displayTitle: 'Line feature',
+          geometryType: 'LineString',
+          geometry: {
+            type: 'LineString',
+            coordinates: [
+              [35.504, 33.904],
+              [35.505, 33.905],
+            ],
+          },
+        },
+        {
+          displayTitle: 'MultiLine feature',
+          geometryType: 'MultiLineString',
+          geometry: {
+            type: 'MultiLineString',
+            coordinates: [
+              [
+                [35.506, 33.906],
+                [35.507, 33.907],
+              ],
+            ],
+          },
+        },
+        {
+          displayTitle: 'Polygon feature',
+          geometryType: 'Polygon',
+          geometry: {
+            type: 'Polygon',
+            coordinates: [
+              [
+                [35.508, 33.908],
+                [35.511, 33.908],
+                [35.511, 33.911],
+                [35.508, 33.911],
+                [35.508, 33.908],
+              ],
+            ],
+          },
+        },
+        {
+          displayTitle: 'MultiPolygon feature',
+          geometryType: 'MultiPolygon',
+          geometry: {
+            type: 'MultiPolygon',
+            coordinates: [
+              [
+                [
+                  [35.512, 33.912],
+                  [35.515, 33.912],
+                  [35.515, 33.915],
+                  [35.512, 33.915],
+                  [35.512, 33.912],
+                ],
+              ],
+            ],
+          },
+        },
+      ].map((feature) => ({
+        ...feature,
+        attributes: { name: feature.displayTitle },
+      })),
+    });
+
+    const approveResponse = await request(app)
+      .post(`${API_PREFIX}/imports/${importId}/review`)
+      .set(authHeader(admin.token))
+      .send({ status: 'approved' })
+      .expect(200);
+
+    expect(approveResponse.body.data.status).toBe('approved');
+    expect(approveResponse.body.data.approved_feature_count).toBe(6);
+    const storedTypes = await pool.query(
+      `SELECT GeometryType(geom) AS geometry_type
+       FROM spatial_feature
+       WHERE project_id = $1
+       ORDER BY geometry_type ASC`,
+      [project.id],
+    );
+    expect(storedTypes.rows.map((row) => row.geometry_type).sort()).toEqual([
+      'LINESTRING',
+      'MULTILINESTRING',
+      'MULTIPOINT',
+      'MULTIPOLYGON',
+      'POINT',
+      'POLYGON',
+    ]);
+  });
+
+  test('keeps invalid approval targets failed while approving valid features', async () => {
+    const { admin, contributorRegistration, project } =
+      await createActiveImportProject('Import Partial Approval');
+    const importId = await createStagedImportJob({
+      projectId: project.id,
+      uploadedByUserId: contributorRegistration.user.id,
+      features: [
+        {
+          displayTitle: 'Valid parcel',
+          geometryType: 'Polygon',
+          geometry: {
+            type: 'Polygon',
+            coordinates: [
+              [
+                [35.52, 33.92],
+                [35.523, 33.92],
+                [35.523, 33.923],
+                [35.52, 33.923],
+                [35.52, 33.92],
+              ],
+            ],
+          },
+          attributes: { name: 'Valid parcel' },
+        },
+        {
+          displayTitle: 'Unsupported geometry collection',
+          geometryType: null,
+          geometry: {
+            type: 'GeometryCollection',
+            geometries: [{ type: 'Point', coordinates: [35.525, 33.925] }],
+          },
+          attributes: { name: 'Unsupported geometry collection' },
+        },
+      ],
+    });
+
+    const approveResponse = await request(app)
+      .post(`${API_PREFIX}/imports/${importId}/review`)
+      .set(authHeader(admin.token))
+      .send({ status: 'approved' })
+      .expect(200);
+
+    expect(approveResponse.body.data.status).toBe('partially_approved');
+    expect(approveResponse.body.data.approved_feature_count).toBe(1);
+    expect(approveResponse.body.data.failed_feature_count).toBe(1);
+    const staged = await request(app)
+      .get(`${API_PREFIX}/imports/${importId}/features?status=failed`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(staged.body.data[0].validation_errors).toEqual(
+      expect.arrayContaining(['Unsupported geometry type: GEOMETRYCOLLECTION.']),
+    );
+    expect(JSON.stringify(staged.body.data[0].validation_errors)).not.toContain(
+      'chk_spatial_feature_geom_type',
+    );
+  });
+
+  test('approves all filtered reviewable features for large imports server-side', async () => {
+    const { admin, contributorRegistration, project } = await createActiveImportProject(
+      'Import Large Approve Filtered',
+    );
+    const features = Array.from({ length: 1401 }, (_, index) => ({
+      displayTitle: `Bulk approve ${index + 1}`,
+      geometryType: 'Point',
+      geometry: {
+        type: 'Point',
+        coordinates: [35.2 + (index % 40) * 0.001, 33.2 + Math.floor(index / 40) * 0.001],
+      },
+      attributes: { name: `Bulk approve ${index + 1}` },
+      validationWarnings: index < 1400 ? ['bulk approve filter'] : [],
+    }));
+    const importId = await createStagedImportJob({
+      projectId: project.id,
+      uploadedByUserId: contributorRegistration.user.id,
+      features,
+    });
+
+    const quickMapResponse = await request(app)
+      .get(`${API_PREFIX}/imports/${importId}/quick-map`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(quickMapResponse.body.data.total_feature_count).toBe(1401);
+    expect(quickMapResponse.body.data.geometry_feature_count).toBe(1401);
+    expect(quickMapResponse.body.data.rendered_feature_count).toBeLessThan(1401);
+    expect(quickMapResponse.body.data.features).toHaveLength(
+      quickMapResponse.body.data.rendered_feature_count,
+    );
+    expect(quickMapResponse.body.data.features[0].geometry.type).toBe('Point');
+    expect(quickMapResponse.body.data.features[0].attributes).toEqual({});
+    expect(
+      quickMapResponse.body.data.features.reduce(
+        (total, feature) => total + feature.cluster_count,
+        0,
+      ),
+    ).toBe(1401);
+
+    const approveResponse = await request(app)
+      .post(`${API_PREFIX}/imports/${importId}/review`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'approved',
+        filters: { issue: 'bulk approve filter' },
+      })
+      .expect(200);
+
+    expect(approveResponse.body.data.status).toBe('pending_review');
+    expect(approveResponse.body.data.approved_feature_count).toBe(1400);
+    expect(approveResponse.body.data.pending_feature_count).toBe(1);
+    const approvedCount = await pool.query(
+      `SELECT COUNT(*)::int AS total
+       FROM spatial_feature
+       WHERE project_id = $1`,
+      [project.id],
+    );
+    expect(approvedCount.rows[0].total).toBe(1400);
+  });
+
+  test('rejects all filtered reviewable features for large imports server-side', async () => {
+    const { admin, contributorRegistration, project } = await createActiveImportProject(
+      'Import Large Reject Filtered',
+    );
+    const features = Array.from({ length: 1401 }, (_, index) => ({
+      displayTitle: `Bulk reject ${index + 1}`,
+      geometryType: 'Point',
+      geometry: {
+        type: 'Point',
+        coordinates: [35.3 + (index % 40) * 0.001, 33.3 + Math.floor(index / 40) * 0.001],
+      },
+      attributes: { name: `Bulk reject ${index + 1}` },
+      validationWarnings: index < 1400 ? ['bulk reject filter'] : [],
+    }));
+    const importId = await createStagedImportJob({
+      projectId: project.id,
+      uploadedByUserId: contributorRegistration.user.id,
+      features,
+    });
+
+    const rejectResponse = await request(app)
+      .post(`${API_PREFIX}/imports/${importId}/review`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'rejected',
+        reason: 'Not part of this review pass.',
+        filters: { issue: 'bulk reject filter' },
+      })
+      .expect(200);
+
+    expect(rejectResponse.body.data.status).toBe('pending_review');
+    expect(rejectResponse.body.data.rejected_feature_count).toBe(1400);
+    expect(rejectResponse.body.data.pending_feature_count).toBe(1);
   });
 
   test('duplicate warnings apply only to matching staged features', async () => {
@@ -1237,7 +2284,7 @@ describe('GIS import workflow', () => {
     expect(importMapResponse.body.data.staged_features.map((item) => item.status)).toEqual(
       expect.arrayContaining(['pending_review', 'approved']),
     );
-    expect(importMapResponse.body.data.approved_project_features).toHaveLength(1);
+    expect(importMapResponse.body.data.approved_project_features).toHaveLength(0);
 
     const projectMapResponse = await request(app)
       .get(`${API_PREFIX}/projects/${project.id}/features?limit=100`)
@@ -1452,19 +2499,19 @@ describe('GIS import workflow', () => {
     expect(detailResponse.body.data.job.validation_summary.top_errors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          message: 'Missing required attribute: feature_type',
+          message: 'Missing required field: Feature type',
           count: 1,
         }),
       ]),
     );
     expect(detailResponse.body.data.preview_features[0].validation_errors).toEqual(
-      expect.arrayContaining(['Missing required attribute: feature_type']),
+      expect.arrayContaining(['Missing required field: Feature type']),
     );
 
     const issueFilteredResponse = await request(app)
       .get(
         `${API_PREFIX}/imports/${uploadResponse.body.data.id}/features?page=1&limit=20&issue=${encodeURIComponent(
-          'Missing required attribute: feature_type',
+          'Missing required field: Feature type',
         )}`,
       )
       .set(authHeader(contributorLogin.token))
@@ -1473,7 +2520,7 @@ describe('GIS import workflow', () => {
     expect(issueFilteredResponse.body.pagination.total).toBe(1);
     expect(issueFilteredResponse.body.data).toHaveLength(1);
     expect(issueFilteredResponse.body.data[0].validation_errors).toEqual(
-      expect.arrayContaining(['Missing required attribute: feature_type']),
+      expect.arrayContaining(['Missing required field: Feature type']),
     );
   });
 
@@ -1768,8 +2815,8 @@ describe('GIS import workflow', () => {
                 [
                   [35.48, 33.89],
                   [35.49, 33.89],
-                  [35.49, 33.90],
-                  [35.48, 33.90],
+                  [35.49, 33.9],
+                  [35.48, 33.9],
                   [35.48, 33.89],
                 ],
               ],
@@ -1793,12 +2840,18 @@ describe('GIS import workflow', () => {
 
     expect(detailResponse.body.data.job.pending_feature_count).toBe(1);
     expect(detailResponse.body.data.job.failed_feature_count).toBe(0);
-    expect(detailResponse.body.data.preview_features[0].geometry_type).toBe(
-      'MultiPolygon',
-    );
+    expect(detailResponse.body.data.preview_features[0].geometry_type).toBe('MultiPolygon');
     expect(detailResponse.body.data.preview_features[0].validation_errors).toEqual(
       expect.not.arrayContaining(['Geometry is missing or unsupported.']),
     );
+
+    const quickMapResponse = await request(app)
+      .get(`${API_PREFIX}/imports/${uploadResponse.body.data.id}/quick-map`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(quickMapResponse.body.data.rendered_feature_count).toBe(1);
+    expect(quickMapResponse.body.data.features[0].geometry.type).toBe('MultiPolygon');
+    expect(quickMapResponse.body.data.features[0].cluster_count).toBe(1);
   }, 15000);
 
   test('accepts larger imports beyond the old 2000-feature cap', async () => {
@@ -1830,6 +2883,18 @@ describe('GIS import workflow', () => {
       name: 'Import Batch Project',
       visibleToContributors: true,
     });
+    await pool.query('UPDATE project SET collection_form_schema = $1::jsonb WHERE id = $2', [
+      JSON.stringify(
+        schemaWithField({
+          key: 'feature_type',
+          label: 'feature_type',
+          type: 'select',
+          required: true,
+          options: ['olive', 'cedar'],
+        }),
+      ),
+      project.id,
+    ]);
     await request(app)
       .put(`${API_PREFIX}/projects/${project.id}`)
       .set(authHeader(admin.token))
@@ -1851,6 +2916,8 @@ describe('GIS import workflow', () => {
       properties: {
         feature_type: index % 2 === 0 ? 'olive' : 'cedar',
         name: `Imported feature ${index + 1}`,
+        OBJECTID_1: index + 1,
+        notes: `Long note ${index + 1} kept out of list summaries`,
       },
       geometry: {
         type: 'Point',
@@ -1881,6 +2948,8 @@ describe('GIS import workflow', () => {
 
     expect(detailsResponse.body.data.job.geometry_count).toBe(2105);
     expect(detailsResponse.body.data.job.pending_feature_count).toBe(2105);
+    expect(detailsResponse.body.data.preview_features).toHaveLength(20);
+    expect(detailsResponse.body.data.preview_summary.preview_feature_count).toBe(20);
 
     const featuresPage1 = await request(app)
       .get(`${API_PREFIX}/imports/${uploadResponse.body.data.id}/features?page=1&limit=20`)
@@ -1889,6 +2958,18 @@ describe('GIS import workflow', () => {
     expect(featuresPage1.body.data).toHaveLength(20);
     expect(featuresPage1.body.pagination.total).toBe(2105);
     expect(featuresPage1.body.pagination.has_more).toBe(true);
+    expect(featuresPage1.body.data[0].geometry).toBeNull();
+    expect(featuresPage1.body.data[0].attributes).toEqual({
+      feature_type: 'olive',
+    });
+    expect(featuresPage1.body.data[0].summary_attributes).toEqual({
+      feature_type: 'olive',
+    });
+    expect(featuresPage1.body.data[0].attribute_count).toBe(4);
+    expect(featuresPage1.body.data[0].attributes.notes).toBeUndefined();
+    expect(featuresPage1.body.data[0].attributes.name).toBeUndefined();
+    expect(featuresPage1.body.data[0].attributes.OBJECTID_1).toBeUndefined();
+    expect(featuresPage1.body.data[0].is_summary).toBe(true);
 
     const featuresPage2 = await request(app)
       .get(`${API_PREFIX}/imports/${uploadResponse.body.data.id}/features?page=2&limit=20`)
@@ -1897,6 +2978,33 @@ describe('GIS import workflow', () => {
     expect(featuresPage2.body.data).toHaveLength(20);
     expect(featuresPage2.body.pagination.total).toBe(2105);
     expect(featuresPage2.body.pagination.has_more).toBe(true);
+
+    const quickMapResponse = await request(app)
+      .get(`${API_PREFIX}/imports/${uploadResponse.body.data.id}/quick-map`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(quickMapResponse.body.data.total_feature_count).toBe(2105);
+    expect(quickMapResponse.body.data.geometry_feature_count).toBe(2105);
+    expect(quickMapResponse.body.data.rendered_feature_count).toBeLessThan(2105);
+    expect(quickMapResponse.body.data.rendered_feature_count).toBeLessThanOrEqual(500);
+    expect(quickMapResponse.body.data.is_clustered).toBe(true);
+    expect(quickMapResponse.body.data.status_counts.pending_review).toBe(2105);
+    expect(quickMapResponse.body.data.features).toHaveLength(
+      quickMapResponse.body.data.rendered_feature_count,
+    );
+    expect(quickMapResponse.body.data.features[0].geometry.type).toBe('Point');
+    expect(quickMapResponse.body.data.features[0].attributes).toEqual({});
+    expect(
+      quickMapResponse.body.data.features.reduce(
+        (total, feature) => total + feature.cluster_count,
+        0,
+      ),
+    ).toBe(2105);
+    expect(quickMapResponse.body.data.bounds.min_lon).toBeCloseTo(35.2, 5);
+    expect(quickMapResponse.body.data.bounds.min_lat).toBeCloseTo(33.1, 5);
+    expect(quickMapResponse.body.data.bounds.max_lon).toBeCloseTo(35.4104, 5);
+    expect(quickMapResponse.body.data.bounds.max_lat).toBeCloseTo(33.3104, 5);
+    expect(JSON.stringify(quickMapResponse.body.data)).not.toContain('Long note');
 
     const importsPage = await request(app)
       .get(`${API_PREFIX}/imports?page=1&limit=20&project_id=${project.id}`)

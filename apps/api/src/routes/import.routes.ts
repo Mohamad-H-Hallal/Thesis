@@ -53,6 +53,13 @@ router.get(
 );
 
 router.get(
+  '/:importId/quick-map',
+  uuidValidation('importId'),
+  validate,
+  asyncHandler(importController.getImportQuickMapPreview),
+);
+
+router.get(
   '/:importId/tiles/:z/:x/:y',
   uuidValidation('importId'),
   tileParamValidation,
@@ -122,6 +129,7 @@ router.post(
       status: req.body?.status,
       reason: req.body?.reason,
       feature_ids: req.body?.feature_ids,
+      filters: req.body?.filters,
     }),
   }),
   importValidation.review,

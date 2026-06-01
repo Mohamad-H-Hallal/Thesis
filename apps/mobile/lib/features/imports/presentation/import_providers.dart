@@ -85,6 +85,14 @@ final importMapDataProvider = FutureProvider.autoDispose
           );
     });
 
+final importQuickMapPreviewProvider = FutureProvider.autoDispose
+    .family<ImportQuickMapPreview, String>((ref, importId) async {
+      ref.watch(workflowRefreshTickProvider);
+      return ref
+          .read(importsRepositoryProvider)
+          .fetchImportQuickMapPreview(importId: importId);
+    });
+
 final importFeatureProvider = FutureProvider.autoDispose
     .family<ImportedFeature, ImportFeatureQuery>((ref, query) async {
       ref.watch(workflowRefreshTickProvider);

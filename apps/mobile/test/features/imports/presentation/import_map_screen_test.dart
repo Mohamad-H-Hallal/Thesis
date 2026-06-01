@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:lebanese_gis_mobile/core/pagination/paginated_list_controller.dart';
+import 'package:lebanese_gis_mobile/core/pagination/paginated_result.dart';
 import 'package:lebanese_gis_mobile/core/providers/providers.dart';
 import 'package:lebanese_gis_mobile/core/router/route_paths.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_models.dart';
@@ -152,6 +154,120 @@ ImportedFeature _importedFeature(
     validationErrors: const <String>[],
     validationReport: const <String, dynamic>{},
     approvedFeatureId: approvedFeatureId,
+    createdAt: DateTime(2026, 4, 25),
+    updatedAt: DateTime(2026, 4, 25),
+  );
+}
+
+ImportedFeature _l4ImportMapFeature() {
+  return ImportedFeature(
+    id: 'feature-l4-1',
+    importJobId: 'import-1',
+    sourceIndex: 0,
+    sourceIdentifier: 'source-parcel-123',
+    sourceFeatureName: 'Self-intersecting polygon',
+    displayTitle: 'Imported polygon',
+    geometryType: 'Polygon',
+    geometry: const <String, dynamic>{
+      'type': 'Polygon',
+      'coordinates': <dynamic>[
+        <dynamic>[
+          <double>[35.5, 33.9],
+          <double>[35.6, 34.0],
+          <double>[35.6, 33.9],
+          <double>[35.5, 34.0],
+          <double>[35.5, 33.9],
+        ],
+      ],
+    },
+    attributes: const <String, dynamic>{
+      'L4_descr': 'Olives',
+      'feature_type': 'Olives',
+      'OBJECTID_1': '123',
+    },
+    status: 'failed',
+    validationWarnings: const <String>[],
+    validationErrors: const <String>[
+      'Invalid value for L4_descr: Bananas. Allowed values: Olives, Fruit Trees.',
+      'Ring Self-intersection[35.55 33.95]',
+    ],
+    validationReport: const <String, dynamic>{},
+    createdAt: DateTime(2026, 4, 25),
+    updatedAt: DateTime(2026, 4, 25),
+  );
+}
+
+ImportedFeature _summaryImportedFeature(String id) {
+  return ImportedFeature(
+    id: id,
+    importJobId: 'import-1',
+    sourceIndex: 0,
+    displayTitle: 'Summary-only feature',
+    geometryType: 'Polygon',
+    geometry: null,
+    attributes: const <String, dynamic>{},
+    summaryAttributes: const <String, dynamic>{'feature_type': 'Olives'},
+    attributeCount: 12,
+    status: 'pending_review',
+    validationWarnings: const <String>[],
+    validationErrors: const <String>[],
+    validationReport: const <String, dynamic>{},
+    isSummary: true,
+    createdAt: DateTime(2026, 4, 25),
+    updatedAt: DateTime(2026, 4, 25),
+  );
+}
+
+ImportedFeature _fullPolygonImportedFeature(String id) {
+  return ImportedFeature(
+    id: id,
+    importJobId: 'import-1',
+    sourceIndex: 0,
+    displayTitle: 'Full polygon feature',
+    geometryType: 'Polygon',
+    geometry: const <String, dynamic>{
+      'type': 'Polygon',
+      'coordinates': <dynamic>[
+        <dynamic>[
+          <double>[35.45, 33.35],
+          <double>[35.46, 33.35],
+          <double>[35.46, 33.36],
+          <double>[35.45, 33.36],
+          <double>[35.45, 33.35],
+        ],
+      ],
+    },
+    attributes: const <String, dynamic>{
+      'feature_type': 'Olives',
+      'source_name': 'Full row from feature API',
+    },
+    status: 'pending_review',
+    validationWarnings: const <String>[],
+    validationErrors: const <String>[],
+    validationReport: const <String, dynamic>{},
+    createdAt: DateTime(2026, 4, 25),
+    updatedAt: DateTime(2026, 4, 25),
+  );
+}
+
+ImportedFeature _aggregatePolygonImportFeature() {
+  return ImportedFeature(
+    id: 'cluster:approved:12:34',
+    importJobId: 'import-1',
+    sourceIndex: 0,
+    displayTitle: '39 imported features',
+    geometryType: 'Polygon',
+    geometry: const <String, dynamic>{
+      'type': 'Point',
+      'coordinates': <double>[35.45, 33.35],
+    },
+    attributes: const <String, dynamic>{},
+    status: 'approved',
+    validationWarnings: const <String>[],
+    validationErrors: const <String>[],
+    validationReport: const <String, dynamic>{},
+    isAggregate: true,
+    clusterCount: 39,
     createdAt: DateTime(2026, 4, 25),
     updatedAt: DateTime(2026, 4, 25),
   );
@@ -319,6 +435,159 @@ void main() {
     },
   );
 
+  testWidgets(
+    'import map keeps polygon aggregate pins lightweight and non-detail',
+    (tester) async {
+      const query = ImportMapQuery(
+        importId: 'import-1',
+        projectId: 'project-1',
+        minLon: 35.094,
+        minLat: 33.045,
+        maxLon: 36.645,
+        maxLat: 34.695,
+        zoom: 7.4,
+      );
+      final details = GisImportDetails(
+        job: _job(
+          geometryCount: 39,
+          pendingFeatureCount: 0,
+          approvedFeatureCount: 39,
+        ),
+        previewFeatures: const <ImportedFeature>[],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 39,
+          previewFeatureCount: 39,
+          outsideWorkspaceFeatureCount: 0,
+        ),
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWith(
+              (_) => _AuthenticatedAuthController(_session()),
+            ),
+            importDetailsProvider(
+              'import-1',
+            ).overrideWith((ref) async => details),
+            importMapDataProvider(query).overrideWith(
+              (ref) async => ImportMapData(
+                stagedFeatures: <ImportedFeature>[
+                  _aggregatePolygonImportFeature(),
+                ],
+                approvedProjectFeatures: const <MapFeatureSummary>[],
+              ),
+            ),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(
+              body: ImportMapScreen(
+                importId: 'import-1',
+                projectId: 'project-1',
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      final markerCount = tester
+          .widgetList<MarkerLayer>(find.byType(MarkerLayer))
+          .fold<int>(0, (total, layer) => total + layer.markers.length);
+      expect(markerCount, 1);
+      expect(find.text('Valid featureId is required'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'imported feature browser fetches full feature before focusing details',
+    (tester) async {
+      var featureFetchCount = 0;
+      const mapQuery = ImportMapQuery(
+        importId: 'import-1',
+        projectId: 'project-1',
+        minLon: 35.094,
+        minLat: 33.045,
+        maxLon: 36.645,
+        maxLat: 34.695,
+        zoom: 7.4,
+      );
+      const browserQuery = ImportedFeatureListQuery(importId: 'import-1');
+      final summaryFeature = _summaryImportedFeature('feature-summary-1');
+      final fullFeature = _fullPolygonImportedFeature('feature-summary-1');
+      final details = GisImportDetails(
+        job: _job(
+          geometryCount: 1,
+          pendingFeatureCount: 1,
+          approvedFeatureCount: 0,
+        ),
+        previewFeatures: const <ImportedFeature>[],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 1,
+          previewFeatureCount: 1,
+          outsideWorkspaceFeatureCount: 0,
+        ),
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWith(
+              (_) => _AuthenticatedAuthController(_session()),
+            ),
+            importDetailsProvider(
+              'import-1',
+            ).overrideWith((ref) async => details),
+            importMapDataProvider(mapQuery).overrideWith(
+              (ref) async => ImportMapData(
+                stagedFeatures: <ImportedFeature>[fullFeature],
+                approvedProjectFeatures: const <MapFeatureSummary>[],
+              ),
+            ),
+            paginatedImportFeaturesProvider(browserQuery).overrideWith(
+              (ref) => PaginatedListController<ImportedFeature>(
+                loadPage: ({required page, required limit}) async =>
+                    PaginatedResult<ImportedFeature>(
+                      items: <ImportedFeature>[summaryFeature],
+                      page: page,
+                      limit: limit,
+                      total: 1,
+                      hasMore: false,
+                    ),
+              ),
+            ),
+            importFeatureProvider.overrideWith((ref, query) async {
+              featureFetchCount += 1;
+              return fullFeature;
+            }),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(
+              body: ImportMapScreen(
+                importId: 'import-1',
+                projectId: 'project-1',
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Browse imported features'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Summary-only feature'));
+      await tester.pumpAndSettle();
+
+      expect(featureFetchCount, 1);
+      expect(find.text('Summary-only feature'), findsNothing);
+      expect(find.text('Attributes'), findsOneWidget);
+      expect(find.text('Olives'), findsAtLeastNWidgets(1));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('import feature details show only comments for that feature', (
     tester,
   ) async {
@@ -427,6 +696,92 @@ void main() {
     expect(featureFetchCount, 1);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'import map feature details show dynamic fields and validation messages',
+    (tester) async {
+      const query = ImportMapQuery(
+        importId: 'import-1',
+        projectId: 'project-1',
+        minLon: 35.094,
+        minLat: 33.045,
+        maxLon: 36.645,
+        maxLat: 34.695,
+        zoom: 7.4,
+      );
+      final feature = _l4ImportMapFeature();
+      final details = GisImportDetails(
+        job: _job(
+          geometryCount: 1,
+          pendingFeatureCount: 0,
+          approvedFeatureCount: 0,
+          failedFeatureCount: 1,
+        ),
+        previewFeatures: const <ImportedFeature>[],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 1,
+          previewFeatureCount: 1,
+          outsideWorkspaceFeatureCount: 0,
+        ),
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWith(
+              (_) => _AuthenticatedAuthController(_session()),
+            ),
+            importDetailsProvider(
+              'import-1',
+            ).overrideWith((ref) async => details),
+            importMapDataProvider(query).overrideWith(
+              (ref) async => ImportMapData(
+                stagedFeatures: <ImportedFeature>[feature],
+                approvedProjectFeatures: const <MapFeatureSummary>[],
+              ),
+            ),
+            importFeatureProvider.overrideWith((ref, query) async => feature),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(
+              body: ImportMapScreen(
+                importId: 'import-1',
+                projectId: 'project-1',
+                initialFeatureId: 'feature-l4-1',
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('L4_descr'),
+        240,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('L4_descr'), findsOneWidget);
+      expect(find.text('Feature Type'), findsNothing);
+      expect(find.text('OBJECTID_1'), findsOneWidget);
+      expect(find.text('123'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'Invalid value for L4_descr: Bananas. Allowed values: Olives, Fruit Trees.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining(
+          'Invalid polygon geometry: ring self-intersection. Fix the geometry in GIS software or exclude this feature.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Ring Self-intersection['), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'import map can focus approved project context from a route target',

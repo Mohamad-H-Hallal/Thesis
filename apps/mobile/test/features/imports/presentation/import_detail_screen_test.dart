@@ -99,16 +99,24 @@ class _FakeImportsRepository implements ImportsRepository {
     required this.details,
     this.features = const <ImportedFeature>[],
     this.pageFeatures,
+    this.quickMapPreview,
     this.reviewedDetails,
     this.reviewedFeatures,
+    this.reviewDelay = Duration.zero,
   });
 
   GisImportDetails details;
   List<ImportedFeature> features;
   List<ImportedFeature>? pageFeatures;
+  final ImportQuickMapPreview? quickMapPreview;
   final GisImportDetails? reviewedDetails;
   final List<ImportedFeature>? reviewedFeatures;
+  final Duration reviewDelay;
   final List<String?> requestedIssues = <String?>[];
+  final List<List<String>?> reviewedFeatureIds = <List<String>?>[];
+  final List<String?> reviewFilterStatuses = <String?>[];
+  final List<String?> reviewFilterIssues = <String?>[];
+  final List<String> reviewStatuses = <String>[];
   int featurePageRequests = 0;
   int featureByIdRequests = 0;
   int detailRequests = 0;
@@ -153,6 +161,29 @@ class _FakeImportsRepository implements ImportsRepository {
     stagedFeatures: <ImportedFeature>[],
     approvedProjectFeatures: <MapFeatureSummary>[],
   );
+
+  @override
+  Future<ImportQuickMapPreview> fetchImportQuickMapPreview({
+    required String importId,
+  }) async {
+    final preview = quickMapPreview;
+    if (preview != null) {
+      return preview;
+    }
+    final drawable = details.previewFeatures
+        .where((feature) => feature.geometry != null)
+        .toList(growable: false);
+    return ImportQuickMapPreview(
+      totalFeatureCount: details.job.geometryCount,
+      geometryFeatureCount: details.previewSummary.geometryFeatureCount,
+      renderedFeatureCount: drawable.length,
+      isClustered: false,
+      statusCounts: <String, int>{
+        details.job.status: details.job.geometryCount,
+      },
+      features: drawable,
+    );
+  }
 
   @override
   Future<ImportedFeature> fetchImportFeatureById({
@@ -204,12 +235,17 @@ class _FakeImportsRepository implements ImportsRepository {
                     item.validationWarnings.contains(issue),
               )
               .toList(growable: false);
+    final start = (page - 1) * limit;
+    final pageItems = issueFiltered
+        .skip(start)
+        .take(limit)
+        .toList(growable: false);
     return PaginatedResult<ImportedFeature>(
-      items: issueFiltered,
-      page: 1,
+      items: pageItems,
+      page: page,
       limit: limit,
       total: issueFiltered.length,
-      hasMore: false,
+      hasMore: start + pageItems.length < issueFiltered.length,
     );
   }
 
@@ -219,7 +255,19 @@ class _FakeImportsRepository implements ImportsRepository {
     required String status,
     String? reason,
     List<String>? featureIds,
+    String? filterStatus,
+    String? filterIssue,
+    String? filterSearch,
+    String? filterGeometryType,
+    String? filterFeatureType,
   }) async {
+    reviewedFeatureIds.add(featureIds);
+    reviewFilterStatuses.add(filterStatus);
+    reviewFilterIssues.add(filterIssue);
+    reviewStatuses.add(status);
+    if (reviewDelay > Duration.zero) {
+      await Future<void>.delayed(reviewDelay);
+    }
     if (reviewedDetails != null) {
       details = reviewedDetails!;
     }
@@ -436,24 +484,193 @@ ImportedFeature _hiddenAccuracyWarningFeature() {
   );
 }
 
-ImportedFeature _reviewableFeature({required String status}) {
+ImportedFeature _reviewableFeature({
+  required String status,
+  String id = 'feature-review-1',
+  String displayTitle = 'Mountain',
+  int sourceIndex = 0,
+  Map<String, dynamic>? geometry = const <String, dynamic>{
+    'type': 'Point',
+    'coordinates': <double>[35.48, 33.89],
+  },
+  Map<String, dynamic> attributes = const <String, dynamic>{
+    'feature_type': 'Mountain',
+    'name': 'Mountain',
+  },
+  Map<String, dynamic> summaryAttributes = const <String, dynamic>{},
+  int attributeCount = 0,
+  List<String> validationWarnings = const <String>[],
+  List<String> validationErrors = const <String>[],
+  bool isSummary = false,
+}) {
   return ImportedFeature(
-    id: 'feature-review-1',
+    id: id,
+    importJobId: 'import-1',
+    sourceIndex: sourceIndex,
+    displayTitle: displayTitle,
+    geometryType: 'Point',
+    geometry: geometry,
+    attributes: attributes,
+    summaryAttributes: summaryAttributes,
+    attributeCount: attributeCount,
+    status: status,
+    validationWarnings: validationWarnings,
+    validationErrors: validationErrors,
+    validationReport: const <String, dynamic>{},
+    isSummary: isSummary,
+    createdAt: DateTime(2026, 4, 25),
+    updatedAt: DateTime(2026, 4, 25),
+  );
+}
+
+ImportedFeature _previewPolygonFeature({
+  required String id,
+  required int clusterCount,
+}) {
+  return ImportedFeature(
+    id: id,
     importJobId: 'import-1',
     sourceIndex: 0,
-    displayTitle: 'Mountain',
+    displayTitle: '$clusterCount staged feature preview geometry',
+    geometryType: 'Polygon',
+    geometry: const <String, dynamic>{
+      'type': 'Polygon',
+      'coordinates': <dynamic>[
+        <dynamic>[
+          <double>[35.48, 33.88],
+          <double>[35.52, 33.88],
+          <double>[35.52, 33.92],
+          <double>[35.48, 33.92],
+          <double>[35.48, 33.88],
+        ],
+      ],
+    },
+    attributes: const <String, dynamic>{},
+    status: 'pending_review',
+    validationWarnings: const <String>[],
+    validationErrors: const <String>[],
+    validationReport: const <String, dynamic>{},
+    isSummary: true,
+    isAggregate: true,
+    clusterCount: clusterCount,
+    createdAt: DateTime(2026, 4, 25),
+    updatedAt: DateTime(2026, 4, 25),
+  );
+}
+
+ImportedFeature _summaryFeatureFrom(
+  ImportedFeature feature,
+  Map<String, dynamic> requiredAttributes,
+) {
+  return ImportedFeature(
+    id: feature.id,
+    importJobId: feature.importJobId,
+    sourceIndex: feature.sourceIndex,
+    sourceIdentifier: feature.sourceIdentifier,
+    displayTitle: feature.displayTitle,
+    sourceFeatureName: feature.sourceFeatureName,
+    geometryType: feature.geometryType,
+    geometry: null,
+    attributes: requiredAttributes,
+    summaryAttributes: requiredAttributes,
+    attributeCount: feature.attributes.length,
+    status: feature.status,
+    validationWarnings: feature.validationWarnings,
+    validationErrors: feature.validationErrors,
+    validationReport: feature.validationReport,
+    duplicateFeatureId: feature.duplicateFeatureId,
+    approvedFeatureId: feature.approvedFeatureId,
+    reviewedByUserId: feature.reviewedByUserId,
+    reviewedByName: feature.reviewedByName,
+    reviewedAt: feature.reviewedAt,
+    approvedAt: feature.approvedAt,
+    reviewReason: feature.reviewReason,
+    isSummary: true,
+    createdAt: feature.createdAt,
+    updatedAt: feature.updatedAt,
+  );
+}
+
+ImportedFeature _l4CanonicalDuplicateFeature() {
+  return ImportedFeature(
+    id: 'feature-l4-1',
+    importJobId: 'import-1',
+    sourceIndex: 0,
+    displayTitle: 'Imported polygon',
+    geometryType: 'Polygon',
+    geometry: const <String, dynamic>{
+      'type': 'Polygon',
+      'coordinates': <dynamic>[
+        <dynamic>[
+          <double>[35.48, 33.89],
+          <double>[35.49, 33.89],
+          <double>[35.49, 33.90],
+          <double>[35.48, 33.89],
+        ],
+      ],
+    },
+    attributes: const <String, dynamic>{
+      'L4_descr': 'Olives',
+      'feature_type': 'Olives',
+      'crop_type': 'Olives',
+    },
+    status: 'failed',
+    validationWarnings: const <String>[],
+    validationErrors: const <String>[],
+    validationReport: const <String, dynamic>{},
+    createdAt: DateTime(2026, 4, 25),
+    updatedAt: DateTime(2026, 4, 25),
+  );
+}
+
+ImportedFeature _invalidL4SelectFeature() {
+  return ImportedFeature(
+    id: 'feature-l4-invalid',
+    importJobId: 'import-1',
+    sourceIndex: 1,
+    displayTitle: 'Invalid L4 descriptor',
     geometryType: 'Point',
     geometry: const <String, dynamic>{
       'type': 'Point',
       'coordinates': <double>[35.48, 33.89],
     },
-    attributes: const <String, dynamic>{
-      'feature_type': 'Mountain',
-      'name': 'Mountain',
-    },
-    status: status,
+    attributes: const <String, dynamic>{'L4_descr': 'Bananas'},
+    status: 'failed',
     validationWarnings: const <String>[],
-    validationErrors: const <String>[],
+    validationErrors: const <String>[
+      'Invalid value for L4_descr: Bananas. Allowed values: Olives, Fruit Trees.',
+    ],
+    validationReport: const <String, dynamic>{},
+    createdAt: DateTime(2026, 4, 25),
+    updatedAt: DateTime(2026, 4, 25),
+  );
+}
+
+ImportedFeature _ringSelfIntersectionFeature() {
+  return ImportedFeature(
+    id: 'feature-ring-self-intersection',
+    importJobId: 'import-1',
+    sourceIndex: 2,
+    sourceIdentifier: 'source-parcel-123',
+    sourceFeatureName: 'Self-intersecting polygon',
+    displayTitle: 'Self-intersecting polygon',
+    geometryType: 'Polygon',
+    geometry: const <String, dynamic>{
+      'type': 'Polygon',
+      'coordinates': <dynamic>[
+        <dynamic>[
+          <double>[35.5, 33.9],
+          <double>[35.6, 34.0],
+          <double>[35.6, 33.9],
+          <double>[35.5, 34.0],
+          <double>[35.5, 33.9],
+        ],
+      ],
+    },
+    attributes: const <String, dynamic>{'OBJECTID_1': '123'},
+    status: 'failed',
+    validationWarnings: const <String>[],
+    validationErrors: const <String>['Ring Self-intersection[35.55 33.95]'],
     validationReport: const <String, dynamic>{},
     createdAt: DateTime(2026, 4, 25),
     updatedAt: DateTime(2026, 4, 25),
@@ -801,7 +1018,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.tap(
-      find.textContaining('Missing required attribute: feature_type').last,
+      find.textContaining('Missing required field: Feature type').last,
     );
     await tester.pumpAndSettle();
 
@@ -811,6 +1028,301 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'large import list renders the server page instead of preview features',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1200, 2600);
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final previewFeatures = List<ImportedFeature>.generate(
+        60,
+        (index) => _reviewableFeature(
+          status: 'pending_review',
+          id: 'preview-$index',
+          displayTitle: 'Preview-only ${index + 1}',
+        ),
+      );
+      final fullFeatures = List<ImportedFeature>.generate(
+        45,
+        (index) => _reviewableFeature(
+          status: 'pending_review',
+          id: 'page-$index',
+          displayTitle: 'Page row ${index + 1}',
+          geometry: null,
+          sourceIndex: index,
+          attributes: <String, dynamic>{
+            'feature_type': index.isEven ? 'olive' : 'cedar',
+            'name': 'Page row ${index + 1}',
+            'OBJECTID_1': index + 1,
+            'notes': 'Long note ${index + 1} kept out of list summaries',
+          },
+        ),
+      );
+      final pageFeatures = List<ImportedFeature>.generate(
+        45,
+        (index) => _reviewableFeature(
+          status: 'pending_review',
+          id: 'page-$index',
+          displayTitle: 'Page row ${index + 1}',
+          geometry: null,
+          sourceIndex: index,
+          attributes: <String, dynamic>{
+            'feature_type': index.isEven ? 'olive' : 'cedar',
+          },
+          summaryAttributes: <String, dynamic>{
+            'feature_type': index.isEven ? 'olive' : 'cedar',
+          },
+          attributeCount: 4,
+          isSummary: true,
+        ),
+      );
+      final repository = _FakeImportsRepository(
+        details: GisImportDetails(
+          job: _job(
+            status: 'pending_review',
+            geometryCount: 1400,
+            pendingFeatureCount: 1400,
+          ),
+          previewFeatures: previewFeatures,
+          previewSummary: const ImportPreviewSummary(
+            geometryFeatureCount: 1400,
+            previewFeatureCount: 20,
+            outsideWorkspaceFeatureCount: 0,
+          ),
+        ),
+        quickMapPreview: ImportQuickMapPreview(
+          totalFeatureCount: 1400,
+          geometryFeatureCount: 1400,
+          renderedFeatureCount: 3,
+          isClustered: true,
+          statusCounts: const <String, int>{'pending_review': 1400},
+          bounds: const ImportMapBounds(
+            minLon: 35.1,
+            minLat: 33.1,
+            maxLon: 36.2,
+            maxLat: 34.4,
+          ),
+          features: <ImportedFeature>[
+            _previewPolygonFeature(id: 'preview-1', clusterCount: 600),
+            _previewPolygonFeature(id: 'preview-2', clusterCount: 500),
+            _previewPolygonFeature(id: 'preview-3', clusterCount: 300),
+          ],
+        ),
+        features: fullFeatures,
+        pageFeatures: pageFeatures,
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWith(
+              (_) => _AuthenticatedAuthController(_session()),
+            ),
+            importsRepositoryProvider.overrideWithValue(repository),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(body: ImportDetailScreen(importId: 'import-1')),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(repository.featurePageRequests, 1);
+      expect(find.text('Page row 1'), findsOneWidget);
+      expect(find.text('Page row 20'), findsOneWidget);
+      expect(find.text('Page row 21'), findsNothing);
+      expect(find.text('Preview-only 1'), findsNothing);
+      expect(find.text('Required attributes'), findsWidgets);
+      expect(find.text('OBJECTID_1'), findsNothing);
+      expect(
+        find.text('Open details to view all imported attributes.'),
+        findsNothing,
+      );
+      expect(
+        find.text('Tap the preview to open the full import map.'),
+        findsOneWidget,
+      );
+      expect(find.text('Long note 1 kept out of list summaries'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('import-preview-map-count')),
+        findsNothing,
+      );
+      final polygonLayer =
+          tester.widget(find.byType(PolygonLayer).first) as dynamic;
+      expect(polygonLayer.polygons, isNotEmpty);
+      final markerLayer = tester.widget<MarkerLayer>(
+        find.byType(MarkerLayer).first,
+      );
+      expect(markerLayer.markers, isEmpty);
+      expect(
+        find.byKey(const ValueKey('import-preview-dot-preview-1')),
+        findsNothing,
+      );
+      final commentButtonLabel = tester.widget<Text>(
+        find
+            .descendant(
+              of: find.widgetWithText(OutlinedButton, 'Comment').first,
+              matching: find.text('Comment'),
+            )
+            .first,
+      );
+      expect(commentButtonLabel.maxLines, 1);
+      expect(commentButtonLabel.softWrap, isFalse);
+
+      await tester.tap(
+        find.widgetWithText(OutlinedButton, 'View details').first,
+      );
+      await tester.pumpAndSettle();
+
+      expect(repository.featureByIdRequests, 1);
+      expect(find.text('Imported attributes'), findsOneWidget);
+      expect(
+        find.text('Long note 1 kept out of list summaries'),
+        findsOneWidget,
+      );
+      expect(find.text('OBJECTID_1'), findsOneWidget);
+
+      Navigator.of(tester.element(find.text('Imported attributes'))).pop();
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.widgetWithText(OutlinedButton, 'Show more').last,
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Show more').last);
+      await tester.pumpAndSettle();
+
+      expect(repository.featurePageRequests, 2);
+      expect(find.text('Page row 21'), findsOneWidget);
+      expect(find.text('Page row 40'), findsOneWidget);
+      expect(find.text('Page row 41'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'import details show dynamic schema fields and readable validation errors',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1200, 2400);
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final l4Feature = _l4CanonicalDuplicateFeature();
+      final invalidSelectFeature = _invalidL4SelectFeature();
+      final ringFeature = _ringSelfIntersectionFeature();
+      final repository = _FakeImportsRepository(
+        details: GisImportDetails(
+          job: _job(
+            status: 'failed',
+            geometryCount: 3,
+            failedFeatureCount: 3,
+            errorCount: 3,
+            validationSummary: const <String, dynamic>{
+              'top_errors': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'message': 'Missing required field: L4_descr',
+                  'count': 1,
+                },
+                <String, dynamic>{
+                  'message':
+                      'Invalid value for L4_descr: Bananas. Allowed values: Olives, Fruit Trees.',
+                  'count': 1,
+                },
+                <String, dynamic>{
+                  'message': 'Ring Self-intersection[35.55 33.95]',
+                  'count': 1,
+                },
+              ],
+            },
+          ),
+          previewFeatures: const <ImportedFeature>[],
+          previewSummary: const ImportPreviewSummary(
+            geometryFeatureCount: 3,
+            previewFeatureCount: 0,
+            outsideWorkspaceFeatureCount: 0,
+          ),
+        ),
+        features: <ImportedFeature>[
+          l4Feature,
+          invalidSelectFeature,
+          ringFeature,
+        ],
+        pageFeatures: <ImportedFeature>[
+          _summaryFeatureFrom(l4Feature, const <String, dynamic>{
+            'L4_descr': 'Olives',
+            'feature_type': 'Olives',
+            'crop_type': 'Olives',
+          }),
+          _summaryFeatureFrom(invalidSelectFeature, const <String, dynamic>{
+            'L4_descr': 'Bananas',
+          }),
+          _summaryFeatureFrom(ringFeature, const <String, dynamic>{}),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWith(
+              (_) => _AuthenticatedAuthController(_session()),
+            ),
+            importsRepositoryProvider.overrideWithValue(repository),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(body: ImportDetailScreen(importId: 'import-1')),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Staged features (3)').first,
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('L4_descr'), findsWidgets);
+      expect(find.text('Feature Type'), findsNothing);
+      expect(find.text('Crop Type'), findsNothing);
+      expect(
+        find.textContaining(
+          'Invalid value for L4_descr: Bananas. Allowed values: Olives, Fruit Trees.',
+        ),
+        findsWidgets,
+      );
+      expect(
+        find.textContaining(
+          'Invalid polygon geometry: ring self-intersection. Fix the geometry in GIS software or exclude this feature.',
+        ),
+        findsWidgets,
+      );
+      expect(find.textContaining('Ring Self-intersection['), findsNothing);
+      expect(find.text('OBJECTID_1'), findsNothing);
+      expect(find.text('123'), findsNothing);
+
+      await tester.tap(
+        find.widgetWithText(OutlinedButton, 'View details').first,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Imported attributes'), findsOneWidget);
+      expect(find.text('Feature Type'), findsOneWidget);
+      expect(find.text('Crop Type'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('import summary uses friendly geometry labels', (tester) async {
     final repository = _FakeImportsRepository(
@@ -1179,15 +1691,110 @@ void main() {
     expect(find.text('1 pending review'), findsWidgets);
     expect(find.text('0 approved'), findsWidgets);
 
-    await tester.tap(
-      find.widgetWithText(FilledButton, 'Approve all reviewable'),
-    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Approve all filtered'));
     await tester.pumpAndSettle();
 
     expect(repository.detailRequests, greaterThan(1));
     expect(find.text('0 pending review'), findsWidgets);
     expect(find.text('1 approved'), findsWidgets);
     expect(find.text('approved'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('approve all filtered shows loading state and sends filters', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1200, 2200);
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final pendingFeature = _reviewableFeature(status: 'pending_review');
+    final repository = _FakeImportsRepository(
+      details: GisImportDetails(
+        job: _job(
+          status: 'pending_review',
+          geometryCount: 25,
+          pendingFeatureCount: 25,
+          approvedFeatureCount: 0,
+          failedFeatureCount: 0,
+          errorCount: 0,
+        ),
+        previewFeatures: <ImportedFeature>[pendingFeature],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 25,
+          previewFeatureCount: 1,
+          outsideWorkspaceFeatureCount: 0,
+        ),
+      ),
+      features: <ImportedFeature>[pendingFeature],
+      reviewedDetails: GisImportDetails(
+        job: _job(
+          status: 'approved',
+          geometryCount: 25,
+          pendingFeatureCount: 0,
+          approvedFeatureCount: 25,
+          failedFeatureCount: 0,
+          errorCount: 0,
+          updatedAt: DateTime(2026, 4, 25, 1),
+        ),
+        previewFeatures: <ImportedFeature>[
+          _reviewableFeature(status: 'approved'),
+        ],
+        previewSummary: const ImportPreviewSummary(
+          geometryFeatureCount: 25,
+          previewFeatureCount: 1,
+          outsideWorkspaceFeatureCount: 0,
+        ),
+      ),
+      reviewedFeatures: <ImportedFeature>[
+        _reviewableFeature(status: 'approved'),
+      ],
+      reviewDelay: const Duration(milliseconds: 100),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authControllerProvider.overrideWith(
+            (_) => _AuthenticatedAuthController(_session()),
+          ),
+          importsRepositoryProvider.overrideWithValue(repository),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(body: ImportDetailScreen(importId: 'import-1')),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.widgetWithText(
+        DropdownButtonFormField<String?>,
+        'All staged features',
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Pending').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Approve all filtered'));
+    await tester.pump();
+
+    expect(
+      find.text('Approving all filtered reviewable features...'),
+      findsOneWidget,
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(repository.reviewStatuses.last, 'approved');
+    expect(repository.reviewedFeatureIds.last, isNull);
+    expect(repository.reviewFilterStatuses.last, 'pending_review');
+    expect(repository.reviewFilterIssues.last, isNull);
+    expect(find.text('25 approved'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 

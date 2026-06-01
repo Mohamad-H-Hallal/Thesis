@@ -141,6 +141,40 @@ class ImportPreviewSummary {
   final int outsideWorkspaceFeatureCount;
 }
 
+class ImportMapBounds {
+  const ImportMapBounds({
+    required this.minLon,
+    required this.minLat,
+    required this.maxLon,
+    required this.maxLat,
+  });
+
+  final double minLon;
+  final double minLat;
+  final double maxLon;
+  final double maxLat;
+}
+
+class ImportQuickMapPreview {
+  const ImportQuickMapPreview({
+    required this.totalFeatureCount,
+    required this.geometryFeatureCount,
+    required this.renderedFeatureCount,
+    required this.isClustered,
+    required this.statusCounts,
+    required this.features,
+    this.bounds,
+  });
+
+  final int totalFeatureCount;
+  final int geometryFeatureCount;
+  final int renderedFeatureCount;
+  final bool isClustered;
+  final Map<String, int> statusCounts;
+  final List<ImportedFeature> features;
+  final ImportMapBounds? bounds;
+}
+
 class ImportComment {
   const ImportComment({
     required this.id,
@@ -176,6 +210,8 @@ class ImportedFeature {
     this.geometryType,
     this.geometry,
     required this.attributes,
+    this.summaryAttributes = const <String, dynamic>{},
+    this.attributeCount = 0,
     required this.status,
     required this.validationWarnings,
     required this.validationErrors,
@@ -203,6 +239,8 @@ class ImportedFeature {
   final String? geometryType;
   final Map<String, dynamic>? geometry;
   final Map<String, dynamic> attributes;
+  final Map<String, dynamic> summaryAttributes;
+  final int attributeCount;
   final String status;
   final List<String> validationWarnings;
   final List<String> validationErrors;

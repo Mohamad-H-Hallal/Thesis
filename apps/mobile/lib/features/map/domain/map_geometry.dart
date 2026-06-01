@@ -33,19 +33,14 @@ bool geometryPointsCollapseToSingleLocation(List<LatLng> points) {
 List<LatLng> geometryPoints(Map<String, dynamic> geometry) {
   switch (_geometryType(geometry)) {
     case 'point':
-      final values = _decodeCoordinatePair(geometry['coordinates']);
-      return values == null
-          ? const <LatLng>[]
-          : <LatLng>[LatLng(values.$2, values.$1)];
     case 'multipoint':
+      return pointGeometryPoints(geometry);
     case 'linestring':
-      return _coordinateListToLatLngs(geometry['coordinates']);
     case 'multilinestring':
-      return _flattenCoordinateGroups(geometry['coordinates']);
+      return lineGeometryPoints(geometry);
     case 'polygon':
-      return _firstRingToLatLngs(geometry['coordinates']);
     case 'multipolygon':
-      return _flattenPolygonGroups(geometry['coordinates']);
+      return polygonGeometryPoints(geometry);
     case 'geometrycollection':
       final geometries = geometry['geometries'];
       if (geometries is! List) {
@@ -60,20 +55,83 @@ List<LatLng> geometryPoints(Map<String, dynamic> geometry) {
   }
 }
 
-List<LatLng> lineGeometryPoints(Map<String, dynamic> geometry) {
+bool isPointGeometry(Map<String, dynamic> geometry) {
   final type = _geometryType(geometry);
-  if (type != 'linestring' && type != 'multilinestring') {
-    return const <LatLng>[];
+  return type == 'point' || type == 'multipoint';
+}
+
+bool isLineGeometry(Map<String, dynamic> geometry) {
+  final type = _geometryType(geometry);
+  return type == 'linestring' || type == 'multilinestring';
+}
+
+bool isPolygonGeometry(Map<String, dynamic> geometry) {
+  final type = _geometryType(geometry);
+  return type == 'polygon' || type == 'multipolygon';
+}
+
+List<LatLng> pointGeometryPoints(Map<String, dynamic> geometry) {
+  switch (_geometryType(geometry)) {
+    case 'point':
+      final values = _decodeCoordinatePair(geometry['coordinates']);
+      return values == null
+          ? const <LatLng>[]
+          : <LatLng>[LatLng(values.$2, values.$1)];
+    case 'multipoint':
+      return _coordinateListToLatLngs(geometry['coordinates']);
+    default:
+      return const <LatLng>[];
   }
-  return geometryPoints(geometry);
+}
+
+List<LatLng> lineGeometryPoints(Map<String, dynamic> geometry) {
+  return lineGeometrySegments(
+    geometry,
+  ).expand((segment) => segment).toList(growable: false);
+}
+
+List<List<LatLng>> lineGeometrySegments(Map<String, dynamic> geometry) {
+  switch (_geometryType(geometry)) {
+    case 'linestring':
+      final points = _coordinateListToLatLngs(geometry['coordinates']);
+      return points.isEmpty ? const <List<LatLng>>[] : <List<LatLng>>[points];
+    case 'multilinestring':
+      final coordinates = geometry['coordinates'];
+      if (coordinates is! List) {
+        return const <List<LatLng>>[];
+      }
+      return coordinates
+          .map(_coordinateListToLatLngs)
+          .where((points) => points.isNotEmpty)
+          .toList(growable: false);
+    default:
+      return const <List<LatLng>>[];
+  }
 }
 
 List<LatLng> polygonGeometryPoints(Map<String, dynamic> geometry) {
-  final type = _geometryType(geometry);
-  if (type != 'polygon' && type != 'multipolygon') {
-    return const <LatLng>[];
+  return polygonGeometrySegments(
+    geometry,
+  ).expand((segment) => segment).toList(growable: false);
+}
+
+List<List<LatLng>> polygonGeometrySegments(Map<String, dynamic> geometry) {
+  switch (_geometryType(geometry)) {
+    case 'polygon':
+      final points = _firstRingToLatLngs(geometry['coordinates']);
+      return points.isEmpty ? const <List<LatLng>>[] : <List<LatLng>>[points];
+    case 'multipolygon':
+      final coordinates = geometry['coordinates'];
+      if (coordinates is! List) {
+        return const <List<LatLng>>[];
+      }
+      return coordinates
+          .map(_firstRingToLatLngs)
+          .where((points) => points.isNotEmpty)
+          .toList(growable: false);
+    default:
+      return const <List<LatLng>>[];
   }
-  return geometryPoints(geometry);
 }
 
 String _geometryType(Map<String, dynamic> geometry) =>
@@ -90,33 +148,11 @@ List<LatLng> _coordinateListToLatLngs(Object? raw) {
       .toList(growable: false);
 }
 
-List<LatLng> _flattenCoordinateGroups(Object? raw) {
-  if (raw is! List) {
-    return const <LatLng>[];
-  }
-  final points = <LatLng>[];
-  for (final group in raw) {
-    points.addAll(_coordinateListToLatLngs(group));
-  }
-  return points;
-}
-
 List<LatLng> _firstRingToLatLngs(Object? raw) {
   if (raw is! List || raw.isEmpty) {
     return const <LatLng>[];
   }
   return _coordinateListToLatLngs(raw.first);
-}
-
-List<LatLng> _flattenPolygonGroups(Object? raw) {
-  if (raw is! List) {
-    return const <LatLng>[];
-  }
-  final points = <LatLng>[];
-  for (final polygon in raw) {
-    points.addAll(_firstRingToLatLngs(polygon));
-  }
-  return points;
 }
 
 (double, double)? _decodeCoordinatePair(Object? raw) {

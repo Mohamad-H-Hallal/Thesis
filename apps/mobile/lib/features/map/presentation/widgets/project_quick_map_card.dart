@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:latlong2/latlong.dart';
 
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
@@ -227,85 +226,97 @@ class _ProjectQuickMapCardState extends ConsumerState<ProjectQuickMapCard> {
   }
 
   List<Polygon> _polygonOverlays(List<MapFeatureSummary> features) {
-    return features
-        .where((feature) => feature.geometry['type'] == 'Polygon')
-        .map((feature) {
-          final points = polygonGeometryPoints(feature.geometry);
-          if (points.isEmpty) {
-            return null;
-          }
-          return Polygon(
+    final polygons = <Polygon>[];
+    for (final feature in features) {
+      if (!isPolygonGeometry(feature.geometry)) {
+        continue;
+      }
+      final color = _statusColor(feature.status);
+      for (final points in polygonGeometrySegments(feature.geometry)) {
+        if (points.isEmpty) {
+          continue;
+        }
+        polygons.add(
+          Polygon(
             points: points,
-            color: _statusColor(feature.status).withValues(alpha: 0.18),
+            color: color.withValues(alpha: 0.12),
             borderStrokeWidth: 2,
-            borderColor: _statusColor(feature.status),
-          );
-        })
-        .whereType<Polygon>()
-        .toList(growable: false);
+            borderColor: color.withValues(alpha: 0.95),
+          ),
+        );
+      }
+    }
+    return polygons;
   }
 
   List<Polyline> _polylineOverlays(List<MapFeatureSummary> features) {
-    return features
-        .where((feature) => feature.geometry['type'] == 'LineString')
-        .map((feature) {
-          final points = lineGeometryPoints(feature.geometry);
-          if (points.isEmpty) {
-            return null;
-          }
-          return Polyline(
+    final polylines = <Polyline>[];
+    for (final feature in features) {
+      if (!isLineGeometry(feature.geometry)) {
+        continue;
+      }
+      final color = _statusColor(feature.status);
+      for (final points in lineGeometrySegments(feature.geometry)) {
+        if (points.isEmpty) {
+          continue;
+        }
+        polylines.add(
+          Polyline(
             points: points,
-            color: _statusColor(feature.status),
-            strokeWidth: 3,
-          );
-        })
-        .whereType<Polyline>()
-        .toList(growable: false);
+            color: color.withValues(alpha: 0.9),
+            strokeWidth: 2.5,
+          ),
+        );
+      }
+    }
+    return polylines;
   }
 
   List<Marker> _markerOverlays(List<MapFeatureSummary> features) {
-    return features
-        .map((feature) {
-          final point = _pointFromGeometry(feature.geometry);
-          if (point == null) {
-            return null;
-          }
-          return Marker(
+    final markers = <Marker>[];
+    for (final feature in features) {
+      if (!isPointGeometry(feature.geometry)) {
+        continue;
+      }
+      final color = _statusColor(feature.status);
+      for (final point in pointGeometryPoints(feature.geometry)) {
+        markers.add(
+          Marker(
             point: point,
-            width: 20,
-            height: 20,
+            width: 16,
+            height: 16,
             child: Container(
               decoration: BoxDecoration(
-                color: _statusColor(feature.status),
+                color: color,
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 1.5),
+                border: Border.all(color: Colors.white, width: 1.2),
                 boxShadow: const [
                   BoxShadow(
-                    blurRadius: 6,
+                    blurRadius: 5,
                     offset: Offset(0, 2),
                     color: Color(0x26000000),
                   ),
                 ],
               ),
             ),
-          );
-        })
-        .whereType<Marker>()
-        .toList(growable: false);
-  }
-
-  LatLng? _pointFromGeometry(Map<String, dynamic> geometry) {
-    return geometryFocusPoint(geometry);
+          ),
+        );
+      }
+    }
+    return markers;
   }
 
   Color _statusColor(String status) {
-    switch (status) {
+    switch (status.toLowerCase()) {
       case 'approved':
         return const Color(0xFF1E7A46);
       case 'pending_review':
+      case 'partially_approved':
         return const Color(0xFFCB7A00);
       case 'rejected':
         return const Color(0xFFB3261E);
+      case 'failed':
+        return const Color(0xFF7B1FA2);
       default:
         return const Color(0xFF1A73E8);
     }

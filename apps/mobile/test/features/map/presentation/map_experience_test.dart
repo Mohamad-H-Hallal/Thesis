@@ -369,12 +369,33 @@ void main() {
     'quick map preview shows the project-scoped preview entry points',
     (tester) async {
       var openedFullscreen = false;
+      final previewFeatures = <MapFeatureSummary>[
+        ..._projectFeatures(),
+        const MapFeatureSummary(
+          id: 'feature-polygon-003',
+          status: 'rejected',
+          geometry: <String, dynamic>{
+            'type': 'Polygon',
+            'coordinates': <dynamic>[
+              <dynamic>[
+                <double>[35.49, 33.89],
+                <double>[35.51, 33.89],
+                <double>[35.51, 33.91],
+                <double>[35.49, 33.91],
+                <double>[35.49, 33.89],
+              ],
+            ],
+          },
+          attributes: <String, dynamic>{'tree_type': 'Citrus'},
+          collectedBy: 'Maya',
+        ),
+      ];
 
       await tester.pumpWidget(
         _wrapWithScope(
           overrides: <Override>[
             projectMapFeaturesProvider.overrideWith(
-              (ref, projectId) async => _projectFeatures(),
+              (ref, projectId) async => previewFeatures,
             ),
           ],
           child: ProjectQuickMapCard(
@@ -388,11 +409,23 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Project map'), findsOneWidget);
-      expect(find.text('2 mapped features'), findsOneWidget);
+      expect(find.text('3 mapped features'), findsOneWidget);
       expect(
         find.text('Tap the preview to open the full project map.'),
         findsOneWidget,
       );
+      final polygonLayer = tester.widget<PolygonLayer>(
+        find.byType(PolygonLayer).first,
+      );
+      expect(polygonLayer.polygons, hasLength(1));
+      final polylineLayer = tester.widget<PolylineLayer>(
+        find.byType(PolylineLayer).first,
+      );
+      expect(polylineLayer.polylines, hasLength(1));
+      final markerLayer = tester.widget<MarkerLayer>(
+        find.byType(MarkerLayer).first,
+      );
+      expect(markerLayer.markers, hasLength(1));
       expect(tester.takeException(), isNull);
 
       await tester.tapAt(tester.getCenter(find.byType(FlutterMap)));

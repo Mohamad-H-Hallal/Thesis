@@ -168,6 +168,20 @@ class _FakeImportsRepository implements ImportsRepository {
   }
 
   @override
+  Future<ImportQuickMapPreview> fetchImportQuickMapPreview({
+    required String importId,
+  }) async {
+    return const ImportQuickMapPreview(
+      totalFeatureCount: 0,
+      geometryFeatureCount: 0,
+      renderedFeatureCount: 0,
+      isClustered: false,
+      statusCounts: <String, int>{},
+      features: <ImportedFeature>[],
+    );
+  }
+
+  @override
   Future<ImportedFeature> fetchImportFeatureById({
     required String importId,
     required String featureId,
@@ -217,6 +231,11 @@ class _FakeImportsRepository implements ImportsRepository {
     required String status,
     String? reason,
     List<String>? featureIds,
+    String? filterStatus,
+    String? filterIssue,
+    String? filterSearch,
+    String? filterGeometryType,
+    String? filterFeatureType,
   }) {
     throw UnimplementedError();
   }

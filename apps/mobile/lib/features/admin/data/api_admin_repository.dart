@@ -750,7 +750,6 @@ class ApiAdminRepository implements AdminRepository {
 
   ProjectSummary _toProjectSummary(Map<String, dynamic> row) {
     final schemaMap = _toMap(row['collection_form_schema']);
-    final fieldsRaw = (schemaMap['fields'] as List?) ?? const <dynamic>[];
 
     return ProjectSummary(
       id: (row['id'] as String?) ?? '',
@@ -786,18 +785,7 @@ class ApiAdminRepository implements AdminRepository {
       objectives: row['objectives'] as String?,
       startDate: _toDateTime(row['start_date']),
       endDate: _toDateTime(row['end_date']),
-      collectionFormSchema: CollectionFormSchema(
-        version:
-            (schemaMap['version'] as String?) ??
-            (schemaMap['schemaVersion'] as String?) ??
-            'v0.0',
-        fields: fieldsRaw
-            .map(
-              (field) =>
-                  _toFieldSchema(Map<String, dynamic>.from(field as Map)),
-            )
-            .toList(growable: false),
-      ),
+      collectionFormSchema: CollectionFormSchema.fromMap(schemaMap),
       requiresPhotos: (row['requires_photos'] as bool?) ?? false,
       minPhotos: _toInt(row['min_photos']) ?? 0,
       maxPhotos: _toInt(row['max_photos']) ?? 5,
@@ -805,37 +793,6 @@ class ApiAdminRepository implements AdminRepository {
       visibleToContributors: (row['visible_to_contributors'] as bool?) ?? true,
       allowedGeometryTypes: defaultProjectGeometryTypes,
       maxGpsAccuracyMeters: _toDouble(schemaMap['maxGpsAccuracyMeters']) ?? 25,
-    );
-  }
-
-  CollectionFormFieldSchema _toFieldSchema(Map<String, dynamic> raw) {
-    final typeRaw = (raw['type'] as String?) ?? 'text';
-    CollectionFieldType normalizedType = CollectionFieldType.text;
-    if (typeRaw == 'textarea') {
-      normalizedType = CollectionFieldType.multiline;
-    } else if (typeRaw == 'float' || typeRaw == 'int') {
-      normalizedType = CollectionFieldType.number;
-    } else {
-      for (final candidate in CollectionFieldType.values) {
-        if (candidate.name == typeRaw) {
-          normalizedType = candidate;
-          break;
-        }
-      }
-    }
-
-    return CollectionFormFieldSchema(
-      key: (raw['key'] as String?) ?? '',
-      label: (raw['label'] as String?) ?? (raw['key'] as String?) ?? 'Field',
-      type: normalizedType,
-      required: (raw['required'] as bool?) ?? false,
-      options: ((raw['options'] as List?) ?? const <dynamic>[])
-          .map((value) => value.toString())
-          .toList(growable: false),
-      hint: raw['hint'] as String?,
-      min: raw['min'] as num?,
-      max: raw['max'] as num?,
-      unit: raw['unit'] as String?,
     );
   }
 

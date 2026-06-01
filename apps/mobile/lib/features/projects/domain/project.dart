@@ -181,7 +181,10 @@ class CollectionFormSchema {
   factory CollectionFormSchema.fromMap(Map<String, dynamic> map) {
     final rawFields = (map['fields'] as List?) ?? const <dynamic>[];
     return CollectionFormSchema(
-      version: (map['version'] as String?) ?? 'v0.0',
+      version:
+          _schemaVersionFrom(map['version']) ??
+          _schemaVersionFrom(map['schemaVersion']) ??
+          'v0.0',
       fields: rawFields
           .whereType<Map>()
           .map(
@@ -192,6 +195,17 @@ class CollectionFormSchema {
           .toList(growable: false),
     );
   }
+}
+
+String? _schemaVersionFrom(dynamic value) {
+  if (value is String) {
+    final normalized = value.trim();
+    return normalized.isEmpty ? null : normalized;
+  }
+  if (value is num) {
+    return value.toString();
+  }
+  return null;
 }
 
 class ProjectSummary {

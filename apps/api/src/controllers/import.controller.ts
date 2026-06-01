@@ -22,7 +22,9 @@ const LEBANON_BOUNDS = {
   maxLat: 34.695,
 };
 const LEBANON_BUFFER_DEGREES = 0.2;
-const IMPORT_PREVIEW_LIMIT = 500;
+const IMPORT_DETAIL_PREVIEW_LIMIT = 20;
+const IMPORT_QUICK_MAP_PREVIEW_LIMIT = 500;
+const IMPORT_QUICK_MAP_SIMPLIFY_TOLERANCE_DEGREES = 0.00005;
 const IMPORT_MAP_TILE_LOW_ZOOM_LIMIT = 300;
 const IMPORT_MAP_TILE_HIGH_ZOOM_LIMIT = 3500;
 const IMPORT_MAP_LAYER_CACHE_MAX_ENTRIES = Number.parseInt(
@@ -35,6 +37,14 @@ const IMPORT_MAP_LAYER_CACHE_TTL_MS = Number.parseInt(
 );
 const PAGE_MAX_LIMIT = 200;
 const IMPORT_INSERT_BATCH_SIZE = 250;
+const SUPPORTED_SPATIAL_FEATURE_GEOMETRY_TYPES = [
+  'POINT',
+  'MULTIPOINT',
+  'LINESTRING',
+  'MULTILINESTRING',
+  'POLYGON',
+  'MULTIPOLYGON',
+];
 const IMPORT_PROCESSING_POLL_INTERVAL_MS = Number.parseInt(
   process.env.IMPORT_PROCESSING_POLL_INTERVAL_MS ??
     (process.env.NODE_ENV === 'test' ? '250' : '2000'),
@@ -71,18 +81,18 @@ const mapSimplifyTolerance = (zoom: number): number => {
 
 const mapClusterCellSizeDegrees = (zoom: number): number => {
   if (zoom < 7.5) {
-    return 0.18;
+    return 0.1;
   }
   if (zoom < 8.5) {
-    return 0.12;
+    return 0.07;
   }
   if (zoom < 9.5) {
-    return 0.08;
+    return 0.045;
   }
   if (zoom < 10.5) {
-    return 0.05;
+    return 0.028;
   }
-  return 0.03;
+  return 0.02;
 };
 
 const parseViewportBounds = (input: {
@@ -142,11 +152,7 @@ const getTileBounds = (zRaw: unknown, xRaw: unknown, yRaw: unknown) => {
   };
 };
 
-const mapRenderGeometrySql = (
-  geometrySql: string,
-  zoom: number,
-  simplifyTolerance: number
-) => {
+const mapRenderGeometrySql = (geometrySql: string, zoom: number, simplifyTolerance: number) => {
   const zoomLiteral = Number(zoom.toFixed(2));
   const toleranceLiteral = Number(simplifyTolerance.toFixed(8));
   return `
@@ -174,6 +180,38 @@ type GeometryType =
   | 'Polygon'
   | 'MultiPolygon';
 type PlainObject = Record<string, unknown>;
+
+type CollectionFormFieldForImport = {
+  key: string | null;
+  label: string | null;
+  displayName: string;
+  type: ImportSchemaFieldType;
+  required: boolean;
+  options: string[];
+  identifiers: string[];
+  min: number | null;
+  max: number | null;
+};
+
+type ImportSchemaFieldType =
+  | 'text'
+  | 'select'
+  | 'multiselect'
+  | 'number'
+  | 'integer'
+  | 'boolean'
+  | 'date'
+  | 'datetime'
+  | 'file'
+  | 'unknown';
+
+type ImportReviewFilters = {
+  status?: string;
+  issue?: string;
+  search?: string;
+  geometry_type?: string;
+  feature_type?: string;
+};
 
 type ParsedImportPayload = {
   fileType: ImportFileType;
@@ -243,6 +281,7 @@ type ImportJobRow = {
 type ImportJobAccessRow = ImportJobRow & {
   uploaded_by_email: string;
   uploaded_by_role: string;
+  project_collection_form_schema?: Record<string, unknown>;
 };
 
 type ImportFeatureRow = {
@@ -255,6 +294,8 @@ type ImportFeatureRow = {
   geometry_type: string | null;
   geometry: string | null;
   attributes: Record<string, unknown>;
+  summary_attributes?: Record<string, unknown>;
+  attribute_count?: number;
   status: string;
   validation_warnings: unknown[];
   validation_errors: unknown[];
@@ -290,6 +331,21 @@ type ImportMapLayerData = {
   approved_project_features: ReturnType<typeof mapImportMapProjectFeatureRow>[];
 };
 
+type ImportQuickMapPreview = {
+  total_feature_count: number;
+  geometry_feature_count: number;
+  rendered_feature_count: number;
+  is_clustered: boolean;
+  bounds: {
+    min_lon: number;
+    min_lat: number;
+    max_lon: number;
+    max_lat: number;
+  } | null;
+  status_counts: Record<string, number>;
+  features: ReturnType<typeof mapImportMapFeatureRow>[];
+};
+
 type StagedImportInsertRow = {
   importJobId: string;
   sourceIndex: number;
@@ -311,10 +367,7 @@ let importProcessingLoop: NodeJS.Timeout | null = null;
 let importProcessingDrainScheduled = false;
 let importProcessingDrainRunning = false;
 let importProcessingDrainTimeout: NodeJS.Timeout | null = null;
-const importMapLayerCache = new Map<
-  string,
-  { expiresAt: number; data: ImportMapLayerData }
->();
+const importMapLayerCache = new Map<string, { expiresAt: number; data: ImportMapLayerData }>();
 
 const getPagination = (pageRaw: unknown, limitRaw: unknown) => {
   const page = Math.max(1, Number.parseInt(String(pageRaw ?? '1'), 10) || 1);
@@ -365,10 +418,7 @@ const getCachedImportMapLayer = (key: string): ImportMapLayerData | null => {
   return cached.data;
 };
 
-const rememberImportMapLayer = (
-  key: string,
-  data: ImportMapLayerData,
-): void => {
+const rememberImportMapLayer = (key: string, data: ImportMapLayerData): void => {
   importMapLayerCache.set(key, {
     data,
     expiresAt: Date.now() + IMPORT_MAP_LAYER_CACHE_TTL_MS,
@@ -497,14 +547,37 @@ const normalizeImportedAttributeAliases = (
   attributes: Record<string, unknown>,
 ): Record<string, unknown> => {
   if (attributes.feature_type === undefined) {
-    const featureTypeAlias = Object.keys(attributes).find(
-      (key) => ['featuretyp', 'featurety'].includes(normalizeHeaderKey(key)),
+    const featureTypeAlias = Object.keys(attributes).find((key) =>
+      ['featuretyp', 'featurety'].includes(normalizeHeaderKey(key)),
     );
     if (featureTypeAlias) {
       attributes.feature_type = attributes[featureTypeAlias];
     }
   }
   return attributes;
+};
+
+const friendlyInvalidGeometryMessage = (reason: unknown, geometryType?: string | null): string => {
+  const rawReason = typeof reason === 'string' ? reason.trim() : '';
+  const normalizedReason = rawReason.toLowerCase();
+  if (
+    normalizedReason.includes('ring self-intersection') ||
+    normalizedReason.includes('self-intersection')
+  ) {
+    return 'Invalid polygon geometry: ring self-intersection. Fix the geometry in GIS software or exclude this feature.';
+  }
+  if (!rawReason) {
+    return 'Geometry is invalid.';
+  }
+  if (rawReason.toLowerCase().startsWith('invalid geometry')) {
+    return rawReason;
+  }
+  const suffix = rawReason.endsWith('.') ? rawReason : `${rawReason}.`;
+  const prefix =
+    geometryType === 'Polygon' || geometryType === 'MultiPolygon'
+      ? 'Invalid polygon geometry'
+      : 'Invalid geometry';
+  return `${prefix}: ${suffix}`;
 };
 
 const isPosition = (value: unknown): value is [number, number] => {
@@ -545,16 +618,18 @@ const validateCoordinates = (type: GeometryType, coordinates: unknown): boolean 
         )
       );
     case 'Polygon':
-      return Array.isArray(coordinates) && coordinates.length > 0 && coordinates.every(validateLinearRing);
+      return (
+        Array.isArray(coordinates) &&
+        coordinates.length > 0 &&
+        coordinates.every(validateLinearRing)
+      );
     case 'MultiPolygon':
       return (
         Array.isArray(coordinates) &&
         coordinates.length > 0 &&
         coordinates.every(
           (polygon) =>
-            Array.isArray(polygon) &&
-            polygon.length > 0 &&
-            polygon.every(validateLinearRing),
+            Array.isArray(polygon) && polygon.length > 0 && polygon.every(validateLinearRing),
         )
       );
   }
@@ -590,15 +665,9 @@ const transformGeometryCoordinates = (
     case 'Point':
       return projector(coordinates as [number, number]);
     case 'MultiPoint':
-      return transformMultiPointCoordinates(
-        coordinates as Array<[number, number]>,
-        projector,
-      );
+      return transformMultiPointCoordinates(coordinates as Array<[number, number]>, projector);
     case 'LineString':
-      return transformMultiPointCoordinates(
-        coordinates as Array<[number, number]>,
-        projector,
-      );
+      return transformMultiPointCoordinates(coordinates as Array<[number, number]>, projector);
     case 'MultiLineString':
       return transformMultiLineCoordinates(
         coordinates as Array<Array<[number, number]>>,
@@ -693,14 +762,9 @@ const normalizeGeoJsonGeometry = (
   const geometryType = geometry.type as GeometryType | undefined;
   if (
     !geometryType ||
-    ![
-      'Point',
-      'MultiPoint',
-      'LineString',
-      'MultiLineString',
-      'Polygon',
-      'MultiPolygon',
-    ].includes(geometryType)
+    !['Point', 'MultiPoint', 'LineString', 'MultiLineString', 'Polygon', 'MultiPolygon'].includes(
+      geometryType,
+    )
   ) {
     return {
       geometryType: null,
@@ -886,7 +950,10 @@ const parseShapefileZip = async (filePath: string): Promise<ParsedImportPayload>
   try {
     zip = new AdmZip(buffer);
   } catch (_error) {
-    throw new AppError('The Shapefile ZIP could not be read. Upload a valid zipped shapefile.', 400);
+    throw new AppError(
+      'The Shapefile ZIP could not be read. Upload a valid zipped shapefile.',
+      400,
+    );
   }
   const entries = zip.getEntries().map((entry: any) => entry.entryName.toLowerCase());
   const hasShp = entries.some((entry: string) => entry.endsWith('.shp'));
@@ -974,10 +1041,12 @@ const parseKmlDocument = (xml: string, fileType: ImportFileType): ParsedImportPa
     return attributes;
   });
   const normalized = features.map((feature: any, index: number) => {
-    const properties = normalizeImportedAttributeAliases(sanitizeImportedAttributes({
-      ...extendedDataByFeature[index],
-      ...ensureAttributesObject(feature?.properties),
-    }));
+    const properties = normalizeImportedAttributeAliases(
+      sanitizeImportedAttributes({
+        ...extendedDataByFeature[index],
+        ...ensureAttributesObject(feature?.properties),
+      }),
+    );
     const geometryResult = normalizeGeoJsonGeometry(
       feature?.geometry as PlainObject | null,
       'EPSG:4326',
@@ -1036,7 +1105,10 @@ const parseKmz = async (filePath: string): Promise<ParsedImportPayload> => {
 };
 
 const normalizeHeaderKey = (value: unknown): string =>
-  String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
 
 const parseDelimitedRows = (raw: string, delimiter = ','): string[][] => {
   const rows: string[][] = [];
@@ -1082,9 +1154,7 @@ const parseDelimitedRows = (raw: string, delimiter = ','): string[][] => {
 };
 
 const detectCsvDelimiter = (raw: string): string => {
-  const sampleLine = raw
-    .split(/\r?\n/)
-    .find((line) => line.trim().length > 0) ?? '';
+  const sampleLine = raw.split(/\r?\n/).find((line) => line.trim().length > 0) ?? '';
   const candidates = [',', ';', '\t', '|'];
   const scored = candidates.map((delimiter) => ({
     delimiter,
@@ -1149,7 +1219,10 @@ const splitTopLevel = (value: string): string[] => {
 };
 
 const parseWktPosition = (value: string): [number, number] | null => {
-  const parts = value.trim().split(/\s+/).map((part) => Number.parseFloat(part));
+  const parts = value
+    .trim()
+    .split(/\s+/)
+    .map((part) => Number.parseFloat(part));
   if (parts.length < 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) {
     return null;
   }
@@ -1188,7 +1261,9 @@ const parseWktGeometry = (raw: string): PlainObject | null => {
       : null;
   }
   if (type === 'MULTIPOINT') {
-    const coordinates = splitTopLevel(body).map((point) => parseWktPosition(stripOuterParens(point)));
+    const coordinates = splitTopLevel(body).map((point) =>
+      parseWktPosition(stripOuterParens(point)),
+    );
     return coordinates.every(Boolean)
       ? { type: 'MultiPoint', coordinates: coordinates as Array<[number, number]> }
       : null;
@@ -1281,13 +1356,18 @@ const buildTabularFeatures = (
         geometryType = normalized.geometryType;
       }
     }
-    const attributes = normalizeImportedAttributeAliases(sanitizeImportedAttributes(Object.fromEntries(
-      Object.entries(row).filter(([key]) =>
-        key !== geometryColumns.latHeader &&
-        key !== geometryColumns.lonHeader &&
-        key !== geometryColumns.geometryHeader
+    const attributes = normalizeImportedAttributeAliases(
+      sanitizeImportedAttributes(
+        Object.fromEntries(
+          Object.entries(row).filter(
+            ([key]) =>
+              key !== geometryColumns.latHeader &&
+              key !== geometryColumns.lonHeader &&
+              key !== geometryColumns.geometryHeader,
+          ),
+        ),
       ),
-    )));
+    );
     return {
       sourceIndex: index,
       sourceIdentifier: cellValue(row, 'id') || null,
@@ -1321,9 +1401,13 @@ const parseCsv = async (filePath: string): Promise<ParsedImportPayload> => {
     throw new AppError('The uploaded CSV file is empty or has no data rows.', 400);
   }
   const headers = uniqueTabularHeaders(rows[0]);
-  const dataRows = rows.slice(1).map((row) =>
-    Object.fromEntries(headers.map((header, index) => [header, normalizeTabularCellValue(row[index])])),
-  );
+  const dataRows = rows
+    .slice(1)
+    .map((row) =>
+      Object.fromEntries(
+        headers.map((header, index) => [header, normalizeTabularCellValue(row[index])]),
+      ),
+    );
   return buildTabularFeatures(dataRows, 'csv', { delimiter, header_row: 1 });
 };
 
@@ -1343,27 +1427,33 @@ const parseXlsxWorksheetRows = ({
 }): string[][] => {
   const sheet = parser.parseFromString(sheetEntry.getData().toString('utf8'), 'text/xml');
   const rowNodes = Array.from(sheet.getElementsByTagName('row') ?? []) as any[];
-  return rowNodes.map((rowNode) => {
-    const values: string[] = [];
-    const cells = Array.from(rowNode.getElementsByTagName('c') ?? []) as any[];
-    for (const cell of cells) {
-      const ref = String(cell.getAttribute('r') ?? '');
-      const columnLetters = /^[A-Z]+/i.exec(ref)?.[0]?.toUpperCase() ?? '';
-      const columnIndex = columnLetters
-        .split('')
-        .reduce((sum, char) => sum * 26 + char.charCodeAt(0) - 64, 0) - 1;
-      const type = cell.getAttribute('t');
-      const rawValue = firstXmlText(cell, 'v') ?? firstXmlText(cell, 't') ?? '';
-      const value = type === 's' ? sharedStrings[Number.parseInt(rawValue, 10)] ?? '' : rawValue;
-      values[columnIndex >= 0 ? columnIndex : values.length] = value;
-    }
-    return values;
-  }).filter((row) => row.some((value) => String(value ?? '').trim().length > 0));
+  return rowNodes
+    .map((rowNode) => {
+      const values: string[] = [];
+      const cells = Array.from(rowNode.getElementsByTagName('c') ?? []) as any[];
+      for (const cell of cells) {
+        const ref = String(cell.getAttribute('r') ?? '');
+        const columnLetters = /^[A-Z]+/i.exec(ref)?.[0]?.toUpperCase() ?? '';
+        const columnIndex =
+          columnLetters.split('').reduce((sum, char) => sum * 26 + char.charCodeAt(0) - 64, 0) - 1;
+        const type = cell.getAttribute('t');
+        const rawValue = firstXmlText(cell, 'v') ?? firstXmlText(cell, 't') ?? '';
+        const value =
+          type === 's' ? (sharedStrings[Number.parseInt(rawValue, 10)] ?? '') : rawValue;
+        values[columnIndex >= 0 ? columnIndex : values.length] = value;
+      }
+      return values;
+    })
+    .filter((row) => row.some((value) => String(value ?? '').trim().length > 0));
 };
 
 const parseXlsx = async (filePath: string): Promise<ParsedImportPayload> => {
   const zip = new AdmZip(await fs.readFile(filePath));
-  if (zip.getEntries().some((entry: any) => entry.entryName.toLowerCase().endsWith('vbaProject.bin'.toLowerCase()))) {
+  if (
+    zip
+      .getEntries()
+      .some((entry: any) => entry.entryName.toLowerCase().endsWith('vbaProject.bin'.toLowerCase()))
+  ) {
     throw new AppError('Macro-enabled Excel content is not supported for GIS imports.', 400);
   }
   const workbookEntry = zip.getEntry('xl/workbook.xml');
@@ -1378,15 +1468,26 @@ const parseXlsx = async (filePath: string): Promise<ParsedImportPayload> => {
   const rels = parser.parseFromString(relsEntry.getData().toString('utf8'), 'text/xml');
   const relationships = Array.from(rels.getElementsByTagName('Relationship') ?? []) as any[];
   const sharedStrings = sharedEntry
-    ? (Array.from(parser.parseFromString(sharedEntry.getData().toString('utf8'), 'text/xml').getElementsByTagName('si') ?? []) as any[])
-        .map((si) => Array.from(si.getElementsByTagName('t') ?? []).map((t: any) => t.textContent ?? '').join(''))
+    ? (
+        Array.from(
+          parser
+            .parseFromString(sharedEntry.getData().toString('utf8'), 'text/xml')
+            .getElementsByTagName('si') ?? [],
+        ) as any[]
+      ).map((si) =>
+        Array.from(si.getElementsByTagName('t') ?? [])
+          .map((t: any) => t.textContent ?? '')
+          .join(''),
+      )
     : [];
 
   let lastError: InstanceType<typeof AppError> | null = null;
   for (const [sheetIndex, sheet] of sheets.entries()) {
     const sheetName = sheet?.getAttribute('name') ?? `Sheet ${sheetIndex + 1}`;
     const relId = sheet?.getAttribute('r:id');
-    const target = relationships.find((rel) => rel.getAttribute('Id') === relId)?.getAttribute('Target');
+    const target = relationships
+      .find((rel) => rel.getAttribute('Id') === relId)
+      ?.getAttribute('Target');
     const sheetPath = target
       ? `xl/${String(target).replace(/^\/?xl\//, '')}`
       : `xl/worksheets/sheet${sheetIndex + 1}.xml`;
@@ -1401,9 +1502,13 @@ const parseXlsx = async (filePath: string): Promise<ParsedImportPayload> => {
       continue;
     }
     const headers = uniqueTabularHeaders(matrix[0]);
-    const dataRows = matrix.slice(1).map((row) =>
-      Object.fromEntries(headers.map((header, index) => [header, normalizeTabularCellValue(row[index])])),
-    );
+    const dataRows = matrix
+      .slice(1)
+      .map((row) =>
+        Object.fromEntries(
+          headers.map((header, index) => [header, normalizeTabularCellValue(row[index])]),
+        ),
+      );
     try {
       return buildTabularFeatures(dataRows, 'xlsx', {
         sheet_name: sheetName,
@@ -1441,21 +1546,220 @@ const parseImportFile = async (
   }
 };
 
-const validateType = (value: unknown, expectedType: string): boolean => {
-  if (value === null || value === undefined || expectedType === 'select') {
+const shouldHideImportAttributeKey = (key: string): boolean => {
+  const normalized = key
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+  return (
+    normalized === 'accuracy' || normalized === 'accuracymeter' || normalized === 'accuracymeters'
+  );
+};
+
+const normalizeSchemaString = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const uniqueNonEmpty = (values: Array<string | null>): string[] =>
+  Array.from(new Set(values.filter((value): value is string => Boolean(value))));
+
+const normalizeImportSchemaFieldType = (type: string | null): ImportSchemaFieldType => {
+  const normalized = normalizeHeaderKey(type ?? '');
+  if (
+    [
+      'string',
+      'text',
+      'textarea',
+      'multiline',
+      'notes',
+      'note',
+      'description',
+      'descr',
+      'memo',
+      'longtext',
+    ].includes(normalized)
+  ) {
+    return 'text';
+  }
+  if (['select', 'dropdown', 'radio', 'choice', 'combo', 'enum'].includes(normalized)) {
+    return 'select';
+  }
+  if (
+    [
+      'multiselect',
+      'multipleselect',
+      'multichoice',
+      'checkboxgroup',
+      'checkboxes',
+      'checklist',
+    ].includes(normalized)
+  ) {
+    return 'multiselect';
+  }
+  if (['number', 'decimal', 'float', 'double'].includes(normalized)) {
+    return 'number';
+  }
+  if (['integer', 'int', 'whole'].includes(normalized)) {
+    return 'integer';
+  }
+  if (['boolean', 'bool', 'switch', 'toggle', 'yesno'].includes(normalized)) {
+    return 'boolean';
+  }
+  if (normalized === 'checkbox') {
+    return 'boolean';
+  }
+  if (['date'].includes(normalized)) {
+    return 'date';
+  }
+  if (['datetime', 'timestamp', 'datetime-local', 'datetimelocal'].includes(normalized)) {
+    return 'datetime';
+  }
+  if (['photo', 'file', 'image', 'attachment', 'upload', 'document'].includes(normalized)) {
+    return 'file';
+  }
+  return 'unknown';
+};
+
+const isBlankAttributeValue = (value: unknown): boolean =>
+  value === undefined || value === null || (typeof value === 'string' && value.trim().length === 0);
+
+const displayImportedValue = (value: unknown): string => {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : '(blank)';
+  }
+  if (value === null || value === undefined) {
+    return '(blank)';
+  }
+  return String(value);
+};
+
+const optionToString = (value: unknown): string | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    const option = value as Record<string, unknown>;
+    return normalizeSchemaString(option.value) ?? normalizeSchemaString(option.label);
+  }
+  const normalized = String(value).trim();
+  return normalized.length > 0 ? normalized : null;
+};
+
+const normalizeSelectComparisonValue = (value: unknown): string =>
+  String(value ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+
+const valueMatchesAllowedOption = (value: unknown, allowedValue: string): boolean => {
+  if (String(value) === allowedValue) {
     return true;
   }
-  switch (expectedType) {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  return normalizeSelectComparisonValue(value) === normalizeSelectComparisonValue(allowedValue);
+};
+
+const multiValueParts = (value: unknown): unknown[] => {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(/[,;|]/)
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
+  }
+  return [value];
+};
+
+const parseImportedNumber = (value: unknown): number | null => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!/^[+-]?(?:\d+|\d*\.\d+)(?:e[+-]?\d+)?$/i.test(trimmed)) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const parseImportedBoolean = (value: unknown): boolean | null => {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    if (value === 1) {
+      return true;
+    }
+    if (value === 0) {
+      return false;
+    }
+    return null;
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (['true', 'yes', 'y', '1'].includes(normalized)) {
+    return true;
+  }
+  if (['false', 'no', 'n', '0'].includes(normalized)) {
+    return false;
+  }
+  return null;
+};
+
+const isParseableDate = (value: unknown): boolean => {
+  if (value instanceof Date) {
+    return !Number.isNaN(value.getTime());
+  }
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+  return !Number.isNaN(Date.parse(trimmed));
+};
+
+const schemaNumberLimit = (value: unknown): number | null => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'string') {
+    return parseImportedNumber(value);
+  }
+  return null;
+};
+
+const validateJsonSchemaType = (value: unknown, expectedType: string): boolean => {
+  if (value === null || value === undefined) {
+    return true;
+  }
+  switch (normalizeHeaderKey(expectedType)) {
     case 'string':
     case 'text':
-    case 'multiline':
-    case 'date':
       return typeof value === 'string';
     case 'number':
-    case 'integer':
-      return typeof value === 'number' && Number.isFinite(value);
+      return parseImportedNumber(value) !== null;
+    case 'integer': {
+      const parsed = parseImportedNumber(value);
+      return parsed !== null && Number.isInteger(parsed);
+    }
     case 'boolean':
-      return typeof value === 'boolean';
+      return parseImportedBoolean(value) !== null;
     case 'object':
       return typeof value === 'object' && !Array.isArray(value);
     case 'array':
@@ -1465,19 +1769,167 @@ const validateType = (value: unknown, expectedType: string): boolean => {
   }
 };
 
-const shouldHideImportAttributeKey = (key: string): boolean => {
-  const normalized = key.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-  return (
-    normalized === 'accuracy' ||
-    normalized === 'accuracymeter' ||
-    normalized === 'accuracymeters'
+const validateSchemaFieldValue = (
+  field: CollectionFormFieldForImport,
+  value: unknown,
+): string | null => {
+  if (isBlankAttributeValue(value)) {
+    return null;
+  }
+  if (field.type === 'number' || field.type === 'integer') {
+    const parsed = parseImportedNumber(value);
+    if (parsed === null) {
+      return `Invalid number for ${field.displayName}: ${displayImportedValue(value)}.`;
+    }
+    if (field.type === 'integer' && !Number.isInteger(parsed)) {
+      return `Invalid integer for ${field.displayName}: ${displayImportedValue(value)}.`;
+    }
+    if (field.min !== null && parsed < field.min) {
+      return `Invalid value for ${field.displayName}: ${displayImportedValue(value)}. Minimum value is ${field.min}.`;
+    }
+    if (field.max !== null && parsed > field.max) {
+      return `Invalid value for ${field.displayName}: ${displayImportedValue(value)}. Maximum value is ${field.max}.`;
+    }
+    return null;
+  }
+  if (field.type === 'boolean') {
+    if (parseImportedBoolean(value) === null) {
+      return `Invalid boolean for ${field.displayName}: ${displayImportedValue(value)}. Use true/false, yes/no, or 1/0.`;
+    }
+    return null;
+  }
+  if (field.type === 'date' || field.type === 'datetime') {
+    if (!isParseableDate(value)) {
+      return `Invalid ${field.type} for ${field.displayName}: ${displayImportedValue(value)}.`;
+    }
+    return null;
+  }
+  return null;
+};
+
+const shouldValidateAllowedOptions = (field: CollectionFormFieldForImport): boolean => {
+  if (field.options.length === 0) {
+    return false;
+  }
+  if (field.type === 'text' || field.type === 'file') {
+    return false;
+  }
+  return true;
+};
+
+const allowedOptionValidationError = (
+  field: CollectionFormFieldForImport,
+  value: unknown,
+): string | null => {
+  if (!shouldValidateAllowedOptions(field) || isBlankAttributeValue(value)) {
+    return null;
+  }
+  const values = field.type === 'multiselect' ? multiValueParts(value) : [value];
+  const invalidValues = values.filter(
+    (item) => !field.options.some((allowedValue) => valueMatchesAllowedOption(item, allowedValue)),
   );
+  if (invalidValues.length === 0) {
+    return null;
+  }
+  return `Invalid value for ${field.displayName}: ${invalidValues.map(displayImportedValue).join(', ')}. Allowed values: ${field.options.join(', ')}.`;
+};
+
+const collectionFormFieldsForImport = (
+  schema: Record<string, unknown>,
+): CollectionFormFieldForImport[] => {
+  const fields = Array.isArray(schema.fields)
+    ? (schema.fields as Array<Record<string, unknown>>)
+    : [];
+
+  return fields
+    .map((field) => {
+      const key = normalizeSchemaString(field.key) ?? normalizeSchemaString(field.name);
+      const label =
+        normalizeSchemaString(field.label) ??
+        normalizeSchemaString(field.name) ??
+        normalizeSchemaString(field.key);
+      const identifiers = uniqueNonEmpty([key, label]);
+      if (identifiers.length === 0) {
+        return null;
+      }
+      const rawOptions =
+        Array.isArray(field.options) && field.options.length > 0
+          ? field.options
+          : Array.isArray(field.enum) && field.enum.length > 0
+            ? field.enum
+            : [];
+      const options = uniqueNonEmpty(rawOptions.map(optionToString));
+      const rawType = normalizeSchemaString(field.type);
+      const normalizedRawType = normalizeHeaderKey(rawType ?? '');
+      const type =
+        normalizedRawType === 'checkbox' && options.length > 0
+          ? 'multiselect'
+          : normalizeImportSchemaFieldType(rawType);
+      return {
+        key,
+        label,
+        displayName: label ?? key ?? identifiers[0],
+        type,
+        required: field.required === true,
+        options,
+        identifiers,
+        min: schemaNumberLimit(field.min),
+        max: schemaNumberLimit(field.max),
+      } satisfies CollectionFormFieldForImport;
+    })
+    .filter((field): field is CollectionFormFieldForImport => field !== null);
+};
+
+const findAttributeMatch = (
+  attributes: Record<string, unknown>,
+  identifiers: string[],
+): { key: string; value: unknown } | null => {
+  for (const identifier of identifiers) {
+    if (Object.prototype.hasOwnProperty.call(attributes, identifier)) {
+      return { key: identifier, value: attributes[identifier] };
+    }
+  }
+
+  const normalizedIdentifiers = identifiers
+    .map(normalizeHeaderKey)
+    .filter((identifier) => identifier.length > 0);
+  if (normalizedIdentifiers.length === 0) {
+    return null;
+  }
+
+  for (const [key, value] of Object.entries(attributes)) {
+    if (normalizedIdentifiers.includes(normalizeHeaderKey(key))) {
+      return { key, value };
+    }
+  }
+
+  return null;
+};
+
+const ensureCanonicalAttribute = (
+  attributes: Record<string, unknown>,
+  canonicalKey: string | null,
+  match: { key: string; value: unknown } | null,
+): void => {
+  if (!canonicalKey || !match || match.key === canonicalKey) {
+    return;
+  }
+  if (!isBlankAttributeValue(attributes[canonicalKey])) {
+    return;
+  }
+  attributes[canonicalKey] = match.value;
 };
 
 const validateAttributesAgainstSchema = (
   attributesInput: Record<string, unknown>,
   schema: Record<string, unknown>,
-): { warnings: string[]; errors: string[]; report: Record<string, unknown> } => {
+): {
+  attributes: Record<string, unknown>;
+  warnings: string[];
+  errors: string[];
+  report: Record<string, unknown>;
+} => {
+  const attributes = { ...attributesInput };
   const errors: string[] = [];
   const warnings: string[] = [];
   const missingRequired: string[] = [];
@@ -1490,81 +1942,69 @@ const validateAttributesAgainstSchema = (
       : {};
 
   for (const requiredKey of jsonSchemaRequired) {
-    if (
-      attributesInput[requiredKey] === undefined ||
-      attributesInput[requiredKey] === null ||
-      attributesInput[requiredKey] === ''
-    ) {
+    const match = findAttributeMatch(attributes, [requiredKey]);
+    ensureCanonicalAttribute(attributes, requiredKey, match);
+    if (isBlankAttributeValue(attributes[requiredKey])) {
       missingRequired.push(requiredKey);
-      errors.push(`Missing required attribute: ${requiredKey}`);
+      errors.push(`Missing required field: ${requiredKey}`);
     }
   }
 
   for (const [key, propSchema] of Object.entries(jsonSchemaProps)) {
-    if (attributesInput[key] === undefined) {
+    const match = findAttributeMatch(attributes, [key]);
+    ensureCanonicalAttribute(attributes, key, match);
+    if (attributes[key] === undefined) {
       continue;
     }
     const expectedType = typeof propSchema?.type === 'string' ? propSchema.type : null;
-    if (expectedType && !validateType(attributesInput[key], expectedType)) {
+    if (expectedType && !validateJsonSchemaType(attributes[key], expectedType)) {
       invalidFields.push(key);
       errors.push(`Invalid type for attribute "${key}"`);
     }
   }
 
-  const fields = Array.isArray(schema.fields)
-    ? (schema.fields as Array<Record<string, unknown>>)
-    : [];
+  const fields = collectionFormFieldsForImport(schema);
   for (const field of fields) {
-    const fieldKey =
-      typeof field.key === 'string'
-        ? field.key
-        : typeof field.name === 'string'
-          ? field.name
-          : null;
-    if (!fieldKey) {
-      continue;
-    }
+    const match = findAttributeMatch(attributes, field.identifiers);
+    ensureCanonicalAttribute(attributes, field.key, match);
+    const value = field.key ? attributes[field.key] : match?.value;
 
-    const value = attributesInput[fieldKey];
-    if (field.required === true && (value === undefined || value === null || value === '')) {
-      if (!missingRequired.includes(fieldKey)) {
-        missingRequired.push(fieldKey);
-        errors.push(`Missing required attribute: ${fieldKey}`);
+    if (field.required && isBlankAttributeValue(value)) {
+      if (!missingRequired.includes(field.displayName)) {
+        missingRequired.push(field.displayName);
+        errors.push(`Missing required field: ${field.displayName}`);
       }
     }
 
-    if (field.type && typeof field.type === 'string' && !validateType(value, field.type)) {
-      if (!invalidFields.includes(fieldKey)) {
-        invalidFields.push(fieldKey);
+    const fieldValueError = validateSchemaFieldValue(field, value);
+    if (fieldValueError !== null) {
+      if (!invalidFields.includes(field.displayName)) {
+        invalidFields.push(field.displayName);
       }
-      errors.push(`Invalid type for attribute "${fieldKey}"`);
+      errors.push(fieldValueError);
     }
 
-    const allowedValues =
-      Array.isArray(field.options) && field.options.length > 0
-        ? field.options
-        : Array.isArray(field.enum) && field.enum.length > 0
-          ? field.enum
-          : null;
-    if (
-      allowedValues &&
-      value !== undefined &&
-      value !== null &&
-      value !== '' &&
-      !allowedValues.includes(value)
-    ) {
-      errors.push(`Invalid value for attribute "${fieldKey}"`);
+    const optionError = allowedOptionValidationError(field, value);
+    if (optionError !== null) {
+      errors.push(optionError);
     }
   }
 
+  const knownFieldIdentifiers = new Set(
+    fields.flatMap((field) => field.identifiers.map(normalizeHeaderKey)),
+  );
   const unknownKeys = Object.keys(attributesInput).filter((key) => {
     if (shouldHideImportAttributeKey(key)) {
       return false;
     }
-    if (jsonSchemaProps[key]) {
+    if (Object.prototype.hasOwnProperty.call(jsonSchemaProps, key)) {
       return false;
     }
-    return !fields.some((field) => field.key === key || field.name === key);
+    const normalizedKey = normalizeHeaderKey(key);
+    if (knownFieldIdentifiers.has(normalizedKey)) {
+      return false;
+    }
+    return !fields.some((field) => field.identifiers.includes(key));
   });
   if (unknownKeys.length > 0) {
     warnings.push(
@@ -1573,6 +2013,7 @@ const validateAttributesAgainstSchema = (
   }
 
   return {
+    attributes,
     warnings,
     errors,
     report: {
@@ -1695,7 +2136,9 @@ const getImportReviewRecipients = async (
   },
 ) => {
   if (uploaderRole === 'admin' && !isProtectedSuperAdminEmail(uploaderEmail)) {
-    const protectedEmail = String(process.env.SUPER_ADMIN_EMAIL ?? '').trim().toLowerCase();
+    const protectedEmail = String(process.env.SUPER_ADMIN_EMAIL ?? '')
+      .trim()
+      .toLowerCase();
     const result = await executor.query(
       `SELECT DISTINCT u.id, u.full_name, u.email
        FROM "user" u
@@ -1746,6 +2189,7 @@ const validateImportedFeature = async (
   warnings.push(...attributeValidation.warnings);
   errors.push(...attributeValidation.errors);
   report.attributes = attributeValidation.report;
+  const attributes = attributeValidation.attributes;
 
   if (!incoming.geometryType || !incoming.geometry) {
     errors.push('Geometry is missing or unsupported.');
@@ -1756,7 +2200,7 @@ const validateImportedFeature = async (
     return {
       geometryType: incoming.geometryType,
       geometryJson: null,
-      attributes: incoming.attributes,
+      attributes,
       warnings,
       errors,
       report,
@@ -1823,7 +2267,7 @@ const validateImportedFeature = async (
   };
 
   if (geoRow.is_valid !== true) {
-    errors.push(String(geoRow.valid_reason ?? 'Geometry is invalid.'));
+    errors.push(friendlyInvalidGeometryMessage(geoRow.valid_reason, incoming.geometryType));
   }
   if (geoRow.intersects_lebanon !== true) {
     warnings.push('Geometry falls outside the Lebanon workspace bounds.');
@@ -1837,7 +2281,7 @@ const validateImportedFeature = async (
   return {
     geometryType: incoming.geometryType,
     geometryJson,
-    attributes: incoming.attributes,
+    attributes,
     warnings,
     errors,
     report,
@@ -1933,8 +2377,8 @@ const mapImportJobRow = (row: ImportJobRow | ImportJobAccessRow) => ({
   rejection_reason: row.rejection_reason,
   review_scope:
     'uploaded_by_role' in row && importNeedsProtectedSuperAdminReview(row)
-        ? 'protected_super_admin'
-        : 'admin',
+      ? 'protected_super_admin'
+      : 'admin',
   uploaded_at: row.uploaded_at,
   processed_at: row.processed_at,
   reviewed_at: row.reviewed_at,
@@ -1952,6 +2396,8 @@ const mapImportFeatureRow = (row: ImportFeatureRow) => ({
   geometry_type: row.geometry_type,
   geometry: row.geometry ? JSON.parse(row.geometry) : null,
   attributes: row.attributes ?? {},
+  summary_attributes: row.summary_attributes ?? {},
+  attribute_count: row.attribute_count ?? Object.keys(row.attributes ?? {}).length,
   status: row.status,
   validation_warnings: row.validation_warnings ?? [],
   validation_errors: row.validation_errors ?? [],
@@ -1970,6 +2416,141 @@ const mapImportFeatureRow = (row: ImportFeatureRow) => ({
   updated_at: row.updated_at,
 });
 
+const normalizeSummaryAttributeValue = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item ?? '').trim())
+      .filter(Boolean)
+      .join('|');
+  }
+  return String(value ?? '')
+    .trim()
+    .toLowerCase();
+};
+
+const isSummaryAttributeValue = (value: unknown): boolean => {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value === 'string') {
+    return value.trim().length > 0;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0 && value.length <= 6;
+  }
+  return false;
+};
+
+const addSummaryAttribute = (
+  summary: Record<string, unknown>,
+  seenValues: Set<string>,
+  key: string,
+  value: unknown,
+): void => {
+  if (!key.trim() || !isSummaryAttributeValue(value)) {
+    return;
+  }
+  if (Object.prototype.hasOwnProperty.call(summary, key)) {
+    return;
+  }
+  const normalizedValue = normalizeSummaryAttributeValue(value);
+  if (!normalizedValue) {
+    return;
+  }
+  const normalizedKey = normalizeHeaderKey(key);
+  const canDedupeByValue =
+    normalizedKey.includes('type') ||
+    normalizedKey.includes('descr') ||
+    normalizedKey.includes('name') ||
+    normalizedKey.includes('crop');
+  if (canDedupeByValue && seenValues.has(normalizedValue)) {
+    return;
+  }
+  if (canDedupeByValue) {
+    seenValues.add(normalizedValue);
+  }
+  summary[key] = value;
+};
+
+const buildImportFeatureSummaryAttributes = (
+  row: ImportFeatureRow,
+  formSchema: Record<string, unknown>,
+): Record<string, unknown> => {
+  const attributes = row.attributes ?? {};
+  const summary: Record<string, unknown> = {};
+  const seenValues = new Set<string>();
+  const requiredFields = collectionFormFieldsForImport(formSchema).filter(
+    (field) => field.required,
+  );
+  const requiredIdentifiers = [...requiredFields.map((field) => field.identifiers)];
+  const jsonSchemaRequired = Array.isArray(formSchema.required)
+    ? (formSchema.required as unknown[])
+        .map((value) => normalizeSchemaString(value))
+        .filter((value): value is string => value !== null)
+    : [];
+
+  for (const requiredKey of jsonSchemaRequired) {
+    if (
+      !requiredIdentifiers.some((identifiers) =>
+        identifiers.some(
+          (identifier) => normalizeHeaderKey(identifier) === normalizeHeaderKey(requiredKey),
+        ),
+      )
+    ) {
+      requiredIdentifiers.push([requiredKey]);
+    }
+  }
+
+  for (const identifiers of requiredIdentifiers) {
+    const match = findAttributeMatch(attributes, identifiers);
+    if (match) {
+      addSummaryAttribute(summary, seenValues, match.key, match.value);
+    }
+  }
+
+  return summary;
+};
+
+const mapImportFeatureSummaryRow = (
+  row: ImportFeatureRow,
+  formSchema: Record<string, unknown> = {},
+) => {
+  const summaryAttributes =
+    row.summary_attributes ?? buildImportFeatureSummaryAttributes(row, formSchema);
+  return {
+    id: row.id,
+    import_job_id: row.import_job_id,
+    source_index: row.source_index,
+    source_identifier: row.source_identifier,
+    display_title: row.display_title,
+    source_feature_name: row.source_feature_name,
+    geometry_type: row.geometry_type,
+    geometry: null,
+    attributes: summaryAttributes,
+    summary_attributes: summaryAttributes,
+    attribute_count: row.attribute_count ?? Object.keys(row.attributes ?? {}).length,
+    status: row.status,
+    validation_warnings: row.validation_warnings ?? [],
+    validation_errors: row.validation_errors ?? [],
+    validation_report: row.validation_report ?? {},
+    duplicate_feature_id: row.duplicate_feature_id,
+    approved_feature_id: row.approved_feature_id,
+    reviewed_by_user_id: row.reviewed_by_user_id,
+    reviewed_by_name: row.reviewed_by_name,
+    reviewed_at: row.reviewed_at,
+    approved_at: row.approved_at,
+    review_reason: row.review_reason,
+    is_summary: true,
+    is_aggregate: false,
+    cluster_count: 1,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+};
+
 const mapImportMapFeatureRow = (row: ImportFeatureRow) => ({
   id: row.id,
   import_job_id: row.import_job_id,
@@ -1980,6 +2561,8 @@ const mapImportMapFeatureRow = (row: ImportFeatureRow) => ({
   geometry_type: row.geometry_type,
   geometry: row.geometry ? JSON.parse(row.geometry) : null,
   attributes: {},
+  summary_attributes: {},
+  attribute_count: 0,
   status: row.status,
   validation_warnings: [],
   validation_errors: [],
@@ -2223,7 +2806,7 @@ const processImportJob = async (importJobId: string): Promise<void> => {
         ? error.message
         : error instanceof Error && error.message.trim().length > 0
           ? error.message.trim()
-        : 'The uploaded GIS file could not be processed.';
+          : 'The uploaded GIS file could not be processed.';
     await failImportJob(importJobId, {
       projectId: job.project_id,
       projectName: job.project_name,
@@ -2543,6 +3126,7 @@ const waitForImportProcessingIdle = async (): Promise<void> => {
 const fetchImportJobWithAccess = async (importId: string, user: Express.UserContext) => {
   const result = await query(
     `SELECT gij.*, p.name AS project_name,
+            p.collection_form_schema AS project_collection_form_schema,
             uploader.full_name AS uploaded_by_name,
             uploader.email AS uploaded_by_email,
             uploader.role AS uploaded_by_role,
@@ -2658,7 +3242,7 @@ const getImportDetails = async (req: Request, res: Response): Promise<void> => {
      WHERE gif.import_job_id = $1
      ORDER BY gif.source_index ASC
      LIMIT $2`,
-    [importId, IMPORT_PREVIEW_LIMIT],
+    [importId, IMPORT_DETAIL_PREVIEW_LIMIT],
   );
 
   const previewSummaryResult = await query(
@@ -2673,17 +3257,17 @@ const getImportDetails = async (req: Request, res: Response): Promise<void> => {
          )::int AS outside_workspace_feature_count
        FROM gis_import_feature
        WHERE import_job_id = $1`,
-     [importId],
-   );
-   const previewSummaryRow = previewSummaryResult.rows[0] ?? {};
-   const geometryFeatureCount = Number(previewSummaryRow.geometry_feature_count ?? 0);
-   const previewFeatureCount = Math.min(
-     Number(previewSummaryRow.preview_feature_count ?? 0),
-     IMPORT_PREVIEW_LIMIT,
-   );
-   const outsideWorkspaceFeatureCount = Number(
-     previewSummaryRow.outside_workspace_feature_count ?? 0,
-   );
+    [importId],
+  );
+  const previewSummaryRow = previewSummaryResult.rows[0] ?? {};
+  const geometryFeatureCount = Number(previewSummaryRow.geometry_feature_count ?? 0);
+  const previewFeatureCount = Math.min(
+    Number(previewSummaryRow.preview_feature_count ?? 0),
+    IMPORT_DETAIL_PREVIEW_LIMIT,
+  );
+  const outsideWorkspaceFeatureCount = Number(
+    previewSummaryRow.outside_workspace_feature_count ?? 0,
+  );
   const commentsResult = await query(
     `SELECT gic.id,
             gic.import_job_id,
@@ -2714,6 +3298,187 @@ const getImportDetails = async (req: Request, res: Response): Promise<void> => {
       },
       comments: commentsResult.rows.map((row) => mapImportCommentRow(row as ImportCommentRow)),
     },
+  });
+};
+
+const fetchImportQuickMapPreview = async (importId: string): Promise<ImportQuickMapPreview> => {
+  const statsResult = await query(
+    `SELECT COUNT(*)::int AS total_feature_count,
+            COUNT(geom)::int AS geometry_feature_count,
+            ST_XMin(ST_Extent(geom))::float AS min_lon,
+            ST_YMin(ST_Extent(geom))::float AS min_lat,
+            ST_XMax(ST_Extent(geom))::float AS max_lon,
+            ST_YMax(ST_Extent(geom))::float AS max_lat
+     FROM gis_import_feature
+     WHERE import_job_id = $1`,
+    [importId],
+  );
+  const stats = statsResult.rows[0] ?? {};
+  const totalFeatureCount = Number(stats.total_feature_count ?? 0);
+  const geometryFeatureCount = Number(stats.geometry_feature_count ?? 0);
+  const bounds =
+    Number.isFinite(Number(stats.min_lon)) &&
+    Number.isFinite(Number(stats.min_lat)) &&
+    Number.isFinite(Number(stats.max_lon)) &&
+    Number.isFinite(Number(stats.max_lat))
+      ? {
+          min_lon: Number(stats.min_lon),
+          min_lat: Number(stats.min_lat),
+          max_lon: Number(stats.max_lon),
+          max_lat: Number(stats.max_lat),
+        }
+      : null;
+  const simplifyToleranceDegrees = bounds
+    ? Math.min(
+        0.00025,
+        Math.max(
+          IMPORT_QUICK_MAP_SIMPLIFY_TOLERANCE_DEGREES,
+          Math.max(bounds.max_lon - bounds.min_lon, bounds.max_lat - bounds.min_lat) / 2500,
+        ),
+      )
+    : IMPORT_QUICK_MAP_SIMPLIFY_TOLERANCE_DEGREES;
+
+  const statusResult = await query(
+    `SELECT status::text AS status, COUNT(*)::int AS total
+     FROM gis_import_feature
+     WHERE import_job_id = $1
+     GROUP BY status
+     ORDER BY status ASC`,
+    [importId],
+  );
+  const statusCounts = Object.fromEntries(
+    statusResult.rows.map((row) => [String(row.status), Number(row.total ?? 0)]),
+  ) as Record<string, number>;
+
+  if (geometryFeatureCount === 0) {
+    return {
+      total_feature_count: totalFeatureCount,
+      geometry_feature_count: geometryFeatureCount,
+      rendered_feature_count: 0,
+      is_clustered: false,
+      bounds,
+      status_counts: statusCounts,
+      features: [],
+    };
+  }
+
+  const result = await query(
+    `WITH prepared AS (
+       SELECT gif.id,
+              gif.import_job_id,
+              gif.source_index,
+              gif.source_identifier,
+              gif.display_title,
+              gif.source_feature_name,
+              gif.geometry_type,
+              gif.status,
+              gif.duplicate_feature_id,
+              gif.approved_feature_id,
+              gif.reviewed_by_user_id,
+              NULL::text AS reviewed_by_name,
+              gif.reviewed_at,
+              gif.approved_at,
+              gif.review_reason,
+              gif.created_at,
+              gif.updated_at,
+              gif.geom,
+              CASE
+                WHEN GeometryType(gif.geom) IN ('POLYGON', 'MULTIPOLYGON') THEN ST_PointOnSurface(gif.geom)
+                WHEN GeometryType(gif.geom) = 'POINT' THEN gif.geom
+                ELSE ST_Centroid(gif.geom)
+              END AS overview_geom
+       FROM gis_import_feature gif
+       WHERE gif.import_job_id = $1
+         AND gif.geom IS NOT NULL
+     ),
+     numbered AS (
+       SELECT *,
+              ROW_NUMBER() OVER (ORDER BY ST_Y(overview_geom), ST_X(overview_geom), source_index) AS quick_row,
+              COUNT(*) OVER () AS quick_total
+       FROM prepared
+     ),
+     sampled AS (
+       SELECT *,
+              CASE
+                WHEN quick_total <= $2::int THEN quick_row
+                ELSE FLOOR(((quick_row - 1)::double precision * $2::double precision) / quick_total)::int
+              END AS quick_bucket
+       FROM numbered
+     ),
+     ranked AS (
+       SELECT *,
+              ROW_NUMBER() OVER (PARTITION BY quick_bucket ORDER BY quick_row) AS bucket_row,
+              COUNT(*) OVER (PARTITION BY quick_bucket)::int AS represented_count
+       FROM sampled
+     )
+     SELECT id::text,
+            import_job_id::text,
+            source_index,
+            source_identifier,
+            display_title,
+            source_feature_name,
+            geometry_type,
+            status,
+            duplicate_feature_id,
+            approved_feature_id,
+            reviewed_by_user_id,
+            reviewed_by_name,
+            reviewed_at,
+            approved_at,
+            review_reason,
+            created_at,
+            updated_at,
+            ST_AsGeoJSON(
+              CASE
+                WHEN $3::double precision > 0
+                  AND GeometryType(geom) IN ('POLYGON', 'MULTIPOLYGON', 'LINESTRING', 'MULTILINESTRING')
+                  THEN
+                    CASE
+                      WHEN geometry_type = 'MultiPolygon' THEN
+                        ST_Multi(
+                          ST_CollectionExtract(
+                            ST_SimplifyPreserveTopology(geom, $3::double precision),
+                            3
+                          )
+                        )
+                      WHEN geometry_type = 'MultiLineString' THEN
+                        ST_Multi(
+                          ST_CollectionExtract(
+                            ST_SimplifyPreserveTopology(geom, $3::double precision),
+                            2
+                          )
+                        )
+                      ELSE ST_SimplifyPreserveTopology(geom, $3::double precision)
+                    END
+                ELSE geom
+              END
+            ) AS geometry,
+            (represented_count > 1) AS is_aggregate,
+            represented_count AS cluster_count
+     FROM ranked
+     WHERE bucket_row = 1
+     ORDER BY quick_row ASC`,
+    [importId, IMPORT_QUICK_MAP_PREVIEW_LIMIT, simplifyToleranceDegrees],
+  );
+
+  return {
+    total_feature_count: totalFeatureCount,
+    geometry_feature_count: geometryFeatureCount,
+    rendered_feature_count: result.rows.length,
+    is_clustered: result.rows.some((row) => Number(row.cluster_count ?? 0) > 1),
+    bounds,
+    status_counts: statusCounts,
+    features: result.rows.map((row) => mapImportMapFeatureRow(row as ImportFeatureRow)),
+  };
+};
+
+const getImportQuickMapPreview = async (req: Request, res: Response): Promise<void> => {
+  const importId = req.params.importId;
+  await fetchImportJobWithAccess(importId, req.user as Express.UserContext);
+  const preview = await fetchImportQuickMapPreview(importId);
+  res.json({
+    success: true,
+    data: preview,
   });
 };
 
@@ -2898,14 +3663,7 @@ const fetchImportMapLayerData = async ({
              AND gif.geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
            ORDER BY gif.source_index ASC
            LIMIT $6`,
-          [
-            importId,
-            bounds.minLon,
-            bounds.minLat,
-            bounds.maxLon,
-            bounds.maxLat,
-            tileFeatureLimit,
-          ],
+          [importId, bounds.minLon, bounds.minLat, bounds.maxLon, bounds.maxLat, tileFeatureLimit],
         );
 
   const approvedProjectResult =
@@ -2933,6 +3691,12 @@ const fetchImportMapLayerData = async ({
              LEFT JOIN "user" reviewer ON reviewer.id = sf.reviewed_by_user_id
              WHERE sf.project_id = $1
                AND sf.status = 'approved'
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM gis_import_feature source_feature
+                 WHERE source_feature.import_job_id = $7
+                   AND source_feature.approved_feature_id = sf.id
+               )
                AND sf.geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
            ),
            marker_filtered AS (
@@ -2981,7 +3745,7 @@ const fetchImportMapLayerData = async ({
            FROM bucketed
            GROUP BY lat_bucket, lon_bucket
            ORDER BY MAX(reviewed_at) DESC NULLS LAST, MAX(submitted_at) DESC NULLS LAST
-           LIMIT $7`,
+           LIMIT $8`,
           [
             projectId,
             bounds.minLon,
@@ -2989,6 +3753,7 @@ const fetchImportMapLayerData = async ({
             bounds.maxLon,
             bounds.maxLat,
             mapClusterCellSizeDegrees(zoom),
+            importId,
             tileFeatureLimit,
           ],
         )
@@ -3012,15 +3777,22 @@ const fetchImportMapLayerData = async ({
            LEFT JOIN "user" reviewer ON reviewer.id = sf.reviewed_by_user_id
            WHERE sf.project_id = $1
              AND sf.status = 'approved'
+             AND NOT EXISTS (
+               SELECT 1
+               FROM gis_import_feature source_feature
+               WHERE source_feature.import_job_id = $6
+                 AND source_feature.approved_feature_id = sf.id
+             )
              AND sf.geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
            ORDER BY sf.reviewed_at DESC NULLS LAST, sf.submitted_at DESC NULLS LAST, sf.id ASC
-           LIMIT $6`,
+           LIMIT $7`,
           [
             projectId,
             bounds.minLon,
             bounds.minLat,
             bounds.maxLon,
             bounds.maxLat,
+            importId,
             tileFeatureLimit,
           ],
         );
@@ -3038,7 +3810,7 @@ const fetchImportMapLayerData = async ({
 const getImportMapTileData = async (req: Request, res: Response): Promise<void> => {
   const importId = req.params.importId;
   const job = await fetchImportJobWithAccess(importId, req.user as Express.UserContext);
-  const zoom = normalizeMapZoom(req.params.z, 11);
+  const zoom = normalizeMapZoom(req.query.zoom ?? req.params.z, 11);
   const bounds = getTileBounds(req.params.z, req.params.x, req.params.y);
   const data = await fetchImportMapLayerData({
     importId,
@@ -3081,35 +3853,53 @@ const getImportFeatureDetails = async (req: Request, res: Response): Promise<voi
   });
 };
 
-const listImportFeatures = async (req: Request, res: Response): Promise<void> => {
-  const importId = req.params.importId;
-  await fetchImportJobWithAccess(importId, req.user as Express.UserContext);
-  const { page, limit, offset } = getPagination(req.query.page, req.query.limit);
-  const status = typeof req.query.status === 'string' ? req.query.status.trim() : '';
-  const issue = typeof req.query.issue === 'string' ? req.query.issue.trim() : '';
-  const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
-  const geometryType =
-    typeof req.query.geometry_type === 'string' ? req.query.geometry_type.trim() : '';
-  const featureType =
-    typeof req.query.feature_type === 'string' ? req.query.feature_type.trim() : '';
+const normalizeImportReviewFilters = (input: unknown): ImportReviewFilters => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return {};
+  }
+  const raw = input as Record<string, unknown>;
+  const readString = (key: keyof ImportReviewFilters): string | undefined => {
+    const value = raw[key];
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  };
+  return {
+    status: readString('status'),
+    issue: readString('issue'),
+    search: readString('search'),
+    geometry_type: readString('geometry_type'),
+    feature_type: readString('feature_type'),
+  };
+};
 
-  const whereClauses = ['gif.import_job_id = $1'];
-  const params: unknown[] = [importId];
-  let paramIndex = 2;
-  if (status) {
+const appendImportFeatureFilters = ({
+  whereClauses,
+  params,
+  paramIndex,
+  filters,
+}: {
+  whereClauses: string[];
+  params: unknown[];
+  paramIndex: number;
+  filters: ImportReviewFilters;
+}): number => {
+  if (filters.status) {
     whereClauses.push(`gif.status = $${paramIndex}`);
-    params.push(status);
+    params.push(filters.status);
     paramIndex += 1;
   }
-  if (issue) {
+  if (filters.issue) {
     whereClauses.push(
       `(gif.validation_errors @> to_jsonb(ARRAY[$${paramIndex}]::text[]) OR gif.validation_warnings @> to_jsonb(ARRAY[$${paramIndex}]::text[]))`,
     );
-    params.push(issue);
+    params.push(filters.issue);
     paramIndex += 1;
   }
-  if (geometryType) {
-    switch (geometryType) {
+  if (filters.geometry_type) {
+    switch (filters.geometry_type) {
       case 'point':
         whereClauses.push(
           `(gif.geometry_type = $${paramIndex} OR gif.geometry_type = $${paramIndex + 1})`,
@@ -3133,12 +3923,12 @@ const listImportFeatures = async (req: Request, res: Response): Promise<void> =>
         break;
       default:
         whereClauses.push(`gif.geometry_type = $${paramIndex}`);
-        params.push(geometryType);
+        params.push(filters.geometry_type);
         paramIndex += 1;
         break;
     }
   }
-  if (featureType) {
+  if (filters.feature_type) {
     whereClauses.push(
       `EXISTS (
         SELECT 1
@@ -3153,23 +3943,65 @@ const listImportFeatures = async (req: Request, res: Response): Promise<void> =>
           AND LOWER(BTRIM(attr.value)) = LOWER($${paramIndex})
       )`,
     );
-    params.push(featureType);
+    params.push(filters.feature_type);
     paramIndex += 1;
   }
-  if (search) {
+  if (filters.search) {
     whereClauses.push(
       `(gif.display_title ILIKE $${paramIndex}
         OR COALESCE(gif.source_feature_name, '') ILIKE $${paramIndex}
         OR gif.attributes::text ILIKE $${paramIndex})`,
     );
-    params.push(`%${search}%`);
+    params.push(`%${filters.search}%`);
     paramIndex += 1;
   }
+  return paramIndex;
+};
+
+const listImportFeatures = async (req: Request, res: Response): Promise<void> => {
+  const importId = req.params.importId;
+  const job = await fetchImportJobWithAccess(importId, req.user as Express.UserContext);
+  const { page, limit, offset } = getPagination(req.query.page, req.query.limit);
+  const filters = normalizeImportReviewFilters({
+    status: req.query.status,
+    issue: req.query.issue,
+    search: req.query.search,
+    geometry_type: req.query.geometry_type,
+    feature_type: req.query.feature_type,
+  });
+  const whereClauses = ['gif.import_job_id = $1'];
+  const params: unknown[] = [importId];
+  let paramIndex = appendImportFeatureFilters({
+    whereClauses,
+    params,
+    paramIndex: 2,
+    filters,
+  });
 
   const whereSql = whereClauses.join(' AND ');
   const listSql = `
-    SELECT gif.*, reviewer.full_name AS reviewed_by_name,
-           CASE WHEN gif.geom IS NULL THEN NULL ELSE ST_AsGeoJSON(gif.geom) END AS geometry
+    SELECT gif.id,
+           gif.import_job_id,
+           gif.source_index,
+           gif.source_identifier,
+           gif.display_title,
+           gif.source_feature_name,
+           gif.geometry_type,
+           NULL::text AS geometry,
+           gif.attributes,
+           gif.status,
+           gif.validation_warnings,
+           gif.validation_errors,
+           gif.validation_report,
+           gif.duplicate_feature_id,
+           gif.approved_feature_id,
+           gif.reviewed_by_user_id,
+           reviewer.full_name AS reviewed_by_name,
+           gif.reviewed_at,
+           gif.approved_at,
+           gif.review_reason,
+           gif.created_at,
+           gif.updated_at
     FROM gis_import_feature gif
     LEFT JOIN "user" reviewer ON reviewer.id = gif.reviewed_by_user_id
     WHERE ${whereSql}
@@ -3186,7 +4018,9 @@ const listImportFeatures = async (req: Request, res: Response): Promise<void> =>
   const total = countResult.rows[0]?.total ?? 0;
   res.json({
     success: true,
-    data: itemsResult.rows.map(mapImportFeatureRow),
+    data: itemsResult.rows.map((row) =>
+      mapImportFeatureSummaryRow(row as ImportFeatureRow, job.project_collection_form_schema ?? {}),
+    ),
     pagination: {
       page,
       limit,
@@ -3451,10 +4285,12 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
     status,
     reason,
     feature_ids: featureIds,
+    filters: rawFilters,
   } = req.body as {
     status: 'approved' | 'rejected';
     reason?: string;
     feature_ids?: string[];
+    filters?: ImportReviewFilters;
   };
 
   const currentUser = req.user as Express.UserContext;
@@ -3469,44 +4305,116 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
   const selectedFeatureIds = Array.isArray(featureIds)
     ? [...new Set(featureIds.map((value) => String(value).trim()).filter(Boolean))]
     : [];
+  const reviewFilters = normalizeImportReviewFilters(rawFilters);
 
   const updatedJob = await transaction(async (client: any) => {
     const allowedStatuses =
-      status === 'approved'
-        ? ['pending_review', 'rejected']
-        : ['pending_review', 'approved'];
+      status === 'approved' ? ['pending_review', 'rejected'] : ['pending_review', 'approved'];
 
     const targetParams: unknown[] = [importId, allowedStatuses];
-    let targetFilter = `import_job_id = $1 AND status = ANY($2::gis_import_feature_status[])`;
+    const targetWhereClauses = [
+      'gif.import_job_id = $1',
+      'gif.status = ANY($2::gis_import_feature_status[])',
+    ];
     if (selectedFeatureIds.length > 0) {
       targetParams.push(selectedFeatureIds);
-      targetFilter += ` AND id = ANY($3::uuid[])`;
+      targetWhereClauses.push(`gif.id = ANY($3::uuid[])`);
+    } else {
+      appendImportFeatureFilters({
+        whereClauses: targetWhereClauses,
+        params: targetParams,
+        paramIndex: 3,
+        filters: reviewFilters,
+      });
     }
+    const targetWhereSql = targetWhereClauses.join(' AND ');
 
     const targetResult = await client.query(
-      `SELECT id, display_title, geometry_type,
-              CASE WHEN geom IS NULL THEN NULL ELSE ST_AsGeoJSON(geom) END AS geometry,
-              attributes, status, approved_feature_id
-       FROM gis_import_feature
-       WHERE ${targetFilter}
-       ORDER BY source_index ASC`,
+      `SELECT COUNT(*)::int AS total
+       FROM gis_import_feature gif
+       WHERE ${targetWhereSql}`,
       targetParams,
     );
 
-    if (targetResult.rows.length === 0) {
+    if ((targetResult.rows[0]?.total ?? 0) === 0) {
       throw new AppError('No staged import features matched this review action.', 409);
     }
 
     if (status === 'approved') {
-      for (const row of targetResult.rows) {
-        if (!row.geometry) {
-          throw new AppError(
-            `Imported feature ${row.display_title} has no valid geometry to approve.`,
-            409,
-          );
-        }
-        const featureInsert = await client.query(
-          `INSERT INTO spatial_feature (
+      const baseParamIndex = targetParams.length;
+      const approvalParams = [
+        ...targetParams,
+        job.project_id,
+        job.uploaded_by_user_id,
+        currentUser.id,
+        `Imported from ${job.original_filename}${normalizedReason ? ` (${normalizedReason})` : ''}`,
+        normalizedReason,
+        SUPPORTED_SPATIAL_FEATURE_GEOMETRY_TYPES,
+      ];
+      await client.query(
+        `WITH target AS (
+           SELECT gif.id,
+                  gif.display_title,
+                  gif.geometry_type,
+                  gif.geom,
+                  gif.attributes
+           FROM gis_import_feature gif
+           WHERE ${targetWhereSql}
+           ORDER BY gif.source_index ASC
+           FOR UPDATE
+         ),
+         invalid_target AS (
+           SELECT target.id,
+                  CASE
+                    WHEN target.geom IS NULL THEN
+                      'Missing geometry: this imported feature cannot be approved.'
+                    WHEN GeometryType(target.geom) <> ALL($${baseParamIndex + 6}::text[]) THEN
+                      'Unsupported geometry type: ' || COALESCE(GeometryType(target.geom), target.geometry_type, 'unknown') || '.'
+                    WHEN ST_IsValid(target.geom) IS DISTINCT FROM TRUE
+                      AND (
+                        LOWER(ST_IsValidReason(target.geom)) LIKE '%ring self-intersection%'
+                        OR LOWER(ST_IsValidReason(target.geom)) LIKE '%self-intersection%'
+                      ) THEN
+                      'Invalid polygon geometry: ring self-intersection. Fix the geometry in GIS software or exclude this feature.'
+                    WHEN ST_IsValid(target.geom) IS DISTINCT FROM TRUE THEN
+                      'Invalid geometry: ' || ST_IsValidReason(target.geom) || '.'
+                    ELSE
+                      'Invalid geometry: this imported feature cannot be approved.'
+                  END AS error_message
+           FROM target
+           WHERE target.geom IS NULL
+              OR GeometryType(target.geom) <> ALL($${baseParamIndex + 6}::text[])
+              OR ST_IsValid(target.geom) IS DISTINCT FROM TRUE
+         ),
+         invalid_update AS (
+           UPDATE gis_import_feature gif
+           SET status = 'failed',
+               approved_feature_id = NULL,
+               validation_errors = COALESCE(gif.validation_errors, '[]'::jsonb)
+                 || jsonb_build_array(invalid_target.error_message),
+               reviewed_by_user_id = $${baseParamIndex + 3},
+               reviewed_at = CURRENT_TIMESTAMP,
+               approved_at = NULL,
+               review_reason = $${baseParamIndex + 5}
+           FROM invalid_target
+           WHERE gif.id = invalid_target.id
+           RETURNING gif.id
+         ),
+         valid_target AS (
+           SELECT uuid_generate_v4() AS approved_feature_id,
+                  target.id AS import_feature_id,
+                  target.geom,
+                  target.attributes
+           FROM target
+           WHERE NOT EXISTS (
+             SELECT 1
+             FROM invalid_target
+             WHERE invalid_target.id = target.id
+           )
+         ),
+         inserted AS (
+           INSERT INTO spatial_feature (
+             id,
              project_id,
              collected_by_user_id,
              geom,
@@ -3517,63 +4425,80 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
              review_notes,
              reviewed_at,
              collected_offline
-           ) VALUES (
-             $1,
-             $2,
-             ST_SetSRID(ST_GeomFromGeoJSON($3), 4326),
-             $4::jsonb,
-             'approved',
-             CURRENT_TIMESTAMP,
-             $5,
-             $6,
-             CURRENT_TIMESTAMP,
-             FALSE
            )
-           RETURNING id`,
-          [
-            job.project_id,
-            job.uploaded_by_user_id,
-            row.geometry,
-            JSON.stringify(sanitizeManagedFeatureAttributes(row.attributes)),
-            currentUser.id,
-            `Imported from ${job.original_filename}${normalizedReason ? ` (${normalizedReason})` : ''}`,
-          ],
-        );
-
-        await client.query(
-          `UPDATE gis_import_feature
+           SELECT valid_target.approved_feature_id,
+                  $${baseParamIndex + 1},
+                  $${baseParamIndex + 2},
+                  valid_target.geom,
+                  COALESCE((
+                    SELECT jsonb_object_agg(attr.key, attr.value)
+                    FROM jsonb_each(COALESCE(valid_target.attributes, '{}'::jsonb)) AS attr(key, value)
+                    WHERE regexp_replace(LOWER(BTRIM(attr.key)), '[^a-z0-9]', '', 'g')
+                      NOT IN ('accuracy', 'accuracymeter', 'accuracymeters')
+                  ), '{}'::jsonb),
+                  'approved',
+                  CURRENT_TIMESTAMP,
+                  $${baseParamIndex + 3},
+                  $${baseParamIndex + 4},
+                  CURRENT_TIMESTAMP,
+                  FALSE
+           FROM valid_target
+           RETURNING id
+         ),
+         approved_update AS (
+           UPDATE gis_import_feature gif
            SET status = 'approved',
-               approved_feature_id = $2,
-               reviewed_by_user_id = $3,
+               approved_feature_id = valid_target.approved_feature_id,
+               reviewed_by_user_id = $${baseParamIndex + 3},
                reviewed_at = CURRENT_TIMESTAMP,
                approved_at = CURRENT_TIMESTAMP,
-               review_reason = $4
-           WHERE id = $1`,
-          [row.id, featureInsert.rows[0].id, currentUser.id, normalizedReason],
-        );
-      }
+               review_reason = $${baseParamIndex + 5}
+           FROM valid_target
+           JOIN inserted ON inserted.id = valid_target.approved_feature_id
+           WHERE gif.id = valid_target.import_feature_id
+           RETURNING gif.id
+         )
+         SELECT
+           (SELECT COUNT(*)::int FROM approved_update) AS approved_count,
+           (SELECT COUNT(*)::int FROM invalid_update) AS failed_count`,
+        approvalParams,
+      );
     } else {
-      for (const row of targetResult.rows) {
-        if (row.status === 'approved' && row.approved_feature_id) {
-          await client.query(
-            `DELETE FROM spatial_feature
-             WHERE id = $1
-               AND project_id = $2`,
-            [row.approved_feature_id, job.project_id],
-          );
-        }
-        await client.query(
-          `UPDATE gis_import_feature
+      const baseParamIndex = targetParams.length;
+      const rejectParams = [...targetParams, job.project_id, currentUser.id, normalizedReason];
+      await client.query(
+        `WITH target AS (
+           SELECT gif.id,
+                  gif.approved_feature_id
+           FROM gis_import_feature gif
+           WHERE ${targetWhereSql}
+           ORDER BY gif.source_index ASC
+           FOR UPDATE
+         ),
+         deleted AS (
+           DELETE FROM spatial_feature sf
+           USING target
+           WHERE sf.id = target.approved_feature_id
+             AND sf.project_id = $${baseParamIndex + 1}
+           RETURNING sf.id
+         ),
+         rejected_update AS (
+           UPDATE gis_import_feature gif
            SET status = 'rejected',
                approved_feature_id = NULL,
-               reviewed_by_user_id = $2,
+               reviewed_by_user_id = $${baseParamIndex + 2},
                reviewed_at = CURRENT_TIMESTAMP,
                approved_at = NULL,
-               review_reason = $3
-           WHERE id = $1`,
-          [row.id, currentUser.id, normalizedReason],
-        );
-      }
+               review_reason = $${baseParamIndex + 3}
+           FROM target
+           WHERE gif.id = target.id
+           RETURNING gif.id
+         )
+         SELECT
+           (SELECT COUNT(*)::int FROM rejected_update) AS rejected_count,
+           (SELECT COUNT(*)::int FROM deleted) AS deleted_approved_count`,
+        rejectParams,
+      );
     }
 
     const refreshedResult = await client.query(
@@ -3669,6 +4594,7 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
 module.exports = {
   listImports,
   getImportDetails,
+  getImportQuickMapPreview,
   getImportMapData,
   getImportMapTileData,
   getImportFeatureDetails,

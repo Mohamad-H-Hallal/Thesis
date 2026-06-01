@@ -19,14 +19,43 @@ class ApiMapRepository {
       LinkedHashMap<String, List<MapFeatureSummary>>();
   static const int _projectTileCacheMaxEntries = 192;
   static const int _projectTileBatchSize = 4;
+  static const int _projectFeaturePageSize = 100;
+  static const int _projectFeaturePageBatchSize = 4;
   int _projectTileCacheRevision = 0;
 
   Future<List<MapFeatureSummary>> fetchProjectFeatures(String projectId) async {
-    final page = await fetchProjectFeaturesPage(
+    final firstPage = await fetchProjectFeaturesPage(
       projectId: projectId,
-      limit: 100,
+      page: 1,
+      limit: _projectFeaturePageSize,
     );
-    return page.items;
+    final features = <MapFeatureSummary>[];
+    features.addAll(firstPage.items);
+    final totalPages = math.max(1, (firstPage.total / firstPage.limit).ceil());
+
+    for (
+      var startPage = 2;
+      startPage <= totalPages;
+      startPage += _projectFeaturePageBatchSize
+    ) {
+      final endPage = math.min(
+        startPage + _projectFeaturePageBatchSize - 1,
+        totalPages,
+      );
+      final pages = await Future.wait([
+        for (var pageNumber = startPage; pageNumber <= endPage; pageNumber++)
+          fetchProjectFeaturesPage(
+            projectId: projectId,
+            page: pageNumber,
+            limit: _projectFeaturePageSize,
+          ),
+      ]);
+      for (final page in pages) {
+        features.addAll(page.items);
+      }
+    }
+
+    return features;
   }
 
   Future<List<MapFeatureSummary>> fetchProjectFeaturesViewport({
@@ -68,6 +97,7 @@ class ApiMapRepository {
                 z: tile.z,
                 x: tile.x,
                 y: tile.y,
+                renderZoom: zoom,
               );
             } catch (error) {
               firstError ??= error;
@@ -105,8 +135,10 @@ class ApiMapRepository {
     required int z,
     required int x,
     required int y,
+    required double renderZoom,
   }) async {
-    final cacheKey = '$projectId:$z:$x:$y';
+    final zoomKey = renderZoom.toStringAsFixed(2);
+    final cacheKey = '$projectId:$z:$x:$y:$zoomKey';
     final cached = _projectTileCache.remove(cacheKey);
     if (cached != null) {
       _projectTileCache[cacheKey] = cached;
@@ -114,7 +146,10 @@ class ApiMapRepository {
     }
     final response = await _apiClient.dio.get<Map<String, dynamic>>(
       '${AppEnv.apiVersionPrefix}/features/tiles/$z/$x/$y',
-      queryParameters: <String, dynamic>{'project_id': projectId},
+      queryParameters: <String, dynamic>{
+        'project_id': projectId,
+        'zoom': zoomKey,
+      },
     );
     final payload = response.data ?? const <String, dynamic>{};
     final featureCollection = Map<String, dynamic>.from(

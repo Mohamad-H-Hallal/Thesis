@@ -207,6 +207,66 @@ class MockImportsRepository implements ImportsRepository {
   }
 
   @override
+  Future<ImportQuickMapPreview> fetchImportQuickMapPreview({
+    required String importId,
+  }) async {
+    final features = _features[importId] ?? const <ImportedFeature>[];
+    final geometryFeatureCount = features
+        .where((feature) => feature.geometry != null)
+        .length;
+    final previewFeatures = geometryFeatureCount == 0
+        ? const <ImportedFeature>[]
+        : <ImportedFeature>[
+            ImportedFeature(
+              id: 'mock-preview-geometry-$importId',
+              importJobId: importId,
+              sourceIndex: 0,
+              displayTitle: '$geometryFeatureCount staged feature preview',
+              geometryType: 'Polygon',
+              geometry: const <String, dynamic>{
+                'type': 'Polygon',
+                'coordinates': <dynamic>[
+                  <dynamic>[
+                    <double>[35.48, 33.88],
+                    <double>[35.52, 33.88],
+                    <double>[35.52, 33.92],
+                    <double>[35.48, 33.92],
+                    <double>[35.48, 33.88],
+                  ],
+                ],
+              },
+              attributes: const <String, dynamic>{},
+              status: 'pending_review',
+              validationWarnings: const <String>[],
+              validationErrors: const <String>[],
+              validationReport: const <String, dynamic>{},
+              isSummary: true,
+              isAggregate: true,
+              clusterCount: geometryFeatureCount,
+              createdAt: DateTime(2026, 4, 25),
+              updatedAt: DateTime(2026, 4, 25),
+            ),
+          ];
+    return ImportQuickMapPreview(
+      totalFeatureCount: features.length,
+      geometryFeatureCount: geometryFeatureCount,
+      renderedFeatureCount: previewFeatures.length,
+      isClustered: geometryFeatureCount > 1,
+      statusCounts: <String, int>{
+        for (final status in features.map((feature) => feature.status).toSet())
+          status: features.where((feature) => feature.status == status).length,
+      },
+      bounds: const ImportMapBounds(
+        minLon: 35.1,
+        minLat: 33.1,
+        maxLon: 36.2,
+        maxLat: 34.4,
+      ),
+      features: previewFeatures,
+    );
+  }
+
+  @override
   Future<ImportedFeature> fetchImportFeatureById({
     required String importId,
     required String featureId,
@@ -329,14 +389,40 @@ class MockImportsRepository implements ImportsRepository {
     required String status,
     String? reason,
     List<String>? featureIds,
+    String? filterStatus,
+    String? filterIssue,
+    String? filterSearch,
+    String? filterGeometryType,
+    String? filterFeatureType,
   }) async {
     final features = _features[importId] ?? const <ImportedFeature>[];
     final targetIds = featureIds?.toSet();
+    final allowedStatuses = status == 'approved'
+        ? const <String>{'pending_review', 'rejected'}
+        : const <String>{'pending_review', 'approved'};
+    final filteredResult = await fetchImportFeaturesPage(
+      importId: importId,
+      status: filterStatus,
+      issue: filterIssue,
+      search: filterSearch,
+      geometryType: filterGeometryType,
+      featureType: filterFeatureType,
+      page: 1,
+      limit: features.length,
+    );
+    final filteredIds = filteredResult.items.map((item) => item.id).toSet();
     final updatedFeatures = features
         .map((item) {
           if (targetIds != null &&
               targetIds.isNotEmpty &&
               !targetIds.contains(item.id)) {
+            return item;
+          }
+          if ((targetIds == null || targetIds.isEmpty) &&
+              !filteredIds.contains(item.id)) {
+            return item;
+          }
+          if (!allowedStatuses.contains(item.status)) {
             return item;
           }
           return ImportedFeature(
