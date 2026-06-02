@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const projectController = require('../controllers/project.controller');
+const aiController = require('../controllers/ai.controller');
 const {
   authenticate,
   authorize,
@@ -9,6 +10,7 @@ const {
 } = require('../middleware/auth');
 const {
   projectValidation,
+  aiValidation,
   validate,
   paginationValidation,
   uuidValidation,
@@ -97,6 +99,60 @@ router.get(
   validate,
   checkProjectAccess,
   asyncHandler(projectController.getProjectFeatures)
+);
+
+router.get(
+  '/:projectId/ai/readiness',
+  uuidValidation('projectId'),
+  aiValidation.readiness,
+  validate,
+  checkProjectAdmin,
+  asyncHandler(aiController.getProjectAiReadiness),
+);
+
+router.get(
+  '/:projectId/ai/settings',
+  uuidValidation('projectId'),
+  validate,
+  checkProjectAdmin,
+  asyncHandler(aiController.getProjectAiSettings),
+);
+
+router.put(
+  '/:projectId/ai/settings',
+  uuidValidation('projectId'),
+  aiValidation.settings,
+  validate,
+  checkProjectAdmin,
+  asyncHandler(aiController.upsertProjectAiSettings),
+);
+
+router.patch(
+  '/:projectId/ai/settings',
+  uuidValidation('projectId'),
+  aiValidation.settings,
+  validate,
+  checkProjectAdmin,
+  asyncHandler(aiController.upsertProjectAiSettings),
+);
+
+router.post(
+  '/:projectId/ai/runs',
+  uuidValidation('projectId'),
+  aiValidation.createRun,
+  validate,
+  checkProjectAdmin,
+  asyncHandler(aiController.createProjectAiRun),
+);
+
+router.get(
+  '/:projectId/ai/runs',
+  uuidValidation('projectId'),
+  paginationValidation,
+  aiValidation.listRuns,
+  validate,
+  checkProjectAdmin,
+  asyncHandler(aiController.listProjectAiRuns),
 );
 
 module.exports = router;

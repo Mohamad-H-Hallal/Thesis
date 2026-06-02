@@ -430,6 +430,122 @@ const importValidation = {
   ] as ValidationChain[],
 };
 
+const aiScopeTypes = [
+  'project',
+  'governorate',
+  'district',
+  'city',
+  'custom_polygon',
+  'national',
+];
+
+const aiValidation = {
+  readiness: [
+    queryParam('label_field')
+      .optional()
+      .trim()
+      .isLength({ min: 1, max: 120 })
+      .withMessage('label_field must be between 1 and 120 characters'),
+    queryParam('scope_type')
+      .optional()
+      .isIn(aiScopeTypes)
+      .withMessage('scope_type is invalid'),
+    queryParam('min_samples_per_class')
+      .optional()
+      .isInt({ min: 1, max: 10000 })
+      .withMessage('min_samples_per_class must be a positive integer'),
+  ] as ValidationChain[],
+  settings: [
+    body('is_enabled').optional().isBoolean().withMessage('is_enabled must be a boolean'),
+    body('label_field')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ min: 1, max: 120 })
+      .withMessage('label_field must be between 1 and 120 characters'),
+    body('scope_type')
+      .optional()
+      .isIn(aiScopeTypes)
+      .withMessage('scope_type is invalid'),
+    body('scope_geometry')
+      .optional({ nullable: true })
+      .custom((value) => {
+        if (value === null) {
+          return true;
+        }
+        return (
+          value &&
+          typeof value === 'object' &&
+          ['Polygon', 'MultiPolygon', 'GeometryCollection'].includes(value.type) &&
+          Array.isArray(value.coordinates ?? value.geometries)
+        );
+      })
+      .withMessage('scope_geometry must be a GeoJSON polygon geometry when provided'),
+    body('min_samples_per_class')
+      .optional()
+      .isInt({ min: 1, max: 10000 })
+      .withMessage('min_samples_per_class must be a positive integer'),
+    body('model_preferences')
+      .optional()
+      .isObject()
+      .withMessage('model_preferences must be an object'),
+  ] as ValidationChain[],
+  createRun: [
+    body('status')
+      .optional()
+      .isIn(['draft', 'queued'])
+      .withMessage('status must be draft or queued'),
+    body('label_field')
+      .optional()
+      .trim()
+      .isLength({ min: 1, max: 120 })
+      .withMessage('label_field must be between 1 and 120 characters'),
+    body('scope_type')
+      .optional()
+      .isIn(aiScopeTypes)
+      .withMessage('scope_type is invalid'),
+    body('scope_geometry')
+      .optional({ nullable: true })
+      .custom((value) => {
+        if (value === null) {
+          return true;
+        }
+        return (
+          value &&
+          typeof value === 'object' &&
+          ['Polygon', 'MultiPolygon', 'GeometryCollection'].includes(value.type) &&
+          Array.isArray(value.coordinates ?? value.geometries)
+        );
+      })
+      .withMessage('scope_geometry must be a GeoJSON polygon geometry when provided'),
+    body('region_preset')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 120 })
+      .withMessage('region_preset must be 120 characters or fewer'),
+    body('min_samples_per_class')
+      .optional()
+      .isInt({ min: 1, max: 10000 })
+      .withMessage('min_samples_per_class must be a positive integer'),
+  ] as ValidationChain[],
+  listRuns: [
+    queryParam('status')
+      .optional()
+      .isIn([
+        'draft',
+        'queued',
+        'extracting_features',
+        'training',
+        'evaluating',
+        'classifying',
+        'ready_for_review',
+        'published',
+        'failed',
+        'cancelled',
+      ])
+      .withMessage('status is invalid'),
+  ] as ValidationChain[],
+};
+
 // Export validation rules
 const exportValidation = {
   create: [
@@ -574,6 +690,7 @@ export {
   settingsValidation,
   notificationValidation,
   importValidation,
+  aiValidation,
   exportValidation,
   paginationValidation,
   bboxPaginationValidation,
