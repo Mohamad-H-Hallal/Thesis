@@ -1117,7 +1117,7 @@ describe('GIS import workflow', () => {
       .expect(200);
 
     const official = await pool.query(
-      `SELECT attributes
+      `SELECT attributes, source
        FROM spatial_feature
        WHERE project_id = $1
        LIMIT 1`,
@@ -1125,6 +1125,7 @@ describe('GIS import workflow', () => {
     );
     expect(official.rows[0].attributes.photo_url).toBe('https://example.com/photos/olive.jpg');
     expect(official.rows[0].attributes.image).toBe("'=not-a-formula.jpg");
+    expect(official.rows[0].source).toBe('import');
   });
 
   test('preserves Shapefile DBF photo reference attributes', async () => {
