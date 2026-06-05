@@ -276,7 +276,7 @@ paths:
       security:
         - bearerAuth: []
       summary: Check whether approved project data is ready for AI training
-      description: Read-only readiness probe. Does not run GEE, train models, classify, or write AI outputs.
+      description: Protected super-admin only. Read-only readiness probe. Does not run GEE, train models, classify, or write AI outputs.
       parameters:
         - $ref: '#/components/parameters/projectId'
         - in: query
@@ -312,6 +312,7 @@ paths:
       security:
         - bearerAuth: []
       summary: Get project AI settings
+      description: Protected super-admin only.
       parameters:
         - $ref: '#/components/parameters/projectId'
       responses:
@@ -394,7 +395,19 @@ paths:
           name: status
           schema:
             type: string
-            enum: [draft, queued, extracting_features, training, evaluating, classifying, ready_for_review, published, failed, cancelled]
+            enum:
+              [
+                draft,
+                queued,
+                extracting_features,
+                training,
+                evaluating,
+                classifying,
+                ready_for_review,
+                published,
+                failed,
+                cancelled,
+              ]
       responses:
         '200':
           description: AI run list
@@ -1471,16 +1484,74 @@ components:
                   nullable: true
                 approved_feature_count:
                   type: integer
+                labeled_feature_count:
+                  type: integer
+                  description: Approved features with valid geometry and a non-empty selected label.
                 eligible_feature_count:
                   type: integer
+                  description: Samples in classes that meet the configured minimum sample threshold.
                 missing_label_count:
                   type: integer
                 invalid_geometry_count:
                   type: integer
+                excluded_feature_count:
+                  type: integer
+                  description: Approved features excluded because of missing labels, invalid geometry, or low-count classes.
+                eligible_class_count:
+                  type: integer
+                  description: Number of classes that meet the configured minimum sample threshold.
                 label_counts:
                   type: array
                   items:
                     type: object
+                classes_below_minimum:
+                  type: array
+                  items:
+                    type: object
+                candidate_label_fields:
+                  type: array
+                  description: Label-field candidates derived from project schema, approved feature attributes, and current AI settings.
+                  items:
+                    type: object
+                    properties:
+                      field:
+                        type: string
+                      source:
+                        type: array
+                        items:
+                          type: string
+                      labeled_feature_count:
+                        type: integer
+                      class_count:
+                        type: integer
+                      usable:
+                        type: boolean
+                      classifier_candidate:
+                        type: boolean
+                        description: Whether the field passed classifier-field heuristics before alias filtering.
+                      selectable:
+                        type: boolean
+                        description: Whether the field should appear as a primary classifier choice.
+                      diagnostic_only:
+                        type: boolean
+                        description: True for aliases or fields without usable labels.
+                      alias_of:
+                        type: string
+                        nullable: true
+                        description: Primary classifier field when this candidate is an equivalent alias.
+                      aliases:
+                        type: array
+                        items:
+                          type: string
+                        description: Equivalent fields mapped to this primary classifier field.
+                      hidden_reason:
+                        type: string
+                        nullable: true
+                        description: Reason the field is diagnostic-only when it is not selectable.
+                      recommended:
+                        type: boolean
+                      note:
+                        type: string
                 source_counts:
                   type: array
                   items:

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lebanese_gis_mobile/core/pagination/paginated_list_controller.dart';
 import 'package:lebanese_gis_mobile/core/pagination/paginated_result.dart';
 import 'package:lebanese_gis_mobile/core/providers/providers.dart';
+import 'package:lebanese_gis_mobile/features/ai/presentation/ai_providers.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_models.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_repository.dart';
 import 'package:lebanese_gis_mobile/features/auth/presentation/controllers/auth_controller.dart';
@@ -12,6 +13,8 @@ import 'package:lebanese_gis_mobile/features/projects/domain/project.dart';
 import 'package:lebanese_gis_mobile/features/projects/domain/projects_repository.dart';
 import 'package:lebanese_gis_mobile/features/projects/presentation/screens/home_projects_screen.dart';
 import 'package:lebanese_gis_mobile/features/projects/presentation/screens/project_details_screen.dart';
+
+import '../../../fakes/fake_ai_repository.dart';
 
 class _NoopAuthRepository implements AuthRepository {
   const _NoopAuthRepository();
@@ -370,6 +373,12 @@ Widget _wrapWithScope({
         (ref) => _AuthenticatedAuthController(session),
       ),
       projectsRepositoryProvider.overrideWithValue(fakeRepository),
+      aiRepositoryProvider.overrideWithValue(
+        FakeAiRepository(
+          settings: fakeAiSettings(projectId: 'admin-project'),
+          readiness: fakeReadiness(projectId: 'admin-project'),
+        ),
+      ),
       paginatedProjectListProvider.overrideWith((ref, scope) {
         return PaginatedListController<ProjectSummary>(
           loadPage: ({required page, required limit}) {

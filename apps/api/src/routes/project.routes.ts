@@ -7,6 +7,7 @@ const {
   authorize,
   checkProjectAccess,
   checkProjectAdmin,
+  requireProtectedSuperAdmin,
 } = require('../middleware/auth');
 const {
   projectValidation,
@@ -106,7 +107,7 @@ router.get(
   uuidValidation('projectId'),
   aiValidation.readiness,
   validate,
-  checkProjectAdmin,
+  requireProtectedSuperAdmin,
   asyncHandler(aiController.getProjectAiReadiness),
 );
 
@@ -114,7 +115,7 @@ router.get(
   '/:projectId/ai/settings',
   uuidValidation('projectId'),
   validate,
-  checkProjectAdmin,
+  requireProtectedSuperAdmin,
   asyncHandler(aiController.getProjectAiSettings),
 );
 
@@ -123,7 +124,7 @@ router.put(
   uuidValidation('projectId'),
   aiValidation.settings,
   validate,
-  checkProjectAdmin,
+  requireProtectedSuperAdmin,
   asyncHandler(aiController.upsertProjectAiSettings),
 );
 
@@ -132,7 +133,7 @@ router.patch(
   uuidValidation('projectId'),
   aiValidation.settings,
   validate,
-  checkProjectAdmin,
+  requireProtectedSuperAdmin,
   asyncHandler(aiController.upsertProjectAiSettings),
 );
 
@@ -141,7 +142,7 @@ router.post(
   uuidValidation('projectId'),
   aiValidation.createRun,
   validate,
-  checkProjectAdmin,
+  requireProtectedSuperAdmin,
   asyncHandler(aiController.createProjectAiRun),
 );
 
@@ -151,7 +152,7 @@ router.get(
   paginationValidation,
   aiValidation.listRuns,
   validate,
-  checkProjectAdmin,
+  requireProtectedSuperAdmin,
   asyncHandler(aiController.listProjectAiRuns),
 );
 

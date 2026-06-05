@@ -1,0 +1,299 @@
+import 'package:dio/dio.dart';
+
+import '../../../core/config/app_env.dart';
+import '../../../core/network/api_client.dart';
+import '../../../core/network/api_error_message.dart';
+import '../../../core/pagination/paginated_result.dart';
+import '../domain/ai_models.dart';
+import '../domain/ai_repository.dart';
+
+class ApiAiRepository implements AiRepository {
+  ApiAiRepository(this._apiClient);
+
+  final ApiClient _apiClient;
+
+  String get _projectsBasePath => '${AppEnv.apiVersionPrefix}/projects';
+  String get _aiBasePath => '${AppEnv.apiVersionPrefix}/ai';
+
+  @override
+  Future<AiReadinessResult> fetchReadiness({
+    required String projectId,
+    String? labelField,
+    int? minSamplesPerClass,
+    String? scopeType,
+  }) async {
+    final queryParameters = <String, dynamic>{};
+    final normalizedLabelField = _nonEmpty(labelField);
+    final normalizedScopeType = _nonEmpty(scopeType);
+    if (normalizedLabelField != null) {
+      queryParameters['label_field'] = normalizedLabelField;
+    }
+    if (minSamplesPerClass != null) {
+      queryParameters['min_samples_per_class'] = minSamplesPerClass;
+    }
+    if (normalizedScopeType != null) {
+      queryParameters['scope_type'] = normalizedScopeType;
+    }
+
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/readiness',
+        queryParameters: queryParameters,
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      final data = _toMap(payload['data']);
+      return AiReadinessResult.fromResponse(data);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to check AI readiness right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiProjectSettings> fetchSettings({required String projectId}) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/settings',
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiProjectSettings.fromMap(
+        _toMap(payload['data']),
+        projectId: projectId,
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load AI settings right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiProjectSettings> saveSettings({
+    required String projectId,
+    required AiProjectSettings settings,
+  }) async {
+    try {
+      final response = await _apiClient.dio.patch<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/settings',
+        data: settings.toRequestBody(),
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiProjectSettings.fromMap(
+        _toMap(payload['data']),
+        projectId: projectId,
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to save AI settings right now.',
+      );
+    }
+  }
+
+  @override
+  Future<PaginatedResult<AiRun>> fetchRunsPage({
+    required String projectId,
+    String? status,
+    int page = 1,
+    int limit = 20,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/runs',
+        queryParameters: <String, dynamic>{
+          'page': page,
+          'limit': limit,
+          if (status?.trim().isNotEmpty ?? false) 'status': status!.trim(),
+        },
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      final rows = (payload['data'] as List? ?? const <dynamic>[]);
+      final items = rows
+          .whereType<Map>()
+          .map((row) => AiRun.fromMap(Map<String, dynamic>.from(row)))
+          .toList(growable: false);
+      final pagination = _toMap(payload['pagination']);
+      final total = _toInt(pagination['total']) ?? items.length;
+      final effectivePage = _toInt(pagination['page']) ?? page;
+      final effectiveLimit = _toInt(pagination['limit']) ?? limit;
+      return PaginatedResult<AiRun>(
+        items: items,
+        page: effectivePage,
+        limit: effectiveLimit,
+        total: total,
+        hasMore:
+            (pagination['has_more'] as bool?) ??
+            ((effectivePage * effectiveLimit) < total && items.isNotEmpty),
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load AI runs right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiRun> createRun({
+    required String projectId,
+    required String status,
+    String? labelField,
+    String? scopeType,
+    int? minSamplesPerClass,
+  }) async {
+    final data = <String, dynamic>{'status': status};
+    final normalizedLabelField = _nonEmpty(labelField);
+    final normalizedScopeType = _nonEmpty(scopeType);
+    if (normalizedLabelField != null) {
+      data['label_field'] = normalizedLabelField;
+    }
+    if (normalizedScopeType != null) {
+      data['scope_type'] = normalizedScopeType;
+    }
+    if (minSamplesPerClass != null) {
+      data['min_samples_per_class'] = minSamplesPerClass;
+    }
+
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/runs',
+        data: data,
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiRun.fromMap(_toMap(payload['data']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to create the AI run record right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiRun> fetchRun({required String runId}) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_aiBasePath/runs/$runId',
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiRun.fromMap(_toMap(payload['data']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load the AI run right now.',
+      );
+    }
+  }
+
+  @override
+  Future<List<AiRunMetric>> fetchRunMetrics({required String runId}) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_aiBasePath/runs/$runId/metrics',
+      );
+      return _rows(
+        response.data,
+      ).map((row) => AiRunMetric.fromMap(row)).toList(growable: false);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load AI metrics right now.',
+      );
+    }
+  }
+
+  @override
+  Future<List<AiOutputLayer>> fetchRunLayers({required String runId}) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_aiBasePath/runs/$runId/layers',
+      );
+      return _rows(
+        response.data,
+      ).map((row) => AiOutputLayer.fromMap(row)).toList(growable: false);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load AI layers right now.',
+      );
+    }
+  }
+
+  @override
+  Future<PaginatedResult<AiRunLog>> fetchRunLogsPage({
+    required String runId,
+    int page = 1,
+    int limit = 20,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_aiBasePath/runs/$runId/logs',
+        queryParameters: <String, dynamic>{'page': page, 'limit': limit},
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      final items = _rows(
+        payload,
+      ).map((row) => AiRunLog.fromMap(row)).toList(growable: false);
+      final pagination = _toMap(payload['pagination']);
+      final total = _toInt(pagination['total']) ?? items.length;
+      final effectivePage = _toInt(pagination['page']) ?? page;
+      final effectiveLimit = _toInt(pagination['limit']) ?? limit;
+      return PaginatedResult<AiRunLog>(
+        items: items,
+        page: effectivePage,
+        limit: effectiveLimit,
+        total: total,
+        hasMore:
+            (pagination['has_more'] as bool?) ??
+            ((effectivePage * effectiveLimit) < total && items.isNotEmpty),
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load AI run logs right now.',
+      );
+    }
+  }
+
+  List<Map<String, dynamic>> _rows(Map<String, dynamic>? payload) {
+    final rows = (payload ?? const <String, dynamic>{})['data'] as List?;
+    return (rows ?? const <dynamic>[])
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+  }
+
+  Map<String, dynamic> _toMap(dynamic raw) {
+    if (raw is Map<String, dynamic>) {
+      return raw;
+    }
+    if (raw is Map) {
+      return Map<String, dynamic>.from(raw);
+    }
+    return const <String, dynamic>{};
+  }
+
+  int? _toInt(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    if (value is String) {
+      return int.tryParse(value);
+    }
+    return null;
+  }
+
+  String? _nonEmpty(String? value) {
+    final trimmed = value?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return null;
+    }
+    return trimmed;
+  }
+}

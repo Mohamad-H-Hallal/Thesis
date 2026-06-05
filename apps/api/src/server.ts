@@ -26,37 +26,102 @@ let closeWorkflowSocket;
 let closeWorkflowChangeListener;
 let isShuttingDown = false;
 
-const startServer = async () => {
-  try {
-    const pendingMigrations = await getPendingMigrations();
-    if (pendingMigrations.length > 0) {
-      logger.warn('Pending migrations detected', { pendingMigrations });
-      if (env.NODE_ENV === 'production') {
-        logger.error('Refusing to start in production with pending migrations');
-        process.exit(1);
-      }
+const startupRetryAttempts = Math.max(
+  1,
+  Number.parseInt(process.env.STARTUP_RETRY_ATTEMPTS ?? '12', 10) || 12,
+);
+const startupRetryDelayMs = Math.max(
+  1000,
+  Number.parseInt(process.env.STARTUP_RETRY_DELAY_MS ?? '5000', 10) || 5000,
+);
 
-      const appliedMigrations = await applyPendingMigrations();
-      logger.info('Applied pending migrations before server start', {
-        appliedMigrations,
-      });
-    }
+const sleep = (delayMs: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
 
-    const dbConnected = await testConnection();
-    if (!dbConnected) {
-      logger.error('Failed to connect to database');
+const isRetryableStartupError = (error: unknown): boolean => {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const typedError = error as { code?: unknown; message?: unknown; cause?: unknown };
+  const code = typeof typedError.code === 'string' ? typedError.code : null;
+  if (code && ['57P03', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN'].includes(code)) {
+    return true;
+  }
+
+  const message = typeof typedError.message === 'string' ? typedError.message.toLowerCase() : '';
+  if (
+    message.includes('database system is starting up') ||
+    message.includes('failed to connect to database') ||
+    message.includes('connect econnrefused') ||
+    message.includes('connection terminated') ||
+    message.includes('connection timeout')
+  ) {
+    return true;
+  }
+
+  return typedError.cause ? isRetryableStartupError(typedError.cause) : false;
+};
+
+const prepareServerStartup = async () => {
+  const pendingMigrations = await getPendingMigrations();
+  if (pendingMigrations.length > 0) {
+    logger.warn('Pending migrations detected', { pendingMigrations });
+    if (env.NODE_ENV === 'production') {
+      logger.error('Refusing to start in production with pending migrations');
       process.exit(1);
     }
 
-    await ensureSuperAdminExists(env);
+    const appliedMigrations = await applyPendingMigrations();
+    logger.info('Applied pending migrations before server start', {
+      appliedMigrations,
+    });
+  }
 
-    await ensureExportDir();
-    await cleanupOldExports();
+  const dbConnected = await testConnection();
+  if (!dbConnected) {
+    throw new Error('Failed to connect to database');
+  }
+
+  await ensureSuperAdminExists(env);
+  await ensureExportDir();
+  await cleanupOldExports();
+  await runNotificationMaintenance();
+};
+
+const prepareServerStartupWithRetry = async () => {
+  for (let attempt = 1; attempt <= startupRetryAttempts; attempt += 1) {
+    try {
+      await prepareServerStartup();
+      return;
+    } catch (error) {
+      const canRetry = attempt < startupRetryAttempts && isRetryableStartupError(error);
+      if (!canRetry) {
+        throw error;
+      }
+      logger.warn('Server startup dependency is not ready; retrying', {
+        attempt,
+        maxAttempts: startupRetryAttempts,
+        retryDelayMs: startupRetryDelayMs,
+        error: error instanceof Error ? error.message : 'Unknown startup error',
+      });
+      await sleep(startupRetryDelayMs);
+    }
+  }
+};
+
+const startServer = async () => {
+  try {
+    await prepareServerStartupWithRetry();
     exportCleanupInterval = setInterval(
-      () => cleanupOldExports().catch((error) => logger.error('Scheduled export cleanup failed:', error)),
-      env.EXPORT_CLEANUP_INTERVAL_HOURS * 60 * 60 * 1000
+      () =>
+        cleanupOldExports().catch((error) =>
+          logger.error('Scheduled export cleanup failed:', error),
+        ),
+      env.EXPORT_CLEANUP_INTERVAL_HOURS * 60 * 60 * 1000,
     );
-    await runNotificationMaintenance();
     notificationMaintenanceInterval = setInterval(
       () =>
         runNotificationMaintenance().catch((error) =>
@@ -145,6 +210,5 @@ module.exports = {
   app,
   startServer,
 };
-
 
 export {};

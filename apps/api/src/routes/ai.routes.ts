@@ -1,6 +1,6 @@
 const express = require('express');
 const aiController = require('../controllers/ai.controller');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireProtectedSuperAdmin } = require('../middleware/auth');
 const {
   validate,
   paginationValidation,
@@ -11,6 +11,7 @@ const { asyncHandler } = require('../middleware/error');
 const router = express.Router();
 
 router.use(authenticate);
+router.use(requireProtectedSuperAdmin);
 
 router.get(
   '/runs/:runId',

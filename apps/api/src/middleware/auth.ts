@@ -4,6 +4,7 @@ import { query } from '../config/database';
 const logger = require('../utils/logger');
 import type { user_role } from '../types/roles';
 import { publicVisibleStatuses, synchronizeProjectStatuses } from '../lib/projectLifecycle';
+import { isProtectedSuperAdminEmail } from '../lib/userWorkflow';
 
 interface TokenPayload extends JwtPayload {
   userId: string;
@@ -147,6 +148,25 @@ const authorize = (...roles: user_role[]) => {
   };
 };
 
+// Protected super-admin authorization middleware
+const requireProtectedSuperAdmin = (req: Request, res: Response, next: NextFunction): Response | void => {
+  if (!req.user) {
+    return res.status(401).json({
+      success: false,
+      message: 'Not authenticated',
+    });
+  }
+
+  if (req.user.role !== 'admin' || !isProtectedSuperAdminEmail(req.user.email)) {
+    return res.status(403).json({
+      success: false,
+      message: 'Only the protected super administrator can manage project AI.',
+    });
+  }
+
+  next();
+};
+
 // Check project access middleware
 const checkProjectAccess = async (req: Request, res: Response, next: NextFunction): Promise<Response | void> => {
   try {
@@ -282,4 +302,12 @@ const checkProjectAdmin = async (req: Request, res: Response, next: NextFunction
   }
 };
 
-export { generateToken, generateRefreshToken, authenticate, authorize, checkProjectAccess, checkProjectAdmin };
+export {
+  generateToken,
+  generateRefreshToken,
+  authenticate,
+  authorize,
+  requireProtectedSuperAdmin,
+  checkProjectAccess,
+  checkProjectAdmin,
+};

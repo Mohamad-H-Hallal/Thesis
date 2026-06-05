@@ -14,6 +14,8 @@ import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
+import '../../../ai/presentation/ai_permissions.dart';
+import '../../../ai/presentation/widgets/project_ai_panel.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../../map/presentation/widgets/project_quick_map_card.dart';
 import '../../domain/project.dart';
@@ -255,6 +257,10 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
         }
 
         final isUserRole = role == UserRole.viewer;
+        final canManageAi = canManageProjectAi(
+          user: session?.user,
+          project: project,
+        );
         final hasContributorAssignment =
             role == UserRole.contributor &&
             project.hasApprovedCurrentUserAssignment;
@@ -435,6 +441,18 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
               ),
             ),
             const SizedBox(height: AppSpacing.lg),
+            if (canManageAi) ...[
+              AnimatedReveal(
+                delay: const Duration(milliseconds: 120),
+                child: const SectionHeader(title: 'AI'),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              AnimatedReveal(
+                delay: const Duration(milliseconds: 125),
+                child: ProjectAiPanel(project: project),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+            ],
             AnimatedReveal(
               delay: const Duration(milliseconds: 130),
               child: const SectionHeader(title: 'Map Preview'),
