@@ -54,7 +54,7 @@ class FakeAiRepository implements AiRepository {
       AiRunLog(
         id: 'log-$createCount',
         level: 'info',
-        message: 'Draft AI run record created. Worker not connected yet.',
+        message: 'Draft AI run record created. No worker command was started.',
         createdAt: DateTime.utc(2026, 6, 1),
       ),
       ...logs,

@@ -199,6 +199,121 @@ Future<void> _pumpAiScreen(
   await tester.pumpAndSettle();
 }
 
+AiRun _phaseFRegionalRun({
+  required String projectId,
+  String id = '00f4bb0c-66cc-4fec-80c3-f3ecc96175f4',
+  String status = 'ready_for_review',
+  String executionMode = 'regional_model_eval',
+  String? failureReason,
+}) {
+  return AiRun(
+    id: id,
+    projectId: projectId,
+    status: status,
+    labelField: 'L4_descr',
+    scopeType: 'project',
+    trainingFeatureCount: 1406,
+    eligibleFeatureCount: 1394,
+    excludedFeatureCount: 12,
+    selectedModel: 'svm_rbf',
+    createdAt: DateTime.utc(2026, 6, 5, 10),
+    startedAt: DateTime.utc(2026, 6, 5, 10, 1),
+    completedAt: status == 'failed' ? null : DateTime.utc(2026, 6, 5, 10, 2, 1),
+    failedAt: status == 'failed' ? DateTime.utc(2026, 6, 5, 10, 2) : null,
+    failureReason: failureReason,
+    metadata: <String, dynamic>{
+      'execution_mode': executionMode,
+      'duration_ms': 60155,
+      'ai_pipeline_run_id': 'app-ai-00f4bb0c66cc4fec80c3f3ec',
+      'pipeline_bridge_phase': 'phase_f',
+      'worker_phase': 'regional_worker',
+      'output_directory': 'outputs/runs/app-ai-00f4bb0c66cc4fec80c3f3ec',
+      'output_paths': <String>[
+        'outputs/projects/$projectId/ground_truth.geojson',
+        'outputs/runs/app-ai-00f4bb0c66cc4fec80c3f3ec/feature_table.csv',
+        'outputs/runs/app-ai-00f4bb0c66cc4fec80c3f3ec/metrics.json',
+        'outputs/runs/app-ai-00f4bb0c66cc4fec80c3f3ec/confusion_matrix.csv',
+        'outputs/runs/app-ai-00f4bb0c66cc4fec80c3f3ec/model_metadata.json',
+        'outputs/runs/app-ai-00f4bb0c66cc4fec80c3f3ec/feature_importance.csv',
+      ],
+      'class_counts': <Map<String, dynamic>>[
+        <String, dynamic>{'class_label': 'Olives', 'sample_count': 940},
+        <String, dynamic>{'class_label': 'Fruit Trees', 'sample_count': 253},
+        <String, dynamic>{
+          'class_label': 'Citrus Fruit Trees',
+          'sample_count': 201,
+        },
+        <String, dynamic>{'class_label': 'Vineyards', 'sample_count': 12},
+      ],
+      'excluded_classes': <Map<String, dynamic>>[
+        <String, dynamic>{'class_label': 'Vineyards', 'sample_count': 12},
+      ],
+      'scientific_limitations': <String>[
+        'Regional proof-of-concept only; not a national model.',
+        'AI predictions remain separate from approved field/import features.',
+      ],
+      'model_metrics_summary': <String, dynamic>{
+        'best_model': 'svm_rbf',
+        'sample_count': 1394,
+        'train_count': 1105,
+        'test_count': 289,
+        'dropped_null_rows': 0,
+        'models': <String, dynamic>{
+          'random_forest': <String, dynamic>{
+            'accuracy': 0.7785467128027682,
+            'macro_f1': 0.5460684259981677,
+            'weighted_f1': 0.7448882408657982,
+          },
+          'svm_rbf': <String, dynamic>{
+            'accuracy': 0.7162629757785467,
+            'macro_f1': 0.6167855821573912,
+            'weighted_f1': 0.7390514814008126,
+          },
+          'xgboost': <String, dynamic>{
+            'accuracy': 0.7923875432525952,
+            'macro_f1': 0.5765313488008162,
+            'weighted_f1': 0.7600163582946212,
+          },
+        },
+        'warnings': <String>[
+          'Dataset is South/Southwest Lebanon only; do not claim national accuracy.',
+          'Vineyards excluded because n=12 is below the current threshold.',
+          'Fruit Trees is a broad/ambiguous label.',
+        ],
+      },
+    },
+  );
+}
+
+List<AiRunLog> _phaseFLogs() {
+  return <AiRunLog>[
+    AiRunLog(
+      id: 'log-1',
+      level: 'info',
+      message: 'Worker started regional model evaluation.',
+      metadata: const <String, dynamic>{'step': 'extracting_features'},
+      createdAt: DateTime.utc(2026, 6, 5, 10, 1),
+    ),
+    AiRunLog(
+      id: 'log-2',
+      level: 'info',
+      message: 'Feature extraction completed.',
+      metadata: const <String, dynamic>{
+        'step': 'extracting_features',
+        'duration_ms': 143950,
+      },
+      createdAt: DateTime.utc(2026, 6, 5, 10, 1, 45),
+    ),
+    AiRunLog(
+      id: 'log-3',
+      level: 'warning',
+      message: 'Config checked with DB_PASSWORD=secret-value',
+      metadata: const <String, dynamic>{'step': 'training'},
+      createdAt: DateTime.utc(2026, 6, 5, 10, 2),
+    ),
+  ];
+}
+
 void main() {
   testWidgets('AI controls are visible only for protected super-admins', (
     tester,
@@ -703,14 +818,128 @@ void main() {
     },
   );
 
+  testWidgets('runs list displays empty state and creates draft metadata only', (
+    tester,
+  ) async {
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+    );
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    expect(find.text('No AI run records yet'), findsOneWidget);
+    expect(
+      find.text(
+        'View AI run records, worker logs, and regional proof-of-concept results.',
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Create draft run record'));
+    await tester.pumpAndSettle();
+
+    expect(repository.createCount, 1);
+    expect(find.text('Run details'), findsOneWidget);
+    expect(
+      find.text(
+        'Model metrics will appear after a regional model evaluation run.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('No published AI layers yet.'), findsOneWidget);
+    expect(
+      find.text('AI map layers are planned for the next phase.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('run details show Phase F metadata, model metrics, and outputs', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1080, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
+      logs: _phaseFLogs(),
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    await tester.tap(find.text('Run 00f4bb0c'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Run details'), findsOneWidget);
+    expect(
+      find.text('This is a regional proof-of-concept, not a national model.'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Execution mode: regional model eval'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Label field: L4_descr'), findsOneWidget);
+    expect(find.textContaining('Duration: 1m 00s'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Model metrics'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Best model: svm rbf'), findsOneWidget);
+    expect(find.textContaining('random forest:'), findsOneWidget);
+    expect(find.textContaining('accuracy 0.779'), findsOneWidget);
+    expect(find.textContaining('svm rbf:'), findsOneWidget);
+    expect(find.textContaining('macro-F1 0.617'), findsOneWidget);
+    expect(find.textContaining('xgboost:'), findsOneWidget);
+    expect(find.textContaining('Confusion matrix:'), findsWidgets);
+    expect(find.textContaining('Feature importance:'), findsWidgets);
+
+    await tester.ensureVisible(find.text('Class counts'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Olives: 940 samples'), findsOneWidget);
+    expect(find.textContaining('Fruit Trees: 253 samples'), findsOneWidget);
+    expect(find.text('Excluded classes'), findsOneWidget);
+    expect(find.textContaining('Vineyards: 12 samples'), findsWidgets);
+
+    await tester.ensureVisible(find.text('Output paths'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Feature table:'), findsOneWidget);
+    expect(find.textContaining('metrics.json'), findsWidgets);
+    expect(find.textContaining('model_metadata.json'), findsWidgets);
+    expect(find.text('No published AI layers yet.'), findsOneWidget);
+  });
+
   testWidgets(
-    'runs list displays empty state and creates draft metadata only',
+    'run logs show timestamp metadata and redact secret-looking values',
     (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1080, 1800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
       final project = _project();
       final repository = FakeAiRepository(
         settings: fakeAiSettings(projectId: project.id),
         readiness: fakeReadiness(projectId: project.id),
+        runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
+        logs: _phaseFLogs(),
       );
+
       await _pumpAiScreen(
         tester,
         session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
@@ -719,29 +948,58 @@ void main() {
         section: 'runs',
       );
 
-      expect(find.text('No AI run records yet'), findsOneWidget);
-      expect(
-        find.text(
-          'View AI run records. Worker execution is not connected yet.',
-        ),
-        findsOneWidget,
-      );
-
-      await tester.tap(find.text('Create draft run record'));
+      await tester.tap(find.text('Run 00f4bb0c'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Logs'));
       await tester.pumpAndSettle();
 
-      expect(repository.createCount, 1);
-      expect(find.text('Run details'), findsOneWidget);
       expect(
-        find.text('No metrics yet. The worker is not connected.'),
+        find.text('Worker started regional model evaluation.'),
         findsOneWidget,
       );
-      expect(
-        find.text('No AI layers yet. Nothing is published to viewers.'),
-        findsOneWidget,
-      );
+      expect(find.text('Feature extraction completed.'), findsOneWidget);
+      expect(find.textContaining('Step extracting_features'), findsWidgets);
+      expect(find.textContaining('2m 23s'), findsOneWidget);
+      expect(find.textContaining('secret-value'), findsNothing);
+      expect(find.textContaining('[redacted]'), findsOneWidget);
     },
   );
+
+  testWidgets('failed run details show failure reason and clean empty states', (
+    tester,
+  ) async {
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[
+        _phaseFRegionalRun(
+          projectId: project.id,
+          id: 'failed-run-1',
+          status: 'failed',
+          executionMode: 'regional_feature_extraction',
+          failureReason: 'AI pipeline timed out before training.',
+        ),
+      ],
+      logs: const <AiRunLog>[],
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    await tester.tap(find.text('Run failed-r'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Failure reason:'), findsOneWidget);
+    expect(find.textContaining('AI pipeline timed out'), findsWidgets);
+    expect(find.text('No logs yet.'), findsOneWidget);
+    expect(find.text('No published AI layers yet.'), findsOneWidget);
+  });
 
   testWidgets('runs expand inline and toggle selected details', (tester) async {
     final project = _project();

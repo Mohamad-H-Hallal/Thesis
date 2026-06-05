@@ -96,7 +96,8 @@ class ProjectAiPanel extends ConsumerWidget {
           const SizedBox(height: AppSpacing.md),
           const _InlineNotice(
             icon: Icons.info_outline,
-            text: 'Worker execution is not connected yet.',
+            text:
+                'Worker execution is controlled from backend commands; this panel does not start AI.',
           ),
           const SizedBox(height: AppSpacing.md),
           FilledButton.icon(

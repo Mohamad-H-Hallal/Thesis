@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
+import '../../../../core/pagination/paginated_result.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/utils/lebanon_time.dart';
 import '../../../../core/widgets/app_card.dart';
@@ -83,7 +84,7 @@ class _ProjectAiScreenState extends ConsumerState<ProjectAiScreen> {
                   ),
                   const SizedBox(height: AppSpacing.xs),
                   const Text(
-                    'AI uses approved project data. Worker execution is not connected yet.',
+                    'AI uses approved project data. Regional worker results appear here after review.',
                   ),
                   const SizedBox(height: AppSpacing.md),
                   SegmentedButton<String>(
@@ -475,7 +476,9 @@ class _ProjectAiSettingsSectionState
                     ? null
                     : (value) => setState(() => _isEnabled = value),
                 title: const Text('Enable AI for this project'),
-                subtitle: const Text('Worker execution is not connected yet.'),
+                subtitle: const Text(
+                  'Settings prepare worker runs but do not start one.',
+                ),
               ),
               const SizedBox(height: AppSpacing.sm),
               DropdownButtonFormField<String>(
@@ -689,7 +692,7 @@ class _ProjectAiRunsSectionState extends ConsumerState<ProjectAiRunsSection> {
               const SectionHeader(title: 'AI Runs'),
               const SizedBox(height: AppSpacing.sm),
               const Text(
-                'View AI run records. Worker execution is not connected yet.',
+                'View AI run records, worker logs, and regional proof-of-concept results.',
               ),
               const SizedBox(height: AppSpacing.md),
               settingsAsync.when(
@@ -816,7 +819,7 @@ class _ProjectAiRunsSectionState extends ConsumerState<ProjectAiRunsSection> {
       if (mounted) {
         AppSnackbar.showSuccess(
           context,
-          'Draft AI run record created. Worker not connected yet.',
+          'Draft AI run record created. No worker command was started.',
         );
       }
     } catch (error) {
@@ -881,53 +884,36 @@ class _AiRunDetailCard extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
-            _KeyValueList(
-              title: 'Summary',
-              rows: [
-                MapEntry('Label field', run.labelField ?? 'Not set'),
-                MapEntry('Scope', _formatValue(run.scopeType)),
-                MapEntry('Training features', '${run.trainingFeatureCount}'),
-                MapEntry('Eligible features', '${run.eligibleFeatureCount}'),
-                MapEntry('Selected model', run.selectedModel ?? 'Not selected'),
-                MapEntry(
-                  'Created',
-                  run.createdAt == null
-                      ? 'Unknown'
-                      : formatLebanonDate(run.createdAt),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.md),
-            _AsyncCountSection(
-              title: 'Metrics',
-              emptyText: 'No metrics yet. The worker is not connected.',
-              asyncValue: metricsAsync,
-              labelFor: (metric) => metric.modelName,
-            ),
-            const SizedBox(height: AppSpacing.md),
-            _AsyncCountSection(
-              title: 'AI output layers',
-              emptyText: 'No AI layers yet. Nothing is published to viewers.',
-              asyncValue: layersAsync,
-              labelFor: (layer) => layer.name,
-            ),
-            const SizedBox(height: AppSpacing.md),
-            logsAsync.when(
-              loading: () => const LinearProgressIndicator(),
-              error: (error, _) => Text(
-                userFacingErrorMessage(
-                  error,
-                  fallback: 'Unable to load run logs.',
-                ),
+            if (_isRegionalRun(run)) ...[
+              const _NoticeRow(
+                icon: Icons.travel_explore_outlined,
+                text:
+                    'This is a regional proof-of-concept, not a national model.',
               ),
-              data: (page) => _KeyValueList(
-                title: 'Logs',
-                emptyText: 'No logs yet.',
-                rows: page.items
-                    .map((log) => MapEntry(log.level, log.message))
-                    .toList(growable: false),
+              const SizedBox(height: AppSpacing.sm),
+            ],
+            _KeyValueList(title: 'Summary', rows: _runSummaryRows(run)),
+            if (run.failureReason?.trim().isNotEmpty ?? false) ...[
+              const SizedBox(height: AppSpacing.md),
+              _NoticeRow(
+                icon: Icons.error_outline,
+                text: 'Failure reason: ${_safeText(run.failureReason!)}',
               ),
-            ),
+            ],
+            const SizedBox(height: AppSpacing.md),
+            _OutputPathsSection(paths: _outputPaths(run.metadata)),
+            const SizedBox(height: AppSpacing.md),
+            _MetricsSection(run: run, asyncValue: metricsAsync),
+            const SizedBox(height: AppSpacing.md),
+            _ClassCountsSection(run: run),
+            const SizedBox(height: AppSpacing.md),
+            _LayerSection(asyncValue: layersAsync),
+            const SizedBox(height: AppSpacing.md),
+            _LimitationSection(run: run),
+            const SizedBox(height: AppSpacing.md),
+            _LogsSection(asyncValue: logsAsync),
+            const SizedBox(height: AppSpacing.sm),
+            _TechnicalDetailsSection(run: run),
           ],
         ),
       ),
@@ -935,35 +921,578 @@ class _AiRunDetailCard extends ConsumerWidget {
   }
 }
 
-class _AsyncCountSection<T> extends StatelessWidget {
-  const _AsyncCountSection({
-    required this.title,
-    required this.emptyText,
-    required this.asyncValue,
-    required this.labelFor,
-  });
+class _OutputPathsSection extends StatelessWidget {
+  const _OutputPathsSection({required this.paths});
 
-  final String title;
-  final String emptyText;
-  final AsyncValue<List<T>> asyncValue;
-  final String Function(T item) labelFor;
+  final List<String> paths;
+
+  @override
+  Widget build(BuildContext context) {
+    return _KeyValueList(
+      title: 'Output paths',
+      emptyText: 'No output paths recorded yet.',
+      rows: paths
+          .map((path) => MapEntry(_outputPathLabel(path), _safeText(path)))
+          .toList(growable: false),
+    );
+  }
+}
+
+class _MetricsSection extends StatelessWidget {
+  const _MetricsSection({required this.run, required this.asyncValue});
+
+  final AiRun run;
+  final AsyncValue<List<AiRunMetric>> asyncValue;
 
   @override
   Widget build(BuildContext context) {
     return asyncValue.when(
       loading: () => const LinearProgressIndicator(),
       error: (error, _) => Text(
-        userFacingErrorMessage(error, fallback: 'Unable to load $title.'),
+        userFacingErrorMessage(error, fallback: 'Unable to load AI metrics.'),
       ),
-      data: (items) => _KeyValueList(
-        title: title,
-        emptyText: emptyText,
-        rows: items
-            .map((item) => MapEntry(labelFor(item), 'available'))
-            .toList(growable: false),
+      data: (metrics) {
+        final rows = _metricRows(run, metrics);
+        if (rows.isEmpty) {
+          return const _KeyValueList(
+            title: 'Model metrics',
+            emptyText:
+                'Model metrics will appear after a regional model evaluation run.',
+            rows: [],
+          );
+        }
+        return _KeyValueList(title: 'Model metrics', rows: rows);
+      },
+    );
+  }
+}
+
+class _ClassCountsSection extends StatelessWidget {
+  const _ClassCountsSection({required this.run});
+
+  final AiRun run;
+
+  @override
+  Widget build(BuildContext context) {
+    final classRows = _countRows(run.metadata['class_counts']);
+    final excludedRows = _countRows(run.metadata['excluded_classes']);
+    if (classRows.isEmpty && excludedRows.isEmpty) {
+      return const _KeyValueList(
+        title: 'Class counts',
+        emptyText: 'No class count summary recorded yet.',
+        rows: [],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _KeyValueList(title: 'Class counts', rows: classRows),
+        if (excludedRows.isNotEmpty) ...[
+          const SizedBox(height: AppSpacing.sm),
+          _KeyValueList(title: 'Excluded classes', rows: excludedRows),
+        ],
+      ],
+    );
+  }
+}
+
+class _LayerSection extends StatelessWidget {
+  const _LayerSection({required this.asyncValue});
+
+  final AsyncValue<List<AiOutputLayer>> asyncValue;
+
+  @override
+  Widget build(BuildContext context) {
+    return asyncValue.when(
+      loading: () => const LinearProgressIndicator(),
+      error: (error, _) => Text(
+        userFacingErrorMessage(error, fallback: 'Unable to load AI layers.'),
+      ),
+      data: (layers) {
+        if (layers.isEmpty) {
+          return const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _KeyValueList(
+                title: 'AI output layers',
+                emptyText: 'No published AI layers yet.',
+                rows: [],
+              ),
+              SizedBox(height: AppSpacing.xs),
+              _NoticeRow(
+                icon: Icons.layers_outlined,
+                text: 'AI map layers are planned for the next phase.',
+              ),
+            ],
+          );
+        }
+        return _KeyValueList(
+          title: 'AI output layers',
+          rows: layers
+              .map(
+                (layer) => MapEntry(
+                  layer.name,
+                  '${_formatValue(layer.layerType)} - ${_formatValue(layer.status)}',
+                ),
+              )
+              .toList(growable: false),
+        );
+      },
+    );
+  }
+}
+
+class _LimitationSection extends StatelessWidget {
+  const _LimitationSection({required this.run});
+
+  final AiRun run;
+
+  @override
+  Widget build(BuildContext context) {
+    final messages = _limitationMessages(run);
+    if (messages.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return _MessageList(title: 'Limitations', messages: messages);
+  }
+}
+
+class _LogsSection extends StatelessWidget {
+  const _LogsSection({required this.asyncValue});
+
+  final AsyncValue<PaginatedResult<AiRunLog>> asyncValue;
+
+  @override
+  Widget build(BuildContext context) {
+    return asyncValue.when(
+      loading: () => const LinearProgressIndicator(),
+      error: (error, _) => Text(
+        userFacingErrorMessage(error, fallback: 'Unable to load run logs.'),
+      ),
+      data: (page) {
+        if (page.items.isEmpty) {
+          return const _KeyValueList(
+            title: 'Logs',
+            emptyText: 'No logs yet.',
+            rows: [],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Logs', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: AppSpacing.xs),
+            for (final log in page.items) _LogRow(log: log),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _LogRow extends StatelessWidget {
+  const _LogRow({required this.log});
+
+  final AiRunLog log;
+
+  @override
+  Widget build(BuildContext context) {
+    final details = <String>[
+      if (log.createdAt != null) formatLebanonDate(log.createdAt),
+      if (_metadataText(log.metadata, 'step') != null)
+        'Step ${_metadataText(log.metadata, 'step')}',
+      if (_metadataText(log.metadata, 'duration_ms') != null)
+        _formatDurationMs(_toIntValue(log.metadata['duration_ms'])),
+    ].where((value) => value.trim().isNotEmpty).join(' - ');
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          StatusChip(status: log.level),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_safeText(log.message)),
+                if (details.isNotEmpty)
+                  Text(details, style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
+}
+
+class _TechnicalDetailsSection extends StatelessWidget {
+  const _TechnicalDetailsSection({required this.run});
+
+  final AiRun run;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <MapEntry<String, String>>[
+      if (_metadataText(run.metadata, 'ai_pipeline_run_id') != null)
+        MapEntry(
+          'AI pipeline run',
+          _metadataText(run.metadata, 'ai_pipeline_run_id')!,
+        ),
+      if (_metadataText(run.metadata, 'output_directory') != null)
+        MapEntry(
+          'Output directory',
+          _metadataText(run.metadata, 'output_directory')!,
+        ),
+      if (_metadataText(run.metadata, 'pipeline_bridge_phase') != null)
+        MapEntry(
+          'Pipeline bridge phase',
+          _metadataText(run.metadata, 'pipeline_bridge_phase')!,
+        ),
+      if (_metadataText(run.metadata, 'worker_phase') != null)
+        MapEntry('Worker phase', _metadataText(run.metadata, 'worker_phase')!),
+      if (run.metadata.isNotEmpty)
+        MapEntry('Metadata keys', run.metadata.keys.toList().join(', ')),
+    ];
+
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: EdgeInsets.zero,
+      title: const Text('Technical details'),
+      children: [
+        _KeyValueList(
+          title: 'Run metadata',
+          emptyText: 'No technical metadata recorded.',
+          rows: rows
+              .map((row) => MapEntry(row.key, _safeText(row.value)))
+              .toList(growable: false),
+        ),
+      ],
+    );
+  }
+}
+
+List<MapEntry<String, String>> _runSummaryRows(AiRun run) {
+  final executionMode = _metadataText(run.metadata, 'execution_mode');
+  return [
+    MapEntry('Status', _formatValue(run.status)),
+    MapEntry('Execution mode', _formatValue(executionMode ?? 'not set')),
+    MapEntry('Label field', run.labelField ?? 'Not set'),
+    MapEntry('Scope', _formatValue(run.scopeType)),
+    if (run.regionPreset?.trim().isNotEmpty ?? false)
+      MapEntry('Region preset', run.regionPreset!),
+    MapEntry('Training features', '${run.trainingFeatureCount}'),
+    MapEntry('Eligible features', '${run.eligibleFeatureCount}'),
+    MapEntry('Excluded features', '${run.excludedFeatureCount}'),
+    MapEntry('Selected model', run.selectedModel ?? 'Not selected'),
+    MapEntry('Duration', _runDuration(run)),
+    MapEntry('Created', _formatDate(run.createdAt)),
+    MapEntry('Started', _formatDate(run.startedAt)),
+    MapEntry('Completed', _formatDate(run.completedAt)),
+  ];
+}
+
+List<MapEntry<String, String>> _metricRows(
+  AiRun run,
+  List<AiRunMetric> metrics,
+) {
+  final summary = _mapValue(run.metadata['model_metrics_summary']);
+  final rows = <MapEntry<String, String>>[];
+  final bestModel = _stringValue(summary['best_model']);
+  if (bestModel != null) {
+    rows.add(MapEntry('Best model', _formatValue(bestModel)));
+  }
+  final sampleCount = _toIntValue(summary['sample_count']);
+  if (sampleCount != null) {
+    rows.add(MapEntry('Samples evaluated', sampleCount.toString()));
+  }
+  final trainCount = _toIntValue(summary['train_count']);
+  final testCount = _toIntValue(summary['test_count']);
+  if (trainCount != null || testCount != null) {
+    rows.add(
+      MapEntry(
+        'Train/test split',
+        '${trainCount ?? 'unknown'} / ${testCount ?? 'unknown'}',
+      ),
+    );
+  }
+  final droppedNullRows = _toIntValue(summary['dropped_null_rows']);
+  if (droppedNullRows != null) {
+    rows.add(MapEntry('Dropped null rows', droppedNullRows.toString()));
+  }
+  final modelRows = _modelMetricRows(summary['models']);
+  if (modelRows.isNotEmpty) {
+    rows.addAll(modelRows);
+  }
+  if (rows.isEmpty && metrics.isNotEmpty) {
+    for (final metric in metrics) {
+      rows.add(
+        MapEntry(
+          metric.modelName,
+          [
+            if (metric.overallAccuracy != null)
+              'accuracy ${_formatMetric(metric.overallAccuracy)}',
+            if (metric.macroF1 != null)
+              'macro-F1 ${_formatMetric(metric.macroF1)}',
+            if (metric.weightedF1 != null)
+              'weighted-F1 ${_formatMetric(metric.weightedF1)}',
+          ].join(', '),
+        ),
+      );
+    }
+  }
+  final confusionPath = _firstOutputPath(run.metadata, 'confusion_matrix');
+  if (confusionPath != null) {
+    rows.add(MapEntry('Confusion matrix', confusionPath));
+  }
+  final importancePath = _firstOutputPath(run.metadata, 'feature_importance');
+  if (importancePath != null) {
+    rows.add(MapEntry('Feature importance', importancePath));
+  }
+  return rows
+      .map((row) => MapEntry(row.key, _safeText(row.value)))
+      .toList(growable: false);
+}
+
+List<MapEntry<String, String>> _modelMetricRows(dynamic value) {
+  final models = _mapValue(value);
+  final rows = <MapEntry<String, String>>[];
+  for (final entry in models.entries) {
+    final metrics = _mapValue(entry.value);
+    final values = <String>[
+      if (_toDoubleValue(metrics['accuracy']) != null)
+        'accuracy ${_formatMetric(_toDoubleValue(metrics['accuracy']))}',
+      if (_toDoubleValue(metrics['macro_f1']) != null)
+        'macro-F1 ${_formatMetric(_toDoubleValue(metrics['macro_f1']))}',
+      if (_toDoubleValue(metrics['weighted_f1']) != null)
+        'weighted-F1 ${_formatMetric(_toDoubleValue(metrics['weighted_f1']))}',
+    ];
+    if (values.isNotEmpty) {
+      rows.add(MapEntry(_formatValue(entry.key), values.join(', ')));
+    }
+  }
+  return rows;
+}
+
+List<MapEntry<String, String>> _countRows(dynamic value) {
+  final rows = <MapEntry<String, String>>[];
+  final items = value is List ? value : const <dynamic>[];
+  for (final item in items) {
+    final map = _mapValue(item);
+    final label =
+        _stringValue(map['class_label']) ?? _stringValue(map['label']);
+    final count =
+        _toIntValue(map['sample_count']) ??
+        _toIntValue(map['feature_count']) ??
+        _toIntValue(map['count']);
+    if (label != null && count != null) {
+      rows.add(MapEntry(label, '$count samples'));
+    }
+  }
+  return rows;
+}
+
+List<String> _limitationMessages(AiRun run) {
+  final messages = <String>{};
+  if (_isRegionalRun(run)) {
+    messages.add(
+      'Regional proof-of-concept only. Do not use as a national model.',
+    );
+  }
+  for (final value in _stringList(run.metadata['scientific_limitations'])) {
+    messages.add(value);
+  }
+  final summary = _mapValue(run.metadata['model_metrics_summary']);
+  for (final value in _stringList(summary['warnings'])) {
+    messages.add(value);
+  }
+  return messages.map(_safeText).toList(growable: false);
+}
+
+List<String> _outputPaths(Map<String, dynamic> metadata) {
+  final paths = <String>{};
+  void collect(dynamic value, [String key = '']) {
+    if (value == null) {
+      return;
+    }
+    if (value is String) {
+      final normalized = value.replaceAll('\\', '/').trim();
+      if (normalized.contains('outputs/')) {
+        paths.add(normalized);
+      }
+      return;
+    }
+    if (value is List) {
+      for (final item in value) {
+        collect(item, key);
+      }
+      return;
+    }
+    if (value is Map) {
+      for (final entry in value.entries) {
+        collect(entry.value, entry.key.toString());
+      }
+    }
+  }
+
+  collect(metadata);
+  return paths.toList()..sort();
+}
+
+String? _firstOutputPath(Map<String, dynamic> metadata, String contains) {
+  final needle = contains.toLowerCase();
+  for (final path in _outputPaths(metadata)) {
+    if (path.toLowerCase().contains(needle)) {
+      return path;
+    }
+  }
+  return null;
+}
+
+String _outputPathLabel(String path) {
+  final parts = path.split('/').where((part) => part.isNotEmpty).toList();
+  if (parts.isEmpty) {
+    return 'Output';
+  }
+  final file = parts.last;
+  if (file == 'feature_table.csv') return 'Feature table';
+  if (file == 'metrics.json') return 'Metrics';
+  if (file == 'confusion_matrix.csv') return 'Confusion matrix';
+  if (file == 'model_metadata.json') return 'Model metadata';
+  if (file == 'classification_report.csv') return 'Classification report';
+  if (file == 'feature_importance.csv') return 'Feature importance';
+  if (file == 'feature_extraction_summary.json') {
+    return 'Feature extraction summary';
+  }
+  if (file == 'ground_truth.geojson') return 'Ground truth';
+  return file;
+}
+
+bool _isRegionalRun(AiRun run) {
+  final executionMode = _metadataText(run.metadata, 'execution_mode') ?? '';
+  return executionMode.startsWith('regional_') ||
+      _stringList(
+        run.metadata['scientific_limitations'],
+      ).any((message) => message.toLowerCase().contains('regional'));
+}
+
+String _runDuration(AiRun run) {
+  final durationMs =
+      _toIntValue(run.metadata['duration_ms']) ??
+      _toIntValue(
+        _mapValue(run.metadata['model_metrics_summary'])['duration_ms'],
+      );
+  if (durationMs != null) {
+    return _formatDurationMs(durationMs);
+  }
+  if (run.startedAt != null && run.completedAt != null) {
+    return _formatDuration(run.completedAt!.difference(run.startedAt!));
+  }
+  return 'Unknown';
+}
+
+String _formatDurationMs(int? durationMs) {
+  if (durationMs == null) {
+    return '';
+  }
+  return _formatDuration(Duration(milliseconds: durationMs));
+}
+
+String _formatDuration(Duration duration) {
+  if (duration.inMinutes >= 1) {
+    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '${duration.inMinutes}m ${seconds}s';
+  }
+  if (duration.inSeconds >= 1) {
+    return '${duration.inSeconds}s';
+  }
+  return '${duration.inMilliseconds}ms';
+}
+
+String _formatDate(DateTime? date) =>
+    date == null ? 'Unknown' : formatLebanonDate(date);
+
+String _formatMetric(double? value) =>
+    value == null ? 'n/a' : value.toStringAsFixed(3);
+
+String? _metadataText(Map<String, dynamic> metadata, String key) =>
+    _stringValue(metadata[key]);
+
+Map<String, dynamic> _mapValue(dynamic value) {
+  if (value is Map<String, dynamic>) {
+    return value;
+  }
+  if (value is Map) {
+    return Map<String, dynamic>.from(value);
+  }
+  return const <String, dynamic>{};
+}
+
+String? _stringValue(dynamic value) {
+  if (value == null) {
+    return null;
+  }
+  final text = value.toString().trim();
+  return text.isEmpty ? null : text;
+}
+
+int? _toIntValue(dynamic value) {
+  if (value is int) {
+    return value;
+  }
+  if (value is num) {
+    return value.toInt();
+  }
+  if (value is String) {
+    return int.tryParse(value);
+  }
+  return null;
+}
+
+double? _toDoubleValue(dynamic value) {
+  if (value is double) {
+    return value;
+  }
+  if (value is num) {
+    return value.toDouble();
+  }
+  if (value is String) {
+    return double.tryParse(value);
+  }
+  return null;
+}
+
+List<String> _stringList(dynamic value) {
+  if (value is List) {
+    return value
+        .map((item) => item?.toString().trim())
+        .whereType<String>()
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+  }
+  return const <String>[];
+}
+
+String _safeText(String value) {
+  var text = value;
+  final replacements = <RegExp>[
+    RegExp(
+      '-----BEGIN [^-]+PRIVATE KEY-----.*?-----END [^-]+PRIVATE KEY-----',
+      caseSensitive: false,
+      dotAll: true,
+    ),
+    RegExp(
+      r'(password|secret|private[_-]?key|api[_-]?key)\s*[:=]\s*[^,\s}]+',
+      caseSensitive: false,
+    ),
+    RegExp(r'(GEE[-_ ]?KEY[/\\][^,\s}]+)', caseSensitive: false),
+  ];
+  for (final pattern in replacements) {
+    text = text.replaceAll(pattern, '[redacted]');
+  }
+  return text;
 }
 
 class _KeyValueList extends StatelessWidget {

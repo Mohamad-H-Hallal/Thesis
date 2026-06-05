@@ -438,12 +438,14 @@ class AiRunLog {
     required this.id,
     required this.level,
     required this.message,
+    this.metadata = const <String, dynamic>{},
     this.createdAt,
   });
 
   final String id;
   final String level;
   final String message;
+  final Map<String, dynamic> metadata;
   final DateTime? createdAt;
 
   factory AiRunLog.fromMap(Map<String, dynamic> map) {
@@ -451,6 +453,7 @@ class AiRunLog {
       id: _toStringOrNull(map['id']) ?? '',
       level: _toStringOrNull(map['level']) ?? 'info',
       message: _toStringOrNull(map['message']) ?? '',
+      metadata: _toMap(map['metadata']),
       createdAt: _toDateTime(map['created_at']),
     );
   }
