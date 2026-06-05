@@ -35,6 +35,8 @@
     "seed": "tsx src/db/seed.ts",
     "seed:staging": "tsx src/db/seedStaging.ts",
     "staging:verify": "tsx src/db/stagingVerify.ts",
+    "ai:worker:once": "tsx src/jobs/runAiWorkerOnce.ts --once --mock",
+    "ai:worker:dry-run": "tsx src/jobs/runAiWorkerOnce.ts --once --dry-run",
     "notifications:run": "tsx src/jobs/runNotificationMaintenance.ts",
     "phase11:staging": "npm run migrate && npm run seed:staging && npm run staging:verify",
     "release:gate": "npm run openapi:check && npm run lint && npm run typecheck && npm run test:ci && npm run test:perf && npm run audit:prod",
