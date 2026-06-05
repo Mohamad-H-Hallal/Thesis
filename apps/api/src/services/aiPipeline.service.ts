@@ -3,7 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 
-type AiPipelineMode = 'disabled' | 'dry_run' | 'local_ground_truth_export';
+type AiPipelineMode =
+  | 'disabled'
+  | 'dry_run'
+  | 'local_ground_truth_export'
+  | 'regional_feature_extraction'
+  | 'regional_model_eval';
 
 type AiPipelineConfig = {
   enabled: boolean;
@@ -17,7 +22,9 @@ type AiPipelineCommandName =
   | 'config_check'
   | 'dry_run'
   | 'probe_project'
-  | 'export_ground_truth_local';
+  | 'export_ground_truth_local'
+  | 'regional_feature_extraction'
+  | 'regional_model_eval';
 
 type AiPipelineCommandResult = {
   command: AiPipelineCommandName;
@@ -38,6 +45,17 @@ type AiPipelineService = {
     projectId: string,
     labelField: string,
   ) => Promise<AiPipelineCommandResult>;
+  extractRegionalFeatures: (
+    projectId: string,
+    labelField: string,
+    regionalRunId: string,
+  ) => Promise<AiPipelineCommandResult>;
+  evaluateRegionalModel: (
+    projectId: string,
+    labelField: string,
+    regionalRunId: string,
+    featureTablePath?: string,
+  ) => Promise<AiPipelineCommandResult>;
 };
 
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -48,6 +66,8 @@ const validPipelineModes = new Set<AiPipelineMode>([
   'disabled',
   'dry_run',
   'local_ground_truth_export',
+  'regional_feature_extraction',
+  'regional_model_eval',
 ]);
 
 const parseBoolean = (value: string | undefined): boolean => {
@@ -133,6 +153,12 @@ const validateLabelField = (labelField: string): void => {
   }
 };
 
+const validateRegionalRunId = (regionalRunId: string): void => {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(regionalRunId)) {
+    throw new Error('Invalid AI regional run id for pipeline command.');
+  }
+};
+
 class DefaultAiPipelineService implements AiPipelineService {
   private readonly configLoader: () => AiPipelineConfig;
 
@@ -172,6 +198,68 @@ class DefaultAiPipelineService implements AiPipelineService {
       '01_export_ground_truth.py',
       ['--project-id', projectId, '--label-field', labelField, '--local-only'],
       [`outputs/projects/${projectId}/ground_truth.geojson`],
+    );
+  }
+
+  extractRegionalFeatures(
+    projectId: string,
+    labelField: string,
+    regionalRunId: string,
+  ): Promise<AiPipelineCommandResult> {
+    validateProjectId(projectId);
+    validateLabelField(labelField);
+    validateRegionalRunId(regionalRunId);
+    return this.runAllowedCommand(
+      'regional_feature_extraction',
+      'run_pipeline.py',
+      [
+        '--regional-feature-extraction',
+        '--project-id',
+        projectId,
+        '--label-field',
+        labelField,
+        '--ground-truth',
+        `outputs/projects/${projectId}/ground_truth.geojson`,
+        '--regional-run-id',
+        regionalRunId,
+      ],
+      [
+        `outputs/runs/${regionalRunId}/feature_table.csv`,
+        `outputs/runs/${regionalRunId}/feature_extraction_summary.json`,
+      ],
+    );
+  }
+
+  evaluateRegionalModel(
+    projectId: string,
+    labelField: string,
+    regionalRunId: string,
+    featureTablePath = `outputs/runs/${regionalRunId}/feature_table.csv`,
+  ): Promise<AiPipelineCommandResult> {
+    validateProjectId(projectId);
+    validateLabelField(labelField);
+    validateRegionalRunId(regionalRunId);
+    return this.runAllowedCommand(
+      'regional_model_eval',
+      'run_pipeline.py',
+      [
+        '--regional-model-eval',
+        '--project-id',
+        projectId,
+        '--label-field',
+        labelField,
+        '--feature-table',
+        featureTablePath,
+        '--regional-run-id',
+        regionalRunId,
+      ],
+      [
+        `outputs/runs/${regionalRunId}/metrics.json`,
+        `outputs/runs/${regionalRunId}/model_metadata.json`,
+        `outputs/runs/${regionalRunId}/confusion_matrix.csv`,
+        `outputs/runs/${regionalRunId}/classification_report.csv`,
+        `outputs/runs/${regionalRunId}/feature_importance.csv`,
+      ],
     );
   }
 

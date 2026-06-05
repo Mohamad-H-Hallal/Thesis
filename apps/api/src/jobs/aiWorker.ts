@@ -10,14 +10,37 @@ const logger = require('../utils/logger');
 type AiRunActiveStatus = 'extracting_features' | 'training' | 'evaluating';
 type AiRunWorkerStatus = AiRunActiveStatus | 'ready_for_review';
 type AiRunFinalStatus = AiRunWorkerStatus | 'failed' | 'queued';
-type AiRunExecutionMode = 'mock' | 'dry_run' | 'local_ground_truth_export';
+type AiRunExecutionMode =
+  | 'mock'
+  | 'dry_run'
+  | 'local_ground_truth_export'
+  | 'regional_feature_extraction'
+  | 'regional_model_eval';
 
 type AiRunRow = QueryResultRow & {
   id: string;
   project_id: string;
   status: string;
   label_field: string;
+  scope_type: string | null;
+  region_preset: string | null;
   metadata: Record<string, unknown> | null;
+};
+
+type AiRunSafetySummary = {
+  status: 'ready' | 'warning' | 'not_ready';
+  approved_feature_count: number;
+  labeled_feature_count: number;
+  eligible_feature_count: number;
+  excluded_feature_count: number;
+  eligible_class_count: number;
+  missing_label_count: number;
+  invalid_geometry_count: number;
+  label_counts: Array<{ class_label: string; sample_count: number }>;
+  eligible_classes: Array<{ class_label: string; sample_count: number }>;
+  excluded_classes: Array<{ class_label: string; sample_count: number }>;
+  warnings: string[];
+  blockers: string[];
 };
 
 type AiWorkerOnceOptions = {
@@ -56,6 +79,13 @@ const AI_WORKER_PIPELINE_STATUS_SEQUENCE: AiRunWorkerStatus[] = [
   'ready_for_review',
 ];
 
+const AI_WORKER_REGIONAL_MODEL_STATUS_SEQUENCE: AiRunWorkerStatus[] = [
+  'extracting_features',
+  'training',
+  'evaluating',
+  'ready_for_review',
+];
+
 const activeStatusSet = new Set<AiRunActiveStatus>([
   'extracting_features',
   'training',
@@ -66,11 +96,19 @@ const executionModeSet = new Set<AiRunExecutionMode>([
   'mock',
   'dry_run',
   'local_ground_truth_export',
+  'regional_feature_extraction',
+  'regional_model_eval',
 ]);
 
 const LOG_METADATA_MAX_CHARS = 4000;
+const WORKER_PHASE = 'phase_f_regional_worker';
+const REGIONAL_SCIENTIFIC_LIMITATIONS = [
+  'Regional proof-of-concept only; not a national model.',
+  'AI predictions remain separate from approved field/import features.',
+  'Outputs must be reviewed before any future publication.',
+];
 
-const createWorkerId = (): string => `phase-e-worker-${process.pid}-${Date.now().toString(36)}`;
+const createWorkerId = (): string => `phase-f-worker-${process.pid}-${Date.now().toString(36)}`;
 
 const safeMetadata = (metadata: Record<string, unknown>): string => JSON.stringify(metadata);
 
@@ -94,7 +132,7 @@ const insertRunLog = async (
 
 const peekQueuedAiRun = async (): Promise<AiRunRow | null> => {
   const result = await query<AiRunRow>(
-    `SELECT id, project_id, status, label_field, metadata
+    `SELECT id, project_id, status, label_field, scope_type, region_preset, metadata
      FROM ai_run
      WHERE status = 'queued'
      ORDER BY created_at ASC
@@ -125,10 +163,12 @@ const claimQueuedRun = async (client: PoolClient, workerId: string): Promise<AiR
                run.project_id,
                run.status,
                run.label_field,
+               run.scope_type,
+               run.region_preset,
                run.metadata`,
     [
       safeMetadata({
-        worker_phase: 'phase_e_bridge',
+        worker_phase: WORKER_PHASE,
         worker_id: workerId,
         real_ai_execution: false,
       }),
@@ -159,13 +199,13 @@ const updateRunStatus = async (
          updated_at = CURRENT_TIMESTAMP
      WHERE id = $1
        AND status = $2
-     RETURNING id, project_id, status, label_field, metadata`,
+     RETURNING id, project_id, status, label_field, scope_type, region_preset, metadata`,
     [
       runId,
       fromStatus,
       toStatus,
       safeMetadata({
-        worker_phase: 'phase_e_bridge',
+        worker_phase: WORKER_PHASE,
         worker_id: workerId,
         real_ai_execution: false,
         ...metadata,
@@ -196,13 +236,13 @@ const failRun = async (
          updated_at = CURRENT_TIMESTAMP
      WHERE id = $1
        AND status = $2
-     RETURNING id, project_id, status, label_field, metadata`,
+     RETURNING id, project_id, status, label_field, scope_type, region_preset, metadata`,
     [
       runId,
       fromStatus,
       failureReason,
       safeMetadata({
-        worker_phase: 'phase_e_bridge',
+        worker_phase: WORKER_PHASE,
         worker_id: workerId,
         real_ai_execution: false,
         ...metadata,
@@ -267,9 +307,9 @@ const resolveExecutionMode = (
     };
   }
 
-  if (config.mode === 'dry_run' || config.mode === 'local_ground_truth_export') {
+  if (executionModeSet.has(config.mode as AiRunExecutionMode)) {
     return {
-      executionMode: config.mode,
+      executionMode: config.mode as AiRunExecutionMode,
       pipelineEnabled: config.enabled,
     };
   }
@@ -291,6 +331,175 @@ const commandSummary = (result: AiPipelineCommandResult): Record<string, unknown
 
 const outputPathsFrom = (results: AiPipelineCommandResult[]): string[] =>
   Array.from(new Set(results.flatMap((result) => result.outputPaths)));
+
+const regionalRunIdFor = (runId: string): string => `app-ai-${runId.replace(/-/g, '').slice(0, 24)}`;
+
+const metadataMinSamplesPerClass = (metadata: Record<string, unknown> | null): number => {
+  const raw = metadata?.min_samples_per_class;
+  const parsed =
+    typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string'
+        ? Number.parseInt(raw, 10)
+        : Number.NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 10000) : 50;
+};
+
+const requestedNationalScope = (run: AiRunRow): boolean => {
+  const metadata = run.metadata ?? {};
+  return (
+    run.scope_type === 'national' ||
+    run.region_preset === 'lebanon' ||
+    metadata.national_classification === true ||
+    metadata.classification_scope === 'national' ||
+    metadata.scope_type === 'national' ||
+    metadata.region_preset === 'lebanon'
+  );
+};
+
+const summarizeRunReadiness = async (
+  projectId: string,
+  labelField: string,
+  minSamplesPerClass: number,
+): Promise<{ projectExists: boolean; projectName: string | null; summary: AiRunSafetySummary }> => {
+  const projectResult = await query<{ id: string; name: string }>(
+    `SELECT id, name
+     FROM project
+     WHERE id = $1`,
+    [projectId],
+  );
+  const projectExists = projectResult.rows.length > 0;
+
+  const totalsResult = await query<{
+    approved_feature_count: number;
+    missing_label_count: number;
+    invalid_geometry_count: number;
+    labeled_feature_count: number;
+  }>(
+    `WITH approved AS (
+       SELECT geom,
+              NULLIF(BTRIM(attributes ->> $2), '') AS class_label
+       FROM spatial_feature
+       WHERE project_id = $1
+         AND status = 'approved'
+     )
+     SELECT COUNT(*)::int AS approved_feature_count,
+            COUNT(*) FILTER (WHERE class_label IS NULL)::int AS missing_label_count,
+            COUNT(*) FILTER (WHERE geom IS NULL OR NOT ST_IsValid(geom))::int AS invalid_geometry_count,
+            COUNT(*) FILTER (
+              WHERE class_label IS NOT NULL
+                AND geom IS NOT NULL
+                AND ST_IsValid(geom)
+            )::int AS labeled_feature_count
+     FROM approved`,
+    [projectId, labelField],
+  );
+
+  const labelCountsResult = await query<{ class_label: string; sample_count: number }>(
+    `SELECT NULLIF(BTRIM(attributes ->> $2), '') AS class_label,
+            COUNT(*)::int AS sample_count
+     FROM spatial_feature
+     WHERE project_id = $1
+       AND status = 'approved'
+       AND geom IS NOT NULL
+       AND ST_IsValid(geom)
+       AND NULLIF(BTRIM(attributes ->> $2), '') IS NOT NULL
+     GROUP BY class_label
+     ORDER BY sample_count DESC, class_label ASC`,
+    [projectId, labelField],
+  );
+
+  const totals = totalsResult.rows[0] ?? {
+    approved_feature_count: 0,
+    missing_label_count: 0,
+    invalid_geometry_count: 0,
+    labeled_feature_count: 0,
+  };
+  const labelCounts = labelCountsResult.rows.map((row) => ({
+    class_label: row.class_label,
+    sample_count: Number(row.sample_count),
+  }));
+  const eligibleClasses = labelCounts.filter((row) => row.sample_count >= minSamplesPerClass);
+  const excludedClasses = labelCounts.filter((row) => row.sample_count < minSamplesPerClass);
+  const eligibleFeatureCount = eligibleClasses.reduce(
+    (total, row) => total + row.sample_count,
+    0,
+  );
+  const warnings: string[] = [];
+  const blockers: string[] = [];
+
+  if (!projectExists) {
+    blockers.push('AI run project does not exist.');
+  }
+  if (Number(totals.approved_feature_count) === 0) {
+    blockers.push('Project has no approved field/import features available for AI.');
+  }
+  if (labelCounts.length === 0) {
+    blockers.push(`Label field ${labelField} has no approved labels.`);
+  }
+  if (labelCounts.length > 0 && labelCounts.length < 2) {
+    blockers.push('At least two labeled classes are required for supervised training.');
+  }
+  if (labelCounts.length >= 2 && eligibleClasses.length < 2) {
+    blockers.push(`At least two classes must meet ${minSamplesPerClass} samples.`);
+  }
+  if (excludedClasses.length > 0 && eligibleClasses.length >= 2) {
+    warnings.push(
+      `Classes below ${minSamplesPerClass} samples will be excluded: ${excludedClasses
+        .map((row) => `${row.class_label} (${row.sample_count})`)
+        .join(', ')}.`,
+    );
+  }
+  if (Number(totals.missing_label_count) > 0) {
+    warnings.push('Some approved features are missing the selected label field.');
+  }
+  if (Number(totals.invalid_geometry_count) > 0) {
+    warnings.push('Some approved features have null or invalid geometry.');
+  }
+
+  return {
+    projectExists,
+    projectName: projectResult.rows[0]?.name ?? null,
+    summary: {
+      status: blockers.length > 0 ? 'not_ready' : warnings.length > 0 ? 'warning' : 'ready',
+      approved_feature_count: Number(totals.approved_feature_count),
+      labeled_feature_count: Number(totals.labeled_feature_count),
+      eligible_feature_count: eligibleFeatureCount,
+      excluded_feature_count: Number(totals.approved_feature_count) - eligibleFeatureCount,
+      eligible_class_count: eligibleClasses.length,
+      missing_label_count: Number(totals.missing_label_count),
+      invalid_geometry_count: Number(totals.invalid_geometry_count),
+      label_counts: labelCounts,
+      eligible_classes: eligibleClasses,
+      excluded_classes: excludedClasses,
+      warnings,
+      blockers,
+    },
+  };
+};
+
+const buildUnsafeReason = (
+  run: AiRunRow,
+  executionMode: AiRunExecutionMode,
+  readiness: AiRunSafetySummary,
+): string | null => {
+  if (!executionModeSet.has(executionMode)) {
+    return `Unsupported AI execution mode: ${executionMode}.`;
+  }
+  if (requestedNationalScope(run)) {
+    return 'National classification is not allowed in Phase F regional worker execution.';
+  }
+  if (readiness.status === 'not_ready') {
+    return readiness.blockers[0] ?? 'AI run readiness checks did not pass.';
+  }
+  if (readiness.approved_feature_count <= 0) {
+    return 'Approved training features are required before regional AI execution.';
+  }
+  if (readiness.eligible_class_count < 2) {
+    return 'At least two eligible classes are required before regional AI execution.';
+  }
+  return null;
+};
 
 const runMockExecution = async ({
   claimedRun,
@@ -314,7 +523,7 @@ const runMockExecution = async ({
     'AI worker mock step: extracting features. Real AI execution was not started.',
     {
       status: currentStatus,
-      worker_phase: 'phase_e_bridge',
+      worker_phase: WORKER_PHASE,
       execution_mode: 'mock',
       worker_id: workerId,
       real_ai_execution: false,
@@ -323,14 +532,14 @@ const runMockExecution = async ({
   logsWritten += 1;
 
   if (failAtStatus === currentStatus) {
-    const failureReason = `Mock Phase D worker failure at ${currentStatus}.`;
+    const failureReason = `Mock AI worker failure at ${currentStatus}.`;
     currentRun = await failRun(claimedRun.id, currentStatus, failureReason, workerId, {
       execution_mode: 'mock',
     });
     await insertRunLog(claimedRun.id, 'error', failureReason, {
       status: 'failed',
       failed_from_status: currentStatus,
-      worker_phase: 'phase_e_bridge',
+      worker_phase: WORKER_PHASE,
       execution_mode: 'mock',
       worker_id: workerId,
       real_ai_execution: false,
@@ -365,7 +574,7 @@ const runMockExecution = async ({
       `AI worker mock step: ${nextStatus}. Real AI execution was not started.`,
       {
         status: nextStatus,
-        worker_phase: 'phase_e_bridge',
+        worker_phase: WORKER_PHASE,
         execution_mode: 'mock',
         worker_id: workerId,
         real_ai_execution: false,
@@ -374,7 +583,7 @@ const runMockExecution = async ({
     logsWritten += 1;
 
     if (failAtStatus === nextStatus && activeStatusSet.has(nextStatus as AiRunActiveStatus)) {
-      const failureReason = `Mock Phase D worker failure at ${nextStatus}.`;
+      const failureReason = `Mock AI worker failure at ${nextStatus}.`;
       currentRun = await failRun(
         claimedRun.id,
         nextStatus as AiRunActiveStatus,
@@ -387,7 +596,7 @@ const runMockExecution = async ({
       await insertRunLog(claimedRun.id, 'error', failureReason, {
         status: 'failed',
         failed_from_status: nextStatus,
-        worker_phase: 'phase_e_bridge',
+        worker_phase: WORKER_PHASE,
         execution_mode: 'mock',
         worker_id: workerId,
         real_ai_execution: false,
@@ -438,21 +647,25 @@ const runPipelineCommandWithLogs = async ({
   run,
   workerId,
   executionMode,
+  status,
+  realAiExecution,
   message,
   commandRunner,
 }: {
   run: AiRunRow;
   workerId: string;
   executionMode: AiRunExecutionMode;
+  status: AiRunWorkerStatus;
+  realAiExecution: boolean;
   message: string;
   commandRunner: () => Promise<AiPipelineCommandResult>;
 }): Promise<{ result: AiPipelineCommandResult; logsWritten: number }> => {
   await insertRunLog(run.id, 'info', `${message} started.`, {
-    status: 'extracting_features',
-    worker_phase: 'phase_e_bridge',
+    status,
+    worker_phase: WORKER_PHASE,
     execution_mode: executionMode,
     worker_id: workerId,
-    real_ai_execution: false,
+    real_ai_execution: realAiExecution,
   });
 
   const result = await commandRunner();
@@ -461,11 +674,11 @@ const runPipelineCommandWithLogs = async ({
     result.success ? 'info' : 'error',
     `${message} ${result.success ? 'completed' : 'failed'}.`,
     {
-      status: 'extracting_features',
-      worker_phase: 'phase_e_bridge',
+      status,
+      worker_phase: WORKER_PHASE,
       execution_mode: executionMode,
       worker_id: workerId,
-      real_ai_execution: false,
+      real_ai_execution: realAiExecution,
       ...commandSummary(result),
       sanitized_log: truncateForMetadata(result.sanitizedLog),
     },
@@ -490,21 +703,139 @@ const runPipelineExecution = async ({
 }): Promise<AiWorkerOnceResult> => {
   const startedAt = Date.now();
   const commandResults: AiPipelineCommandResult[] = [];
+  const regionalRunId = regionalRunIdFor(claimedRun.id);
+  const realAiExecution =
+    executionMode === 'regional_feature_extraction' || executionMode === 'regional_model_eval';
+  const statuses: AiRunWorkerStatus[] = ['extracting_features'];
+  let currentStatus: AiRunActiveStatus = 'extracting_features';
+  let safetySummary: AiRunSafetySummary | null = null;
   let logsWritten = 0;
 
   await insertRunLog(
     claimedRun.id,
     'info',
-    'AI pipeline bridge started. Phase E runs only safe dry-run/local-readiness commands.',
+    'AI pipeline bridge started. Phase F allows controlled regional execution modes only.',
     {
       status: 'extracting_features',
-      worker_phase: 'phase_e_bridge',
+      worker_phase: WORKER_PHASE,
       execution_mode: executionMode,
       worker_id: workerId,
-      real_ai_execution: false,
+      ai_pipeline_run_id: regionalRunId,
+      real_ai_execution: realAiExecution,
     },
   );
   logsWritten += 1;
+
+  const completionMetadata = (): Record<string, unknown> => {
+    const outputPaths = outputPathsFrom(commandResults);
+    const metadata: Record<string, unknown> = {
+      execution_mode: executionMode,
+      pipeline_bridge_phase: 'phase_f',
+      worker_phase: WORKER_PHASE,
+      ai_pipeline_run_id: regionalRunId,
+      project_id: claimedRun.project_id,
+      label_field: claimedRun.label_field,
+      command_results: commandResults.map(commandSummary),
+      output_paths: outputPaths,
+      duration_ms: Date.now() - startedAt,
+      real_ai_execution: realAiExecution,
+      scientific_limitations: REGIONAL_SCIENTIFIC_LIMITATIONS,
+    };
+
+    if (safetySummary) {
+      metadata.readiness_status = safetySummary.status;
+      metadata.class_counts = safetySummary.label_counts;
+      metadata.eligible_classes = safetySummary.eligible_classes;
+      metadata.excluded_classes = safetySummary.excluded_classes;
+      metadata.approved_feature_count = safetySummary.approved_feature_count;
+      metadata.eligible_feature_count = safetySummary.eligible_feature_count;
+      metadata.excluded_feature_count = safetySummary.excluded_feature_count;
+    }
+    if (
+      executionMode === 'local_ground_truth_export' ||
+      executionMode === 'regional_feature_extraction' ||
+      executionMode === 'regional_model_eval'
+    ) {
+      metadata.output_directory = `outputs/projects/${claimedRun.project_id}`;
+      metadata.ground_truth_path = `outputs/projects/${claimedRun.project_id}/ground_truth.geojson`;
+    }
+    if (
+      executionMode === 'regional_feature_extraction' ||
+      executionMode === 'regional_model_eval'
+    ) {
+      metadata.output_directory = `outputs/runs/${regionalRunId}`;
+      metadata.feature_table_path = `outputs/runs/${regionalRunId}/feature_table.csv`;
+      metadata.feature_extraction_summary_path =
+        `outputs/runs/${regionalRunId}/feature_extraction_summary.json`;
+    }
+    if (executionMode === 'regional_model_eval') {
+      metadata.metrics_path = `outputs/runs/${regionalRunId}/metrics.json`;
+      metadata.model_metrics_summary = {
+        source: `outputs/runs/${regionalRunId}/metrics.json`,
+        note: 'Regional proof-of-concept metrics only; not national accuracy.',
+      };
+    }
+
+    return metadata;
+  };
+
+  const failFromCurrentStatus = async (failureReason: string): Promise<AiWorkerOnceResult> => {
+    await failRun(claimedRun.id, currentStatus, failureReason, workerId, completionMetadata());
+    return {
+      processed: true,
+      dryRun: false,
+      mock: false,
+      executionMode,
+      pipelineEnabled: true,
+      runId: claimedRun.id,
+      projectId: claimedRun.project_id,
+      labelField: claimedRun.label_field,
+      initialStatus: 'queued',
+      finalStatus: 'failed',
+      statuses,
+      logsWritten,
+      failureReason,
+    };
+  };
+
+  if (executionMode !== 'dry_run') {
+    const minSamplesPerClass = metadataMinSamplesPerClass(claimedRun.metadata);
+    const readiness = await summarizeRunReadiness(
+      claimedRun.project_id,
+      claimedRun.label_field,
+      minSamplesPerClass,
+    );
+    safetySummary = readiness.summary;
+
+    await insertRunLog(claimedRun.id, 'info', 'AI regional safety checks completed.', {
+      status: currentStatus,
+      worker_phase: WORKER_PHASE,
+      execution_mode: executionMode,
+      worker_id: workerId,
+      ai_pipeline_run_id: regionalRunId,
+      real_ai_execution: realAiExecution,
+      project_exists: readiness.projectExists,
+      project_name: readiness.projectName,
+      min_samples_per_class: minSamplesPerClass,
+      readiness: safetySummary,
+    });
+    logsWritten += 1;
+
+    const unsafeReason = buildUnsafeReason(claimedRun, executionMode, safetySummary);
+    if (unsafeReason) {
+      await insertRunLog(claimedRun.id, 'error', unsafeReason, {
+        status: 'failed',
+        failed_from_status: currentStatus,
+        worker_phase: WORKER_PHASE,
+        execution_mode: executionMode,
+        worker_id: workerId,
+        ai_pipeline_run_id: regionalRunId,
+        real_ai_execution: realAiExecution,
+      });
+      logsWritten += 1;
+      return failFromCurrentStatus(unsafeReason);
+    }
+  }
 
   const steps: Array<{
     message: string;
@@ -531,12 +862,35 @@ const runPipelineExecution = async ({
         pipelineService.exportGroundTruthLocal(claimedRun.project_id, claimedRun.label_field),
     });
   }
+  if (
+    executionMode === 'regional_feature_extraction' ||
+    executionMode === 'regional_model_eval'
+  ) {
+    steps.push(
+      {
+        message: 'AI local-only ground truth export',
+        run: () =>
+          pipelineService.exportGroundTruthLocal(claimedRun.project_id, claimedRun.label_field),
+      },
+      {
+        message: 'AI regional Sentinel-2 feature extraction',
+        run: () =>
+          pipelineService.extractRegionalFeatures(
+            claimedRun.project_id,
+            claimedRun.label_field,
+            regionalRunId,
+          ),
+      },
+    );
+  }
 
   for (const step of steps) {
     const { result, logsWritten: stepLogsWritten } = await runPipelineCommandWithLogs({
       run: claimedRun,
       workerId,
       executionMode,
+      status: currentStatus,
+      realAiExecution,
       message: step.message,
       commandRunner: step.run,
     });
@@ -544,57 +898,84 @@ const runPipelineExecution = async ({
     logsWritten += stepLogsWritten;
 
     if (!result.success) {
-      const failureReason = `AI pipeline ${result.command} failed during Phase E safe bridge.`;
-      await failRun(claimedRun.id, 'extracting_features', failureReason, workerId, {
-        execution_mode: executionMode,
-        pipeline_bridge_phase: 'phase_e',
-        command_results: commandResults.map(commandSummary),
-        output_paths: outputPathsFrom(commandResults),
-        duration_ms: Date.now() - startedAt,
-      });
-      return {
-        processed: true,
-        dryRun: false,
-        mock: false,
-        executionMode,
-        pipelineEnabled: true,
-        runId: claimedRun.id,
-        projectId: claimedRun.project_id,
-        labelField: claimedRun.label_field,
-        initialStatus: 'queued',
-        finalStatus: 'failed',
-        statuses: ['extracting_features'],
-        logsWritten,
-        failureReason,
-      };
+      const failureReason = `AI pipeline ${result.command} failed during Phase F regional worker execution.`;
+      return failFromCurrentStatus(failureReason);
     }
+  }
+
+  if (executionMode === 'regional_model_eval') {
+    await updateRunStatus(claimedRun.id, currentStatus, 'training', workerId, completionMetadata());
+    currentStatus = 'training';
+    statuses.push('training');
+    await insertRunLog(claimedRun.id, 'info', 'AI regional model evaluation started.', {
+      status: currentStatus,
+      worker_phase: WORKER_PHASE,
+      execution_mode: executionMode,
+      worker_id: workerId,
+      ai_pipeline_run_id: regionalRunId,
+      real_ai_execution: realAiExecution,
+    });
+    logsWritten += 1;
+
+    const { result, logsWritten: modelLogsWritten } = await runPipelineCommandWithLogs({
+      run: claimedRun,
+      workerId,
+      executionMode,
+      status: currentStatus,
+      realAiExecution,
+      message: 'AI regional model evaluation',
+      commandRunner: () =>
+        pipelineService.evaluateRegionalModel(
+          claimedRun.project_id,
+          claimedRun.label_field,
+          regionalRunId,
+        ),
+    });
+    commandResults.push(result);
+    logsWritten += modelLogsWritten;
+
+    if (!result.success) {
+      const failureReason = `AI pipeline ${result.command} failed during Phase F regional worker execution.`;
+      return failFromCurrentStatus(failureReason);
+    }
+
+    await updateRunStatus(claimedRun.id, currentStatus, 'evaluating', workerId, completionMetadata());
+    currentStatus = 'evaluating';
+    statuses.push('evaluating');
+    await insertRunLog(claimedRun.id, 'info', 'AI regional model metrics are ready for review.', {
+      status: currentStatus,
+      worker_phase: WORKER_PHASE,
+      execution_mode: executionMode,
+      worker_id: workerId,
+      ai_pipeline_run_id: regionalRunId,
+      real_ai_execution: realAiExecution,
+      metrics_path: `outputs/runs/${regionalRunId}/metrics.json`,
+    });
+    logsWritten += 1;
   }
 
   const completedRun = await updateRunStatus(
     claimedRun.id,
-    'extracting_features',
+    currentStatus,
     'ready_for_review',
     workerId,
-    {
-      execution_mode: executionMode,
-      pipeline_bridge_phase: 'phase_e',
-      command_results: commandResults.map(commandSummary),
-      output_paths: outputPathsFrom(commandResults),
-      duration_ms: Date.now() - startedAt,
-    },
+    completionMetadata(),
   );
+  statuses.push('ready_for_review');
 
   await insertRunLog(
     claimedRun.id,
     'info',
-    'AI pipeline bridge completed. Run is ready for review of dry-run/local-readiness results only.',
+    'AI pipeline bridge completed. Run is ready for admin review; nothing was published.',
     {
       status: 'ready_for_review',
-      worker_phase: 'phase_e_bridge',
+      worker_phase: WORKER_PHASE,
       execution_mode: executionMode,
       worker_id: workerId,
-      real_ai_execution: false,
+      ai_pipeline_run_id: regionalRunId,
+      real_ai_execution: realAiExecution,
       output_paths: outputPathsFrom(commandResults),
+      scientific_limitations: REGIONAL_SCIENTIFIC_LIMITATIONS,
     },
   );
   logsWritten += 1;
@@ -603,7 +984,7 @@ const runPipelineExecution = async ({
     runId: completedRun.id,
     projectId: completedRun.project_id,
     executionMode,
-    realAiExecution: false,
+    realAiExecution,
   });
 
   return {
@@ -617,7 +998,7 @@ const runPipelineExecution = async ({
     labelField: completedRun.label_field,
     initialStatus: 'queued',
     finalStatus: 'ready_for_review',
-    statuses: AI_WORKER_PIPELINE_STATUS_SEQUENCE,
+    statuses,
     logsWritten,
     failureReason: null,
   };
@@ -631,7 +1012,7 @@ const runAiWorkerOnce = async (options: AiWorkerOnceOptions = {}): Promise<AiWor
   const pipelineService = options.pipelineService ?? createAiPipelineService();
 
   if (!dryRun && options.mock === false) {
-    throw new Error('Phase D AI worker only supports --mock or --dry-run execution.');
+    throw new Error('AI worker direct calls should use --mock, --pipeline-bridge, or --dry-run.');
   }
 
   if (failAtStatus && !activeStatusSet.has(failAtStatus)) {
@@ -694,6 +1075,7 @@ const runAiWorkerOnce = async (options: AiWorkerOnceOptions = {}): Promise<AiWor
 export {
   AI_WORKER_MOCK_STATUS_SEQUENCE,
   AI_WORKER_PIPELINE_STATUS_SEQUENCE,
+  AI_WORKER_REGIONAL_MODEL_STATUS_SEQUENCE,
   peekQueuedAiRun,
   runAiWorkerOnce,
   type AiRunActiveStatus,

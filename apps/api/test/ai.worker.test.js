@@ -13,6 +13,7 @@ const {
 const {
   AI_WORKER_MOCK_STATUS_SEQUENCE,
   AI_WORKER_PIPELINE_STATUS_SEQUENCE,
+  AI_WORKER_REGIONAL_MODEL_STATUS_SEQUENCE,
   runAiWorkerOnce,
 } = require('../src/jobs/aiWorker');
 
@@ -57,6 +58,7 @@ const insertQueuedRun = async ({
   projectId,
   userId,
   labelField = 'L4_descr',
+  scopeType = 'project',
   metadata = { test: 'ai-worker' },
 }) => {
   const result = await pool.query(
@@ -75,7 +77,7 @@ const insertQueuedRun = async ({
        $1,
        'queued',
        $2,
-       'project',
+       $5,
        1406,
        1394,
        12,
@@ -83,10 +85,66 @@ const insertQueuedRun = async ({
        $4::jsonb
      )
      RETURNING id`,
-    [projectId, labelField, userId, JSON.stringify(metadata)],
+    [projectId, labelField, userId, JSON.stringify(metadata), scopeType],
   );
 
   return result.rows[0].id;
+};
+
+const insertApprovedFeature = async ({
+  projectId,
+  userId,
+  labelField = 'L4_descr',
+  label,
+  source = 'import',
+  lon = 35.5,
+  lat = 33.9,
+}) => {
+  await pool.query(
+    `INSERT INTO spatial_feature (
+       project_id,
+       collected_by_user_id,
+       geom,
+       attributes,
+       status,
+       submitted_at,
+       reviewed_at,
+       reviewed_by_user_id,
+       source
+     )
+     VALUES (
+       $1,
+       $2,
+       ST_SetSRID(ST_MakePoint($3, $4), 4326),
+       $5::jsonb,
+       'approved',
+       CURRENT_TIMESTAMP,
+       CURRENT_TIMESTAMP,
+       $2,
+       $6
+     )`,
+    [
+      projectId,
+      userId,
+      lon,
+      lat,
+      JSON.stringify({ [labelField]: label }),
+      source,
+    ],
+  );
+};
+
+const insertReadyRegionalFeatures = async ({ projectId, userId, labelField = 'L4_descr' }) => {
+  for (const [index, label] of ['Olives', 'Olives', 'Citrus', 'Citrus'].entries()) {
+    await insertApprovedFeature({
+      projectId,
+      userId,
+      labelField,
+      label,
+      lon: 35.4 + index * 0.01,
+      lat: 33.7 + index * 0.01,
+    });
+  }
 };
 
 const countRows = async (tableName) => {
@@ -114,6 +172,8 @@ const pipelineResult = (command, overrides = {}) => ({
   ...overrides,
 });
 
+const regionalRunIdForTest = (runId) => `app-ai-${runId.replace(/-/g, '').slice(0, 24)}`;
+
 const createMockPipelineService = ({ config = pipelineConfig(), overrides = {} } = {}) => ({
   getConfig: jest.fn(() => config),
   checkConfig: jest.fn(async () => pipelineResult('config_check')),
@@ -122,6 +182,22 @@ const createMockPipelineService = ({ config = pipelineConfig(), overrides = {} }
   exportGroundTruthLocal: jest.fn(async () =>
     pipelineResult('export_ground_truth_local', {
       outputPaths: ['outputs/projects/test-project/ground_truth.geojson'],
+    }),
+  ),
+  extractRegionalFeatures: jest.fn(async () =>
+    pipelineResult('regional_feature_extraction', {
+      outputPaths: [
+        'outputs/runs/app-ai-test-run/feature_table.csv',
+        'outputs/runs/app-ai-test-run/feature_extraction_summary.json',
+      ],
+    }),
+  ),
+  evaluateRegionalModel: jest.fn(async () =>
+    pipelineResult('regional_model_eval', {
+      outputPaths: [
+        'outputs/runs/app-ai-test-run/metrics.json',
+        'outputs/runs/app-ai-test-run/model_metadata.json',
+      ],
     }),
   ),
   ...overrides,
@@ -193,7 +269,7 @@ describe('AI worker skeleton phase D', () => {
     expect(runResult.rows[0].completed_at).toBeTruthy();
     expect(runResult.rows[0].metadata).toEqual(
       expect.objectContaining({
-        worker_phase: 'phase_e_bridge',
+        worker_phase: 'phase_f_regional_worker',
         real_ai_execution: false,
       }),
     );
@@ -243,7 +319,7 @@ describe('AI worker skeleton phase D', () => {
         runId,
         finalStatus: 'failed',
         statuses: ['extracting_features', 'training'],
-        failureReason: 'Mock Phase D worker failure at training.',
+        failureReason: 'Mock AI worker failure at training.',
       }),
     );
 
@@ -257,7 +333,7 @@ describe('AI worker skeleton phase D', () => {
       expect.objectContaining({
         status: 'failed',
         completed_at: null,
-        failure_reason: 'Mock Phase D worker failure at training.',
+        failure_reason: 'Mock AI worker failure at training.',
       }),
     );
     expect(runResult.rows[0].failed_at).toBeTruthy();
@@ -364,7 +440,7 @@ describe('AI worker skeleton phase D', () => {
         mock: false,
         workerId: 'phase-d-real-worker',
       }),
-    ).rejects.toThrow('Phase D AI worker only supports --mock or --dry-run execution.');
+    ).rejects.toThrow('AI worker direct calls should use --mock, --pipeline-bridge, or --dry-run.');
 
     expect(await countRows('ai_run_log')).toBe(0);
     expect(await countRows('ai_output_layer')).toBe(0);
@@ -452,7 +528,7 @@ describe('AI worker skeleton phase D', () => {
     expect(runResult.rows[0].metadata).toEqual(
       expect.objectContaining({
         execution_mode: 'dry_run',
-        pipeline_bridge_phase: 'phase_e',
+        pipeline_bridge_phase: 'phase_f',
         real_ai_execution: false,
       }),
     );
@@ -482,12 +558,17 @@ describe('AI worker skeleton phase D', () => {
 
   test('runs local-only ground-truth export only when that safe mode is requested', async () => {
     const { admin, project } = await createProjectFixture('AI Worker Local Export Pipeline');
+    await insertReadyRegionalFeatures({
+      projectId: project.id,
+      userId: admin.user.id,
+    });
     const runId = await insertQueuedRun({
       projectId: project.id,
       userId: admin.user.id,
       metadata: {
         test: 'ai-worker',
         execution_mode: 'local_ground_truth_export',
+        min_samples_per_class: 2,
       },
     });
     const pipelineService = createMockPipelineService({
@@ -513,6 +594,221 @@ describe('AI worker skeleton phase D', () => {
     expect(runResult.rows[0].metadata.output_paths).toEqual([
       'outputs/projects/test-project/ground_truth.geojson',
     ]);
+  });
+
+  test('runs regional feature extraction mode with safety checks, logs, and output metadata', async () => {
+    const { admin, project } = await createProjectFixture('AI Worker Regional Extraction');
+    await insertReadyRegionalFeatures({
+      projectId: project.id,
+      userId: admin.user.id,
+    });
+    const runId = await insertQueuedRun({
+      projectId: project.id,
+      userId: admin.user.id,
+      metadata: {
+        test: 'ai-worker',
+        execution_mode: 'regional_feature_extraction',
+        min_samples_per_class: 2,
+      },
+    });
+    const beforeSpatialCount = await countRows('spatial_feature');
+    const beforeLayerCount = await countRows('ai_output_layer');
+    const pipelineService = createMockPipelineService({
+      config: pipelineConfig({
+        mode: 'regional_feature_extraction',
+      }),
+    });
+    const regionalRunId = regionalRunIdForTest(runId);
+
+    const result = await runAiWorkerOnce({
+      pipelineService,
+      workerId: 'phase-f-extraction-worker',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        mock: false,
+        executionMode: 'regional_feature_extraction',
+        finalStatus: 'ready_for_review',
+        statuses: AI_WORKER_PIPELINE_STATUS_SEQUENCE,
+      }),
+    );
+    expect(pipelineService.exportGroundTruthLocal).toHaveBeenCalledWith(project.id, 'L4_descr');
+    expect(pipelineService.extractRegionalFeatures).toHaveBeenCalledWith(
+      project.id,
+      'L4_descr',
+      regionalRunId,
+    );
+    expect(pipelineService.evaluateRegionalModel).not.toHaveBeenCalled();
+
+    const runResult = await pool.query(
+      `SELECT status, metadata
+       FROM ai_run
+       WHERE id = $1`,
+      [runId],
+    );
+    expect(runResult.rows[0].status).toBe('ready_for_review');
+    expect(runResult.rows[0].metadata).toEqual(
+      expect.objectContaining({
+        execution_mode: 'regional_feature_extraction',
+        pipeline_bridge_phase: 'phase_f',
+        ai_pipeline_run_id: regionalRunId,
+        real_ai_execution: true,
+        feature_table_path: `outputs/runs/${regionalRunId}/feature_table.csv`,
+      }),
+    );
+    expect(runResult.rows[0].metadata.class_counts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ class_label: 'Olives', sample_count: 2 }),
+        expect.objectContaining({ class_label: 'Citrus', sample_count: 2 }),
+      ]),
+    );
+    expect(runResult.rows[0].metadata.scientific_limitations).toEqual(
+      expect.arrayContaining(['Regional proof-of-concept only; not a national model.']),
+    );
+
+    const logResult = await pool.query(
+      `SELECT message, metadata
+       FROM ai_run_log
+       WHERE ai_run_id = $1
+       ORDER BY created_at ASC`,
+      [runId],
+    );
+    expect(logResult.rows.map((row) => row.message)).toEqual(
+      expect.arrayContaining([
+        'AI regional safety checks completed.',
+        'AI regional Sentinel-2 feature extraction started.',
+        'AI regional Sentinel-2 feature extraction completed.',
+      ]),
+    );
+    expect(await countRows('spatial_feature')).toBe(beforeSpatialCount);
+    expect(await countRows('ai_output_layer')).toBe(beforeLayerCount);
+  });
+
+  test('runs regional model evaluation through training and evaluating statuses', async () => {
+    const { admin, project } = await createProjectFixture('AI Worker Regional Model Eval');
+    await insertReadyRegionalFeatures({
+      projectId: project.id,
+      userId: admin.user.id,
+    });
+    const runId = await insertQueuedRun({
+      projectId: project.id,
+      userId: admin.user.id,
+      metadata: {
+        test: 'ai-worker',
+        execution_mode: 'regional_model_eval',
+        min_samples_per_class: 2,
+      },
+    });
+    const pipelineService = createMockPipelineService({
+      config: pipelineConfig({
+        mode: 'regional_model_eval',
+      }),
+    });
+    const regionalRunId = regionalRunIdForTest(runId);
+
+    const result = await runAiWorkerOnce({
+      pipelineService,
+      workerId: 'phase-f-model-worker',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        executionMode: 'regional_model_eval',
+        finalStatus: 'ready_for_review',
+        statuses: AI_WORKER_REGIONAL_MODEL_STATUS_SEQUENCE,
+      }),
+    );
+    expect(pipelineService.extractRegionalFeatures).toHaveBeenCalledWith(
+      project.id,
+      'L4_descr',
+      regionalRunId,
+    );
+    expect(pipelineService.evaluateRegionalModel).toHaveBeenCalledWith(
+      project.id,
+      'L4_descr',
+      regionalRunId,
+    );
+
+    const runResult = await pool.query(
+      `SELECT metadata
+       FROM ai_run
+       WHERE id = $1`,
+      [runId],
+    );
+    expect(runResult.rows[0].metadata).toEqual(
+      expect.objectContaining({
+        execution_mode: 'regional_model_eval',
+        metrics_path: `outputs/runs/${regionalRunId}/metrics.json`,
+        real_ai_execution: true,
+      }),
+    );
+
+    const statusLogs = await pool.query(
+      `SELECT metadata ->> 'status' AS status
+       FROM ai_run_log
+       WHERE ai_run_id = $1
+       ORDER BY created_at ASC`,
+      [runId],
+    );
+    expect(statusLogs.rows.map((row) => row.status)).toEqual(
+      expect.arrayContaining(['extracting_features', 'training', 'evaluating', 'ready_for_review']),
+    );
+    expect(await countRows('ai_output_layer')).toBe(0);
+  });
+
+  test('rejects unsafe national regional execution before pipeline commands run', async () => {
+    const { admin, project } = await createProjectFixture('AI Worker National Guard');
+    await insertReadyRegionalFeatures({
+      projectId: project.id,
+      userId: admin.user.id,
+    });
+    const runId = await insertQueuedRun({
+      projectId: project.id,
+      userId: admin.user.id,
+      scopeType: 'national',
+      metadata: {
+        test: 'ai-worker',
+        execution_mode: 'regional_feature_extraction',
+        min_samples_per_class: 2,
+      },
+    });
+    const beforeSpatialCount = await countRows('spatial_feature');
+    const pipelineService = createMockPipelineService({
+      config: pipelineConfig({
+        mode: 'regional_feature_extraction',
+      }),
+    });
+
+    const result = await runAiWorkerOnce({
+      pipelineService,
+      workerId: 'phase-f-national-guard-worker',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        finalStatus: 'failed',
+        failureReason: 'National classification is not allowed in Phase F regional worker execution.',
+      }),
+    );
+    expect(pipelineService.checkConfig).not.toHaveBeenCalled();
+    expect(pipelineService.extractRegionalFeatures).not.toHaveBeenCalled();
+
+    const runResult = await pool.query(
+      `SELECT status, failure_reason
+       FROM ai_run
+       WHERE id = $1`,
+      [runId],
+    );
+    expect(runResult.rows[0].status).toBe('failed');
+    expect(runResult.rows[0].failure_reason).toBe(
+      'National classification is not allowed in Phase F regional worker execution.',
+    );
+    expect(await countRows('spatial_feature')).toBe(beforeSpatialCount);
+    expect(await countRows('ai_output_layer')).toBe(0);
   });
 
   test('marks the run failed when a safe pipeline command fails', async () => {
@@ -548,7 +844,8 @@ describe('AI worker skeleton phase D', () => {
         mock: false,
         executionMode: 'dry_run',
         finalStatus: 'failed',
-        failureReason: 'AI pipeline dry_run failed during Phase E safe bridge.',
+        failureReason:
+          'AI pipeline dry_run failed during Phase F regional worker execution.',
       }),
     );
 
@@ -560,7 +857,7 @@ describe('AI worker skeleton phase D', () => {
     );
     expect(runResult.rows[0].status).toBe('failed');
     expect(runResult.rows[0].failure_reason).toBe(
-      'AI pipeline dry_run failed during Phase E safe bridge.',
+      'AI pipeline dry_run failed during Phase F regional worker execution.',
     );
     expect(runResult.rows[0].metadata.command_results).toHaveLength(2);
     expect(await countRows('spatial_feature')).toBe(0);

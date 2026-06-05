@@ -16,7 +16,15 @@ const allowedRunStatuses = [
   'cancelled',
 ];
 
-const allowedExecutionModes = ['mock', 'dry_run', 'local_ground_truth_export'];
+const allowedExecutionModes = [
+  'mock',
+  'dry_run',
+  'local_ground_truth_export',
+  'regional_feature_extraction',
+  'regional_model_eval',
+];
+
+const regionalExecutionModes = ['regional_feature_extraction', 'regional_model_eval'];
 
 const defaultSettings = {
   is_enabled: false,
@@ -951,9 +959,17 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
 
   if (!allowedExecutionModes.includes(executionMode)) {
     throw new AppError(
-      'Unsupported AI execution_mode. Phase E allows only mock, dry_run, or local_ground_truth_export.',
+      'Unsupported AI execution_mode. Phase F allows only mock, dry_run, local_ground_truth_export, regional_feature_extraction, or regional_model_eval.',
       400,
     );
+  }
+
+  if (
+    status === 'queued' &&
+    regionalExecutionModes.includes(executionMode) &&
+    scopeType === 'national'
+  ) {
+    throw new AppError('Regional AI execution modes cannot be queued with national scope.', 400);
   }
 
   const readiness = await getFeatureReadinessSummary({
@@ -1040,9 +1056,14 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
         JSON.stringify({
           readiness_status: readiness.status,
           min_samples_per_class: minSamplesPerClass,
-          worker_execution: 'not_started_phase_e',
+          worker_execution: 'not_started_phase_f',
           execution_mode: executionMode,
           real_ai_execution: false,
+          regional_ai_execution_requested: regionalExecutionModes.includes(executionMode),
+          scientific_limitations: [
+            'Regional proof-of-concept only; not a national model.',
+            'AI outputs remain separate from approved spatial_feature data.',
+          ],
           requested_by: currentUser.id,
           requested_status: status,
         }),
@@ -1058,7 +1079,7 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
           ? 'AI run queued as a backend placeholder; no worker execution started.'
           : 'AI run draft created; no worker execution started.',
         JSON.stringify({
-          phase: 'backend_phase_e',
+          phase: 'backend_phase_f',
           readiness_status: readiness.status,
           execution_mode: executionMode,
           real_ai_execution: false,

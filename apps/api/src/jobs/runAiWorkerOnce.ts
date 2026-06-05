@@ -51,10 +51,10 @@ const run = async (): Promise<void> => {
   try {
     const args = parseArgs(process.argv.slice(2));
     if (!args.once) {
-      throw new Error('Phase D AI worker supports only --once execution.');
+      throw new Error('AI worker supports only --once execution.');
     }
     if (!args.dryRun && !args.mock && !args.pipelineBridge) {
-      throw new Error('Phase E AI worker requires --mock, --pipeline-bridge, or --dry-run.');
+      throw new Error('AI worker requires --mock, --pipeline-bridge, or --dry-run.');
     }
 
     const result = await runAiWorkerOnce({

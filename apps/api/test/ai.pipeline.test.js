@@ -78,6 +78,33 @@ describe('AI pipeline adapter phase E', () => {
       `outputs/projects/${TEST_PROJECT_ID}/ground_truth.geojson`,
     ]);
     expect(exportResult.sanitizedLog).toContain('--local-only');
+
+    const extractionResult = await service.extractRegionalFeatures(
+      TEST_PROJECT_ID,
+      'L4_descr',
+      'app-ai-test-run',
+    );
+    expect(extractionResult.sanitizedLog).toContain('--regional-feature-extraction');
+    expect(extractionResult.sanitizedLog).toContain('--ground-truth');
+    expect(extractionResult.outputPaths).toEqual([
+      'outputs/runs/app-ai-test-run/feature_table.csv',
+      'outputs/runs/app-ai-test-run/feature_extraction_summary.json',
+    ]);
+
+    const evalResult = await service.evaluateRegionalModel(
+      TEST_PROJECT_ID,
+      'L4_descr',
+      'app-ai-test-run',
+    );
+    expect(evalResult.sanitizedLog).toContain('--regional-model-eval');
+    expect(evalResult.sanitizedLog).toContain('--feature-table');
+    expect(evalResult.outputPaths).toEqual([
+      'outputs/runs/app-ai-test-run/metrics.json',
+      'outputs/runs/app-ai-test-run/model_metadata.json',
+      'outputs/runs/app-ai-test-run/confusion_matrix.csv',
+      'outputs/runs/app-ai-test-run/classification_report.csv',
+      'outputs/runs/app-ai-test-run/feature_importance.csv',
+    ]);
   });
 
   test('fails clearly when the pipeline root is missing', async () => {
@@ -130,6 +157,9 @@ describe('AI pipeline adapter phase E', () => {
     expect(() => service.probeProject(TEST_PROJECT_ID, 'L4_descr; rm -rf /')).toThrow(
       'Invalid AI label field',
     );
+    expect(() =>
+      service.extractRegionalFeatures(TEST_PROJECT_ID, 'L4_descr', '../unsafe'),
+    ).toThrow('Invalid AI regional run id');
   });
 
   test('redacts common secret shapes', () => {

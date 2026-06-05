@@ -88,6 +88,6 @@ Expected safe failures include:
 
 These failures do not crash the API process, do not write `spatial_feature`, and do not expose secret values in logs.
 
-## Future Phase F
+## Phase F Hand-Off
 
-Future phases can replace or extend the safe command allowlist with reviewed feature extraction and training steps. That should happen only after explicit approval and should still keep AI outputs separate from approved human/imported field data.
+Phase F extends this bridge with controlled regional feature extraction and regional model-evaluation modes. Those modes remain project-scoped, keep AI outputs separate from approved human/imported field data, and still block national classification, vectorization into the app database, publishing, and Redis scaling.

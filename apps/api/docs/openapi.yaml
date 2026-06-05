@@ -422,7 +422,7 @@ paths:
       security:
         - bearerAuth: []
       summary: Create a draft or queued AI run record without worker execution
-      description: Creates only an ai_run row and ai_run_log entry. Phase E execution modes are limited to mock, dry-run, or local-only ground-truth export. No GEE feature extraction, training, classification, publishing, or DB output insertion is started.
+      description: Creates only an ai_run row and ai_run_log entry. Phase F execution modes are limited to mock, dry-run, local-only ground-truth export, regional feature extraction, or regional model evaluation. National classification, publishing, and DB output insertion are not started.
       parameters:
         - $ref: '#/components/parameters/projectId'
       requestBody:
@@ -1432,11 +1432,6 @@ components:
         min_samples_per_class:
           type: integer
           minimum: 1
-        execution_mode:
-          type: string
-          enum: [mock, dry_run, local_ground_truth_export]
-          default: mock
-          description: Safe worker mode. Full training/classification modes are intentionally unavailable in Phase E.
         model_preferences:
           type: object
     AiRunCreateRequest:
@@ -1460,6 +1455,16 @@ components:
         min_samples_per_class:
           type: integer
           minimum: 1
+        execution_mode:
+          type: string
+          enum:
+            - mock
+            - dry_run
+            - local_ground_truth_export
+            - regional_feature_extraction
+            - regional_model_eval
+          default: mock
+          description: Safe worker mode. National classification, vectorization, publishing, and Redis-backed queueing are intentionally unavailable in Phase F.
     AiReadinessResponse:
       type: object
       properties:

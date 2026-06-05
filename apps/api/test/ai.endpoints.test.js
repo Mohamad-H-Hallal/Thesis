@@ -634,6 +634,33 @@ describe('AI backend endpoints phase B', () => {
       .expect(201);
     expect(dryRunResponse.body.data.metadata.execution_mode).toBe('dry_run');
 
+    const regionalResponse = await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'queued',
+        execution_mode: 'regional_feature_extraction',
+      })
+      .expect(201);
+    expect(regionalResponse.body.data.status).toBe('queued');
+    expect(regionalResponse.body.data.metadata).toEqual(
+      expect.objectContaining({
+        execution_mode: 'regional_feature_extraction',
+        regional_ai_execution_requested: true,
+        real_ai_execution: false,
+      }),
+    );
+
+    await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'queued',
+        scope_type: 'national',
+        execution_mode: 'regional_model_eval',
+      })
+      .expect(400);
+
     await request(app)
       .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
       .set(authHeader(admin.token))

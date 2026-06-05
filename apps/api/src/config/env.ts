@@ -68,7 +68,12 @@ export interface EnvConfig {
   AI_PIPELINE_ROOT: string;
   AI_PYTHON_BIN: string;
   AI_PIPELINE_TIMEOUT_MS: number;
-  AI_PIPELINE_MODE: 'disabled' | 'dry_run' | 'local_ground_truth_export';
+  AI_PIPELINE_MODE:
+    | 'disabled'
+    | 'dry_run'
+    | 'local_ground_truth_export'
+    | 'regional_feature_extraction'
+    | 'regional_model_eval';
 }
 
 const envSchema = Joi.object({
@@ -207,7 +212,13 @@ const envSchema = Joi.object({
   AI_PYTHON_BIN: Joi.string().allow('').default('python'),
   AI_PIPELINE_TIMEOUT_MS: Joi.number().integer().min(1000).max(600000).default(60000),
   AI_PIPELINE_MODE: Joi.string()
-    .valid('disabled', 'dry_run', 'local_ground_truth_export')
+    .valid(
+      'disabled',
+      'dry_run',
+      'local_ground_truth_export',
+      'regional_feature_extraction',
+      'regional_model_eval',
+    )
     .default('disabled'),
 }).unknown(true);
 
