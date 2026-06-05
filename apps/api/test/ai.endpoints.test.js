@@ -571,6 +571,12 @@ describe('AI backend endpoints phase B', () => {
     expect(createResponse.body.data.status).toBe('draft');
     expect(createResponse.body.data.label_field).toBe('feature_type');
     expect(createResponse.body.data.eligible_feature_count).toBe(2);
+    expect(createResponse.body.data.metadata).toEqual(
+      expect.objectContaining({
+        execution_mode: 'mock',
+        real_ai_execution: false,
+      }),
+    );
 
     const afterCount = await pool.query(
       `SELECT COUNT(*)::int AS count FROM spatial_feature WHERE project_id = $1`,
@@ -610,9 +616,32 @@ describe('AI backend endpoints phase B', () => {
       expect.arrayContaining([
         expect.objectContaining({
           level: 'info',
+          metadata: expect.objectContaining({
+            execution_mode: 'mock',
+            real_ai_execution: false,
+          }),
         }),
       ]),
     );
+
+    const dryRunResponse = await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'draft',
+        execution_mode: 'dry_run',
+      })
+      .expect(201);
+    expect(dryRunResponse.body.data.metadata.execution_mode).toBe('dry_run');
+
+    await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'draft',
+        execution_mode: 'full_training',
+      })
+      .expect(400);
   });
 
   test('RBAC allows only protected super-admin users without cross-project leaks', async () => {

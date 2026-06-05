@@ -422,7 +422,7 @@ paths:
       security:
         - bearerAuth: []
       summary: Create a draft or queued AI run record without worker execution
-      description: Creates only an ai_run row and ai_run_log entry. No GEE job, training, classification, or DB output insertion is started.
+      description: Creates only an ai_run row and ai_run_log entry. Phase E execution modes are limited to mock, dry-run, or local-only ground-truth export. No GEE feature extraction, training, classification, publishing, or DB output insertion is started.
       parameters:
         - $ref: '#/components/parameters/projectId'
       requestBody:
@@ -1432,6 +1432,11 @@ components:
         min_samples_per_class:
           type: integer
           minimum: 1
+        execution_mode:
+          type: string
+          enum: [mock, dry_run, local_ground_truth_export]
+          default: mock
+          description: Safe worker mode. Full training/classification modes are intentionally unavailable in Phase E.
         model_preferences:
           type: object
     AiRunCreateRequest:

@@ -16,6 +16,8 @@ const allowedRunStatuses = [
   'cancelled',
 ];
 
+const allowedExecutionModes = ['mock', 'dry_run', 'local_ground_truth_export'];
+
 const defaultSettings = {
   is_enabled: false,
   label_field: null,
@@ -928,6 +930,8 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
   const settings = await getEffectiveAiSettings(projectId);
   const body = req.body ?? {};
   const status = body.status === 'queued' ? 'queued' : 'draft';
+  const requestedExecutionMode = normalizeOptionalString(body.execution_mode);
+  const executionMode = requestedExecutionMode ?? 'mock';
   const labelField =
     normalizeOptionalString(body.label_field) ??
     settings.label_field ??
@@ -943,6 +947,13 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
 
   if (!labelField) {
     throw new AppError('AI label_field is required to create an AI run.', 400);
+  }
+
+  if (!allowedExecutionModes.includes(executionMode)) {
+    throw new AppError(
+      'Unsupported AI execution_mode. Phase E allows only mock, dry_run, or local_ground_truth_export.',
+      400,
+    );
   }
 
   const readiness = await getFeatureReadinessSummary({
@@ -1029,7 +1040,9 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
         JSON.stringify({
           readiness_status: readiness.status,
           min_samples_per_class: minSamplesPerClass,
-          worker_execution: 'not_started_phase_b',
+          worker_execution: 'not_started_phase_e',
+          execution_mode: executionMode,
+          real_ai_execution: false,
           requested_by: currentUser.id,
           requested_status: status,
         }),
@@ -1045,8 +1058,10 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
           ? 'AI run queued as a backend placeholder; no worker execution started.'
           : 'AI run draft created; no worker execution started.',
         JSON.stringify({
-          phase: 'backend_phase_b',
+          phase: 'backend_phase_e',
           readiness_status: readiness.status,
+          execution_mode: executionMode,
+          real_ai_execution: false,
         }),
       ],
     );

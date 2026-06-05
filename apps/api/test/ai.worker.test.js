@@ -10,7 +10,11 @@ const {
   createCategory,
   createProject,
 } = require('./helpers/api-test-helpers');
-const { AI_WORKER_MOCK_STATUS_SEQUENCE, runAiWorkerOnce } = require('../src/jobs/aiWorker');
+const {
+  AI_WORKER_MOCK_STATUS_SEQUENCE,
+  AI_WORKER_PIPELINE_STATUS_SEQUENCE,
+  runAiWorkerOnce,
+} = require('../src/jobs/aiWorker');
 
 const activateProject = async ({ token, projectId }) => {
   const response = await request(app)
@@ -49,7 +53,12 @@ const createProjectFixture = async (name = 'AI Worker Project') => {
   };
 };
 
-const insertQueuedRun = async ({ projectId, userId, labelField = 'L4_descr' }) => {
+const insertQueuedRun = async ({
+  projectId,
+  userId,
+  labelField = 'L4_descr',
+  metadata = { test: 'ai-worker' },
+}) => {
   const result = await pool.query(
     `INSERT INTO ai_run (
        project_id,
@@ -71,10 +80,10 @@ const insertQueuedRun = async ({ projectId, userId, labelField = 'L4_descr' }) =
        1394,
        12,
        $3,
-       '{"test":"ai-worker"}'::jsonb
+       $4::jsonb
      )
      RETURNING id`,
-    [projectId, labelField, userId],
+    [projectId, labelField, userId, JSON.stringify(metadata)],
   );
 
   return result.rows[0].id;
@@ -84,6 +93,39 @@ const countRows = async (tableName) => {
   const result = await pool.query(`SELECT COUNT(*)::int AS count FROM ${tableName}`);
   return Number(result.rows[0].count);
 };
+
+const pipelineConfig = (overrides = {}) => ({
+  enabled: true,
+  root: 'configured',
+  pythonBin: 'python',
+  timeoutMs: 60000,
+  mode: 'dry_run',
+  ...overrides,
+});
+
+const pipelineResult = (command, overrides = {}) => ({
+  command,
+  success: true,
+  exitCode: 0,
+  durationMs: 5,
+  timedOut: false,
+  sanitizedLog: `${command} ok`,
+  outputPaths: [],
+  ...overrides,
+});
+
+const createMockPipelineService = ({ config = pipelineConfig(), overrides = {} } = {}) => ({
+  getConfig: jest.fn(() => config),
+  checkConfig: jest.fn(async () => pipelineResult('config_check')),
+  dryRun: jest.fn(async () => pipelineResult('dry_run')),
+  probeProject: jest.fn(async () => pipelineResult('probe_project')),
+  exportGroundTruthLocal: jest.fn(async () =>
+    pipelineResult('export_ground_truth_local', {
+      outputPaths: ['outputs/projects/test-project/ground_truth.geojson'],
+    }),
+  ),
+  ...overrides,
+});
 
 beforeEach(async () => {
   await resetDb();
@@ -151,7 +193,7 @@ describe('AI worker skeleton phase D', () => {
     expect(runResult.rows[0].completed_at).toBeTruthy();
     expect(runResult.rows[0].metadata).toEqual(
       expect.objectContaining({
-        worker_phase: 'phase_d_mock',
+        worker_phase: 'phase_e_bridge',
         real_ai_execution: false,
       }),
     );
@@ -327,5 +369,201 @@ describe('AI worker skeleton phase D', () => {
     expect(await countRows('ai_run_log')).toBe(0);
     expect(await countRows('ai_output_layer')).toBe(0);
     expect(await countRows('spatial_feature')).toBe(0);
+  });
+
+  test('uses the mock path when the AI pipeline is disabled', async () => {
+    const { admin, project } = await createProjectFixture('AI Worker Disabled Pipeline');
+    const runId = await insertQueuedRun({
+      projectId: project.id,
+      userId: admin.user.id,
+      metadata: {
+        test: 'ai-worker',
+        execution_mode: 'dry_run',
+      },
+    });
+    const pipelineService = createMockPipelineService({
+      config: pipelineConfig({
+        enabled: false,
+        mode: 'disabled',
+      }),
+    });
+
+    const result = await runAiWorkerOnce({
+      pipelineService,
+      workerId: 'phase-e-disabled-worker',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        mock: true,
+        executionMode: 'mock',
+        pipelineEnabled: false,
+        runId,
+        finalStatus: 'ready_for_review',
+      }),
+    );
+    expect(pipelineService.checkConfig).not.toHaveBeenCalled();
+    expect(pipelineService.dryRun).not.toHaveBeenCalled();
+    expect(pipelineService.probeProject).not.toHaveBeenCalled();
+    expect(pipelineService.exportGroundTruthLocal).not.toHaveBeenCalled();
+  });
+
+  test('runs the enabled dry-run pipeline bridge and stores command metadata', async () => {
+    const { admin, project } = await createProjectFixture('AI Worker Dry Pipeline');
+    const runId = await insertQueuedRun({
+      projectId: project.id,
+      userId: admin.user.id,
+      metadata: {
+        test: 'ai-worker',
+        execution_mode: 'dry_run',
+      },
+    });
+    const pipelineService = createMockPipelineService();
+
+    const result = await runAiWorkerOnce({
+      pipelineService,
+      workerId: 'phase-e-dry-worker',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        mock: false,
+        executionMode: 'dry_run',
+        pipelineEnabled: true,
+        runId,
+        finalStatus: 'ready_for_review',
+        statuses: AI_WORKER_PIPELINE_STATUS_SEQUENCE,
+      }),
+    );
+    expect(pipelineService.checkConfig).toHaveBeenCalledTimes(1);
+    expect(pipelineService.dryRun).toHaveBeenCalledTimes(1);
+    expect(pipelineService.probeProject).toHaveBeenCalledWith(project.id, 'L4_descr');
+    expect(pipelineService.exportGroundTruthLocal).not.toHaveBeenCalled();
+
+    const runResult = await pool.query(
+      `SELECT status, metadata
+       FROM ai_run
+       WHERE id = $1`,
+      [runId],
+    );
+    expect(runResult.rows[0].status).toBe('ready_for_review');
+    expect(runResult.rows[0].metadata).toEqual(
+      expect.objectContaining({
+        execution_mode: 'dry_run',
+        pipeline_bridge_phase: 'phase_e',
+        real_ai_execution: false,
+      }),
+    );
+    expect(runResult.rows[0].metadata.command_results).toHaveLength(3);
+
+    const logResult = await pool.query(
+      `SELECT message, metadata
+       FROM ai_run_log
+       WHERE ai_run_id = $1
+       ORDER BY created_at ASC`,
+      [runId],
+    );
+    expect(logResult.rows.map((row) => row.message)).toEqual(
+      expect.arrayContaining([
+        'AI pipeline config check started.',
+        'AI pipeline config check completed.',
+        'AI pipeline dry-run started.',
+        'AI pipeline dry-run completed.',
+        'AI pipeline project readiness probe started.',
+        'AI pipeline project readiness probe completed.',
+      ]),
+    );
+    expect(logResult.rows.every((row) => row.metadata.real_ai_execution === false)).toBe(true);
+    expect(await countRows('spatial_feature')).toBe(0);
+    expect(await countRows('ai_output_layer')).toBe(0);
+  });
+
+  test('runs local-only ground-truth export only when that safe mode is requested', async () => {
+    const { admin, project } = await createProjectFixture('AI Worker Local Export Pipeline');
+    const runId = await insertQueuedRun({
+      projectId: project.id,
+      userId: admin.user.id,
+      metadata: {
+        test: 'ai-worker',
+        execution_mode: 'local_ground_truth_export',
+      },
+    });
+    const pipelineService = createMockPipelineService({
+      config: pipelineConfig({
+        mode: 'local_ground_truth_export',
+      }),
+    });
+
+    const result = await runAiWorkerOnce({
+      pipelineService,
+      workerId: 'phase-e-export-worker',
+    });
+
+    expect(result.finalStatus).toBe('ready_for_review');
+    expect(pipelineService.exportGroundTruthLocal).toHaveBeenCalledWith(project.id, 'L4_descr');
+
+    const runResult = await pool.query(
+      `SELECT metadata
+       FROM ai_run
+       WHERE id = $1`,
+      [runId],
+    );
+    expect(runResult.rows[0].metadata.output_paths).toEqual([
+      'outputs/projects/test-project/ground_truth.geojson',
+    ]);
+  });
+
+  test('marks the run failed when a safe pipeline command fails', async () => {
+    const { admin, project } = await createProjectFixture('AI Worker Pipeline Failure');
+    const runId = await insertQueuedRun({
+      projectId: project.id,
+      userId: admin.user.id,
+      metadata: {
+        test: 'ai-worker',
+        execution_mode: 'dry_run',
+      },
+    });
+    const pipelineService = createMockPipelineService({
+      overrides: {
+        dryRun: jest.fn(async () =>
+          pipelineResult('dry_run', {
+            success: false,
+            exitCode: 2,
+            sanitizedLog: 'dry-run failed without secrets',
+          }),
+        ),
+      },
+    });
+
+    const result = await runAiWorkerOnce({
+      pipelineService,
+      workerId: 'phase-e-failing-worker',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        mock: false,
+        executionMode: 'dry_run',
+        finalStatus: 'failed',
+        failureReason: 'AI pipeline dry_run failed during Phase E safe bridge.',
+      }),
+    );
+
+    const runResult = await pool.query(
+      `SELECT status, failure_reason, metadata
+       FROM ai_run
+       WHERE id = $1`,
+      [runId],
+    );
+    expect(runResult.rows[0].status).toBe('failed');
+    expect(runResult.rows[0].failure_reason).toBe(
+      'AI pipeline dry_run failed during Phase E safe bridge.',
+    );
+    expect(runResult.rows[0].metadata.command_results).toHaveLength(2);
+    expect(await countRows('spatial_feature')).toBe(0);
+    expect(await countRows('ai_output_layer')).toBe(0);
   });
 });

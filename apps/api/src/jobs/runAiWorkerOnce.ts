@@ -9,12 +9,14 @@ const parseArgs = (
   once: boolean;
   dryRun: boolean;
   mock: boolean;
+  pipelineBridge: boolean;
   failAtStatus: AiRunActiveStatus | null;
 } => {
   const parsed = {
     once: false,
     dryRun: false,
     mock: false,
+    pipelineBridge: false,
     failAtStatus: null as AiRunActiveStatus | null,
   };
 
@@ -29,6 +31,10 @@ const parseArgs = (
     }
     if (arg === '--mock') {
       parsed.mock = true;
+      continue;
+    }
+    if (arg === '--pipeline-bridge') {
+      parsed.pipelineBridge = true;
       continue;
     }
     if (arg.startsWith('--fail-at=')) {
@@ -47,13 +53,13 @@ const run = async (): Promise<void> => {
     if (!args.once) {
       throw new Error('Phase D AI worker supports only --once execution.');
     }
-    if (!args.dryRun && !args.mock) {
-      throw new Error('Phase D AI worker requires --mock or --dry-run.');
+    if (!args.dryRun && !args.mock && !args.pipelineBridge) {
+      throw new Error('Phase E AI worker requires --mock, --pipeline-bridge, or --dry-run.');
     }
 
     const result = await runAiWorkerOnce({
       dryRun: args.dryRun,
-      mock: args.mock,
+      mock: args.mock ? true : undefined,
       failAtStatus: args.failAtStatus,
     });
 
