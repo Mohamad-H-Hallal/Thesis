@@ -772,7 +772,7 @@ class _ProjectAiRunsSectionState extends ConsumerState<ProjectAiRunsSection> {
                         'Run ${run.id.substring(0, run.id.length.clamp(0, 8))}',
                       ),
                       subtitle: Text(
-                        '${_formatValue(run.status)} - ${run.labelField ?? 'No label'} - ${run.eligibleFeatureCount} eligible',
+                        '${_friendlyStatusLabel(run.status)} - ${run.labelField ?? 'No label'} - ${run.eligibleFeatureCount} eligible',
                       ),
                       trailing: StatusChip(status: run.status),
                       onTap: () => setState(
@@ -876,7 +876,7 @@ class _AiRunDetailCard extends ConsumerWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Run details',
+                    'Run summary',
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                 ),
@@ -884,15 +884,7 @@ class _AiRunDetailCard extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
-            if (_isRegionalRun(run)) ...[
-              const _NoticeRow(
-                icon: Icons.travel_explore_outlined,
-                text:
-                    'This is a regional proof-of-concept, not a national model.',
-              ),
-              const SizedBox(height: AppSpacing.sm),
-            ],
-            _KeyValueList(title: 'Summary', rows: _runSummaryRows(run)),
+            _RunStatusSection(run: run),
             if (run.failureReason?.trim().isNotEmpty ?? false) ...[
               const SizedBox(height: AppSpacing.md),
               _NoticeRow(
@@ -901,22 +893,65 @@ class _AiRunDetailCard extends ConsumerWidget {
               ),
             ],
             const SizedBox(height: AppSpacing.md),
-            _OutputPathsSection(paths: _outputPaths(run.metadata)),
-            const SizedBox(height: AppSpacing.md),
-            _MetricsSection(run: run, asyncValue: metricsAsync),
-            const SizedBox(height: AppSpacing.md),
-            _ClassCountsSection(run: run),
-            const SizedBox(height: AppSpacing.md),
-            _LayerSection(asyncValue: layersAsync),
+            _WhatHappenedSection(run: run, metricsAsync: metricsAsync),
             const SizedBox(height: AppSpacing.md),
             _LimitationSection(run: run),
             const SizedBox(height: AppSpacing.md),
+            _NextStepSection(run: run, layersAsync: layersAsync),
+            const SizedBox(height: AppSpacing.md),
+            _OutputPathsSection(paths: _outputPaths(run.metadata)),
+            const SizedBox(height: AppSpacing.sm),
             _LogsSection(asyncValue: logsAsync),
             const SizedBox(height: AppSpacing.sm),
             _TechnicalDetailsSection(run: run),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _RunStatusSection extends StatelessWidget {
+  const _RunStatusSection({required this.run});
+
+  final AiRun run;
+
+  @override
+  Widget build(BuildContext context) {
+    return _KeyValueList(title: 'Run status', rows: _runStatusRows(run));
+  }
+}
+
+class _WhatHappenedSection extends StatelessWidget {
+  const _WhatHappenedSection({required this.run, required this.metricsAsync});
+
+  final AiRun run;
+  final AsyncValue<List<AiRunMetric>> metricsAsync;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = _whatHappenedRows(run);
+    final mode = _executionMode(run);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('What happened', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: AppSpacing.xs),
+        _NoticeRow(
+          icon: Icons.auto_awesome_outlined,
+          text: _whatHappenedMessage(mode),
+        ),
+        if (rows.isNotEmpty) ...[
+          const SizedBox(height: AppSpacing.xs),
+          _KeyValueList(title: 'Result summary', rows: rows),
+        ],
+        if (mode == 'regional_model_eval') ...[
+          const SizedBox(height: AppSpacing.sm),
+          _ModelResultSection(run: run, metricsAsync: metricsAsync),
+        ],
+        const SizedBox(height: AppSpacing.sm),
+        _ClassCountsSection(run: run),
+      ],
     );
   }
 }
@@ -928,42 +963,48 @@ class _OutputPathsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _KeyValueList(
-      title: 'Output paths',
-      emptyText: 'No output paths recorded yet.',
-      rows: paths
-          .map((path) => MapEntry(_outputPathLabel(path), _safeText(path)))
-          .toList(growable: false),
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: EdgeInsets.zero,
+      expandedAlignment: Alignment.centerLeft,
+      expandedCrossAxisAlignment: CrossAxisAlignment.start,
+      title: const Text('Technical output files'),
+      children: [
+        SizedBox(
+          width: double.infinity,
+          child: _KeyValueList(
+            title: 'Output files',
+            emptyText: 'No technical output files recorded yet.',
+            rows: paths
+                .map(
+                  (path) =>
+                      MapEntry(_friendlyOutputPathLabel(path), _safeText(path)),
+                )
+                .toList(growable: false),
+          ),
+        ),
+      ],
     );
   }
 }
 
-class _MetricsSection extends StatelessWidget {
-  const _MetricsSection({required this.run, required this.asyncValue});
+class _ModelResultSection extends StatelessWidget {
+  const _ModelResultSection({required this.run, required this.metricsAsync});
 
   final AiRun run;
-  final AsyncValue<List<AiRunMetric>> asyncValue;
+  final AsyncValue<List<AiRunMetric>> metricsAsync;
 
   @override
   Widget build(BuildContext context) {
-    return asyncValue.when(
-      loading: () => const LinearProgressIndicator(),
-      error: (error, _) => Text(
-        userFacingErrorMessage(error, fallback: 'Unable to load AI metrics.'),
-      ),
-      data: (metrics) {
-        final rows = _metricRows(run, metrics);
-        if (rows.isEmpty) {
-          return const _KeyValueList(
-            title: 'Model metrics',
-            emptyText:
-                'Model metrics will appear after a regional model evaluation run.',
-            rows: [],
-          );
-        }
-        return _KeyValueList(title: 'Model metrics', rows: rows);
-      },
+    final metrics = metricsAsync.maybeWhen(
+      data: (items) => items,
+      orElse: () => const <AiRunMetric>[],
     );
+    final rows = _modelResultRows(run, metrics);
+    if (rows.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return _KeyValueList(title: 'Model result', rows: rows);
   }
 }
 
@@ -996,46 +1037,34 @@ class _ClassCountsSection extends StatelessWidget {
   }
 }
 
-class _LayerSection extends StatelessWidget {
-  const _LayerSection({required this.asyncValue});
+class _NextStepSection extends StatelessWidget {
+  const _NextStepSection({required this.run, required this.layersAsync});
 
-  final AsyncValue<List<AiOutputLayer>> asyncValue;
+  final AiRun run;
+  final AsyncValue<List<AiOutputLayer>> layersAsync;
 
   @override
   Widget build(BuildContext context) {
-    return asyncValue.when(
+    return layersAsync.when(
       loading: () => const LinearProgressIndicator(),
       error: (error, _) => Text(
         userFacingErrorMessage(error, fallback: 'Unable to load AI layers.'),
       ),
       data: (layers) {
+        final messages = <String>[
+          _statusExplanation(run),
+          if (_executionMode(run) != 'regional_model_eval')
+            'Model metrics will appear after a regional model evaluation run.',
+        ];
         if (layers.isEmpty) {
-          return const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _KeyValueList(
-                title: 'AI output layers',
-                emptyText: 'No published AI layers yet.',
-                rows: [],
-              ),
-              SizedBox(height: AppSpacing.xs),
-              _NoticeRow(
-                icon: Icons.layers_outlined,
-                text: 'AI map layers are planned for the next phase.',
-              ),
-            ],
-          );
+          messages.add('No published AI layers yet.');
+          messages.add('AI map layers are planned for a later phase.');
+        } else {
+          messages.add('${layers.length} AI layer record(s) are available.');
         }
-        return _KeyValueList(
-          title: 'AI output layers',
-          rows: layers
-              .map(
-                (layer) => MapEntry(
-                  layer.name,
-                  '${_formatValue(layer.layerType)} - ${_formatValue(layer.status)}',
-                ),
-              )
-              .toList(growable: false),
+        return _MessageList(
+          title: 'Next step',
+          messages: messages.map(_safeText).toList(growable: false),
         );
       },
     );
@@ -1064,28 +1093,37 @@ class _LogsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return asyncValue.when(
-      loading: () => const LinearProgressIndicator(),
-      error: (error, _) => Text(
-        userFacingErrorMessage(error, fallback: 'Unable to load run logs.'),
-      ),
-      data: (page) {
-        if (page.items.isEmpty) {
-          return const _KeyValueList(
-            title: 'Logs',
-            emptyText: 'No logs yet.',
-            rows: [],
-          );
-        }
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Logs', style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: AppSpacing.xs),
-            for (final log in page.items) _LogRow(log: log),
-          ],
-        );
-      },
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: EdgeInsets.zero,
+      expandedAlignment: Alignment.centerLeft,
+      expandedCrossAxisAlignment: CrossAxisAlignment.start,
+      title: const Text('Worker logs'),
+      children: [
+        asyncValue.when(
+          loading: () => const LinearProgressIndicator(),
+          error: (error, _) => Text(
+            userFacingErrorMessage(error, fallback: 'Unable to load run logs.'),
+          ),
+          data: (page) {
+            if (page.items.isEmpty) {
+              return const _KeyValueList(
+                title: 'Logs',
+                emptyText: 'Worker logs will appear after processing starts.',
+                rows: [],
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Logs', style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: AppSpacing.xs),
+                for (final log in page.items) _LogRow(log: log),
+              ],
+            );
+          },
+        ),
+      ],
     );
   }
 }
@@ -1160,7 +1198,9 @@ class _TechnicalDetailsSection extends StatelessWidget {
     return ExpansionTile(
       tilePadding: EdgeInsets.zero,
       childrenPadding: EdgeInsets.zero,
-      title: const Text('Technical details'),
+      expandedAlignment: Alignment.centerLeft,
+      expandedCrossAxisAlignment: CrossAxisAlignment.start,
+      title: const Text('Technical metadata'),
       children: [
         _KeyValueList(
           title: 'Run metadata',
@@ -1174,106 +1214,439 @@ class _TechnicalDetailsSection extends StatelessWidget {
   }
 }
 
-List<MapEntry<String, String>> _runSummaryRows(AiRun run) {
-  final executionMode = _metadataText(run.metadata, 'execution_mode');
-  return [
-    MapEntry('Status', _formatValue(run.status)),
-    MapEntry('Execution mode', _formatValue(executionMode ?? 'not set')),
-    MapEntry('Label field', run.labelField ?? 'Not set'),
-    MapEntry('Scope', _formatValue(run.scopeType)),
-    if (run.regionPreset?.trim().isNotEmpty ?? false)
-      MapEntry('Region preset', run.regionPreset!),
-    MapEntry('Training features', '${run.trainingFeatureCount}'),
-    MapEntry('Eligible features', '${run.eligibleFeatureCount}'),
-    MapEntry('Excluded features', '${run.excludedFeatureCount}'),
-    MapEntry('Selected model', run.selectedModel ?? 'Not selected'),
-    MapEntry('Duration', _runDuration(run)),
-    MapEntry('Created', _formatDate(run.createdAt)),
+String _executionMode(AiRun run) =>
+    _metadataText(run.metadata, 'execution_mode') ?? 'not set';
+
+List<MapEntry<String, String>> _runStatusRows(AiRun run) {
+  final rows = <MapEntry<String, String>>[
+    MapEntry('Status', _friendlyStatusLabel(run.status)),
+    MapEntry(
+      'Execution type',
+      _friendlyExecutionModeLabel(_executionMode(run)),
+    ),
     MapEntry('Started', _formatDate(run.startedAt)),
     MapEntry('Completed', _formatDate(run.completedAt)),
+    MapEntry('Duration', _runDuration(run)),
+    MapEntry('Label/class field', run.labelField ?? 'Not set'),
+    MapEntry('Scope', _friendlyScopeLabel(run.scopeType)),
   ];
+  if (run.regionPreset?.trim().isNotEmpty ?? false) {
+    rows.add(MapEntry('Region', run.regionPreset!));
+  }
+  return rows.map((row) => MapEntry(row.key, _safeText(row.value))).toList();
 }
 
-List<MapEntry<String, String>> _metricRows(
-  AiRun run,
-  List<AiRunMetric> metrics,
-) {
-  final summary = _mapValue(run.metadata['model_metrics_summary']);
+String _whatHappenedMessage(String executionMode) {
+  switch (executionMode) {
+    case 'local_ground_truth_export':
+      return 'Prepared approved project data for AI training.';
+    case 'regional_feature_extraction':
+      return 'Extracted satellite features for approved project samples.';
+    case 'regional_model_eval':
+      return 'Evaluated regional AI models using approved project data.';
+    case 'dry_run':
+      return 'Checked the AI pipeline without running model processing.';
+    case 'mock':
+      return 'Simulated worker processing for a safe app-side check.';
+    default:
+      return 'Recorded AI run progress for this project.';
+  }
+}
+
+List<MapEntry<String, String>> _whatHappenedRows(AiRun run) {
+  final mode = _executionMode(run);
+  final classRows = _countRows(run.metadata['class_counts']);
+  final excludedRows = _countRows(run.metadata['excluded_classes']);
   final rows = <MapEntry<String, String>>[];
-  final bestModel = _stringValue(summary['best_model']);
-  if (bestModel != null) {
-    rows.add(MapEntry('Best model', _formatValue(bestModel)));
-  }
-  final sampleCount = _toIntValue(summary['sample_count']);
-  if (sampleCount != null) {
-    rows.add(MapEntry('Samples evaluated', sampleCount.toString()));
-  }
-  final trainCount = _toIntValue(summary['train_count']);
-  final testCount = _toIntValue(summary['test_count']);
-  if (trainCount != null || testCount != null) {
-    rows.add(
-      MapEntry(
-        'Train/test split',
-        '${trainCount ?? 'unknown'} / ${testCount ?? 'unknown'}',
-      ),
-    );
-  }
-  final droppedNullRows = _toIntValue(summary['dropped_null_rows']);
-  if (droppedNullRows != null) {
-    rows.add(MapEntry('Dropped null rows', droppedNullRows.toString()));
-  }
-  final modelRows = _modelMetricRows(summary['models']);
-  if (modelRows.isNotEmpty) {
-    rows.addAll(modelRows);
-  }
-  if (rows.isEmpty && metrics.isNotEmpty) {
-    for (final metric in metrics) {
-      rows.add(
+
+  switch (mode) {
+    case 'local_ground_truth_export':
+      rows.addAll([
+        MapEntry('Approved samples', '${run.trainingFeatureCount}'),
+        MapEntry('Eligible samples', '${run.eligibleFeatureCount}'),
+        if (classRows.isNotEmpty) MapEntry('Classes', '${classRows.length}'),
+        MapEntry('Excluded samples', '${run.excludedFeatureCount}'),
+      ]);
+      break;
+    case 'regional_feature_extraction':
+      rows.addAll([
+        MapEntry('Sample count', '${run.eligibleFeatureCount}'),
         MapEntry(
-          metric.modelName,
-          [
-            if (metric.overallAccuracy != null)
-              'accuracy ${_formatMetric(metric.overallAccuracy)}',
-            if (metric.macroF1 != null)
-              'macro-F1 ${_formatMetric(metric.macroF1)}',
-            if (metric.weightedF1 != null)
-              'weighted-F1 ${_formatMetric(metric.weightedF1)}',
-          ].join(', '),
+          'Satellite collection',
+          _metadataText(run.metadata, 'satellite_collection') ?? 'Sentinel-2',
         ),
-      );
-    }
+        MapEntry('Date range', _featureDateRange(run.metadata)),
+        MapEntry('Extracted features', _featureCountText(run.metadata)),
+        MapEntry('Missing/null values', _nullValueText(run.metadata)),
+      ]);
+      break;
+    case 'regional_model_eval':
+      final summary = _mapValue(run.metadata['model_metrics_summary']);
+      rows.addAll([
+        MapEntry('Approved samples', '${run.trainingFeatureCount}'),
+        MapEntry('Eligible samples', '${run.eligibleFeatureCount}'),
+        if (classRows.isNotEmpty) MapEntry('Classes', '${classRows.length}'),
+        if (excludedRows.isNotEmpty)
+          MapEntry('Excluded classes', '${excludedRows.length}'),
+        if (_toIntValue(summary['sample_count']) != null)
+          MapEntry(
+            'Samples evaluated',
+            '${_toIntValue(summary['sample_count'])}',
+          ),
+      ]);
+      break;
+    default:
+      rows.addAll([
+        MapEntry('Approved samples', '${run.trainingFeatureCount}'),
+        MapEntry('Eligible samples', '${run.eligibleFeatureCount}'),
+        MapEntry('Excluded samples', '${run.excludedFeatureCount}'),
+      ]);
+      break;
   }
-  final confusionPath = _firstOutputPath(run.metadata, 'confusion_matrix');
-  if (confusionPath != null) {
-    rows.add(MapEntry('Confusion matrix', confusionPath));
-  }
-  final importancePath = _firstOutputPath(run.metadata, 'feature_importance');
-  if (importancePath != null) {
-    rows.add(MapEntry('Feature importance', importancePath));
-  }
+
   return rows
+      .where((row) => row.value.trim().isNotEmpty)
       .map((row) => MapEntry(row.key, _safeText(row.value)))
       .toList(growable: false);
 }
 
-List<MapEntry<String, String>> _modelMetricRows(dynamic value) {
-  final models = _mapValue(value);
-  final rows = <MapEntry<String, String>>[];
-  for (final entry in models.entries) {
-    final metrics = _mapValue(entry.value);
-    final values = <String>[
-      if (_toDoubleValue(metrics['accuracy']) != null)
-        'accuracy ${_formatMetric(_toDoubleValue(metrics['accuracy']))}',
-      if (_toDoubleValue(metrics['macro_f1']) != null)
-        'macro-F1 ${_formatMetric(_toDoubleValue(metrics['macro_f1']))}',
-      if (_toDoubleValue(metrics['weighted_f1']) != null)
-        'weighted-F1 ${_formatMetric(_toDoubleValue(metrics['weighted_f1']))}',
+List<MapEntry<String, String>> _modelResultRows(
+  AiRun run,
+  List<AiRunMetric> metrics,
+) {
+  final rows = metrics.isNotEmpty
+      ? _modelRowsFromMetricRecords(run, metrics)
+      : _modelRowsFromMetadata(run);
+  if (rows.isNotEmpty) {
+    return rows
+        .map((row) => MapEntry(row.key, _safeText(row.value)))
+        .toList(growable: false);
+  }
+  if (_firstOutputPath(run.metadata, 'metrics') != null) {
+    return const [
+      MapEntry('Model metrics file', 'Available in Technical output files.'),
     ];
-    if (values.isNotEmpty) {
-      rows.add(MapEntry(_formatValue(entry.key), values.join(', ')));
+  }
+  return const <MapEntry<String, String>>[];
+}
+
+List<MapEntry<String, String>> _modelRowsFromMetricRecords(
+  AiRun run,
+  List<AiRunMetric> metrics,
+) {
+  final bestBalanced = _maxMetric(metrics, (metric) => metric.macroF1);
+  final highestAccuracy = _maxMetric(
+    metrics,
+    (metric) => metric.overallAccuracy,
+  );
+  final selectedModel = _firstString([
+    run.selectedModel,
+    _metadataText(run.metadata, 'selected_model'),
+    _metadataText(run.metadata, 'final_model'),
+    _metadataText(run.metadata, 'best_model'),
+  ]);
+  final selectedMetric =
+      _findMetric(metrics, selectedModel) ??
+      bestBalanced ??
+      highestAccuracy ??
+      metrics.first;
+
+  return _compactModelRows(
+    bestBalancedModel: bestBalanced?.modelName,
+    highestAccuracyModel: highestAccuracy?.modelName,
+    finalSelectedModel: selectedModel ?? selectedMetric.modelName,
+    accuracy: selectedMetric.overallAccuracy,
+    macroF1: selectedMetric.macroF1,
+    weightedF1: selectedMetric.weightedF1,
+  );
+}
+
+List<MapEntry<String, String>> _modelRowsFromMetadata(AiRun run) {
+  final summary = _mapValue(run.metadata['model_metrics_summary']);
+  if (summary.isEmpty) {
+    return const <MapEntry<String, String>>[];
+  }
+  final models = _modelMetricMaps(summary['models']);
+  final bestBalancedModel =
+      _firstString([
+        _stringValue(summary['best_balanced_model']),
+        _stringValue(summary['best_macro_f1_model']),
+        _stringValue(summary['best_model_by_macro_f1']),
+        _stringValue(summary['model_chosen_by_macro_f1']),
+        _stringValue(summary['best_model']),
+      ]) ??
+      _bestModelName(models, 'macro_f1');
+  final highestAccuracyModel =
+      _firstString([
+        _stringValue(summary['highest_accuracy_model']),
+        _stringValue(summary['best_accuracy_model']),
+        _stringValue(summary['model_with_highest_accuracy']),
+      ]) ??
+      _bestModelName(models, 'accuracy');
+  final finalSelectedModel = _firstString([
+    _stringValue(summary['selected_model']),
+    _stringValue(summary['final_model']),
+    _stringValue(summary['final_selected_model']),
+    run.selectedModel,
+    bestBalancedModel,
+  ]);
+  final selectedMetrics =
+      _modelMetricMap(models, finalSelectedModel) ??
+      _modelMetricMap(models, bestBalancedModel) ??
+      _modelMetricMap(models, highestAccuracyModel) ??
+      summary;
+
+  return _compactModelRows(
+    bestBalancedModel: bestBalancedModel,
+    highestAccuracyModel: highestAccuracyModel,
+    finalSelectedModel: finalSelectedModel,
+    accuracy: _toDoubleValue(selectedMetrics['accuracy']),
+    macroF1: _toDoubleValue(
+      selectedMetrics['macro_f1'] ?? selectedMetrics['macroF1'],
+    ),
+    weightedF1: _toDoubleValue(
+      selectedMetrics['weighted_f1'] ?? selectedMetrics['weightedF1'],
+    ),
+  );
+}
+
+List<MapEntry<String, String>> _compactModelRows({
+  required String? bestBalancedModel,
+  required String? highestAccuracyModel,
+  required String? finalSelectedModel,
+  required double? accuracy,
+  required double? macroF1,
+  required double? weightedF1,
+}) {
+  return <MapEntry<String, String>>[
+    if (bestBalancedModel != null)
+      MapEntry('Best balanced model', _friendlyModelLabel(bestBalancedModel)),
+    if (highestAccuracyModel != null)
+      MapEntry(
+        'Highest accuracy model',
+        _friendlyModelLabel(highestAccuracyModel),
+      ),
+    if (finalSelectedModel != null)
+      MapEntry('Final selected model', _friendlyModelLabel(finalSelectedModel)),
+    if (accuracy != null) MapEntry('Accuracy', _formatMetric(accuracy)),
+    if (macroF1 != null) MapEntry('Macro-F1', _formatMetric(macroF1)),
+    if (weightedF1 != null) MapEntry('Weighted-F1', _formatMetric(weightedF1)),
+  ];
+}
+
+String _featureDateRange(Map<String, dynamic> metadata) {
+  final direct =
+      _metadataText(metadata, 'date_range') ??
+      _metadataText(metadata, 'satellite_date_range');
+  if (direct != null) {
+    return direct;
+  }
+  final start =
+      _metadataText(metadata, 'start_date') ??
+      _metadataText(metadata, 'date_start');
+  final end =
+      _metadataText(metadata, 'end_date') ??
+      _metadataText(metadata, 'date_end');
+  if (start != null || end != null) {
+    return '${start ?? 'start unknown'} to ${end ?? 'end unknown'}';
+  }
+  return 'Configured in AI pipeline';
+}
+
+String _featureCountText(Map<String, dynamic> metadata) {
+  final count =
+      _toIntValue(metadata['extracted_feature_count']) ??
+      _toIntValue(metadata['feature_count']) ??
+      _toIntValue(metadata['column_count']);
+  if (count != null) {
+    return count.toString();
+  }
+  return 'See feature table';
+}
+
+String _nullValueText(Map<String, dynamic> metadata) {
+  final count =
+      _toIntValue(metadata['missing_feature_values']) ??
+      _toIntValue(metadata['null_feature_values']) ??
+      _toIntValue(metadata['null_value_count']);
+  if (count != null) {
+    return count.toString();
+  }
+  return 'See feature extraction summary';
+}
+
+String _friendlyExecutionModeLabel(String mode) {
+  switch (mode) {
+    case 'local_ground_truth_export':
+      return 'Ground truth export';
+    case 'regional_feature_extraction':
+      return 'Regional feature extraction';
+    case 'regional_model_eval':
+      return 'Regional model evaluation';
+    case 'dry_run':
+      return 'Dry run';
+    case 'mock':
+      return 'Mock worker check';
+    case 'not set':
+      return 'Not set';
+    default:
+      return _titleCase(mode.replaceAll('_', ' '));
+  }
+}
+
+String _friendlyStatusLabel(String status) {
+  switch (status) {
+    case 'ready_for_review':
+      return 'Ready for review';
+    case 'extracting_features':
+      return 'Extracting features';
+    default:
+      return _titleCase(status.replaceAll('_', ' '));
+  }
+}
+
+String _friendlyScopeLabel(String scope) {
+  switch (scope) {
+    case 'project':
+      return 'Project';
+    case 'custom_polygon':
+      return 'Custom polygon';
+    default:
+      return _titleCase(scope.replaceAll('_', ' '));
+  }
+}
+
+String _friendlyModelLabel(String model) {
+  final normalized = model.trim().toLowerCase();
+  switch (normalized) {
+    case 'svm_rbf':
+      return 'SVM RBF';
+    case 'random_forest':
+      return 'Random Forest';
+    case 'xgboost':
+      return 'XGBoost';
+    default:
+      return _titleCase(model.replaceAll('_', ' '));
+  }
+}
+
+AiRunMetric? _maxMetric(
+  List<AiRunMetric> metrics,
+  double? Function(AiRunMetric metric) selector,
+) {
+  AiRunMetric? best;
+  double? bestValue;
+  for (final metric in metrics) {
+    final value = selector(metric);
+    if (value == null) {
+      continue;
+    }
+    if (bestValue == null || value > bestValue) {
+      best = metric;
+      bestValue = value;
     }
   }
-  return rows;
+  return best;
+}
+
+AiRunMetric? _findMetric(List<AiRunMetric> metrics, String? modelName) {
+  final normalized = _normalizedModelName(modelName);
+  if (normalized == null) {
+    return null;
+  }
+  for (final metric in metrics) {
+    if (_normalizedModelName(metric.modelName) == normalized) {
+      return metric;
+    }
+  }
+  return null;
+}
+
+Map<String, Map<String, dynamic>> _modelMetricMaps(dynamic value) {
+  final result = <String, Map<String, dynamic>>{};
+  final models = _mapValue(value);
+  for (final entry in models.entries) {
+    final name = _stringValue(entry.key);
+    final normalized = _normalizedModelName(name);
+    final metrics = _mapValue(entry.value);
+    if (normalized != null && metrics.isNotEmpty) {
+      result[normalized] = metrics;
+    }
+  }
+  return result;
+}
+
+Map<String, dynamic>? _modelMetricMap(
+  Map<String, Map<String, dynamic>> models,
+  String? modelName,
+) {
+  final normalized = _normalizedModelName(modelName);
+  if (normalized == null) {
+    return null;
+  }
+  return models[normalized];
+}
+
+String? _bestModelName(
+  Map<String, Map<String, dynamic>> models,
+  String metricKey,
+) {
+  String? bestName;
+  double? bestValue;
+  for (final entry in models.entries) {
+    final value = _toDoubleValue(entry.value[metricKey]);
+    if (value == null) {
+      continue;
+    }
+    if (bestValue == null || value > bestValue) {
+      bestName = entry.key;
+      bestValue = value;
+    }
+  }
+  return bestName;
+}
+
+String? _firstString(Iterable<String?> values) {
+  for (final value in values) {
+    final text = _stringValue(value);
+    if (text != null) {
+      return text;
+    }
+  }
+  return null;
+}
+
+String? _normalizedModelName(String? value) {
+  final text = _stringValue(value);
+  if (text == null) {
+    return null;
+  }
+  return text.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_').trim();
+}
+
+String _statusExplanation(AiRun run) {
+  switch (run.status) {
+    case 'ready_for_review':
+      return 'Ready for review.';
+    case 'failed':
+      return 'This run failed. Review the failure reason and worker logs.';
+    case 'draft':
+      return 'Draft run record only. No worker processing has started.';
+    case 'queued':
+      return 'Queued for the worker.';
+    case 'extracting_features':
+      return 'The worker is extracting satellite features.';
+    case 'training':
+      return 'The worker is training regional models.';
+    case 'evaluating':
+      return 'The worker is evaluating model results.';
+    case 'published':
+      return 'Published for app users.';
+    case 'cancelled':
+      return 'This run was cancelled.';
+    default:
+      return '${_friendlyStatusLabel(run.status)}.';
+  }
 }
 
 List<MapEntry<String, String>> _countRows(dynamic value) {
@@ -1297,16 +1670,34 @@ List<MapEntry<String, String>> _countRows(dynamic value) {
 List<String> _limitationMessages(AiRun run) {
   final messages = <String>{};
   if (_isRegionalRun(run)) {
-    messages.add(
-      'Regional proof-of-concept only. Do not use as a national model.',
-    );
+    messages.add('This is a regional proof-of-concept, not a national model.');
+    messages.add('South Lebanon only.');
+    messages.add('National AI requires wider Lebanon coverage.');
   }
   for (final value in _stringList(run.metadata['scientific_limitations'])) {
-    messages.add(value);
+    final lower = value.toLowerCase();
+    if (lower.contains('national')) {
+      messages.add('National AI requires wider Lebanon coverage.');
+    } else if (lower.contains('regional')) {
+      messages.add(
+        'This is a regional proof-of-concept, not a national model.',
+      );
+    }
   }
   final summary = _mapValue(run.metadata['model_metrics_summary']);
   for (final value in _stringList(summary['warnings'])) {
-    messages.add(value);
+    final lower = value.toLowerCase();
+    if (lower.contains('vineyard')) {
+      messages.add(
+        'Vineyards were excluded because only 12 samples are available.',
+      );
+    } else if (lower.contains('fruit trees') || lower.contains('broad')) {
+      messages.add('Fruit Trees is a broad class.');
+    } else if (lower.contains('national') || lower.contains('south')) {
+      messages.add('National AI requires wider Lebanon coverage.');
+    } else {
+      messages.add(value);
+    }
   }
   return messages.map(_safeText).toList(growable: false);
 }
@@ -1351,14 +1742,14 @@ String? _firstOutputPath(Map<String, dynamic> metadata, String contains) {
   return null;
 }
 
-String _outputPathLabel(String path) {
+String _friendlyOutputPathLabel(String path) {
   final parts = path.split('/').where((part) => part.isNotEmpty).toList();
   if (parts.isEmpty) {
-    return 'Output';
+    return 'Output file';
   }
   final file = parts.last;
   if (file == 'feature_table.csv') return 'Feature table';
-  if (file == 'metrics.json') return 'Metrics';
+  if (file == 'metrics.json') return 'Metrics file';
   if (file == 'confusion_matrix.csv') return 'Confusion matrix';
   if (file == 'model_metadata.json') return 'Model metadata';
   if (file == 'classification_report.csv') return 'Classification report';
@@ -1593,7 +1984,19 @@ String _normalizedSection(String value) {
   return 'readiness';
 }
 
-String _formatValue(String value) => value.replaceAll('_', ' ');
+String _titleCase(String value) {
+  return value
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((word) => word.isNotEmpty)
+      .map((word) {
+        if (word.length <= 1) {
+          return word.toUpperCase();
+        }
+        return '${word.substring(0, 1).toUpperCase()}${word.substring(1)}';
+      })
+      .join(' ');
+}
 
 String _formatExtent(AiSpatialExtent extent) {
   return '${extent.minLon.toStringAsFixed(4)}, ${extent.minLat.toStringAsFixed(4)} to ${extent.maxLon.toStringAsFixed(4)}, ${extent.maxLat.toStringAsFixed(4)}';

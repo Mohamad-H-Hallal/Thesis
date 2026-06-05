@@ -846,7 +846,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(repository.createCount, 1);
-    expect(find.text('Run details'), findsOneWidget);
+    expect(find.text('Run summary'), findsOneWidget);
+    expect(find.textContaining('Execution type: Not set'), findsOneWidget);
+    expect(
+      find.text('Draft run record only. No worker processing has started.'),
+      findsOneWidget,
+    );
     expect(
       find.text(
         'Model metrics will appear after a regional model evaluation run.',
@@ -855,12 +860,12 @@ void main() {
     );
     expect(find.text('No published AI layers yet.'), findsOneWidget);
     expect(
-      find.text('AI map layers are planned for the next phase.'),
+      find.text('AI map layers are planned for a later phase.'),
       findsOneWidget,
     );
   });
 
-  testWidgets('run details show Phase F metadata, model metrics, and outputs', (
+  testWidgets('run details use readable summary and hide technical paths', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1080, 1800));
@@ -885,29 +890,40 @@ void main() {
     await tester.tap(find.text('Run 00f4bb0c'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Run details'), findsOneWidget);
+    expect(find.text('Run summary'), findsOneWidget);
+    expect(find.text('Run status'), findsOneWidget);
+    expect(find.textContaining('Status: Ready for review'), findsOneWidget);
     expect(
-      find.text('This is a regional proof-of-concept, not a national model.'),
+      find.textContaining('Execution type: Regional model evaluation'),
       findsOneWidget,
     );
-    expect(
-      find.textContaining('Execution mode: regional model eval'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('Label field: L4_descr'), findsOneWidget);
+    expect(find.textContaining('Label/class field: L4_descr'), findsOneWidget);
     expect(find.textContaining('Duration: 1m 00s'), findsOneWidget);
 
-    await tester.ensureVisible(find.text('Model metrics'));
+    expect(find.text('What happened'), findsOneWidget);
+    expect(
+      find.text('Evaluated regional AI models using approved project data.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Approved samples: 1406'), findsOneWidget);
+    expect(find.textContaining('Eligible samples: 1394'), findsOneWidget);
+    expect(find.textContaining('Excluded classes: 1'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Model result'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Best model: svm rbf'), findsOneWidget);
-    expect(find.textContaining('random forest:'), findsOneWidget);
-    expect(find.textContaining('accuracy 0.779'), findsOneWidget);
-    expect(find.textContaining('svm rbf:'), findsOneWidget);
-    expect(find.textContaining('macro-F1 0.617'), findsOneWidget);
-    expect(find.textContaining('xgboost:'), findsOneWidget);
-    expect(find.textContaining('Confusion matrix:'), findsWidgets);
-    expect(find.textContaining('Feature importance:'), findsWidgets);
+    expect(find.textContaining('Best balanced model: SVM RBF'), findsOneWidget);
+    expect(
+      find.textContaining('Highest accuracy model: XGBoost'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Final selected model: SVM RBF'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Accuracy: 0.716'), findsOneWidget);
+    expect(find.textContaining('Macro-F1: 0.617'), findsOneWidget);
+    expect(find.textContaining('Weighted-F1: 0.739'), findsOneWidget);
 
     await tester.ensureVisible(find.text('Class counts'));
     await tester.pumpAndSettle();
@@ -917,53 +933,265 @@ void main() {
     expect(find.text('Excluded classes'), findsOneWidget);
     expect(find.textContaining('Vineyards: 12 samples'), findsWidgets);
 
-    await tester.ensureVisible(find.text('Output paths'));
+    expect(
+      find.text('This is a regional proof-of-concept, not a national model.'),
+      findsOneWidget,
+    );
+    expect(find.text('South Lebanon only.'), findsOneWidget);
+    expect(
+      find.text(
+        'Vineyards were excluded because only 12 samples are available.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Fruit Trees is a broad class.'), findsOneWidget);
+    expect(
+      find.text('National AI requires wider Lebanon coverage.'),
+      findsOneWidget,
+    );
+
+    expect(find.text('Technical output files'), findsOneWidget);
+    expect(find.textContaining('metrics.json'), findsNothing);
+    expect(find.textContaining('model_metadata.json'), findsNothing);
+
+    await tester.ensureVisible(find.text('Technical output files'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Technical output files'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Feature table:'), findsOneWidget);
+    expect(find.textContaining('Metrics file:'), findsOneWidget);
     expect(find.textContaining('metrics.json'), findsWidgets);
     expect(find.textContaining('model_metadata.json'), findsWidgets);
     expect(find.text('No published AI layers yet.'), findsOneWidget);
+    expect(
+      find.text('AI map layers are planned for a later phase.'),
+      findsOneWidget,
+    );
   });
 
-  testWidgets(
-    'run logs show timestamp metadata and redact secret-looking values',
-    (tester) async {
-      await tester.binding.setSurfaceSize(const Size(1080, 1800));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
+  testWidgets('model result prefers structured metric rows over metadata', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1080, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
 
-      final project = _project();
-      final repository = FakeAiRepository(
-        settings: fakeAiSettings(projectId: project.id),
-        readiness: fakeReadiness(projectId: project.id),
-        runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
-        logs: _phaseFLogs(),
-      );
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
+      metrics: const <AiRunMetric>[
+        AiRunMetric(
+          id: 'metric-rf',
+          modelName: 'random_forest',
+          overallAccuracy: 0.800,
+          macroF1: 0.500,
+          weightedF1: 0.700,
+        ),
+        AiRunMetric(
+          id: 'metric-svm',
+          modelName: 'svm_rbf',
+          overallAccuracy: 0.720,
+          macroF1: 0.660,
+          weightedF1: 0.750,
+        ),
+        AiRunMetric(
+          id: 'metric-xgb',
+          modelName: 'xgboost',
+          overallAccuracy: 0.840,
+          macroF1: 0.610,
+          weightedF1: 0.780,
+        ),
+      ],
+    );
 
-      await _pumpAiScreen(
-        tester,
-        session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
-        project: project,
-        aiRepository: repository,
-        section: 'runs',
-      );
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
 
-      await tester.tap(find.text('Run 00f4bb0c'));
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Logs'));
-      await tester.pumpAndSettle();
+    await tester.tap(find.text('Run 00f4bb0c'));
+    await tester.pumpAndSettle();
 
-      expect(
-        find.text('Worker started regional model evaluation.'),
-        findsOneWidget,
-      );
-      expect(find.text('Feature extraction completed.'), findsOneWidget);
-      expect(find.textContaining('Step extracting_features'), findsWidgets);
-      expect(find.textContaining('2m 23s'), findsOneWidget);
-      expect(find.textContaining('secret-value'), findsNothing);
-      expect(find.textContaining('[redacted]'), findsOneWidget);
-    },
-  );
+    await tester.ensureVisible(find.text('Model result'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Best balanced model: SVM RBF'), findsOneWidget);
+    expect(
+      find.textContaining('Highest accuracy model: XGBoost'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Final selected model: SVM RBF'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Accuracy: 0.720'), findsOneWidget);
+    expect(find.textContaining('Macro-F1: 0.660'), findsOneWidget);
+    expect(find.textContaining('Weighted-F1: 0.750'), findsOneWidget);
+    expect(find.textContaining('Accuracy: 0.716'), findsNothing);
+  });
+
+  testWidgets('model result is hidden when no metrics or summary exist', (
+    tester,
+  ) async {
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[
+        AiRun(
+          id: 'run-no-metrics',
+          projectId: project.id,
+          status: 'ready_for_review',
+          labelField: 'L4_descr',
+          scopeType: 'project',
+          trainingFeatureCount: 1406,
+          eligibleFeatureCount: 1394,
+          excludedFeatureCount: 12,
+          metadata: const <String, dynamic>{
+            'execution_mode': 'regional_model_eval',
+            'class_counts': <Map<String, dynamic>>[
+              <String, dynamic>{'class_label': 'Olives', 'sample_count': 940},
+              <String, dynamic>{
+                'class_label': 'Fruit Trees',
+                'sample_count': 253,
+              },
+            ],
+          },
+        ),
+      ],
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    await tester.tap(find.text('Run run-no-m'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Model result'), findsNothing);
+    expect(find.textContaining('Accuracy:'), findsNothing);
+    expect(
+      find.text('This is a regional proof-of-concept, not a national model.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('worker logs are hidden by default, expandable, and redacted', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1080, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
+      logs: _phaseFLogs(),
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    await tester.tap(find.text('Run 00f4bb0c'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Worker logs'), findsOneWidget);
+    expect(
+      find.text('Worker started regional model evaluation.'),
+      findsNothing,
+    );
+    expect(find.textContaining('secret-value'), findsNothing);
+
+    await tester.ensureVisible(find.text('Worker logs'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Worker logs'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Worker started regional model evaluation.'),
+      findsOneWidget,
+    );
+    expect(find.text('Feature extraction completed.'), findsOneWidget);
+    expect(find.textContaining('Step extracting_features'), findsWidgets);
+    expect(find.textContaining('2m 23s'), findsOneWidget);
+    expect(find.textContaining('secret-value'), findsNothing);
+    expect(find.textContaining('[redacted]'), findsOneWidget);
+  });
+
+  testWidgets('friendly labels describe safe non-model execution modes', (
+    tester,
+  ) async {
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[
+        _phaseFRegionalRun(
+          projectId: project.id,
+          id: 'feature-run-1',
+          executionMode: 'regional_feature_extraction',
+        ),
+        _phaseFRegionalRun(
+          projectId: project.id,
+          id: 'ground-run-1',
+          executionMode: 'local_ground_truth_export',
+        ),
+      ],
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    await tester.tap(find.text('Run feature-'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Execution type: Regional feature extraction'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Extracted satellite features for approved project samples.'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Satellite collection: Sentinel-2'),
+      findsOneWidget,
+    );
+
+    await tester.ensureVisible(find.text('Run ground-r'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Run ground-r'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Execution type: Ground truth export'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Prepared approved project data for AI training.'),
+      findsOneWidget,
+    );
+  });
 
   testWidgets('failed run details show failure reason and clean empty states', (
     tester,
@@ -997,7 +1225,19 @@ void main() {
 
     expect(find.textContaining('Failure reason:'), findsOneWidget);
     expect(find.textContaining('AI pipeline timed out'), findsWidgets);
-    expect(find.text('No logs yet.'), findsOneWidget);
+    expect(find.text('Worker logs'), findsOneWidget);
+    expect(
+      find.text('Worker logs will appear after processing starts.'),
+      findsNothing,
+    );
+    await tester.ensureVisible(find.text('Worker logs'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Worker logs'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Worker logs will appear after processing starts.'),
+      findsOneWidget,
+    );
     expect(find.text('No published AI layers yet.'), findsOneWidget);
   });
 
@@ -1041,24 +1281,30 @@ void main() {
     await tester.tap(find.text('Run run-seco'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Run details'), findsOneWidget);
-    expect(find.textContaining('Label field: feature_type'), findsOneWidget);
+    expect(find.text('Run summary'), findsOneWidget);
+    expect(
+      find.textContaining('Label/class field: feature_type'),
+      findsOneWidget,
+    );
 
     await tester.ensureVisible(find.text('Run run-firs'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Run run-firs'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Run details'), findsOneWidget);
-    expect(find.textContaining('Label field: L4_descr'), findsOneWidget);
-    expect(find.textContaining('Label field: feature_type'), findsNothing);
+    expect(find.text('Run summary'), findsOneWidget);
+    expect(find.textContaining('Label/class field: L4_descr'), findsOneWidget);
+    expect(
+      find.textContaining('Label/class field: feature_type'),
+      findsNothing,
+    );
 
     await tester.ensureVisible(find.text('Run run-firs'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Run run-firs'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Run details'), findsNothing);
+    expect(find.text('Run summary'), findsNothing);
   });
 
   testWidgets('backend readiness errors show clean UI copy', (tester) async {
