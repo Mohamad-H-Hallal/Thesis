@@ -416,19 +416,55 @@ class AiOutputLayer {
     required this.layerType,
     required this.status,
     required this.name,
+    this.aiRunId,
+    this.projectId,
+    this.description,
+    this.storagePath,
+    this.assetId,
+    this.crs,
+    this.bounds = const <String, dynamic>{},
+    this.style = const <String, dynamic>{},
+    this.publishedAt,
+    this.publishedBy,
+    this.createdAt,
+    this.updatedAt,
   });
 
   final String id;
   final String layerType;
   final String status;
   final String name;
+  final String? aiRunId;
+  final String? projectId;
+  final String? description;
+  final String? storagePath;
+  final String? assetId;
+  final String? crs;
+  final Map<String, dynamic> bounds;
+  final Map<String, dynamic> style;
+  final DateTime? publishedAt;
+  final String? publishedBy;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
 
   factory AiOutputLayer.fromMap(Map<String, dynamic> map) {
     return AiOutputLayer(
       id: _toStringOrNull(map['id']) ?? '',
+      aiRunId: _toStringOrNull(map['ai_run_id']),
+      projectId: _toStringOrNull(map['project_id']),
       layerType: _toStringOrNull(map['layer_type']) ?? 'classification',
       status: _toStringOrNull(map['status']) ?? 'draft',
       name: _toStringOrNull(map['name']) ?? 'AI layer',
+      description: _toStringOrNull(map['description']),
+      storagePath: _toStringOrNull(map['storage_path']),
+      assetId: _toStringOrNull(map['asset_id']),
+      crs: _toStringOrNull(map['crs']),
+      bounds: _toMap(map['bounds']),
+      style: _toMap(map['style']),
+      publishedAt: _toDateTime(map['published_at']),
+      publishedBy: _toStringOrNull(map['published_by']),
+      createdAt: _toDateTime(map['created_at']),
+      updatedAt: _toDateTime(map['updated_at']),
     );
   }
 }

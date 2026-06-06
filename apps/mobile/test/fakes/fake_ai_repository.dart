@@ -153,9 +153,21 @@ class FakeAiRepository implements AiRepository {
         .map(
           (layer) => AiOutputLayer(
             id: layer.id,
+            aiRunId: layer.aiRunId,
+            projectId: layer.projectId,
             layerType: layer.layerType,
             status: nextLayerStatus,
             name: layer.name,
+            description: layer.description,
+            storagePath: layer.storagePath,
+            assetId: layer.assetId,
+            crs: layer.crs,
+            bounds: layer.bounds,
+            style: layer.style,
+            publishedAt: null,
+            publishedBy: null,
+            createdAt: layer.createdAt,
+            updatedAt: layer.updatedAt,
           ),
         )
         .toList(growable: false);

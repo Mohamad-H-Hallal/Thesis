@@ -315,12 +315,19 @@ List<AiRunLog> _phaseFLogs() {
 }
 
 List<AiOutputLayer> _reviewableLayers() {
-  return const <AiOutputLayer>[
+  return <AiOutputLayer>[
     AiOutputLayer(
       id: 'layer-statistics',
+      aiRunId: '00f4bb0c-66cc-4fec-80c3-f3ecc96175f4',
+      projectId: 'project-1',
       layerType: 'statistics',
       status: 'ready_for_review',
       name: 'Regional model statistics',
+      description: 'Unpublished regional class statistics for review.',
+      storagePath: 'outputs/runs/phase-j/statistics_layer.json',
+      crs: 'EPSG:4326',
+      bounds: const <String, dynamic>{'type': 'Polygon'},
+      createdAt: DateTime.utc(2026, 6, 5, 10, 3),
     ),
   ];
 }
@@ -332,7 +339,7 @@ List<AiReviewDecision> _reviewHistory() {
       aiRunId: '00f4bb0c-66cc-4fec-80c3-f3ecc96175f4',
       decision: 'approved_for_publish',
       reason: 'Metrics are acceptable for future publication review.',
-      decidedBy: 'admin-1',
+      decidedBy: 'NCRS Administrator',
       decidedAt: DateTime.utc(2026, 6, 6, 10),
       metadata: const <String, dynamic>{'viewer_publication_enabled': false},
     ),
@@ -917,7 +924,7 @@ void main() {
 
     expect(find.text('Run summary'), findsOneWidget);
     expect(find.text('Run status'), findsOneWidget);
-    expect(find.textContaining('Status: Ready for review'), findsOneWidget);
+    expect(find.textContaining('Status: Ready for review'), findsWidgets);
     expect(
       find.textContaining('Execution type: Regional model evaluation'),
       findsOneWidget,
@@ -1063,6 +1070,208 @@ void main() {
       find.textContaining(
         'Random Forest: Accuracy 0.800, Macro-F1 0.500, Weighted-F1 0.700',
       ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('AI output layer section shows unpublished statistics safely', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1080, 2200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
+      layers: _reviewableLayers(),
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    await tester.tap(find.text('Run 00f4bb0c'));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('AI output layers'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('AI output layers'), findsOneWidget);
+    expect(find.text('Statistics layer'), findsOneWidget);
+    expect(
+      find.textContaining('Layer name: Regional model statistics'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Status: Ready for review'), findsWidgets);
+    expect(
+      find.textContaining('Viewer visibility: Not published'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('CRS: EPSG:4326'), findsOneWidget);
+    expect(
+      find.textContaining('Bounds: Recorded in layer metadata'),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'AI layers are not visible to viewers until a later publishing phase.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Citrus Fruit Trees: 201 samples'),
+      findsWidgets,
+    );
+    expect(find.textContaining('Fruit Trees: 253 samples'), findsWidgets);
+    expect(find.textContaining('Olives: 940 samples'), findsWidgets);
+    expect(
+      find.textContaining('Vineyards: 12 samples below threshold'),
+      findsOneWidget,
+    );
+    expect(find.text('Area statistics not available yet.'), findsOneWidget);
+    expect(
+      find.text('Confidence statistics not available yet.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('statistics_layer.json'), findsNothing);
+
+    await tester.tap(find.text('Layer technical details'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Related run id:'), findsOneWidget);
+    expect(find.textContaining('Output/storage path:'), findsOneWidget);
+    expect(find.textContaining('statistics_layer.json'), findsOneWidget);
+  });
+
+  testWidgets('AI output layer review decisions use future-publication wording', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1080, 2200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
+      layers: <AiOutputLayer>[
+        AiOutputLayer(
+          id: 'layer-approved',
+          aiRunId: '00f4bb0c-66cc-4fec-80c3-f3ecc96175f4',
+          layerType: 'statistics',
+          status: 'approved',
+          name: 'Approved regional statistics',
+          description: 'Approved internally, not viewer-facing.',
+          storagePath: 'outputs/runs/phase-j/approved_statistics.json',
+          crs: 'EPSG:4326',
+          createdAt: DateTime.utc(2026, 6, 5, 10, 3),
+        ),
+      ],
+      reviews: _reviewHistory(),
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    await tester.tap(find.text('Run 00f4bb0c'));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('AI output layers'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Status: Approved for future publication'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Viewer visibility: Not published'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        'Review decision: Approved for future publication by NCRS Administrator',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        'Review reason: Metrics are acceptable for future publication review.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Published:'), findsNothing);
+    expect(find.textContaining('approved_statistics.json'), findsNothing);
+  });
+
+  testWidgets('AI output layer section shows rejected reasons clearly', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1080, 2200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
+      layers: const <AiOutputLayer>[
+        AiOutputLayer(
+          id: 'layer-rejected',
+          layerType: 'statistics',
+          status: 'rejected',
+          name: 'Rejected regional statistics',
+        ),
+      ],
+      reviews: <AiReviewDecision>[
+        AiReviewDecision(
+          id: 'review-rejected',
+          aiRunId: '00f4bb0c-66cc-4fec-80c3-f3ecc96175f4',
+          decision: 'rejected',
+          reason: 'Need broader regional validation before publishing.',
+          decidedBy: 'NCRS Administrator',
+          decidedAt: DateTime.utc(2026, 6, 6, 11),
+        ),
+      ],
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    await tester.tap(find.text('Run 00f4bb0c'));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('AI output layers'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Status: Rejected'), findsOneWidget);
+    expect(
+      find.textContaining('Review decision: Rejected by NCRS Administrator'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        'Review reason: Need broader regional validation before publishing.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Viewer visibility: Not published'),
       findsOneWidget,
     );
   });

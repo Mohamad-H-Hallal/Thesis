@@ -900,6 +900,12 @@ class _AiRunDetailCard extends ConsumerWidget {
             const SizedBox(height: AppSpacing.md),
             _NextStepSection(run: run, layersAsync: layersAsync),
             const SizedBox(height: AppSpacing.md),
+            _AiOutputLayersSection(
+              run: run,
+              layersAsync: layersAsync,
+              reviewsAsync: reviewsAsync,
+            ),
+            const SizedBox(height: AppSpacing.md),
             _ReviewSection(run: run, reviewsAsync: reviewsAsync),
             const SizedBox(height: AppSpacing.md),
             _OutputPathsSection(paths: _outputPaths(run.metadata)),
@@ -1094,6 +1100,184 @@ class _NextStepSection extends StatelessWidget {
           messages: messages.map(_safeText).toList(growable: false),
         );
       },
+    );
+  }
+}
+
+class _AiOutputLayersSection extends StatelessWidget {
+  const _AiOutputLayersSection({
+    required this.run,
+    required this.layersAsync,
+    required this.reviewsAsync,
+  });
+
+  final AiRun run;
+  final AsyncValue<List<AiOutputLayer>> layersAsync;
+  final AsyncValue<List<AiReviewDecision>> reviewsAsync;
+
+  @override
+  Widget build(BuildContext context) {
+    return layersAsync.when(
+      loading: () => const LinearProgressIndicator(),
+      error: (error, _) => Text(
+        userFacingErrorMessage(
+          error,
+          fallback: 'Unable to load AI output layers.',
+        ),
+      ),
+      data: (layers) {
+        final reviews = reviewsAsync.maybeWhen(
+          data: (items) => items,
+          orElse: () => const <AiReviewDecision>[],
+        );
+        final latestReview = reviews.isEmpty ? null : reviews.first;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'AI output layers',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            const _NoticeRow(
+              icon: Icons.visibility_off_outlined,
+              text:
+                  'AI layers are not visible to viewers until a later publishing phase.',
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            if (layers.isEmpty)
+              const _NoticeRow(
+                icon: Icons.layers_clear_outlined,
+                text: 'No AI output layers have been registered yet.',
+              )
+            else
+              for (final layer in layers)
+                _AiOutputLayerTile(
+                  run: run,
+                  layer: layer,
+                  latestReview: latestReview,
+                ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _AiOutputLayerTile extends StatelessWidget {
+  const _AiOutputLayerTile({
+    required this.run,
+    required this.layer,
+    required this.latestReview,
+  });
+
+  final AiRun run;
+  final AiOutputLayer layer;
+  final AiReviewDecision? latestReview;
+
+  @override
+  Widget build(BuildContext context) {
+    final summaryRows = _layerSummaryRows(layer, latestReview);
+    final technicalRows = _layerTechnicalRows(layer);
+    return Padding(
+      padding: const EdgeInsets.only(top: AppSpacing.sm),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: Theme.of(context).colorScheme.outline),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.layers_outlined,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${_friendlyLayerTypeLabel(layer.layerType)} layer',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                        Text(
+                          _safeText(layer.name),
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  StatusChip(status: layer.status),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              _KeyValueList(title: 'Layer details', rows: summaryRows),
+              if (layer.layerType == 'statistics') ...[
+                const SizedBox(height: AppSpacing.sm),
+                _StatisticsLayerSummary(run: run),
+              ],
+              if (technicalRows.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.sm),
+                ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  childrenPadding: EdgeInsets.zero,
+                  expandedAlignment: Alignment.centerLeft,
+                  expandedCrossAxisAlignment: CrossAxisAlignment.start,
+                  title: const Text('Layer technical details'),
+                  children: [
+                    _KeyValueList(
+                      title: 'Technical layer metadata',
+                      rows: technicalRows,
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatisticsLayerSummary extends StatelessWidget {
+  const _StatisticsLayerSummary({required this.run});
+
+  final AiRun run;
+
+  @override
+  Widget build(BuildContext context) {
+    final includedRows = _includedClassCountRows(run);
+    final excludedRows = _excludedClassCountRows(run);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _KeyValueList(
+          title: 'Statistics summary',
+          emptyText: 'No class statistics are registered yet.',
+          rows: includedRows,
+        ),
+        if (excludedRows.isNotEmpty) ...[
+          const SizedBox(height: AppSpacing.sm),
+          _KeyValueList(title: 'Excluded classes', rows: excludedRows),
+        ],
+        const SizedBox(height: AppSpacing.sm),
+        const _NoticeRow(
+          icon: Icons.info_outline,
+          text: 'Area statistics not available yet.',
+        ),
+        const _NoticeRow(
+          icon: Icons.info_outline,
+          text: 'Confidence statistics not available yet.',
+        ),
+      ],
     );
   }
 }
@@ -1631,6 +1815,98 @@ class _TechnicalDetailsSection extends StatelessWidget {
   }
 }
 
+List<MapEntry<String, String>> _layerSummaryRows(
+  AiOutputLayer layer,
+  AiReviewDecision? latestReview,
+) {
+  final rows = <MapEntry<String, String>>[
+    MapEntry('Layer name', layer.name),
+    MapEntry('Layer type', _friendlyLayerTypeLabel(layer.layerType)),
+    MapEntry('Status', _friendlyLayerStatusTitle(layer.status)),
+    MapEntry('Viewer visibility', _layerVisibilityText(layer)),
+    if (layer.description?.trim().isNotEmpty ?? false)
+      MapEntry('Description', layer.description!),
+    if (layer.crs?.trim().isNotEmpty ?? false) MapEntry('CRS', layer.crs!),
+    if (layer.bounds.isNotEmpty)
+      const MapEntry('Bounds', 'Recorded in layer metadata'),
+    if (layer.createdAt != null)
+      MapEntry('Created', formatLebanonDate(layer.createdAt)),
+    if (layer.publishedAt != null)
+      MapEntry('Published', formatLebanonDate(layer.publishedAt)),
+    if (layer.publishedBy?.trim().isNotEmpty ?? false)
+      MapEntry('Published by', layer.publishedBy!),
+  ];
+
+  if (latestReview != null) {
+    rows.add(MapEntry('Review decision', _reviewDecisionSummary(latestReview)));
+    if (latestReview.reason?.trim().isNotEmpty ?? false) {
+      rows.add(MapEntry('Review reason', latestReview.reason!));
+    }
+  }
+
+  return rows
+      .map((row) => MapEntry(row.key, _safeText(row.value)))
+      .toList(growable: false);
+}
+
+List<MapEntry<String, String>> _layerTechnicalRows(AiOutputLayer layer) {
+  return <MapEntry<String, String>>[
+    MapEntry('Layer id', layer.id),
+    if (layer.aiRunId?.trim().isNotEmpty ?? false)
+      MapEntry('Related run id', layer.aiRunId!),
+    if (layer.projectId?.trim().isNotEmpty ?? false)
+      MapEntry('Project id', layer.projectId!),
+    if (layer.storagePath?.trim().isNotEmpty ?? false)
+      MapEntry('Output/storage path', layer.storagePath!),
+    if (layer.assetId?.trim().isNotEmpty ?? false)
+      MapEntry('Asset id', layer.assetId!),
+    if (layer.bounds.isNotEmpty) const MapEntry('Bounds metadata', 'Available'),
+    if (layer.style.isNotEmpty) const MapEntry('Style metadata', 'Available'),
+    if (layer.updatedAt != null)
+      MapEntry('Updated', formatLebanonDate(layer.updatedAt)),
+  ].map((row) => MapEntry(row.key, _safeText(row.value))).toList();
+}
+
+String _layerVisibilityText(AiOutputLayer layer) {
+  if (layer.publishedAt != null || layer.status == 'published') {
+    return 'Published';
+  }
+  return 'Not published';
+}
+
+String _reviewDecisionSummary(AiReviewDecision review) {
+  final label = _friendlyReviewDecisionLabel(review.decision);
+  final actor = _stringValue(review.decidedBy);
+  if (actor != null) {
+    return '$label by $actor';
+  }
+  return label;
+}
+
+List<MapEntry<String, String>> _includedClassCountRows(AiRun run) {
+  final excludedLabels = _excludedClassLabels(run);
+  final rows = _countRows(run.metadata['class_counts'])
+      .where((row) => !excludedLabels.contains(row.key.toLowerCase()))
+      .map((row) => MapEntry(row.key, row.value))
+      .toList(growable: false);
+  rows.sort(
+    (left, right) => left.key.toLowerCase().compareTo(right.key.toLowerCase()),
+  );
+  return rows;
+}
+
+List<MapEntry<String, String>> _excludedClassCountRows(AiRun run) {
+  return _countRows(run.metadata['excluded_classes'])
+      .map((row) => MapEntry(row.key, '${row.value} below threshold'))
+      .toList(growable: false);
+}
+
+Set<String> _excludedClassLabels(AiRun run) {
+  return _countRows(
+    run.metadata['excluded_classes'],
+  ).map((row) => row.key.toLowerCase()).toSet();
+}
+
 String _executionMode(AiRun run) =>
     _metadataText(run.metadata, 'execution_mode') ?? 'not set';
 
@@ -1959,6 +2235,27 @@ String _friendlyLayerStatusLabel(String status) {
       return 'failed';
     default:
       return status.replaceAll('_', ' ');
+  }
+}
+
+String _friendlyLayerStatusTitle(String status) {
+  switch (status) {
+    case 'ready_for_review':
+      return 'Ready for review';
+    case 'approved':
+      return 'Approved for future publication';
+    case 'rejected':
+      return 'Rejected';
+    case 'published':
+      return 'Published';
+    case 'unpublished':
+      return 'Not published';
+    case 'draft':
+      return 'Draft';
+    case 'failed':
+      return 'Failed';
+    default:
+      return _titleCase(status.replaceAll('_', ' '));
   }
 }
 
