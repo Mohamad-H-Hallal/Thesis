@@ -17,6 +17,7 @@ const { registerAiRunArtifactsForReview } = require('../src/services/aiArtifactR
 const {
   AI_WORKER_MOCK_STATUS_SEQUENCE,
   AI_WORKER_PIPELINE_STATUS_SEQUENCE,
+  AI_WORKER_REGIONAL_ARTIFACT_STATUS_SEQUENCE,
   AI_WORKER_REGIONAL_MODEL_STATUS_SEQUENCE,
   runAiWorkerOnce,
 } = require('../src/jobs/aiWorker');
@@ -206,6 +207,23 @@ const createMockPipelineService = ({ config = pipelineConfig(), overrides = {} }
       ],
     }),
   ),
+  classifyRegional: jest.fn(async () =>
+    pipelineResult('regional_classification', {
+      outputPaths: [
+        'outputs/runs/app-ai-test-run/regional_classification_summary.json',
+      ],
+    }),
+  ),
+  prepareRegionalVectorArtifacts: jest.fn(async () =>
+    pipelineResult('regional_vectorization_artifacts', {
+      outputPaths: [
+        'outputs/runs/app-ai-test-run/classification_polygons.geojson',
+        'outputs/runs/app-ai-test-run/confidence_polygons.geojson',
+        'outputs/runs/app-ai-test-run/uncertainty_areas.geojson',
+        'outputs/runs/app-ai-test-run/vectorization_summary.json',
+      ],
+    }),
+  ),
   ...overrides,
 });
 
@@ -320,6 +338,41 @@ const writeRegionalModelArtifacts = async ({ root, projectId, regionalRunId }) =
     { model: 'random_forest', feature: 'ndvi', importance: 0.45 },
     { model: 'xgboost', feature: 'b4', importance: 0.22 },
   ]);
+};
+
+const writeRegionalClassificationArtifacts = async ({ root, regionalRunId }) => {
+  const runDir = `outputs/runs/${regionalRunId}`;
+  const emptyFeatureCollection = {
+    type: 'FeatureCollection',
+    features: [],
+  };
+  await writeJsonArtifact(root, `${runDir}/regional_classification_summary.json`, {
+    run_id: regionalRunId,
+    regional_only: true,
+    national_classification: false,
+    class_counts: {
+      Citrus: 2,
+      Olives: 2,
+    },
+    outputs: {
+      classification_polygons: `${runDir}/classification_polygons.geojson`,
+      confidence_polygons: `${runDir}/confidence_polygons.geojson`,
+      uncertainty_areas: `${runDir}/uncertainty_areas.geojson`,
+    },
+  });
+  await writeJsonArtifact(root, `${runDir}/vectorization_summary.json`, {
+    run_id: regionalRunId,
+    regional_only: true,
+    no_spatial_feature_writes: true,
+    class_counts: {
+      Citrus: 2,
+      Olives: 2,
+    },
+    polygon_count: 4,
+  });
+  await writeJsonArtifact(root, `${runDir}/classification_polygons.geojson`, emptyFeatureCollection);
+  await writeJsonArtifact(root, `${runDir}/confidence_polygons.geojson`, emptyFeatureCollection);
+  await writeJsonArtifact(root, `${runDir}/uncertainty_areas.geojson`, emptyFeatureCollection);
 };
 
 beforeEach(async () => {
@@ -882,6 +935,202 @@ describe('AI worker skeleton phase D', () => {
     expect(await countRows('ai_run_metric')).toBe(0);
   });
 
+  test('prepares regional classification artifacts without publishing or writing spatial features', async () => {
+    const { admin, project } = await createProjectFixture('AI Worker Regional Classification');
+    await insertReadyRegionalFeatures({
+      projectId: project.id,
+      userId: admin.user.id,
+    });
+    const runId = await insertQueuedRun({
+      projectId: project.id,
+      userId: admin.user.id,
+      metadata: {
+        test: 'ai-worker',
+        execution_mode: 'regional_classification',
+        min_samples_per_class: 2,
+      },
+    });
+    const regionalRunId = regionalRunIdForTest(runId);
+    const beforeSpatialCount = await countRows('spatial_feature');
+    const pipelineService = createMockPipelineService({
+      config: pipelineConfig({
+        mode: 'regional_classification',
+      }),
+    });
+
+    const result = await runAiWorkerOnce({
+      pipelineService,
+      workerId: 'phase-k-classification-worker',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        executionMode: 'regional_classification',
+        finalStatus: 'ready_for_review',
+        statuses: AI_WORKER_REGIONAL_ARTIFACT_STATUS_SEQUENCE,
+      }),
+    );
+    expect(pipelineService.extractRegionalFeatures).not.toHaveBeenCalled();
+    expect(pipelineService.evaluateRegionalModel).not.toHaveBeenCalled();
+    expect(pipelineService.classifyRegional).toHaveBeenCalledWith(
+      project.id,
+      'L4_descr',
+      regionalRunId,
+    );
+    expect(pipelineService.prepareRegionalVectorArtifacts).not.toHaveBeenCalled();
+
+    const runResult = await pool.query(
+      `SELECT status, metadata
+       FROM ai_run
+       WHERE id = $1`,
+      [runId],
+    );
+    expect(runResult.rows[0].status).toBe('ready_for_review');
+    expect(runResult.rows[0].metadata).toEqual(
+      expect.objectContaining({
+        execution_mode: 'regional_classification',
+        pipeline_bridge_phase: 'phase_k',
+        ai_pipeline_run_id: regionalRunId,
+        regional_classification_summary_path:
+          `outputs/runs/${regionalRunId}/regional_classification_summary.json`,
+        real_ai_execution: true,
+      }),
+    );
+    expect(await countRows('spatial_feature')).toBe(beforeSpatialCount);
+    expect(await countRows('ai_output_layer')).toBe(0);
+
+    const statusLogs = await pool.query(
+      `SELECT metadata ->> 'status' AS status
+       FROM ai_run_log
+       WHERE ai_run_id = $1
+       ORDER BY created_at ASC`,
+      [runId],
+    );
+    expect(statusLogs.rows.map((row) => row.status)).toEqual(
+      expect.arrayContaining(['extracting_features', 'classifying', 'ready_for_review']),
+    );
+    expect(statusLogs.rows.map((row) => row.status)).not.toEqual(
+      expect.arrayContaining(['training', 'evaluating']),
+    );
+  });
+
+  test('registers regional vectorization artifacts as unpublished review layers only', async () => {
+    const { admin, project } = await createProjectFixture('AI Worker Regional Vector Artifacts');
+    await insertReadyRegionalFeatures({
+      projectId: project.id,
+      userId: admin.user.id,
+    });
+    const runId = await insertQueuedRun({
+      projectId: project.id,
+      userId: admin.user.id,
+      metadata: {
+        test: 'ai-worker',
+        execution_mode: 'regional_vectorization_artifacts',
+        min_samples_per_class: 2,
+      },
+    });
+    const regionalRunId = regionalRunIdForTest(runId);
+    const artifactRoot = await createTempArtifactRoot();
+    await writeRegionalModelArtifacts({
+      root: artifactRoot,
+      projectId: project.id,
+      regionalRunId,
+    });
+    await writeRegionalClassificationArtifacts({
+      root: artifactRoot,
+      regionalRunId,
+    });
+    const beforeSpatialCount = await countRows('spatial_feature');
+    const pipelineService = createMockPipelineService({
+      config: pipelineConfig({
+        root: artifactRoot,
+        mode: 'regional_vectorization_artifacts',
+      }),
+    });
+
+    const result = await runAiWorkerOnce({
+      pipelineService,
+      workerId: 'phase-k-vector-worker',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        executionMode: 'regional_vectorization_artifacts',
+        finalStatus: 'ready_for_review',
+        statuses: AI_WORKER_REGIONAL_ARTIFACT_STATUS_SEQUENCE,
+      }),
+    );
+    expect(pipelineService.extractRegionalFeatures).not.toHaveBeenCalled();
+    expect(pipelineService.evaluateRegionalModel).not.toHaveBeenCalled();
+    expect(pipelineService.classifyRegional).toHaveBeenCalledWith(
+      project.id,
+      'L4_descr',
+      regionalRunId,
+    );
+    expect(pipelineService.prepareRegionalVectorArtifacts).toHaveBeenCalledWith(
+      project.id,
+      'L4_descr',
+      regionalRunId,
+    );
+
+    const runResult = await pool.query(
+      `SELECT status, metadata
+       FROM ai_run
+       WHERE id = $1`,
+      [runId],
+    );
+    expect(runResult.rows[0].status).toBe('ready_for_review');
+    expect(runResult.rows[0].metadata.artifact_registration).toEqual(
+      expect.objectContaining({
+        phase: 'phase_h_artifact_registration',
+        execution_mode: 'regional_vectorization_artifacts',
+        output_layers_registered: 4,
+        unpublished_only: true,
+        review_only: true,
+        no_spatial_feature_writes: true,
+      }),
+    );
+
+    const layersResult = await pool.query(
+      `SELECT layer_type, status, storage_path, published_at
+       FROM ai_output_layer
+       WHERE ai_run_id = $1
+       ORDER BY layer_type ASC`,
+      [runId],
+    );
+    expect(layersResult.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          layer_type: 'classification',
+          status: 'ready_for_review',
+          storage_path: `outputs/runs/${regionalRunId}/classification_polygons.geojson`,
+          published_at: null,
+        }),
+        expect.objectContaining({
+          layer_type: 'confidence',
+          status: 'ready_for_review',
+          storage_path: `outputs/runs/${regionalRunId}/confidence_polygons.geojson`,
+          published_at: null,
+        }),
+        expect.objectContaining({
+          layer_type: 'statistics',
+          status: 'ready_for_review',
+          storage_path: `outputs/runs/${regionalRunId}/metrics.json`,
+          published_at: null,
+        }),
+        expect.objectContaining({
+          layer_type: 'uncertainty',
+          status: 'ready_for_review',
+          storage_path: `outputs/runs/${regionalRunId}/uncertainty_areas.geojson`,
+          published_at: null,
+        }),
+      ]),
+    );
+    expect(await countRows('spatial_feature')).toBe(beforeSpatialCount);
+  });
+
   test('registers regional model artifacts as unpublished review data', async () => {
     const { admin, project } = await createProjectFixture('AI Worker Artifact Registration');
     await insertReadyRegionalFeatures({
@@ -1099,6 +1348,23 @@ describe('AI worker skeleton phase D', () => {
         }),
       }),
     ).rejects.toThrow('AI artifact path traversal is not allowed');
+
+    await expect(
+      registerAiRunArtifactsForReview({
+        runId: '00000000-0000-4000-8000-000000000001',
+        projectId: '00000000-0000-4000-8000-000000000002',
+        labelField: 'L4_descr',
+        metadata: {
+          execution_mode: 'regional_vectorization_artifacts',
+          classification_polygons_path:
+            'outputs/runs/app-ai-safe/../secrets/classification_polygons.geojson',
+        },
+        pipelineConfig: pipelineConfig({
+          root: artifactRoot,
+          mode: 'regional_vectorization_artifacts',
+        }),
+      }),
+    ).rejects.toThrow('AI artifact path traversal is not allowed');
   });
 
   test('rejects unsafe national regional execution before pipeline commands run', async () => {
@@ -1133,7 +1399,7 @@ describe('AI worker skeleton phase D', () => {
       expect.objectContaining({
         processed: true,
         finalStatus: 'failed',
-        failureReason: 'National classification is not allowed in Phase F regional worker execution.',
+        failureReason: 'National classification is not allowed in regional AI worker execution.',
       }),
     );
     expect(pipelineService.checkConfig).not.toHaveBeenCalled();
@@ -1147,7 +1413,7 @@ describe('AI worker skeleton phase D', () => {
     );
     expect(runResult.rows[0].status).toBe('failed');
     expect(runResult.rows[0].failure_reason).toBe(
-      'National classification is not allowed in Phase F regional worker execution.',
+      'National classification is not allowed in regional AI worker execution.',
     );
     expect(await countRows('spatial_feature')).toBe(beforeSpatialCount);
     expect(await countRows('ai_output_layer')).toBe(0);
@@ -1187,7 +1453,7 @@ describe('AI worker skeleton phase D', () => {
         executionMode: 'dry_run',
         finalStatus: 'failed',
         failureReason:
-          'AI pipeline dry_run failed during Phase F regional worker execution.',
+          'AI pipeline dry_run failed during regional AI worker execution.',
       }),
     );
 
@@ -1199,7 +1465,7 @@ describe('AI worker skeleton phase D', () => {
     );
     expect(runResult.rows[0].status).toBe('failed');
     expect(runResult.rows[0].failure_reason).toBe(
-      'AI pipeline dry_run failed during Phase F regional worker execution.',
+      'AI pipeline dry_run failed during regional AI worker execution.',
     );
     expect(runResult.rows[0].metadata.command_results).toHaveLength(2);
     expect(await countRows('spatial_feature')).toBe(0);

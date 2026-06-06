@@ -34,7 +34,12 @@ type KnownArtifactKey =
   | 'feature_importance'
   | 'model_metadata'
   | 'feature_extraction_summary'
-  | 'ground_truth_summary';
+  | 'ground_truth_summary'
+  | 'regional_classification_summary'
+  | 'vectorization_summary'
+  | 'classification_polygons'
+  | 'confidence_polygons'
+  | 'uncertainty_areas';
 
 type ResolvedArtifact = {
   key: KnownArtifactKey;
@@ -68,6 +73,11 @@ const KNOWN_ARTIFACT_FILENAMES: Record<KnownArtifactKey, string> = {
   model_metadata: 'model_metadata.json',
   feature_extraction_summary: 'feature_extraction_summary.json',
   ground_truth_summary: 'ground_truth_summary.json',
+  regional_classification_summary: 'regional_classification_summary.json',
+  vectorization_summary: 'vectorization_summary.json',
+  classification_polygons: 'classification_polygons.geojson',
+  confidence_polygons: 'confidence_polygons.geojson',
+  uncertainty_areas: 'uncertainty_areas.geojson',
 };
 
 const KNOWN_ARTIFACT_KEYS = Object.keys(KNOWN_ARTIFACT_FILENAMES) as KnownArtifactKey[];
@@ -209,6 +219,11 @@ const collectArtifactCandidates = (
   ]);
   const runOutputDir = runId ? `outputs/runs/${runId}` : null;
   const projectOutputDir = `outputs/projects/${input.projectId}`;
+  const executionMode = toStringValue(metadata.execution_mode);
+  const hasRegionalClassificationArtifacts =
+    executionMode === 'regional_classification' ||
+    executionMode === 'regional_vectorization_artifacts';
+  const hasRegionalVectorArtifacts = executionMode === 'regional_vectorization_artifacts';
 
   return {
     metrics:
@@ -254,6 +269,44 @@ const collectArtifactCandidates = (
         outputPathEndingWith(metadata, 'ground_truth_summary.json'),
         `${projectOutputDir}/ground_truth_summary.json`,
       ]) ?? undefined,
+    ...(hasRegionalClassificationArtifacts
+      ? {
+          regional_classification_summary:
+            firstString([
+              metadata.regional_classification_summary_path,
+              outputPathEndingWith(metadata, 'regional_classification_summary.json'),
+              runOutputDir ? `${runOutputDir}/regional_classification_summary.json` : null,
+            ]) ?? undefined,
+        }
+      : {}),
+    ...(hasRegionalVectorArtifacts
+      ? {
+          vectorization_summary:
+            firstString([
+              metadata.vectorization_summary_path,
+              outputPathEndingWith(metadata, 'vectorization_summary.json'),
+              runOutputDir ? `${runOutputDir}/vectorization_summary.json` : null,
+            ]) ?? undefined,
+          classification_polygons:
+            firstString([
+              metadata.classification_polygons_path,
+              outputPathEndingWith(metadata, 'classification_polygons.geojson'),
+              runOutputDir ? `${runOutputDir}/classification_polygons.geojson` : null,
+            ]) ?? undefined,
+          confidence_polygons:
+            firstString([
+              metadata.confidence_polygons_path,
+              outputPathEndingWith(metadata, 'confidence_polygons.geojson'),
+              runOutputDir ? `${runOutputDir}/confidence_polygons.geojson` : null,
+            ]) ?? undefined,
+          uncertainty_areas:
+            firstString([
+              metadata.uncertainty_areas_path,
+              outputPathEndingWith(metadata, 'uncertainty_areas.geojson'),
+              runOutputDir ? `${runOutputDir}/uncertainty_areas.geojson` : null,
+            ]) ?? undefined,
+        }
+      : {}),
   };
 };
 
@@ -372,6 +425,20 @@ const readCsvArtifact = async (
     warnings.push(`Could not parse ${artifact.relativePath}: ${message}`);
     return [];
   }
+};
+
+const existingArtifactPath = async (
+  artifact: ResolvedArtifact | undefined,
+  warnings: string[],
+): Promise<string | null> => {
+  if (!artifact) {
+    return null;
+  }
+  if (!(await fileExists(artifact.absolutePath))) {
+    warnings.push(`AI artifact not found: ${artifact.relativePath}.`);
+    return null;
+  }
+  return artifact.relativePath;
 };
 
 const featureImportanceForModel = (
@@ -552,12 +619,16 @@ const classStatisticRowsFromArtifacts = ({
   metricsPayload,
   featureExtractionSummary,
   groundTruthSummary,
+  vectorizationSummary,
+  regionalClassificationSummary,
   classificationReportRows,
   metadata,
 }: {
   metricsPayload: JsonRecord;
   featureExtractionSummary: JsonRecord;
   groundTruthSummary: JsonRecord;
+  vectorizationSummary: JsonRecord;
+  regionalClassificationSummary: JsonRecord;
   classificationReportRows: JsonRecord[];
   metadata: JsonRecord;
 }): ClassStatisticRow[] => {
@@ -565,6 +636,13 @@ const classStatisticRowsFromArtifacts = ({
   mergeClassCountSource(rowsByLabel, groundTruthSummary.class_counts, 'ground_truth', true);
   mergeClassCountSource(rowsByLabel, featureExtractionSummary.class_counts, 'feature_extraction', true);
   mergeClassCountSource(rowsByLabel, metricsPayload.class_counts, 'metrics', true);
+  mergeClassCountSource(
+    rowsByLabel,
+    regionalClassificationSummary.class_counts,
+    'regional_classification',
+    true,
+  );
+  mergeClassCountSource(rowsByLabel, vectorizationSummary.class_counts, 'vectorization', true);
   mergeClassificationReportSupport(rowsByLabel, classificationReportRows);
   mergeExcludedClasses(rowsByLabel, metadata);
   return Array.from(rowsByLabel.values()).sort((left, right) =>
@@ -680,15 +758,21 @@ const insertClassStatisticRows = async (
   return rows.length;
 };
 
-const insertStatisticsLayer = async ({
+const insertOutputLayer = async ({
   client,
   runId,
   projectId,
+  layerType,
+  name,
+  description,
   storagePath,
 }: {
   client: PoolClient;
   runId: string;
   projectId: string;
+  layerType: 'classification' | 'confidence' | 'uncertainty' | 'statistics';
+  name: string;
+  description: string;
   storagePath: string | null;
 }): Promise<number> => {
   if (!storagePath) {
@@ -709,31 +793,96 @@ const insertStatisticsLayer = async ({
      VALUES (
        $1,
        $2,
-       'statistics',
-       'ready_for_review',
-       'Regional AI statistics',
-       'Unpublished regional AI metrics and class statistics for admin review.',
        $3,
+       'ready_for_review',
+       $4,
+       $5,
+       $6,
        'EPSG:4326',
        '{}'::jsonb
      )`,
-    [runId, projectId, storagePath],
+    [runId, projectId, layerType, name, description, storagePath],
   );
   return 1;
+};
+
+const insertReviewOutputLayers = async ({
+  client,
+  runId,
+  projectId,
+  metricsPath,
+  classificationPath,
+  confidencePath,
+  uncertaintyPath,
+}: {
+  client: PoolClient;
+  runId: string;
+  projectId: string;
+  metricsPath: string | null;
+  classificationPath: string | null;
+  confidencePath: string | null;
+  uncertaintyPath: string | null;
+}): Promise<number> => {
+  let inserted = 0;
+  inserted += await insertOutputLayer({
+    client,
+    runId,
+    projectId,
+    layerType: 'statistics',
+    name: 'Regional AI statistics',
+    description: 'Unpublished regional AI metrics and class statistics for admin review.',
+    storagePath: metricsPath,
+  });
+  inserted += await insertOutputLayer({
+    client,
+    runId,
+    projectId,
+    layerType: 'classification',
+    name: 'Regional AI classification review layer',
+    description: 'Unpublished regional classification polygons for super-admin review only.',
+    storagePath: classificationPath,
+  });
+  inserted += await insertOutputLayer({
+    client,
+    runId,
+    projectId,
+    layerType: 'confidence',
+    name: 'Regional AI confidence review layer',
+    description: 'Unpublished regional confidence artifact for super-admin review only.',
+    storagePath: confidencePath,
+  });
+  inserted += await insertOutputLayer({
+    client,
+    runId,
+    projectId,
+    layerType: 'uncertainty',
+    name: 'Regional AI uncertainty review layer',
+    description: 'Unpublished regional uncertainty artifact for contributor validation planning.',
+    storagePath: uncertaintyPath,
+  });
+  return inserted;
 };
 
 const registerAiRunArtifactsForReview = async (
   input: AiRunArtifactRegistrationInput,
 ): Promise<AiArtifactRegistrationResult> => {
   const metadata = input.metadata ?? {};
-  if (metadata.execution_mode !== 'regional_model_eval') {
+  const executionMode = toStringValue(metadata.execution_mode);
+  const registrationEnabledModes = new Set([
+    'regional_model_eval',
+    'regional_classification',
+    'regional_vectorization_artifacts',
+  ]);
+  if (!executionMode || !registrationEnabledModes.has(executionMode)) {
     return {
       success: true,
       skipped: true,
       metricsRegistered: 0,
       classStatisticsRegistered: 0,
       outputLayersRegistered: 0,
-      warnings: ['Artifact registration is only enabled for regional_model_eval runs in Phase H.'],
+      warnings: [
+        'Artifact registration is only enabled for regional model or regional artifact runs.',
+      ],
       artifactPaths: {},
       metadataPatch: {
         artifact_registration: {
@@ -755,6 +904,8 @@ const registerAiRunArtifactsForReview = async (
     modelMetadata,
     featureExtractionSummary,
     groundTruthSummary,
+    regionalClassificationSummary,
+    vectorizationSummary,
     confusionMatrixRows,
     classificationReportRows,
     featureImportanceRows,
@@ -763,6 +914,8 @@ const registerAiRunArtifactsForReview = async (
     readJsonArtifact(artifacts.model_metadata, warnings),
     readJsonArtifact(artifacts.feature_extraction_summary, warnings),
     readJsonArtifact(artifacts.ground_truth_summary, warnings),
+    readJsonArtifact(artifacts.regional_classification_summary, warnings),
+    readJsonArtifact(artifacts.vectorization_summary, warnings),
     readCsvArtifact(artifacts.confusion_matrix, warnings),
     readCsvArtifact(artifacts.classification_report, warnings),
     readCsvArtifact(artifacts.feature_importance, warnings),
@@ -781,6 +934,8 @@ const registerAiRunArtifactsForReview = async (
     metricsPayload,
     featureExtractionSummary,
     groundTruthSummary,
+    regionalClassificationSummary,
+    vectorizationSummary,
     classificationReportRows,
     metadata,
   });
@@ -788,7 +943,14 @@ const registerAiRunArtifactsForReview = async (
     warnings.push('No class statistics were available to register.');
   }
 
-  const metricsPath = artifacts.metrics?.relativePath ?? null;
+  const metricsPath = artifacts.metrics && Object.keys(metricsPayload).length > 0
+    ? artifacts.metrics.relativePath
+    : null;
+  const [classificationPath, confidencePath, uncertaintyPath] = await Promise.all([
+    existingArtifactPath(artifacts.classification_polygons, warnings),
+    existingArtifactPath(artifacts.confidence_polygons, warnings),
+    existingArtifactPath(artifacts.uncertainty_areas, warnings),
+  ]);
   const selectedModel =
     toStringValue(metricsPayload.best_model) ?? toStringValue(modelMetadata.best_model);
   const modelMetricsSummary =
@@ -801,8 +963,11 @@ const registerAiRunArtifactsForReview = async (
       `DELETE FROM ai_output_layer
        WHERE ai_run_id = $1
          AND status <> 'published'
-         AND layer_type = 'statistics'`,
-      [input.runId],
+         AND layer_type = ANY($2::ai_output_layer_type[])`,
+      [
+        input.runId,
+        ['statistics', 'classification', 'confidence', 'uncertainty'],
+      ],
     );
 
     const metricsRegistered = await insertMetricRows(client, input.runId, metricRows);
@@ -813,11 +978,14 @@ const registerAiRunArtifactsForReview = async (
     );
     const hasReviewableStructuredResults =
       metricRows.length > 0 || classStatisticRows.length > 0;
-    const outputLayersRegistered = await insertStatisticsLayer({
+    const outputLayersRegistered = await insertReviewOutputLayers({
       client,
       runId: input.runId,
       projectId: input.projectId,
-      storagePath: hasReviewableStructuredResults ? metricsPath : null,
+      metricsPath: hasReviewableStructuredResults ? metricsPath : null,
+      classificationPath,
+      confidencePath,
+      uncertaintyPath,
     });
     if (selectedModel) {
       await client.query(`UPDATE ai_run SET selected_model = $2 WHERE id = $1`, [
@@ -837,12 +1005,14 @@ const registerAiRunArtifactsForReview = async (
     artifact_registration: {
       phase: REGISTRATION_PHASE,
       registered_at: new Date().toISOString(),
+      execution_mode: executionMode,
       metrics_registered: result.metricsRegistered,
       class_statistics_registered: result.classStatisticsRegistered,
       output_layers_registered: result.outputLayersRegistered,
       warnings,
       artifact_paths: artifactPaths,
       unpublished_only: true,
+      review_only: true,
       no_spatial_feature_writes: true,
     },
     registered_artifact_paths: artifactPaths,

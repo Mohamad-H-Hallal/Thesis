@@ -73,7 +73,9 @@ export interface EnvConfig {
     | 'dry_run'
     | 'local_ground_truth_export'
     | 'regional_feature_extraction'
-    | 'regional_model_eval';
+    | 'regional_model_eval'
+    | 'regional_classification'
+    | 'regional_vectorization_artifacts';
 }
 
 const envSchema = Joi.object({
@@ -218,6 +220,8 @@ const envSchema = Joi.object({
       'local_ground_truth_export',
       'regional_feature_extraction',
       'regional_model_eval',
+      'regional_classification',
+      'regional_vectorization_artifacts',
     )
     .default('disabled'),
 }).unknown(true);

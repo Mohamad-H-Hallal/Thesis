@@ -8,7 +8,7 @@ import {
 import { registerAiRunArtifactsForReview } from '../services/aiArtifactRegistration.service';
 const logger = require('../utils/logger');
 
-type AiRunActiveStatus = 'extracting_features' | 'training' | 'evaluating';
+type AiRunActiveStatus = 'extracting_features' | 'training' | 'evaluating' | 'classifying';
 type AiRunWorkerStatus = AiRunActiveStatus | 'ready_for_review';
 type AiRunFinalStatus = AiRunWorkerStatus | 'failed' | 'queued';
 type AiRunExecutionMode =
@@ -16,7 +16,9 @@ type AiRunExecutionMode =
   | 'dry_run'
   | 'local_ground_truth_export'
   | 'regional_feature_extraction'
-  | 'regional_model_eval';
+  | 'regional_model_eval'
+  | 'regional_classification'
+  | 'regional_vectorization_artifacts';
 
 type AiRunRow = QueryResultRow & {
   id: string;
@@ -87,10 +89,17 @@ const AI_WORKER_REGIONAL_MODEL_STATUS_SEQUENCE: AiRunWorkerStatus[] = [
   'ready_for_review',
 ];
 
+const AI_WORKER_REGIONAL_ARTIFACT_STATUS_SEQUENCE: AiRunWorkerStatus[] = [
+  'extracting_features',
+  'classifying',
+  'ready_for_review',
+];
+
 const activeStatusSet = new Set<AiRunActiveStatus>([
   'extracting_features',
   'training',
   'evaluating',
+  'classifying',
 ]);
 
 const executionModeSet = new Set<AiRunExecutionMode>([
@@ -99,6 +108,8 @@ const executionModeSet = new Set<AiRunExecutionMode>([
   'local_ground_truth_export',
   'regional_feature_extraction',
   'regional_model_eval',
+  'regional_classification',
+  'regional_vectorization_artifacts',
 ]);
 
 const LOG_METADATA_MAX_CHARS = 4000;
@@ -110,6 +121,20 @@ const REGIONAL_SCIENTIFIC_LIMITATIONS = [
 ];
 
 const createWorkerId = (): string => `phase-f-worker-${process.pid}-${Date.now().toString(36)}`;
+
+const regionalClassificationModeSet = new Set<AiRunExecutionMode>([
+  'regional_classification',
+  'regional_vectorization_artifacts',
+]);
+
+const regionalModelOrArtifactModeSet = new Set<AiRunExecutionMode>([
+  'regional_model_eval',
+]);
+
+const regionalFeatureOrLaterModeSet = new Set<AiRunExecutionMode>([
+  'regional_feature_extraction',
+  'regional_model_eval',
+]);
 
 const safeMetadata = (metadata: Record<string, unknown>): string => JSON.stringify(metadata);
 
@@ -488,7 +513,7 @@ const buildUnsafeReason = (
     return `Unsupported AI execution mode: ${executionMode}.`;
   }
   if (requestedNationalScope(run)) {
-    return 'National classification is not allowed in Phase F regional worker execution.';
+    return 'National classification is not allowed in regional AI worker execution.';
   }
   if (readiness.status === 'not_ready') {
     return readiness.blockers[0] ?? 'AI run readiness checks did not pass.';
@@ -706,7 +731,8 @@ const runPipelineExecution = async ({
   const commandResults: AiPipelineCommandResult[] = [];
   const regionalRunId = regionalRunIdFor(claimedRun.id);
   const realAiExecution =
-    executionMode === 'regional_feature_extraction' || executionMode === 'regional_model_eval';
+    regionalFeatureOrLaterModeSet.has(executionMode) ||
+    regionalClassificationModeSet.has(executionMode);
   const statuses: AiRunWorkerStatus[] = ['extracting_features'];
   let currentStatus: AiRunActiveStatus = 'extracting_features';
   let safetySummary: AiRunSafetySummary | null = null;
@@ -716,7 +742,7 @@ const runPipelineExecution = async ({
   await insertRunLog(
     claimedRun.id,
     'info',
-    'AI pipeline bridge started. Phase F allows controlled regional execution modes only.',
+    'AI pipeline bridge started. Controlled regional execution modes only; national classification is blocked.',
     {
       status: 'extracting_features',
       worker_phase: WORKER_PHASE,
@@ -732,7 +758,9 @@ const runPipelineExecution = async ({
     const outputPaths = outputPathsFrom(commandResults);
     const metadata: Record<string, unknown> = {
       execution_mode: executionMode,
-      pipeline_bridge_phase: 'phase_f',
+      pipeline_bridge_phase: regionalClassificationModeSet.has(executionMode)
+        ? 'phase_k'
+        : 'phase_f',
       worker_phase: WORKER_PHASE,
       ai_pipeline_run_id: regionalRunId,
       project_id: claimedRun.project_id,
@@ -755,22 +783,20 @@ const runPipelineExecution = async ({
     }
     if (
       executionMode === 'local_ground_truth_export' ||
-      executionMode === 'regional_feature_extraction' ||
-      executionMode === 'regional_model_eval'
+      regionalFeatureOrLaterModeSet.has(executionMode)
     ) {
       metadata.output_directory = `outputs/projects/${claimedRun.project_id}`;
       metadata.ground_truth_path = `outputs/projects/${claimedRun.project_id}/ground_truth.geojson`;
     }
     if (
-      executionMode === 'regional_feature_extraction' ||
-      executionMode === 'regional_model_eval'
+      regionalFeatureOrLaterModeSet.has(executionMode)
     ) {
       metadata.output_directory = `outputs/runs/${regionalRunId}`;
       metadata.feature_table_path = `outputs/runs/${regionalRunId}/feature_table.csv`;
       metadata.feature_extraction_summary_path =
         `outputs/runs/${regionalRunId}/feature_extraction_summary.json`;
     }
-    if (executionMode === 'regional_model_eval') {
+    if (regionalModelOrArtifactModeSet.has(executionMode)) {
       metadata.metrics_path = `outputs/runs/${regionalRunId}/metrics.json`;
       metadata.confusion_matrix_path = `outputs/runs/${regionalRunId}/confusion_matrix.csv`;
       metadata.classification_report_path =
@@ -782,6 +808,19 @@ const runPipelineExecution = async ({
           source: `outputs/runs/${regionalRunId}/metrics.json`,
           note: 'Regional proof-of-concept metrics only; not national accuracy.',
         };
+    }
+    if (regionalClassificationModeSet.has(executionMode)) {
+      metadata.regional_classification_summary_path =
+        `outputs/runs/${regionalRunId}/regional_classification_summary.json`;
+    }
+    if (executionMode === 'regional_vectorization_artifacts') {
+      metadata.classification_polygons_path =
+        `outputs/runs/${regionalRunId}/classification_polygons.geojson`;
+      metadata.confidence_polygons_path =
+        `outputs/runs/${regionalRunId}/confidence_polygons.geojson`;
+      metadata.uncertainty_areas_path = `outputs/runs/${regionalRunId}/uncertainty_areas.geojson`;
+      metadata.vectorization_summary_path =
+        `outputs/runs/${regionalRunId}/vectorization_summary.json`;
     }
 
     if (artifactRegistrationMetadata) {
@@ -875,8 +914,7 @@ const runPipelineExecution = async ({
     });
   }
   if (
-    executionMode === 'regional_feature_extraction' ||
-    executionMode === 'regional_model_eval'
+    regionalFeatureOrLaterModeSet.has(executionMode)
   ) {
     steps.push(
       {
@@ -910,12 +948,12 @@ const runPipelineExecution = async ({
     logsWritten += stepLogsWritten;
 
     if (!result.success) {
-      const failureReason = `AI pipeline ${result.command} failed during Phase F regional worker execution.`;
+      const failureReason = `AI pipeline ${result.command} failed during regional AI worker execution.`;
       return failFromCurrentStatus(failureReason);
     }
   }
 
-  if (executionMode === 'regional_model_eval') {
+  if (regionalModelOrArtifactModeSet.has(executionMode)) {
     await updateRunStatus(claimedRun.id, currentStatus, 'training', workerId, completionMetadata());
     currentStatus = 'training';
     statuses.push('training');
@@ -947,7 +985,7 @@ const runPipelineExecution = async ({
     logsWritten += modelLogsWritten;
 
     if (!result.success) {
-      const failureReason = `AI pipeline ${result.command} failed during Phase F regional worker execution.`;
+      const failureReason = `AI pipeline ${result.command} failed during regional AI worker execution.`;
       return failFromCurrentStatus(failureReason);
     }
 
@@ -964,6 +1002,128 @@ const runPipelineExecution = async ({
       metrics_path: `outputs/runs/${regionalRunId}/metrics.json`,
     });
     logsWritten += 1;
+
+    try {
+      const registrationResult = await registerAiRunArtifactsForReview({
+        runId: claimedRun.id,
+        projectId: claimedRun.project_id,
+        labelField: claimedRun.label_field,
+        metadata: completionMetadata(),
+        pipelineConfig: pipelineService.getConfig(),
+      });
+      artifactRegistrationMetadata = registrationResult.metadataPatch;
+      await insertRunLog(
+        claimedRun.id,
+        registrationResult.warnings.length > 0 ? 'warning' : 'info',
+        'AI artifacts registered for review.',
+        {
+          status: currentStatus,
+          worker_phase: WORKER_PHASE,
+          registration_phase: 'phase_h_artifact_registration',
+          execution_mode: executionMode,
+          worker_id: workerId,
+          ai_pipeline_run_id: regionalRunId,
+          real_ai_execution: realAiExecution,
+          metrics_registered: registrationResult.metricsRegistered,
+          class_statistics_registered: registrationResult.classStatisticsRegistered,
+          output_layers_registered: registrationResult.outputLayersRegistered,
+          warnings: registrationResult.warnings,
+          artifact_paths: registrationResult.artifactPaths,
+          unpublished_only: true,
+          no_spatial_feature_writes: true,
+        },
+      );
+      logsWritten += 1;
+    } catch (error) {
+      const failureReason =
+        error instanceof Error
+          ? `AI artifact registration failed: ${error.message}`
+          : 'AI artifact registration failed.';
+      await insertRunLog(claimedRun.id, 'error', failureReason, {
+        status: 'failed',
+        failed_from_status: currentStatus,
+        worker_phase: WORKER_PHASE,
+        registration_phase: 'phase_h_artifact_registration',
+        execution_mode: executionMode,
+        worker_id: workerId,
+        ai_pipeline_run_id: regionalRunId,
+        real_ai_execution: realAiExecution,
+      });
+      logsWritten += 1;
+      return failFromCurrentStatus(failureReason);
+    }
+  }
+
+  if (regionalClassificationModeSet.has(executionMode)) {
+    await updateRunStatus(
+      claimedRun.id,
+      currentStatus,
+      'classifying',
+      workerId,
+      completionMetadata(),
+    );
+    currentStatus = 'classifying';
+    statuses.push('classifying');
+    await insertRunLog(claimedRun.id, 'info', 'AI regional classification artifact step started.', {
+      status: currentStatus,
+      worker_phase: WORKER_PHASE,
+      execution_mode: executionMode,
+      worker_id: workerId,
+      ai_pipeline_run_id: regionalRunId,
+      real_ai_execution: realAiExecution,
+      national_classification: false,
+    });
+    logsWritten += 1;
+
+    const { result: classificationResult, logsWritten: classificationLogsWritten } =
+      await runPipelineCommandWithLogs({
+        run: claimedRun,
+        workerId,
+        executionMode,
+        status: currentStatus,
+        realAiExecution,
+        message: 'AI regional classification artifact preparation',
+        commandRunner: () =>
+          pipelineService.classifyRegional(
+            claimedRun.project_id,
+            claimedRun.label_field,
+            regionalRunId,
+          ),
+      });
+    commandResults.push(classificationResult);
+    logsWritten += classificationLogsWritten;
+
+    if (!classificationResult.success) {
+      const failureReason =
+        `AI pipeline ${classificationResult.command} failed during regional AI worker execution.`;
+      return failFromCurrentStatus(failureReason);
+    }
+
+    if (executionMode === 'regional_vectorization_artifacts') {
+      const { result: vectorizationResult, logsWritten: vectorizationLogsWritten } =
+        await runPipelineCommandWithLogs({
+          run: claimedRun,
+          workerId,
+          executionMode,
+          status: currentStatus,
+          realAiExecution,
+          message: 'AI regional vectorization review artifact preparation',
+          commandRunner: () =>
+            pipelineService.prepareRegionalVectorArtifacts(
+              claimedRun.project_id,
+              claimedRun.label_field,
+              regionalRunId,
+            ),
+        });
+      commandResults.push(vectorizationResult);
+      logsWritten += vectorizationLogsWritten;
+
+      if (!vectorizationResult.success) {
+        const failureReason =
+          `AI pipeline ${vectorizationResult.command} failed during regional AI worker execution.`;
+        return failFromCurrentStatus(failureReason);
+      }
+    }
 
     try {
       const registrationResult = await registerAiRunArtifactsForReview({
@@ -1138,6 +1298,7 @@ export {
   AI_WORKER_MOCK_STATUS_SEQUENCE,
   AI_WORKER_PIPELINE_STATUS_SEQUENCE,
   AI_WORKER_REGIONAL_MODEL_STATUS_SEQUENCE,
+  AI_WORKER_REGIONAL_ARTIFACT_STATUS_SEQUENCE,
   peekQueuedAiRun,
   runAiWorkerOnce,
   type AiRunActiveStatus,

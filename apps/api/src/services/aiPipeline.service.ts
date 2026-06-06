@@ -8,7 +8,9 @@ type AiPipelineMode =
   | 'dry_run'
   | 'local_ground_truth_export'
   | 'regional_feature_extraction'
-  | 'regional_model_eval';
+  | 'regional_model_eval'
+  | 'regional_classification'
+  | 'regional_vectorization_artifacts';
 
 type AiPipelineConfig = {
   enabled: boolean;
@@ -24,7 +26,9 @@ type AiPipelineCommandName =
   | 'probe_project'
   | 'export_ground_truth_local'
   | 'regional_feature_extraction'
-  | 'regional_model_eval';
+  | 'regional_model_eval'
+  | 'regional_classification'
+  | 'regional_vectorization_artifacts';
 
 type AiPipelineCommandResult = {
   command: AiPipelineCommandName;
@@ -56,6 +60,20 @@ type AiPipelineService = {
     regionalRunId: string,
     featureTablePath?: string,
   ) => Promise<AiPipelineCommandResult>;
+  classifyRegional: (
+    projectId: string,
+    labelField: string,
+    regionalRunId: string,
+    modelMetadataPath?: string,
+    regionPreset?: string,
+  ) => Promise<AiPipelineCommandResult>;
+  prepareRegionalVectorArtifacts: (
+    projectId: string,
+    labelField: string,
+    regionalRunId: string,
+    classificationSummaryPath?: string,
+    regionPreset?: string,
+  ) => Promise<AiPipelineCommandResult>;
 };
 
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -68,6 +86,8 @@ const validPipelineModes = new Set<AiPipelineMode>([
   'local_ground_truth_export',
   'regional_feature_extraction',
   'regional_model_eval',
+  'regional_classification',
+  'regional_vectorization_artifacts',
 ]);
 
 const parseBoolean = (value: string | undefined): boolean => {
@@ -156,6 +176,12 @@ const validateLabelField = (labelField: string): void => {
 const validateRegionalRunId = (regionalRunId: string): void => {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(regionalRunId)) {
     throw new Error('Invalid AI regional run id for pipeline command.');
+  }
+};
+
+const validateRegionalPreset = (regionPreset: string): void => {
+  if (regionPreset !== 'south_lebanon') {
+    throw new Error('Invalid AI regional preset for pipeline command.');
   }
 };
 
@@ -259,6 +285,75 @@ class DefaultAiPipelineService implements AiPipelineService {
         `outputs/runs/${regionalRunId}/confusion_matrix.csv`,
         `outputs/runs/${regionalRunId}/classification_report.csv`,
         `outputs/runs/${regionalRunId}/feature_importance.csv`,
+      ],
+    );
+  }
+
+  classifyRegional(
+    projectId: string,
+    labelField: string,
+    regionalRunId: string,
+    modelMetadataPath = `outputs/runs/${regionalRunId}/model_metadata.json`,
+    regionPreset = 'south_lebanon',
+  ): Promise<AiPipelineCommandResult> {
+    validateProjectId(projectId);
+    validateLabelField(labelField);
+    validateRegionalRunId(regionalRunId);
+    validateRegionalPreset(regionPreset);
+    return this.runAllowedCommand(
+      'regional_classification',
+      'run_pipeline.py',
+      [
+        '--regional-classification',
+        '--project-id',
+        projectId,
+        '--label-field',
+        labelField,
+        '--region-preset',
+        regionPreset,
+        '--model-metadata',
+        modelMetadataPath,
+        '--regional-run-id',
+        regionalRunId,
+      ],
+      [
+        `outputs/runs/${regionalRunId}/regional_classification_summary.json`,
+      ],
+    );
+  }
+
+  prepareRegionalVectorArtifacts(
+    projectId: string,
+    labelField: string,
+    regionalRunId: string,
+    classificationSummaryPath = `outputs/runs/${regionalRunId}/regional_classification_summary.json`,
+    regionPreset = 'south_lebanon',
+  ): Promise<AiPipelineCommandResult> {
+    validateProjectId(projectId);
+    validateLabelField(labelField);
+    validateRegionalRunId(regionalRunId);
+    validateRegionalPreset(regionPreset);
+    return this.runAllowedCommand(
+      'regional_vectorization_artifacts',
+      'run_pipeline.py',
+      [
+        '--regional-vectorization-artifacts',
+        '--project-id',
+        projectId,
+        '--label-field',
+        labelField,
+        '--region-preset',
+        regionPreset,
+        '--classification-summary',
+        classificationSummaryPath,
+        '--regional-run-id',
+        regionalRunId,
+      ],
+      [
+        `outputs/runs/${regionalRunId}/classification_polygons.geojson`,
+        `outputs/runs/${regionalRunId}/confidence_polygons.geojson`,
+        `outputs/runs/${regionalRunId}/uncertainty_areas.geojson`,
+        `outputs/runs/${regionalRunId}/vectorization_summary.json`,
       ],
     );
   }

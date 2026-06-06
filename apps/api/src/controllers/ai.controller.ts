@@ -22,9 +22,16 @@ const allowedExecutionModes = [
   'local_ground_truth_export',
   'regional_feature_extraction',
   'regional_model_eval',
+  'regional_classification',
+  'regional_vectorization_artifacts',
 ];
 
-const regionalExecutionModes = ['regional_feature_extraction', 'regional_model_eval'];
+const regionalExecutionModes = [
+  'regional_feature_extraction',
+  'regional_model_eval',
+  'regional_classification',
+  'regional_vectorization_artifacts',
+];
 
 const reviewActions = {
   approve_for_publication: {
@@ -987,7 +994,7 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
 
   if (!allowedExecutionModes.includes(executionMode)) {
     throw new AppError(
-      'Unsupported AI execution_mode. Phase F allows only mock, dry_run, local_ground_truth_export, regional_feature_extraction, or regional_model_eval.',
+      'Unsupported AI execution_mode. Allowed modes are mock, dry_run, local_ground_truth_export, regional_feature_extraction, regional_model_eval, regional_classification, or regional_vectorization_artifacts.',
       400,
     );
   }

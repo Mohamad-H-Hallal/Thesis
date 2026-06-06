@@ -105,6 +105,35 @@ describe('AI pipeline adapter phase E', () => {
       'outputs/runs/app-ai-test-run/classification_report.csv',
       'outputs/runs/app-ai-test-run/feature_importance.csv',
     ]);
+
+    const classificationResult = await service.classifyRegional(
+      TEST_PROJECT_ID,
+      'L4_descr',
+      'app-ai-test-run',
+    );
+    expect(classificationResult.sanitizedLog).toContain('--regional-classification');
+    expect(classificationResult.sanitizedLog).toContain('--region-preset');
+    expect(classificationResult.sanitizedLog).toContain('south_lebanon');
+    expect(classificationResult.sanitizedLog).toContain('--model-metadata');
+    expect(classificationResult.outputPaths).toEqual([
+      'outputs/runs/app-ai-test-run/regional_classification_summary.json',
+    ]);
+
+    const vectorResult = await service.prepareRegionalVectorArtifacts(
+      TEST_PROJECT_ID,
+      'L4_descr',
+      'app-ai-test-run',
+    );
+    expect(vectorResult.sanitizedLog).toContain('--regional-vectorization-artifacts');
+    expect(vectorResult.sanitizedLog).toContain('--region-preset');
+    expect(vectorResult.sanitizedLog).toContain('south_lebanon');
+    expect(vectorResult.sanitizedLog).toContain('--classification-summary');
+    expect(vectorResult.outputPaths).toEqual([
+      'outputs/runs/app-ai-test-run/classification_polygons.geojson',
+      'outputs/runs/app-ai-test-run/confidence_polygons.geojson',
+      'outputs/runs/app-ai-test-run/uncertainty_areas.geojson',
+      'outputs/runs/app-ai-test-run/vectorization_summary.json',
+    ]);
   });
 
   test('fails clearly when the pipeline root is missing', async () => {
@@ -159,6 +188,9 @@ describe('AI pipeline adapter phase E', () => {
     );
     expect(() =>
       service.extractRegionalFeatures(TEST_PROJECT_ID, 'L4_descr', '../unsafe'),
+    ).toThrow('Invalid AI regional run id');
+    expect(() =>
+      service.prepareRegionalVectorArtifacts(TEST_PROJECT_ID, 'L4_descr', '../unsafe'),
     ).toThrow('Invalid AI regional run id');
   });
 

@@ -713,13 +713,45 @@ describe('AI backend endpoints phase B', () => {
       }),
     );
 
+    const regionalClassificationResponse = await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'queued',
+        execution_mode: 'regional_classification',
+      })
+      .expect(201);
+    expect(regionalClassificationResponse.body.data.metadata).toEqual(
+      expect.objectContaining({
+        execution_mode: 'regional_classification',
+        regional_ai_execution_requested: true,
+        real_ai_execution: false,
+      }),
+    );
+
+    const vectorArtifactResponse = await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'queued',
+        execution_mode: 'regional_vectorization_artifacts',
+      })
+      .expect(201);
+    expect(vectorArtifactResponse.body.data.metadata).toEqual(
+      expect.objectContaining({
+        execution_mode: 'regional_vectorization_artifacts',
+        regional_ai_execution_requested: true,
+        real_ai_execution: false,
+      }),
+    );
+
     await request(app)
       .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
       .set(authHeader(admin.token))
       .send({
         status: 'queued',
         scope_type: 'national',
-        execution_mode: 'regional_model_eval',
+        execution_mode: 'regional_vectorization_artifacts',
       })
       .expect(400);
 

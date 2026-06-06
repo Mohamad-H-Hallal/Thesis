@@ -1503,8 +1503,10 @@ components:
             - local_ground_truth_export
             - regional_feature_extraction
             - regional_model_eval
+            - regional_classification
+            - regional_vectorization_artifacts
           default: mock
-          description: Safe worker mode. National classification, vectorization, publishing, and Redis-backed queueing are intentionally unavailable in Phase F.
+          description: Safe worker mode. Regional classification/vectorization modes prepare review artifacts only; national classification, viewer publishing, spatial_feature insertion, and Redis-backed queueing remain unavailable.
     AiRunReviewRequest:
       type: object
       required: [action]
