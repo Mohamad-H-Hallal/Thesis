@@ -490,6 +490,46 @@ paths:
           description: Forbidden
         '404':
           description: AI run not found
+  /api/v1/ai/runs/{runId}/reviews:
+    get:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: List AI run review decisions
+      description: Protected super-admin only. Returns admin review history for AI run outputs; it does not expose AI layers to viewers.
+      parameters:
+        - $ref: '#/components/parameters/runId'
+      responses:
+        '200':
+          description: AI review decision list
+        '403':
+          description: Forbidden
+        '404':
+          description: AI run not found
+  /api/v1/ai/runs/{runId}/review:
+    post:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Review AI run results for future publication
+      description: Protected super-admin only. Records a review decision and updates AI output layer review status. This endpoint does not publish viewer-facing map layers and never inserts AI predictions into spatial_feature.
+      parameters:
+        - $ref: '#/components/parameters/runId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiRunReviewRequest'
+      responses:
+        '200':
+          description: AI review decision saved
+        '400':
+          description: Invalid review payload
+        '403':
+          description: Forbidden
+        '404':
+          description: AI run not found
   /api/v1/ai/runs/{runId}/logs:
     get:
       tags: [AI]
@@ -1465,6 +1505,23 @@ components:
             - regional_model_eval
           default: mock
           description: Safe worker mode. National classification, vectorization, publishing, and Redis-backed queueing are intentionally unavailable in Phase F.
+    AiRunReviewRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum:
+            - approve_for_publication
+            - reject
+            - request_more_data
+            - keep_draft
+          description: Review action for protected super-admins. Approving prepares results for a later publishing phase; it does not publish to viewers.
+        reason:
+          type: string
+          nullable: true
+          maxLength: 4000
+          description: Required for reject and request_more_data.
     AiReadinessResponse:
       type: object
       properties:

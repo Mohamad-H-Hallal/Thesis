@@ -130,6 +130,8 @@ describe('AI integration schema phase A', () => {
       'uncertainty',
       'statistics',
     ]);
+    expect(enums.ai_output_layer_status).toContain('approved');
+    expect(enums.ai_review_decision_type).toContain('keep_draft');
   });
 
   test('adds source provenance to approved real spatial features', async () => {

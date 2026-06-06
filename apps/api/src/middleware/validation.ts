@@ -544,6 +544,26 @@ const aiValidation = {
       ])
       .withMessage('status is invalid'),
   ] as ValidationChain[],
+  reviewRun: [
+    body('action')
+      .isIn(['approve_for_publication', 'reject', 'request_more_data', 'keep_draft'])
+      .withMessage('action must be approve_for_publication, reject, request_more_data, or keep_draft'),
+    body()
+      .custom((value) => {
+        const action = value?.action;
+        if (action === 'reject' || action === 'request_more_data') {
+          return typeof value?.reason === 'string' && value.reason.trim().length > 0;
+        }
+        return true;
+      })
+      .withMessage('reason is required for reject and request_more_data actions'),
+    body('reason')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 4000 })
+      .withMessage('reason must be 4000 characters or fewer')
+      .withMessage('reason must be 4000 characters or fewer'),
+  ] as ValidationChain[],
 };
 
 // Export validation rules

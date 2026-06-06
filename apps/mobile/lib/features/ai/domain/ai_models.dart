@@ -459,6 +459,64 @@ class AiRunLog {
   }
 }
 
+class AiReviewDecision {
+  const AiReviewDecision({
+    required this.id,
+    required this.aiRunId,
+    required this.decision,
+    this.reason,
+    this.decidedBy,
+    this.decidedAt,
+    this.metadata = const <String, dynamic>{},
+  });
+
+  final String id;
+  final String aiRunId;
+  final String decision;
+  final String? reason;
+  final String? decidedBy;
+  final DateTime? decidedAt;
+  final Map<String, dynamic> metadata;
+
+  factory AiReviewDecision.fromMap(Map<String, dynamic> map) {
+    return AiReviewDecision(
+      id: _toStringOrNull(map['id']) ?? '',
+      aiRunId: _toStringOrNull(map['ai_run_id']) ?? '',
+      decision: _toStringOrNull(map['decision']) ?? 'keep_draft',
+      reason: _toStringOrNull(map['reason']),
+      decidedBy: _toStringOrNull(map['decided_by']),
+      decidedAt: _toDateTime(map['decided_at']),
+      metadata: _toMap(map['metadata']),
+    );
+  }
+}
+
+class AiRunReviewResult {
+  const AiRunReviewResult({
+    required this.decision,
+    required this.run,
+    required this.layers,
+    required this.viewerPublished,
+  });
+
+  final AiReviewDecision decision;
+  final AiRun run;
+  final List<AiOutputLayer> layers;
+  final bool viewerPublished;
+
+  factory AiRunReviewResult.fromResponse(Map<String, dynamic> data) {
+    return AiRunReviewResult(
+      decision: AiReviewDecision.fromMap(_toMap(data['decision'])),
+      run: AiRun.fromMap(_toMap(data['run'])),
+      layers: _toList(data['layers'])
+          .whereType<Map>()
+          .map((row) => AiOutputLayer.fromMap(Map<String, dynamic>.from(row)))
+          .toList(growable: false),
+      viewerPublished: _toBool(data['viewer_published']) ?? false,
+    );
+  }
+}
+
 class AiReadinessQuery {
   const AiReadinessQuery({
     required this.projectId,

@@ -26,6 +26,34 @@ const allowedExecutionModes = [
 
 const regionalExecutionModes = ['regional_feature_extraction', 'regional_model_eval'];
 
+const reviewActions = {
+  approve_for_publication: {
+    decision: 'approved_for_publish',
+    layerStatus: 'approved',
+    reviewStatus: 'approved_for_publication',
+    logMessage:
+      'AI run approved for future publication. No viewer-facing AI layer was published.',
+  },
+  reject: {
+    decision: 'rejected',
+    layerStatus: 'rejected',
+    reviewStatus: 'rejected',
+    logMessage: 'AI run results rejected during protected super-admin review.',
+  },
+  request_more_data: {
+    decision: 'needs_more_data',
+    layerStatus: 'draft',
+    reviewStatus: 'needs_more_data',
+    logMessage: 'More training data requested during AI result review.',
+  },
+  keep_draft: {
+    decision: 'keep_draft',
+    layerStatus: 'draft',
+    reviewStatus: 'draft',
+    logMessage: 'AI run kept as a draft for later review.',
+  },
+} as const;
+
 const defaultSettings = {
   is_enabled: false,
   label_field: null,
@@ -1265,6 +1293,188 @@ const listAiRunLogs = async (req: Request, res: Response): Promise<void> => {
   });
 };
 
+const listAiRunReviews = async (req: Request, res: Response): Promise<void> => {
+  const run = await assertRunReadable(req.params.runId, req.user as Express.UserContext);
+  const result = await query(
+    `SELECT id,
+            ai_run_id,
+            decision,
+            reason,
+            decided_by,
+            decided_at,
+            metadata
+     FROM ai_review_decision
+     WHERE ai_run_id = $1
+     ORDER BY decided_at DESC`,
+    [run.id],
+  );
+
+  res.json({
+    success: true,
+    data: result.rows,
+  });
+};
+
+const reviewAiRun = async (req: Request, res: Response): Promise<void> => {
+  const run = await assertRunReadable(req.params.runId, req.user as Express.UserContext);
+  const currentUser = req.user as Express.UserContext;
+  const action = normalizeOptionalString(req.body?.action) as keyof typeof reviewActions | null;
+  const reason = normalizeOptionalString(req.body?.reason);
+
+  if (!action || !(action in reviewActions)) {
+    throw new AppError('Unsupported AI review action.', 400);
+  }
+  if ((action === 'reject' || action === 'request_more_data') && !reason) {
+    throw new AppError('A reason is required for this AI review action.', 400);
+  }
+
+  const config = reviewActions[action];
+  const result = await transaction(async (client: PoolClient) => {
+    const lockedRunResult = await client.query(
+      `SELECT id,
+              project_id,
+              status,
+              metadata
+       FROM ai_run
+       WHERE id = $1
+       FOR UPDATE`,
+      [run.id],
+    );
+
+    if (lockedRunResult.rows.length === 0) {
+      throw new AppError('AI run not found', 404);
+    }
+
+    const lockedRun = lockedRunResult.rows[0];
+    const currentMetadata =
+      lockedRun.metadata && typeof lockedRun.metadata === 'object' ? lockedRun.metadata : {};
+    const reviewMetadata = {
+      action,
+      review_status: config.reviewStatus,
+      layer_status: config.layerStatus,
+      viewer_publication_enabled: false,
+      spatial_feature_writes: false,
+      reviewed_by: currentUser.id,
+      reviewed_at: new Date().toISOString(),
+    };
+
+    const decisionResult = await client.query(
+      `INSERT INTO ai_review_decision (ai_run_id, decision, reason, decided_by, metadata)
+       VALUES ($1, $2, $3, $4, $5::jsonb)
+       RETURNING id,
+                 ai_run_id,
+                 decision,
+                 reason,
+                 decided_by,
+                 decided_at,
+                 metadata`,
+      [
+        lockedRun.id,
+        config.decision,
+        reason,
+        currentUser.id,
+        JSON.stringify({
+          phase: 'phase_i_review',
+          ...reviewMetadata,
+        }),
+      ],
+    );
+
+    const layerResult = await client.query(
+      `UPDATE ai_output_layer
+       SET status = $2,
+           published_at = NULL,
+           published_by = NULL
+       WHERE ai_run_id = $1
+         AND status <> 'published'
+       RETURNING id,
+                 ai_run_id,
+                 project_id,
+                 layer_type,
+                 status,
+                 name,
+                 published_at,
+                 published_by`,
+      [lockedRun.id, config.layerStatus],
+    );
+
+    const updatedRunResult = await client.query(
+      `UPDATE ai_run
+       SET metadata = $2::jsonb
+       WHERE id = $1
+       RETURNING id,
+                 project_id,
+                 settings_id,
+                 status,
+                 label_field,
+                 scope_type,
+                 ST_AsGeoJSON(scope_geometry)::json AS scope_geometry,
+                 region_preset,
+                 training_feature_count,
+                 eligible_feature_count,
+                 excluded_feature_count,
+                 selected_model,
+                 started_by,
+                 started_at,
+                 completed_at,
+                 failed_at,
+                 failure_reason,
+                 metadata,
+                 created_at,
+                 updated_at`,
+      [
+        lockedRun.id,
+        JSON.stringify({
+          ...currentMetadata,
+          review: {
+            ...reviewMetadata,
+            decision_id: decisionResult.rows[0].id,
+            reason,
+          },
+        }),
+      ],
+    );
+
+    await client.query(
+      `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
+       VALUES ($1, 'info', $2, $3::jsonb)`,
+      [
+        lockedRun.id,
+        config.logMessage,
+        JSON.stringify({
+          phase: 'phase_i_review',
+          action,
+          decision: config.decision,
+          layer_status: config.layerStatus,
+          layers_updated: layerResult.rowCount ?? 0,
+          viewer_publication_enabled: false,
+          spatial_feature_writes: false,
+        }),
+      ],
+    );
+
+    return {
+      decision: decisionResult.rows[0],
+      run: updatedRunResult.rows[0],
+      layers: layerResult.rows,
+    };
+  });
+
+  res.json({
+    success: true,
+    message:
+      action === 'approve_for_publication'
+        ? 'AI run approved for future publication. It has not been published to viewers.'
+        : 'AI review decision saved.',
+    data: {
+      decision: result.decision,
+      run: normalizeRunRow(result.run),
+      layers: result.layers,
+      viewer_published: false,
+    },
+  });
+};
+
 module.exports = {
   getProjectAiReadiness,
   getProjectAiSettings,
@@ -1275,6 +1485,8 @@ module.exports = {
   listAiRunMetrics,
   listAiRunLayers,
   listAiRunLogs,
+  listAiRunReviews,
+  reviewAiRun,
 };
 
 export {};

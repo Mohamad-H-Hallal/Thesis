@@ -314,6 +314,31 @@ List<AiRunLog> _phaseFLogs() {
   ];
 }
 
+List<AiOutputLayer> _reviewableLayers() {
+  return const <AiOutputLayer>[
+    AiOutputLayer(
+      id: 'layer-statistics',
+      layerType: 'statistics',
+      status: 'ready_for_review',
+      name: 'Regional model statistics',
+    ),
+  ];
+}
+
+List<AiReviewDecision> _reviewHistory() {
+  return <AiReviewDecision>[
+    AiReviewDecision(
+      id: 'review-1',
+      aiRunId: '00f4bb0c-66cc-4fec-80c3-f3ecc96175f4',
+      decision: 'approved_for_publish',
+      reason: 'Metrics are acceptable for future publication review.',
+      decidedBy: 'admin-1',
+      decidedAt: DateTime.utc(2026, 6, 6, 10),
+      metadata: const <String, dynamic>{'viewer_publication_enabled': false},
+    ),
+  ];
+}
+
 void main() {
   testWidgets('AI controls are visible only for protected super-admins', (
     tester,
@@ -1033,6 +1058,308 @@ void main() {
     expect(find.textContaining('Macro-F1: 0.660'), findsOneWidget);
     expect(find.textContaining('Weighted-F1: 0.750'), findsOneWidget);
     expect(find.textContaining('Accuracy: 0.716'), findsNothing);
+    expect(find.text('Model comparison'), findsOneWidget);
+    expect(
+      find.textContaining(
+        'Random Forest: Accuracy 0.800, Macro-F1 0.500, Weighted-F1 0.700',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('review section records protected super-admin decisions safely', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1080, 1900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
+      layers: _reviewableLayers(),
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    await tester.tap(find.text('Run 00f4bb0c'));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Review result'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('No review decision has been recorded yet.'),
+      findsOneWidget,
+    );
+    expect(find.text('Approve for future publication'), findsOneWidget);
+    expect(find.text('Reject'), findsOneWidget);
+    expect(find.text('Request more data'), findsOneWidget);
+    expect(find.text('Publish now'), findsNothing);
+    expect(
+      find.text(
+        'Review decisions prepare AI results for a later publishing phase. They do not publish map layers to viewers yet.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Approve accepts the result'), findsOneWidget);
+
+    await tester.tap(find.text('Reject'));
+    await tester.pumpAndSettle();
+
+    expect(repository.reviewCount, 0);
+    expect(find.text('Please add a reason before rejecting.'), findsOneWidget);
+
+    await tester.tap(find.text('Request more data'));
+    await tester.pumpAndSettle();
+
+    expect(repository.reviewCount, 0);
+    expect(find.text('Please explain what data is needed.'), findsOneWidget);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Review reason or comment'),
+      'Metrics need more review before publication.',
+    );
+    await tester.tap(find.text('Reject'));
+    await tester.pumpAndSettle();
+
+    expect(repository.reviewCount, 1);
+    expect(
+      find.text('AI review saved. No viewer-facing layer was published.'),
+      findsOneWidget,
+    );
+    expect(find.text('Latest decision'), findsOneWidget);
+    expect(find.textContaining('Decision: Rejected'), findsOneWidget);
+    expect(
+      find.textContaining(
+        'Reason: Metrics need more review before publication.',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('review actions keep mobile layout aligned', (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.binding.setSurfaceSize(const Size(390, 1500));
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
+      layers: _reviewableLayers(),
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    await tester.ensureVisible(find.text('Run 00f4bb0c'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Run 00f4bb0c'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Approve for future publication'));
+    await tester.pumpAndSettle();
+
+    final mobileApprove = tester.getRect(
+      find.widgetWithText(FilledButton, 'Approve for future publication'),
+    );
+    final mobileReason = tester.getRect(
+      find.widgetWithText(TextField, 'Review reason or comment'),
+    );
+    final mobileReject = tester.getRect(
+      find.widgetWithText(OutlinedButton, 'Reject'),
+    );
+    final mobileRequest = tester.getRect(
+      find.widgetWithText(OutlinedButton, 'Request more data'),
+    );
+    final mobileKeep = tester.getRect(
+      find.widgetWithText(OutlinedButton, 'Keep draft'),
+    );
+
+    expect(mobileReason.left, closeTo(mobileApprove.left, 1));
+    expect(mobileReason.width, closeTo(mobileApprove.width, 1));
+    final secondaryActionsShareRow =
+        (mobileReject.top - mobileRequest.top).abs() < 1;
+    if (secondaryActionsShareRow) {
+      expect(mobileApprove.width, greaterThan(mobileReject.width));
+    } else {
+      expect(mobileReject.width, closeTo(mobileApprove.width, 1));
+      expect(mobileRequest.width, closeTo(mobileApprove.width, 1));
+      expect(mobileRequest.top, greaterThan(mobileReject.top));
+    }
+    expect(mobileKeep.left, closeTo(mobileApprove.left, 1));
+    expect(mobileKeep.width, closeTo(mobileApprove.width, 1));
+  });
+
+  testWidgets('review actions keep wide layout aligned', (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.binding.setSurfaceSize(const Size(1080, 1500));
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
+      layers: _reviewableLayers(),
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    await tester.ensureVisible(find.text('Run 00f4bb0c'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Run 00f4bb0c'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Approve for future publication'));
+    await tester.pumpAndSettle();
+
+    final wideReject = tester.getRect(
+      find.widgetWithText(OutlinedButton, 'Reject'),
+    );
+    final wideReason = tester.getRect(
+      find.widgetWithText(TextField, 'Review reason or comment'),
+    );
+    final wideRequest = tester.getRect(
+      find.widgetWithText(OutlinedButton, 'Request more data'),
+    );
+    final wideKeep = tester.getRect(
+      find.widgetWithText(OutlinedButton, 'Keep draft'),
+    );
+
+    expect(wideReason.left, closeTo(wideReject.left, 1));
+    expect(wideReason.width, closeTo(wideReject.width * 3 + 24, 2));
+    expect((wideReject.top - wideRequest.top).abs(), lessThan(1));
+    expect((wideReject.top - wideKeep.top).abs(), lessThan(1));
+    expect(wideReject.width, closeTo(wideRequest.width, 1));
+    expect(wideRequest.width, closeTo(wideKeep.width, 1));
+  });
+
+  testWidgets('approve and keep draft can be saved without a reason', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1080, 1900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
+      layers: _reviewableLayers(),
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    await tester.tap(find.text('Run 00f4bb0c'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Approve for future publication'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Approve for future publication'));
+    await tester.pumpAndSettle();
+
+    expect(repository.reviewCount, 1);
+    expect(repository.reviews.first.decision, 'approved_for_publish');
+    expect(
+      repository.reviews.first.metadata['viewer_publication_enabled'],
+      false,
+    );
+    expect(
+      find.text('AI review saved. No viewer-facing layer was published.'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Keep draft'));
+    await tester.pumpAndSettle();
+
+    expect(repository.reviewCount, 2);
+    expect(repository.reviews.first.decision, 'keep_draft');
+    expect(
+      repository.reviews.first.metadata['viewer_publication_enabled'],
+      false,
+    );
+  });
+
+  testWidgets('review history and unpublished layer state display cleanly', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1080, 1900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
+      layers: const <AiOutputLayer>[
+        AiOutputLayer(
+          id: 'layer-statistics',
+          layerType: 'statistics',
+          status: 'approved',
+          name: 'Regional model statistics',
+        ),
+      ],
+      reviews: _reviewHistory(),
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    await tester.tap(find.text('Run 00f4bb0c'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Statistics layer: approved for future publication.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('No viewer-facing AI layer is published in this phase.'),
+      findsOneWidget,
+    );
+
+    await tester.ensureVisible(find.text('Review result'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Latest decision'), findsOneWidget);
+    expect(
+      find.textContaining('Decision: Approved for future publication'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        'Reason: Metrics are acceptable for future publication review.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Publish now'), findsNothing);
   });
 
   testWidgets('model result is hidden when no metrics or summary exist', (

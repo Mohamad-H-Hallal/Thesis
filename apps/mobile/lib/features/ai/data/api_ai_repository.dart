@@ -258,6 +258,52 @@ class ApiAiRepository implements AiRepository {
     }
   }
 
+  @override
+  Future<List<AiReviewDecision>> fetchRunReviews({
+    required String runId,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_aiBasePath/runs/$runId/reviews',
+      );
+      return _rows(
+        response.data,
+      ).map((row) => AiReviewDecision.fromMap(row)).toList(growable: false);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load AI review decisions right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiRunReviewResult> reviewRun({
+    required String runId,
+    required String action,
+    String? reason,
+  }) async {
+    final data = <String, dynamic>{'action': action};
+    final normalizedReason = _nonEmpty(reason);
+    if (normalizedReason != null) {
+      data['reason'] = normalizedReason;
+    }
+
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_aiBasePath/runs/$runId/review',
+        data: data,
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiRunReviewResult.fromResponse(_toMap(payload['data']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to save AI review decision right now.',
+      );
+    }
+  }
+
   List<Map<String, dynamic>> _rows(Map<String, dynamic>? payload) {
     final rows = (payload ?? const <String, dynamic>{})['data'] as List?;
     return (rows ?? const <dynamic>[])

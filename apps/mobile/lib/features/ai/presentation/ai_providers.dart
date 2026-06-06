@@ -79,3 +79,9 @@ final aiRunLogsProvider =
       ref.watch(workflowRefreshTickProvider);
       return ref.read(aiRepositoryProvider).fetchRunLogsPage(runId: runId);
     });
+
+final aiRunReviewsProvider =
+    FutureProvider.family<List<AiReviewDecision>, String>((ref, runId) async {
+      ref.watch(workflowRefreshTickProvider);
+      return ref.read(aiRepositoryProvider).fetchRunReviews(runId: runId);
+    });

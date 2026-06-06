@@ -42,4 +42,12 @@ abstract class AiRepository {
     int page = 1,
     int limit = 20,
   });
+
+  Future<List<AiReviewDecision>> fetchRunReviews({required String runId});
+
+  Future<AiRunReviewResult> reviewRun({
+    required String runId,
+    required String action,
+    String? reason,
+  });
 }

@@ -10,13 +10,15 @@ class FakeAiRepository implements AiRepository {
     List<AiRunMetric> metrics = const <AiRunMetric>[],
     List<AiOutputLayer> layers = const <AiOutputLayer>[],
     List<AiRunLog> logs = const <AiRunLog>[],
+    List<AiReviewDecision> reviews = const <AiReviewDecision>[],
     this.failReadiness = false,
   }) : settings = settings ?? AiProjectSettings.defaults('project-1'),
        readiness = readiness ?? fakeReadiness(projectId: 'project-1'),
        runs = List<AiRun>.from(runs),
        metrics = List<AiRunMetric>.from(metrics),
        layers = List<AiOutputLayer>.from(layers),
-       logs = List<AiRunLog>.from(logs);
+       logs = List<AiRunLog>.from(logs),
+       reviews = List<AiReviewDecision>.from(reviews);
 
   AiProjectSettings settings;
   AiReadinessResult readiness;
@@ -24,9 +26,11 @@ class FakeAiRepository implements AiRepository {
   List<AiRunMetric> metrics;
   List<AiOutputLayer> layers;
   List<AiRunLog> logs;
+  List<AiReviewDecision> reviews;
   bool failReadiness;
   int saveCount = 0;
   int createCount = 0;
+  int reviewCount = 0;
   int readinessFetchCount = 0;
 
   @override
@@ -100,8 +104,83 @@ class FakeAiRepository implements AiRepository {
   }
 
   @override
+  Future<List<AiReviewDecision>> fetchRunReviews({
+    required String runId,
+  }) async {
+    return reviews;
+  }
+
+  @override
   Future<List<AiRunMetric>> fetchRunMetrics({required String runId}) async {
     return metrics;
+  }
+
+  @override
+  Future<AiRunReviewResult> reviewRun({
+    required String runId,
+    required String action,
+    String? reason,
+  }) async {
+    reviewCount++;
+    final decision = AiReviewDecision(
+      id: 'review-$reviewCount',
+      aiRunId: runId,
+      decision: switch (action) {
+        'approve_for_publication' => 'approved_for_publish',
+        'reject' => 'rejected',
+        'request_more_data' => 'needs_more_data',
+        'keep_draft' => 'keep_draft',
+        _ => action,
+      },
+      reason: reason,
+      decidedBy: 'admin-1',
+      decidedAt: DateTime.utc(2026, 6, 6, 10, reviewCount),
+      metadata: <String, dynamic>{
+        'action': action,
+        'viewer_publication_enabled': false,
+      },
+    );
+    reviews = <AiReviewDecision>[decision, ...reviews];
+
+    final nextLayerStatus = switch (action) {
+      'approve_for_publication' => 'approved',
+      'reject' => 'rejected',
+      'request_more_data' => 'draft',
+      'keep_draft' => 'draft',
+      _ => 'draft',
+    };
+    layers = layers
+        .map(
+          (layer) => AiOutputLayer(
+            id: layer.id,
+            layerType: layer.layerType,
+            status: nextLayerStatus,
+            name: layer.name,
+          ),
+        )
+        .toList(growable: false);
+
+    final run = await fetchRun(runId: runId);
+    logs = <AiRunLog>[
+      AiRunLog(
+        id: 'review-log-$reviewCount',
+        level: 'info',
+        message:
+            'AI review decision saved. No viewer-facing layer was published.',
+        metadata: <String, dynamic>{
+          'action': action,
+          'viewer_publication_enabled': false,
+        },
+        createdAt: DateTime.utc(2026, 6, 6, 10, reviewCount),
+      ),
+      ...logs,
+    ];
+    return AiRunReviewResult(
+      decision: decision,
+      run: run,
+      layers: layers,
+      viewerPublished: false,
+    );
   }
 
   @override

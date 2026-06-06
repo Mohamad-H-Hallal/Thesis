@@ -110,6 +110,68 @@ const updateProjectSchema = async ({ projectId, fields }) => {
   );
 };
 
+const createReviewableAiRun = async ({ projectId, userId, layerStatus = 'ready_for_review' }) => {
+  const runResult = await pool.query(
+    `INSERT INTO ai_run (
+       project_id,
+       status,
+       label_field,
+       scope_type,
+       training_feature_count,
+       eligible_feature_count,
+       excluded_feature_count,
+       selected_model,
+       started_by,
+       metadata
+     )
+     VALUES (
+       $1,
+       'ready_for_review',
+       'feature_type',
+       'project',
+       12,
+       12,
+       0,
+       'random_forest',
+       $2,
+       '{"execution_mode":"regional_model_eval","phase":"phase_i_test"}'::jsonb
+     )
+     RETURNING id`,
+    [projectId, userId],
+  );
+  const layerResult = await pool.query(
+    `INSERT INTO ai_output_layer (
+       ai_run_id,
+       project_id,
+       layer_type,
+       status,
+       name,
+       description,
+       storage_path,
+       crs,
+       style
+     )
+     VALUES (
+       $1,
+       $2,
+       'statistics',
+       $3,
+       'Regional model statistics',
+       'Unpublished regional statistics layer',
+       'outputs/runs/phase-i-test/metrics.json',
+       'EPSG:4326',
+       '{}'::jsonb
+     )
+     RETURNING id`,
+    [runResult.rows[0].id, projectId, layerStatus],
+  );
+
+  return {
+    runId: runResult.rows[0].id,
+    layerId: layerResult.rows[0].id,
+  };
+};
+
 const createContributorToken = async ({ adminToken, emailPrefix = 'ai-endpoint-contributor' }) => {
   const registered = await registerUser({
     role: 'contributor',
@@ -727,5 +789,251 @@ describe('AI backend endpoints phase B', () => {
       .get(`${API_PREFIX}/ai/runs/${runResponse.body.data.id}`)
       .set(authHeader(assignedProjectAdmin.token))
       .expect(403);
+  });
+});
+
+describe('AI result review phase I', () => {
+  test('protected super-admin approves AI output for future publication without publishing or touching spatial_feature', async () => {
+    const { admin, project } = await createProjectFixture('AI Review Approve');
+    const { runId, layerId } = await createReviewableAiRun({
+      projectId: project.id,
+      userId: admin.user.id,
+    });
+    const beforeFeatureCount = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM spatial_feature`,
+    );
+
+    const response = await request(app)
+      .post(`${API_PREFIX}/ai/runs/${runId}/review`)
+      .set(authHeader(admin.token))
+      .send({
+        action: 'approve_for_publication',
+        reason: 'Metrics look acceptable for future publishing review.',
+      })
+      .expect(200);
+
+    expect(response.body.data.viewer_published).toBe(false);
+    expect(response.body.data.decision).toEqual(
+      expect.objectContaining({
+        ai_run_id: runId,
+        decision: 'approved_for_publish',
+        reason: 'Metrics look acceptable for future publishing review.',
+      }),
+    );
+    expect(response.body.data.run.metadata.review).toEqual(
+      expect.objectContaining({
+        action: 'approve_for_publication',
+        review_status: 'approved_for_publication',
+        layer_status: 'approved',
+        viewer_publication_enabled: false,
+        spatial_feature_writes: false,
+      }),
+    );
+
+    const layerResult = await pool.query(
+      `SELECT status, published_at, published_by
+       FROM ai_output_layer
+       WHERE id = $1`,
+      [layerId],
+    );
+    expect(layerResult.rows[0]).toEqual(
+      expect.objectContaining({
+        status: 'approved',
+        published_at: null,
+        published_by: null,
+      }),
+    );
+
+    const decisionsResponse = await request(app)
+      .get(`${API_PREFIX}/ai/runs/${runId}/reviews`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(decisionsResponse.body.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          decision: 'approved_for_publish',
+          reason: 'Metrics look acceptable for future publishing review.',
+        }),
+      ]),
+    );
+
+    const logsResponse = await request(app)
+      .get(`${API_PREFIX}/ai/runs/${runId}/logs`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(logsResponse.body.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message:
+            'AI run approved for future publication. No viewer-facing AI layer was published.',
+          metadata: expect.objectContaining({
+            phase: 'phase_i_review',
+            action: 'approve_for_publication',
+            viewer_publication_enabled: false,
+            spatial_feature_writes: false,
+          }),
+        }),
+      ]),
+    );
+
+    const layersResponse = await request(app)
+      .get(`${API_PREFIX}/ai/runs/${runId}/layers`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(layersResponse.body.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: layerId,
+          status: 'approved',
+          published_at: null,
+          published_by: null,
+        }),
+      ]),
+    );
+
+    const afterFeatureCount = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM spatial_feature`,
+    );
+    expect(afterFeatureCount.rows[0].count).toBe(beforeFeatureCount.rows[0].count);
+  });
+
+  test('reject and request-more-data require reasons and keep AI layers unpublished', async () => {
+    const { admin, project } = await createProjectFixture('AI Review Reject');
+    const rejectable = await createReviewableAiRun({
+      projectId: project.id,
+      userId: admin.user.id,
+    });
+    const moreData = await createReviewableAiRun({
+      projectId: project.id,
+      userId: admin.user.id,
+    });
+
+    await request(app)
+      .post(`${API_PREFIX}/ai/runs/${rejectable.runId}/review`)
+      .set(authHeader(admin.token))
+      .send({ action: 'reject' })
+      .expect(400);
+
+    await request(app)
+      .post(`${API_PREFIX}/ai/runs/${rejectable.runId}/review`)
+      .set(authHeader(admin.token))
+      .send({ action: 'reject', reason: 'Regional metrics are not acceptable yet.' })
+      .expect(200);
+
+    await request(app)
+      .post(`${API_PREFIX}/ai/runs/${moreData.runId}/review`)
+      .set(authHeader(admin.token))
+      .send({ action: 'request_more_data', reason: 'Need more samples outside South Lebanon.' })
+      .expect(200);
+
+    const layerResult = await pool.query(
+      `SELECT ai_run_id, status, published_at
+       FROM ai_output_layer
+       WHERE ai_run_id = ANY($1::uuid[])
+       ORDER BY ai_run_id`,
+      [[rejectable.runId, moreData.runId]],
+    );
+    expect(layerResult.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ai_run_id: rejectable.runId,
+          status: 'rejected',
+          published_at: null,
+        }),
+        expect.objectContaining({
+          ai_run_id: moreData.runId,
+          status: 'draft',
+          published_at: null,
+        }),
+      ]),
+    );
+
+    const decisionResult = await pool.query(
+      `SELECT decision, reason
+       FROM ai_review_decision
+       WHERE ai_run_id = ANY($1::uuid[])
+       ORDER BY decided_at DESC`,
+      [[rejectable.runId, moreData.runId]],
+    );
+    expect(decisionResult.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          decision: 'rejected',
+          reason: 'Regional metrics are not acceptable yet.',
+        }),
+        expect.objectContaining({
+          decision: 'needs_more_data',
+          reason: 'Need more samples outside South Lebanon.',
+        }),
+      ]),
+    );
+  });
+
+  test('keep draft records a review decision and moves prepared layers back to draft', async () => {
+    const { admin, project } = await createProjectFixture('AI Review Draft');
+    const { runId, layerId } = await createReviewableAiRun({
+      projectId: project.id,
+      userId: admin.user.id,
+    });
+
+    const response = await request(app)
+      .post(`${API_PREFIX}/ai/runs/${runId}/review`)
+      .set(authHeader(admin.token))
+      .send({ action: 'keep_draft' })
+      .expect(200);
+
+    expect(response.body.data.decision.decision).toBe('keep_draft');
+    expect(response.body.data.run.metadata.review.review_status).toBe('draft');
+
+    const layerResult = await pool.query(
+      `SELECT status, published_at
+       FROM ai_output_layer
+       WHERE id = $1`,
+      [layerId],
+    );
+    expect(layerResult.rows[0]).toEqual(
+      expect.objectContaining({
+        status: 'draft',
+        published_at: null,
+      }),
+    );
+  });
+
+  test('only protected super-admin can review AI runs', async () => {
+    const first = await createProjectFixture('AI Review RBAC First');
+    const second = await createProjectFixture('AI Review RBAC Second', {
+      protectedSuperAdmin: false,
+    });
+    const viewer = await createViewerToken();
+    const contributor = await createContributorToken({
+      adminToken: first.admin.token,
+      emailPrefix: 'ai-review-contributor',
+    });
+    const { runId } = await createReviewableAiRun({
+      projectId: first.project.id,
+      userId: first.admin.user.id,
+    });
+
+    await request(app)
+      .post(`${API_PREFIX}/ai/runs/${runId}/review`)
+      .set(authHeader(second.admin.token))
+      .send({ action: 'approve_for_publication' })
+      .expect(403);
+    await request(app)
+      .post(`${API_PREFIX}/ai/runs/${runId}/review`)
+      .set(authHeader(viewer.token))
+      .send({ action: 'approve_for_publication' })
+      .expect(403);
+    await request(app)
+      .post(`${API_PREFIX}/ai/runs/${runId}/review`)
+      .set(authHeader(contributor.token))
+      .send({ action: 'approve_for_publication' })
+      .expect(403);
+
+    await request(app)
+      .post(`${API_PREFIX}/ai/runs/${runId}/review`)
+      .set(authHeader(first.admin.token))
+      .send({ action: 'approve_for_publication' })
+      .expect(200);
   });
 });

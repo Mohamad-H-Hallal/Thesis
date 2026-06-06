@@ -851,6 +851,7 @@ class _AiRunDetailCard extends ConsumerWidget {
     final metricsAsync = ref.watch(aiRunMetricsProvider(runId));
     final layersAsync = ref.watch(aiRunLayersProvider(runId));
     final logsAsync = ref.watch(aiRunLogsProvider(runId));
+    final reviewsAsync = ref.watch(aiRunReviewsProvider(runId));
 
     return runAsync.when(
       loading: () =>
@@ -898,6 +899,8 @@ class _AiRunDetailCard extends ConsumerWidget {
             _LimitationSection(run: run),
             const SizedBox(height: AppSpacing.md),
             _NextStepSection(run: run, layersAsync: layersAsync),
+            const SizedBox(height: AppSpacing.md),
+            _ReviewSection(run: run, reviewsAsync: reviewsAsync),
             const SizedBox(height: AppSpacing.md),
             _OutputPathsSection(paths: _outputPaths(run.metadata)),
             const SizedBox(height: AppSpacing.sm),
@@ -1004,7 +1007,26 @@ class _ModelResultSection extends StatelessWidget {
     if (rows.isEmpty) {
       return const SizedBox.shrink();
     }
-    return _KeyValueList(title: 'Model result', rows: rows);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _KeyValueList(title: 'Model result', rows: rows),
+        if (metrics.length > 1) ...[
+          const SizedBox(height: AppSpacing.sm),
+          _KeyValueList(
+            title: 'Model comparison',
+            rows: metrics
+                .map(
+                  (metric) => MapEntry(
+                    _friendlyModelLabel(metric.modelName),
+                    _modelMetricSummary(metric),
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        ],
+      ],
+    );
   }
 }
 
@@ -1060,7 +1082,12 @@ class _NextStepSection extends StatelessWidget {
           messages.add('No published AI layers yet.');
           messages.add('AI map layers are planned for a later phase.');
         } else {
-          messages.add('${layers.length} AI layer record(s) are available.');
+          for (final layer in layers) {
+            messages.add(
+              '${_friendlyLayerTypeLabel(layer.layerType)} layer: ${_friendlyLayerStatusLabel(layer.status)}.',
+            );
+          }
+          messages.add('No viewer-facing AI layer is published in this phase.');
         }
         return _MessageList(
           title: 'Next step',
@@ -1069,6 +1096,396 @@ class _NextStepSection extends StatelessWidget {
       },
     );
   }
+}
+
+class _ReviewSection extends ConsumerStatefulWidget {
+  const _ReviewSection({required this.run, required this.reviewsAsync});
+
+  final AiRun run;
+  final AsyncValue<List<AiReviewDecision>> reviewsAsync;
+
+  @override
+  ConsumerState<_ReviewSection> createState() => _ReviewSectionState();
+}
+
+class _ReviewSectionState extends ConsumerState<_ReviewSection> {
+  final TextEditingController _reasonController = TextEditingController();
+  String? _submittingAction;
+  String? _errorText;
+
+  @override
+  void dispose() {
+    _reasonController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return widget.reviewsAsync.when(
+      loading: () => const LinearProgressIndicator(),
+      error: (error, _) => Text(
+        userFacingErrorMessage(
+          error,
+          fallback: 'Unable to load AI review decisions.',
+        ),
+      ),
+      data: (reviews) {
+        final latest = reviews.isEmpty ? null : reviews.first;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Review result',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            if (latest == null)
+              const _NoticeRow(
+                icon: Icons.rate_review_outlined,
+                text: 'No review decision has been recorded yet.',
+              )
+            else
+              _KeyValueList(
+                title: 'Latest decision',
+                rows: <MapEntry<String, String>>[
+                  MapEntry(
+                    'Decision',
+                    _friendlyReviewDecisionLabel(latest.decision),
+                  ),
+                  if (latest.reason?.trim().isNotEmpty ?? false)
+                    MapEntry('Reason', _safeText(latest.reason!)),
+                  if (latest.decidedAt != null)
+                    MapEntry('Decided', formatLebanonDate(latest.decidedAt)),
+                ],
+              ),
+            if (widget.run.status == 'ready_for_review') ...[
+              const SizedBox(height: AppSpacing.sm),
+              const _NoticeRow(
+                icon: Icons.visibility_off_outlined,
+                text:
+                    'Review decisions prepare AI results for a later publishing phase. They do not publish map layers to viewers yet.',
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              const _ReviewActionGuide(),
+              const SizedBox(height: AppSpacing.sm),
+              _ReviewFormArea(
+                reasonController: _reasonController,
+                errorText: _errorText,
+                actions: _ReviewActionButtons(
+                  submittingAction: _submittingAction,
+                  onApprove: _isSubmitting
+                      ? null
+                      : () => _submitReview('approve_for_publication'),
+                  onReject: _isSubmitting
+                      ? null
+                      : () => _submitReview('reject'),
+                  onRequestMoreData: _isSubmitting
+                      ? null
+                      : () => _submitReview('request_more_data'),
+                  onKeepDraft: _isSubmitting
+                      ? null
+                      : () => _submitReview('keep_draft'),
+                ),
+              ),
+            ],
+            if (reviews.length > 1) ...[
+              const SizedBox(height: AppSpacing.sm),
+              ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: EdgeInsets.zero,
+                expandedAlignment: Alignment.centerLeft,
+                expandedCrossAxisAlignment: CrossAxisAlignment.start,
+                title: const Text('Review history'),
+                children: [
+                  for (final review in reviews)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Text(
+                        '${_friendlyReviewDecisionLabel(review.decision)}'
+                        '${review.reason?.trim().isNotEmpty ?? false ? ': ${_safeText(review.reason!)}' : ''}',
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  bool get _isSubmitting => _submittingAction != null;
+
+  Future<void> _submitReview(String action) async {
+    final reason = _reasonController.text.trim();
+    if (action == 'reject' && reason.isEmpty) {
+      setState(() => _errorText = 'Please add a reason before rejecting.');
+      return;
+    }
+    if (action == 'request_more_data' && reason.isEmpty) {
+      setState(() => _errorText = 'Please explain what data is needed.');
+      return;
+    }
+
+    setState(() {
+      _submittingAction = action;
+      _errorText = null;
+    });
+    try {
+      final result = await ref
+          .read(aiRepositoryProvider)
+          .reviewRun(runId: widget.run.id, action: action, reason: reason);
+      ref.invalidate(aiRunProvider(widget.run.id));
+      ref.invalidate(aiRunMetricsProvider(widget.run.id));
+      ref.invalidate(aiRunLayersProvider(widget.run.id));
+      ref.invalidate(aiRunLogsProvider(widget.run.id));
+      ref.invalidate(aiRunReviewsProvider(widget.run.id));
+      ref.invalidate(
+        aiRunsProvider(AiRunsQuery(projectId: widget.run.projectId)),
+      );
+      if (mounted) {
+        _reasonController.clear();
+        AppSnackbar.showSuccess(
+          context,
+          result.viewerPublished
+              ? 'AI review decision saved.'
+              : 'AI review saved. No viewer-facing layer was published.',
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to save AI review decision right now.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _submittingAction = null);
+      }
+    }
+  }
+}
+
+class _ReviewFormArea extends StatelessWidget {
+  const _ReviewFormArea({
+    required this.reasonController,
+    required this.actions,
+    required this.errorText,
+  });
+
+  final TextEditingController reasonController;
+  final Widget actions;
+  final String? errorText;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : 420.0;
+        final formWidth = _reviewActionWidth(width);
+        return SizedBox(
+          width: formWidth,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextField(
+                controller: reasonController,
+                minLines: 2,
+                maxLines: 4,
+                decoration: InputDecoration(
+                  labelText: 'Review reason or comment',
+                  hintText:
+                      'Required for reject or request more data. Optional for approval.',
+                  errorText: errorText,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              actions,
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ReviewActionGuide extends StatelessWidget {
+  const _ReviewActionGuide();
+
+  @override
+  Widget build(BuildContext context) {
+    final textStyle = Theme.of(context).textTheme.bodySmall;
+    final mutedColor = Theme.of(context).colorScheme.onSurfaceVariant;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Action guide', style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 4),
+        Text(
+          'Approve accepts the result for a later publishing phase. Reject or request more data require a reason. Keep draft leaves it internal for now.',
+          style: textStyle?.copyWith(color: mutedColor),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReviewActionButtons extends StatelessWidget {
+  const _ReviewActionButtons({
+    required this.submittingAction,
+    required this.onApprove,
+    required this.onReject,
+    required this.onRequestMoreData,
+    required this.onKeepDraft,
+  });
+
+  final String? submittingAction;
+  final VoidCallback? onApprove;
+  final VoidCallback? onReject;
+  final VoidCallback? onRequestMoreData;
+  final VoidCallback? onKeepDraft;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : 420.0;
+        final actionWidth = _reviewActionWidth(width);
+        final showSecondaryRow = actionWidth >= 760;
+
+        return SizedBox(
+          width: actionWidth,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Tooltip(
+                message:
+                    'Accept this AI result for a later publishing phase. Viewers will not see it yet.',
+                child: SizedBox(
+                  height: 48,
+                  child: FilledButton(
+                    onPressed: onApprove,
+                    child: _buttonLabel(
+                      action: 'approve_for_publication',
+                      label: 'Approve for future publication',
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              if (showSecondaryRow)
+                Row(
+                  children: [
+                    Expanded(
+                      child: _reviewButton(
+                        action: 'reject',
+                        label: 'Reject',
+                        tooltip: 'Reject this AI result. A reason is required.',
+                        onPressed: onReject,
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: _reviewButton(
+                        action: 'request_more_data',
+                        label: 'Request more data',
+                        tooltip:
+                            'Ask for more field or training data. A reason is required.',
+                        onPressed: onRequestMoreData,
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: _reviewButton(
+                        action: 'keep_draft',
+                        label: 'Keep draft',
+                        tooltip:
+                            'Keep this result internal for now. Nothing is published.',
+                        onPressed: onKeepDraft,
+                      ),
+                    ),
+                  ],
+                )
+              else
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _reviewButton(
+                      action: 'reject',
+                      label: 'Reject',
+                      tooltip: 'Reject this AI result. A reason is required.',
+                      onPressed: onReject,
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _reviewButton(
+                      action: 'request_more_data',
+                      label: 'Request more data',
+                      tooltip:
+                          'Ask for more field or training data. A reason is required.',
+                      onPressed: onRequestMoreData,
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _reviewButton(
+                      action: 'keep_draft',
+                      label: 'Keep draft',
+                      tooltip:
+                          'Keep this result internal for now. Nothing is published.',
+                      onPressed: onKeepDraft,
+                    ),
+                  ],
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _reviewButton({
+    required String action,
+    required String label,
+    required String tooltip,
+    required VoidCallback? onPressed,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: SizedBox(
+        height: 48,
+        child: OutlinedButton(
+          onPressed: onPressed,
+          child: _buttonLabel(action: action, label: label),
+        ),
+      ),
+    );
+  }
+
+  Widget _buttonLabel({required String action, required String label}) {
+    if (submittingAction == action) {
+      return const SizedBox(
+        width: 18,
+        height: 18,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
+    }
+    return Text(
+      label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      textAlign: TextAlign.center,
+    );
+  }
+}
+
+double _reviewActionWidth(double availableWidth) {
+  return availableWidth < 840 ? availableWidth : 840.0;
 }
 
 class _LimitationSection extends StatelessWidget {
@@ -1505,6 +1922,61 @@ String _friendlyStatusLabel(String status) {
   }
 }
 
+String _friendlyReviewDecisionLabel(String decision) {
+  switch (decision) {
+    case 'approved_for_publish':
+      return 'Approved for future publication';
+    case 'rejected':
+      return 'Rejected';
+    case 'needs_more_data':
+      return 'More data requested';
+    case 'keep_draft':
+      return 'Kept as draft';
+    case 'needs_rerun':
+      return 'Rerun requested';
+    case 'unpublished':
+      return 'Unpublished';
+    default:
+      return _titleCase(decision.replaceAll('_', ' '));
+  }
+}
+
+String _friendlyLayerStatusLabel(String status) {
+  switch (status) {
+    case 'ready_for_review':
+      return 'ready for review';
+    case 'approved':
+      return 'approved for future publication';
+    case 'rejected':
+      return 'rejected';
+    case 'published':
+      return 'published';
+    case 'unpublished':
+      return 'unpublished';
+    case 'draft':
+      return 'draft';
+    case 'failed':
+      return 'failed';
+    default:
+      return status.replaceAll('_', ' ');
+  }
+}
+
+String _friendlyLayerTypeLabel(String layerType) {
+  switch (layerType) {
+    case 'classification':
+      return 'Classification';
+    case 'confidence':
+      return 'Confidence';
+    case 'uncertainty':
+      return 'Uncertainty';
+    case 'statistics':
+      return 'Statistics';
+    default:
+      return _titleCase(layerType.replaceAll('_', ' '));
+  }
+}
+
 String _friendlyScopeLabel(String scope) {
   switch (scope) {
     case 'project':
@@ -1528,6 +2000,17 @@ String _friendlyModelLabel(String model) {
     default:
       return _titleCase(model.replaceAll('_', ' '));
   }
+}
+
+String _modelMetricSummary(AiRunMetric metric) {
+  final parts = <String>[
+    if (metric.overallAccuracy != null)
+      'Accuracy ${_formatMetric(metric.overallAccuracy)}',
+    if (metric.macroF1 != null) 'Macro-F1 ${_formatMetric(metric.macroF1)}',
+    if (metric.weightedF1 != null)
+      'Weighted-F1 ${_formatMetric(metric.weightedF1)}',
+  ];
+  return parts.isEmpty ? 'Metrics recorded' : parts.join(', ');
 }
 
 AiRunMetric? _maxMetric(

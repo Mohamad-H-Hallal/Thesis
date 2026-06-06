@@ -2,6 +2,7 @@ const express = require('express');
 const aiController = require('../controllers/ai.controller');
 const { authenticate, requireProtectedSuperAdmin } = require('../middleware/auth');
 const {
+  aiValidation,
   validate,
   paginationValidation,
   uuidValidation,
@@ -32,6 +33,21 @@ router.get(
   uuidValidation('runId'),
   validate,
   asyncHandler(aiController.listAiRunLayers),
+);
+
+router.get(
+  '/runs/:runId/reviews',
+  uuidValidation('runId'),
+  validate,
+  asyncHandler(aiController.listAiRunReviews),
+);
+
+router.post(
+  '/runs/:runId/review',
+  uuidValidation('runId'),
+  aiValidation.reviewRun,
+  validate,
+  asyncHandler(aiController.reviewAiRun),
 );
 
 router.get(
