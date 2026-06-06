@@ -5,6 +5,7 @@ import {
   type AiPipelineCommandResult,
   type AiPipelineService,
 } from '../services/aiPipeline.service';
+import { registerAiRunArtifactsForReview } from '../services/aiArtifactRegistration.service';
 const logger = require('../utils/logger');
 
 type AiRunActiveStatus = 'extracting_features' | 'training' | 'evaluating';
@@ -709,6 +710,7 @@ const runPipelineExecution = async ({
   const statuses: AiRunWorkerStatus[] = ['extracting_features'];
   let currentStatus: AiRunActiveStatus = 'extracting_features';
   let safetySummary: AiRunSafetySummary | null = null;
+  let artifactRegistrationMetadata: Record<string, unknown> | null = null;
   let logsWritten = 0;
 
   await insertRunLog(
@@ -770,10 +772,20 @@ const runPipelineExecution = async ({
     }
     if (executionMode === 'regional_model_eval') {
       metadata.metrics_path = `outputs/runs/${regionalRunId}/metrics.json`;
-      metadata.model_metrics_summary = {
-        source: `outputs/runs/${regionalRunId}/metrics.json`,
-        note: 'Regional proof-of-concept metrics only; not national accuracy.',
-      };
+      metadata.confusion_matrix_path = `outputs/runs/${regionalRunId}/confusion_matrix.csv`;
+      metadata.classification_report_path =
+        `outputs/runs/${regionalRunId}/classification_report.csv`;
+      metadata.feature_importance_path = `outputs/runs/${regionalRunId}/feature_importance.csv`;
+      metadata.model_metadata_path = `outputs/runs/${regionalRunId}/model_metadata.json`;
+      metadata.model_metrics_summary =
+        artifactRegistrationMetadata?.model_metrics_summary ?? {
+          source: `outputs/runs/${regionalRunId}/metrics.json`,
+          note: 'Regional proof-of-concept metrics only; not national accuracy.',
+        };
+    }
+
+    if (artifactRegistrationMetadata) {
+      Object.assign(metadata, artifactRegistrationMetadata);
     }
 
     return metadata;
@@ -952,6 +964,56 @@ const runPipelineExecution = async ({
       metrics_path: `outputs/runs/${regionalRunId}/metrics.json`,
     });
     logsWritten += 1;
+
+    try {
+      const registrationResult = await registerAiRunArtifactsForReview({
+        runId: claimedRun.id,
+        projectId: claimedRun.project_id,
+        labelField: claimedRun.label_field,
+        metadata: completionMetadata(),
+        pipelineConfig: pipelineService.getConfig(),
+      });
+      artifactRegistrationMetadata = registrationResult.metadataPatch;
+      await insertRunLog(
+        claimedRun.id,
+        registrationResult.warnings.length > 0 ? 'warning' : 'info',
+        'AI artifacts registered for review.',
+        {
+          status: currentStatus,
+          worker_phase: WORKER_PHASE,
+          registration_phase: 'phase_h_artifact_registration',
+          execution_mode: executionMode,
+          worker_id: workerId,
+          ai_pipeline_run_id: regionalRunId,
+          real_ai_execution: realAiExecution,
+          metrics_registered: registrationResult.metricsRegistered,
+          class_statistics_registered: registrationResult.classStatisticsRegistered,
+          output_layers_registered: registrationResult.outputLayersRegistered,
+          warnings: registrationResult.warnings,
+          artifact_paths: registrationResult.artifactPaths,
+          unpublished_only: true,
+          no_spatial_feature_writes: true,
+        },
+      );
+      logsWritten += 1;
+    } catch (error) {
+      const failureReason =
+        error instanceof Error
+          ? `AI artifact registration failed: ${error.message}`
+          : 'AI artifact registration failed.';
+      await insertRunLog(claimedRun.id, 'error', failureReason, {
+        status: 'failed',
+        failed_from_status: currentStatus,
+        worker_phase: WORKER_PHASE,
+        registration_phase: 'phase_h_artifact_registration',
+        execution_mode: executionMode,
+        worker_id: workerId,
+        ai_pipeline_run_id: regionalRunId,
+        real_ai_execution: realAiExecution,
+      });
+      logsWritten += 1;
+      return failFromCurrentStatus(failureReason);
+    }
   }
 
   const completedRun = await updateRunStatus(

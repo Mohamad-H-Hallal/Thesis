@@ -1,3 +1,6 @@
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const {
   app,
   API_PREFIX,
@@ -10,12 +13,15 @@ const {
   createCategory,
   createProject,
 } = require('./helpers/api-test-helpers');
+const { registerAiRunArtifactsForReview } = require('../src/services/aiArtifactRegistration.service');
 const {
   AI_WORKER_MOCK_STATUS_SEQUENCE,
   AI_WORKER_PIPELINE_STATUS_SEQUENCE,
   AI_WORKER_REGIONAL_MODEL_STATUS_SEQUENCE,
   runAiWorkerOnce,
 } = require('../src/jobs/aiWorker');
+
+const tempArtifactRoots = [];
 
 const activateProject = async ({ token, projectId }) => {
   const response = await request(app)
@@ -203,6 +209,119 @@ const createMockPipelineService = ({ config = pipelineConfig(), overrides = {} }
   ...overrides,
 });
 
+const createTempArtifactRoot = async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'gis-ai-artifacts-test-'));
+  tempArtifactRoots.push(root);
+  return root;
+};
+
+const writeJsonArtifact = async (root, relativePath, payload) => {
+  const filePath = path.join(root, relativePath);
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify(payload, null, 2), 'utf8');
+};
+
+const writeCsvArtifact = async (root, relativePath, rows) => {
+  const filePath = path.join(root, relativePath);
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const headers = Array.from(
+    rows.reduce((set, row) => {
+      Object.keys(row).forEach((key) => set.add(key));
+      return set;
+    }, new Set()),
+  );
+  const escapeCell = (value) => {
+    const text = String(value ?? '');
+    return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  const content = [
+    headers.join(','),
+    ...rows.map((row) => headers.map((header) => escapeCell(row[header])).join(',')),
+  ].join('\n');
+  await fs.writeFile(filePath, content, 'utf8');
+};
+
+const writeRegionalModelArtifacts = async ({ root, projectId, regionalRunId }) => {
+  const runDir = `outputs/runs/${regionalRunId}`;
+  const projectDir = `outputs/projects/${projectId}`;
+  await writeJsonArtifact(root, `${projectDir}/ground_truth_summary.json`, {
+    project_id: projectId,
+    label_field: 'L4_descr',
+    feature_count: 4,
+    class_counts: {
+      Citrus: 2,
+      Olives: 2,
+    },
+    db_write: false,
+  });
+  await writeJsonArtifact(root, `${runDir}/feature_extraction_summary.json`, {
+    run_id: regionalRunId,
+    feature_table: `${runDir}/feature_table.csv`,
+    class_counts: {
+      citrus: 2,
+      olives: 2,
+    },
+    total_null_feature_values: 0,
+    db_write: false,
+    national_classification: false,
+  });
+  await writeJsonArtifact(root, `${runDir}/metrics.json`, {
+    run_id: regionalRunId,
+    project_id: projectId,
+    label_field: 'L4_descr',
+    regional_only: true,
+    not_national_accuracy: true,
+    models: {
+      random_forest: {
+        accuracy: 0.72,
+        macro_f1: 0.65,
+        weighted_f1: 0.7,
+      },
+      svm_rbf: {
+        accuracy: 0.75,
+        macro_f1: 0.7,
+        weighted_f1: 0.74,
+      },
+      xgboost: {
+        accuracy: 0.68,
+        macro_f1: 0.62,
+        weighted_f1: 0.66,
+      },
+    },
+    best_model: 'svm_rbf',
+    classes: ['citrus', 'olives'],
+    sample_count: 4,
+    train_count: 3,
+    test_count: 1,
+    class_counts: {
+      citrus: 2,
+      olives: 2,
+    },
+    evaluation_method: 'spatial_group_shuffle',
+    runtime_seconds: 1.23,
+    warnings: ['Regional proof-of-concept only.'],
+  });
+  await writeJsonArtifact(root, `${runDir}/model_metadata.json`, {
+    run_id: regionalRunId,
+    best_model: 'svm_rbf',
+    no_app_db_writes: true,
+    no_national_classification: true,
+  });
+  await writeCsvArtifact(root, `${runDir}/confusion_matrix.csv`, [
+    { actual: 'citrus', citrus: 1, olives: 0 },
+    { actual: 'olives', citrus: 0, olives: 1 },
+  ]);
+  await writeCsvArtifact(root, `${runDir}/classification_report.csv`, [
+    { label: 'citrus', precision: 1, recall: 1, 'f1-score': 1, support: 1 },
+    { label: 'olives', precision: 1, recall: 1, 'f1-score': 1, support: 1 },
+    { label: 'macro avg', precision: 1, recall: 1, 'f1-score': 1, support: 2 },
+  ]);
+  await writeCsvArtifact(root, `${runDir}/feature_importance.csv`, [
+    { model: 'random_forest', feature: 'ndvi', importance: 0.45 },
+    { model: 'xgboost', feature: 'b4', importance: 0.22 },
+  ]);
+};
+
 beforeEach(async () => {
   await resetDb();
 });
@@ -212,6 +331,9 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
+  await Promise.all(
+    tempArtifactRoots.map((root) => fs.rm(root, { recursive: true, force: true })),
+  );
   await shutdown();
 });
 
@@ -757,6 +879,226 @@ describe('AI worker skeleton phase D', () => {
       expect.arrayContaining(['extracting_features', 'training', 'evaluating', 'ready_for_review']),
     );
     expect(await countRows('ai_output_layer')).toBe(0);
+    expect(await countRows('ai_run_metric')).toBe(0);
+  });
+
+  test('registers regional model artifacts as unpublished review data', async () => {
+    const { admin, project } = await createProjectFixture('AI Worker Artifact Registration');
+    await insertReadyRegionalFeatures({
+      projectId: project.id,
+      userId: admin.user.id,
+    });
+    await insertApprovedFeature({
+      projectId: project.id,
+      userId: admin.user.id,
+      labelField: 'L4_descr',
+      label: 'Vineyards',
+      source: 'import',
+      lon: 35.6,
+      lat: 33.95,
+    });
+    const runId = await insertQueuedRun({
+      projectId: project.id,
+      userId: admin.user.id,
+      metadata: {
+        test: 'ai-worker',
+        execution_mode: 'regional_model_eval',
+        min_samples_per_class: 2,
+      },
+    });
+    const regionalRunId = regionalRunIdForTest(runId);
+    const artifactRoot = await createTempArtifactRoot();
+    await writeRegionalModelArtifacts({
+      root: artifactRoot,
+      projectId: project.id,
+      regionalRunId,
+    });
+    const beforeSpatialCount = await countRows('spatial_feature');
+    const pipelineService = createMockPipelineService({
+      config: pipelineConfig({
+        root: artifactRoot,
+        mode: 'regional_model_eval',
+      }),
+    });
+
+    const result = await runAiWorkerOnce({
+      pipelineService,
+      workerId: 'phase-h-registration-worker',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        executionMode: 'regional_model_eval',
+        finalStatus: 'ready_for_review',
+        statuses: AI_WORKER_REGIONAL_MODEL_STATUS_SEQUENCE,
+      }),
+    );
+
+    const runResult = await pool.query(
+      `SELECT status, selected_model, metadata
+       FROM ai_run
+       WHERE id = $1`,
+      [runId],
+    );
+    expect(runResult.rows[0].status).toBe('ready_for_review');
+    expect(runResult.rows[0].selected_model).toBe('svm_rbf');
+    expect(runResult.rows[0].metadata).toEqual(
+      expect.objectContaining({
+        selected_model: 'svm_rbf',
+        artifact_registration: expect.objectContaining({
+          phase: 'phase_h_artifact_registration',
+          metrics_registered: 3,
+          class_statistics_registered: 3,
+          output_layers_registered: 1,
+          unpublished_only: true,
+          no_spatial_feature_writes: true,
+        }),
+        model_metrics_summary: expect.objectContaining({
+          best_model: 'svm_rbf',
+          best_balanced_model: 'svm_rbf',
+          highest_accuracy_model: 'svm_rbf',
+          not_national_accuracy: true,
+        }),
+      }),
+    );
+
+    const metricsResult = await pool.query(
+      `SELECT model_name, overall_accuracy, macro_f1, weighted_f1, metrics, confusion_matrix,
+              feature_importance
+       FROM ai_run_metric
+       WHERE ai_run_id = $1
+       ORDER BY model_name ASC`,
+      [runId],
+    );
+    expect(metricsResult.rows).toHaveLength(3);
+    expect(metricsResult.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          model_name: 'random_forest',
+          overall_accuracy: 0.72,
+          macro_f1: 0.65,
+          weighted_f1: 0.7,
+        }),
+        expect.objectContaining({
+          model_name: 'svm_rbf',
+          overall_accuracy: 0.75,
+          macro_f1: 0.7,
+          weighted_f1: 0.74,
+        }),
+        expect.objectContaining({
+          model_name: 'xgboost',
+          overall_accuracy: 0.68,
+          macro_f1: 0.62,
+          weighted_f1: 0.66,
+        }),
+      ]),
+    );
+    expect(metricsResult.rows[0].confusion_matrix.rows).toEqual(
+      expect.arrayContaining([expect.objectContaining({ actual: 'citrus', citrus: 1 })]),
+    );
+    expect(metricsResult.rows.find((row) => row.model_name === 'random_forest').feature_importance)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ feature: 'ndvi' })]));
+
+    const classStatsResult = await pool.query(
+      `SELECT class_label, feature_count, statistics
+       FROM ai_class_statistic
+       WHERE ai_run_id = $1
+       ORDER BY class_label ASC`,
+      [runId],
+    );
+    expect(classStatsResult.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ class_label: 'Citrus', feature_count: 2 }),
+        expect.objectContaining({ class_label: 'Olives', feature_count: 2 }),
+        expect.objectContaining({ class_label: 'Vineyards', feature_count: 1 }),
+      ]),
+    );
+    expect(
+      classStatsResult.rows.find((row) => row.class_label === 'Vineyards').statistics,
+    ).toEqual(
+      expect.objectContaining({
+        excluded: true,
+        exclusion_reason: 'below_minimum_samples',
+      }),
+    );
+
+    const layersResult = await pool.query(
+      `SELECT layer_type, status, storage_path, published_at
+       FROM ai_output_layer
+       WHERE ai_run_id = $1`,
+      [runId],
+    );
+    expect(layersResult.rows).toEqual([
+      expect.objectContaining({
+        layer_type: 'statistics',
+        status: 'ready_for_review',
+        storage_path: `outputs/runs/${regionalRunId}/metrics.json`,
+        published_at: null,
+      }),
+    ]);
+
+    const logsResult = await pool.query(
+      `SELECT level, message, metadata
+       FROM ai_run_log
+       WHERE ai_run_id = $1
+         AND message = 'AI artifacts registered for review.'`,
+      [runId],
+    );
+    expect(logsResult.rows).toHaveLength(1);
+    expect(logsResult.rows[0].metadata).toEqual(
+      expect.objectContaining({
+        registration_phase: 'phase_h_artifact_registration',
+        metrics_registered: 3,
+        output_layers_registered: 1,
+        no_spatial_feature_writes: true,
+      }),
+    );
+
+    process.env.SUPER_ADMIN_EMAIL = admin.email;
+    const metricsResponse = await request(app)
+      .get(`${API_PREFIX}/ai/runs/${runId}/metrics`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(metricsResponse.body.data).toHaveLength(3);
+    expect(metricsResponse.body.data.map((row) => row.model_name)).toEqual(
+      expect.arrayContaining(['random_forest', 'svm_rbf', 'xgboost']),
+    );
+
+    const layersResponse = await request(app)
+      .get(`${API_PREFIX}/ai/runs/${runId}/layers`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(layersResponse.body.data).toEqual([
+      expect.objectContaining({
+        layer_type: 'statistics',
+        status: 'ready_for_review',
+        published_at: null,
+      }),
+    ]);
+
+    expect(await countRows('spatial_feature')).toBe(beforeSpatialCount);
+    expect(await countRows('ai_uncertainty_area')).toBe(0);
+  });
+
+  test('rejects AI artifact path traversal before reading files', async () => {
+    const artifactRoot = await createTempArtifactRoot();
+
+    await expect(
+      registerAiRunArtifactsForReview({
+        runId: '00000000-0000-4000-8000-000000000001',
+        projectId: '00000000-0000-4000-8000-000000000002',
+        labelField: 'L4_descr',
+        metadata: {
+          execution_mode: 'regional_model_eval',
+          metrics_path: 'outputs/runs/app-ai-safe/../secrets/metrics.json',
+        },
+        pipelineConfig: pipelineConfig({
+          root: artifactRoot,
+          mode: 'regional_model_eval',
+        }),
+      }),
+    ).rejects.toThrow('AI artifact path traversal is not allowed');
   });
 
   test('rejects unsafe national regional execution before pipeline commands run', async () => {
