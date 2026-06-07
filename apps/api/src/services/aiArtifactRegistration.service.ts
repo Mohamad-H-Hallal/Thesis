@@ -33,10 +33,16 @@ type KnownArtifactKey =
   | 'classification_report'
   | 'feature_importance'
   | 'model_metadata'
+  | 'metadata'
   | 'feature_extraction_summary'
   | 'ground_truth_summary'
   | 'regional_classification_summary'
   | 'vectorization_summary'
+  | 'ai_class_statistics_json'
+  | 'ai_class_statistics_csv'
+  | 'ai_classification_review'
+  | 'ai_confidence_review'
+  | 'ai_uncertainty_areas'
   | 'classification_polygons'
   | 'confidence_polygons'
   | 'uncertainty_areas';
@@ -71,10 +77,16 @@ const KNOWN_ARTIFACT_FILENAMES: Record<KnownArtifactKey, string> = {
   classification_report: 'classification_report.csv',
   feature_importance: 'feature_importance.csv',
   model_metadata: 'model_metadata.json',
+  metadata: 'metadata.json',
   feature_extraction_summary: 'feature_extraction_summary.json',
   ground_truth_summary: 'ground_truth_summary.json',
   regional_classification_summary: 'regional_classification_summary.json',
   vectorization_summary: 'vectorization_summary.json',
+  ai_class_statistics_json: 'ai_class_statistics.json',
+  ai_class_statistics_csv: 'ai_class_statistics.csv',
+  ai_classification_review: 'ai_classification_review.geojson',
+  ai_confidence_review: 'ai_confidence_review.geojson',
+  ai_uncertainty_areas: 'ai_uncertainty_areas.geojson',
   classification_polygons: 'classification_polygons.geojson',
   confidence_polygons: 'confidence_polygons.geojson',
   uncertainty_areas: 'uncertainty_areas.geojson',
@@ -199,7 +211,18 @@ const outputPathEndingWith = (
   metadata: JsonRecord,
   filename: string,
 ): string | null => {
-  const outputPaths = toArray(metadata.output_paths);
+  const pathCollections = [
+    metadata.output_paths,
+    metadata.review_artifacts,
+    metadata.outputs,
+  ];
+  const outputPaths = pathCollections.flatMap((collection) => {
+    if (Array.isArray(collection)) {
+      return collection;
+    }
+    const record = toRecord(collection);
+    return Object.keys(record).length > 0 ? Object.values(record) : [];
+  });
   for (const item of outputPaths) {
     const outputPath = toStringValue(item);
     if (outputPath && toPosixPath(outputPath).endsWith(`/${filename}`)) {
@@ -215,6 +238,8 @@ const collectArtifactCandidates = (
   const metadata = input.metadata ?? {};
   const runId = firstString([
     metadata.ai_pipeline_run_id,
+    metadata.run_id,
+    metadata.regional_run_id,
     toRecord(metadata.model_metrics_summary).run_id,
   ]);
   const runOutputDir = runId ? `outputs/runs/${runId}` : null;
@@ -257,6 +282,11 @@ const collectArtifactCandidates = (
         outputPathEndingWith(metadata, 'model_metadata.json'),
         runOutputDir ? `${runOutputDir}/model_metadata.json` : null,
       ]) ?? undefined,
+    metadata:
+      firstString([
+        metadata.metadata_path,
+        outputPathEndingWith(metadata, 'metadata.json'),
+      ]) ?? undefined,
     feature_extraction_summary:
       firstString([
         metadata.feature_extraction_summary_path,
@@ -286,6 +316,31 @@ const collectArtifactCandidates = (
               metadata.vectorization_summary_path,
               outputPathEndingWith(metadata, 'vectorization_summary.json'),
               runOutputDir ? `${runOutputDir}/vectorization_summary.json` : null,
+            ]) ?? undefined,
+          ai_class_statistics_json:
+            firstString([
+              metadata.ai_class_statistics_json_path,
+              outputPathEndingWith(metadata, 'ai_class_statistics.json'),
+            ]) ?? undefined,
+          ai_class_statistics_csv:
+            firstString([
+              metadata.ai_class_statistics_csv_path,
+              outputPathEndingWith(metadata, 'ai_class_statistics.csv'),
+            ]) ?? undefined,
+          ai_classification_review:
+            firstString([
+              metadata.ai_classification_review_path,
+              outputPathEndingWith(metadata, 'ai_classification_review.geojson'),
+            ]) ?? undefined,
+          ai_confidence_review:
+            firstString([
+              metadata.ai_confidence_review_path,
+              outputPathEndingWith(metadata, 'ai_confidence_review.geojson'),
+            ]) ?? undefined,
+          ai_uncertainty_areas:
+            firstString([
+              metadata.ai_uncertainty_areas_path,
+              outputPathEndingWith(metadata, 'ai_uncertainty_areas.geojson'),
             ]) ?? undefined,
           classification_polygons:
             firstString([
@@ -585,6 +640,92 @@ const mergeClassificationReportSupport = (
   }
 };
 
+const mergePhaseMClassStatistics = (
+  rowsByLabel: Map<string, ClassStatisticRow>,
+  aiClassStatistics: JsonRecord,
+): void => {
+  for (const item of toArray(aiClassStatistics.class_statistics)) {
+    const row = toRecord(item);
+    const classLabel = toStringValue(row.class_label);
+    const predictedCount = toIntValue(
+      row.predicted_feature_count ?? row.feature_count ?? row.count,
+    );
+    if (!classLabel || predictedCount === null) {
+      continue;
+    }
+
+    const normalized = classLabel.toLowerCase();
+    const existing =
+      rowsByLabel.get(normalized) ??
+      ({
+        classLabel,
+        featureCount: predictedCount,
+        areaHa: null,
+        confidenceMean: null,
+        statistics: {
+          sources: [],
+        },
+      } satisfies ClassStatisticRow);
+
+    existing.featureCount = predictedCount;
+    existing.areaHa = toNumberValue(row.area_ha) ?? existing.areaHa;
+    existing.confidenceMean =
+      toNumberValue(row.confidence_mean) ?? existing.confidenceMean;
+    existing.statistics = {
+      ...existing.statistics,
+      eligible: true,
+      predicted_feature_count: predictedCount,
+      approved_feature_count: toIntValue(row.approved_feature_count),
+      confidence_min: toNumberValue(row.confidence_min),
+      confidence_max: toNumberValue(row.confidence_max),
+      phase_m_review_artifact: true,
+      sources: Array.from(
+        new Set([...toArray(existing.statistics.sources).map(String), 'ai_class_statistics']),
+      ),
+    };
+    rowsByLabel.set(normalized, existing);
+  }
+
+  mergeClassCountSource(
+    rowsByLabel,
+    aiClassStatistics.predicted_class_counts,
+    'ai_class_statistics',
+    true,
+  );
+};
+
+const mergeExcludedClassCountSource = (
+  rowsByLabel: Map<string, ClassStatisticRow>,
+  excludedClasses: unknown,
+  source: string,
+): void => {
+  const excludedCounts = toRecord(excludedClasses);
+  for (const [label, countValue] of Object.entries(excludedCounts)) {
+    const classLabel = label.trim();
+    const featureCount = toIntValue(countValue);
+    if (!classLabel || featureCount === null) {
+      continue;
+    }
+    const normalized = classLabel.toLowerCase();
+    if (rowsByLabel.has(normalized)) {
+      continue;
+    }
+    rowsByLabel.set(normalized, {
+      classLabel,
+      featureCount,
+      areaHa: null,
+      confidenceMean: null,
+      statistics: {
+        eligible: false,
+        excluded: true,
+        exclusion_reason: 'below_minimum_samples',
+        [`${source}_feature_count`]: featureCount,
+        sources: [source],
+      },
+    });
+  }
+};
+
 const mergeExcludedClasses = (
   rowsByLabel: Map<string, ClassStatisticRow>,
   metadata: JsonRecord,
@@ -613,6 +754,7 @@ const mergeExcludedClasses = (
       },
     });
   }
+  mergeExcludedClassCountSource(rowsByLabel, metadata.excluded_classes, 'ai_run_metadata');
 };
 
 const classStatisticRowsFromArtifacts = ({
@@ -621,6 +763,7 @@ const classStatisticRowsFromArtifacts = ({
   groundTruthSummary,
   vectorizationSummary,
   regionalClassificationSummary,
+  aiClassStatistics,
   classificationReportRows,
   metadata,
 }: {
@@ -629,6 +772,7 @@ const classStatisticRowsFromArtifacts = ({
   groundTruthSummary: JsonRecord;
   vectorizationSummary: JsonRecord;
   regionalClassificationSummary: JsonRecord;
+  aiClassStatistics: JsonRecord;
   classificationReportRows: JsonRecord[];
   metadata: JsonRecord;
 }): ClassStatisticRow[] => {
@@ -644,6 +788,17 @@ const classStatisticRowsFromArtifacts = ({
   );
   mergeClassCountSource(rowsByLabel, vectorizationSummary.class_counts, 'vectorization', true);
   mergeClassificationReportSupport(rowsByLabel, classificationReportRows);
+  mergePhaseMClassStatistics(rowsByLabel, aiClassStatistics);
+  mergeExcludedClassCountSource(
+    rowsByLabel,
+    regionalClassificationSummary.excluded_classes,
+    'regional_classification',
+  );
+  mergeExcludedClassCountSource(
+    rowsByLabel,
+    vectorizationSummary.excluded_classes,
+    'vectorization',
+  );
   mergeExcludedClasses(rowsByLabel, metadata);
   return Array.from(rowsByLabel.values()).sort((left, right) =>
     left.classLabel.localeCompare(right.classLabel),
@@ -863,6 +1018,24 @@ const insertReviewOutputLayers = async ({
   return inserted;
 };
 
+const classCountMetadataFromRows = (
+  rows: ClassStatisticRow[],
+): { classCounts: JsonRecord[]; excludedClasses: JsonRecord[] } => {
+  const classCounts: JsonRecord[] = [];
+  const excludedClasses: JsonRecord[] = [];
+  for (const row of rows) {
+    const target =
+      row.statistics.excluded === true || row.statistics.eligible === false
+        ? excludedClasses
+        : classCounts;
+    target.push({
+      class_label: row.classLabel,
+      feature_count: row.featureCount,
+    });
+  }
+  return { classCounts, excludedClasses };
+};
+
 const registerAiRunArtifactsForReview = async (
   input: AiRunArtifactRegistrationInput,
 ): Promise<AiArtifactRegistrationResult> => {
@@ -902,20 +1075,26 @@ const registerAiRunArtifactsForReview = async (
   const [
     metricsPayload,
     modelMetadata,
+    artifactMetadata,
     featureExtractionSummary,
     groundTruthSummary,
     regionalClassificationSummary,
     vectorizationSummary,
+    aiClassStatistics,
+    aiClassStatisticsCsvRows,
     confusionMatrixRows,
     classificationReportRows,
     featureImportanceRows,
   ] = await Promise.all([
     readJsonArtifact(artifacts.metrics, warnings),
     readJsonArtifact(artifacts.model_metadata, warnings),
+    readJsonArtifact(artifacts.metadata, warnings),
     readJsonArtifact(artifacts.feature_extraction_summary, warnings),
     readJsonArtifact(artifacts.ground_truth_summary, warnings),
     readJsonArtifact(artifacts.regional_classification_summary, warnings),
     readJsonArtifact(artifacts.vectorization_summary, warnings),
+    readJsonArtifact(artifacts.ai_class_statistics_json, warnings),
+    readCsvArtifact(artifacts.ai_class_statistics_csv, warnings),
     readCsvArtifact(artifacts.confusion_matrix, warnings),
     readCsvArtifact(artifacts.classification_report, warnings),
     readCsvArtifact(artifacts.feature_importance, warnings),
@@ -936,6 +1115,7 @@ const registerAiRunArtifactsForReview = async (
     groundTruthSummary,
     regionalClassificationSummary,
     vectorizationSummary,
+    aiClassStatistics,
     classificationReportRows,
     metadata,
   });
@@ -943,16 +1123,42 @@ const registerAiRunArtifactsForReview = async (
     warnings.push('No class statistics were available to register.');
   }
 
-  const metricsPath = artifacts.metrics && Object.keys(metricsPayload).length > 0
-    ? artifacts.metrics.relativePath
-    : null;
+  const metricsPath =
+    artifacts.metrics && Object.keys(metricsPayload).length > 0
+      ? artifacts.metrics.relativePath
+      : null;
+  const statisticsPath =
+    metricsPath ??
+    (artifacts.ai_class_statistics_json && Object.keys(aiClassStatistics).length > 0
+      ? artifacts.ai_class_statistics_json.relativePath
+      : null) ??
+    (artifacts.ai_class_statistics_csv && aiClassStatisticsCsvRows.length > 0
+      ? artifacts.ai_class_statistics_csv.relativePath
+      : null) ??
+    (artifacts.regional_classification_summary &&
+    Object.keys(regionalClassificationSummary).length > 0
+      ? artifacts.regional_classification_summary.relativePath
+      : null) ??
+    (artifacts.vectorization_summary && Object.keys(vectorizationSummary).length > 0
+      ? artifacts.vectorization_summary.relativePath
+      : null);
+  const classificationArtifact =
+    artifacts.ai_classification_review ?? artifacts.classification_polygons;
+  const confidenceArtifact = artifacts.ai_confidence_review ?? artifacts.confidence_polygons;
+  const uncertaintyArtifact =
+    artifacts.ai_uncertainty_areas ?? artifacts.uncertainty_areas;
   const [classificationPath, confidencePath, uncertaintyPath] = await Promise.all([
-    existingArtifactPath(artifacts.classification_polygons, warnings),
-    existingArtifactPath(artifacts.confidence_polygons, warnings),
-    existingArtifactPath(artifacts.uncertainty_areas, warnings),
+    existingArtifactPath(classificationArtifact, warnings),
+    existingArtifactPath(confidenceArtifact, warnings),
+    existingArtifactPath(uncertaintyArtifact, warnings),
   ]);
   const selectedModel =
-    toStringValue(metricsPayload.best_model) ?? toStringValue(modelMetadata.best_model);
+    toStringValue(metricsPayload.best_model) ??
+    toStringValue(modelMetadata.best_model) ??
+    toStringValue(regionalClassificationSummary.classification_model) ??
+    toStringValue(regionalClassificationSummary.classification_output_model) ??
+    toStringValue(artifactMetadata.classification_model) ??
+    toStringValue(vectorizationSummary.classification_output_model);
   const modelMetricsSummary =
     Object.keys(metricsPayload).length > 0 ? modelMetricsSummaryFrom(metricsPayload) : {};
 
@@ -982,7 +1188,7 @@ const registerAiRunArtifactsForReview = async (
       client,
       runId: input.runId,
       projectId: input.projectId,
-      metricsPath: hasReviewableStructuredResults ? metricsPath : null,
+      metricsPath: hasReviewableStructuredResults ? statisticsPath : null,
       classificationPath,
       confidencePath,
       uncertaintyPath,
@@ -1023,6 +1229,75 @@ const registerAiRunArtifactsForReview = async (
   }
   if (Object.keys(modelMetricsSummary).length > 0) {
     metadataPatch.model_metrics_summary = modelMetricsSummary;
+  }
+  const { classCounts, excludedClasses } =
+    classCountMetadataFromRows(classStatisticRows);
+  if (classCounts.length > 0) {
+    metadataPatch.class_counts = classCounts;
+  }
+  if (excludedClasses.length > 0) {
+    metadataPatch.excluded_classes = excludedClasses;
+  }
+  const classificationModel = firstString([
+    regionalClassificationSummary.classification_model,
+    regionalClassificationSummary.classification_output_model,
+    artifactMetadata.classification_model,
+    vectorizationSummary.classification_output_model,
+  ]);
+  const metricsBestMacroF1Model = firstString([
+    regionalClassificationSummary.metrics_best_macro_f1_model,
+    regionalClassificationSummary.metrics_selected_model,
+    artifactMetadata.metrics_best_macro_f1_model,
+    vectorizationSummary.metrics_selected_model,
+  ]);
+  const highestAccuracyModel = firstString([
+    regionalClassificationSummary.highest_accuracy_model,
+    artifactMetadata.highest_accuracy_model,
+  ]);
+  const modelMismatchReason = firstString([
+    regionalClassificationSummary.model_mismatch_reason,
+    regionalClassificationSummary.model_selection_reason,
+    artifactMetadata.model_mismatch_reason,
+  ]);
+  const confidenceSummary =
+    Object.keys(toRecord(aiClassStatistics.confidence_summary)).length > 0
+      ? toRecord(aiClassStatistics.confidence_summary)
+      : toRecord(regionalClassificationSummary.confidence_summary);
+  const uncertaintyCount =
+    toIntValue(regionalClassificationSummary.uncertainty_feature_count) ??
+    toIntValue(confidenceSummary.uncertain_feature_count);
+  const regionalScope = toRecord(regionalClassificationSummary.scope);
+  const limitations = [
+    ...toArray(regionalClassificationSummary.limitations),
+    ...toArray(vectorizationSummary.limitations),
+    ...toArray(artifactMetadata.limitations),
+  ]
+    .map(String)
+    .filter((value, index, array) => value.trim().length > 0 && array.indexOf(value) === index);
+
+  if (classificationModel) {
+    metadataPatch.classification_model = classificationModel;
+  }
+  if (metricsBestMacroF1Model) {
+    metadataPatch.metrics_best_macro_f1_model = metricsBestMacroF1Model;
+  }
+  if (highestAccuracyModel) {
+    metadataPatch.highest_accuracy_model = highestAccuracyModel;
+  }
+  if (modelMismatchReason) {
+    metadataPatch.model_mismatch_reason = modelMismatchReason;
+  }
+  if (Object.keys(confidenceSummary).length > 0) {
+    metadataPatch.confidence_summary = confidenceSummary;
+  }
+  if (uncertaintyCount !== null) {
+    metadataPatch.uncertainty_feature_count = uncertaintyCount;
+  }
+  if (Object.keys(regionalScope).length > 0) {
+    metadataPatch.regional_scope = regionalScope;
+  }
+  if (limitations.length > 0) {
+    metadataPatch.scientific_limitations = limitations;
   }
 
   return {

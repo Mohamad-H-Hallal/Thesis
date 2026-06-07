@@ -375,6 +375,161 @@ const writeRegionalClassificationArtifacts = async ({ root, regionalRunId }) => 
   await writeJsonArtifact(root, `${runDir}/uncertainty_areas.geojson`, emptyFeatureCollection);
 };
 
+const writePhaseMReviewArtifacts = async ({ root, regionalRunId, projectId }) => {
+  const runDir = `outputs/runs/${regionalRunId}`;
+  const emptyFeatureCollection = {
+    type: 'FeatureCollection',
+    features: [],
+  };
+  const confidenceSummary = {
+    min: 0.336667,
+    mean: 0.753197,
+    max: 0.996667,
+    threshold: 0.6,
+    uncertain_feature_count: 279,
+  };
+
+  await writeJsonArtifact(root, `${runDir}/regional_classification_summary.json`, {
+    run_id: regionalRunId,
+    project_id: projectId,
+    label_field: 'L4_descr',
+    execution_mode: 'regional_classification',
+    classification_model: 'random_forest',
+    classification_output_model: 'random_forest',
+    metrics_selected_model: 'svm_rbf',
+    highest_accuracy_model: 'xgboost',
+    model_mismatch_reason:
+      'SVM RBF was selected by metrics, but Random Forest generated the review layer.',
+    regional_only: true,
+    national_classification: false,
+    viewer_publishing: false,
+    spatial_feature_insert: false,
+    class_counts: {
+      'citrus fruit trees': 181,
+      'fruit trees': 66,
+      olives: 1147,
+    },
+    excluded_classes: {
+      vineyards: 12,
+    },
+    confidence_summary: confidenceSummary,
+    uncertainty_feature_count: 279,
+    scope: {
+      type: 'south_lebanon',
+      bounds: [35.300811634, 33.383710169, 35.645209556, 33.67100595],
+      project_id: projectId,
+      label_field: 'L4_descr',
+      not_national: true,
+    },
+    limitations: [
+      'Phase M produces regional review predictions only.',
+      'No AI predictions were inserted into spatial_feature.',
+    ],
+    output_paths: {
+      ai_classification_review: `${runDir}/ai_classification_review.geojson`,
+      ai_confidence_review: `${runDir}/ai_confidence_review.geojson`,
+      ai_uncertainty_areas: `${runDir}/ai_uncertainty_areas.geojson`,
+      ai_class_statistics_json: `${runDir}/ai_class_statistics.json`,
+    },
+  });
+  await writeJsonArtifact(root, `${runDir}/vectorization_summary.json`, {
+    run_id: regionalRunId,
+    project_id: projectId,
+    label_field: 'L4_descr',
+    execution_mode: 'regional_vectorization_artifacts',
+    regional_only: true,
+    national_classification: false,
+    viewer_publishing: false,
+    spatial_feature_insert: false,
+    class_counts: {
+      'citrus fruit trees': 181,
+      'fruit trees': 66,
+      olives: 1147,
+    },
+    excluded_classes: {
+      vineyards: 12,
+    },
+    classification_output_model: 'random_forest',
+    metrics_selected_model: 'svm_rbf',
+    review_artifacts: {
+      ai_classification_review: `${runDir}/ai_classification_review.geojson`,
+      ai_confidence_review: `${runDir}/ai_confidence_review.geojson`,
+      ai_uncertainty_areas: `${runDir}/ai_uncertainty_areas.geojson`,
+    },
+  });
+  await writeJsonArtifact(root, `${runDir}/metadata.json`, {
+    run_id: regionalRunId,
+    project_id: projectId,
+    label_field: 'L4_descr',
+    regional_only: true,
+    national_classification: false,
+    classification_model: 'random_forest',
+    metrics_best_macro_f1_model: 'svm_rbf',
+    highest_accuracy_model: 'xgboost',
+    model_mismatch_reason:
+      'SVM RBF was selected by metrics, but Random Forest generated the review layer.',
+    db_write: false,
+    viewer_publishing: false,
+    spatial_feature_insert: false,
+  });
+  await writeJsonArtifact(root, `${runDir}/ai_class_statistics.json`, {
+    run_id: regionalRunId,
+    project_id: projectId,
+    label_field: 'L4_descr',
+    regional_only: true,
+    classification_model: 'random_forest',
+    predicted_class_counts: {
+      'citrus fruit trees': 181,
+      'fruit trees': 66,
+      olives: 1147,
+    },
+    approved_class_counts: {
+      'citrus fruit trees': 201,
+      'fruit trees': 253,
+      olives: 940,
+    },
+    class_statistics: [
+      {
+        class_label: 'citrus fruit trees',
+        predicted_feature_count: 181,
+        approved_feature_count: 201,
+        area_ha: 2340.146694,
+        confidence_mean: 0.660203,
+        confidence_min: 0.363333,
+        confidence_max: 0.986667,
+      },
+      {
+        class_label: 'fruit trees',
+        predicted_feature_count: 66,
+        approved_feature_count: 253,
+        area_ha: 449.331633,
+        confidence_mean: 0.513687,
+        confidence_min: 0.363333,
+        confidence_max: 0.743333,
+      },
+      {
+        class_label: 'olives',
+        predicted_feature_count: 1147,
+        approved_feature_count: 940,
+        area_ha: 10208.522072,
+        confidence_mean: 0.781654,
+        confidence_min: 0.336667,
+        confidence_max: 0.996667,
+      },
+    ],
+    confidence_available: true,
+    confidence_summary: confidenceSummary,
+  });
+  await writeCsvArtifact(root, `${runDir}/ai_class_statistics.csv`, [
+    { class_label: 'citrus fruit trees', predicted_feature_count: 181 },
+    { class_label: 'fruit trees', predicted_feature_count: 66 },
+    { class_label: 'olives', predicted_feature_count: 1147 },
+  ]);
+  await writeJsonArtifact(root, `${runDir}/ai_classification_review.geojson`, emptyFeatureCollection);
+  await writeJsonArtifact(root, `${runDir}/ai_confidence_review.geojson`, emptyFeatureCollection);
+  await writeJsonArtifact(root, `${runDir}/ai_uncertainty_areas.geojson`, emptyFeatureCollection);
+};
+
 beforeEach(async () => {
   await resetDb();
 });
@@ -1136,6 +1291,202 @@ describe('AI worker skeleton phase D', () => {
           published_at: null,
         }),
       ]),
+    );
+    expect(await countRows('spatial_feature')).toBe(beforeSpatialCount);
+  });
+
+  test('registers real Phase M review artifact filenames and predicted class statistics', async () => {
+    const { admin, project } = await createProjectFixture('AI Worker Phase M Artifact Registration');
+    await insertReadyRegionalFeatures({
+      projectId: project.id,
+      userId: admin.user.id,
+    });
+    const runId = await insertQueuedRun({
+      projectId: project.id,
+      userId: admin.user.id,
+      metadata: {
+        test: 'ai-worker',
+        execution_mode: 'regional_vectorization_artifacts',
+        ai_pipeline_run_id: 'phase-m-real-regional-proof',
+        output_paths: {
+          ai_classification_review:
+            'outputs/runs/phase-m-real-regional-proof/ai_classification_review.geojson',
+          ai_confidence_review:
+            'outputs/runs/phase-m-real-regional-proof/ai_confidence_review.geojson',
+          ai_uncertainty_areas:
+            'outputs/runs/phase-m-real-regional-proof/ai_uncertainty_areas.geojson',
+          ai_class_statistics_json:
+            'outputs/runs/phase-m-real-regional-proof/ai_class_statistics.json',
+        },
+      },
+    });
+    const artifactRoot = await createTempArtifactRoot();
+    await writePhaseMReviewArtifacts({
+      root: artifactRoot,
+      regionalRunId: 'phase-m-real-regional-proof',
+      projectId: project.id,
+    });
+    const beforeSpatialCount = await countRows('spatial_feature');
+
+    const result = await registerAiRunArtifactsForReview({
+      runId,
+      projectId: project.id,
+      labelField: 'L4_descr',
+      metadata: {
+        execution_mode: 'regional_vectorization_artifacts',
+        ai_pipeline_run_id: 'phase-m-real-regional-proof',
+        output_paths: {
+          ai_classification_review:
+            'outputs/runs/phase-m-real-regional-proof/ai_classification_review.geojson',
+          ai_confidence_review:
+            'outputs/runs/phase-m-real-regional-proof/ai_confidence_review.geojson',
+          ai_uncertainty_areas:
+            'outputs/runs/phase-m-real-regional-proof/ai_uncertainty_areas.geojson',
+          ai_class_statistics_json:
+            'outputs/runs/phase-m-real-regional-proof/ai_class_statistics.json',
+          ai_class_statistics_csv:
+            'outputs/runs/phase-m-real-regional-proof/ai_class_statistics.csv',
+        },
+      },
+      pipelineConfig: pipelineConfig({
+        root: artifactRoot,
+        mode: 'regional_vectorization_artifacts',
+      }),
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: true,
+        skipped: false,
+        metricsRegistered: 0,
+        classStatisticsRegistered: 4,
+        outputLayersRegistered: 4,
+      }),
+    );
+    expect(result.metadataPatch).toEqual(
+      expect.objectContaining({
+        classification_model: 'random_forest',
+        metrics_best_macro_f1_model: 'svm_rbf',
+        highest_accuracy_model: 'xgboost',
+        model_mismatch_reason:
+          'SVM RBF was selected by metrics, but Random Forest generated the review layer.',
+        uncertainty_feature_count: 279,
+        confidence_summary: expect.objectContaining({
+          uncertain_feature_count: 279,
+          threshold: 0.6,
+        }),
+        artifact_registration: expect.objectContaining({
+          output_layers_registered: 4,
+          unpublished_only: true,
+          review_only: true,
+          no_spatial_feature_writes: true,
+        }),
+        class_counts: [
+          { class_label: 'citrus fruit trees', feature_count: 181 },
+          { class_label: 'fruit trees', feature_count: 66 },
+          { class_label: 'olives', feature_count: 1147 },
+        ],
+        excluded_classes: [
+          { class_label: 'vineyards', feature_count: 12 },
+        ],
+      }),
+    );
+    expect(result.artifactPaths).toEqual(
+      expect.objectContaining({
+        ai_classification_review:
+          'outputs/runs/phase-m-real-regional-proof/ai_classification_review.geojson',
+        ai_confidence_review:
+          'outputs/runs/phase-m-real-regional-proof/ai_confidence_review.geojson',
+        ai_uncertainty_areas:
+          'outputs/runs/phase-m-real-regional-proof/ai_uncertainty_areas.geojson',
+        ai_class_statistics_json:
+          'outputs/runs/phase-m-real-regional-proof/ai_class_statistics.json',
+      }),
+    );
+
+    const layersResult = await pool.query(
+      `SELECT layer_type, status, storage_path, published_at
+       FROM ai_output_layer
+       WHERE ai_run_id = $1
+       ORDER BY layer_type ASC`,
+      [runId],
+    );
+    expect(layersResult.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          layer_type: 'classification',
+          status: 'ready_for_review',
+          storage_path:
+            'outputs/runs/phase-m-real-regional-proof/ai_classification_review.geojson',
+          published_at: null,
+        }),
+        expect.objectContaining({
+          layer_type: 'confidence',
+          status: 'ready_for_review',
+          storage_path: 'outputs/runs/phase-m-real-regional-proof/ai_confidence_review.geojson',
+          published_at: null,
+        }),
+        expect.objectContaining({
+          layer_type: 'statistics',
+          status: 'ready_for_review',
+          storage_path: 'outputs/runs/phase-m-real-regional-proof/ai_class_statistics.json',
+          published_at: null,
+        }),
+        expect.objectContaining({
+          layer_type: 'uncertainty',
+          status: 'ready_for_review',
+          storage_path: 'outputs/runs/phase-m-real-regional-proof/ai_uncertainty_areas.geojson',
+          published_at: null,
+        }),
+      ]),
+    );
+
+    const classStatsResult = await pool.query(
+      `SELECT class_label, feature_count, area_ha, confidence_mean, statistics
+       FROM ai_class_statistic
+       WHERE ai_run_id = $1
+       ORDER BY class_label ASC`,
+      [runId],
+    );
+    expect(classStatsResult.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          class_label: 'citrus fruit trees',
+          feature_count: 181,
+          confidence_mean: 0.660203,
+        }),
+        expect.objectContaining({
+          class_label: 'fruit trees',
+          feature_count: 66,
+          confidence_mean: 0.513687,
+        }),
+        expect.objectContaining({
+          class_label: 'olives',
+          feature_count: 1147,
+          confidence_mean: 0.781654,
+        }),
+        expect.objectContaining({
+          class_label: 'vineyards',
+          feature_count: 12,
+        }),
+      ]),
+    );
+    expect(
+      classStatsResult.rows.find((row) => row.class_label === 'fruit trees').statistics,
+    ).toEqual(
+      expect.objectContaining({
+        predicted_feature_count: 66,
+        approved_feature_count: 253,
+        phase_m_review_artifact: true,
+      }),
+    );
+    expect(
+      classStatsResult.rows.find((row) => row.class_label === 'vineyards').statistics,
+    ).toEqual(
+      expect.objectContaining({
+        excluded: true,
+        exclusion_reason: 'below_minimum_samples',
+      }),
     );
     expect(await countRows('spatial_feature')).toBe(beforeSpatialCount);
   });
