@@ -360,6 +360,17 @@ const outputPathsFrom = (results: AiPipelineCommandResult[]): string[] =>
 
 const regionalRunIdFor = (runId: string): string => `app-ai-${runId.replace(/-/g, '').slice(0, 24)}`;
 
+const safeOutputRunIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+const metadataSourceModelRunId = (metadata: Record<string, unknown> | null): string | null => {
+  const raw = metadata?.source_model_run_id;
+  if (typeof raw !== 'string') {
+    return null;
+  }
+  const value = raw.trim();
+  return safeOutputRunIdPattern.test(value) ? value : null;
+};
+
 const metadataMinSamplesPerClass = (metadata: Record<string, unknown> | null): number => {
   const raw = metadata?.min_samples_per_class;
   const parsed =
@@ -730,6 +741,10 @@ const runPipelineExecution = async ({
   const startedAt = Date.now();
   const commandResults: AiPipelineCommandResult[] = [];
   const regionalRunId = regionalRunIdFor(claimedRun.id);
+  const sourceModelRunId = metadataSourceModelRunId(claimedRun.metadata);
+  const sourceModelMetadataPath = sourceModelRunId
+    ? `outputs/runs/${sourceModelRunId}/model_metadata.json`
+    : `outputs/runs/${regionalRunId}/model_metadata.json`;
   const realAiExecution =
     regionalFeatureOrLaterModeSet.has(executionMode) ||
     regionalClassificationModeSet.has(executionMode);
@@ -812,6 +827,10 @@ const runPipelineExecution = async ({
     if (regionalClassificationModeSet.has(executionMode)) {
       metadata.regional_classification_summary_path =
         `outputs/runs/${regionalRunId}/regional_classification_summary.json`;
+      if (sourceModelRunId) {
+        metadata.source_model_run_id = sourceModelRunId;
+        metadata.source_model_metadata_path = sourceModelMetadataPath;
+      }
     }
     if (executionMode === 'regional_vectorization_artifacts') {
       metadata.classification_polygons_path =
@@ -1088,6 +1107,7 @@ const runPipelineExecution = async ({
             claimedRun.project_id,
             claimedRun.label_field,
             regionalRunId,
+            sourceModelMetadataPath,
           ),
       });
     commandResults.push(classificationResult);

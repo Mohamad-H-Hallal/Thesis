@@ -977,6 +977,7 @@ describe('AI worker skeleton phase D', () => {
       project.id,
       'L4_descr',
       regionalRunId,
+      `outputs/runs/${regionalRunId}/model_metadata.json`,
     );
     expect(pipelineService.prepareRegionalVectorArtifacts).not.toHaveBeenCalled();
 
@@ -1028,6 +1029,7 @@ describe('AI worker skeleton phase D', () => {
         test: 'ai-worker',
         execution_mode: 'regional_vectorization_artifacts',
         min_samples_per_class: 2,
+        source_model_run_id: 'app-ai-phase-f-model-run',
       },
     });
     const regionalRunId = regionalRunIdForTest(runId);
@@ -1068,6 +1070,7 @@ describe('AI worker skeleton phase D', () => {
       project.id,
       'L4_descr',
       regionalRunId,
+      'outputs/runs/app-ai-phase-f-model-run/model_metadata.json',
     );
     expect(pipelineService.prepareRegionalVectorArtifacts).toHaveBeenCalledWith(
       project.id,
@@ -1090,6 +1093,12 @@ describe('AI worker skeleton phase D', () => {
         unpublished_only: true,
         review_only: true,
         no_spatial_feature_writes: true,
+      }),
+    );
+    expect(runResult.rows[0].metadata).toEqual(
+      expect.objectContaining({
+        source_model_run_id: 'app-ai-phase-f-model-run',
+        source_model_metadata_path: 'outputs/runs/app-ai-phase-f-model-run/model_metadata.json',
       }),
     );
 
