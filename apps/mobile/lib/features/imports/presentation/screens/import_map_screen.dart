@@ -1834,7 +1834,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
       }
       final color = _statusColor(feature.status);
       for (final points in polygonGeometrySegments(geometry)) {
-        if (points.isEmpty) {
+        if (!isValidPolygonRing(points)) {
           continue;
         }
         polygons.add(
@@ -1969,7 +1969,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
         .where((feature) => isPolygonGeometry(feature.geometry))
         .expand((feature) sync* {
           for (final points in polygonGeometrySegments(feature.geometry)) {
-            if (points.isEmpty) {
+            if (!isValidPolygonRing(points)) {
               continue;
             }
             final isFocused = _focusedFeatureId == feature.id;

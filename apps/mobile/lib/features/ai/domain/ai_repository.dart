@@ -37,6 +37,19 @@ abstract class AiRepository {
 
   Future<List<AiOutputLayer>> fetchRunLayers({required String runId});
 
+  Future<AiLayerFeatureCollection> fetchLayerFeatures({
+    required String layerId,
+    String detail = 'overview',
+    String geometry = 'simplified',
+    String? bounds,
+    double? zoom,
+    int? limit,
+    int? page,
+    String? search,
+    String? classLabel,
+    String? featureId,
+  });
+
   Future<PaginatedResult<AiRunLog>> fetchRunLogsPage({
     required String runId,
     int page = 1,

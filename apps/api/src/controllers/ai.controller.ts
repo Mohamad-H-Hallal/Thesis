@@ -1,7 +1,11 @@
+import fsSync from 'node:fs';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import type { PoolClient } from 'pg';
 import type { Request, Response } from 'express';
 const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
+const { createAiPipelineService } = require('../services/aiPipeline.service');
 
 const allowedRunStatuses = [
   'draft',
@@ -38,8 +42,7 @@ const reviewActions = {
     decision: 'approved_for_publish',
     layerStatus: 'approved',
     reviewStatus: 'approved_for_publication',
-    logMessage:
-      'AI run approved for future publication. No viewer-facing AI layer was published.',
+    logMessage: 'AI run approved for future publication. No viewer-facing AI layer was published.',
   },
   reject: {
     decision: 'rejected',
@@ -60,6 +63,13 @@ const reviewActions = {
     logMessage: 'AI run kept as a draft for later review.',
   },
 } as const;
+
+const previewableLayerStatuses = new Set(['draft', 'ready_for_review', 'approved']);
+const previewableLayerTypes = new Set(['classification', 'confidence', 'uncertainty']);
+const MAX_AI_LAYER_GEOJSON_BYTES = 20 * 1024 * 1024;
+const MAX_AI_LAYER_PREVIEW_FEATURES = 2500;
+const DEFAULT_AI_LAYER_OVERVIEW_FEATURE_LIMIT = 1800;
+const DEV_CONTAINER_AI_OUTPUT_ROOT = '/workspace-ai-outputs';
 
 const defaultSettings = {
   is_enabled: false,
@@ -1263,6 +1273,751 @@ const listAiRunLayers = async (req: Request, res: Response): Promise<void> => {
   });
 };
 
+const resolveRegisteredAiLayerGeoJsonPath = ({
+  storagePath,
+  outputRoot,
+}: {
+  storagePath: string;
+  outputRoot: string | null;
+}): string => {
+  if (!outputRoot) {
+    throw new AppError('AI pipeline output root is not configured.', 503);
+  }
+
+  const rawPath = storagePath.trim();
+  if (!rawPath || rawPath.includes('\0')) {
+    throw new AppError('AI output layer path is invalid.', 400);
+  }
+
+  const posixPath = rawPath.replace(/\\/g, '/');
+  if (posixPath.split('/').includes('..')) {
+    throw new AppError('AI output layer path traversal is not allowed.', 400);
+  }
+
+  if (!posixPath.toLowerCase().endsWith('.geojson')) {
+    throw new AppError('AI output layer does not reference a GeoJSON preview artifact.', 400);
+  }
+
+  const resolvedOutputRoot = path.resolve(outputRoot);
+  const relativeArtifactPath = posixPath.startsWith('outputs/')
+    ? posixPath.slice('outputs/'.length)
+    : posixPath;
+  const candidatePath = path.isAbsolute(rawPath)
+    ? path.resolve(rawPath)
+    : path.resolve(resolvedOutputRoot, relativeArtifactPath);
+  const relativeToOutputRoot = path.relative(resolvedOutputRoot, candidatePath);
+  if (
+    !relativeToOutputRoot ||
+    relativeToOutputRoot.startsWith('..') ||
+    path.isAbsolute(relativeToOutputRoot)
+  ) {
+    throw new AppError('AI output layer path is outside the configured output directory.', 400);
+  }
+
+  return candidatePath;
+};
+
+const resolveConfiguredAiOutputRoot = (pipelineRoot: string | null): string | null => {
+  const explicitOutputRoot = process.env.AI_PIPELINE_OUTPUT_ROOT?.trim();
+  if (explicitOutputRoot) {
+    return path.resolve(explicitOutputRoot);
+  }
+  if (
+    process.platform !== 'win32' &&
+    fsSync.existsSync(DEV_CONTAINER_AI_OUTPUT_ROOT) &&
+    fsSync.statSync(DEV_CONTAINER_AI_OUTPUT_ROOT).isDirectory()
+  ) {
+    return DEV_CONTAINER_AI_OUTPUT_ROOT;
+  }
+  return pipelineRoot ? path.resolve(pipelineRoot, 'outputs') : null;
+};
+
+type AiLayerDetail = 'overview' | 'full';
+type AiLayerGeometry = 'aggregate' | 'simplified' | 'full';
+type AiLayerBounds = {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+};
+
+const parseAiLayerBounds = (value: unknown): AiLayerBounds | null => {
+  const raw = normalizeOptionalString(value);
+  if (!raw) {
+    return null;
+  }
+  const parts = raw.split(',').map((part) => Number.parseFloat(part.trim()));
+  if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part))) {
+    throw new AppError('AI layer bounds must be west,south,east,north.', 400);
+  }
+  const [west, south, east, north] = parts;
+  if (west < -180 || east > 180 || south < -90 || north > 90 || west >= east || south >= north) {
+    throw new AppError('AI layer bounds are invalid.', 400);
+  }
+  return { west, south, east, north };
+};
+
+const parseOptionalZoom = (value: unknown): number | null => {
+  const raw = normalizeOptionalString(value);
+  if (!raw) {
+    return null;
+  }
+  const zoom = Number.parseFloat(raw);
+  if (!Number.isFinite(zoom) || zoom < 0 || zoom > 24) {
+    throw new AppError('AI layer zoom is invalid.', 400);
+  }
+  return zoom;
+};
+
+const parseAiLayerFeatureQuery = (
+  req: Request,
+): {
+  detail: AiLayerDetail;
+  geometry: AiLayerGeometry;
+  limit: number;
+  page: number;
+  offset: number;
+  search: string | null;
+  classLabel: string | null;
+  featureId: string | null;
+  bounds: AiLayerBounds | null;
+  zoom: number | null;
+} => {
+  const rawDetailValue = normalizeOptionalString(req.query.detail) ?? 'overview';
+  const rawDetail = rawDetailValue === 'preview' ? 'overview' : rawDetailValue;
+  if (rawDetail !== 'overview' && rawDetail !== 'full') {
+    throw new AppError('AI layer detail must be overview or full.', 400);
+  }
+  const zoom = parseOptionalZoom(req.query.zoom);
+  const rawGeometry = normalizeOptionalString(req.query.geometry);
+  const geometry =
+    rawGeometry ??
+    (rawDetail === 'overview' && (zoom === null || zoom < 10)
+      ? 'aggregate'
+      : rawDetail === 'overview'
+        ? 'simplified'
+        : 'full');
+  if (geometry !== 'aggregate' && geometry !== 'simplified' && geometry !== 'full') {
+    throw new AppError('AI layer geometry must be aggregate, simplified, or full.', 400);
+  }
+  if (rawDetail === 'full' && geometry !== 'full') {
+    throw new AppError('Full AI layer detail requires full geometry.', 400);
+  }
+  const page = parsePositiveInteger(req.query.page, 1, 100000);
+  const limit = parsePositiveInteger(
+    req.query.limit,
+    DEFAULT_AI_LAYER_OVERVIEW_FEATURE_LIMIT,
+    MAX_AI_LAYER_PREVIEW_FEATURES,
+  );
+  return {
+    detail: rawDetail,
+    geometry,
+    limit,
+    page,
+    offset: (page - 1) * limit,
+    search: normalizeOptionalString(req.query.q),
+    classLabel: normalizeOptionalString(req.query.class_label),
+    featureId: normalizeOptionalString(req.query.feature_id),
+    bounds: parseAiLayerBounds(req.query.bounds),
+    zoom,
+  };
+};
+
+const collectGeoJsonPositions = (value: unknown, positions: Array<[number, number]>): void => {
+  if (!Array.isArray(value)) {
+    return;
+  }
+  if (
+    value.length >= 2 &&
+    typeof value[0] === 'number' &&
+    typeof value[1] === 'number' &&
+    Number.isFinite(value[0]) &&
+    Number.isFinite(value[1])
+  ) {
+    positions.push([value[0], value[1]]);
+    return;
+  }
+  for (const child of value) {
+    collectGeoJsonPositions(child, positions);
+  }
+};
+
+const featureBounds = (feature: any): AiLayerBounds | null => {
+  const positions: Array<[number, number]> = [];
+  collectGeoJsonPositions(feature?.geometry?.coordinates, positions);
+  if (positions.length === 0) {
+    return null;
+  }
+  let minLon = Number.POSITIVE_INFINITY;
+  let minLat = Number.POSITIVE_INFINITY;
+  let maxLon = Number.NEGATIVE_INFINITY;
+  let maxLat = Number.NEGATIVE_INFINITY;
+  for (const [lon, lat] of positions) {
+    minLon = Math.min(minLon, lon);
+    minLat = Math.min(minLat, lat);
+    maxLon = Math.max(maxLon, lon);
+    maxLat = Math.max(maxLat, lat);
+  }
+  return { west: minLon, south: minLat, east: maxLon, north: maxLat };
+};
+
+const boundsIntersect = (a: AiLayerBounds, b: AiLayerBounds): boolean =>
+  a.west <= b.east && a.east >= b.west && a.south <= b.north && a.north >= b.south;
+
+const layerBoundsFromFeatures = (features: any[]): AiLayerBounds | null => {
+  let west = Number.POSITIVE_INFINITY;
+  let south = Number.POSITIVE_INFINITY;
+  let east = Number.NEGATIVE_INFINITY;
+  let north = Number.NEGATIVE_INFINITY;
+  for (const feature of features) {
+    const bounds = featureBounds(feature);
+    if (!bounds) {
+      continue;
+    }
+    west = Math.min(west, bounds.west);
+    south = Math.min(south, bounds.south);
+    east = Math.max(east, bounds.east);
+    north = Math.max(north, bounds.north);
+  }
+  if (![west, south, east, north].every(Number.isFinite)) {
+    return null;
+  }
+  return { west, south, east, north };
+};
+
+const aiFeatureClassLabel = (feature: any): string => {
+  const properties =
+    feature?.properties && typeof feature.properties === 'object' ? feature.properties : {};
+  return (
+    normalizeOptionalString(properties.predicted_class) ??
+    normalizeOptionalString(properties.class_label) ??
+    normalizeOptionalString(properties.label) ??
+    normalizeOptionalString(properties.L4_descr) ??
+    'unknown'
+  );
+};
+
+const aiFeatureIdentifier = (feature: any, fallbackIndex?: number): string => {
+  const properties =
+    feature?.properties && typeof feature.properties === 'object' ? feature.properties : {};
+  return (
+    normalizeOptionalString(feature?.id) ??
+    normalizeOptionalString(properties.id) ??
+    normalizeOptionalString(properties.feature_id) ??
+    normalizeOptionalString(properties.source_feature_id) ??
+    normalizeOptionalString(properties.source_id) ??
+    (fallbackIndex === undefined ? '' : `ai-preview-${fallbackIndex}`)
+  );
+};
+
+const incrementCount = (counts: Record<string, number>, key: string, value = 1): void => {
+  counts[key] = (counts[key] ?? 0) + value;
+};
+
+const classCountsForFeatures = (features: any[]): Record<string, number> => {
+  const counts: Record<string, number> = {};
+  for (const feature of features) {
+    incrementCount(counts, aiFeatureClassLabel(feature));
+  }
+  return counts;
+};
+
+const aiFeatureSearchBlob = (feature: any): string => {
+  const properties =
+    feature?.properties && typeof feature.properties === 'object' ? feature.properties : {};
+  const values = [
+    properties.predicted_class,
+    properties.dominant_class,
+    properties.class_label,
+    properties.label,
+    properties.model_name,
+    properties.model,
+  ];
+  return values
+    .map((value) => normalizeOptionalString(value))
+    .filter((value): value is string => Boolean(value))
+    .join(' ')
+    .toLowerCase();
+};
+
+const filterAiLayerFeatures = (
+  features: any[],
+  options: {
+    search: string | null;
+    classLabel: string | null;
+    featureId: string | null;
+  },
+): any[] => {
+  const search = options.search?.toLowerCase() ?? null;
+  const classLabel = options.classLabel?.toLowerCase() ?? null;
+  const featureId = options.featureId?.toLowerCase() ?? null;
+  if (!search && !classLabel && !featureId) {
+    return features;
+  }
+  return features.filter((feature, index) => {
+    if (featureId && aiFeatureIdentifier(feature, index).toLowerCase() !== featureId) {
+      return false;
+    }
+    if (classLabel && aiFeatureClassLabel(feature).toLowerCase() !== classLabel) {
+      return false;
+    }
+    if (search && !aiFeatureSearchBlob(feature).includes(search)) {
+      return false;
+    }
+    return true;
+  });
+};
+
+const geometryTypesForFeatures = (features: any[]): string[] =>
+  Array.from(
+    new Set(
+      features
+        .map((feature) => normalizeOptionalString(feature?.geometry?.type))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ).sort();
+
+const overviewCoordinateBudget = (zoom: number | null): number => {
+  if (zoom === null || zoom < 9) {
+    return 28;
+  }
+  if (zoom < 11) {
+    return 44;
+  }
+  if (zoom < 13) {
+    return 72;
+  }
+  return 120;
+};
+
+const aggregateGridSize = (zoom: number | null): number => {
+  if (zoom === null || zoom < 7) {
+    return 0.18;
+  }
+  if (zoom < 9) {
+    return 0.09;
+  }
+  if (zoom < 11) {
+    return 0.045;
+  }
+  return 0.0225;
+};
+
+const aggregateAiLayerFeatures = (
+  features: any[],
+  options: {
+    limit: number;
+    offset: number;
+    zoom: number | null;
+  },
+): {
+  features: Record<string, unknown>[];
+  capped: boolean;
+  cap: number;
+} => {
+  const cellSize = aggregateGridSize(options.zoom);
+  const cells = new Map<
+    string,
+    {
+      count: number;
+      classCounts: Record<string, number>;
+      lonSum: number;
+      latSum: number;
+    }
+  >();
+
+  for (const feature of features) {
+    const bounds = featureBounds(feature);
+    if (!bounds) {
+      continue;
+    }
+    const lon = (bounds.west + bounds.east) / 2;
+    const lat = (bounds.south + bounds.north) / 2;
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+      continue;
+    }
+    const x = Math.floor(lon / cellSize);
+    const y = Math.floor(lat / cellSize);
+    const key = `${x}:${y}`;
+    const cell = cells.get(key) ?? {
+      count: 0,
+      classCounts: {},
+      lonSum: 0,
+      latSum: 0,
+    };
+    cell.count += 1;
+    cell.lonSum += lon;
+    cell.latSum += lat;
+    incrementCount(cell.classCounts, aiFeatureClassLabel(feature));
+    cells.set(key, cell);
+  }
+
+  const allCells = Array.from(cells.entries()).sort((a, b) => b[1].count - a[1].count);
+  const selectedCells = allCells.slice(options.offset, options.offset + options.limit);
+  return {
+    capped: options.offset + selectedCells.length < allCells.length,
+    cap: options.limit,
+    features: selectedCells.map(([key, cell]) => {
+      const dominantClass =
+        Object.entries(cell.classCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'unknown';
+      return {
+        type: 'Feature',
+        id: `ai-aggregate-${key}`,
+        properties: {
+          preview_kind: 'aggregate',
+          preview_detail: 'overview',
+          preview_geometry: 'aggregate',
+          aggregate: true,
+          aggregate_count: cell.count,
+          class_counts: cell.classCounts,
+          predicted_class: dominantClass,
+          dominant_class: dominantClass,
+        },
+        geometry: {
+          type: 'Point',
+          coordinates: [
+            Number((cell.lonSum / cell.count).toFixed(7)),
+            Number((cell.latSum / cell.count).toFixed(7)),
+          ],
+        },
+      };
+    }),
+  };
+};
+
+const simplifyCoordinateList = (
+  coordinates: any[],
+  maxPoints: number,
+  closeRing = false,
+): any[] => {
+  if (coordinates.length <= maxPoints) {
+    return coordinates;
+  }
+  const step = Math.max(1, Math.ceil(coordinates.length / Math.max(2, maxPoints)));
+  const simplified: any[] = [];
+  for (let index = 0; index < coordinates.length; index += step) {
+    simplified.push(coordinates[index]);
+  }
+  const last = coordinates[coordinates.length - 1];
+  if (simplified[simplified.length - 1] !== last) {
+    simplified.push(last);
+  }
+  if (closeRing && simplified.length > 0) {
+    const first = simplified[0];
+    const tail = simplified[simplified.length - 1];
+    if (
+      Array.isArray(first) &&
+      Array.isArray(tail) &&
+      (first[0] !== tail[0] || first[1] !== tail[1])
+    ) {
+      simplified.push(first);
+    }
+  }
+  return simplified;
+};
+
+const simplifyGeometry = (geometry: any, maxPoints: number): any => {
+  if (!geometry || typeof geometry !== 'object') {
+    return geometry ?? null;
+  }
+  const type = normalizeOptionalString(geometry.type);
+  const coordinates = geometry.coordinates;
+  if (!type || !Array.isArray(coordinates)) {
+    return geometry;
+  }
+  switch (type) {
+    case 'LineString':
+      return { ...geometry, coordinates: simplifyCoordinateList(coordinates, maxPoints) };
+    case 'MultiLineString':
+      return {
+        ...geometry,
+        coordinates: coordinates.map((line: any) =>
+          Array.isArray(line) ? simplifyCoordinateList(line, maxPoints) : line,
+        ),
+      };
+    case 'Polygon':
+      return {
+        ...geometry,
+        coordinates: coordinates.map((ring: any) =>
+          Array.isArray(ring) ? simplifyCoordinateList(ring, maxPoints, true) : ring,
+        ),
+      };
+    case 'MultiPolygon':
+      return {
+        ...geometry,
+        coordinates: coordinates.map((polygon: any) =>
+          Array.isArray(polygon)
+            ? polygon.map((ring: any) =>
+                Array.isArray(ring) ? simplifyCoordinateList(ring, maxPoints, true) : ring,
+              )
+            : polygon,
+        ),
+      };
+    default:
+      return geometry;
+  }
+};
+
+const overviewPropertiesFor = (feature: any): Record<string, unknown> => {
+  const properties =
+    feature?.properties && typeof feature.properties === 'object' ? feature.properties : {};
+  const allowedKeys = [
+    'id',
+    'feature_id',
+    'source_feature_id',
+    'predicted_class',
+    'class_label',
+    'label',
+    'L4_descr',
+    'confidence',
+    'confidence_score',
+    'probability',
+    'max_probability',
+    'model_name',
+    'model',
+    'run_id',
+    'source',
+    'area',
+    'area_ha',
+    'limitation_note',
+  ];
+  return Object.fromEntries(
+    allowedKeys
+      .filter((key) => properties[key] !== undefined && properties[key] !== null)
+      .map((key) => [key, properties[key]]),
+  );
+};
+
+const buildAiLayerFeatureCollection = (
+  parsed: any,
+  options: {
+    detail: AiLayerDetail;
+    geometry: AiLayerGeometry;
+    limit: number;
+    offset: number;
+    search: string | null;
+    classLabel: string | null;
+    featureId: string | null;
+    bounds: AiLayerBounds | null;
+    zoom: number | null;
+  },
+): {
+  featureCollection: Record<string, unknown>;
+  returnedFeatureCount: number;
+  sourceFeatureCount: number;
+  matchingFeatureCount: number;
+  capped: boolean;
+  cap: number;
+  layerBounds: AiLayerBounds | null;
+  classCounts: Record<string, number>;
+  geometryTypes: string[];
+} => {
+  const sourceFeatures = Array.isArray(parsed.features) ? parsed.features : [];
+  const filteredFeatures = filterAiLayerFeatures(sourceFeatures, {
+    search: options.search,
+    classLabel: options.classLabel,
+    featureId: options.featureId,
+  });
+  const boundedFeatures = options.bounds
+    ? filteredFeatures.filter((feature: any) => {
+        const bounds = featureBounds(feature);
+        return bounds ? boundsIntersect(bounds, options.bounds as AiLayerBounds) : false;
+      })
+    : filteredFeatures;
+  const layerBounds = layerBoundsFromFeatures(sourceFeatures);
+  const classCounts = classCountsForFeatures(sourceFeatures);
+  const geometryTypes = geometryTypesForFeatures(sourceFeatures);
+  if (options.geometry === 'aggregate') {
+    const aggregate = aggregateAiLayerFeatures(boundedFeatures, {
+      limit: options.limit,
+      offset: options.offset,
+      zoom: options.zoom,
+    });
+    return {
+      featureCollection: {
+        type: 'FeatureCollection',
+        features: aggregate.features,
+      },
+      returnedFeatureCount: aggregate.features.length,
+      sourceFeatureCount: sourceFeatures.length,
+      matchingFeatureCount: boundedFeatures.length,
+      capped: aggregate.capped,
+      cap: aggregate.cap,
+      layerBounds,
+      classCounts,
+      geometryTypes,
+    };
+  }
+  const selectedFeatures = boundedFeatures.slice(options.offset, options.offset + options.limit);
+  const coordinateBudget = overviewCoordinateBudget(options.zoom);
+  const capped = options.offset + selectedFeatures.length < boundedFeatures.length;
+  const features = selectedFeatures.map((feature: any, index: number) => {
+    const properties = {
+      ...(options.detail === 'overview'
+        ? overviewPropertiesFor(feature)
+        : feature?.properties && typeof feature.properties === 'object'
+          ? feature.properties
+          : {}),
+      preview_detail: options.detail,
+      preview_geometry: options.geometry,
+    };
+    return {
+      type: 'Feature',
+      id: aiFeatureIdentifier(feature, options.offset + index),
+      properties,
+      geometry:
+        options.geometry === 'simplified'
+          ? simplifyGeometry(feature?.geometry, coordinateBudget)
+          : (feature?.geometry ?? null),
+    };
+  });
+  return {
+    featureCollection: {
+      type: 'FeatureCollection',
+      features,
+    },
+    returnedFeatureCount: features.length,
+    sourceFeatureCount: sourceFeatures.length,
+    matchingFeatureCount: boundedFeatures.length,
+    capped,
+    cap: options.limit,
+    layerBounds,
+    classCounts,
+    geometryTypes,
+  };
+};
+
+const getAiLayerFeatures = async (req: Request, res: Response): Promise<void> => {
+  const featureQuery = parseAiLayerFeatureQuery(req);
+  const layerResult = await query(
+    `SELECT l.id,
+            l.ai_run_id,
+            l.project_id,
+            l.layer_type,
+            l.status,
+            l.name,
+            l.description,
+            l.storage_path,
+            l.crs,
+            l.published_at,
+            ar.project_id AS run_project_id
+     FROM ai_output_layer l
+     JOIN ai_run ar ON ar.id = l.ai_run_id
+     WHERE l.id = $1`,
+    [req.params.layerId],
+  );
+
+  if (layerResult.rows.length === 0) {
+    throw new AppError('AI output layer not found', 404);
+  }
+
+  const layer = layerResult.rows[0];
+  if (layer.project_id !== layer.run_project_id) {
+    throw new AppError('AI output layer project mismatch.', 400);
+  }
+  if (!previewableLayerTypes.has(layer.layer_type)) {
+    throw new AppError('This AI output layer is not a map-preview layer.', 400);
+  }
+  if (!previewableLayerStatuses.has(layer.status)) {
+    throw new AppError('This AI output layer is not available for preview.', 403);
+  }
+  const storagePath = normalizeOptionalString(layer.storage_path);
+  if (!storagePath) {
+    throw new AppError('AI output layer has no registered preview artifact.', 404);
+  }
+
+  const pipelineConfig = createAiPipelineService().getConfig();
+  const artifactPath = resolveRegisteredAiLayerGeoJsonPath({
+    storagePath,
+    outputRoot: resolveConfiguredAiOutputRoot(pipelineConfig.root),
+  });
+
+  let stat;
+  try {
+    stat = await fs.stat(artifactPath);
+  } catch {
+    throw new AppError('AI output layer preview artifact was not found.', 404);
+  }
+  if (!stat.isFile()) {
+    throw new AppError('AI output layer preview artifact is not a file.', 400);
+  }
+  if (stat.size > MAX_AI_LAYER_GEOJSON_BYTES) {
+    throw new AppError('AI output layer preview artifact is too large to load directly.', 413);
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(await fs.readFile(artifactPath, 'utf8'));
+  } catch {
+    throw new AppError('AI output layer preview artifact is not valid GeoJSON.', 422);
+  }
+
+  if (!parsed || parsed.type !== 'FeatureCollection' || !Array.isArray(parsed.features)) {
+    throw new AppError(
+      'AI output layer preview artifact must be a GeoJSON FeatureCollection.',
+      422,
+    );
+  }
+
+  const {
+    featureCollection,
+    returnedFeatureCount,
+    sourceFeatureCount,
+    matchingFeatureCount,
+    capped,
+    cap,
+    layerBounds,
+    classCounts,
+    geometryTypes,
+  } = buildAiLayerFeatureCollection(parsed, featureQuery);
+
+  res.json({
+    success: true,
+    data: {
+      layer: {
+        id: layer.id,
+        ai_run_id: layer.ai_run_id,
+        project_id: layer.project_id,
+        layer_type: layer.layer_type,
+        status: layer.status,
+        name: layer.name,
+        description: layer.description,
+        crs: layer.crs,
+        published_at: layer.published_at,
+        viewer_published: false,
+      },
+      feature_collection: featureCollection,
+      feature_count: sourceFeatureCount,
+      total_count: sourceFeatureCount,
+      matching_feature_count: matchingFeatureCount,
+      visible_count: matchingFeatureCount,
+      returned_feature_count: returnedFeatureCount,
+      returned_count: returnedFeatureCount,
+      capped,
+      cap,
+      pagination: {
+        page: featureQuery.page,
+        limit: featureQuery.limit,
+        total: matchingFeatureCount,
+        pages: Math.max(1, Math.ceil(matchingFeatureCount / featureQuery.limit)),
+        has_more: featureQuery.offset + returnedFeatureCount < matchingFeatureCount,
+      },
+      detail: featureQuery.detail,
+      geometry_mode: featureQuery.geometry,
+      optimized_preview: featureQuery.detail === 'overview',
+      available_detail_modes: ['overview', 'full'],
+      available_geometry_modes: ['aggregate', 'simplified', 'full'],
+      q: featureQuery.search,
+      class_label: featureQuery.classLabel,
+      layer_bounds: layerBounds,
+      class_counts: classCounts,
+      geometry_types: geometryTypes,
+      bounds: featureQuery.bounds,
+      zoom: featureQuery.zoom,
+    },
+  });
+};
+
 const listAiRunLogs = async (req: Request, res: Response): Promise<void> => {
   const run = await assertRunReadable(req.params.runId, req.user as Express.UserContext);
   const { page, limit, offset } = parsePagination(req);
@@ -1491,6 +2246,7 @@ module.exports = {
   getAiRun,
   listAiRunMetrics,
   listAiRunLayers,
+  getAiLayerFeatures,
   listAiRunLogs,
   listAiRunReviews,
   reviewAiRun,

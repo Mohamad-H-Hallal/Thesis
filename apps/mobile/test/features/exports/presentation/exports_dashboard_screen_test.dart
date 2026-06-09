@@ -372,6 +372,42 @@ void main() {
     expect(useArea.onPressed, isNull);
   });
 
+  testWidgets('draw export area back button closes route cleanly', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: FilledButton(
+                onPressed: () {
+                  Navigator.of(context).push<Map<String, dynamic>>(
+                    MaterialPageRoute<Map<String, dynamic>>(
+                      builder: (_) => buildExportAreaPickerForTest(),
+                    ),
+                  );
+                },
+                child: const Text('Open picker'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open picker'));
+    await tester.pumpAndSettle();
+    expect(find.text('Draw export area'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Back'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('Open picker'), findsOneWidget);
+    expect(find.text('Draw export area'), findsNothing);
+  });
+
   testWidgets('map tools stay above bottom panel on compact phone', (
     tester,
   ) async {

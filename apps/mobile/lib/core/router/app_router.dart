@@ -382,6 +382,24 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         },
       ),
       GoRoute(
+        path: '/app/projects/:projectId/ai/runs/:runId/preview',
+        pageBuilder: (_, state) {
+          final projectId = state.pathParameters['projectId'] ?? '';
+          final runId = state.pathParameters['runId'] ?? '';
+          return _buildPage(
+            state,
+            Scaffold(
+              resizeToAvoidBottomInset: false,
+              appBar: AppBar(title: const Text('AI preview map')),
+              body: ProjectAiPreviewMapScreen(
+                projectId: projectId,
+                runId: runId,
+              ),
+            ),
+          );
+        },
+      ),
+      GoRoute(
         path: '/app/projects/:projectId/ai',
         pageBuilder: (_, state) {
           final projectId = state.pathParameters['projectId'] ?? '';

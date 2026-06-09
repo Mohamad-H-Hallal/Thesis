@@ -1,16 +1,27 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
+import '../../../../core/pagination/paginated_list_controller.dart';
 import '../../../../core/pagination/paginated_result.dart';
 import '../../../../core/providers/providers.dart';
+import '../../../../core/router/route_paths.dart';
 import '../../../../core/utils/lebanon_time.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
+import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
+import '../../../map/domain/app_tile_provider.dart';
+import '../../../map/domain/lebanon_map.dart';
+import '../../../map/domain/map_geometry.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/ai_models.dart';
 import '../ai_permissions.dart';
@@ -894,11 +905,7 @@ class _AiRunDetailCard extends ConsumerWidget {
               ),
             ],
             const SizedBox(height: AppSpacing.md),
-            _WhatHappenedSection(run: run, metricsAsync: metricsAsync),
-            const SizedBox(height: AppSpacing.md),
-            _LimitationSection(run: run),
-            const SizedBox(height: AppSpacing.md),
-            _NextStepSection(run: run, layersAsync: layersAsync),
+            _ModelResultSection(run: run, metricsAsync: metricsAsync),
             const SizedBox(height: AppSpacing.md),
             _AiOutputLayersSection(
               run: run,
@@ -908,6 +915,12 @@ class _AiRunDetailCard extends ConsumerWidget {
             const SizedBox(height: AppSpacing.md),
             _ReviewSection(run: run, reviewsAsync: reviewsAsync),
             const SizedBox(height: AppSpacing.md),
+            _DetailedRunResultsSection(
+              run: run,
+              metricsAsync: metricsAsync,
+              layersAsync: layersAsync,
+            ),
+            const SizedBox(height: AppSpacing.sm),
             _OutputPathsSection(paths: _outputPaths(run.metadata)),
             const SizedBox(height: AppSpacing.sm),
             _LogsSection(asyncValue: logsAsync),
@@ -928,6 +941,36 @@ class _RunStatusSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _KeyValueList(title: 'Run status', rows: _runStatusRows(run));
+  }
+}
+
+class _DetailedRunResultsSection extends StatelessWidget {
+  const _DetailedRunResultsSection({
+    required this.run,
+    required this.metricsAsync,
+    required this.layersAsync,
+  });
+
+  final AiRun run;
+  final AsyncValue<List<AiRunMetric>> metricsAsync;
+  final AsyncValue<List<AiOutputLayer>> layersAsync;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: EdgeInsets.zero,
+      expandedAlignment: Alignment.centerLeft,
+      expandedCrossAxisAlignment: CrossAxisAlignment.start,
+      title: const Text('Detailed run results'),
+      children: [
+        _WhatHappenedSection(run: run, metricsAsync: metricsAsync),
+        const SizedBox(height: AppSpacing.md),
+        _LimitationSection(run: run),
+        const SizedBox(height: AppSpacing.md),
+        _NextStepSection(run: run, layersAsync: layersAsync),
+      ],
+    );
   }
 }
 
@@ -1131,6 +1174,9 @@ class _AiOutputLayersSection extends StatelessWidget {
           orElse: () => const <AiReviewDecision>[],
         );
         final latestReview = reviews.isEmpty ? null : reviews.first;
+        final previewLayers = layers
+            .where(_isPreviewableAiLayer)
+            .toList(growable: false);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1151,15 +1197,95 @@ class _AiOutputLayersSection extends StatelessWidget {
                 text: 'No AI output layers have been registered yet.',
               )
             else
-              for (final layer in layers)
-                _AiOutputLayerTile(
-                  run: run,
-                  layer: layer,
-                  latestReview: latestReview,
+              _LayerStatusSummary(layers: layers),
+            if (previewLayers.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.md),
+              const _NoticeRow(
+                icon: Icons.admin_panel_settings_outlined,
+                text:
+                    'Preview is protected super-admin review only. These layers are not published to viewers.',
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.map_outlined),
+                  label: const Text('Open AI preview map'),
+                  onPressed: () => context.push(
+                    AppRoutes.projectAiPreview(run.projectId, run.id),
+                  ),
                 ),
+              ),
+            ],
+            if (layers.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.sm),
+              ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: EdgeInsets.zero,
+                expandedAlignment: Alignment.centerLeft,
+                expandedCrossAxisAlignment: CrossAxisAlignment.start,
+                title: const Text('Layer details'),
+                children: [
+                  for (final layer in layers)
+                    _AiOutputLayerTile(
+                      run: run,
+                      layer: layer,
+                      latestReview: latestReview,
+                    ),
+                ],
+              ),
+            ],
           ],
         );
       },
+    );
+  }
+}
+
+bool _isPreviewableAiLayer(AiOutputLayer layer) {
+  const types = {'classification', 'confidence', 'uncertainty'};
+  const statuses = {'draft', 'ready_for_review', 'approved'};
+  return types.contains(layer.layerType) && statuses.contains(layer.status);
+}
+
+AiOutputLayer? _primaryPreviewFeatureListLayer(List<AiOutputLayer> layers) {
+  for (final layer in layers) {
+    if (layer.layerType == 'classification') {
+      return layer;
+    }
+  }
+  return layers.isEmpty ? null : layers.first;
+}
+
+class _LayerStatusSummary extends StatelessWidget {
+  const _LayerStatusSummary({required this.layers});
+
+  final List<AiOutputLayer> layers;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final layer in layers)
+          Padding(
+            padding: const EdgeInsets.only(top: AppSpacing.xs),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${_friendlyLayerTypeLabel(layer.layerType)}: '
+                    '${_friendlyLayerStatusTitle(layer.status)}',
+                  ),
+                ),
+                Text(
+                  _layerVisibilityText(layer),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 }
@@ -1280,6 +1406,2115 @@ class _StatisticsLayerSummary extends StatelessWidget {
       ],
     );
   }
+}
+
+class ProjectAiPreviewMapScreen extends ConsumerStatefulWidget {
+  const ProjectAiPreviewMapScreen({
+    required this.projectId,
+    required this.runId,
+    super.key,
+  });
+
+  final String projectId;
+  final String runId;
+
+  @override
+  ConsumerState<ProjectAiPreviewMapScreen> createState() =>
+      _ProjectAiPreviewMapScreenState();
+}
+
+class _ProjectAiPreviewMapScreenState
+    extends ConsumerState<ProjectAiPreviewMapScreen> {
+  final MapController _mapController = MapController();
+  final LayerHitNotifier<_AiPreviewFeature> _previewPolygonHitNotifier =
+      ValueNotifier(null);
+  final LayerHitNotifier<_AiPreviewFeature> _previewPolylineHitNotifier =
+      ValueNotifier(null);
+
+  MapCamera? _latestCamera;
+  Timer? _viewportFeatureRefreshTimer;
+  LebanonBasemapStyle _basemapStyle = LebanonBasemapStyle.street;
+  bool _showClassification = true;
+  bool _showConfidence = false;
+  bool _showUncertainty = false;
+  bool _panelExpanded = false;
+  String? _selectedFeatureKey;
+  _AiPreviewFeature? _selectedFeatureOverride;
+  String? _featureViewportBounds;
+  double? _featureViewportZoom;
+  DateTime? _suppressProgrammaticViewportRefreshUntil;
+  final Map<String, AiLayerFeatureCollection> _lastLayerCollections =
+      <String, AiLayerFeatureCollection>{};
+
+  @override
+  void initState() {
+    super.initState();
+    final initialZoom = _aiPreviewZoomBucket(
+      LebanonMapConfig.fullscreenInitialZoom,
+    );
+    _featureViewportBounds = _aiLayerBoundsQuery(
+      LebanonMapConfig.bounds,
+      initialZoom,
+    );
+    _featureViewportZoom = initialZoom;
+  }
+
+  @override
+  void dispose() {
+    _viewportFeatureRefreshTimer?.cancel();
+    _previewPolygonHitNotifier.dispose();
+    _previewPolylineHitNotifier.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final session = ref.watch(authControllerProvider).session;
+    if (session?.user.isProtectedSuperAdmin != true) {
+      return const AppEmptyState(
+        icon: Icons.lock_outline,
+        title: 'AI preview restricted',
+        message: 'Only the protected super-admin can preview AI layers.',
+      );
+    }
+
+    final runAsync = ref.watch(aiRunProvider(widget.runId));
+    final layersAsync = ref.watch(aiRunLayersProvider(widget.runId));
+
+    return runAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (error, _) => AppEmptyState(
+        icon: Icons.error_outline,
+        title: 'AI run unavailable',
+        message: userFacingErrorMessage(
+          error,
+          fallback: 'Unable to load this AI run.',
+        ),
+      ),
+      data: (run) => layersAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (error, _) => AppEmptyState(
+          icon: Icons.error_outline,
+          title: 'AI layers unavailable',
+          message: userFacingErrorMessage(
+            error,
+            fallback: 'Unable to load AI output layers.',
+          ),
+        ),
+        data: (layers) => _buildPreview(run, layers),
+      ),
+    );
+  }
+
+  Widget _buildPreview(AiRun run, List<AiOutputLayer> layers) {
+    final previewLayers = layers.where(_isPreviewableAiLayer).toList();
+    final activeLayerTypes = <String>{
+      if (_showClassification) 'classification',
+      if (_showConfidence) 'confidence',
+      if (_showUncertainty) 'uncertainty',
+    };
+    final activeLayers = previewLayers
+        .where((layer) => activeLayerTypes.contains(layer.layerType))
+        .toList(growable: false);
+
+    final collections = <AiLayerFeatureCollection>[];
+    final errors = <String>[];
+    var loading = false;
+    for (final layer in activeLayers) {
+      final cachedCollection = _lastLayerCollections[layer.id];
+      ref
+          .watch(aiLayerFeaturesProvider(_featureQuery(layer.id)))
+          .when<void>(
+            loading: () {
+              loading = true;
+              if (cachedCollection != null) {
+                collections.add(cachedCollection);
+              }
+            },
+            error: (error, _) {
+              errors.add(
+                '${_friendlyLayerTypeLabel(layer.layerType)}: '
+                '${userFacingErrorMessage(error, fallback: 'Unable to load layer features.')}',
+              );
+              if (cachedCollection != null) {
+                collections.add(cachedCollection);
+              }
+            },
+            data: (collection) {
+              _lastLayerCollections[layer.id] = collection;
+              collections.add(collection);
+            },
+          );
+    }
+
+    final features = <_AiPreviewFeature>[
+      for (final collection in collections)
+        for (final feature in collection.features)
+          _AiPreviewFeature(layer: collection.layer, feature: feature),
+    ];
+    final selectedOverride = _selectedFeatureOverride;
+    if (selectedOverride != null &&
+        activeLayerTypes.contains(selectedOverride.layer.layerType) &&
+        !features.any((item) => item.key == selectedOverride.key)) {
+      features.add(selectedOverride);
+    }
+    final loadSummary = _AiPreviewLoadSummary.fromCollections(collections);
+    final hasStatisticsLayer = layers.any(
+      (layer) => layer.layerType == 'statistics',
+    );
+    final featureListLayer = _primaryPreviewFeatureListLayer(previewLayers);
+
+    return ClipRRect(
+      borderRadius: AppRadii.lg,
+      child: ColoredBox(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        child: Stack(
+          children: [
+            _AiPreviewMap(
+              mapController: _mapController,
+              basemapStyle: _basemapStyle,
+              run: run,
+              features: features,
+              polygonHitNotifier: _previewPolygonHitNotifier,
+              polylineHitNotifier: _previewPolylineHitNotifier,
+              showClassification: _showClassification,
+              showConfidence: _showConfidence,
+              showUncertainty: _showUncertainty,
+              selectedFeatureKey: _selectedFeatureKey,
+              onFeatureSelected: (feature) =>
+                  _handlePreviewFeatureSelected(run, feature),
+              onPositionChanged: _handleMapPositionChanged,
+            ),
+            Positioned(
+              left: 12,
+              top: 12,
+              right: 12,
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: SizedBox(
+                  width: double.infinity,
+                  child: _AiPreviewControlPanel(
+                    title: _previewPanelTitle(run),
+                    layers: previewLayers,
+                    loadSummary: loadSummary,
+                    showClassification: _showClassification,
+                    showConfidence: _showConfidence,
+                    showUncertainty: _showUncertainty,
+                    expanded: _panelExpanded,
+                    loading: loading,
+                    errors: errors,
+                    hasStatisticsLayer: hasStatisticsLayer,
+                    onExpandedChanged: (value) {
+                      setState(() => _panelExpanded = value);
+                    },
+                    onClassificationChanged: (value) {
+                      setState(() => _showClassification = value);
+                    },
+                    onConfidenceChanged: (value) {
+                      setState(() => _showConfidence = value);
+                    },
+                    onUncertaintyChanged: (value) {
+                      setState(() => _showUncertainty = value);
+                    },
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              right: 14,
+              bottom: 18,
+              child: _AiPreviewMapControls(
+                basemapStyle: _basemapStyle,
+                featureCount: loadSummary?.totalFeatureCount ?? features.length,
+                onOpenFeatures: featureListLayer == null
+                    ? null
+                    : () => _openFeatureList(run, featureListLayer),
+                onFitWorkspace: _fitWorkspace,
+                onZoomIn: () => _zoomBy(1),
+                onZoomOut: () => _zoomBy(-1),
+                onToggleBasemap: () {
+                  setState(() {
+                    _basemapStyle = _basemapStyle == LebanonBasemapStyle.street
+                        ? LebanonBasemapStyle.satellite
+                        : LebanonBasemapStyle.street;
+                  });
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  AiLayerFeaturesQuery _featureQuery(String layerId) {
+    final zoom = _featureViewportZoom;
+    final geometry = _aiPreviewGeometryMode(zoom);
+    return AiLayerFeaturesQuery(
+      layerId: layerId,
+      detail: geometry == 'full' ? 'full' : 'overview',
+      geometry: geometry,
+      bounds: _featureViewportBounds,
+      zoom: zoom,
+    );
+  }
+
+  void _handleMapPositionChanged(MapCamera camera, bool hasGesture) {
+    _latestCamera = camera;
+    final suppressUntil = _suppressProgrammaticViewportRefreshUntil;
+    if (!hasGesture &&
+        suppressUntil != null &&
+        DateTime.now().isBefore(suppressUntil)) {
+      return;
+    }
+    if (suppressUntil != null && DateTime.now().isAfter(suppressUntil)) {
+      _suppressProgrammaticViewportRefreshUntil = null;
+    }
+    _scheduleFeatureViewportRefresh();
+  }
+
+  void _scheduleFeatureViewportRefresh() {
+    _scheduleFeatureViewportRefreshAfter();
+  }
+
+  void _scheduleFeatureViewportRefreshAfter({
+    Duration delay = const Duration(milliseconds: 350),
+    bool force = false,
+  }) {
+    _viewportFeatureRefreshTimer?.cancel();
+    _viewportFeatureRefreshTimer = Timer(delay, () {
+      if (!mounted) {
+        return;
+      }
+      final camera = _currentAiPreviewCamera();
+      if (camera == null) {
+        return;
+      }
+      final nextZoom = _aiPreviewZoomBucket(camera.zoom);
+      final nextBounds = _aiLayerBoundsQuery(
+        _paddedAiViewportBounds(camera.visibleBounds, nextZoom),
+        nextZoom,
+      );
+      if (nextBounds == _featureViewportBounds &&
+          nextZoom == _featureViewportZoom &&
+          !force) {
+        return;
+      }
+      setState(() {
+        _featureViewportBounds = nextBounds;
+        _featureViewportZoom = nextZoom;
+      });
+    });
+  }
+
+  MapCamera? _currentAiPreviewCamera() {
+    final latest = _latestCamera;
+    if (latest != null) {
+      return latest;
+    }
+    try {
+      return _mapController.camera;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _fitWorkspace() {
+    _runMapAction(
+      () => _mapController.fitCamera(LebanonMapConfig.fullscreenFit),
+    );
+  }
+
+  void _zoomBy(double delta) {
+    MapCamera camera;
+    try {
+      camera = _latestCamera ?? _mapController.camera;
+    } catch (_) {
+      return;
+    }
+    final zoom = (camera.zoom + delta)
+        .clamp(
+          LebanonMapConfig.fullscreenMinZoom,
+          LebanonMapConfig.fullscreenMaxZoom,
+        )
+        .toDouble();
+    _runMapAction(() => _mapController.move(camera.center, zoom));
+  }
+
+  void _runMapAction(VoidCallback action) {
+    try {
+      action();
+    } catch (_) {
+      // The controller can briefly be unavailable while FlutterMap mounts.
+    }
+  }
+
+  void _selectPreviewFeature(
+    AiRun run,
+    _AiPreviewFeature item, {
+    required bool showDetails,
+  }) {
+    _focusPreviewFeature(item);
+    if (showDetails) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _openFeatureDetails(run, item);
+        }
+      });
+    }
+  }
+
+  void _handlePreviewFeatureSelected(AiRun run, _AiPreviewFeature item) {
+    if (_isAggregateAiFeature(item.feature)) {
+      _drillIntoPreviewAggregate(item);
+      return;
+    }
+    _selectPreviewFeature(run, item, showDetails: true);
+  }
+
+  void _drillIntoPreviewAggregate(_AiPreviewFeature item) {
+    final center = geometryPointsCenter(geometryPoints(item.feature.geometry));
+    if (center == null) {
+      return;
+    }
+    _runMapAction(() {
+      final currentZoom = _latestCamera?.zoom ?? _featureViewportZoom ?? 9;
+      final nextZoom = (currentZoom + 2.5)
+          .clamp(11.5, LebanonMapConfig.fullscreenMaxZoom)
+          .toDouble();
+      _suppressProgrammaticViewportRefreshUntil = DateTime.now().add(
+        const Duration(milliseconds: 500),
+      );
+      _mapController.move(center, nextZoom);
+      setState(() {
+        _selectedFeatureKey = null;
+        _selectedFeatureOverride = null;
+      });
+      _scheduleFeatureViewportRefreshAfter(
+        delay: const Duration(milliseconds: 650),
+        force: true,
+      );
+    });
+  }
+
+  void _focusPreviewFeature(_AiPreviewFeature item) {
+    final points = geometryPoints(item.feature.geometry);
+    setState(() {
+      _selectedFeatureKey = item.key;
+      if (!_isAggregateAiFeature(item.feature)) {
+        _selectedFeatureOverride = item;
+      }
+      if (points.isNotEmpty && !_isAggregateAiFeature(item.feature)) {
+        final targetBounds = LatLngBounds.fromPoints(points);
+        _featureViewportZoom = 14;
+        _featureViewportBounds = _aiLayerBoundsQuery(
+          _expandedAiBounds(targetBounds, 0.02),
+          _featureViewportZoom!,
+        );
+      }
+    });
+    if (points.isEmpty) {
+      return;
+    }
+    _runMapAction(() {
+      _suppressProgrammaticViewportRefreshUntil = DateTime.now().add(
+        const Duration(milliseconds: 900),
+      );
+      if (points.length > 1 &&
+          !geometryPointsCollapseToSingleLocation(points)) {
+        _mapController.fitCamera(
+          CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints(points),
+            padding: const EdgeInsets.all(76),
+            maxZoom: 16,
+          ),
+        );
+        return;
+      }
+      final center = geometryPointsCenter(points);
+      if (center != null) {
+        _mapController.move(center, 16);
+      }
+      _scheduleFeatureViewportRefreshAfter(
+        delay: const Duration(milliseconds: 900),
+        force: true,
+      );
+    });
+  }
+
+  void _openFeatureDetails(AiRun run, _AiPreviewFeature item) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) =>
+          _AiFeatureDetailsSheet(run: run, previewFeature: item),
+    );
+  }
+
+  void _openFeatureList(AiRun run, AiOutputLayer layer) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => _AiFeatureListSheet(
+        layer: layer,
+        onFeatureSelected: (feature) {
+          Navigator.of(context).pop();
+          unawaited(_selectFullPreviewFeatureFromList(run, feature));
+        },
+      ),
+    );
+  }
+
+  Future<void> _selectFullPreviewFeatureFromList(
+    AiRun run,
+    _AiPreviewFeature item,
+  ) async {
+    if (_isAggregateAiFeature(item.feature)) {
+      _drillIntoPreviewAggregate(item);
+      return;
+    }
+    try {
+      final collection = await ref
+          .read(aiRepositoryProvider)
+          .fetchLayerFeatures(
+            layerId: item.layer.id,
+            detail: 'full',
+            geometry: 'full',
+            page: 1,
+            limit: 1,
+            featureId: item.feature.id,
+          );
+      if (!mounted) {
+        return;
+      }
+      final feature = collection.features.isEmpty
+          ? item.feature
+          : collection.features.first;
+      final fullItem = _AiPreviewFeature(
+        layer: collection.features.isEmpty ? item.layer : collection.layer,
+        feature: feature,
+      );
+      _selectPreviewFeature(run, fullItem, showDetails: true);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      AppSnackbar.showError(
+        context,
+        userFacingErrorMessage(
+          error,
+          fallback: 'Unable to open this AI feature right now.',
+        ),
+      );
+      _selectPreviewFeature(run, item, showDetails: true);
+    }
+  }
+}
+
+String _previewPanelTitle(AiRun run) {
+  final shortId = run.id.length <= 8 ? run.id : run.id.substring(0, 8);
+  return 'Run $shortId preview';
+}
+
+String _aiLayerBoundsQuery(LatLngBounds bounds, double zoom) {
+  final cell = _aiPreviewBoundsCellSize(zoom);
+  double snapDown(double value) => (value / cell).floorToDouble() * cell;
+  double snapUp(double value) => (value / cell).ceilToDouble() * cell;
+  String normalize(double value) => value.toStringAsFixed(4);
+  return [
+    normalize(snapDown(bounds.southWest.longitude)),
+    normalize(snapDown(bounds.southWest.latitude)),
+    normalize(snapUp(bounds.northEast.longitude)),
+    normalize(snapUp(bounds.northEast.latitude)),
+  ].join(',');
+}
+
+LatLngBounds _expandedAiBounds(LatLngBounds bounds, double paddingDegrees) {
+  final southWest = bounds.southWest;
+  final northEast = bounds.northEast;
+  return LatLngBounds(
+    LatLng(
+      southWest.latitude - paddingDegrees,
+      southWest.longitude - paddingDegrees,
+    ),
+    LatLng(
+      northEast.latitude + paddingDegrees,
+      northEast.longitude + paddingDegrees,
+    ),
+  );
+}
+
+LatLngBounds _paddedAiViewportBounds(LatLngBounds bounds, double zoomBucket) {
+  final southWest = bounds.southWest;
+  final northEast = bounds.northEast;
+  final latSpan = (northEast.latitude - southWest.latitude).abs();
+  final lonSpan = (northEast.longitude - southWest.longitude).abs();
+  final scalePadding = zoomBucket >= 14
+      ? 0.45
+      : zoomBucket >= 12
+      ? 0.35
+      : 0.25;
+  final minPadding = zoomBucket >= 14
+      ? 0.006
+      : zoomBucket >= 12
+      ? 0.015
+      : 0.04;
+  final latPadding = (latSpan * scalePadding)
+      .clamp(minPadding, zoomBucket >= 14 ? 0.08 : 0.18)
+      .toDouble();
+  final lonPadding = (lonSpan * scalePadding)
+      .clamp(minPadding, zoomBucket >= 14 ? 0.08 : 0.18)
+      .toDouble();
+
+  return LatLngBounds(
+    LatLng(southWest.latitude - latPadding, southWest.longitude - lonPadding),
+    LatLng(northEast.latitude + latPadding, northEast.longitude + lonPadding),
+  );
+}
+
+double _aiPreviewZoomBucket(double zoom) {
+  if (zoom < 8) {
+    return 7;
+  }
+  if (zoom < 10) {
+    return 9;
+  }
+  if (zoom < 12) {
+    return 11;
+  }
+  if (zoom < 14) {
+    return 13;
+  }
+  return (zoom * 2).roundToDouble() / 2;
+}
+
+double _aiPreviewBoundsCellSize(double zoomBucket) {
+  if (zoomBucket < 8) {
+    return 0.25;
+  }
+  if (zoomBucket < 10) {
+    return 0.12;
+  }
+  if (zoomBucket < 12) {
+    return 0.06;
+  }
+  if (zoomBucket < 14) {
+    return 0.025;
+  }
+  return 0.01;
+}
+
+String _aiPreviewGeometryMode(double? zoom) {
+  final value = zoom ?? LebanonMapConfig.fullscreenInitialZoom;
+  if (value >= 14) {
+    return 'full';
+  }
+  if (value < 11) {
+    return 'aggregate';
+  }
+  return 'simplified';
+}
+
+class _AiPreviewLoadSummary {
+  const _AiPreviewLoadSummary({
+    required this.totalFeatureCount,
+    required this.visibleFeatureCount,
+    required this.returnedFeatureCount,
+    required this.capped,
+    required this.optimizedPreview,
+    required this.geometryMode,
+    this.cap,
+  });
+
+  final int totalFeatureCount;
+  final int visibleFeatureCount;
+  final int returnedFeatureCount;
+  final bool capped;
+  final bool optimizedPreview;
+  final String geometryMode;
+  final int? cap;
+
+  static _AiPreviewLoadSummary? fromCollections(
+    List<AiLayerFeatureCollection> collections,
+  ) {
+    if (collections.isEmpty) {
+      return null;
+    }
+    final primary = collections.firstWhere(
+      (collection) => collection.layer.layerType == 'classification',
+      orElse: () => collections.first,
+    );
+    return _AiPreviewLoadSummary(
+      totalFeatureCount: primary.featureCount,
+      visibleFeatureCount: primary.matchingFeatureCount,
+      returnedFeatureCount: primary.returnedFeatureCount,
+      capped: primary.capped,
+      cap: primary.cap,
+      optimizedPreview: primary.optimizedPreview,
+      geometryMode: primary.geometryMode,
+    );
+  }
+}
+
+class _AiPreviewLayerToggles extends StatelessWidget {
+  const _AiPreviewLayerToggles({
+    required this.layers,
+    required this.showClassification,
+    required this.showConfidence,
+    required this.showUncertainty,
+    required this.onClassificationChanged,
+    required this.onConfidenceChanged,
+    required this.onUncertaintyChanged,
+  });
+
+  final List<AiOutputLayer> layers;
+  final bool showClassification;
+  final bool showConfidence;
+  final bool showUncertainty;
+  final ValueChanged<bool> onClassificationChanged;
+  final ValueChanged<bool> onConfidenceChanged;
+  final ValueChanged<bool> onUncertaintyChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasClassification = layers.any(
+      (layer) => layer.layerType == 'classification',
+    );
+    final hasConfidence = layers.any(
+      (layer) => layer.layerType == 'confidence',
+    );
+    final hasUncertainty = layers.any(
+      (layer) => layer.layerType == 'uncertainty',
+    );
+    return Wrap(
+      spacing: AppSpacing.sm,
+      runSpacing: AppSpacing.xs,
+      children: [
+        FilterChip(
+          selected: showClassification && hasClassification,
+          avatar: const _LegendSwatch(color: Color(0xFF2E7D32)),
+          label: const Text('Classification'),
+          onSelected: hasClassification ? onClassificationChanged : null,
+        ),
+        FilterChip(
+          selected: showConfidence && hasConfidence,
+          avatar: const _LegendSwatch(color: Color(0xFF0288D1)),
+          label: const Text('Confidence'),
+          onSelected: hasConfidence ? onConfidenceChanged : null,
+        ),
+        FilterChip(
+          selected: showUncertainty && hasUncertainty,
+          avatar: const _LegendSwatch(color: Color(0xFFE65100)),
+          label: const Text('Uncertainty'),
+          onSelected: hasUncertainty ? onUncertaintyChanged : null,
+        ),
+      ],
+    );
+  }
+}
+
+class _AiPreviewLegend extends StatelessWidget {
+  const _AiPreviewLegend({
+    required this.showClassification,
+    required this.showConfidence,
+    required this.showUncertainty,
+  });
+
+  final bool showClassification;
+  final bool showConfidence;
+  final bool showUncertainty;
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = <(Color, String)>[
+      if (showClassification) ...[
+        (const Color(0xFF2E7D32), 'Olives'),
+        (const Color(0xFFF9A825), 'Citrus fruit trees'),
+        (const Color(0xFF7B1FA2), 'Fruit trees'),
+      ],
+      if (showConfidence) (const Color(0xFF0288D1), 'Confidence available'),
+      if (showUncertainty)
+        (const Color(0xFFE65100), 'Uncertain areas need validation'),
+    ];
+    if (entries.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Legend', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: AppSpacing.xs),
+        Wrap(
+          spacing: AppSpacing.md,
+          runSpacing: AppSpacing.xs,
+          children: [
+            for (final entry in entries)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 170),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _LegendSwatch(color: entry.$1),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        entry.$2,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+        if (showUncertainty) ...[
+          const SizedBox(height: AppSpacing.xs),
+          const _NoticeRow(
+            icon: Icons.info_outline,
+            text: 'Uncertain areas are candidates for future field validation.',
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _AiPreviewControlPanel extends StatelessWidget {
+  const _AiPreviewControlPanel({
+    required this.title,
+    required this.layers,
+    required this.loadSummary,
+    required this.showClassification,
+    required this.showConfidence,
+    required this.showUncertainty,
+    required this.expanded,
+    required this.loading,
+    required this.errors,
+    required this.hasStatisticsLayer,
+    required this.onExpandedChanged,
+    required this.onClassificationChanged,
+    required this.onConfidenceChanged,
+    required this.onUncertaintyChanged,
+  });
+
+  final String title;
+  final List<AiOutputLayer> layers;
+  final _AiPreviewLoadSummary? loadSummary;
+  final bool showClassification;
+  final bool showConfidence;
+  final bool showUncertainty;
+  final bool expanded;
+  final bool loading;
+  final List<String> errors;
+  final bool hasStatisticsLayer;
+  final ValueChanged<bool> onExpandedChanged;
+  final ValueChanged<bool> onClassificationChanged;
+  final ValueChanged<bool> onConfidenceChanged;
+  final ValueChanged<bool> onUncertaintyChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      child: Material(
+        elevation: 0,
+        color: scheme.surface.withValues(alpha: 0.93),
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: BorderSide(
+            color: scheme.outlineVariant.withValues(alpha: 0.38),
+          ),
+        ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final actionRailWidth = constraints.maxWidth >= 370 ? 104.0 : 48.0;
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(12, 11, 12, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 1),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  height: 1.15,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  const _MapInfoPill(
+                                    icon: Icons.visibility_off_outlined,
+                                    label: 'Not published',
+                                  ),
+                                  const _MapInfoPill(
+                                    icon: Icons.rule_folder_outlined,
+                                    label: 'Review only',
+                                  ),
+                                  if (loadSummary != null)
+                                    _MapInfoPill(
+                                      icon: Icons.layers_outlined,
+                                      label:
+                                          'Total AI features: ${loadSummary!.totalFeatureCount}',
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: actionRailWidth),
+                        child: Align(
+                          alignment: Alignment.topRight,
+                          child: Wrap(
+                            alignment: WrapAlignment.end,
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              _MapPanelIconButton(
+                                tooltip: expanded
+                                    ? 'Collapse AI layers'
+                                    : 'Show AI layers',
+                                icon: expanded
+                                    ? Icons.keyboard_arrow_up_rounded
+                                    : Icons.tune_rounded,
+                                onPressed: () => onExpandedChanged(!expanded),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (expanded) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    if (loadSummary != null) ...[
+                      _AiPreviewCountSummary(summary: loadSummary!),
+                      const SizedBox(height: AppSpacing.sm),
+                    ],
+                    _AiPreviewLayerToggles(
+                      layers: layers,
+                      showClassification: showClassification,
+                      showConfidence: showConfidence,
+                      showUncertainty: showUncertainty,
+                      onClassificationChanged: onClassificationChanged,
+                      onConfidenceChanged: onConfidenceChanged,
+                      onUncertaintyChanged: onUncertaintyChanged,
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _AiPreviewLegend(
+                      showClassification: showClassification,
+                      showConfidence: showConfidence,
+                      showUncertainty: showUncertainty,
+                    ),
+                    if (loading) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      const LinearProgressIndicator(),
+                    ],
+                    for (final error in errors)
+                      Padding(
+                        padding: const EdgeInsets.only(top: AppSpacing.xs),
+                        child: _NoticeRow(
+                          icon: Icons.error_outline,
+                          text: error,
+                        ),
+                      ),
+                    if (layers.isEmpty) ...[
+                      const SizedBox(height: AppSpacing.xs),
+                      const _NoticeRow(
+                        icon: Icons.layers_clear_outlined,
+                        text: 'No preview layers are registered for this run.',
+                      ),
+                    ],
+                    if (hasStatisticsLayer) ...[
+                      const SizedBox(height: AppSpacing.xs),
+                      const _NoticeRow(
+                        icon: Icons.query_stats_outlined,
+                        text: 'Statistics are summarized in Run Details.',
+                      ),
+                    ],
+                    const SizedBox(height: AppSpacing.xs),
+                    const _NoticeRow(
+                      icon: Icons.info_outline,
+                      text: 'AI predictions remain separate from field data.',
+                    ),
+                  ],
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _AiPreviewCountSummary extends StatelessWidget {
+  const _AiPreviewCountSummary({required this.summary});
+
+  final _AiPreviewLoadSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final details = <Widget>[
+      _MapInfoPill(
+        icon: Icons.layers_outlined,
+        label: 'Total: ${summary.totalFeatureCount}',
+      ),
+      _MapInfoPill(
+        icon: Icons.crop_free_outlined,
+        label: 'Visible: ${summary.visibleFeatureCount}',
+      ),
+      _MapInfoPill(
+        icon: Icons.visibility_outlined,
+        label: 'Loaded: ${summary.returnedFeatureCount}',
+      ),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(spacing: 8, runSpacing: 8, children: details),
+        if (summary.geometryMode == 'aggregate') ...[
+          const SizedBox(height: AppSpacing.xs),
+          const _NoticeRow(
+            icon: Icons.grid_view_outlined,
+            text: 'Overview mode: grouped features. Zoom in for geometry.',
+          ),
+        ] else if (summary.geometryMode == 'simplified') ...[
+          const SizedBox(height: AppSpacing.xs),
+          const _NoticeRow(
+            icon: Icons.speed_outlined,
+            text: 'Optimized preview. Zoom in for detailed geometry.',
+          ),
+        ],
+        if (summary.capped) ...[
+          const SizedBox(height: AppSpacing.xs),
+          _NoticeRow(
+            icon: Icons.info_outline,
+            text:
+                'Showing ${summary.returnedFeatureCount} of '
+                '${summary.visibleFeatureCount} visible features in this view.',
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _AiPreviewMapControls extends StatelessWidget {
+  const _AiPreviewMapControls({
+    required this.basemapStyle,
+    required this.featureCount,
+    required this.onOpenFeatures,
+    required this.onFitWorkspace,
+    required this.onZoomIn,
+    required this.onZoomOut,
+    required this.onToggleBasemap,
+  });
+
+  final LebanonBasemapStyle basemapStyle;
+  final int featureCount;
+  final VoidCallback? onOpenFeatures;
+  final VoidCallback onFitWorkspace;
+  final VoidCallback onZoomIn;
+  final VoidCallback onZoomOut;
+  final VoidCallback onToggleBasemap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        _MapFloatingActionButton(
+          tooltip: 'Browse AI features',
+          onPressed: onOpenFeatures,
+          badgeLabel: featureCount > 0 ? '$featureCount' : null,
+          child: const Icon(Icons.layers_outlined, size: 20),
+        ),
+        const SizedBox(height: 12),
+        Material(
+          elevation: 6,
+          color: scheme.surface.withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _AiGroupedMapRailButton(
+                tooltip: basemapStyle == LebanonBasemapStyle.street
+                    ? 'Switch to satellite'
+                    : 'Switch to street map',
+                onPressed: onToggleBasemap,
+                icon: Icon(
+                  basemapStyle == LebanonBasemapStyle.street
+                      ? Icons.satellite_alt_outlined
+                      : Icons.map_outlined,
+                ),
+                isTop: true,
+              ),
+              _AiGroupedMapRailButton(
+                tooltip: 'Fit Lebanon workspace',
+                onPressed: onFitWorkspace,
+                icon: const Icon(Icons.center_focus_strong_outlined),
+              ),
+              _AiGroupedMapRailButton(
+                tooltip: 'Zoom in',
+                onPressed: onZoomIn,
+                icon: const Icon(Icons.add),
+              ),
+              _AiGroupedMapRailButton(
+                tooltip: 'Zoom out',
+                onPressed: onZoomOut,
+                icon: const Icon(Icons.remove),
+                isBottom: true,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AiGroupedMapRailButton extends StatelessWidget {
+  const _AiGroupedMapRailButton({
+    required this.tooltip,
+    required this.onPressed,
+    required this.icon,
+    this.isTop = false,
+    this.isBottom = false,
+  });
+
+  final String tooltip;
+  final VoidCallback? onPressed;
+  final Widget icon;
+  final bool isTop;
+  final bool isBottom;
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = BorderRadius.vertical(
+      top: isTop ? const Radius.circular(18) : Radius.zero,
+      bottom: isBottom ? const Radius.circular(18) : Radius.zero,
+    );
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: radius,
+        onTap: onPressed,
+        child: SizedBox(width: 44, height: 44, child: Center(child: icon)),
+      ),
+    );
+  }
+}
+
+class _MapFloatingActionButton extends StatelessWidget {
+  const _MapFloatingActionButton({
+    required this.tooltip,
+    required this.onPressed,
+    required this.child,
+    this.badgeLabel,
+  });
+
+  final String tooltip;
+  final VoidCallback? onPressed;
+  final Widget child;
+  final String? badgeLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        elevation: 6,
+        color: scheme.surface.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onPressed,
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Center(child: child),
+                if (badgeLabel != null)
+                  Positioned(
+                    right: 4,
+                    top: 4,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: scheme.primary,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 1.5,
+                        ),
+                        child: Text(
+                          badgeLabel!,
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(
+                                color: scheme.onPrimary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MapPanelIconButton extends StatelessWidget {
+  const _MapPanelIconButton({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: scheme.primaryContainer.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: onPressed,
+          child: SizedBox(width: 40, height: 40, child: Icon(icon, size: 20)),
+        ),
+      ),
+    );
+  }
+}
+
+class _MapInfoPill extends StatelessWidget {
+  const _MapInfoPill({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 15, color: scheme.primary),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelMedium,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AiPreviewMap extends StatelessWidget {
+  const _AiPreviewMap({
+    required this.mapController,
+    required this.basemapStyle,
+    required this.run,
+    required this.features,
+    required this.polygonHitNotifier,
+    required this.polylineHitNotifier,
+    required this.showClassification,
+    required this.showConfidence,
+    required this.showUncertainty,
+    required this.selectedFeatureKey,
+    required this.onFeatureSelected,
+    required this.onPositionChanged,
+  });
+
+  final MapController mapController;
+  final LebanonBasemapStyle basemapStyle;
+  final AiRun run;
+  final List<_AiPreviewFeature> features;
+  final LayerHitNotifier<_AiPreviewFeature> polygonHitNotifier;
+  final LayerHitNotifier<_AiPreviewFeature> polylineHitNotifier;
+  final bool showClassification;
+  final bool showConfidence;
+  final bool showUncertainty;
+  final String? selectedFeatureKey;
+  final ValueChanged<_AiPreviewFeature> onFeatureSelected;
+  final void Function(MapCamera camera, bool hasGesture) onPositionChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final center = LebanonMapConfig.center;
+    final labelOverlayUrl = LebanonMapConfig.referenceLabelUrlTemplate(
+      basemapStyle,
+    );
+    return FlutterMap(
+      mapController: mapController,
+      options: MapOptions(
+        initialCenter: center,
+        initialZoom: LebanonMapConfig.fullscreenInitialZoom,
+        initialCameraFit: LebanonMapConfig.fullscreenFit,
+        minZoom: LebanonMapConfig.fullscreenMinZoom,
+        maxZoom: LebanonMapConfig.fullscreenMaxZoom,
+        cameraConstraint: CameraConstraint.containCenter(
+          bounds: LebanonMapConfig.bounds,
+        ),
+        onPositionChanged: onPositionChanged,
+      ),
+      children: [
+        if (LebanonMapConfig.shouldRenderTileLayers)
+          TileLayer(
+            key: ValueKey<String>('ai_preview_basemap_${basemapStyle.name}'),
+            urlTemplate: LebanonMapConfig.basemapUrlTemplate(basemapStyle),
+            tileProvider: appNetworkTileProvider(),
+            tileDisplay: const TileDisplay.fadeIn(
+              duration: Duration(milliseconds: 180),
+              startOpacity: 0,
+              reloadStartOpacity: 0,
+            ),
+            panBuffer: 2,
+            keepBuffer: 3,
+            userAgentPackageName: 'lb.gov.gis_collector',
+          ),
+        if (LebanonMapConfig.shouldRenderTileLayers && labelOverlayUrl != null)
+          TileLayer(
+            key: ValueKey<String>(
+              'ai_preview_label_overlay_${basemapStyle.name}',
+            ),
+            urlTemplate: labelOverlayUrl,
+            tileProvider: appNetworkTileProvider(),
+            tileDisplay: const TileDisplay.fadeIn(
+              duration: Duration(milliseconds: 220),
+              startOpacity: 0,
+              reloadStartOpacity: 0,
+            ),
+            panBuffer: 2,
+            keepBuffer: 3,
+            userAgentPackageName: 'lb.gov.gis_collector',
+          ),
+        _polygonLayer(),
+        _polylineLayer(),
+        MarkerLayer(markers: _markers(context)),
+      ],
+    );
+  }
+
+  Widget _polygonLayer() {
+    final layer = PolygonLayer<_AiPreviewFeature>(
+      polygons: _polygons(),
+      hitNotifier: polygonHitNotifier,
+    );
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      hitTestBehavior: HitTestBehavior.deferToChild,
+      child: GestureDetector(
+        behavior: HitTestBehavior.deferToChild,
+        onTap: () => _handleGeometryLayerHit(polygonHitNotifier),
+        child: layer,
+      ),
+    );
+  }
+
+  Widget _polylineLayer() {
+    final layer = PolylineLayer<_AiPreviewFeature>(
+      polylines: _polylines(),
+      hitNotifier: polylineHitNotifier,
+      minimumHitbox: 12,
+    );
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      hitTestBehavior: HitTestBehavior.deferToChild,
+      child: GestureDetector(
+        behavior: HitTestBehavior.deferToChild,
+        onTap: () => _handleGeometryLayerHit(polylineHitNotifier),
+        child: layer,
+      ),
+    );
+  }
+
+  void _handleGeometryLayerHit(LayerHitNotifier<_AiPreviewFeature> notifier) {
+    final hits = notifier.value?.hitValues;
+    if (hits == null || hits.isEmpty) {
+      return;
+    }
+    final feature = _preferredHitFeature(hits);
+    if (feature != null) {
+      onFeatureSelected(feature);
+    }
+  }
+
+  _AiPreviewFeature? _preferredHitFeature(List<_AiPreviewFeature> hits) {
+    final visibleHits = hits
+        .where(_isVisible)
+        .where((item) {
+          return !_isAggregateAiFeature(item.feature);
+        })
+        .toList(growable: false);
+    if (visibleHits.isEmpty) {
+      return null;
+    }
+    if (visibleHits.length == 1) {
+      return visibleHits.first;
+    }
+    visibleHits.sort((a, b) {
+      final aArea = _aiFeatureApproxArea(a.feature);
+      final bArea = _aiFeatureApproxArea(b.feature);
+      return aArea.compareTo(bArea);
+    });
+    return visibleHits.first;
+  }
+
+  List<Polygon<_AiPreviewFeature>> _polygons() {
+    final polygons = <Polygon<_AiPreviewFeature>>[];
+    for (final item in features) {
+      if (!_isVisible(item)) {
+        continue;
+      }
+      if (!isPolygonGeometry(item.feature.geometry)) {
+        continue;
+      }
+      final selected = item.key == selectedFeatureKey;
+      final style = _aiFeatureStyle(item);
+      for (final points in polygonGeometrySegments(item.feature.geometry)) {
+        if (!isValidPolygonRing(points)) {
+          continue;
+        }
+        polygons.add(
+          Polygon<_AiPreviewFeature>(
+            points: points,
+            borderStrokeWidth: selected ? 4.2 : style.borderWidth,
+            borderColor: selected ? Colors.black87 : style.borderColor,
+            color: style.fillColor,
+            hitValue: item,
+          ),
+        );
+      }
+    }
+    return polygons;
+  }
+
+  List<Polyline<_AiPreviewFeature>> _polylines() {
+    final lines = <Polyline<_AiPreviewFeature>>[];
+    for (final item in features) {
+      if (!_isVisible(item)) {
+        continue;
+      }
+      if (!isLineGeometry(item.feature.geometry)) {
+        continue;
+      }
+      final selected = item.key == selectedFeatureKey;
+      final style = _aiFeatureStyle(item);
+      for (final points in lineGeometrySegments(item.feature.geometry)) {
+        if (points.isEmpty) {
+          continue;
+        }
+        lines.add(
+          Polyline<_AiPreviewFeature>(
+            points: points,
+            strokeWidth: selected ? 4.0 : 3.0,
+            color: selected ? Colors.black87 : style.borderColor,
+            hitValue: item,
+          ),
+        );
+      }
+    }
+    return lines;
+  }
+
+  List<Marker> _markers(BuildContext context) {
+    final markers = <Marker>[];
+    for (final item in features) {
+      if (!_isVisible(item)) {
+        continue;
+      }
+      if (!isPointGeometry(item.feature.geometry)) {
+        continue;
+      }
+      final style = _aiFeatureStyle(item);
+      final selected = item.key == selectedFeatureKey;
+      final aggregate = _isAggregateAiFeature(item.feature);
+      for (final point in pointGeometryPoints(item.feature.geometry)) {
+        markers.add(
+          Marker(
+            point: point,
+            width: aggregate ? 30 : 26,
+            height: aggregate ? 30 : 26,
+            child: GestureDetector(
+              key: ValueKey<String>('ai-preview-feature-${item.key}'),
+              behavior: HitTestBehavior.translucent,
+              onTap: () => onFeatureSelected(item),
+              child: Center(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: style.borderColor,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: selected ? Colors.black87 : Colors.white,
+                      width: selected ? 2.4 : 1.8,
+                    ),
+                  ),
+                  child: SizedBox(
+                    width: aggregate ? 17 : 15,
+                    height: aggregate ? 17 : 15,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+    }
+    return markers;
+  }
+
+  bool _isVisible(_AiPreviewFeature item) {
+    return (item.layer.layerType == 'classification' && showClassification) ||
+        (item.layer.layerType == 'confidence' && showConfidence) ||
+        (item.layer.layerType == 'uncertainty' && showUncertainty);
+  }
+}
+
+class _AiFeatureDetailsSheet extends StatelessWidget {
+  const _AiFeatureDetailsSheet({
+    required this.run,
+    required this.previewFeature,
+  });
+
+  final AiRun run;
+  final _AiPreviewFeature previewFeature;
+
+  @override
+  Widget build(BuildContext context) {
+    final feature = previewFeature.feature;
+    final isAggregate = _isAggregateAiFeature(feature);
+    final rows = <MapEntry<String, String>>[
+      if (isAggregate)
+        MapEntry(
+          'Overview group',
+          '${_aggregateAiFeatureCount(feature) ?? 1} AI features',
+        ),
+      if (_aiFeatureClass(feature) != null)
+        MapEntry(
+          isAggregate ? 'Dominant class' : 'Predicted class',
+          _aiFeatureClass(feature)!,
+        ),
+      if (_aiFeatureConfidence(feature) != null)
+        MapEntry(
+          'Confidence',
+          _formatConfidence(_aiFeatureConfidence(feature)!),
+        ),
+      if (_aiFeatureText(feature, const ['model_name', 'model']) != null)
+        MapEntry(
+          'Model',
+          _friendlyModelLabel(
+            _aiFeatureText(feature, const ['model_name', 'model'])!,
+          ),
+        ),
+      if (_aiFeatureText(feature, const ['source']) != null)
+        MapEntry('Source', _aiFeatureText(feature, const ['source'])!),
+      MapEntry('Run id', _aiFeatureText(feature, const ['run_id']) ?? run.id),
+      if (_aiFeatureText(feature, const ['area_ha', 'area']) != null)
+        MapEntry('Area', _aiFeatureText(feature, const ['area_ha', 'area'])!),
+      MapEntry(
+        'Layer',
+        _friendlyLayerTypeLabel(previewFeature.layer.layerType),
+      ),
+    ].map((row) => MapEntry(row.key, _safeText(row.value))).toList();
+
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'AI feature details',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            const _NoticeRow(
+              icon: Icons.warning_amber_outlined,
+              text:
+                  'This is an AI prediction for review, not approved field data.',
+            ),
+            if (isAggregate) ...[
+              const SizedBox(height: AppSpacing.xs),
+              const _NoticeRow(
+                icon: Icons.grid_view_outlined,
+                text:
+                    'This is an optimized overview group. Zoom in for detailed geometry.',
+              ),
+            ],
+            const SizedBox(height: AppSpacing.md),
+            _KeyValueList(title: 'Prediction', rows: rows),
+            const SizedBox(height: AppSpacing.sm),
+            const _NoticeRow(
+              icon: Icons.info_outline,
+              text: 'Regional proof-of-concept. Not a national model.',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AiFeatureListSheet extends ConsumerStatefulWidget {
+  const _AiFeatureListSheet({
+    required this.layer,
+    required this.onFeatureSelected,
+  });
+
+  final AiOutputLayer layer;
+  final ValueChanged<_AiPreviewFeature> onFeatureSelected;
+
+  @override
+  ConsumerState<_AiFeatureListSheet> createState() =>
+      _AiFeatureListSheetState();
+}
+
+class _AiFeatureListSheetState extends ConsumerState<_AiFeatureListSheet> {
+  final TextEditingController _searchController = TextEditingController();
+  String _query = '';
+  String? _selectedClass;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final browserQuery = AiLayerFeatureBrowserQuery(
+      layerId: widget.layer.id,
+      search: _query.trim().isEmpty ? null : _query.trim(),
+      classLabel: _selectedClass,
+    );
+    final featuresAsync = ref.watch(
+      paginatedAiLayerFeatureBrowserProvider(browserQuery),
+    );
+    final featuresController = ref.read(
+      paginatedAiLayerFeatureBrowserProvider(browserQuery).notifier,
+    );
+    final featureState =
+        featuresAsync.valueOrNull ??
+        const PaginatedListState<AiLayerFeature>.initial();
+    final displayedFeatures = featureState.items;
+    final summaryAsync = ref.watch(
+      aiLayerFeaturesProvider(
+        AiLayerFeaturesQuery(
+          layerId: widget.layer.id,
+          detail: 'overview',
+          geometry: 'simplified',
+          page: 1,
+          limit: 1,
+          zoom: 14,
+        ),
+      ),
+    );
+    final summary = summaryAsync.valueOrNull;
+    final classes = _aiFeatureBrowserClasses(summary, displayedFeatures);
+    final displayedTotal = featureState.total > 0
+        ? featureState.total
+        : (browserQuery.search == null && browserQuery.classLabel == null
+              ? summary?.featureCount ?? 0
+              : 0);
+
+    final bottomInset =
+        MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
+    return SafeArea(
+      child: DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.68,
+        minChildSize: 0.36,
+        maxChildSize: 0.92,
+        builder: (context, controller) {
+          return ListView(
+            controller: controller,
+            padding: EdgeInsets.fromLTRB(
+              AppSpacing.md,
+              AppSpacing.sm,
+              AppSpacing.md,
+              bottomInset,
+            ),
+            children: [
+              Center(
+                child: Container(
+                  width: 44,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Padding(
+                padding: EdgeInsets.zero,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'AI features',
+                            style: theme.textTheme.titleLarge,
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Close',
+                          onPressed: () => Navigator.of(context).pop(),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                    Text(
+                      _aiFeatureListLabel(
+                        shownCount: displayedFeatures.length,
+                        totalCount: displayedTotal,
+                        hasFilter:
+                            browserQuery.search != null ||
+                            browserQuery.classLabel != null,
+                      ),
+                      style: theme.textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'These are AI predictions for review, not approved field data.',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    TextField(
+                      controller: _searchController,
+                      textInputAction: TextInputAction.search,
+                      decoration: InputDecoration(
+                        isDense: true,
+                        prefixIcon: const Icon(Icons.search),
+                        hintText: 'Search AI features',
+                        suffixIcon: _query.trim().isEmpty
+                            ? null
+                            : IconButton(
+                                tooltip: 'Clear search',
+                                onPressed: () {
+                                  setState(() {
+                                    _searchController.clear();
+                                    _query = '';
+                                  });
+                                },
+                                icon: const Icon(Icons.clear),
+                              ),
+                      ),
+                      onChanged: (value) => setState(() => _query = value),
+                    ),
+                    if (classes.isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            ChoiceChip(
+                              label: const Text('All'),
+                              selected: _selectedClass == null,
+                              onSelected: (_) {
+                                setState(() => _selectedClass = null);
+                              },
+                            ),
+                            const SizedBox(width: AppSpacing.xs),
+                            for (final className in classes) ...[
+                              ChoiceChip(
+                                label: Text(_friendlyClassLabel(className)),
+                                selected: _selectedClass == className,
+                                onSelected: (_) {
+                                  setState(() => _selectedClass = className);
+                                },
+                              ),
+                              const SizedBox(width: AppSpacing.xs),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              if (featuresAsync.isLoading && displayedFeatures.isEmpty)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(AppSpacing.lg),
+                    child: CircularProgressIndicator(),
+                  ),
+                )
+              else if (featuresAsync.hasError && displayedFeatures.isEmpty)
+                AppEmptyState(
+                  icon: Icons.error_outline,
+                  title: 'AI features unavailable',
+                  message: userFacingErrorMessage(
+                    featuresAsync.asError?.error ??
+                        StateError(
+                          'AI features failed without an error payload.',
+                        ),
+                    fallback: 'Unable to load AI features right now.',
+                  ),
+                  actionLabel: 'Retry',
+                  onAction: featuresController.refresh,
+                )
+              else if (displayedFeatures.isEmpty)
+                const AppEmptyState(
+                  icon: Icons.layers_clear_outlined,
+                  title: 'No AI features match these filters',
+                  message: 'Try a different class or search term.',
+                )
+              else
+                ProgressiveListSection<AiLayerFeature>(
+                  items: displayedFeatures,
+                  resetKey: browserQuery,
+                  hasMore: featureState.hasMore,
+                  isLoadingMore: featureState.isLoadingMore,
+                  onLoadMore: featuresController.loadMore,
+                  gridMinItemWidth: 360,
+                  itemBuilder: (context, feature, _) {
+                    final item = _AiPreviewFeature(
+                      layer: widget.layer,
+                      feature: feature,
+                    );
+                    return _AiFeatureListCard(
+                      item: item,
+                      onTap: () => widget.onFeatureSelected(item),
+                    );
+                  },
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _AiFeatureListCard extends StatelessWidget {
+  const _AiFeatureListCard({required this.item, required this.onTap});
+
+  final _AiPreviewFeature item;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final feature = item.feature;
+    final className = _aiFeatureClass(feature);
+    final confidence = _aiFeatureConfidence(feature);
+    final model = _aiFeatureText(feature, const ['model_name', 'model']);
+    final layerLabel = _friendlyLayerTypeLabel(item.layer.layerType);
+    final title = className == null
+        ? '$layerLabel artifact'
+        : _friendlyClassLabel(className);
+    final subtitle = [
+      layerLabel,
+      if (confidence != null) 'Confidence ${_formatConfidence(confidence)}',
+      if (model != null) _friendlyModelLabel(model),
+    ].join(' - ');
+
+    return AppCard(
+      onTap: onTap,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 12,
+            height: 12,
+            margin: const EdgeInsets.only(top: 6),
+            decoration: BoxDecoration(
+              color: _aiFeatureStyle(item).borderColor,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: Theme.of(context).textTheme.bodySmall,
+                  softWrap: true,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _aiFeatureListLabel({
+  required int shownCount,
+  required int totalCount,
+  required bool hasFilter,
+}) {
+  final totalLabel = totalCount <= 0 ? 'matching AI features' : '$totalCount';
+  if (hasFilter) {
+    return 'Showing $shownCount of $totalLabel matching AI feature(s)';
+  }
+  return 'Showing $shownCount of $totalLabel AI review feature(s)';
+}
+
+List<String> _aiFeatureBrowserClasses(
+  AiLayerFeatureCollection? summary,
+  List<AiLayerFeature> fallbackFeatures,
+) {
+  final classes = <String>{
+    ...?summary?.classCounts.keys.where((value) => value.trim().isNotEmpty),
+    ...fallbackFeatures.map(_aiFeatureClass).whereType<String>(),
+  }.toList();
+  classes.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+  return classes;
+}
+
+class _AiPreviewFeature {
+  const _AiPreviewFeature({required this.layer, required this.feature});
+
+  final AiOutputLayer layer;
+  final AiLayerFeature feature;
+
+  String get key => '${layer.id}:${feature.id}';
+}
+
+class _AiFeatureStyle {
+  const _AiFeatureStyle({
+    required this.fillColor,
+    required this.borderColor,
+    required this.borderWidth,
+  });
+
+  final Color fillColor;
+  final Color borderColor;
+  final double borderWidth;
+}
+
+class _LegendSwatch extends StatelessWidget {
+  const _LegendSwatch({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: const SizedBox(width: 14, height: 14),
+    );
+  }
+}
+
+_AiFeatureStyle _aiFeatureStyle(_AiPreviewFeature item) {
+  switch (item.layer.layerType) {
+    case 'confidence':
+      final confidence = _aiFeatureConfidence(item.feature);
+      final alpha = confidence == null
+          ? 0.22
+          : (0.12 + confidence.clamp(0, 1).toDouble() * 0.32);
+      return _AiFeatureStyle(
+        fillColor: const Color(0xFF0288D1).withValues(alpha: alpha),
+        borderColor: const Color(0xFF01579B),
+        borderWidth: 2,
+      );
+    case 'uncertainty':
+      return _AiFeatureStyle(
+        fillColor: const Color(0xFFE65100).withValues(alpha: 0.24),
+        borderColor: const Color(0xFFBF360C),
+        borderWidth: 2.4,
+      );
+    case 'classification':
+    default:
+      final color = _classificationColor(_aiFeatureClass(item.feature));
+      return _AiFeatureStyle(
+        fillColor: color.withValues(alpha: 0.20),
+        borderColor: color,
+        borderWidth: 2,
+      );
+  }
+}
+
+Color _classificationColor(String? label) {
+  final normalized = label?.trim().toLowerCase() ?? '';
+  if (normalized.contains('citrus')) {
+    return const Color(0xFFF9A825);
+  }
+  if (normalized.contains('fruit')) {
+    return const Color(0xFF7B1FA2);
+  }
+  if (normalized.contains('olive')) {
+    return const Color(0xFF2E7D32);
+  }
+  return const Color(0xFF455A64);
+}
+
+String _friendlyClassLabel(String label) {
+  final normalized = label.trim();
+  if (normalized.isEmpty) {
+    return 'Unlabeled';
+  }
+  return _titleCase(normalized.replaceAll('_', ' '));
+}
+
+String? _aiFeatureClass(AiLayerFeature feature) {
+  return _aiFeatureText(feature, const [
+    'predicted_class',
+    'dominant_class',
+    'class_label',
+    'label',
+    'L4_descr',
+  ]);
+}
+
+bool _isAggregateAiFeature(AiLayerFeature feature) {
+  final aggregate = feature.properties['aggregate'];
+  if (aggregate is bool) {
+    return aggregate;
+  }
+  return _stringValue(feature.properties['preview_geometry']) == 'aggregate' ||
+      _stringValue(feature.properties['preview_kind']) == 'aggregate';
+}
+
+int? _aggregateAiFeatureCount(AiLayerFeature feature) {
+  final value = feature.properties['aggregate_count'];
+  if (value is int) {
+    return value;
+  }
+  if (value is num) {
+    return value.toInt();
+  }
+  if (value is String) {
+    return int.tryParse(value);
+  }
+  return null;
+}
+
+double _aiFeatureApproxArea(AiLayerFeature feature) {
+  final storedArea = _aiFeatureAreaValue(feature);
+  if (storedArea != null) {
+    return storedArea;
+  }
+  final points = geometryPoints(feature.geometry);
+  if (points.isEmpty) {
+    return double.infinity;
+  }
+  var minLat = double.infinity;
+  var minLon = double.infinity;
+  var maxLat = -double.infinity;
+  var maxLon = -double.infinity;
+  for (final point in points) {
+    if (point.latitude < minLat) minLat = point.latitude;
+    if (point.longitude < minLon) minLon = point.longitude;
+    if (point.latitude > maxLat) maxLat = point.latitude;
+    if (point.longitude > maxLon) maxLon = point.longitude;
+  }
+  final bboxArea = (maxLat - minLat).abs() * (maxLon - minLon).abs();
+  return bboxArea.isFinite ? bboxArea : double.infinity;
+}
+
+double? _aiFeatureAreaValue(AiLayerFeature feature) {
+  for (final key in const <String>['area_ha', 'area']) {
+    final value = feature.properties[key];
+    if (value is num && value.isFinite) {
+      return value.toDouble().abs();
+    }
+    if (value is String) {
+      final parsed = double.tryParse(value);
+      if (parsed != null && parsed.isFinite) {
+        return parsed.abs();
+      }
+    }
+  }
+  return null;
+}
+
+double? _aiFeatureConfidence(AiLayerFeature feature) {
+  for (final key in const [
+    'confidence',
+    'confidence_score',
+    'probability',
+    'max_probability',
+  ]) {
+    final value = _toDoubleValue(feature.properties[key]);
+    if (value != null) {
+      return value;
+    }
+  }
+  return null;
+}
+
+String? _aiFeatureText(AiLayerFeature feature, List<String> keys) {
+  for (final key in keys) {
+    final text = _stringValue(feature.properties[key]);
+    if (text != null) {
+      return text;
+    }
+  }
+  return null;
+}
+
+String _formatConfidence(double value) {
+  if (value >= 0 && value <= 1) {
+    return '${(value * 100).toStringAsFixed(1)}%';
+  }
+  return value.toStringAsFixed(2);
 }
 
 class _ReviewSection extends ConsumerStatefulWidget {

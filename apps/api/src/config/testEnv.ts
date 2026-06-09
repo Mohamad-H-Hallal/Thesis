@@ -93,6 +93,7 @@ const applyTestEnvDefaults = (): TestDbConfig => {
   setDefault('SMTP_FROM_NAME', 'Lebanese GIS Collector');
   setDefault('AI_PIPELINE_ENABLED', 'false');
   setDefault('AI_PIPELINE_ROOT', '');
+  setDefault('AI_PIPELINE_OUTPUT_ROOT', '');
   setDefault('AI_PYTHON_BIN', 'python');
   setDefault('AI_PIPELINE_TIMEOUT_MS', '60000');
   setDefault('AI_PIPELINE_MODE', 'disabled');

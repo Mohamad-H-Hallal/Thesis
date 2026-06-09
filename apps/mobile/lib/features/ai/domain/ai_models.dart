@@ -469,6 +469,179 @@ class AiOutputLayer {
   }
 }
 
+class AiLayerFeature {
+  const AiLayerFeature({
+    required this.id,
+    required this.geometry,
+    required this.properties,
+  });
+
+  final String id;
+  final Map<String, dynamic> geometry;
+  final Map<String, dynamic> properties;
+
+  factory AiLayerFeature.fromMap(Map<String, dynamic> map, int index) {
+    final properties = _toMap(map['properties']);
+    return AiLayerFeature(
+      id:
+          _toStringOrNull(map['id']) ??
+          _toStringOrNull(properties['id']) ??
+          _toStringOrNull(properties['feature_id']) ??
+          _toStringOrNull(properties['source_feature_id']) ??
+          'ai-feature-$index',
+      geometry: _toMap(map['geometry']),
+      properties: properties,
+    );
+  }
+}
+
+class AiLayerFeatureCollection {
+  const AiLayerFeatureCollection({
+    required this.layer,
+    required this.features,
+    required this.featureCount,
+    required this.matchingFeatureCount,
+    required this.returnedFeatureCount,
+    this.detail = 'overview',
+    this.geometryMode = 'simplified',
+    this.optimizedPreview = true,
+    this.capped = false,
+    this.cap,
+    this.classCounts = const <String, int>{},
+    this.geometryTypes = const <String>[],
+  });
+
+  final AiOutputLayer layer;
+  final List<AiLayerFeature> features;
+  final int featureCount;
+  final int matchingFeatureCount;
+  final int returnedFeatureCount;
+  final String detail;
+  final String geometryMode;
+  final bool optimizedPreview;
+  final bool capped;
+  final int? cap;
+  final Map<String, int> classCounts;
+  final List<String> geometryTypes;
+
+  factory AiLayerFeatureCollection.fromResponse(Map<String, dynamic> data) {
+    final featureCollection = _toMap(data['feature_collection']);
+    final features = _toList(
+      featureCollection['features'],
+    ).whereType<Map>().toList(growable: false);
+    return AiLayerFeatureCollection(
+      layer: AiOutputLayer.fromMap(_toMap(data['layer'])),
+      features: [
+        for (var index = 0; index < features.length; index++)
+          AiLayerFeature.fromMap(
+            Map<String, dynamic>.from(features[index]),
+            index,
+          ),
+      ],
+      featureCount:
+          _toInt(data['total_count']) ??
+          _toInt(data['feature_count']) ??
+          features.length,
+      matchingFeatureCount:
+          _toInt(data['visible_count']) ??
+          _toInt(data['matching_feature_count']) ??
+          _toInt(data['returned_feature_count']) ??
+          features.length,
+      returnedFeatureCount:
+          _toInt(data['returned_count']) ??
+          _toInt(data['returned_feature_count']) ??
+          features.length,
+      detail: _toStringOrNull(data['detail']) ?? 'overview',
+      geometryMode: _toStringOrNull(data['geometry_mode']) ?? 'simplified',
+      optimizedPreview: data['optimized_preview'] is bool
+          ? data['optimized_preview'] as bool
+          : true,
+      capped: data['capped'] is bool ? data['capped'] as bool : false,
+      cap: _toInt(data['cap']),
+      classCounts: _toIntMap(data['class_counts']),
+      geometryTypes: _toStringList(data['geometry_types']),
+    );
+  }
+}
+
+class AiLayerFeaturesQuery {
+  const AiLayerFeaturesQuery({
+    required this.layerId,
+    this.detail = 'overview',
+    this.geometry = 'simplified',
+    this.bounds,
+    this.zoom,
+    this.limit,
+    this.page,
+    this.search,
+    this.classLabel,
+    this.featureId,
+  });
+
+  final String layerId;
+  final String detail;
+  final String geometry;
+  final String? bounds;
+  final double? zoom;
+  final int? limit;
+  final int? page;
+  final String? search;
+  final String? classLabel;
+  final String? featureId;
+
+  @override
+  bool operator ==(Object other) {
+    return other is AiLayerFeaturesQuery &&
+        other.layerId == layerId &&
+        other.detail == detail &&
+        other.geometry == geometry &&
+        other.bounds == bounds &&
+        other.zoom == zoom &&
+        other.limit == limit &&
+        other.page == page &&
+        other.search == search &&
+        other.classLabel == classLabel &&
+        other.featureId == featureId;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    layerId,
+    detail,
+    geometry,
+    bounds,
+    zoom,
+    limit,
+    page,
+    search,
+    classLabel,
+    featureId,
+  );
+}
+
+class AiLayerFeatureBrowserQuery {
+  const AiLayerFeatureBrowserQuery({
+    required this.layerId,
+    this.search,
+    this.classLabel,
+  });
+
+  final String layerId;
+  final String? search;
+  final String? classLabel;
+
+  @override
+  bool operator ==(Object other) {
+    return other is AiLayerFeatureBrowserQuery &&
+        other.layerId == layerId &&
+        other.search == search &&
+        other.classLabel == classLabel;
+  }
+
+  @override
+  int get hashCode => Object.hash(layerId, search, classLabel);
+}
+
 class AiRunLog {
   const AiRunLog({
     required this.id,
@@ -680,6 +853,18 @@ List<String> _toStringList(dynamic raw) {
       .map((value) => value.toString().trim())
       .where((value) => value.isNotEmpty)
       .toList(growable: false);
+}
+
+Map<String, int> _toIntMap(dynamic raw) {
+  final source = _toMap(raw);
+  if (source.isEmpty) {
+    return const <String, int>{};
+  }
+  return <String, int>{
+    for (final entry in source.entries)
+      if (entry.key.trim().isNotEmpty && _toInt(entry.value) != null)
+        entry.key.trim(): _toInt(entry.value)!,
+  };
 }
 
 Map<String, dynamic> _toMap(dynamic raw) {
