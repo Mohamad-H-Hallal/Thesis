@@ -2179,7 +2179,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               ),
             if (_isProjectMapCaptureMode &&
                 (_captureGeometryType == 'Polygon') &&
-                _captureVertices.length >= 3)
+                _captureVertices.length >= 3 &&
+                isValidPolygonRing(<LatLng>[
+                  ..._captureVertices,
+                  _captureVertices.first,
+                ]))
               PolygonLayer(
                 polygons: [
                   Polygon(
@@ -4087,7 +4091,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       final color = _statusColor(feature.status);
       final focused = _focusedFeatureId == feature.id;
       for (final points in polygonGeometrySegments(feature.geometry)) {
-        if (points.isEmpty) {
+        if (!isValidPolygonRing(points)) {
           continue;
         }
         polygons.add(

@@ -490,6 +490,73 @@ paths:
           description: Forbidden
         '404':
           description: AI run not found
+  /api/v1/ai/layers/{layerId}/features:
+    get:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Preview registered AI layer GeoJSON features
+      description: Protected super-admin only. Reads only registered review artifact paths under the configured AI outputs directory. Returns unpublished AI prediction features for review and never inserts them into spatial_feature or exposes them to viewers. Responses include whole-layer totals, visible viewport counts, returned counts, and cap metadata so clients do not confuse an optimized preview with the full layer.
+      parameters:
+        - $ref: '#/components/parameters/layerId'
+        - in: query
+          name: detail
+          schema:
+            type: string
+            enum: [overview, full]
+            default: overview
+          description: Overview returns viewport-aware aggregate or simplified geometry for map review. Full returns registered GeoJSON geometry for the requested viewport and is still capped for client safety.
+        - in: query
+          name: geometry
+          schema:
+            type: string
+            enum: [aggregate, simplified, full]
+            default: aggregate
+          description: Geometry representation for the payload. Aggregate returns grouped point features with class counts. Simplified preserves geometry type with reduced coordinates. Full preserves registered geometry and requires detail=full.
+        - in: query
+          name: bounds
+          schema:
+            type: string
+          description: Optional viewport bounds as west,south,east,north. Only intersecting features are returned.
+        - in: query
+          name: zoom
+          schema:
+            type: number
+          description: Optional map zoom used to choose aggregation grid size or simplification tolerance.
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2500
+            default: 1800
+          description: Maximum number of features or aggregate cells returned by this request. The total_count still reports the whole registered layer.
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page of full-layer or viewport features to return. Used by the AI feature browser to load all layer features in small pages without changing total_count.
+        - in: query
+          name: q
+          schema:
+            type: string
+          description: Optional full-layer search term for the AI feature browser. Searches feature ids, class labels, model/source metadata, and run ids before pagination.
+        - in: query
+          name: class_label
+          schema:
+            type: string
+          description: Optional full-layer predicted class filter applied before pagination.
+      responses:
+        '200':
+          description: AI layer GeoJSON preview payload with total_count, visible_count, returned_count, capped, cap, pagination, class_counts, geometry_types, and feature_collection.
+        '400':
+          description: Layer is not previewable or artifact path is unsafe
+        '403':
+          description: Forbidden
+        '404':
+          description: AI layer or artifact not found
   /api/v1/ai/runs/{runId}/reviews:
     get:
       tags: [AI]
@@ -1423,6 +1490,13 @@ components:
     runId:
       in: path
       name: runId
+      required: true
+      schema:
+        type: string
+        format: uuid
+    layerId:
+      in: path
+      name: layerId
       required: true
       schema:
         type: string

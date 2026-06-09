@@ -79,7 +79,7 @@ class AppEnv {
       'PUSH_NOTIFICATIONS_ENABLED',
       defaultValue: '',
     );
-    return _parseBool(raw, fallback: true);
+    return _parseBool(raw, fallback: flavor == AppFlavor.prod);
   }
 
   static bool get androidPushNotificationsRequested {

@@ -42,6 +42,7 @@ export interface EnvConfig {
   EXPORT_RETENTION_DAYS: number;
   EXPORT_CLEANUP_INTERVAL_HOURS: number;
   NOTIFICATION_MAINTENANCE_INTERVAL_MINUTES: number;
+  NOTIFICATION_EMAILS_ENABLED: boolean;
   NOTIFICATION_EMAIL_BATCH_SIZE: number;
   NOTIFICATION_EMAIL_MAX_ATTEMPTS: number;
   PUSH_NOTIFICATIONS_ENABLED: boolean;
@@ -66,6 +67,7 @@ export interface EnvConfig {
   SUPER_ADMIN_FULL_NAME: string;
   AI_PIPELINE_ENABLED: boolean;
   AI_PIPELINE_ROOT: string;
+  AI_PIPELINE_OUTPUT_ROOT: string;
   AI_PYTHON_BIN: string;
   AI_PIPELINE_TIMEOUT_MS: number;
   AI_PIPELINE_MODE:
@@ -157,6 +159,12 @@ const envSchema = Joi.object({
   EXPORT_RETENTION_DAYS: Joi.number().integer().min(1).default(7),
   EXPORT_CLEANUP_INTERVAL_HOURS: Joi.number().integer().min(1).default(24),
   NOTIFICATION_MAINTENANCE_INTERVAL_MINUTES: Joi.number().integer().min(1).default(60),
+  NOTIFICATION_EMAILS_ENABLED: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(false),
   NOTIFICATION_EMAIL_BATCH_SIZE: Joi.number().integer().min(1).max(500).default(50),
   NOTIFICATION_EMAIL_MAX_ATTEMPTS: Joi.number().integer().min(1).max(20).default(5),
   PUSH_NOTIFICATIONS_ENABLED: Joi.boolean()
@@ -211,6 +219,7 @@ const envSchema = Joi.object({
     .falsy('0')
     .default(false),
   AI_PIPELINE_ROOT: Joi.string().allow('').default(''),
+  AI_PIPELINE_OUTPUT_ROOT: Joi.string().allow('').default(''),
   AI_PYTHON_BIN: Joi.string().allow('').default('python'),
   AI_PIPELINE_TIMEOUT_MS: Joi.number().integer().min(1000).max(600000).default(60000),
   AI_PIPELINE_MODE: Joi.string()

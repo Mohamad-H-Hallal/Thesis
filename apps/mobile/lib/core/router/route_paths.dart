@@ -45,6 +45,9 @@ class AppRoutes {
     return uri.toString();
   }
 
+  static String projectAiPreview(String projectId, String runId) =>
+      '/app/projects/$projectId/ai/runs/$runId/preview';
+
   static String projectReviewQueue(String id) => '/app/projects/$id/reviews';
   static String projectApprovedReviews(String id) =>
       '/app/projects/$id/approved-reviews';

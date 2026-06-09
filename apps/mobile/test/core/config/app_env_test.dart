@@ -12,4 +12,11 @@ void main() {
     expect(() => AppEnv.androidPushNotificationsRequested, returnsNormally);
     expect(() => AppEnv.iosPushNotificationsRequested, returnsNormally);
   });
+
+  test('push notifications are opt-in for dev builds', () {
+    expect(AppEnv.flavor, AppFlavor.dev);
+    expect(AppEnv.pushNotificationsRequested, isFalse);
+    expect(AppEnv.androidPushNotificationsRequested, isFalse);
+    expect(AppEnv.iosPushNotificationsRequested, isFalse);
+  });
 }

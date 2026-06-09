@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/pagination/paginated_result.dart';
+import '../../../core/pagination/paginated_list_controller.dart';
 import '../../../core/providers/providers.dart';
 import '../data/api_ai_repository.dart';
 import '../domain/ai_models.dart';
@@ -70,6 +71,58 @@ final aiRunLayersProvider = FutureProvider.family<List<AiOutputLayer>, String>((
   ref.watch(workflowRefreshTickProvider);
   return ref.read(aiRepositoryProvider).fetchRunLayers(runId: runId);
 });
+
+final aiLayerFeaturesProvider =
+    FutureProvider.family<AiLayerFeatureCollection, AiLayerFeaturesQuery>((
+      ref,
+      query,
+    ) async {
+      return ref
+          .read(aiRepositoryProvider)
+          .fetchLayerFeatures(
+            layerId: query.layerId,
+            detail: query.detail,
+            geometry: query.geometry,
+            bounds: query.bounds,
+            zoom: query.zoom,
+            limit: query.limit,
+            page: query.page,
+            search: query.search,
+            classLabel: query.classLabel,
+            featureId: query.featureId,
+          );
+    });
+
+final paginatedAiLayerFeatureBrowserProvider = StateNotifierProvider.autoDispose
+    .family<
+      PaginatedListController<AiLayerFeature>,
+      AsyncValue<PaginatedListState<AiLayerFeature>>,
+      AiLayerFeatureBrowserQuery
+    >((ref, query) {
+      return PaginatedListController<AiLayerFeature>(
+        loadPage: ({required page, required limit}) async {
+          final collection = await ref
+              .read(aiRepositoryProvider)
+              .fetchLayerFeatures(
+                layerId: query.layerId,
+                detail: 'overview',
+                geometry: 'simplified',
+                page: page,
+                limit: limit,
+                zoom: 14,
+                search: query.search,
+                classLabel: query.classLabel,
+              );
+          return PaginatedResult<AiLayerFeature>(
+            items: collection.features,
+            page: page,
+            limit: limit,
+            total: collection.matchingFeatureCount,
+            hasMore: page * limit < collection.matchingFeatureCount,
+          );
+        },
+      );
+    });
 
 final aiRunLogsProvider =
     FutureProvider.family<PaginatedResult<AiRunLog>, String>((

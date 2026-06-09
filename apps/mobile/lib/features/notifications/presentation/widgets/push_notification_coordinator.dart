@@ -34,8 +34,6 @@ class _PushNotificationCoordinatorState
 
   Future<void> _bootstrap() async {
     final service = ref.read(pushNotificationServiceProvider);
-    await service.initialize();
-    await service.syncSession(ref.read(authControllerProvider).session);
 
     _authSubscription = ref.listenManual<AuthState>(authControllerProvider, (
       previous,
@@ -47,6 +45,7 @@ class _PushNotificationCoordinatorState
         return;
       }
       if (previousUserId != nextSession.user.id) {
+        await service.initialize();
         await service.syncSession(nextSession);
       }
     });
@@ -66,6 +65,12 @@ class _PushNotificationCoordinatorState
         context.go(AppRoutes.notifications);
       }
     });
+
+    final currentSession = ref.read(authControllerProvider).session;
+    if (currentSession != null) {
+      await service.initialize();
+      await service.syncSession(currentSession);
+    }
   }
 
   @override

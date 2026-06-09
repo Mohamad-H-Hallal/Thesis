@@ -70,6 +70,24 @@ const claimPendingNotificationDeliveries = async (
   return result;
 };
 
+const skipPendingNotificationEmailDeliveries = async (): Promise<number> => {
+  const result = await query<{ skipped: number }>(
+    `WITH skipped AS (
+       UPDATE notification_delivery
+       SET status = 'skipped',
+           updated_at = CURRENT_TIMESTAMP,
+           last_error = 'Notification email delivery is disabled for this runtime.'
+       WHERE channel = 'email'
+         AND status IN ('pending', 'failed')
+       RETURNING id
+     )
+     SELECT COUNT(*)::int AS skipped
+     FROM skipped`,
+  );
+
+  return result.rows[0]?.skipped ?? 0;
+};
+
 const deliverPendingNotificationEmails = async (): Promise<{
   attempted: number;
   delivered: number;
@@ -77,6 +95,22 @@ const deliverPendingNotificationEmails = async (): Promise<{
   skipped: number;
 }> => {
   const env = validateEnv();
+  if (!env.NOTIFICATION_EMAILS_ENABLED) {
+    const skipped = await skipPendingNotificationEmailDeliveries();
+    if (skipped > 0) {
+      logger.info('Notification email delivery skipped because it is disabled for this runtime', {
+        skipped,
+      });
+    }
+
+    return {
+      attempted: 0,
+      delivered: 0,
+      failed: 0,
+      skipped,
+    };
+  }
+
   const deliveries = await claimPendingNotificationDeliveries(
     env.NOTIFICATION_EMAIL_BATCH_SIZE,
     env.NOTIFICATION_EMAIL_MAX_ATTEMPTS,

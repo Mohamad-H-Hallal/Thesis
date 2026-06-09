@@ -85,6 +85,7 @@ const applyTestEnvDefaults = (): TestDbConfig => {
   setDefault('AUDIT_LOG_ENABLED', 'true');
   setDefault('METRICS_ENABLED', 'false');
   setDefault('MAIL_TRANSPORT', 'mailpit');
+  setDefault('NOTIFICATION_EMAILS_ENABLED', 'false');
   setDefault('PASSWORD_RESET_REQUIRE_REAL_DELIVERY', 'false');
   setDefault('SMTP_HOST', 'mailpit');
   setDefault('SMTP_PORT', '1025');
@@ -93,6 +94,7 @@ const applyTestEnvDefaults = (): TestDbConfig => {
   setDefault('SMTP_FROM_NAME', 'Lebanese GIS Collector');
   setDefault('AI_PIPELINE_ENABLED', 'false');
   setDefault('AI_PIPELINE_ROOT', '');
+  setDefault('AI_PIPELINE_OUTPUT_ROOT', '');
   setDefault('AI_PYTHON_BIN', 'python');
   setDefault('AI_PIPELINE_TIMEOUT_MS', '60000');
   setDefault('AI_PIPELINE_MODE', 'disabled');

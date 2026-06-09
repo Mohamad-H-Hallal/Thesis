@@ -144,9 +144,35 @@ describe('Project provisioning and lifecycle reminders', () => {
     expect(startReminderDelivery.rows[0].status).toBe('pending');
     expect(startReminderDelivery.rows[0].recipient_email).toBe(admin.email);
 
-    const startDeliveryRun = await deliverPendingNotificationEmails();
-    expect(startDeliveryRun.attempted).toBeGreaterThanOrEqual(1);
-    expect(startDeliveryRun.delivered).toBeGreaterThanOrEqual(1);
+    const previousMailEnv = {
+      NODE_ENV: process.env.NODE_ENV,
+      MAIL_TRANSPORT: process.env.MAIL_TRANSPORT,
+      SMTP_HOST: process.env.SMTP_HOST,
+      SMTP_PORT: process.env.SMTP_PORT,
+      SMTP_FROM_EMAIL: process.env.SMTP_FROM_EMAIL,
+      PASSWORD_RESET_REQUIRE_REAL_DELIVERY: process.env.PASSWORD_RESET_REQUIRE_REAL_DELIVERY,
+      NOTIFICATION_EMAILS_ENABLED: process.env.NOTIFICATION_EMAILS_ENABLED,
+    };
+    process.env.NODE_ENV = 'test';
+    process.env.MAIL_TRANSPORT = 'mailpit';
+    process.env.SMTP_HOST = 'mailpit';
+    process.env.SMTP_PORT = '1025';
+    process.env.SMTP_FROM_EMAIL = 'no-reply@gis.local';
+    process.env.PASSWORD_RESET_REQUIRE_REAL_DELIVERY = 'false';
+    process.env.NOTIFICATION_EMAILS_ENABLED = 'true';
+    try {
+      const startDeliveryRun = await deliverPendingNotificationEmails();
+      expect(startDeliveryRun.attempted).toBeGreaterThanOrEqual(1);
+      expect(startDeliveryRun.delivered).toBeGreaterThanOrEqual(1);
+    } finally {
+      Object.entries(previousMailEnv).forEach(([key, value]) => {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      });
+    }
 
     await request(app)
       .put(`${API_PREFIX}/projects/${projectId}`)
@@ -218,5 +244,65 @@ describe('Project provisioning and lifecycle reminders', () => {
       [admin.user.id, projectId],
     );
     expect(activeReminderAfterPause.rows[0].value).toBe(0);
+  });
+
+  test('workflow notification email delivery is disabled by default while in-app notifications remain', async () => {
+    const admin = await createAdminUser({
+      fullName: 'Email Disabled Admin',
+      emailPrefix: 'email-disabled-admin',
+    });
+
+    await pool.query(
+      `INSERT INTO notification (user_id, type, title, message, metadata)
+       VALUES ($1, 'assignment', $2, $3, $4::jsonb)`,
+      [
+        admin.user.id,
+        'Assignment updated',
+        'This should remain an in-app notification without sending email.',
+        JSON.stringify({ project_id: 'email-disabled-project' }),
+      ],
+    );
+
+    const pendingDelivery = await pool.query(
+      `SELECT status, recipient_email
+       FROM notification_delivery`,
+    );
+    expect(pendingDelivery.rows).toHaveLength(1);
+    expect(pendingDelivery.rows[0].status).toBe('pending');
+    expect(pendingDelivery.rows[0].recipient_email).toBe(admin.email);
+
+    const previousNotificationEmailsEnabled = process.env.NOTIFICATION_EMAILS_ENABLED;
+    process.env.NOTIFICATION_EMAILS_ENABLED = 'false';
+    try {
+      const deliveryRun = await deliverPendingNotificationEmails();
+      expect(deliveryRun).toMatchObject({
+        attempted: 0,
+        delivered: 0,
+        failed: 0,
+        skipped: 1,
+      });
+    } finally {
+      if (previousNotificationEmailsEnabled === undefined) {
+        delete process.env.NOTIFICATION_EMAILS_ENABLED;
+      } else {
+        process.env.NOTIFICATION_EMAILS_ENABLED = previousNotificationEmailsEnabled;
+      }
+    }
+
+    const skippedDelivery = await pool.query(
+      `SELECT status, last_error
+       FROM notification_delivery`,
+    );
+    expect(skippedDelivery.rows[0].status).toBe('skipped');
+    expect(skippedDelivery.rows[0].last_error).toContain('disabled');
+
+    const inAppNotification = await pool.query(
+      `SELECT title
+       FROM notification
+       WHERE user_id = $1`,
+      [admin.user.id],
+    );
+    expect(inAppNotification.rows).toHaveLength(1);
+    expect(inAppNotification.rows[0].title).toBe('Assignment updated');
   });
 });

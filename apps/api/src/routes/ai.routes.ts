@@ -36,6 +36,13 @@ router.get(
 );
 
 router.get(
+  '/layers/:layerId/features',
+  uuidValidation('layerId'),
+  validate,
+  asyncHandler(aiController.getAiLayerFeatures),
+);
+
+router.get(
   '/runs/:runId/reviews',
   uuidValidation('runId'),
   validate,
