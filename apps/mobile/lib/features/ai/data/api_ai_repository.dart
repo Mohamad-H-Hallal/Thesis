@@ -223,6 +223,63 @@ class ApiAiRepository implements AiRepository {
   }
 
   @override
+  Future<AiLayerFeatureCollection> fetchLayerFeatures({
+    required String layerId,
+    String detail = 'overview',
+    String geometry = 'simplified',
+    String? bounds,
+    double? zoom,
+    int? limit,
+    int? page,
+    String? search,
+    String? classLabel,
+    String? featureId,
+  }) async {
+    try {
+      final boundsValue = bounds?.trim();
+      final queryParameters = <String, dynamic>{
+        'detail': detail,
+        'geometry': geometry,
+      };
+      if (boundsValue != null && boundsValue.isNotEmpty) {
+        queryParameters['bounds'] = boundsValue;
+      }
+      if (zoom != null) {
+        queryParameters['zoom'] = zoom.toStringAsFixed(2);
+      }
+      if (limit != null) {
+        queryParameters['limit'] = limit;
+      }
+      if (page != null) {
+        queryParameters['page'] = page;
+      }
+      final searchValue = search?.trim();
+      if (searchValue != null && searchValue.isNotEmpty) {
+        queryParameters['q'] = searchValue;
+      }
+      final classValue = classLabel?.trim();
+      if (classValue != null && classValue.isNotEmpty) {
+        queryParameters['class_label'] = classValue;
+      }
+      final featureIdValue = featureId?.trim();
+      if (featureIdValue != null && featureIdValue.isNotEmpty) {
+        queryParameters['feature_id'] = featureIdValue;
+      }
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_aiBasePath/layers/$layerId/features',
+        queryParameters: queryParameters,
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiLayerFeatureCollection.fromResponse(_toMap(payload['data']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load AI layer preview features right now.',
+      );
+    }
+  }
+
+  @override
   Future<PaginatedResult<AiRunLog>> fetchRunLogsPage({
     required String runId,
     int page = 1,

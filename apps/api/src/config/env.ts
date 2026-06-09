@@ -66,6 +66,7 @@ export interface EnvConfig {
   SUPER_ADMIN_FULL_NAME: string;
   AI_PIPELINE_ENABLED: boolean;
   AI_PIPELINE_ROOT: string;
+  AI_PIPELINE_OUTPUT_ROOT: string;
   AI_PYTHON_BIN: string;
   AI_PIPELINE_TIMEOUT_MS: number;
   AI_PIPELINE_MODE:
@@ -211,6 +212,7 @@ const envSchema = Joi.object({
     .falsy('0')
     .default(false),
   AI_PIPELINE_ROOT: Joi.string().allow('').default(''),
+  AI_PIPELINE_OUTPUT_ROOT: Joi.string().allow('').default(''),
   AI_PYTHON_BIN: Joi.string().allow('').default('python'),
   AI_PIPELINE_TIMEOUT_MS: Joi.number().integer().min(1000).max(600000).default(60000),
   AI_PIPELINE_MODE: Joi.string()

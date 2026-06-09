@@ -24,6 +24,7 @@ import '../../../auth/domain/auth_models.dart';
 import '../../../auth/presentation/controllers/auth_controller.dart';
 import '../../../map/domain/app_tile_provider.dart';
 import '../../../map/domain/lebanon_map.dart';
+import '../../../map/domain/map_geometry.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/export_job.dart';
 import '../export_file_actions.dart';
@@ -1101,6 +1102,7 @@ class _ExportAreaPickerDialogState extends State<_ExportAreaPickerDialog> {
   MapCamera? _latestCamera;
   double _bottomPanelHeight = 0;
   bool _isMapReady = false;
+  bool _isClosing = false;
   LebanonBasemapStyle _basemapStyle = LebanonBasemapStyle.street;
 
   @override
@@ -1227,156 +1229,198 @@ class _ExportAreaPickerDialogState extends State<_ExportAreaPickerDialog> {
     }
   }
 
+  void _closePicker([Map<String, dynamic>? result]) {
+    if (_isClosing || !mounted) {
+      return;
+    }
+    _isClosing = true;
+    FocusManager.instance.primaryFocus?.unfocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context).pop(result);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final polygonPoints = _points.length >= 3
         ? <LatLng>[..._points, _points.first]
         : _points;
-    return Scaffold(
-      appBar: AppBar(
-        leading: const BackButton(),
-        title: const Text('Draw export area'),
-      ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              _measureBottomPanel();
-            }
-          });
-          const overlayMargin = AppSpacing.sm;
-          const verticalRailHeight = 245.0;
-          final canShowTools = _bottomPanelHeight > 0;
-          final availableAbovePanel =
-              constraints.maxHeight - _bottomPanelHeight - overlayMargin * 2;
-          final useHorizontalTools =
-              availableAbovePanel < verticalRailHeight + overlayMargin;
-          final toolsBottom = _bottomPanelHeight + overlayMargin;
-          return Stack(
-            fit: StackFit.expand,
-            children: [
-              Positioned.fill(
-                child: ClipRRect(
-                  key: const ValueKey<String>('export_area_map_clip'),
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(18),
-                  ),
-                  child: FlutterMap(
-                    key: _mapKey,
-                    mapController: _mapController,
-                    options: _mapOptions,
-                    children: [
-                      if (LebanonMapConfig.shouldRenderTileLayers)
-                        TileLayer(
-                          key: ValueKey<String>(
-                            'export_area_basemap_${_basemapStyle.name}',
-                          ),
-                          urlTemplate: LebanonMapConfig.basemapUrlTemplate(
-                            _basemapStyle,
-                          ),
-                          tileProvider: _tileProvider,
-                          userAgentPackageName: 'lb.gov.gis_collector',
-                        ),
-                      if (LebanonMapConfig.shouldRenderTileLayers &&
-                          LebanonMapConfig.referenceLabelUrlTemplate(
-                                _basemapStyle,
-                              ) !=
-                              null)
-                        TileLayer(
-                          key: ValueKey<String>(
-                            'export_area_labels_${_basemapStyle.name}',
-                          ),
-                          urlTemplate:
-                              LebanonMapConfig.referenceLabelUrlTemplate(
-                                _basemapStyle,
-                              )!,
-                          tileProvider: _tileProvider,
-                          userAgentPackageName: 'lb.gov.gis_collector',
-                        ),
-                      if (polygonPoints.length >= 2)
-                        PolylineLayer(
-                          polylines: [
-                            Polyline(
-                              points: polygonPoints,
-                              color: Theme.of(context).colorScheme.primary,
-                              strokeWidth: 3,
+    return PopScope<Map<String, dynamic>?>(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) {
+          _closePicker(result);
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          leading: IconButton(
+            tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+            icon: const BackButtonIcon(),
+            onPressed: _closePicker,
+          ),
+          title: const Text('Draw export area'),
+        ),
+        body: LayoutBuilder(
+          builder: (context, constraints) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                _measureBottomPanel();
+              }
+            });
+            const overlayMargin = AppSpacing.sm;
+            const verticalRailHeight = 245.0;
+            final canShowTools = _bottomPanelHeight > 0;
+            final availableAbovePanel =
+                constraints.maxHeight - _bottomPanelHeight - overlayMargin * 2;
+            final useHorizontalTools =
+                availableAbovePanel < verticalRailHeight + overlayMargin;
+            final toolsBottom = _bottomPanelHeight + overlayMargin;
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                Positioned.fill(
+                  child: ClipRRect(
+                    key: const ValueKey<String>('export_area_map_clip'),
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(18),
+                    ),
+                    child: FlutterMap(
+                      key: _mapKey,
+                      mapController: _mapController,
+                      options: _mapOptions,
+                      children: [
+                        if (LebanonMapConfig.shouldRenderTileLayers)
+                          TileLayer(
+                            key: ValueKey<String>(
+                              'export_area_basemap_${_basemapStyle.name}',
                             ),
-                          ],
-                        ),
-                      if (polygonPoints.length >= 4)
-                        PolygonLayer(
-                          polygons: [
-                            Polygon(
-                              points: polygonPoints,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.primary.withValues(alpha: 0.20),
-                              borderColor: Theme.of(
-                                context,
-                              ).colorScheme.primary,
-                              borderStrokeWidth: 2,
+                            urlTemplate: LebanonMapConfig.basemapUrlTemplate(
+                              _basemapStyle,
                             ),
-                          ],
-                        ),
-                      MarkerLayer(
-                        markers: [
-                          for (
-                            var index = 0;
-                            index < _points.length;
-                            index += 1
-                          )
-                            Marker(
-                              point: _points[index],
-                              width: 34,
-                              height: 34,
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Theme.of(context).colorScheme.primary,
-                                  border: Border.all(
-                                    color: Colors.white,
-                                    width: 2,
-                                  ),
-                                  boxShadow: const [
-                                    BoxShadow(
-                                      color: Color(0x33000000),
-                                      blurRadius: 8,
-                                      offset: Offset(0, 2),
+                            tileProvider: _tileProvider,
+                            userAgentPackageName: 'lb.gov.gis_collector',
+                          ),
+                        if (LebanonMapConfig.shouldRenderTileLayers &&
+                            LebanonMapConfig.referenceLabelUrlTemplate(
+                                  _basemapStyle,
+                                ) !=
+                                null)
+                          TileLayer(
+                            key: ValueKey<String>(
+                              'export_area_labels_${_basemapStyle.name}',
+                            ),
+                            urlTemplate:
+                                LebanonMapConfig.referenceLabelUrlTemplate(
+                                  _basemapStyle,
+                                )!,
+                            tileProvider: _tileProvider,
+                            userAgentPackageName: 'lb.gov.gis_collector',
+                          ),
+                        if (polygonPoints.length >= 2)
+                          PolylineLayer(
+                            polylines: [
+                              Polyline(
+                                points: polygonPoints,
+                                color: Theme.of(context).colorScheme.primary,
+                                strokeWidth: 3,
+                              ),
+                            ],
+                          ),
+                        if (isValidPolygonRing(polygonPoints))
+                          PolygonLayer(
+                            polygons: [
+                              Polygon(
+                                points: polygonPoints,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.primary.withValues(alpha: 0.20),
+                                borderColor: Theme.of(
+                                  context,
+                                ).colorScheme.primary,
+                                borderStrokeWidth: 2,
+                              ),
+                            ],
+                          ),
+                        MarkerLayer(
+                          markers: [
+                            for (
+                              var index = 0;
+                              index < _points.length;
+                              index += 1
+                            )
+                              Marker(
+                                point: _points[index],
+                                width: 34,
+                                height: 34,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.primary,
+                                    border: Border.all(
+                                      color: Colors.white,
+                                      width: 2,
                                     ),
-                                  ],
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    '${index + 1}',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .labelSmall
-                                        ?.copyWith(color: Colors.white),
+                                    boxShadow: const [
+                                      BoxShadow(
+                                        color: Color(0x33000000),
+                                        blurRadius: 8,
+                                        offset: Offset(0, 2),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      '${index + 1}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelSmall
+                                          ?.copyWith(color: Colors.white),
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                        ],
-                      ),
-                    ],
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              Positioned.fill(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  onTapUp: _addPointFromTap,
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTapUp: _addPointFromTap,
+                  ),
                 ),
-              ),
-              if (canShowTools)
-                if (useHorizontalTools)
-                  Positioned(
-                    left: AppSpacing.sm,
-                    right: AppSpacing.sm,
-                    bottom: toolsBottom,
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: _ExportAreaHorizontalToolbar(
+                if (canShowTools)
+                  if (useHorizontalTools)
+                    Positioned(
+                      left: AppSpacing.sm,
+                      right: AppSpacing.sm,
+                      bottom: toolsBottom,
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: _ExportAreaHorizontalToolbar(
+                          onFitWorkspace: _fitWorkspace,
+                          onZoomIn: () => _zoomBy(1),
+                          onZoomOut: () => _zoomBy(-1),
+                          basemapStyle: _basemapStyle,
+                          onToggleBasemap: _toggleBasemap,
+                          onUndo: _points.isEmpty ? null : _undoPoint,
+                          onClear: _points.isEmpty ? null : _clearPoints,
+                        ),
+                      ),
+                    )
+                  else
+                    Positioned(
+                      right: AppSpacing.sm,
+                      bottom: toolsBottom,
+                      child: _ExportAreaControlRail(
                         onFitWorkspace: _fitWorkspace,
                         onZoomIn: () => _zoomBy(1),
                         onZoomOut: () => _zoomBy(-1),
@@ -1386,41 +1430,27 @@ class _ExportAreaPickerDialogState extends State<_ExportAreaPickerDialog> {
                         onClear: _points.isEmpty ? null : _clearPoints,
                       ),
                     ),
-                  )
-                else
-                  Positioned(
-                    right: AppSpacing.sm,
-                    bottom: toolsBottom,
-                    child: _ExportAreaControlRail(
-                      onFitWorkspace: _fitWorkspace,
-                      onZoomIn: () => _zoomBy(1),
-                      onZoomOut: () => _zoomBy(-1),
-                      basemapStyle: _basemapStyle,
-                      onToggleBasemap: _toggleBasemap,
-                      onUndo: _points.isEmpty ? null : _undoPoint,
-                      onClear: _points.isEmpty ? null : _clearPoints,
-                    ),
-                  ),
-              Positioned(
-                left: AppSpacing.sm,
-                right: AppSpacing.sm,
-                bottom: 0,
-                child: KeyedSubtree(
-                  key: _bottomPanelKey,
-                  child: SafeArea(
-                    top: false,
-                    minimum: const EdgeInsets.only(bottom: AppSpacing.sm),
-                    child: _ExportAreaActionPanel(
-                      onUseArea: _points.length < 3
-                          ? null
-                          : () => Navigator.of(context).pop(_polygonGeoJson()),
+                Positioned(
+                  left: AppSpacing.sm,
+                  right: AppSpacing.sm,
+                  bottom: 0,
+                  child: KeyedSubtree(
+                    key: _bottomPanelKey,
+                    child: SafeArea(
+                      top: false,
+                      minimum: const EdgeInsets.only(bottom: AppSpacing.sm),
+                      child: _ExportAreaActionPanel(
+                        onUseArea: _points.length < 3
+                            ? null
+                            : () => _closePicker(_polygonGeoJson()),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
-          );
-        },
+              ],
+            );
+          },
+        ),
       ),
     );
   }

@@ -30,6 +30,22 @@ bool geometryPointsCollapseToSingleLocation(List<LatLng> points) {
   );
 }
 
+bool isValidPolygonRing(List<LatLng> points) {
+  if (points.length < 3) {
+    return false;
+  }
+  final uniquePoints = <String>{};
+  for (final point in points) {
+    if (!point.latitude.isFinite || !point.longitude.isFinite) {
+      return false;
+    }
+    uniquePoints.add(
+      '${point.latitude.toStringAsFixed(8)},${point.longitude.toStringAsFixed(8)}',
+    );
+  }
+  return uniquePoints.length >= 3;
+}
+
 List<LatLng> geometryPoints(Map<String, dynamic> geometry) {
   switch (_geometryType(geometry)) {
     case 'point':

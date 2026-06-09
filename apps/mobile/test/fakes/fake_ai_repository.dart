@@ -9,6 +9,8 @@ class FakeAiRepository implements AiRepository {
     List<AiRun> runs = const <AiRun>[],
     List<AiRunMetric> metrics = const <AiRunMetric>[],
     List<AiOutputLayer> layers = const <AiOutputLayer>[],
+    Map<String, AiLayerFeatureCollection> layerFeatures =
+        const <String, AiLayerFeatureCollection>{},
     List<AiRunLog> logs = const <AiRunLog>[],
     List<AiReviewDecision> reviews = const <AiReviewDecision>[],
     this.failReadiness = false,
@@ -17,6 +19,9 @@ class FakeAiRepository implements AiRepository {
        runs = List<AiRun>.from(runs),
        metrics = List<AiRunMetric>.from(metrics),
        layers = List<AiOutputLayer>.from(layers),
+       layerFeatures = Map<String, AiLayerFeatureCollection>.from(
+         layerFeatures,
+       ),
        logs = List<AiRunLog>.from(logs),
        reviews = List<AiReviewDecision>.from(reviews);
 
@@ -25,6 +30,10 @@ class FakeAiRepository implements AiRepository {
   List<AiRun> runs;
   List<AiRunMetric> metrics;
   List<AiOutputLayer> layers;
+  Map<String, AiLayerFeatureCollection> layerFeatures;
+  final Map<String, int> layerFeatureFetchCounts = <String, int>{};
+  final List<AiLayerFeaturesQuery> layerFeatureQueries =
+      <AiLayerFeaturesQuery>[];
   List<AiRunLog> logs;
   List<AiReviewDecision> reviews;
   bool failReadiness;
@@ -86,6 +95,131 @@ class FakeAiRepository implements AiRepository {
   @override
   Future<List<AiOutputLayer>> fetchRunLayers({required String runId}) async {
     return layers;
+  }
+
+  @override
+  Future<AiLayerFeatureCollection> fetchLayerFeatures({
+    required String layerId,
+    String detail = 'overview',
+    String geometry = 'simplified',
+    String? bounds,
+    double? zoom,
+    int? limit,
+    int? page,
+    String? search,
+    String? classLabel,
+    String? featureId,
+  }) async {
+    layerFeatureFetchCounts[layerId] =
+        (layerFeatureFetchCounts[layerId] ?? 0) + 1;
+    layerFeatureQueries.add(
+      AiLayerFeaturesQuery(
+        layerId: layerId,
+        detail: detail,
+        geometry: geometry,
+        bounds: bounds,
+        zoom: zoom,
+        limit: limit,
+        page: page,
+        search: search,
+        classLabel: classLabel,
+        featureId: featureId,
+      ),
+    );
+    final collection = layerFeatures[layerId];
+    if (collection != null) {
+      var filteredFeatures = collection.features;
+      final normalizedClass = classLabel?.trim().toLowerCase();
+      if (normalizedClass != null && normalizedClass.isNotEmpty) {
+        filteredFeatures = filteredFeatures
+            .where(
+              (feature) =>
+                  _fakeAiFeatureClass(feature)?.toLowerCase() ==
+                  normalizedClass,
+            )
+            .toList(growable: false);
+      }
+      final normalizedSearch = search?.trim().toLowerCase();
+      if (normalizedSearch != null && normalizedSearch.isNotEmpty) {
+        filteredFeatures = filteredFeatures
+            .where(
+              (feature) =>
+                  _fakeAiFeatureSearchBlob(feature).contains(normalizedSearch),
+            )
+            .toList(growable: false);
+      }
+      final normalizedFeatureId = featureId?.trim().toLowerCase();
+      if (normalizedFeatureId != null && normalizedFeatureId.isNotEmpty) {
+        filteredFeatures = filteredFeatures
+            .where((feature) => feature.id.toLowerCase() == normalizedFeatureId)
+            .toList(growable: false);
+      }
+      final isFiltered =
+          normalizedClass != null ||
+          normalizedSearch != null ||
+          normalizedFeatureId != null;
+      if (page == null || limit == null) {
+        if (!isFiltered) {
+          return collection;
+        }
+        return AiLayerFeatureCollection(
+          layer: collection.layer,
+          features: filteredFeatures,
+          featureCount: collection.featureCount,
+          matchingFeatureCount: filteredFeatures.length,
+          returnedFeatureCount: filteredFeatures.length,
+          detail: collection.detail,
+          geometryMode: collection.geometryMode,
+          optimizedPreview: collection.optimizedPreview,
+          capped: collection.capped,
+          cap: collection.cap,
+          classCounts: collection.classCounts,
+          geometryTypes: collection.geometryTypes,
+        );
+      }
+      final safePage = page < 1 ? 1 : page;
+      final start = (safePage - 1) * limit;
+      final end = start + limit > filteredFeatures.length
+          ? filteredFeatures.length
+          : start + limit;
+      final pageFeatures = start >= filteredFeatures.length
+          ? const <AiLayerFeature>[]
+          : filteredFeatures.sublist(start, end);
+      return AiLayerFeatureCollection(
+        layer: collection.layer,
+        features: pageFeatures,
+        featureCount: collection.featureCount,
+        matchingFeatureCount: isFiltered
+            ? filteredFeatures.length
+            : collection.matchingFeatureCount,
+        returnedFeatureCount: pageFeatures.length,
+        detail: collection.detail,
+        geometryMode: collection.geometryMode,
+        optimizedPreview: collection.optimizedPreview,
+        capped: end < filteredFeatures.length,
+        cap: collection.cap,
+        classCounts: collection.classCounts,
+        geometryTypes: collection.geometryTypes,
+      );
+    }
+    final layer = layers.firstWhere(
+      (item) => item.id == layerId,
+      orElse: () => AiOutputLayer(
+        id: layerId,
+        layerType: 'classification',
+        status: 'ready_for_review',
+        name: 'AI preview layer',
+      ),
+    );
+    return AiLayerFeatureCollection(
+      layer: layer,
+      features: const <AiLayerFeature>[],
+      featureCount: 0,
+      matchingFeatureCount: 0,
+      returnedFeatureCount: 0,
+      detail: detail,
+      geometryMode: geometry,
+    );
   }
 
   @override
@@ -244,6 +378,38 @@ class FakeAiRepository implements AiRepository {
     this.settings = settings.copyWith(projectId: projectId, persisted: true);
     return this.settings;
   }
+}
+
+String? _fakeAiFeatureClass(AiLayerFeature feature) {
+  for (final key in const <String>[
+    'predicted_class',
+    'dominant_class',
+    'class_label',
+    'label',
+    'L4_descr',
+  ]) {
+    final value = feature.properties[key];
+    if (value is String && value.trim().isNotEmpty) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+String _fakeAiFeatureSearchBlob(AiLayerFeature feature) {
+  final values = <Object?>[
+    feature.properties['predicted_class'],
+    feature.properties['dominant_class'],
+    feature.properties['class_label'],
+    feature.properties['label'],
+    feature.properties['model_name'],
+    feature.properties['model'],
+  ];
+  return values
+      .whereType<String>()
+      .where((value) => value.trim().isNotEmpty)
+      .join(' ')
+      .toLowerCase();
 }
 
 AiProjectSettings fakeAiSettings({

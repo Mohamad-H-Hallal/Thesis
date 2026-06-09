@@ -13,8 +13,14 @@ const {
   createCategory,
   createProject,
 } = require('./helpers/api-test-helpers');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 
 const SUPER_ADMIN_EMAIL = 'ai-superadmin@gov.lb';
+const ORIGINAL_AI_PIPELINE_ROOT = process.env.AI_PIPELINE_ROOT;
+const ORIGINAL_AI_PIPELINE_OUTPUT_ROOT = process.env.AI_PIPELINE_OUTPUT_ROOT;
+let tempAiPipelineRoot;
 
 const activateProject = async ({ token, projectId }) => {
   const response = await request(app)
@@ -172,6 +178,115 @@ const createReviewableAiRun = async ({ projectId, userId, layerStatus = 'ready_f
   };
 };
 
+const createPreviewableAiLayer = async ({
+  projectId,
+  userId,
+  layerType = 'classification',
+  status = 'ready_for_review',
+  storagePath = 'outputs/runs/phase-o-test/ai_classification_review.geojson',
+}) => {
+  const runResult = await pool.query(
+    `INSERT INTO ai_run (
+       project_id,
+       status,
+       label_field,
+       scope_type,
+       training_feature_count,
+       eligible_feature_count,
+       excluded_feature_count,
+       selected_model,
+       started_by,
+       metadata
+     )
+     VALUES (
+       $1,
+       'ready_for_review',
+       'L4_descr',
+       'project',
+       1406,
+       1394,
+       12,
+       'random_forest',
+       $2,
+       '{"execution_mode":"regional_vectorization_artifacts","phase":"phase_o_preview_test"}'::jsonb
+     )
+     RETURNING id`,
+    [projectId, userId],
+  );
+  const layerResult = await pool.query(
+    `INSERT INTO ai_output_layer (
+       ai_run_id,
+       project_id,
+       layer_type,
+       status,
+       name,
+       description,
+       storage_path,
+       crs,
+       style
+     )
+     VALUES (
+       $1,
+       $2,
+       $3,
+       $4,
+       'Regional AI classification preview',
+       'Unpublished AI map preview artifact.',
+       $5,
+       'EPSG:4326',
+       '{}'::jsonb
+     )
+     RETURNING id`,
+    [runResult.rows[0].id, projectId, layerType, status, storagePath],
+  );
+
+  return {
+    runId: runResult.rows[0].id,
+    layerId: layerResult.rows[0].id,
+  };
+};
+
+const writePreviewGeoJson = async (
+  relativePath = 'outputs/runs/phase-o-test/ai_classification_review.geojson',
+  features = [
+    {
+      type: 'Feature',
+      properties: {
+        predicted_class: 'olives',
+        confidence: 0.82,
+        model_name: 'random_forest',
+        source: 'ai_prediction',
+        run_id: 'phase-o-test',
+        area_ha: 1.4,
+      },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [35.22, 33.2],
+            [35.23, 33.2],
+            [35.23, 33.21],
+            [35.22, 33.21],
+            [35.22, 33.2],
+          ],
+        ],
+      },
+    },
+  ],
+) => {
+  const absolutePath = path.join(tempAiPipelineRoot, relativePath);
+  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+  await fs.writeFile(
+    absolutePath,
+    JSON.stringify({
+      type: 'FeatureCollection',
+      features,
+    }),
+    'utf8',
+  );
+  return relativePath;
+};
+
 const createContributorToken = async ({ adminToken, emailPrefix = 'ai-endpoint-contributor' }) => {
   const registered = await registerUser({
     role: 'contributor',
@@ -211,10 +326,27 @@ const createViewerToken = async () => {
 beforeEach(async () => {
   await resetDb();
   process.env.SUPER_ADMIN_EMAIL = SUPER_ADMIN_EMAIL;
+  tempAiPipelineRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'gis-ai-phase-o-'));
+  process.env.AI_PIPELINE_ROOT = tempAiPipelineRoot;
+  delete process.env.AI_PIPELINE_OUTPUT_ROOT;
 });
 
 afterEach(async () => {
   await resetDb();
+  if (tempAiPipelineRoot) {
+    await fs.rm(tempAiPipelineRoot, { recursive: true, force: true });
+    tempAiPipelineRoot = null;
+  }
+  if (ORIGINAL_AI_PIPELINE_ROOT === undefined) {
+    delete process.env.AI_PIPELINE_ROOT;
+  } else {
+    process.env.AI_PIPELINE_ROOT = ORIGINAL_AI_PIPELINE_ROOT;
+  }
+  if (ORIGINAL_AI_PIPELINE_OUTPUT_ROOT === undefined) {
+    delete process.env.AI_PIPELINE_OUTPUT_ROOT;
+  } else {
+    process.env.AI_PIPELINE_OUTPUT_ROOT = ORIGINAL_AI_PIPELINE_OUTPUT_ROOT;
+  }
 });
 
 afterAll(async () => {
@@ -762,6 +894,338 @@ describe('AI backend endpoints phase B', () => {
         status: 'draft',
         execution_mode: 'full_training',
       })
+      .expect(400);
+  });
+
+  test('protected super-admin can preview registered AI GeoJSON layer features only', async () => {
+    const { admin, project } = await createProjectFixture('AI Layer Preview');
+    const storagePath = await writePreviewGeoJson();
+    const { layerId } = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+      storagePath,
+    });
+    const featureCountBefore = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM spatial_feature',
+    );
+
+    const response = await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/features?zoom=12`)
+      .set(authHeader(admin.token))
+      .expect(200);
+
+    expect(response.body.data.layer.layer_type).toBe('classification');
+    expect(response.body.data.layer.status).toBe('ready_for_review');
+    expect(response.body.data.layer.viewer_published).toBe(false);
+    expect(response.body.data.feature_count).toBe(1);
+    expect(response.body.data.total_count).toBe(1);
+    expect(response.body.data.matching_feature_count).toBe(1);
+    expect(response.body.data.visible_count).toBe(1);
+    expect(response.body.data.returned_feature_count).toBe(1);
+    expect(response.body.data.returned_count).toBe(1);
+    expect(response.body.data.capped).toBe(false);
+    expect(response.body.data.cap).toBe(1800);
+    expect(response.body.data.detail).toBe('overview');
+    expect(response.body.data.geometry_mode).toBe('simplified');
+    expect(response.body.data.optimized_preview).toBe(true);
+    expect(response.body.data.class_counts).toEqual({ olives: 1 });
+    expect(response.body.data.geometry_types).toEqual(['Polygon']);
+    expect(response.body.data.feature_collection.type).toBe('FeatureCollection');
+    expect(response.body.data.feature_collection.features[0].geometry.type).toBe('Polygon');
+    expect(response.body.data.feature_collection.features[0].properties).toEqual(
+      expect.objectContaining({
+        predicted_class: 'olives',
+        confidence: 0.82,
+        model_name: 'random_forest',
+        source: 'ai_prediction',
+      }),
+    );
+
+    const fullResponse = await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/features?detail=full&geometry=full`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(fullResponse.body.data.detail).toBe('full');
+    expect(fullResponse.body.data.geometry_mode).toBe('full');
+    expect(fullResponse.body.data.optimized_preview).toBe(false);
+    expect(fullResponse.body.data.feature_collection.features[0].geometry.type).toBe('Polygon');
+
+    const aggregateResponse = await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/features?zoom=8&geometry=aggregate`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(aggregateResponse.body.data.detail).toBe('overview');
+    expect(aggregateResponse.body.data.geometry_mode).toBe('aggregate');
+    expect(aggregateResponse.body.data.total_count).toBe(1);
+    expect(aggregateResponse.body.data.visible_count).toBe(1);
+    expect(aggregateResponse.body.data.returned_count).toBe(1);
+    expect(aggregateResponse.body.data.feature_collection.features[0].geometry.type).toBe('Point');
+    expect(aggregateResponse.body.data.feature_collection.features[0].properties).toEqual(
+      expect.objectContaining({
+        aggregate: true,
+        aggregate_count: 1,
+        dominant_class: 'olives',
+      }),
+    );
+
+    const outsideBoundsResponse = await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/features?bounds=35.7,33.8,35.8,33.9`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(outsideBoundsResponse.body.data.feature_count).toBe(1);
+    expect(outsideBoundsResponse.body.data.total_count).toBe(1);
+    expect(outsideBoundsResponse.body.data.matching_feature_count).toBe(0);
+    expect(outsideBoundsResponse.body.data.visible_count).toBe(0);
+    expect(outsideBoundsResponse.body.data.returned_feature_count).toBe(0);
+    expect(outsideBoundsResponse.body.data.capped).toBe(false);
+
+    await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/features?detail=everything`)
+      .set(authHeader(admin.token))
+      .expect(400);
+    await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/features?bounds=bad`)
+      .set(authHeader(admin.token))
+      .expect(400);
+
+    const featureCountAfter = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM spatial_feature',
+    );
+    expect(featureCountAfter.rows[0].count).toBe(featureCountBefore.rows[0].count);
+  });
+
+  test('AI layer preview reports caps without changing total counts', async () => {
+    const { admin, project } = await createProjectFixture('AI Layer Preview Caps');
+    const features = ['olives', 'fruit trees', 'citrus fruit trees'].map((label, index) => ({
+      type: 'Feature',
+      properties: {
+        predicted_class: label,
+        confidence: 0.7 + index / 100,
+        model_name: 'random_forest',
+        source: 'ai_prediction',
+        run_id: 'phase-o-cap-test',
+      },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [35.2 + index / 100, 33.2],
+            [35.205 + index / 100, 33.2],
+            [35.205 + index / 100, 33.205],
+            [35.2 + index / 100, 33.205],
+            [35.2 + index / 100, 33.2],
+          ],
+        ],
+      },
+    }));
+    const storagePath = await writePreviewGeoJson(
+      'outputs/runs/phase-o-test/ai_classification_many.geojson',
+      features,
+    );
+    const { layerId } = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+      storagePath,
+    });
+
+    const cappedResponse = await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/features?detail=full&geometry=full&limit=1`)
+      .set(authHeader(admin.token))
+      .expect(200);
+
+    expect(cappedResponse.body.data.total_count).toBe(3);
+    expect(cappedResponse.body.data.visible_count).toBe(3);
+    expect(cappedResponse.body.data.returned_count).toBe(1);
+    expect(cappedResponse.body.data.cap).toBe(1);
+    expect(cappedResponse.body.data.capped).toBe(true);
+    expect(cappedResponse.body.data.pagination).toEqual({
+      page: 1,
+      limit: 1,
+      total: 3,
+      pages: 3,
+      has_more: true,
+    });
+    expect(cappedResponse.body.data.feature_collection.features[0].geometry.type).toBe('Polygon');
+    expect(cappedResponse.body.data.class_counts).toEqual({
+      olives: 1,
+      'fruit trees': 1,
+      'citrus fruit trees': 1,
+    });
+
+    const secondPageResponse = await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/features?detail=full&geometry=full&limit=1&page=2`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(secondPageResponse.body.data.total_count).toBe(3);
+    expect(secondPageResponse.body.data.visible_count).toBe(3);
+    expect(secondPageResponse.body.data.returned_count).toBe(1);
+    expect(secondPageResponse.body.data.pagination).toEqual({
+      page: 2,
+      limit: 1,
+      total: 3,
+      pages: 3,
+      has_more: true,
+    });
+    expect(
+      secondPageResponse.body.data.feature_collection.features[0].properties.predicted_class,
+    ).toBe('fruit trees');
+
+    const classFilterResponse = await request(app)
+      .get(
+        `${API_PREFIX}/ai/layers/${layerId}/features?detail=full&geometry=full&class_label=citrus%20fruit%20trees&limit=20`,
+      )
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(classFilterResponse.body.data.total_count).toBe(3);
+    expect(classFilterResponse.body.data.visible_count).toBe(1);
+    expect(classFilterResponse.body.data.returned_count).toBe(1);
+    expect(classFilterResponse.body.data.pagination).toEqual({
+      page: 1,
+      limit: 20,
+      total: 1,
+      pages: 1,
+      has_more: false,
+    });
+    expect(
+      classFilterResponse.body.data.feature_collection.features[0].properties.predicted_class,
+    ).toBe('citrus fruit trees');
+
+    const searchResponse = await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/features?detail=full&geometry=full&q=fruit&limit=1`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(searchResponse.body.data.total_count).toBe(3);
+    expect(searchResponse.body.data.visible_count).toBe(2);
+    expect(searchResponse.body.data.returned_count).toBe(1);
+    expect(searchResponse.body.data.pagination).toEqual({
+      page: 1,
+      limit: 1,
+      total: 2,
+      pages: 2,
+      has_more: true,
+    });
+
+    const hiddenReferenceLabelStoragePath = await writePreviewGeoJson(
+      'outputs/runs/phase-o-test/ai_classification_reference_labels.geojson',
+      [
+        {
+          type: 'Feature',
+          properties: {
+            source_feature_id: 'exact-citrus-reference',
+            predicted_class: 'olives',
+            L4_descr: 'citrus fruit trees',
+            model_name: 'random_forest',
+          },
+          geometry: {
+            type: 'Polygon',
+            coordinates: [
+              [
+                [35.7, 33.3],
+                [35.705, 33.3],
+                [35.705, 33.305],
+                [35.7, 33.305],
+                [35.7, 33.3],
+              ],
+            ],
+          },
+        },
+        {
+          type: 'Feature',
+          properties: {
+            source_feature_id: 'exact-citrus-prediction',
+            predicted_class: 'citrus fruit trees',
+            L4_descr: 'olives',
+            model_name: 'random_forest',
+          },
+          geometry: {
+            type: 'Polygon',
+            coordinates: [
+              [
+                [35.71, 33.3],
+                [35.715, 33.3],
+                [35.715, 33.305],
+                [35.71, 33.305],
+                [35.71, 33.3],
+              ],
+            ],
+          },
+        },
+      ],
+    );
+    const { layerId: hiddenReferenceLayerId } = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+      storagePath: hiddenReferenceLabelStoragePath,
+    });
+    const citrusSearchResponse = await request(app)
+      .get(
+        `${API_PREFIX}/ai/layers/${hiddenReferenceLayerId}/features?detail=full&geometry=full&q=citr&limit=20`,
+      )
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(citrusSearchResponse.body.data.total_count).toBe(2);
+    expect(citrusSearchResponse.body.data.visible_count).toBe(1);
+    expect(
+      citrusSearchResponse.body.data.feature_collection.features[0].properties.predicted_class,
+    ).toBe('citrus fruit trees');
+
+    const exactFeatureResponse = await request(app)
+      .get(
+        `${API_PREFIX}/ai/layers/${hiddenReferenceLayerId}/features?detail=full&geometry=full&feature_id=exact-citrus-reference&limit=1`,
+      )
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(exactFeatureResponse.body.data.visible_count).toBe(1);
+    expect(exactFeatureResponse.body.data.feature_collection.features[0].id).toBe(
+      'exact-citrus-reference',
+    );
+    expect(
+      exactFeatureResponse.body.data.feature_collection.features[0].properties.predicted_class,
+    ).toBe('olives');
+  });
+
+  test('AI layer preview denies non-protected users and unsafe artifact paths', async () => {
+    const { admin, project } = await createProjectFixture('AI Layer Preview Safety');
+    const storagePath = await writePreviewGeoJson();
+    const { layerId } = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+      storagePath,
+    });
+    const normalAdmin = await createAdminUser({
+      fullName: 'Normal AI Admin',
+      emailPrefix: 'normal-ai-admin',
+    });
+    const viewer = await createViewerToken();
+
+    await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/features`)
+      .set(authHeader(normalAdmin.token))
+      .expect(403);
+    await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/features`)
+      .set(authHeader(viewer.token))
+      .expect(403);
+
+    const traversal = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+      storagePath: 'outputs/runs/phase-o-test/../secret.geojson',
+    });
+    await request(app)
+      .get(`${API_PREFIX}/ai/layers/${traversal.layerId}/features`)
+      .set(authHeader(admin.token))
+      .expect(400);
+
+    const statistics = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+      layerType: 'statistics',
+      storagePath: 'outputs/runs/phase-o-test/statistics_layer.json',
+    });
+    await request(app)
+      .get(`${API_PREFIX}/ai/layers/${statistics.layerId}/features`)
+      .set(authHeader(admin.token))
       .expect(400);
   });
 
