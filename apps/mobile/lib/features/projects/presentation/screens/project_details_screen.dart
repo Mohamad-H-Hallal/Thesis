@@ -338,6 +338,18 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                                 : 'Photos optional',
                           ),
                         ),
+                        if (project.publishedAiLayerCount > 0)
+                          Chip(
+                            avatar: const Icon(
+                              Icons.auto_awesome_outlined,
+                              size: 18,
+                            ),
+                            label: Text(
+                              project.publishedAiLayerCount == 1
+                                  ? 'Published AI layer available'
+                                  : '${project.publishedAiLayerCount} published AI layers available',
+                            ),
+                          ),
                       ],
                     ),
                   ],

@@ -223,6 +223,25 @@ class ApiAiRepository implements AiRepository {
   }
 
   @override
+  Future<List<AiOutputLayer>> fetchPublishedProjectLayers({
+    required String projectId,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/published-layers',
+      );
+      return _rows(
+        response.data,
+      ).map((row) => AiOutputLayer.fromMap(row)).toList(growable: false);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load published AI layers right now.',
+      );
+    }
+  }
+
+  @override
   Future<AiLayerFeatureCollection> fetchLayerFeatures({
     required String layerId,
     String detail = 'overview',
@@ -357,6 +376,38 @@ class ApiAiRepository implements AiRepository {
       throw userFacingDioMessage(
         error,
         fallback: 'Unable to save AI review decision right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiOutputLayer> publishLayer({required String layerId}) async {
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_aiBasePath/layers/$layerId/publish',
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiOutputLayer.fromMap(_toMap(payload['data']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to publish this AI layer right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiOutputLayer> unpublishLayer({required String layerId}) async {
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_aiBasePath/layers/$layerId/unpublish',
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiOutputLayer.fromMap(_toMap(payload['data']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to unpublish this AI layer right now.',
       );
     }
   }

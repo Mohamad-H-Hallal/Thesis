@@ -306,6 +306,24 @@ paths:
           description: Forbidden
         '404':
           description: Project not found
+  /api/v1/projects/{projectId}/ai/published-layers:
+    get:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: List published AI layers for Project Map overlays
+      description: Viewer-safe endpoint. Users with project access can see only AI output layers with published status when project AI is enabled. Technical storage paths and unpublished review layers are not exposed.
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+      responses:
+        '200':
+          description: Published AI output layer list
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: Project not found
   /api/v1/projects/{projectId}/ai/settings:
     get:
       tags: [AI]
@@ -480,7 +498,7 @@ paths:
       security:
         - bearerAuth: []
       summary: List AI output layer metadata
-      description: Returns reviewable AI layer metadata only. AI outputs are not inserted into spatial_feature and are not published to viewers in Phase B.
+      description: Protected super-admin only. Returns reviewable AI layer metadata. AI outputs are never inserted into spatial_feature.
       parameters:
         - $ref: '#/components/parameters/runId'
       responses:
@@ -496,7 +514,7 @@ paths:
       security:
         - bearerAuth: []
       summary: Preview registered AI layer GeoJSON features
-      description: Protected super-admin only. Reads only registered review artifact paths under the configured AI outputs directory. Returns unpublished AI prediction features for review and never inserts them into spatial_feature or exposes them to viewers. Responses include whole-layer totals, visible viewport counts, returned counts, and cap metadata so clients do not confuse an optimized preview with the full layer.
+      description: Protected super-admin can preview unpublished review layers. Other project users can fetch features only for published AI layers. Reads only registered artifact paths under the configured AI outputs directory, never inserts AI predictions into spatial_feature, and includes whole-layer totals, visible viewport counts, returned counts, and cap metadata so clients do not confuse an optimized preview with the full layer.
       parameters:
         - $ref: '#/components/parameters/layerId'
         - in: query
@@ -557,6 +575,44 @@ paths:
           description: Forbidden
         '404':
           description: AI layer or artifact not found
+  /api/v1/ai/layers/{layerId}/publish:
+    post:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Publish an approved AI output layer as a read-only map overlay
+      description: Protected super-admin only. The layer must already be approved and project AI must be enabled. Publishing sets status=published and published metadata, writes an AI run log, and does not insert predictions into spatial_feature.
+      parameters:
+        - $ref: '#/components/parameters/layerId'
+      responses:
+        '200':
+          description: AI output layer published
+        '400':
+          description: Layer is not publishable
+        '403':
+          description: Forbidden
+        '404':
+          description: AI layer not found
+        '409':
+          description: Layer is not approved or project AI is disabled
+  /api/v1/ai/layers/{layerId}/unpublish:
+    post:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Remove viewer visibility for a published AI output layer
+      description: Protected super-admin only. Unpublishing returns the layer to approved status, clears viewer publication metadata, writes an AI run log, and does not touch spatial_feature.
+      parameters:
+        - $ref: '#/components/parameters/layerId'
+      responses:
+        '200':
+          description: AI output layer unpublished
+        '403':
+          description: Forbidden
+        '404':
+          description: AI layer not found
+        '409':
+          description: Layer is not published
   /api/v1/ai/runs/{runId}/reviews:
     get:
       tags: [AI]

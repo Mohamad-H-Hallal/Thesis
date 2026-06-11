@@ -119,6 +119,8 @@ class AiReadinessResult {
     required this.warnings,
     required this.blockers,
     required this.settings,
+    required this.nationalScopeEnabled,
+    required this.nationalScopeEligibility,
   });
 
   final String projectId;
@@ -144,6 +146,8 @@ class AiReadinessResult {
   final List<String> warnings;
   final List<String> blockers;
   final AiProjectSettings settings;
+  final bool nationalScopeEnabled;
+  final AiNationalScopeEligibility nationalScopeEligibility;
 
   bool get isReady => status == 'ready';
   bool get hasWarning => status == 'warning';
@@ -207,6 +211,31 @@ class AiReadinessResult {
       warnings: _toStringList(readiness['warnings']),
       blockers: _toStringList(readiness['blockers']),
       settings: AiProjectSettings.fromMap(settingsMap, projectId: projectId),
+      nationalScopeEnabled:
+          _toBool(readiness['national_scope_enabled']) ?? false,
+      nationalScopeEligibility: AiNationalScopeEligibility.fromMap(
+        _toMap(readiness['national_scope_eligibility']),
+      ),
+    );
+  }
+}
+
+class AiNationalScopeEligibility {
+  const AiNationalScopeEligibility({
+    required this.eligible,
+    required this.unmetRequirements,
+    required this.warnings,
+  });
+
+  final bool eligible;
+  final List<String> unmetRequirements;
+  final List<String> warnings;
+
+  factory AiNationalScopeEligibility.fromMap(Map<String, dynamic> map) {
+    return AiNationalScopeEligibility(
+      eligible: _toBool(map['eligible']) ?? false,
+      unmetRequirements: _toStringList(map['unmet_requirements']),
+      warnings: _toStringList(map['warnings']),
     );
   }
 }

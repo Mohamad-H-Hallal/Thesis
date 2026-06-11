@@ -26,6 +26,8 @@ import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../auth/domain/auth_models.dart';
+import '../../../ai/domain/ai_models.dart';
+import '../../../ai/presentation/ai_providers.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/app_tile_provider.dart';
 import '../../domain/current_location_service.dart';
@@ -79,6 +81,7 @@ class MapScreen extends ConsumerStatefulWidget {
 }
 
 class _MapScreenState extends ConsumerState<MapScreen> {
+  static const String _noOfficialFeatureFilter = '__none_official_features__';
   static const List<String> _projectMapStatusOrder = <String>[
     'approved',
     'pending_review',
@@ -95,6 +98,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       ValueNotifier(null);
   final LayerHitNotifier<MapFeatureSummary> _projectPolylineHitNotifier =
       ValueNotifier(null);
+  final LayerHitNotifier<_PublishedAiMapFeature>
+  _publishedAiPolygonHitNotifier = ValueNotifier(null);
+  final LayerHitNotifier<_PublishedAiMapFeature>
+  _publishedAiPolylineHitNotifier = ValueNotifier(null);
   final Set<String> _visibleStatuses = Set<String>.from(_projectMapStatusOrder);
   final List<LatLng> _captureVertices = <LatLng>[];
   final Map<String, Future<_OfflineTileAssets?>> _offlineTileAssetsFutureCache =
@@ -124,6 +131,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool _isProjectMapCaptureMode = false;
   bool _isProjectMapGeometryChooserOpen = false;
   bool _isProjectMapModalSheetOpen = false;
+  bool _showPublishedAiLayers = false;
+  Set<String> _visiblePublishedAiLayerTypes = const <String>{
+    'classification',
+    'confidence',
+    'uncertainty',
+  };
+  String? _selectedPublishedAiClass;
+  List<String> _stablePublishedAiClassOptions = const <String>[];
+  Map<String, int> _stablePublishedAiLayerCounts = const <String, int>{};
+  Map<String, Map<String, int>> _stablePublishedAiLayerClassCounts =
+      const <String, Map<String, int>>{};
+  String? _focusedPublishedAiFeatureKey;
+  _PublishedAiMapFeature? _focusedPublishedAiFeatureOverride;
   bool _hasHandledStartCaptureOnOpen = false;
   LebanonBasemapStyle _basemapStyle = LebanonBasemapStyle.street;
   MapCamera? _latestMapCamera;
@@ -410,6 +430,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     _offlineSheetUiState.dispose();
     _projectPolygonHitNotifier.dispose();
     _projectPolylineHitNotifier.dispose();
+    _publishedAiPolygonHitNotifier.dispose();
+    _publishedAiPolylineHitNotifier.dispose();
     _searchController.dispose();
     _projectMapSearchFocusNode.dispose();
     super.dispose();
@@ -488,6 +510,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       maxLon: normalize(bounds.northEast.longitude),
       maxLat: normalize(bounds.northEast.latitude),
       zoom: double.parse(zoom.toStringAsFixed(2)),
+      featureType: _selectedFeatureChip == _noOfficialFeatureFilter
+          ? null
+          : _selectedFeatureChip,
     );
   }
 
@@ -1109,6 +1134,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           availableProjects,
           requestedProjectId: widget.initialProjectId,
         );
+        final publishedAiLayersAsync = ref.watch(
+          publishedAiLayersProvider(project.id),
+        );
         _selectedProjectId ??= project.id;
         final viewportQuery =
             _projectViewportQuery ?? _buildProjectViewportQuery(project.id);
@@ -1313,14 +1341,93 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
         Widget buildWorkspace({Widget? embeddedControls}) {
           Widget buildLoadedWorkspace(List<MapFeatureSummary> features) {
-            final scopedFeatures = isUserRole
+            final publishedAiLayers = _publishedAiMapLayers(
+              publishedAiLayersAsync.valueOrNull ?? const <AiOutputLayer>[],
+            );
+            final publishedAiLayerTypes = _publishedAiLayerTypes(
+              publishedAiLayers,
+            );
+            final activePublishedAiLayers = publishedAiLayers
+                .where(
+                  (layer) =>
+                      _visiblePublishedAiLayerTypes.contains(layer.layerType),
+                )
+                .toList(growable: false);
+            final aiLayerCollections = <AiLayerFeatureCollection>[];
+            if (_showPublishedAiLayers && activePublishedAiLayers.isNotEmpty) {
+              for (final layer in activePublishedAiLayers) {
+                final query = _publishedAiLayerViewportQuery(
+                  layer,
+                  viewportQuery,
+                  classLabel: _selectedPublishedAiClass,
+                );
+                final collection = ref
+                    .watch(aiLayerFeaturesProvider(query))
+                    .valueOrNull;
+                if (collection != null) {
+                  aiLayerCollections.add(collection);
+                }
+              }
+            }
+            final loadedPublishedAiClassOptions = _publishedAiClassOptions(
+              aiLayerCollections,
+            );
+            if (loadedPublishedAiClassOptions.isNotEmpty) {
+              _stablePublishedAiClassOptions = loadedPublishedAiClassOptions;
+            }
+            final loadedPublishedAiLayerClassCounts =
+                _publishedAiLayerClassCountsByType(aiLayerCollections);
+            if (loadedPublishedAiLayerClassCounts.isNotEmpty) {
+              _stablePublishedAiLayerClassCounts =
+                  loadedPublishedAiLayerClassCounts;
+            }
+            final loadedPublishedAiLayerCounts = _publishedAiLayerCountsByType(
+              aiLayerCollections,
+            );
+            if (loadedPublishedAiLayerCounts.isNotEmpty) {
+              _stablePublishedAiLayerCounts = loadedPublishedAiLayerCounts;
+            }
+            final publishedAiClassOptions =
+                publishedAiLayerTypes.contains('classification')
+                ? _stablePublishedAiClassOptions
+                : const <String>[];
+            final publishedAiLayerCounts = Map<String, int>.from(
+              _stablePublishedAiLayerCounts,
+            );
+            if (_selectedPublishedAiClass != null) {
+              for (final layerType in publishedAiLayerTypes) {
+                final selectedClassCount =
+                    _stablePublishedAiLayerClassCounts[layerType]?[_selectedPublishedAiClass];
+                publishedAiLayerCounts[layerType] = selectedClassCount ?? 0;
+              }
+            }
+            final hasNoPublishedAiClassMatches =
+                _showPublishedAiLayers &&
+                _selectedPublishedAiClass != null &&
+                activePublishedAiLayers.isNotEmpty &&
+                publishedAiLayerCounts.entries
+                    .where(
+                      (entry) =>
+                          _visiblePublishedAiLayerTypes.contains(entry.key),
+                    )
+                    .every((entry) => entry.value == 0);
+            final hideOfficialFeatures =
+                _showPublishedAiLayers &&
+                _selectedFeatureChip == _noOfficialFeatureFilter;
+            final scopedFeatures = hideOfficialFeatures
+                ? const <MapFeatureSummary>[]
+                : isUserRole
                 ? features
                       .where((feature) => feature.status == 'approved')
                       .toList(growable: false)
                 : features;
             final quickFeatureChips = _deriveFeatureChips(
               project,
-              scopedFeatures,
+              isUserRole
+                  ? features
+                        .where((feature) => feature.status == 'approved')
+                        .toList(growable: false)
+                  : features,
             );
             final filteredFeatures = scopedFeatures
                 .where(
@@ -1331,7 +1438,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   (feature) => _matchesSearchAndChip(
                     feature,
                     query: _searchController.text,
-                    selectedChip: _selectedFeatureChip,
+                    selectedChip: null,
                   ),
                 )
                 .toList(growable: false);
@@ -1346,18 +1453,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   ? null
                   : _searchController.text.trim(),
               statuses: countStatuses,
-              featureType: _selectedFeatureChip,
+              featureType: hideOfficialFeatures ? null : _selectedFeatureChip,
             );
-            final featureCountAsync = ref.watch(
-              projectFeatureCountProvider(countQuery),
-            );
+            final featureCountAsync = hideOfficialFeatures
+                ? null
+                : ref.watch(projectFeatureCountProvider(countQuery));
             final fallbackFeatureCount = _projectMapFeatureTotal(
               project,
               filteredFeatures,
               canFilterStatuses: !isUserRole,
             );
-            final totalFeatureCount =
-                featureCountAsync.valueOrNull ?? fallbackFeatureCount;
+            final totalFeatureCount = hideOfficialFeatures
+                ? 0
+                : featureCountAsync?.valueOrNull ?? fallbackFeatureCount;
             _maybeOpenInitialFeatureDetails(
               project: project,
               features: filteredFeatures,
@@ -1377,6 +1485,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               canUseOfflineMap: canUseOfflineMap,
               canReview: canReview,
               canFilterStatuses: !isUserRole,
+              publishedAiLayers: publishedAiLayers,
+              publishedAiLayerCollections: aiLayerCollections,
+              publishedAiLayerTypes: publishedAiLayerTypes,
+              publishedAiClassOptions: publishedAiClassOptions,
+              publishedAiLayerCounts: publishedAiLayerCounts,
+              hasNoPublishedAiClassMatches: hasNoPublishedAiClassMatches,
               embeddedControls: embeddedControls,
             );
           }
@@ -1455,6 +1569,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required bool canUseOfflineMap,
     required bool canReview,
     required bool canFilterStatuses,
+    required List<AiOutputLayer> publishedAiLayers,
+    required List<AiLayerFeatureCollection> publishedAiLayerCollections,
+    required List<String> publishedAiLayerTypes,
+    required List<String> publishedAiClassOptions,
+    required Map<String, int> publishedAiLayerCounts,
+    required bool hasNoPublishedAiClassMatches,
     Widget? embeddedControls,
   }) {
     return LayoutBuilder(
@@ -1468,6 +1588,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           offlinePackage: offlinePackageAsync.valueOrNull,
           canCollectOnMap: canCollectOnMap,
           canReview: canReview,
+          publishedAiLayers: publishedAiLayers,
+          publishedAiLayerCollections: publishedAiLayerCollections,
+          publishedAiLayerTypes: publishedAiLayerTypes,
         );
         final featureListContent = features.isEmpty
             ? AppEmptyState(
@@ -1624,6 +1747,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               canUseOfflineMap: canUseOfflineMap,
               canReview: canReview,
               canFilterStatuses: canFilterStatuses,
+              publishedAiLayers: publishedAiLayers,
+              publishedAiLayerCollections: publishedAiLayerCollections,
+              publishedAiLayerTypes: publishedAiLayerTypes,
+              publishedAiClassOptions: publishedAiClassOptions,
+              publishedAiLayerCounts: publishedAiLayerCounts,
+              hasNoPublishedAiClassMatches: hasNoPublishedAiClassMatches,
             );
           }
           return Stack(
@@ -1745,6 +1874,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required bool canUseOfflineMap,
     required bool canReview,
     required bool canFilterStatuses,
+    required List<AiOutputLayer> publishedAiLayers,
+    required List<AiLayerFeatureCollection> publishedAiLayerCollections,
+    required List<String> publishedAiLayerTypes,
+    required List<String> publishedAiClassOptions,
+    required Map<String, int> publishedAiLayerCounts,
+    required bool hasNoPublishedAiClassMatches,
   }) {
     _scheduleProjectAutoFrame(project: project);
     _scheduleProjectMapTilePrime(offlinePackage);
@@ -1792,6 +1927,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 offlinePackage: offlinePackage,
                 canCollectOnMap: canCollectOnMap,
                 canReview: canReview,
+                publishedAiLayerCollections: publishedAiLayerCollections,
               ),
             ),
           ),
@@ -1897,6 +2033,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                     onChipSelected: (chip) {
                                       setState(() {
                                         _selectedFeatureChip = chip;
+                                        _lastViewportFeatures = null;
+                                        _projectViewportQuery =
+                                            _buildProjectViewportQuery(
+                                              project.id,
+                                            );
                                       });
                                     },
                                     onResetVisibleStatuses:
@@ -1906,6 +2047,86 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                         _visibleStatusSummaryLabel(),
                                     onBasemapStyleChanged:
                                         _setProjectMapBasemapStyle,
+                                    publishedAiLayerTypes:
+                                        publishedAiLayerTypes,
+                                    publishedAiClassOptions:
+                                        publishedAiClassOptions,
+                                    publishedAiLayerCounts:
+                                        publishedAiLayerCounts,
+                                    selectedPublishedAiClass:
+                                        _selectedPublishedAiClass,
+                                    hasNoPublishedAiClassMatches:
+                                        hasNoPublishedAiClassMatches,
+                                    allowNoOfficialFeatureFilter:
+                                        _showPublishedAiLayers,
+                                    visiblePublishedAiLayerTypes:
+                                        _visiblePublishedAiLayerTypes,
+                                    onPublishedAiClassSelected: (className) {
+                                      setState(() {
+                                        _selectedPublishedAiClass = className;
+                                        _focusedPublishedAiFeatureKey = null;
+                                        _focusedPublishedAiFeatureOverride =
+                                            null;
+                                      });
+                                    },
+                                    onPublishedAiLayerTypeSelected:
+                                        (layerType, selected) {
+                                          setState(() {
+                                            final next = Set<String>.from(
+                                              _visiblePublishedAiLayerTypes,
+                                            );
+                                            if (selected) {
+                                              next.add(layerType);
+                                            } else {
+                                              next.remove(layerType);
+                                            }
+                                            _visiblePublishedAiLayerTypes =
+                                                next;
+                                            if (!next.contains(
+                                              'classification',
+                                            )) {
+                                              _selectedPublishedAiClass = null;
+                                            }
+                                            _focusedPublishedAiFeatureKey =
+                                                null;
+                                            _focusedPublishedAiFeatureOverride =
+                                                null;
+                                          });
+                                        },
+                                    showPublishedAiLayers:
+                                        _showPublishedAiLayers,
+                                    onTogglePublishedAiLayers:
+                                        publishedAiLayers.isEmpty
+                                        ? null
+                                        : (selected) {
+                                            setState(() {
+                                              _showPublishedAiLayers = selected;
+                                              if (selected &&
+                                                  _visiblePublishedAiLayerTypes
+                                                      .isEmpty) {
+                                                _visiblePublishedAiLayerTypes =
+                                                    publishedAiLayerTypes
+                                                        .toSet();
+                                              }
+                                              if (!selected) {
+                                                _selectedPublishedAiClass =
+                                                    null;
+                                                _focusedPublishedAiFeatureKey =
+                                                    null;
+                                                _focusedPublishedAiFeatureOverride =
+                                                    null;
+                                                if (_selectedFeatureChip ==
+                                                    _noOfficialFeatureFilter) {
+                                                  _selectedFeatureChip = null;
+                                                  _lastViewportFeatures = null;
+                                                  _projectViewportQuery =
+                                                      _buildProjectViewportQuery(
+                                                        project.id,
+                                                      );
+                                                }
+                                              }
+                                            });
+                                          },
                                     onOpenOfflineTools: canUseOfflineMap
                                         ? () => _openOfflineToolsSheet(
                                             offlinePackage: offlinePackage,
@@ -1977,6 +2198,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       canCollectOnMap: canCollectOnMap,
                       canReview: canReview,
                       canFilterStatuses: canFilterStatuses,
+                      featureTypeOptions: quickFeatureChips,
+                      initialFeatureType:
+                          _selectedFeatureChip == _noOfficialFeatureFilter
+                          ? _noOfficialFeatureFilter
+                          : _selectedFeatureChip,
                     ),
               onCenterCurrentLocation: _isLocating
                   ? null
@@ -2061,6 +2287,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required OfflineMapPackage? offlinePackage,
     required bool canCollectOnMap,
     required bool canReview,
+    required List<AiLayerFeatureCollection> publishedAiLayerCollections,
   }) {
     return FutureBuilder<_OfflineTileAssets?>(
       future: _offlineTileAssetsFuture(offlinePackage),
@@ -2150,6 +2377,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               canReview: canReview,
               interactive: !_isProjectMapCaptureMode,
             ),
+            if (_showPublishedAiLayers &&
+                publishedAiLayerCollections.isNotEmpty) ...[
+              _publishedAiPolygonLayer(publishedAiLayerCollections),
+              _publishedAiPolylineLayer(publishedAiLayerCollections),
+              MarkerLayer(
+                markers: _publishedAiMarkerOverlays(
+                  publishedAiLayerCollections,
+                ),
+              ),
+            ],
             if (_currentLocation != null)
               MarkerLayer(
                 markers: [
@@ -2278,6 +2515,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required OfflineMapPackage? offlinePackage,
     required bool canCollectOnMap,
     required bool canReview,
+    required List<AiOutputLayer> publishedAiLayers,
+    required List<AiLayerFeatureCollection> publishedAiLayerCollections,
+    required List<String> publishedAiLayerTypes,
   }) {
     final currentCenter = _latestMapCamera?.center ?? LebanonMapConfig.center;
     final currentZoom =
@@ -2373,6 +2613,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       canCollectOnMap: canCollectOnMap,
                       canReview: canReview,
                     ),
+                    if (_showPublishedAiLayers &&
+                        publishedAiLayerCollections.isNotEmpty) ...[
+                      _publishedAiPolygonLayer(publishedAiLayerCollections),
+                      _publishedAiPolylineLayer(publishedAiLayerCollections),
+                      MarkerLayer(
+                        markers: _publishedAiMarkerOverlays(
+                          publishedAiLayerCollections,
+                        ),
+                      ),
+                    ],
                     if (_currentLocation != null)
                       MarkerLayer(
                         markers: [
@@ -2473,6 +2723,24 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                             LebanonMapConfig.basemapDescription(_basemapStyle),
                           ),
                         ),
+                        if (publishedAiLayers.isNotEmpty)
+                          FilterChip(
+                            avatar: const Icon(
+                              Icons.auto_awesome_outlined,
+                              size: 18,
+                            ),
+                            label: Text(
+                              _showPublishedAiLayers
+                                  ? 'Hide AI layer'
+                                  : 'Show AI layer',
+                            ),
+                            selected: _showPublishedAiLayers,
+                            onSelected: (selected) {
+                              setState(() {
+                                _showPublishedAiLayers = selected;
+                              });
+                            },
+                          ),
                       ],
                     ),
                     if (quickFeatureChips.isNotEmpty) ...[
@@ -2721,6 +2989,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required bool canCollectOnMap,
     required bool canReview,
     required bool canFilterStatuses,
+    required List<String> featureTypeOptions,
+    required String? initialFeatureType,
   }) async {
     if (mounted) {
       setState(() {
@@ -2742,6 +3012,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           statusLabelBuilder: _statusLabel,
           statusColorBuilder: _statusColor,
           canFilterStatuses: canFilterStatuses,
+          featureTypeOptions: featureTypeOptions,
+          initialFeatureType: initialFeatureType,
           onAddFeature: canCollectOnMap
               ? () {
                   Navigator.of(sheetContext).pop();
@@ -4080,6 +4352,227 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     );
   }
 
+  Widget _publishedAiPolygonLayer(List<AiLayerFeatureCollection> collections) {
+    final layer = PolygonLayer<_PublishedAiMapFeature>(
+      polygons: _publishedAiPolygonOverlays(collections),
+      hitNotifier: _publishedAiPolygonHitNotifier,
+    );
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      hitTestBehavior: HitTestBehavior.deferToChild,
+      child: GestureDetector(
+        behavior: HitTestBehavior.deferToChild,
+        onTap: () => _handlePublishedAiLayerHit(_publishedAiPolygonHitNotifier),
+        child: layer,
+      ),
+    );
+  }
+
+  Widget _publishedAiPolylineLayer(List<AiLayerFeatureCollection> collections) {
+    final layer = PolylineLayer<_PublishedAiMapFeature>(
+      polylines: _publishedAiPolylineOverlays(collections),
+      hitNotifier: _publishedAiPolylineHitNotifier,
+      minimumHitbox: 12,
+    );
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      hitTestBehavior: HitTestBehavior.deferToChild,
+      child: GestureDetector(
+        behavior: HitTestBehavior.deferToChild,
+        onTap: () =>
+            _handlePublishedAiLayerHit(_publishedAiPolylineHitNotifier),
+        child: layer,
+      ),
+    );
+  }
+
+  void _handlePublishedAiLayerHit(
+    LayerHitNotifier<_PublishedAiMapFeature> notifier,
+  ) {
+    if (_isProjectMapCaptureMode) {
+      return;
+    }
+    final hits = notifier.value?.hitValues;
+    if (hits == null || hits.isEmpty) {
+      return;
+    }
+    final selected = hits.firstWhere(
+      (item) => !_publishedAiIsAggregate(item.feature),
+      orElse: () => hits.first,
+    );
+    if (_publishedAiIsAggregate(selected.feature)) {
+      _focusPublishedAiAggregate(selected);
+      return;
+    }
+    _openPublishedAiFeatureDetails(selected);
+  }
+
+  List<Polygon<_PublishedAiMapFeature>> _publishedAiPolygonOverlays(
+    List<AiLayerFeatureCollection> collections,
+  ) {
+    final polygons = <Polygon<_PublishedAiMapFeature>>[];
+    for (final item in _publishedAiFeatures(
+      collections,
+      focusedOverride: _focusedPublishedAiFeatureOverride,
+    )) {
+      if (!isPolygonGeometry(item.feature.geometry)) {
+        continue;
+      }
+      final focused = _focusedPublishedAiFeatureKey == item.key;
+      final style = _publishedAiFeatureStyle(item, focused: focused);
+      for (final points in polygonGeometrySegments(item.feature.geometry)) {
+        if (!isValidPolygonRing(points)) {
+          continue;
+        }
+        polygons.add(
+          Polygon<_PublishedAiMapFeature>(
+            points: points,
+            color: style.fillColor,
+            borderStrokeWidth: style.borderWidth,
+            borderColor: style.borderColor,
+            hitValue: item,
+          ),
+        );
+      }
+    }
+    return polygons;
+  }
+
+  List<Polyline<_PublishedAiMapFeature>> _publishedAiPolylineOverlays(
+    List<AiLayerFeatureCollection> collections,
+  ) {
+    final polylines = <Polyline<_PublishedAiMapFeature>>[];
+    for (final item in _publishedAiFeatures(
+      collections,
+      focusedOverride: _focusedPublishedAiFeatureOverride,
+    )) {
+      if (!isLineGeometry(item.feature.geometry)) {
+        continue;
+      }
+      final focused = _focusedPublishedAiFeatureKey == item.key;
+      final style = _publishedAiFeatureStyle(item, focused: focused);
+      for (final points in lineGeometrySegments(item.feature.geometry)) {
+        if (points.length < 2) {
+          continue;
+        }
+        polylines.add(
+          Polyline<_PublishedAiMapFeature>(
+            points: points,
+            color: style.borderColor,
+            strokeWidth: math.max(2.8, style.borderWidth),
+            hitValue: item,
+          ),
+        );
+      }
+    }
+    return polylines;
+  }
+
+  List<Marker> _publishedAiMarkerOverlays(
+    List<AiLayerFeatureCollection> collections,
+  ) {
+    final markers = <Marker>[];
+    for (final item in _publishedAiFeatures(
+      collections,
+      focusedOverride: _focusedPublishedAiFeatureOverride,
+    )) {
+      if (!isPointGeometry(item.feature.geometry)) {
+        continue;
+      }
+      final focused = _focusedPublishedAiFeatureKey == item.key;
+      final style = _publishedAiFeatureStyle(item, focused: focused);
+      final aggregate = _publishedAiIsAggregate(item.feature);
+      for (final point in pointGeometryPoints(item.feature.geometry)) {
+        markers.add(
+          Marker(
+            point: point,
+            width: aggregate ? 28 : 24,
+            height: aggregate ? 28 : 24,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: () {
+                if (aggregate) {
+                  _focusPublishedAiAggregate(item);
+                  return;
+                }
+                _openPublishedAiFeatureDetails(item);
+              },
+              child: Center(
+                child: Container(
+                  width: aggregate ? 18 : 14,
+                  height: aggregate ? 18 : 14,
+                  decoration: BoxDecoration(
+                    color: style.borderColor,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 1.8),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x33000000),
+                        blurRadius: 5,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+    }
+    return markers;
+  }
+
+  void _focusPublishedAiAggregate(_PublishedAiMapFeature item) {
+    final point = geometryFocusPoint(item.feature.geometry);
+    if (point == null) {
+      return;
+    }
+    _runMainMapAction(() {
+      _mapController.move(
+        point,
+        math.max((_latestMapCamera?.zoom ?? _defaultMapZoom) + 1.8, 12),
+      );
+    }, queueUntilReady: true);
+  }
+
+  void _openPublishedAiFeatureDetails(_PublishedAiMapFeature item) {
+    _focusPublishedAiFeature(item);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => _PublishedAiFeatureDetailsSheet(item: item),
+    );
+  }
+
+  void _focusPublishedAiFeature(_PublishedAiMapFeature item) {
+    final points = geometryPoints(item.feature.geometry);
+    setState(() {
+      _focusedPublishedAiFeatureKey = item.key;
+      _focusedPublishedAiFeatureOverride = item;
+    });
+    if (points.isEmpty) {
+      return;
+    }
+    _runMainMapAction(() {
+      if (points.length > 1 &&
+          !geometryPointsCollapseToSingleLocation(points)) {
+        _mapController.fitCamera(
+          CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints(points),
+            padding: const EdgeInsets.all(72),
+            maxZoom: 16,
+          ),
+        );
+        return;
+      }
+      final center = geometryPointsCenter(points);
+      if (center != null) {
+        _mapController.move(center, 16);
+      }
+    }, queueUntilReady: true);
+  }
+
   List<Polygon<MapFeatureSummary>> _polygonOverlays(
     List<MapFeatureSummary> features,
   ) {
@@ -4340,6 +4833,442 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 }
 
+List<AiOutputLayer> _publishedAiMapLayers(List<AiOutputLayer> layers) {
+  const types = {'classification', 'confidence', 'uncertainty'};
+  final latestByType = <String, AiOutputLayer>{};
+  for (final layer in layers.where(
+    (layer) => layer.status == 'published' && types.contains(layer.layerType),
+  )) {
+    final existing = latestByType[layer.layerType];
+    if (existing == null || _isNewerPublishedLayer(layer, existing)) {
+      latestByType[layer.layerType] = layer;
+    }
+  }
+  return [
+    for (final type in const ['classification', 'confidence', 'uncertainty'])
+      if (latestByType[type] != null) latestByType[type]!,
+  ];
+}
+
+bool _isNewerPublishedLayer(AiOutputLayer candidate, AiOutputLayer current) {
+  final candidateDate =
+      candidate.publishedAt ?? candidate.updatedAt ?? candidate.createdAt;
+  final currentDate =
+      current.publishedAt ?? current.updatedAt ?? current.createdAt;
+  if (candidateDate == null) {
+    return currentDate == null && candidate.id.compareTo(current.id) > 0;
+  }
+  if (currentDate == null) {
+    return true;
+  }
+  return candidateDate.isAfter(currentDate);
+}
+
+List<String> _publishedAiLayerTypes(List<AiOutputLayer> layers) {
+  return [
+    for (final type in const ['classification', 'confidence', 'uncertainty'])
+      if (layers.any((layer) => layer.layerType == type)) type,
+  ];
+}
+
+AiLayerFeaturesQuery _publishedAiLayerViewportQuery(
+  AiOutputLayer layer,
+  ProjectMapViewportQuery viewport, {
+  String? classLabel,
+}) {
+  final detail = viewport.zoom >= 13 ? 'full' : 'overview';
+  final geometry = viewport.zoom < 11
+      ? 'aggregate'
+      : viewport.zoom < 13
+      ? 'simplified'
+      : 'full';
+  return AiLayerFeaturesQuery(
+    layerId: layer.id,
+    detail: detail,
+    geometry: geometry,
+    bounds:
+        '${viewport.minLon},${viewport.minLat},${viewport.maxLon},${viewport.maxLat}',
+    zoom: viewport.zoom,
+    limit: 900,
+    classLabel: classLabel,
+  );
+}
+
+List<String> _publishedAiClassOptions(
+  List<AiLayerFeatureCollection> collections,
+) {
+  final values = <String>{};
+  for (final collection in collections) {
+    if (collection.layer.layerType != 'classification') {
+      continue;
+    }
+    values.addAll(
+      collection.classCounts.keys.where((value) => value.trim().isNotEmpty),
+    );
+    for (final feature in collection.features) {
+      final className = _publishedAiFeatureClass(feature);
+      if (className != null && className.trim().isNotEmpty) {
+        values.add(className);
+      }
+    }
+  }
+  final sorted = values.toList(growable: false);
+  sorted.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+  return sorted;
+}
+
+Map<String, int> _publishedAiLayerCountsByType(
+  List<AiLayerFeatureCollection> collections,
+) {
+  final counts = <String, int>{};
+  for (final collection in collections) {
+    final type = collection.layer.layerType;
+    counts[type] = math.max(counts[type] ?? 0, collection.featureCount);
+  }
+  return counts;
+}
+
+Map<String, Map<String, int>> _publishedAiLayerClassCountsByType(
+  List<AiLayerFeatureCollection> collections,
+) {
+  final counts = <String, Map<String, int>>{};
+  for (final collection in collections) {
+    final layerCounts = <String, int>{};
+    collection.classCounts.forEach((label, count) {
+      if (label.trim().isEmpty || count < 0) {
+        return;
+      }
+      layerCounts[label] = count;
+    });
+    if (layerCounts.isNotEmpty) {
+      counts[collection.layer.layerType] = layerCounts;
+    }
+  }
+  return counts;
+}
+
+String _publishedAiLayerChipLabel(String layerType, int? count) {
+  final label = _publishedAiFriendlyLayerType(layerType);
+  if (count == null) {
+    return label;
+  }
+  return '$label $count';
+}
+
+List<_PublishedAiMapFeature> _publishedAiFeatures(
+  List<AiLayerFeatureCollection> collections, {
+  _PublishedAiMapFeature? focusedOverride,
+}) {
+  final items = <_PublishedAiMapFeature>[
+    for (final collection in collections)
+      for (final feature in collection.features)
+        _PublishedAiMapFeature(layer: collection.layer, feature: feature),
+  ];
+  if (focusedOverride == null ||
+      items.any((item) => item.key == focusedOverride.key)) {
+    return items;
+  }
+  return <_PublishedAiMapFeature>[...items, focusedOverride];
+}
+
+class _PublishedAiMapFeature {
+  const _PublishedAiMapFeature({required this.layer, required this.feature});
+
+  final AiOutputLayer layer;
+  final AiLayerFeature feature;
+
+  String get key => '${layer.id}:${feature.id}';
+}
+
+class _PublishedAiStyle {
+  const _PublishedAiStyle({
+    required this.fillColor,
+    required this.borderColor,
+    required this.borderWidth,
+  });
+
+  final Color fillColor;
+  final Color borderColor;
+  final double borderWidth;
+}
+
+_PublishedAiStyle _publishedAiFeatureStyle(
+  _PublishedAiMapFeature item, {
+  bool focused = false,
+}) {
+  switch (item.layer.layerType) {
+    case 'confidence':
+      final confidence = _publishedAiFeatureConfidence(item.feature);
+      final alpha = confidence == null
+          ? 0.20
+          : (0.10 + confidence.clamp(0, 1).toDouble() * 0.28);
+      return _PublishedAiStyle(
+        fillColor: const Color(0xFF0288D1).withValues(alpha: alpha),
+        borderColor: focused ? Colors.black87 : const Color(0xFF01579B),
+        borderWidth: focused ? 3.2 : 2,
+      );
+    case 'uncertainty':
+      return _PublishedAiStyle(
+        fillColor: const Color(0xFFE65100).withValues(alpha: 0.22),
+        borderColor: focused ? Colors.black87 : const Color(0xFFBF360C),
+        borderWidth: focused ? 3.4 : 2.2,
+      );
+    case 'classification':
+    default:
+      final color = _publishedAiClassColor(
+        _publishedAiFeatureClass(item.feature),
+      );
+      return _PublishedAiStyle(
+        fillColor: color.withValues(alpha: 0.18),
+        borderColor: focused ? Colors.black87 : color,
+        borderWidth: focused ? 3.2 : 2,
+      );
+  }
+}
+
+Color _publishedAiClassColor(String? className) {
+  final normalized = (className ?? '').toLowerCase();
+  if (normalized.contains('citrus')) {
+    return const Color(0xFFF9A825);
+  }
+  if (normalized.contains('fruit')) {
+    return const Color(0xFF7B1FA2);
+  }
+  if (normalized.contains('olive')) {
+    return const Color(0xFF2E7D32);
+  }
+  return const Color(0xFF00695C);
+}
+
+Color _publishedAiLayerTypeColor(String layerType) {
+  switch (layerType) {
+    case 'confidence':
+      return const Color(0xFF0288D1);
+    case 'uncertainty':
+      return const Color(0xFFE65100);
+    case 'classification':
+    default:
+      return const Color(0xFF2E7D32);
+  }
+}
+
+String? _publishedAiFeatureClass(AiLayerFeature feature) {
+  for (final key in const [
+    'predicted_class',
+    'dominant_class',
+    'class_label',
+    'label',
+    'L4_descr',
+  ]) {
+    final value = feature.properties[key]?.toString().trim();
+    if (value != null && value.isNotEmpty) {
+      return value;
+    }
+  }
+  return null;
+}
+
+double? _publishedAiFeatureConfidence(AiLayerFeature feature) {
+  final raw = feature.properties['confidence'];
+  if (raw is num) {
+    return raw.toDouble();
+  }
+  if (raw is String) {
+    return double.tryParse(raw);
+  }
+  return null;
+}
+
+bool _publishedAiIsAggregate(AiLayerFeature feature) {
+  return feature.properties['aggregate'] == true ||
+      feature.properties['preview_kind'] == 'aggregate';
+}
+
+String? _publishedAiFeatureText(AiLayerFeature feature, List<String> keys) {
+  for (final key in keys) {
+    final value = feature.properties[key]?.toString().trim();
+    if (value != null && value.isNotEmpty) {
+      return value;
+    }
+  }
+  return null;
+}
+
+String _publishedAiFriendlyLayerType(String type) {
+  switch (type) {
+    case 'confidence':
+      return 'Confidence';
+    case 'uncertainty':
+      return 'Uncertainty';
+    case 'classification':
+      return 'Classification';
+    default:
+      return 'AI layer';
+  }
+}
+
+String _publishedAiFriendlyClass(String value) {
+  return value
+      .replaceAll('_', ' ')
+      .split(' ')
+      .where((part) => part.trim().isNotEmpty)
+      .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
+      .join(' ');
+}
+
+String _publishedAiFormatConfidence(double value) =>
+    '${(value * 100).clamp(0, 100).toStringAsFixed(1)}%';
+
+class _PublishedAiFeatureDetailsSheet extends StatelessWidget {
+  const _PublishedAiFeatureDetailsSheet({required this.item});
+
+  final _PublishedAiMapFeature item;
+
+  @override
+  Widget build(BuildContext context) {
+    final feature = item.feature;
+    final className = _publishedAiFeatureClass(feature);
+    final confidence = _publishedAiFeatureConfidence(feature);
+    final bottomInset =
+        MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
+    final model = _publishedAiFeatureText(feature, const [
+      'model_name',
+      'model',
+    ]);
+    final source =
+        _publishedAiFeatureText(feature, const ['source']) ?? 'AI prediction';
+    final runId = _publishedAiFeatureText(feature, const ['run_id']);
+    final area = _publishedAiFeatureText(feature, const ['area_ha', 'area']);
+    final attributes = <String, dynamic>{
+      'layer': _publishedAiFriendlyLayerType(item.layer.layerType),
+      'source': source,
+    };
+    if (className != null) {
+      attributes['predicted_class'] = _publishedAiFriendlyClass(className);
+    }
+    if (confidence != null) {
+      attributes['confidence'] = _publishedAiFormatConfidence(confidence);
+    }
+    if (model != null) {
+      attributes['model'] = model;
+    }
+    if (area != null) {
+      attributes['area'] = area;
+    }
+    if (runId != null) {
+      attributes['run_id'] = runId;
+    }
+
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.75,
+      minChildSize: 0.45,
+      maxChildSize: 0.94,
+      builder: (context, controller) => ListView(
+        controller: controller,
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.md,
+          AppSpacing.sm,
+          AppSpacing.md,
+          bottomInset,
+        ),
+        children: [
+          Center(
+            child: Container(
+              width: 44,
+              height: 5,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.outlineVariant,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      className == null
+                          ? 'AI prediction'
+                          : _publishedAiFriendlyClass(className),
+                      style: Theme.of(context).textTheme.titleLarge,
+                      softWrap: true,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${_publishedAiFriendlyLayerType(item.layer.layerType)} layer - read only',
+                      style: Theme.of(context).textTheme.bodySmall,
+                      softWrap: true,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              StatusChip(status: 'published'),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          _DetailSection(
+            title: 'Prediction details',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (className != null)
+                      _MapInfoPill(
+                        icon: Icons.category_outlined,
+                        label: _publishedAiFriendlyClass(className),
+                      ),
+                    if (confidence != null)
+                      _MapInfoPill(
+                        icon: Icons.speed_outlined,
+                        label:
+                            'Confidence ${_publishedAiFormatConfidence(confidence)}',
+                      ),
+                    _MapInfoPill(
+                      icon: Icons.layers_outlined,
+                      label: _publishedAiFriendlyLayerType(
+                        item.layer.layerType,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          if (attributes.isNotEmpty)
+            _DetailSection(
+              title: 'Attributes',
+              child: _FeatureAttributesGrid(attributes: attributes),
+            ),
+          const _DetailSection(
+            title: 'Data status',
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.lock_outline, size: 20),
+                SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text(
+                    'Read-only AI prediction. Not approved field data and not editable.',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ProjectMapFloatingPanel extends StatelessWidget {
   const _ProjectMapFloatingPanel({
     required this.project,
@@ -4361,6 +5290,17 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
     required this.onToggleVisibleStatus,
     required this.visibleStatusSummaryLabel,
     required this.onBasemapStyleChanged,
+    required this.publishedAiLayerTypes,
+    required this.publishedAiClassOptions,
+    required this.publishedAiLayerCounts,
+    required this.selectedPublishedAiClass,
+    required this.hasNoPublishedAiClassMatches,
+    required this.allowNoOfficialFeatureFilter,
+    required this.visiblePublishedAiLayerTypes,
+    required this.onPublishedAiClassSelected,
+    required this.onPublishedAiLayerTypeSelected,
+    required this.showPublishedAiLayers,
+    required this.onTogglePublishedAiLayers,
     required this.onOpenOfflineTools,
     required this.onToggleExpanded,
     required this.onHidePanel,
@@ -4386,6 +5326,18 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
   final ValueChanged<String> onToggleVisibleStatus;
   final String visibleStatusSummaryLabel;
   final ValueChanged<LebanonBasemapStyle> onBasemapStyleChanged;
+  final List<String> publishedAiLayerTypes;
+  final List<String> publishedAiClassOptions;
+  final Map<String, int> publishedAiLayerCounts;
+  final String? selectedPublishedAiClass;
+  final bool hasNoPublishedAiClassMatches;
+  final bool allowNoOfficialFeatureFilter;
+  final Set<String> visiblePublishedAiLayerTypes;
+  final ValueChanged<String?> onPublishedAiClassSelected;
+  final void Function(String layerType, bool selected)
+  onPublishedAiLayerTypeSelected;
+  final bool showPublishedAiLayers;
+  final ValueChanged<bool>? onTogglePublishedAiLayers;
   final VoidCallback? onOpenOfflineTools;
   final VoidCallback onToggleExpanded;
   final VoidCallback onHidePanel;
@@ -4396,7 +5348,10 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final openOfflineTools = onOpenOfflineTools;
-    final activeFilterLabel = selectedFeatureChip ?? 'All features';
+    final officialFeatureFilterLabel = selectedFeatureChip ?? 'All features';
+    final hasVisibleOfficialFeatureChip =
+        selectedFeatureChip != null &&
+        selectedFeatureChip != _MapScreenState._noOfficialFeatureFilter;
     final visibleCountLabel = featureCount == 1
         ? '1 feature'
         : '$featureCount features';
@@ -4470,7 +5425,9 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                                         ),
                                   ),
                                   _CompactMapMetaPill(
-                                    icon: Icons.place_outlined,
+                                    icon: showPublishedAiLayers
+                                        ? Icons.auto_awesome_outlined
+                                        : Icons.place_outlined,
                                     label: visibleCountLabel,
                                     maxWidth: metaMaxWidth - 12,
                                     textStyle: theme.textTheme.labelSmall
@@ -4556,7 +5513,8 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                   if (!isExpanded) ...[
                     if (searchSummaryLabel != null ||
                         !_isDefaultStatusSummary(visibleStatusSummaryLabel) ||
-                        selectedFeatureChip != null) ...[
+                        selectedFeatureChip != null ||
+                        showPublishedAiLayers) ...[
                       const SizedBox(height: 10),
                       Wrap(
                         spacing: 8,
@@ -4575,10 +5533,10 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                               icon: Icons.visibility_outlined,
                               label: visibleStatusSummaryLabel,
                             ),
-                          if (selectedFeatureChip != null)
+                          if (hasVisibleOfficialFeatureChip)
                             _MapInfoPill(
                               icon: Icons.layers_outlined,
-                              label: activeFilterLabel,
+                              label: officialFeatureFilterLabel,
                             ),
                         ],
                       ),
@@ -4586,6 +5544,121 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                   ],
                   if (isExpanded) ...[
                     const SizedBox(height: 10),
+                    if (onTogglePublishedAiLayers != null) ...[
+                      FilterChip(
+                        avatar: const Icon(
+                          Icons.auto_awesome_outlined,
+                          size: 18,
+                        ),
+                        label: Text(
+                          showPublishedAiLayers
+                              ? 'Hide published AI layer'
+                              : 'Show published AI layer',
+                        ),
+                        selected: showPublishedAiLayers,
+                        onSelected: onTogglePublishedAiLayers,
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    if (showPublishedAiLayers) ...[
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            for (
+                              var index = 0;
+                              index < publishedAiLayerTypes.length;
+                              index += 1
+                            ) ...[
+                              if (index > 0) const SizedBox(width: 8),
+                              _LegendFilterChip(
+                                label: _publishedAiLayerChipLabel(
+                                  publishedAiLayerTypes[index],
+                                  publishedAiLayerCounts[publishedAiLayerTypes[index]],
+                                ),
+                                color: _publishedAiLayerTypeColor(
+                                  publishedAiLayerTypes[index],
+                                ),
+                                selected: visiblePublishedAiLayerTypes.contains(
+                                  publishedAiLayerTypes[index],
+                                ),
+                                onSelected: (selected) =>
+                                    onPublishedAiLayerTypeSelected(
+                                      publishedAiLayerTypes[index],
+                                      selected,
+                                    ),
+                              ),
+                            ],
+                            if (visiblePublishedAiLayerTypes.length !=
+                                publishedAiLayerTypes.length) ...[
+                              const SizedBox(width: 8),
+                              ActionChip(
+                                avatar: const Icon(Icons.clear, size: 18),
+                                label: const Text('All layers'),
+                                onPressed: () {
+                                  for (final layerType
+                                      in publishedAiLayerTypes) {
+                                    onPublishedAiLayerTypeSelected(
+                                      layerType,
+                                      true,
+                                    );
+                                  }
+                                },
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      if (visiblePublishedAiLayerTypes.contains(
+                            'classification',
+                          ) &&
+                          publishedAiClassOptions.isNotEmpty) ...[
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: [
+                              ChoiceChip(
+                                label: const Text('All classes'),
+                                selected: selectedPublishedAiClass == null,
+                                onSelected: (_) =>
+                                    onPublishedAiClassSelected(null),
+                              ),
+                              for (final className
+                                  in publishedAiClassOptions) ...[
+                                const SizedBox(width: 8),
+                                _LegendFilterChip(
+                                  label: _publishedAiFriendlyClass(className),
+                                  color: _publishedAiClassColor(className),
+                                  selected:
+                                      selectedPublishedAiClass == className,
+                                  onSelected: (selected) =>
+                                      onPublishedAiClassSelected(
+                                        selected ? className : null,
+                                      ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        if (hasNoPublishedAiClassMatches) ...[
+                          const Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(Icons.search_off_outlined, size: 18),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'No AI predictions match this class.',
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                        ],
+                      ],
+                    ],
                     if (canFilterStatuses) ...[
                       SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
@@ -4622,6 +5695,24 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                             selected: selectedFeatureChip == null,
                             onSelected: (_) => onChipSelected(null),
                           ),
+                          if (allowNoOfficialFeatureFilter) ...[
+                            const SizedBox(width: 8),
+                            ChoiceChip(
+                              avatar: const Icon(
+                                Icons.visibility_off_outlined,
+                                size: 18,
+                              ),
+                              label: const Text('None'),
+                              selected:
+                                  selectedFeatureChip ==
+                                  _MapScreenState._noOfficialFeatureFilter,
+                              onSelected: (selected) => onChipSelected(
+                                selected
+                                    ? _MapScreenState._noOfficialFeatureFilter
+                                    : null,
+                              ),
+                            ),
+                          ],
                           for (final chip in quickFeatureChips) ...[
                             const SizedBox(width: 8),
                             ChoiceChip(
@@ -4749,6 +5840,30 @@ class _MapControlRail extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _LegendFilterChip extends StatelessWidget {
+  const _LegendFilterChip({
+    required this.label,
+    required this.color,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final String label;
+  final Color color;
+  final bool selected;
+  final ValueChanged<bool> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilterChip(
+      avatar: Icon(Icons.square_rounded, color: color, size: 16),
+      label: Text(label),
+      selected: selected,
+      onSelected: onSelected,
     );
   }
 }
@@ -5247,15 +6362,25 @@ class _MapInfoPill extends StatelessWidget {
         color: scheme.surfaceContainerHighest.withValues(alpha: 0.7),
         borderRadius: BorderRadius.circular(999),
       ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 16, color: scheme.primary),
-            const SizedBox(width: 6),
-            Text(label, style: Theme.of(context).textTheme.bodySmall),
-          ],
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 240),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: scheme.primary),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -5451,6 +6576,8 @@ class _ProjectFeatureBrowserSheet extends ConsumerStatefulWidget {
     required this.statusLabelBuilder,
     required this.statusColorBuilder,
     required this.onSelectFeature,
+    required this.featureTypeOptions,
+    this.initialFeatureType,
     this.onAddFeature,
   });
 
@@ -5464,6 +6591,8 @@ class _ProjectFeatureBrowserSheet extends ConsumerStatefulWidget {
   final String Function(MapFeatureSummary feature) searchBlobBuilder;
   final String Function(String status) statusLabelBuilder;
   final Color Function(String status) statusColorBuilder;
+  final List<String> featureTypeOptions;
+  final String? initialFeatureType;
   final VoidCallback? onAddFeature;
   final ValueChanged<MapFeatureSummary> onSelectFeature;
 
@@ -5477,6 +6606,7 @@ class _ProjectFeatureBrowserSheetState
   final TextEditingController _searchController = TextEditingController();
   String? _statusFilter;
   String? _geometryTypeFilter;
+  String? _featureTypeFilter;
 
   static const List<String> _statusOrder = <String>[
     'approved',
@@ -5484,6 +6614,15 @@ class _ProjectFeatureBrowserSheetState
     'rejected',
     'draft',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    final initialFeatureType = widget.initialFeatureType?.trim();
+    _featureTypeFilter = initialFeatureType?.isEmpty == true
+        ? null
+        : initialFeatureType;
+  }
 
   @override
   void dispose() {
@@ -5526,6 +6665,7 @@ class _ProjectFeatureBrowserSheetState
           : _searchController.text.trim(),
       status: widget.canFilterStatuses ? _statusFilter : null,
       geometryType: _geometryTypeFilter,
+      featureType: _featureTypeFilter,
     );
     final featuresAsync = ref.watch(
       paginatedProjectFeatureBrowserProvider(query),
@@ -5541,7 +6681,8 @@ class _ProjectFeatureBrowserSheetState
         widget.features.isNotEmpty &&
         _searchController.text.trim().isEmpty &&
         _statusFilter == null &&
-        _geometryTypeFilter == null;
+        _geometryTypeFilter == null &&
+        _featureTypeFilter == widget.initialFeatureType;
     final displayedFeatures = useSeedFeatures
         ? widget.features
         : featureState.items;
@@ -5550,6 +6691,14 @@ class _ProjectFeatureBrowserSheetState
         ? math.max(widget.initialTotalCount, displayedRepresentedCount)
         : featureState.total;
     final geometryTypes = _geometryTypes;
+    final lockedFeatureType = widget.initialFeatureType?.trim();
+    final hasNoOfficialFeatureType =
+        lockedFeatureType == _MapScreenState._noOfficialFeatureFilter;
+    final hasLockedFeatureType =
+        lockedFeatureType != null && lockedFeatureType.isNotEmpty;
+    final lockedFeatureTypeLabel = hasNoOfficialFeatureType
+        ? 'None'
+        : lockedFeatureType ?? '';
 
     final bottomInset =
         MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
@@ -5639,6 +6788,57 @@ class _ProjectFeatureBrowserSheetState
                   ],
                 ),
               ),
+            if (widget.featureTypeOptions.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.sm),
+              if (hasLockedFeatureType) ...[
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    ChoiceChip(
+                      label: Text(lockedFeatureTypeLabel),
+                      selected: true,
+                      onSelected: (_) {},
+                    ),
+                    const _MapInfoPill(
+                      icon: Icons.lock_outline,
+                      label: 'Using map filter',
+                    ),
+                  ],
+                ),
+              ] else
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      ChoiceChip(
+                        label: const Text('All'),
+                        selected: _featureTypeFilter == null,
+                        onSelected: (_) {
+                          setState(() {
+                            _featureTypeFilter = null;
+                          });
+                        },
+                      ),
+                      for (final featureType in widget.featureTypeOptions) ...[
+                        const SizedBox(width: 8),
+                        ChoiceChip(
+                          label: Text(featureType),
+                          selected: _featureTypeFilter == featureType,
+                          onSelected: (selected) {
+                            setState(() {
+                              _featureTypeFilter = selected
+                                  ? featureType
+                                  : null;
+                            });
+                          },
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+            ],
             if (geometryTypes.length > 1) ...[
               const SizedBox(height: AppSpacing.sm),
               SingleChildScrollView(
@@ -5646,7 +6846,7 @@ class _ProjectFeatureBrowserSheetState
                 child: Row(
                   children: [
                     ChoiceChip(
-                      label: const Text('Any geometry'),
+                      label: const Text('All'),
                       selected: _geometryTypeFilter == null,
                       onSelected: (_) {
                         setState(() {
@@ -5696,12 +6896,20 @@ class _ProjectFeatureBrowserSheetState
             else if (displayedFeatures.isEmpty)
               AppEmptyState(
                 icon: Icons.layers_clear_outlined,
-                title: 'No features match these filters',
-                message: widget.canFilterStatuses
+                title: hasNoOfficialFeatureType
+                    ? 'Official features are hidden'
+                    : 'No features match these filters',
+                message: hasNoOfficialFeatureType
+                    ? 'The map is showing published AI layers only. Clear the None filter to browse official project features again.'
+                    : widget.canFilterStatuses
                     ? 'Try a different search, status, or geometry filter for this project.'
                     : 'Try a different search or geometry filter for this project.',
-                actionLabel: widget.canCollectOnMap ? 'Add Feature' : null,
-                onAction: widget.onAddFeature,
+                actionLabel: hasNoOfficialFeatureType
+                    ? null
+                    : widget.canCollectOnMap
+                    ? 'Add Feature'
+                    : null,
+                onAction: hasNoOfficialFeatureType ? null : widget.onAddFeature,
               )
             else
               ProgressiveListSection<MapFeatureSummary>(

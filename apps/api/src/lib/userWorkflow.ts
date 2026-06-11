@@ -232,10 +232,11 @@ const ensureSuperAdminExists = async (env: EnvConfig): Promise<void> => {
   const existing = await query<{
     id: string;
     email: string;
+    password_hash: string | null;
     role: string;
     is_active: boolean;
   }>(
-    `SELECT id, email, role, is_active
+    `SELECT id, email, password_hash, role, is_active
      FROM "user"
      WHERE LOWER(email) = $1`,
     [email]
@@ -253,16 +254,28 @@ const ensureSuperAdminExists = async (env: EnvConfig): Promise<void> => {
   }
 
   const current = existing.rows[0];
-  if (current.role !== 'admin' || !current.is_active) {
+  const passwordMatchesEnv = current.password_hash
+    ? await bcrypt.compare(password, current.password_hash)
+    : false;
+
+  if (current.role !== 'admin' || !current.is_active || !passwordMatchesEnv) {
+    const passwordHash =
+      passwordMatchesEnv && current.password_hash ? current.password_hash : await bcrypt.hash(password, 12);
     await query(
       `UPDATE "user"
        SET role = 'admin',
            is_active = TRUE,
-           full_name = COALESCE(NULLIF($1, ''), full_name)
-       WHERE id = $2`,
-      [fullName, current.id]
+           password_hash = $1,
+           full_name = COALESCE(NULLIF($2, ''), full_name)
+       WHERE id = $3`,
+      [passwordHash, fullName, current.id]
     );
-    logger.warn('Super admin bootstrap user corrected to active admin', { email });
+    logger.warn('Super admin bootstrap user corrected from configured environment', {
+      email,
+      roleCorrected: current.role !== 'admin',
+      activeCorrected: !current.is_active,
+      passwordHashSynced: !passwordMatchesEnv,
+    });
     return;
   }
 

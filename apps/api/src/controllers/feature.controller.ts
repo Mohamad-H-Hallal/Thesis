@@ -1389,6 +1389,10 @@ const findFeaturesTile = async (req: Request, res: Response): Promise<void> => {
   const projectId = String(req.query.project_id ?? '');
   const requestedStatus = req.query.status ? String(req.query.status) : null;
   const status = req.user?.role === 'viewer' ? 'approved' : requestedStatus;
+  const featureType =
+    typeof req.query.feature_type === 'string'
+      ? req.query.feature_type.trim()
+      : '';
   const zoom = normalizeMapZoom(req.query.zoom ?? req.params.z, 11);
   const simplifyTolerance = mapSimplifyTolerance(zoom);
   const bounds = getTileBounds(req.params.z, req.params.x, req.params.y);
@@ -1417,6 +1421,18 @@ const findFeaturesTile = async (req: Request, res: Response): Promise<void> => {
     paramIndex += 1;
   }
 
+  if (featureType) {
+    whereClauses.push(`
+      EXISTS (
+        SELECT 1
+        FROM jsonb_each_text(COALESCE(sf.attributes, '{}'::jsonb)) AS attr(key, value)
+        WHERE LOWER(BTRIM(attr.value)) = LOWER($${paramIndex})
+      )
+    `);
+    params.push(featureType);
+    paramIndex += 1;
+  }
+
   if (req.user?.role !== 'admin') {
     paramIndex = appendProjectReadVisibility(
       whereClauses,
@@ -1431,6 +1447,7 @@ const findFeaturesTile = async (req: Request, res: Response): Promise<void> => {
   const tileFeatureLimit =
     zoom < 10.5 ? MAP_TILE_LOW_ZOOM_LIMIT : MAP_TILE_HIGH_ZOOM_LIMIT;
   const lowZoom = zoom < 10.5;
+  const lowZoomUnclusteredThreshold = 50;
   const result = lowZoom
     ? await query(
         `WITH visible AS (
@@ -1462,11 +1479,23 @@ const findFeaturesTile = async (req: Request, res: Response): Promise<void> => {
            FROM visible
            WHERE marker_geom && ST_MakeEnvelope($1, $2, $3, $4, 4326)
          ),
+         counted AS (
+           SELECT *,
+                  COUNT(*) OVER ()::int AS visible_marker_count
+           FROM marker_filtered
+         ),
          bucketed AS (
            SELECT *,
                   FLOOR(ST_Y(marker_geom) / $${paramIndex})::int AS lat_bucket,
-                  FLOOR(ST_X(marker_geom) / $${paramIndex})::int AS lon_bucket
-            FROM marker_filtered
+                  FLOOR(ST_X(marker_geom) / $${paramIndex})::int AS lon_bucket,
+                  CASE
+                    WHEN visible_marker_count <= $${paramIndex + 1} THEN id::text
+                    ELSE CONCAT('bucket:', status, ':',
+                      FLOOR(ST_Y(marker_geom) / $${paramIndex})::int::text, ':',
+                      FLOOR(ST_X(marker_geom) / $${paramIndex})::int::text
+                    )
+                  END AS grouping_key
+            FROM counted
          )
          SELECT CASE
                   WHEN COUNT(*) = 1 THEN (ARRAY_AGG(id::text ORDER BY collected_at DESC NULLS LAST, id ASC))[1]
@@ -1503,10 +1532,15 @@ const findFeaturesTile = async (req: Request, res: Response): Promise<void> => {
                 (COUNT(*) > 1) AS is_aggregate,
                 COUNT(*)::int AS cluster_count
          FROM bucketed
-         GROUP BY status, lat_bucket, lon_bucket
+         GROUP BY status, lat_bucket, lon_bucket, grouping_key
          ORDER BY MIN(collected_at) DESC NULLS LAST
-         LIMIT $${paramIndex + 1}`,
-        [...params, mapClusterCellSizeDegrees(zoom), tileFeatureLimit],
+         LIMIT $${paramIndex + 2}`,
+        [
+          ...params,
+          mapClusterCellSizeDegrees(zoom),
+          lowZoomUnclusteredThreshold,
+          tileFeatureLimit,
+        ],
       )
     : await query(
         `SELECT sf.id,

@@ -37,6 +37,10 @@ abstract class AiRepository {
 
   Future<List<AiOutputLayer>> fetchRunLayers({required String runId});
 
+  Future<List<AiOutputLayer>> fetchPublishedProjectLayers({
+    required String projectId,
+  });
+
   Future<AiLayerFeatureCollection> fetchLayerFeatures({
     required String layerId,
     String detail = 'overview',
@@ -63,4 +67,8 @@ abstract class AiRepository {
     required String action,
     String? reason,
   });
+
+  Future<AiOutputLayer> publishLayer({required String layerId});
+
+  Future<AiOutputLayer> unpublishLayer({required String layerId});
 }

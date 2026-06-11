@@ -6,6 +6,8 @@ import type { Request, Response } from 'express';
 const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const { createAiPipelineService } = require('../services/aiPipeline.service');
+import { publicVisibleStatuses, synchronizeProjectStatuses } from '../lib/projectLifecycle';
+import { isProtectedSuperAdminEmail } from '../lib/userWorkflow';
 
 const allowedRunStatuses = [
   'draft',
@@ -64,7 +66,7 @@ const reviewActions = {
   },
 } as const;
 
-const previewableLayerStatuses = new Set(['draft', 'ready_for_review', 'approved']);
+const previewableLayerStatuses = new Set(['draft', 'ready_for_review', 'approved', 'published']);
 const previewableLayerTypes = new Set(['classification', 'confidence', 'uncertainty']);
 const MAX_AI_LAYER_GEOJSON_BYTES = 20 * 1024 * 1024;
 const MAX_AI_LAYER_PREVIEW_FEATURES = 2500;
@@ -85,6 +87,111 @@ const lebanonApproxBounds = {
   min_lat: 33.0,
   max_lon: 36.7,
   max_lat: 34.75,
+};
+
+const nationalScopeUnmetRequirements = [
+  'National mode is enabled for this project.',
+  'Lebanon boundary is configured for AI prediction.',
+  'Approved training samples cover multiple Lebanese regions and environmental conditions.',
+  'Every class has enough approved samples: minimum 50, recommended 100+.',
+  'All samples used for training have valid and consistent labels.',
+  'No class or region is dangerously underrepresented, or the warning is reviewed.',
+  'The AI pipeline supports the selected satellite, dates, features, and national boundary.',
+  'A validation/review plan exists before national results are published.',
+];
+
+const boolPreference = (preferences: Record<string, unknown> | null | undefined, key: string) =>
+  preferences?.[key] === true;
+
+const aiAreaTypeFromScope = (
+  scopeType: string,
+): 'project_area' | 'custom_ai_area' | 'national_lebanon' => {
+  if (scopeType === 'custom_polygon') {
+    return 'custom_ai_area';
+  }
+  if (scopeType === 'national') {
+    return 'national_lebanon';
+  }
+  return 'project_area';
+};
+
+const nationalScopeEligibilityFor = ({
+  requestedNational,
+  labelCounts = [],
+  totals,
+  warnings = [],
+  modelPreferences = {},
+}: {
+  requestedNational: boolean;
+  labelCounts?: Array<{ sample_count: number }>;
+  totals?: {
+    missing_label_count?: number;
+    invalid_geometry_count?: number;
+  };
+  warnings?: string[];
+  modelPreferences?: Record<string, unknown>;
+}) => {
+  const unmetRequirements: string[] = [];
+  const nationalModeAllowed = boolPreference(modelPreferences, 'national_mode_allowed');
+  const lebanonBoundaryConfigured = boolPreference(modelPreferences, 'lebanon_boundary_configured');
+  const nationalSampleSpreadConfirmed = boolPreference(
+    modelPreferences,
+    'national_sample_spread_confirmed',
+  );
+  const minimumSamplesPerClassMet =
+    labelCounts.length > 0 && labelCounts.every((row) => Number(row.sample_count) >= 50);
+  const labelsValid =
+    Number(totals?.missing_label_count ?? 0) === 0 &&
+    Number(totals?.invalid_geometry_count ?? 0) === 0;
+  const imbalanceWarningsReviewed =
+    !warnings.some((warning) => /balance|spatially limited|below/i.test(warning)) ||
+    boolPreference(modelPreferences, 'national_imbalance_reviewed');
+  const pipelineSupportsNational = boolPreference(
+    modelPreferences,
+    'pipeline_supports_national_scope',
+  );
+  const validationPlanRecorded = boolPreference(
+    modelPreferences,
+    'national_validation_plan_recorded',
+  );
+
+  if (!nationalModeAllowed) {
+    unmetRequirements.push(nationalScopeUnmetRequirements[0]);
+  }
+  if (!lebanonBoundaryConfigured) {
+    unmetRequirements.push(nationalScopeUnmetRequirements[1]);
+  }
+  if (!nationalSampleSpreadConfirmed) {
+    unmetRequirements.push(nationalScopeUnmetRequirements[2]);
+  }
+  if (!minimumSamplesPerClassMet) {
+    unmetRequirements.push(nationalScopeUnmetRequirements[3]);
+  }
+  if (!labelsValid) {
+    unmetRequirements.push(nationalScopeUnmetRequirements[4]);
+  }
+  if (!imbalanceWarningsReviewed) {
+    unmetRequirements.push(nationalScopeUnmetRequirements[5]);
+  }
+  if (!pipelineSupportsNational) {
+    unmetRequirements.push(nationalScopeUnmetRequirements[6]);
+  }
+  if (!validationPlanRecorded) {
+    unmetRequirements.push(nationalScopeUnmetRequirements[7]);
+  }
+
+  const eligible = unmetRequirements.length === 0;
+  return {
+    eligible,
+    unmet_requirements: unmetRequirements,
+    warnings:
+      requestedNational && !eligible
+        ? [
+            ...warnings,
+            'National Lebanon prediction is locked until national readiness requirements are met.',
+          ]
+        : warnings,
+  };
 };
 
 const normalizeOptionalString = (value: unknown): string | null => {
@@ -592,15 +699,21 @@ const getFeatureReadinessSummary = async ({
   labelField,
   minSamplesPerClass,
   scopeType,
+  scopeGeometry,
+  modelPreferences = {},
 }: {
   projectId: string;
   labelField: string | null;
   minSamplesPerClass: number;
   scopeType: string;
+  scopeGeometry?: unknown;
+  modelPreferences?: Record<string, unknown>;
 }) => {
   const warnings: string[] = [];
   const blockers: string[] = [];
   const hasSourceColumn = await hasSpatialFeatureSourceColumn();
+  const scopeGeometryText =
+    scopeType === 'custom_polygon' ? serializeGeometry(scopeGeometry) : null;
 
   const totalsResult = await query(
     `WITH approved AS (
@@ -613,6 +726,10 @@ const getFeatureReadinessSummary = async ({
        FROM spatial_feature
        WHERE project_id = $1
          AND status = 'approved'
+         AND (
+           $3::text IS NULL
+           OR ST_Intersects(geom, ST_SetSRID(ST_GeomFromGeoJSON($3::text), 4326))
+         )
      )
      SELECT COUNT(*)::int AS approved_feature_count,
             COUNT(*) FILTER (
@@ -629,7 +746,7 @@ const getFeatureReadinessSummary = async ({
                 AND ST_IsValid(geom)
             )::int AS valid_labeled_feature_count
      FROM approved`,
-    [projectId, labelField],
+    [projectId, labelField, scopeGeometryText],
   );
   const totals = totalsResult.rows[0] ?? {
     approved_feature_count: 0,
@@ -645,12 +762,16 @@ const getFeatureReadinessSummary = async ({
          FROM spatial_feature
          WHERE project_id = $1
            AND status = 'approved'
+           AND (
+             $3::text IS NULL
+             OR ST_Intersects(geom, ST_SetSRID(ST_GeomFromGeoJSON($3::text), 4326))
+           )
            AND geom IS NOT NULL
            AND ST_IsValid(geom)
            AND NULLIF(BTRIM(attributes ->> $2), '') IS NOT NULL
          GROUP BY class_label
          ORDER BY sample_count DESC, class_label ASC`,
-        [projectId, labelField],
+        [projectId, labelField, scopeGeometryText],
       )
     : { rows: [] };
 
@@ -661,9 +782,13 @@ const getFeatureReadinessSummary = async ({
          FROM spatial_feature
          WHERE project_id = $1
            AND status = 'approved'
+           AND (
+             $2::text IS NULL
+             OR ST_Intersects(geom, ST_SetSRID(ST_GeomFromGeoJSON($2::text), 4326))
+           )
          GROUP BY COALESCE(source, 'unknown')
          ORDER BY feature_count DESC, source ASC`,
-        [projectId],
+        [projectId, scopeGeometryText],
       )
     : { rows: [] };
 
@@ -675,9 +800,13 @@ const getFeatureReadinessSummary = async ({
      FROM spatial_feature
      WHERE project_id = $1
        AND status = 'approved'
+       AND (
+         $2::text IS NULL
+         OR ST_Intersects(geom, ST_SetSRID(ST_GeomFromGeoJSON($2::text), 4326))
+       )
        AND geom IS NOT NULL
        AND ST_IsValid(geom)`,
-    [projectId],
+    [projectId, scopeGeometryText],
   );
   const extent = extentResult.rows[0] ?? null;
   const spatialExtent =
@@ -750,6 +879,21 @@ const getFeatureReadinessSummary = async ({
   }
 
   const status = blockers.length > 0 ? 'not_ready' : warnings.length > 0 ? 'warning' : 'ready';
+  const nationalScopeEligibility = nationalScopeEligibilityFor({
+    requestedNational: scopeType === 'national',
+    labelCounts,
+    totals: {
+      missing_label_count: Number(totals.missing_label_count),
+      invalid_geometry_count: Number(totals.invalid_geometry_count),
+    },
+    warnings:
+      scopeType === 'national' && spatialExtent === null
+        ? ['No approved sample extent is available for national readiness evaluation.']
+        : [],
+    modelPreferences,
+  });
+  const nationalScopeEnabled =
+    boolPreference(modelPreferences, 'national_scope_enabled') && nationalScopeEligibility.eligible;
 
   return {
     status,
@@ -771,6 +915,12 @@ const getFeatureReadinessSummary = async ({
       feature_count: Number(row.feature_count),
     })),
     spatial_extent: spatialExtent,
+    scope_type: scopeType,
+    training_samples_area_type: aiAreaTypeFromScope(scopeType),
+    prediction_area_type: aiAreaTypeFromScope(scopeType),
+    national_scope_enabled: nationalScopeEnabled,
+    national_scope_eligibility: nationalScopeEligibility,
+    custom_scope_applied: scopeGeometryText !== null,
     coverage_warning_applies: warnings.some((warning) => warning.includes('spatially limited')),
     warnings,
     blockers,
@@ -822,6 +972,59 @@ const assertRunReadable = async (runId: string, user: Express.UserContext) => {
   return run;
 };
 
+const isProtectedSuperAdminUser = (user: Express.UserContext | undefined): boolean =>
+  user?.role === 'admin' && isProtectedSuperAdminEmail(user.email);
+
+const assertProjectReadableForAiLayer = async (
+  projectId: string,
+  user: Express.UserContext,
+): Promise<void> => {
+  await synchronizeProjectStatuses(projectId);
+  if (user.role === 'admin') {
+    return;
+  }
+
+  const visibleStatuses = publicVisibleStatuses;
+  if (user.role === 'viewer') {
+    const result = await query(
+      `SELECT id
+       FROM project
+       WHERE id = $1
+         AND visible_to_viewers = TRUE
+         AND status::text = ANY($2::text[])`,
+      [projectId, visibleStatuses],
+    );
+    if (result.rows.length > 0) {
+      return;
+    }
+    throw new AppError('You do not have access to this project', 403);
+  }
+
+  const result = await query(
+    `SELECT
+        EXISTS (
+          SELECT 1
+          FROM project_assignment
+          WHERE project_id = $1
+            AND user_id = $2
+            AND status = 'approved'
+        ) AS has_assignment,
+        EXISTS (
+          SELECT 1
+          FROM project
+          WHERE id = $1
+            AND visible_to_contributors = TRUE
+            AND status::text = ANY($3::text[])
+        ) AS is_public_project`,
+    [projectId, user.id, visibleStatuses],
+  );
+  const row = result.rows[0];
+  if (row?.has_assignment === true || row?.is_public_project === true) {
+    return;
+  }
+  throw new AppError('You do not have access to this project', 403);
+};
+
 const getProjectAiReadiness = async (req: Request, res: Response): Promise<void> => {
   const { projectId } = req.params;
   const project = await getProjectOrFail(projectId);
@@ -843,6 +1046,8 @@ const getProjectAiReadiness = async (req: Request, res: Response): Promise<void>
     labelField,
     minSamplesPerClass,
     scopeType,
+    scopeGeometry: settings.scope_geometry,
+    modelPreferences: settings.model_preferences ?? {},
   });
   const candidateLabelFields = await getCandidateLabelFieldSummary({
     projectId,
@@ -910,6 +1115,33 @@ const upsertProjectAiSettings = async (req: Request, res: Response): Promise<voi
         ? (body.model_preferences ?? {})
         : (existing.model_preferences ?? {}),
   };
+
+  const nationalReadiness = await getFeatureReadinessSummary({
+    projectId,
+    labelField: nextSettings.label_field,
+    minSamplesPerClass: nextSettings.min_samples_per_class,
+    scopeType: 'national',
+    scopeGeometry: null,
+    modelPreferences: nextSettings.model_preferences ?? {},
+  });
+  const nationalEligibility = nationalReadiness.national_scope_eligibility;
+  const nationalModeRequested =
+    nextSettings.scope_type === 'national' ||
+    nextSettings.model_preferences?.national_scope_enabled === true;
+
+  if (nationalModeRequested && nationalEligibility.eligible !== true) {
+    throw new AppError(
+      'National Lebanon is locked until national readiness requirements are met.',
+      422,
+    );
+  }
+
+  if (
+    nextSettings.scope_type === 'national' &&
+    nextSettings.model_preferences?.national_scope_enabled !== true
+  ) {
+    throw new AppError('Enable national mode before selecting National Lebanon.', 422);
+  }
 
   const result = await query(
     `INSERT INTO ai_project_settings (
@@ -1002,6 +1234,38 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
     throw new AppError('AI label_field is required to create an AI run.', 400);
   }
 
+  if (scopeType === 'national' && settings.model_preferences?.national_scope_enabled !== true) {
+    throw new AppError('Enable national mode before selecting National Lebanon.', 422);
+  }
+
+  if (scopeType === 'national') {
+    const nationalReadiness = await getFeatureReadinessSummary({
+      projectId,
+      labelField,
+      minSamplesPerClass,
+      scopeType: 'national',
+      scopeGeometry: null,
+      modelPreferences: settings.model_preferences ?? {},
+    });
+    if (nationalReadiness.national_scope_eligibility?.eligible !== true) {
+      throw new AppError(
+        'National Lebanon is locked until national readiness requirements are met.',
+        422,
+      );
+    }
+  }
+
+  if (scopeType === 'national' && regionalExecutionModes.includes(executionMode)) {
+    throw new AppError('Regional AI execution modes cannot be queued with national scope.', 400);
+  }
+
+  if (scopeType === 'national' && executionMode !== 'mock' && executionMode !== 'dry_run') {
+    throw new AppError(
+      'National AI execution is not available until the national pipeline is connected.',
+      400,
+    );
+  }
+
   if (!allowedExecutionModes.includes(executionMode)) {
     throw new AppError(
       'Unsupported AI execution_mode. Allowed modes are mock, dry_run, local_ground_truth_export, regional_feature_extraction, regional_model_eval, regional_classification, or regional_vectorization_artifacts.',
@@ -1009,19 +1273,13 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
     );
   }
 
-  if (
-    status === 'queued' &&
-    regionalExecutionModes.includes(executionMode) &&
-    scopeType === 'national'
-  ) {
-    throw new AppError('Regional AI execution modes cannot be queued with national scope.', 400);
-  }
-
   const readiness = await getFeatureReadinessSummary({
     projectId,
     labelField,
     minSamplesPerClass,
     scopeType,
+    scopeGeometry,
+    modelPreferences: settings.model_preferences ?? {},
   });
 
   if (status === 'queued' && !settings.is_enabled) {
@@ -1033,6 +1291,15 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
   }
 
   const currentUser = req.user as Express.UserContext;
+  const trainingSamplesAreaType = aiAreaTypeFromScope(scopeType);
+  const predictionAreaType = trainingSamplesAreaType;
+  const pendingPipelineSettings = [
+    'satellite_source',
+    'date_range',
+    'feature_inputs',
+    'prediction_area_type',
+    ...(scopeType === 'custom_polygon' ? ['custom_area'] : []),
+  ];
   const createdRun = await transaction(async (client: PoolClient) => {
     const runResult = await client.query(
       `INSERT INTO ai_run (
@@ -1100,6 +1367,45 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
         currentUser.id,
         JSON.stringify({
           readiness_status: readiness.status,
+          training_samples_area_type: trainingSamplesAreaType,
+          prediction_area_type: predictionAreaType,
+          national_scope_enabled: false,
+          national_scope_eligibility: readiness.national_scope_eligibility,
+          project_bounds: readiness.spatial_extent,
+          ai_settings: {
+            satellite_source: settings.model_preferences?.satellite_source ?? null,
+            target_year: settings.model_preferences?.target_year ?? null,
+            season: settings.model_preferences?.season ?? null,
+            date_from: settings.model_preferences?.date_from ?? null,
+            date_to: settings.model_preferences?.date_to ?? null,
+            feature_inputs: settings.model_preferences?.feature_inputs ?? [],
+            preferred_model: settings.model_preferences?.preferred_model ?? null,
+            scope_type: scopeType,
+            training_samples_area_type: trainingSamplesAreaType,
+            prediction_area_type: predictionAreaType,
+            custom_scope_applied: readiness.custom_scope_applied === true,
+            custom_polygon_summary:
+              scopeType === 'custom_polygon'
+                ? {
+                    saved_for_run: true,
+                    geometry_type:
+                      scopeGeometry && typeof scopeGeometry === 'object'
+                        ? ((scopeGeometry as { type?: unknown }).type ?? null)
+                        : null,
+                  }
+                : null,
+          },
+          pipeline_execution_support: {
+            settings_saved_for_run: true,
+            backend_scope_applied: true,
+            pipeline_config_payload_ready: true,
+            effective_pipeline_settings: [
+              'label_field',
+              'execution_mode',
+              'training_samples_area_type',
+            ],
+            pending_pipeline_settings: pendingPipelineSettings,
+          },
           min_samples_per_class: minSamplesPerClass,
           worker_execution: 'not_started_phase_f',
           execution_mode: executionMode,
@@ -1265,6 +1571,48 @@ const listAiRunLayers = async (req: Request, res: Response): Promise<void> => {
      WHERE ai_run_id = $1
      ORDER BY created_at DESC`,
     [run.id],
+  );
+
+  res.json({
+    success: true,
+    data: result.rows,
+  });
+};
+
+const listProjectPublishedAiLayers = async (req: Request, res: Response): Promise<void> => {
+  const user = req.user as Express.UserContext;
+  await assertProjectReadableForAiLayer(req.params.projectId, user);
+  const settings = await getEffectiveAiSettings(req.params.projectId);
+  if (!settings.is_enabled) {
+    res.json({
+      success: true,
+      data: [],
+    });
+    return;
+  }
+  const result = await query(
+    `SELECT id,
+            ai_run_id,
+            project_id,
+            layer_type,
+            status,
+            name,
+            description,
+            NULL::text AS storage_path,
+            asset_id,
+            crs,
+            ST_AsGeoJSON(bounds)::json AS bounds,
+            style,
+            published_at,
+            published_by,
+            created_at,
+            updated_at
+     FROM ai_output_layer
+     WHERE project_id = $1
+       AND status = 'published'
+       AND published_at IS NOT NULL
+     ORDER BY layer_type ASC, published_at DESC`,
+    [req.params.projectId],
   );
 
   res.json({
@@ -1918,8 +2266,22 @@ const getAiLayerFeatures = async (req: Request, res: Response): Promise<void> =>
   if (!previewableLayerTypes.has(layer.layer_type)) {
     throw new AppError('This AI output layer is not a map-preview layer.', 400);
   }
-  if (!previewableLayerStatuses.has(layer.status)) {
-    throw new AppError('This AI output layer is not available for preview.', 403);
+  const currentUser = req.user as Express.UserContext;
+  const protectedSuperAdmin = isProtectedSuperAdminUser(currentUser);
+  const viewerPublished = layer.status === 'published' && layer.published_at !== null;
+  if (protectedSuperAdmin) {
+    if (!previewableLayerStatuses.has(layer.status)) {
+      throw new AppError('This AI output layer is not available for preview.', 403);
+    }
+  } else {
+    if (!viewerPublished) {
+      throw new AppError('This AI output layer is not published.', 403);
+    }
+    const settings = await getEffectiveAiSettings(layer.project_id);
+    if (!settings.is_enabled) {
+      throw new AppError('AI layers are disabled for this project.', 403);
+    }
+    await assertProjectReadableForAiLayer(layer.project_id, currentUser);
   }
   const storagePath = normalizeOptionalString(layer.storage_path);
   if (!storagePath) {
@@ -1984,7 +2346,7 @@ const getAiLayerFeatures = async (req: Request, res: Response): Promise<void> =>
         description: layer.description,
         crs: layer.crs,
         published_at: layer.published_at,
-        viewer_published: false,
+        viewer_published: viewerPublished,
       },
       feature_collection: featureCollection,
       feature_count: sourceFeatureCount,
@@ -2142,13 +2504,15 @@ const reviewAiRun = async (req: Request, res: Response): Promise<void> => {
       ],
     );
 
+    const preservePublishedLayers = action === 'approve_for_publication';
     const layerResult = await client.query(
       `UPDATE ai_output_layer
        SET status = $2,
-           published_at = NULL,
-           published_by = NULL
+           published_at = CASE WHEN $3::boolean THEN published_at ELSE NULL END,
+           published_by = CASE WHEN $3::boolean THEN published_by ELSE NULL END,
+           updated_at = NOW()
        WHERE ai_run_id = $1
-         AND status <> 'published'
+         AND ($3::boolean = false OR status <> 'published')
        RETURNING id,
                  ai_run_id,
                  project_id,
@@ -2157,7 +2521,7 @@ const reviewAiRun = async (req: Request, res: Response): Promise<void> => {
                  name,
                  published_at,
                  published_by`,
-      [lockedRun.id, config.layerStatus],
+      [lockedRun.id, config.layerStatus, preservePublishedLayers],
     );
 
     const updatedRunResult = await client.query(
@@ -2209,6 +2573,8 @@ const reviewAiRun = async (req: Request, res: Response): Promise<void> => {
           decision: config.decision,
           layer_status: config.layerStatus,
           layers_updated: layerResult.rowCount ?? 0,
+          published_layers_preserved: preservePublishedLayers,
+          viewer_publication_changed: false,
           viewer_publication_enabled: false,
           spatial_feature_writes: false,
         }),
@@ -2237,6 +2603,189 @@ const reviewAiRun = async (req: Request, res: Response): Promise<void> => {
   });
 };
 
+const publishAiLayer = async (req: Request, res: Response): Promise<void> => {
+  const currentUser = req.user as Express.UserContext;
+  const result = await transaction(async (client: PoolClient) => {
+    const layerResult = await client.query(
+      `SELECT l.id,
+              l.ai_run_id,
+              l.project_id,
+              l.layer_type,
+              l.status,
+              l.name,
+              l.published_at,
+              ar.project_id AS run_project_id
+       FROM ai_output_layer l
+       JOIN ai_run ar ON ar.id = l.ai_run_id
+       WHERE l.id = $1
+       FOR UPDATE`,
+      [req.params.layerId],
+    );
+
+    if (layerResult.rows.length === 0) {
+      throw new AppError('AI output layer not found', 404);
+    }
+
+    const layer = layerResult.rows[0];
+    if (layer.project_id !== layer.run_project_id) {
+      throw new AppError('AI output layer project mismatch.', 400);
+    }
+    if (layer.status !== 'approved') {
+      throw new AppError('Only approved AI layers can be published.', 409);
+    }
+    if (!previewableLayerTypes.has(layer.layer_type)) {
+      throw new AppError('Only map-preview AI layers can be published.', 400);
+    }
+    const settingsResult = await client.query(
+      `SELECT is_enabled
+       FROM ai_project_settings
+       WHERE project_id = $1`,
+      [layer.project_id],
+    );
+    if (settingsResult.rows[0]?.is_enabled !== true) {
+      throw new AppError('AI must be enabled for this project before publishing layers.', 409);
+    }
+
+    const updated = await client.query(
+      `UPDATE ai_output_layer
+       SET status = 'published',
+           published_at = NOW(),
+           published_by = $2,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id,
+                 ai_run_id,
+                 project_id,
+                 layer_type,
+                 status,
+                 name,
+                 description,
+                 NULL::text AS storage_path,
+                 asset_id,
+                 crs,
+                 ST_AsGeoJSON(bounds)::json AS bounds,
+                 style,
+                 published_at,
+                 published_by,
+                 created_at,
+                 updated_at`,
+      [layer.id, currentUser.id],
+    );
+
+    await client.query(
+      `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
+       VALUES ($1, 'info', $2, $3::jsonb)`,
+      [
+        layer.ai_run_id,
+        'AI output layer published for read-only viewer map access.',
+        JSON.stringify({
+          phase: 'phase_p_publish',
+          layer_id: layer.id,
+          layer_type: layer.layer_type,
+          published_by: currentUser.id,
+          viewer_publication_enabled: true,
+          spatial_feature_writes: false,
+        }),
+      ],
+    );
+
+    return updated.rows[0];
+  });
+
+  res.json({
+    success: true,
+    message: 'AI layer published as a read-only map overlay.',
+    data: result,
+  });
+};
+
+const unpublishAiLayer = async (req: Request, res: Response): Promise<void> => {
+  const currentUser = req.user as Express.UserContext;
+  const result = await transaction(async (client: PoolClient) => {
+    const layerResult = await client.query(
+      `SELECT l.id,
+              l.ai_run_id,
+              l.project_id,
+              l.layer_type,
+              l.status,
+              l.name,
+              l.published_at,
+              l.published_by,
+              ar.project_id AS run_project_id
+       FROM ai_output_layer l
+       JOIN ai_run ar ON ar.id = l.ai_run_id
+       WHERE l.id = $1
+       FOR UPDATE`,
+      [req.params.layerId],
+    );
+
+    if (layerResult.rows.length === 0) {
+      throw new AppError('AI output layer not found', 404);
+    }
+
+    const layer = layerResult.rows[0];
+    if (layer.project_id !== layer.run_project_id) {
+      throw new AppError('AI output layer project mismatch.', 400);
+    }
+    if (layer.status !== 'published') {
+      throw new AppError('Only published AI layers can be unpublished.', 409);
+    }
+
+    const updated = await client.query(
+      `UPDATE ai_output_layer
+       SET status = 'approved',
+           published_at = NULL,
+           published_by = NULL,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id,
+                 ai_run_id,
+                 project_id,
+                 layer_type,
+                 status,
+                 name,
+                 description,
+                 NULL::text AS storage_path,
+                 asset_id,
+                 crs,
+                 ST_AsGeoJSON(bounds)::json AS bounds,
+                 style,
+                 published_at,
+                 published_by,
+                 created_at,
+                 updated_at`,
+      [layer.id],
+    );
+
+    await client.query(
+      `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
+       VALUES ($1, 'info', $2, $3::jsonb)`,
+      [
+        layer.ai_run_id,
+        'AI output layer unpublished. Viewer map access was removed.',
+        JSON.stringify({
+          phase: 'phase_p_unpublish',
+          layer_id: layer.id,
+          layer_type: layer.layer_type,
+          unpublished_by: currentUser.id,
+          previous_published_at: layer.published_at,
+          previous_published_by: layer.published_by,
+          viewer_publication_enabled: false,
+          spatial_feature_writes: false,
+        }),
+      ],
+    );
+
+    return updated.rows[0];
+  });
+
+  res.json({
+    success: true,
+    message: 'AI layer unpublished. Viewer access is disabled.',
+    data: result,
+  });
+};
+
 module.exports = {
   getProjectAiReadiness,
   getProjectAiSettings,
@@ -2246,10 +2795,13 @@ module.exports = {
   getAiRun,
   listAiRunMetrics,
   listAiRunLayers,
+  listProjectPublishedAiLayers,
   getAiLayerFeatures,
   listAiRunLogs,
   listAiRunReviews,
   reviewAiRun,
+  publishAiLayer,
+  unpublishAiLayer,
 };
 
 export {};

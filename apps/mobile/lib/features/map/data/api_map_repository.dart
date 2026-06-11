@@ -65,6 +65,7 @@ class ApiMapRepository {
     required double maxLon,
     required double maxLat,
     required double zoom,
+    String? featureType,
     int cacheRevision = 0,
   }) async {
     if (_projectTileCacheRevision != cacheRevision) {
@@ -98,6 +99,7 @@ class ApiMapRepository {
                 x: tile.x,
                 y: tile.y,
                 renderZoom: zoom,
+                featureType: featureType,
               );
             } catch (error) {
               firstError ??= error;
@@ -136,9 +138,11 @@ class ApiMapRepository {
     required int x,
     required int y,
     required double renderZoom,
+    String? featureType,
   }) async {
     final zoomKey = renderZoom.toStringAsFixed(2);
-    final cacheKey = '$projectId:$z:$x:$y:$zoomKey';
+    final featureTypeKey = featureType?.trim() ?? '';
+    final cacheKey = '$projectId:$z:$x:$y:$zoomKey:$featureTypeKey';
     final cached = _projectTileCache.remove(cacheKey);
     if (cached != null) {
       _projectTileCache[cacheKey] = cached;
@@ -149,6 +153,7 @@ class ApiMapRepository {
       queryParameters: <String, dynamic>{
         'project_id': projectId,
         'zoom': zoomKey,
+        if (featureTypeKey.isNotEmpty) 'feature_type': featureTypeKey,
       },
     );
     final payload = response.data ?? const <String, dynamic>{};

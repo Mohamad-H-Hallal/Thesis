@@ -203,6 +203,10 @@ class ApiProjectsRepository implements ProjectsRepository {
           0,
       rejectedAssignmentRequests:
           _toInt(row['rejected_assignment_requests']) ?? 0,
+      publishedAiLayerCount:
+          _toInt(row['published_ai_layer_count']) ??
+          _toInt(row['publishedAiLayerCount']) ??
+          0,
       description:
           (row['description'] as String?) ??
           (row['objectives'] as String?) ??

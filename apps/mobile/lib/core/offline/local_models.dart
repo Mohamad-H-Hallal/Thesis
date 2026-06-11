@@ -373,6 +373,7 @@ extension ProjectSummaryLocalMapper on ProjectSummary {
       'approvedFeatures': approvedFeatures,
       'assignedCollectors': assignedCollectors,
       'pendingReviews': pendingReviews,
+      'publishedAiLayerCount': publishedAiLayerCount,
       'description': description,
       'assignments': assignments
           .map((assignment) => assignment.toMap())
@@ -401,6 +402,8 @@ ProjectSummary projectSummaryFromPayload(Map<String, dynamic> payload) {
     approvedFeatures: ((payload['approvedFeatures'] as num?) ?? 0).toInt(),
     assignedCollectors: ((payload['assignedCollectors'] as num?) ?? 0).toInt(),
     pendingReviews: ((payload['pendingReviews'] as num?) ?? 0).toInt(),
+    publishedAiLayerCount: ((payload['publishedAiLayerCount'] as num?) ?? 0)
+        .toInt(),
     description: payload['description'] as String,
     assignments: rawAssignments
         .map(

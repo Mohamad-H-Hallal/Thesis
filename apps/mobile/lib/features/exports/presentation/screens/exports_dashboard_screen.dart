@@ -1076,14 +1076,35 @@ Widget buildExportAreaPickerForTest({Map<String, dynamic>? initialPolygon}) {
   );
 }
 
+Future<Map<String, dynamic>?> openExportAreaPicker(
+  BuildContext context, {
+  Map<String, dynamic>? initialPolygon,
+  String title = 'Draw export area',
+  String submitLabel = 'Use area',
+}) {
+  return Navigator.of(context).push<Map<String, dynamic>>(
+    MaterialPageRoute<Map<String, dynamic>>(
+      builder: (context) => _ExportAreaPickerDialog(
+        initialPolygon: initialPolygon,
+        title: title,
+        submitLabel: submitLabel,
+      ),
+    ),
+  );
+}
+
 class _ExportAreaPickerDialog extends StatefulWidget {
   const _ExportAreaPickerDialog({
     this.initialPolygon,
     this.validateWorkspace = true,
+    this.title = 'Draw export area',
+    this.submitLabel = 'Use area',
   });
 
   final Map<String, dynamic>? initialPolygon;
   final bool validateWorkspace;
+  final String title;
+  final String submitLabel;
 
   @override
   State<_ExportAreaPickerDialog> createState() =>
@@ -1262,7 +1283,7 @@ class _ExportAreaPickerDialogState extends State<_ExportAreaPickerDialog> {
             icon: const BackButtonIcon(),
             onPressed: _closePicker,
           ),
-          title: const Text('Draw export area'),
+          title: Text(widget.title),
         ),
         body: LayoutBuilder(
           builder: (context, constraints) {
@@ -1440,6 +1461,7 @@ class _ExportAreaPickerDialogState extends State<_ExportAreaPickerDialog> {
                       top: false,
                       minimum: const EdgeInsets.only(bottom: AppSpacing.sm),
                       child: _ExportAreaActionPanel(
+                        submitLabel: widget.submitLabel,
                         onUseArea: _points.length < 3
                             ? null
                             : () => _closePicker(_polygonGeoJson()),
@@ -1617,9 +1639,13 @@ class _ExportAreaHorizontalToolbar extends StatelessWidget {
 }
 
 class _ExportAreaActionPanel extends StatelessWidget {
-  const _ExportAreaActionPanel({required this.onUseArea});
+  const _ExportAreaActionPanel({
+    required this.onUseArea,
+    required this.submitLabel,
+  });
 
   final VoidCallback? onUseArea;
+  final String submitLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -1639,7 +1665,7 @@ class _ExportAreaActionPanel extends StatelessWidget {
               child: FilledButton.icon(
                 onPressed: onUseArea,
                 icon: const Icon(Icons.check),
-                label: const Text('Use area'),
+                label: Text(submitLabel),
               ),
             ),
           ),

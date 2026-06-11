@@ -11,6 +11,8 @@ import 'package:lebanese_gis_mobile/core/offline/local_store.dart';
 import 'package:lebanese_gis_mobile/core/providers/providers.dart';
 import 'package:lebanese_gis_mobile/core/sync/sync_controller.dart';
 import 'package:lebanese_gis_mobile/core/sync/sync_engine.dart';
+import 'package:lebanese_gis_mobile/features/ai/domain/ai_models.dart';
+import 'package:lebanese_gis_mobile/features/ai/presentation/ai_providers.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_models.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_repository.dart';
 import 'package:lebanese_gis_mobile/features/auth/presentation/controllers/auth_controller.dart';
@@ -20,6 +22,8 @@ import 'package:lebanese_gis_mobile/features/map/presentation/screens/add_featur
 import 'package:lebanese_gis_mobile/features/map/presentation/screens/map_screen.dart';
 import 'package:lebanese_gis_mobile/features/map/presentation/widgets/project_quick_map_card.dart';
 import 'package:lebanese_gis_mobile/features/projects/domain/project.dart';
+
+import '../../../fakes/fake_ai_repository.dart';
 
 class _NoopAuthRepository implements AuthRepository {
   const _NoopAuthRepository();
@@ -326,14 +330,104 @@ OfflineMapPackage _offlinePackage() {
   );
 }
 
+AiOutputLayer _publishedAiLayer() {
+  return AiOutputLayer(
+    id: 'ai-layer-1',
+    aiRunId: 'ai-run-1',
+    projectId: 'project-1',
+    layerType: 'classification',
+    status: 'published',
+    name: 'Published AI classification',
+    publishedAt: DateTime.utc(2026, 6, 9),
+    publishedBy: 'admin-1',
+  );
+}
+
+AiLayerFeatureCollection _publishedAiFeatureCollection(AiOutputLayer layer) {
+  return AiLayerFeatureCollection(
+    layer: layer,
+    features: const <AiLayerFeature>[
+      AiLayerFeature(
+        id: 'ai-feature-1',
+        geometry: <String, dynamic>{
+          'type': 'Point',
+          'coordinates': <double>[35.5, 33.9],
+        },
+        properties: <String, dynamic>{
+          'predicted_class': 'olives',
+          'confidence': 0.91,
+          'model_name': 'random_forest',
+          'source': 'ai_prediction',
+          'run_id': 'ai-run-1',
+        },
+      ),
+      AiLayerFeature(
+        id: 'ai-feature-2',
+        geometry: <String, dynamic>{
+          'type': 'Point',
+          'coordinates': <double>[35.52, 33.92],
+        },
+        properties: <String, dynamic>{
+          'predicted_class': 'citrus fruit trees',
+          'confidence': 0.74,
+          'model_name': 'random_forest',
+          'source': 'ai_prediction',
+          'run_id': 'ai-run-1',
+        },
+      ),
+      AiLayerFeature(
+        id: 'ai-feature-3',
+        geometry: <String, dynamic>{
+          'type': 'Point',
+          'coordinates': <double>[35.54, 33.94],
+        },
+        properties: <String, dynamic>{
+          'predicted_class': 'fruit trees',
+          'confidence': 0.62,
+          'model_name': 'random_forest',
+          'source': 'ai_prediction',
+          'run_id': 'ai-run-1',
+        },
+      ),
+    ],
+    featureCount: 1394,
+    matchingFeatureCount: 1394,
+    returnedFeatureCount: 3,
+    classCounts: const <String, int>{
+      'almonds': 0,
+      'olives': 1147,
+      'citrus fruit trees': 181,
+      'fruit trees': 66,
+    },
+    geometryTypes: const <String>['Point'],
+  );
+}
+
 Widget _wrapWithScope({
   required List<Override> overrides,
   required Widget child,
+  FakeAiRepository? aiRepository,
 }) {
   return ProviderScope(
     overrides: <Override>[
+      aiRepositoryProvider.overrideWithValue(
+        aiRepository ?? FakeAiRepository(layers: const <AiOutputLayer>[]),
+      ),
       projectMapViewportFeaturesProvider.overrideWith((ref, query) async {
-        return ref.watch(projectMapFeaturesProvider(query.projectId).future);
+        final features = await ref.watch(
+          projectMapFeaturesProvider(query.projectId).future,
+        );
+        final featureType = query.featureType?.trim().toLowerCase();
+        if (featureType == null || featureType.isEmpty) {
+          return features;
+        }
+        return features
+            .where(
+              (feature) => feature.attributes.values.any(
+                (value) => '$value'.toLowerCase().contains(featureType),
+              ),
+            )
+            .toList(growable: false);
       }),
       projectFeatureDetailsProvider.overrideWith((ref, featureId) async {
         return _projectFeatures().firstWhere(
@@ -351,11 +445,20 @@ Widget _wrapWithScope({
                   .toList(growable: false)
             : allFeatures;
         final statuses = query.statuses;
-        if (statuses == null) {
-          return features.length;
-        }
+        final featureType = query.featureType?.trim().toLowerCase();
         return features
-            .where((feature) => statuses.contains(feature.status))
+            .where(
+              (feature) =>
+                  statuses == null || statuses.contains(feature.status),
+            )
+            .where(
+              (feature) =>
+                  featureType == null ||
+                  featureType.isEmpty ||
+                  feature.attributes.values.any(
+                    (value) => '$value'.toLowerCase().contains(featureType),
+                  ),
+            )
             .length;
       }),
       ...overrides,
@@ -1200,6 +1303,163 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Field'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'project map shows published AI overlay toggle and lazy-loads it',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(430, 932));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final project = _projectSummary(
+        name: 'South Lebanon Fruit Trees Training Dataset',
+      );
+      final layer = _publishedAiLayer();
+      final confidenceLayer = AiOutputLayer(
+        id: 'ai-layer-confidence',
+        aiRunId: 'ai-run-1',
+        projectId: 'project-1',
+        layerType: 'confidence',
+        status: 'published',
+        name: 'Published AI confidence',
+        publishedAt: DateTime.utc(2026, 6, 9),
+        publishedBy: 'admin-1',
+      );
+      final fakeAiRepository = FakeAiRepository(
+        layers: <AiOutputLayer>[layer, confidenceLayer],
+        layerFeatures: <String, AiLayerFeatureCollection>{
+          layer.id: _publishedAiFeatureCollection(layer),
+          confidenceLayer.id: _publishedAiFeatureCollection(confidenceLayer),
+        },
+      );
+
+      await tester.pumpWidget(
+        _wrapWithScope(
+          aiRepository: fakeAiRepository,
+          overrides: <Override>[
+            authControllerProvider.overrideWith(
+              (ref) => _AuthenticatedAuthController(_session(UserRole.viewer)),
+            ),
+            syncControllerProvider.overrideWith(
+              (ref) => _buildSyncController(),
+            ),
+            mapProjectsProvider.overrideWith(
+              (ref) async => <ProjectSummary>[project],
+            ),
+            projectMapFeaturesProvider.overrideWith(
+              (ref, projectId) async => _projectFeatures(),
+            ),
+            offlineMapPackageProvider.overrideWith((ref) async => null),
+          ],
+          child: const MapScreen(
+            initialProjectId: 'project-1',
+            lockProjectSelection: true,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(fakeAiRepository.layerFeatureFetchCounts[layer.id], isNull);
+
+      await tester.tap(find.byTooltip('Show quick filters'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.widgetWithText(FilterChip, 'Show published AI layer'),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.widgetWithText(FilterChip, 'Show published AI layer'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(fakeAiRepository.layerFeatureFetchCounts[layer.id], 1);
+      expect(fakeAiRepository.layerFeatureFetchCounts[confidenceLayer.id], 1);
+      expect(find.text('Hide published AI layer'), findsOneWidget);
+      expect(
+        fakeAiRepository.layerFeatureQueries
+            .where((query) => query.classLabel == null)
+            .length,
+        greaterThanOrEqualTo(2),
+      );
+      expect(find.textContaining('Classification 1394'), findsOneWidget);
+      expect(find.textContaining('Confidence 1394'), findsOneWidget);
+      expect(find.text('Olives'), findsOneWidget);
+
+      await tester.drag(find.text('Almonds'), const Offset(-280, 0));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Citrus Fruit Trees'));
+      await tester.pumpAndSettle();
+
+      expect(
+        fakeAiRepository.layerFeatureQueries.last.classLabel,
+        'citrus fruit trees',
+      );
+      expect(find.textContaining('Classification 181'), findsOneWidget);
+      expect(find.textContaining('Confidence 181'), findsOneWidget);
+      expect(find.textContaining('AI: Citrus'), findsNothing);
+
+      await tester.drag(find.text('Citrus Fruit Trees'), const Offset(280, 0));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Almonds'));
+      await tester.pumpAndSettle();
+
+      expect(fakeAiRepository.layerFeatureQueries.last.classLabel, 'almonds');
+      expect(find.textContaining('Classification 0'), findsOneWidget);
+      expect(find.textContaining('Confidence 0'), findsOneWidget);
+      expect(find.text('No AI predictions match this class.'), findsOneWidget);
+
+      await tester.drag(find.text('Almonds'), const Offset(360, 0));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ChoiceChip, 'All classes'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Classification 1394'), findsOneWidget);
+      expect(find.text('No AI predictions match this class.'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'project map hides AI overlay toggle when no layer is published',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(430, 932));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        _wrapWithScope(
+          overrides: <Override>[
+            authControllerProvider.overrideWith(
+              (ref) => _AuthenticatedAuthController(_session(UserRole.viewer)),
+            ),
+            syncControllerProvider.overrideWith(
+              (ref) => _buildSyncController(),
+            ),
+            mapProjectsProvider.overrideWith(
+              (ref) async => <ProjectSummary>[_projectSummary()],
+            ),
+            projectMapFeaturesProvider.overrideWith(
+              (ref, projectId) async => _projectFeatures(),
+            ),
+            offlineMapPackageProvider.overrideWith((ref) async => null),
+          ],
+          child: const MapScreen(
+            initialProjectId: 'project-1',
+            lockProjectSelection: true,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      await tester.tap(find.byTooltip('Show quick filters'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Show published AI layer'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );

@@ -655,6 +655,11 @@ const tileFeatureQueryValidation: ValidationChain[] = [
     .optional()
     .isIn(['draft', 'pending_review', 'approved', 'rejected'])
     .withMessage('Invalid status value'),
+  queryParam('feature_type')
+    .optional()
+    .trim()
+    .isLength({ max: 100 })
+    .withMessage('feature_type must be 100 characters or fewer'),
 ];
 
 const bboxValidation: ValidationChain[] = [

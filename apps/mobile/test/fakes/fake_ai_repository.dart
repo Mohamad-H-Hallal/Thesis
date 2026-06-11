@@ -40,6 +40,8 @@ class FakeAiRepository implements AiRepository {
   int saveCount = 0;
   int createCount = 0;
   int reviewCount = 0;
+  int publishCount = 0;
+  int unpublishCount = 0;
   int readinessFetchCount = 0;
 
   @override
@@ -95,6 +97,20 @@ class FakeAiRepository implements AiRepository {
   @override
   Future<List<AiOutputLayer>> fetchRunLayers({required String runId}) async {
     return layers;
+  }
+
+  @override
+  Future<List<AiOutputLayer>> fetchPublishedProjectLayers({
+    required String projectId,
+  }) async {
+    return layers
+        .where(
+          (layer) =>
+              layer.projectId == projectId &&
+              layer.status == 'published' &&
+              layer.publishedAt != null,
+        )
+        .toList(growable: false);
   }
 
   @override
@@ -330,6 +346,76 @@ class FakeAiRepository implements AiRepository {
   }
 
   @override
+  Future<AiOutputLayer> publishLayer({required String layerId}) async {
+    publishCount++;
+    final index = layers.indexWhere((layer) => layer.id == layerId);
+    if (index < 0) {
+      throw StateError('Layer not found');
+    }
+    final layer = layers[index];
+    final updated = _copyLayer(
+      layer,
+      status: 'published',
+      publishedAt: DateTime.utc(2026, 6, 9, 9, publishCount),
+      publishedBy: 'admin-1',
+    );
+    layers = <AiOutputLayer>[
+      ...layers.take(index),
+      updated,
+      ...layers.skip(index + 1),
+    ];
+    logs = <AiRunLog>[
+      AiRunLog(
+        id: 'publish-log-$publishCount',
+        level: 'info',
+        message: 'AI output layer published for read-only viewer map access.',
+        metadata: const <String, dynamic>{
+          'viewer_publication_enabled': true,
+          'spatial_feature_writes': false,
+        },
+        createdAt: DateTime.utc(2026, 6, 9, 9, publishCount),
+      ),
+      ...logs,
+    ];
+    return updated;
+  }
+
+  @override
+  Future<AiOutputLayer> unpublishLayer({required String layerId}) async {
+    unpublishCount++;
+    final index = layers.indexWhere((layer) => layer.id == layerId);
+    if (index < 0) {
+      throw StateError('Layer not found');
+    }
+    final layer = layers[index];
+    final updated = _copyLayer(
+      layer,
+      status: 'approved',
+      publishedAt: null,
+      publishedBy: null,
+    );
+    layers = <AiOutputLayer>[
+      ...layers.take(index),
+      updated,
+      ...layers.skip(index + 1),
+    ];
+    logs = <AiRunLog>[
+      AiRunLog(
+        id: 'unpublish-log-$unpublishCount',
+        level: 'info',
+        message: 'AI output layer unpublished. Viewer map access was removed.',
+        metadata: const <String, dynamic>{
+          'viewer_publication_enabled': false,
+          'spatial_feature_writes': false,
+        },
+        createdAt: DateTime.utc(2026, 6, 9, 10, unpublishCount),
+      ),
+      ...logs,
+    ];
+    return updated;
+  }
+
+  @override
   Future<AiReadinessResult> fetchReadiness({
     required String projectId,
     String? labelField,
@@ -340,7 +426,35 @@ class FakeAiRepository implements AiRepository {
     if (failReadiness) {
       throw StateError('Readiness failed');
     }
-    return readiness;
+    return AiReadinessResult(
+      projectId: readiness.projectId,
+      projectName: readiness.projectName,
+      status: readiness.status,
+      labelField: readiness.labelField,
+      minSamplesPerClass: readiness.minSamplesPerClass,
+      approvedFeatureCount: readiness.approvedFeatureCount,
+      labeledFeatureCount: readiness.labeledFeatureCount,
+      eligibleFeatureCount: readiness.eligibleFeatureCount,
+      missingLabelCount: readiness.missingLabelCount,
+      invalidGeometryCount: readiness.invalidGeometryCount,
+      excludedFeatureCount: readiness.excludedFeatureCount,
+      classCount: readiness.classCount,
+      eligibleClassCount: readiness.eligibleClassCount,
+      labelCounts: readiness.labelCounts,
+      classesBelowMinimum: readiness.classesBelowMinimum,
+      candidateLabelFields: readiness.candidateLabelFields,
+      sourceColumnAvailable: readiness.sourceColumnAvailable,
+      sourceCounts: readiness.sourceCounts,
+      spatialExtent: readiness.spatialExtent,
+      coverageWarningApplies: readiness.coverageWarningApplies,
+      warnings: readiness.warnings,
+      blockers: readiness.blockers,
+      settings: readiness.settings,
+      nationalScopeEnabled:
+          readiness.nationalScopeEligibility.eligible &&
+          settings.modelPreferences['national_scope_enabled'] == true,
+      nationalScopeEligibility: readiness.nationalScopeEligibility,
+    );
   }
 
   @override
@@ -412,12 +526,39 @@ String _fakeAiFeatureSearchBlob(AiLayerFeature feature) {
       .toLowerCase();
 }
 
+AiOutputLayer _copyLayer(
+  AiOutputLayer layer, {
+  String? status,
+  DateTime? publishedAt,
+  String? publishedBy,
+}) {
+  return AiOutputLayer(
+    id: layer.id,
+    aiRunId: layer.aiRunId,
+    projectId: layer.projectId,
+    layerType: layer.layerType,
+    status: status ?? layer.status,
+    name: layer.name,
+    description: layer.description,
+    storagePath: layer.storagePath,
+    assetId: layer.assetId,
+    crs: layer.crs,
+    bounds: layer.bounds,
+    style: layer.style,
+    publishedAt: publishedAt,
+    publishedBy: publishedBy,
+    createdAt: layer.createdAt,
+    updatedAt: DateTime.utc(2026, 6, 9),
+  );
+}
+
 AiProjectSettings fakeAiSettings({
   String projectId = 'project-1',
   bool isEnabled = false,
   String? labelField = 'L4_descr',
   String scopeType = 'project',
   int minSamplesPerClass = 50,
+  Map<String, dynamic> modelPreferences = const <String, dynamic>{},
 }) {
   return AiProjectSettings(
     projectId: projectId,
@@ -425,6 +566,7 @@ AiProjectSettings fakeAiSettings({
     labelField: labelField,
     scopeType: scopeType,
     minSamplesPerClass: minSamplesPerClass,
+    modelPreferences: modelPreferences,
     persisted: true,
   );
 }
@@ -484,6 +626,22 @@ AiReadinessResult fakeReadiness({
       ],
   List<String> warnings = const <String>[],
   List<String> blockers = const <String>[],
+  bool nationalScopeEnabled = false,
+  AiNationalScopeEligibility
+  nationalScopeEligibility = const AiNationalScopeEligibility(
+    eligible: false,
+    unmetRequirements: <String>[
+      'National mode is enabled for this project.',
+      'Lebanon boundary is configured for AI prediction.',
+      'Approved training samples cover multiple Lebanese regions and environmental conditions.',
+      'Every class has enough approved samples: minimum 50, recommended 100+.',
+      'All samples used for training have valid and consistent labels.',
+      'No class or region is dangerously underrepresented, or the warning is reviewed.',
+      'The AI pipeline supports the selected satellite, dates, features, and national boundary.',
+      'A validation/review plan exists before national results are published.',
+    ],
+    warnings: <String>[],
+  ),
 }) {
   return AiReadinessResult(
     projectId: projectId,
@@ -516,5 +674,7 @@ AiReadinessResult fakeReadiness({
     warnings: warnings,
     blockers: blockers,
     settings: fakeAiSettings(projectId: projectId),
+    nationalScopeEnabled: nationalScopeEnabled,
+    nationalScopeEligibility: nationalScopeEligibility,
   );
 }

@@ -492,6 +492,7 @@ final projectMapViewportFeaturesProvider = FutureProvider.autoDispose
               maxLon: query.maxLon,
               maxLat: query.maxLat,
               zoom: query.zoom,
+              featureType: query.featureType,
               cacheRevision: refreshTick,
             );
         return _mergeProjectFeatures(remoteFeatures, projectDrafts);

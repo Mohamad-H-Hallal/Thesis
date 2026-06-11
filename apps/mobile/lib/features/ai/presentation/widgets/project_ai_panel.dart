@@ -55,7 +55,7 @@ class ProjectAiPanel extends ConsumerWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Configure AI settings and draft run records.',
+                      'Configure AI settings and prepared runs.',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
@@ -78,7 +78,9 @@ class ProjectAiPanel extends ConsumerWidget {
                         : 'No label field',
                   ),
                 ),
-                Chip(label: Text('Scope ${_formatValue(settings.scopeType)}')),
+                Chip(
+                  label: Text('AI area ${_formatValue(settings.scopeType)}'),
+                ),
                 Chip(label: Text('Min ${settings.minSamplesPerClass}/class')),
               ],
             ),

@@ -83,6 +83,14 @@ const getAllProjects = async (req, res) => {
             WHERE pac.project_id = p.id
               AND pac.role = 'contributor'
               AND pac.status = 'rejected') as rejected_assignment_requests,
+           (SELECT COUNT(*)
+            FROM ai_output_layer aol
+            JOIN ai_project_settings aps
+              ON aps.project_id = aol.project_id
+             AND aps.is_enabled = true
+            WHERE aol.project_id = p.id
+              AND aol.status = 'published'
+              AND aol.published_at IS NOT NULL) as published_ai_layer_count,
            pa_user.role as current_user_assignment_role,
            pa_user.status as current_user_assignment_status
     FROM project p
@@ -233,6 +241,14 @@ const getProject = async (req, res) => {
             (SELECT COUNT(*) FROM project_assignment WHERE project_id = p.id AND role = 'contributor' AND status = 'approved') as contributor_count,
             (SELECT COUNT(*) FROM project_assignment WHERE project_id = p.id AND role = 'contributor' AND status = 'pending') as pending_assignment_requests,
             (SELECT COUNT(*) FROM project_assignment WHERE project_id = p.id AND role = 'contributor' AND status = 'rejected') as rejected_assignment_requests,
+            (SELECT COUNT(*)
+             FROM ai_output_layer aol
+             JOIN ai_project_settings aps
+               ON aps.project_id = aol.project_id
+              AND aps.is_enabled = true
+             WHERE aol.project_id = p.id
+               AND aol.status = 'published'
+               AND aol.published_at IS NOT NULL) as published_ai_layer_count,
             pa_user.role as current_user_assignment_role,
             pa_user.status as current_user_assignment_status
      FROM project p
@@ -634,7 +650,23 @@ const getProjectFeatures = async (req, res) => {
   }
 
   if (geometryType) {
-    queryText += ` AND GeometryType(sf.geom) = $${paramIndex}`;
+    queryText += `
+      AND (
+        LOWER(REPLACE(GeometryType(sf.geom), 'ST_', '')) = LOWER($${paramIndex})
+        OR (
+          LOWER($${paramIndex}) = 'polygon'
+          AND LOWER(REPLACE(GeometryType(sf.geom), 'ST_', '')) = 'multipolygon'
+        )
+        OR (
+          LOWER($${paramIndex}) = 'linestring'
+          AND LOWER(REPLACE(GeometryType(sf.geom), 'ST_', '')) = 'multilinestring'
+        )
+        OR (
+          LOWER($${paramIndex}) = 'point'
+          AND LOWER(REPLACE(GeometryType(sf.geom), 'ST_', '')) = 'multipoint'
+        )
+      )
+    `;
     params.push(geometryType);
     paramIndex++;
   }
@@ -644,14 +676,7 @@ const getProjectFeatures = async (req, res) => {
       AND EXISTS (
         SELECT 1
         FROM jsonb_each_text(COALESCE(sf.attributes, '{}'::jsonb)) AS attr(key, value)
-        WHERE (
-          LOWER(attr.key) LIKE '%type%'
-          OR LOWER(attr.key) LIKE '%species%'
-          OR LOWER(attr.key) LIKE '%crop%'
-          OR LOWER(attr.key) LIKE '%tree%'
-          OR LOWER(attr.key) LIKE '%orchard%'
-        )
-          AND LOWER(BTRIM(attr.value)) = LOWER($${paramIndex})
+        WHERE LOWER(BTRIM(attr.value)) = LOWER($${paramIndex})
       )
     `;
     params.push(featureType);
@@ -721,7 +746,23 @@ const getProjectFeatures = async (req, res) => {
   }
 
   if (geometryType) {
-    countQuery += ` AND GeometryType(sf.geom) = $${countParamIndex}`;
+    countQuery += `
+      AND (
+        LOWER(REPLACE(GeometryType(sf.geom), 'ST_', '')) = LOWER($${countParamIndex})
+        OR (
+          LOWER($${countParamIndex}) = 'polygon'
+          AND LOWER(REPLACE(GeometryType(sf.geom), 'ST_', '')) = 'multipolygon'
+        )
+        OR (
+          LOWER($${countParamIndex}) = 'linestring'
+          AND LOWER(REPLACE(GeometryType(sf.geom), 'ST_', '')) = 'multilinestring'
+        )
+        OR (
+          LOWER($${countParamIndex}) = 'point'
+          AND LOWER(REPLACE(GeometryType(sf.geom), 'ST_', '')) = 'multipoint'
+        )
+      )
+    `;
     countParams.push(geometryType);
     countParamIndex++;
   }
@@ -731,14 +772,7 @@ const getProjectFeatures = async (req, res) => {
       AND EXISTS (
         SELECT 1
         FROM jsonb_each_text(COALESCE(sf.attributes, '{}'::jsonb)) AS attr(key, value)
-        WHERE (
-          LOWER(attr.key) LIKE '%type%'
-          OR LOWER(attr.key) LIKE '%species%'
-          OR LOWER(attr.key) LIKE '%crop%'
-          OR LOWER(attr.key) LIKE '%tree%'
-          OR LOWER(attr.key) LIKE '%orchard%'
-        )
-          AND LOWER(BTRIM(attr.value)) = LOWER($${countParamIndex})
+        WHERE LOWER(BTRIM(attr.value)) = LOWER($${countParamIndex})
       )
     `;
     countParams.push(featureType);

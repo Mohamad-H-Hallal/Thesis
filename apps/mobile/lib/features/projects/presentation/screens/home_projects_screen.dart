@@ -186,6 +186,18 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
                                         project.visibilitySummaryLabel,
                                       ),
                                     ),
+                                  if (project.publishedAiLayerCount > 0)
+                                    Chip(
+                                      avatar: const Icon(
+                                        Icons.auto_awesome_outlined,
+                                        size: 18,
+                                      ),
+                                      label: Text(
+                                        project.publishedAiLayerCount == 1
+                                            ? 'Published AI layer'
+                                            : '${project.publishedAiLayerCount} published AI layers',
+                                      ),
+                                    ),
                                 ],
                               ),
                             ],

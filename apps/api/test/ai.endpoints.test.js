@@ -178,6 +178,28 @@ const createReviewableAiRun = async ({ projectId, userId, layerStatus = 'ready_f
   };
 };
 
+const enableProjectAiSettings = async ({ projectId, userId }) => {
+  await pool.query(
+    `INSERT INTO ai_project_settings (
+       project_id,
+       is_enabled,
+       label_field,
+       scope_type,
+       min_samples_per_class,
+       model_preferences,
+       created_by,
+       updated_by
+     )
+     VALUES ($1, true, 'L4_descr', 'project', 50, '{}'::jsonb, $2, $2)
+     ON CONFLICT (project_id)
+     DO UPDATE SET
+       is_enabled = true,
+       label_field = EXCLUDED.label_field,
+       updated_by = EXCLUDED.updated_by`,
+    [projectId, userId],
+  );
+};
+
 const createPreviewableAiLayer = async ({
   projectId,
   userId,
@@ -723,6 +745,237 @@ describe('AI backend endpoints phase B', () => {
     expect(updateResponse.body.data.model_preferences.models).toEqual(['random_forest']);
   });
 
+  test('custom polygon scope is saved for AI only and affects readiness and run metadata', async () => {
+    const { admin, project } = await createProjectFixture('AI Custom Scope');
+    const customScope = {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [35.49, 33.89],
+          [35.51, 33.89],
+          [35.51, 33.91],
+          [35.49, 33.91],
+          [35.49, 33.89],
+        ],
+      ],
+    };
+
+    await insertApprovedFeature({
+      projectId: project.id,
+      userId: admin.user.id,
+      attributes: { feature_type: 'Olives' },
+      lon: 35.5,
+      lat: 33.9,
+    });
+    await insertApprovedFeature({
+      projectId: project.id,
+      userId: admin.user.id,
+      attributes: { feature_type: 'Citrus' },
+      lon: 35.8,
+      lat: 34.2,
+    });
+    const beforeCount = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM spatial_feature WHERE project_id = $1`,
+      [project.id],
+    );
+
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}/ai/settings`)
+      .set(authHeader(admin.token))
+      .send({
+        is_enabled: true,
+        label_field: 'feature_type',
+        scope_type: 'custom_polygon',
+        scope_geometry: customScope,
+        min_samples_per_class: 1,
+        model_preferences: {
+          satellite_source: 'sentinel2',
+          season: 'growing',
+          date_from: '2026-03-01',
+          date_to: '2026-10-31',
+          feature_inputs: ['NDVI', 'EVI'],
+        },
+      })
+      .expect(200);
+
+    const scopedReadiness = await request(app)
+      .get(
+        `${API_PREFIX}/projects/${project.id}/ai/readiness?label_field=feature_type&min_samples_per_class=1`,
+      )
+      .set(authHeader(admin.token))
+      .expect(200);
+
+    expect(scopedReadiness.body.data.readiness.approved_feature_count).toBe(1);
+    expect(scopedReadiness.body.data.readiness.custom_scope_applied).toBe(true);
+    expect(scopedReadiness.body.data.readiness.scope_type).toBe('custom_polygon');
+    expect(scopedReadiness.body.data.readiness.training_samples_area_type).toBe('custom_ai_area');
+    expect(scopedReadiness.body.data.readiness.prediction_area_type).toBe('custom_ai_area');
+    expect(scopedReadiness.body.data.readiness.national_scope_enabled).toBe(false);
+    expect(scopedReadiness.body.data.readiness.national_scope_eligibility).toEqual(
+      expect.objectContaining({
+        eligible: false,
+        unmet_requirements: expect.arrayContaining([
+          'National mode is enabled for this project.',
+          'Lebanon boundary is configured for AI prediction.',
+          'The AI pipeline supports the selected satellite, dates, features, and national boundary.',
+        ]),
+      }),
+    );
+
+    const runResponse = await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
+      .set(authHeader(admin.token))
+      .send({ status: 'draft' })
+      .expect(201);
+
+    expect(runResponse.body.data.training_feature_count).toBe(1);
+    expect(runResponse.body.data.scope_type).toBe('custom_polygon');
+    expect(runResponse.body.data.metadata).toEqual(
+      expect.objectContaining({
+        training_samples_area_type: 'custom_ai_area',
+        prediction_area_type: 'custom_ai_area',
+        national_scope_enabled: false,
+        national_scope_eligibility: expect.objectContaining({
+          eligible: false,
+          unmet_requirements: expect.arrayContaining([
+            'National mode is enabled for this project.',
+          ]),
+        }),
+      }),
+    );
+    expect(runResponse.body.data.metadata.ai_settings).toEqual(
+      expect.objectContaining({
+        satellite_source: 'sentinel2',
+        season: 'growing',
+        feature_inputs: ['NDVI', 'EVI'],
+        training_samples_area_type: 'custom_ai_area',
+        prediction_area_type: 'custom_ai_area',
+        custom_scope_applied: true,
+        custom_polygon_summary: expect.objectContaining({
+          saved_for_run: true,
+          geometry_type: 'Polygon',
+        }),
+      }),
+    );
+    expect(runResponse.body.data.metadata.pipeline_execution_support).toEqual(
+      expect.objectContaining({
+        settings_saved_for_run: true,
+        backend_scope_applied: true,
+        effective_pipeline_settings: expect.arrayContaining(['training_samples_area_type']),
+        pending_pipeline_settings: expect.arrayContaining([
+          'satellite_source',
+          'date_range',
+          'feature_inputs',
+          'prediction_area_type',
+          'custom_area',
+        ]),
+      }),
+    );
+
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}/ai/settings`)
+      .set(authHeader(admin.token))
+      .send({
+        is_enabled: true,
+        label_field: 'feature_type',
+        scope_type: 'project',
+        scope_geometry: customScope,
+        min_samples_per_class: 1,
+        model_preferences: {},
+      })
+      .expect(200);
+
+    const projectReadiness = await request(app)
+      .get(
+        `${API_PREFIX}/projects/${project.id}/ai/readiness?label_field=feature_type&min_samples_per_class=1`,
+      )
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(projectReadiness.body.data.readiness.approved_feature_count).toBe(2);
+    expect(projectReadiness.body.data.readiness.custom_scope_applied).toBe(false);
+    expect(projectReadiness.body.data.readiness.scope_type).toBe('project');
+    expect(projectReadiness.body.data.readiness.training_samples_area_type).toBe('project_area');
+    expect(projectReadiness.body.data.readiness.prediction_area_type).toBe('project_area');
+
+    const afterCount = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM spatial_feature WHERE project_id = $1`,
+      [project.id],
+    );
+    expect(afterCount.rows[0].count).toBe(beforeCount.rows[0].count);
+  });
+
+  test('National Lebanon AI scope is reported as locked until readiness requirements pass', async () => {
+    const { admin, project } = await createProjectFixture('AI National Locked');
+    await insertApprovedFeature({
+      projectId: project.id,
+      userId: admin.user.id,
+      attributes: { feature_type: 'Olives' },
+      lon: 35.5,
+      lat: 33.9,
+    });
+
+    const readiness = await request(app)
+      .get(
+        `${API_PREFIX}/projects/${project.id}/ai/readiness?label_field=feature_type&scope_type=national&min_samples_per_class=1`,
+      )
+      .set(authHeader(admin.token))
+      .expect(200);
+
+    expect(readiness.body.data.readiness.scope_type).toBe('national');
+    expect(readiness.body.data.readiness.training_samples_area_type).toBe('national_lebanon');
+    expect(readiness.body.data.readiness.prediction_area_type).toBe('national_lebanon');
+    expect(readiness.body.data.readiness.national_scope_enabled).toBe(false);
+    expect(readiness.body.data.readiness.national_scope_eligibility).toEqual(
+      expect.objectContaining({
+        eligible: false,
+        unmet_requirements: expect.arrayContaining([
+          'National mode is enabled for this project.',
+          'Lebanon boundary is configured for AI prediction.',
+          'Approved training samples cover multiple Lebanese regions and environmental conditions.',
+          'Every class has enough approved samples: minimum 50, recommended 100+.',
+          'The AI pipeline supports the selected satellite, dates, features, and national boundary.',
+        ]),
+        warnings: expect.arrayContaining([
+          'National Lebanon prediction is locked until national readiness requirements are met.',
+        ]),
+      }),
+    );
+
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}/ai/settings`)
+      .set(authHeader(admin.token))
+      .send({
+        is_enabled: true,
+        label_field: 'feature_type',
+        scope_type: 'national',
+        min_samples_per_class: 1,
+        model_preferences: {},
+      })
+      .expect(422);
+
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}/ai/settings`)
+      .set(authHeader(admin.token))
+      .send({
+        is_enabled: true,
+        label_field: 'feature_type',
+        scope_type: 'project',
+        min_samples_per_class: 1,
+        model_preferences: { national_scope_enabled: true },
+      })
+      .expect(422);
+
+    await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'draft',
+        label_field: 'feature_type',
+        scope_type: 'national',
+      })
+      .expect(422);
+  });
+
   test('creates draft AI runs, lists runs, exposes placeholder child resources, and leaves spatial_feature untouched', async () => {
     const { admin, project } = await createProjectFixture('AI Run Draft');
     await request(app)
@@ -885,7 +1138,7 @@ describe('AI backend endpoints phase B', () => {
         scope_type: 'national',
         execution_mode: 'regional_vectorization_artifacts',
       })
-      .expect(400);
+      .expect(422);
 
     await request(app)
       .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
@@ -1229,6 +1482,226 @@ describe('AI backend endpoints phase B', () => {
       .expect(400);
   });
 
+  test('protected super-admin publishes and unpublishes approved AI map layers without spatial_feature writes', async () => {
+    const { admin, project } = await createProjectFixture('AI Layer Publishing');
+    await enableProjectAiSettings({ projectId: project.id, userId: admin.user.id });
+    const storagePath = await writePreviewGeoJson(
+      'outputs/runs/phase-p-test/ai_classification_review.geojson',
+    );
+    const { runId, layerId } = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+      status: 'approved',
+      storagePath,
+    });
+    const viewer = await createViewerToken();
+    const beforeFeatureCount = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM spatial_feature',
+    );
+
+    await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/features`)
+      .set(authHeader(viewer.token))
+      .expect(403);
+    await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/ai/published-layers`)
+      .set(authHeader(viewer.token))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data).toEqual([]);
+      });
+
+    const publishResponse = await request(app)
+      .post(`${API_PREFIX}/ai/layers/${layerId}/publish`)
+      .set(authHeader(admin.token))
+      .expect(200);
+
+    expect(publishResponse.body.data).toEqual(
+      expect.objectContaining({
+        id: layerId,
+        project_id: project.id,
+        layer_type: 'classification',
+        status: 'published',
+        storage_path: null,
+        published_by: admin.user.id,
+      }),
+    );
+    expect(publishResponse.body.data.published_at).toBeTruthy();
+
+    const publishedLayersResponse = await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/ai/published-layers`)
+      .set(authHeader(viewer.token))
+      .expect(200);
+    expect(publishedLayersResponse.body.data).toEqual([
+      expect.objectContaining({
+        id: layerId,
+        project_id: project.id,
+        layer_type: 'classification',
+        status: 'published',
+        storage_path: null,
+        published_by: admin.user.id,
+      }),
+    ]);
+
+    const viewerFeaturesResponse = await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/features?detail=full&geometry=full`)
+      .set(authHeader(viewer.token))
+      .expect(200);
+    expect(viewerFeaturesResponse.body.data.layer).toEqual(
+      expect.objectContaining({
+        id: layerId,
+        status: 'published',
+        viewer_published: true,
+      }),
+    );
+    expect(viewerFeaturesResponse.body.data.feature_collection.features[0].properties).toEqual(
+      expect.objectContaining({
+        predicted_class: 'olives',
+        source: 'ai_prediction',
+      }),
+    );
+
+    const logAfterPublish = await request(app)
+      .get(`${API_PREFIX}/ai/runs/${runId}/logs`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(logAfterPublish.body.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: 'AI output layer published for read-only viewer map access.',
+          metadata: expect.objectContaining({
+            phase: 'phase_p_publish',
+            viewer_publication_enabled: true,
+            spatial_feature_writes: false,
+          }),
+        }),
+      ]),
+    );
+
+    const unpublishResponse = await request(app)
+      .post(`${API_PREFIX}/ai/layers/${layerId}/unpublish`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(unpublishResponse.body.data).toEqual(
+      expect.objectContaining({
+        id: layerId,
+        status: 'approved',
+        published_at: null,
+        published_by: null,
+        storage_path: null,
+      }),
+    );
+
+    await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/ai/published-layers`)
+      .set(authHeader(viewer.token))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data).toEqual([]);
+      });
+    await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/features`)
+      .set(authHeader(viewer.token))
+      .expect(403);
+
+    const afterFeatureCount = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM spatial_feature',
+    );
+    expect(afterFeatureCount.rows[0].count).toBe(beforeFeatureCount.rows[0].count);
+  });
+
+  test('AI layer publishing is protected and requires approved map layers', async () => {
+    const { admin, project } = await createProjectFixture('AI Layer Publish RBAC');
+    await enableProjectAiSettings({ projectId: project.id, userId: admin.user.id });
+    const draft = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+      status: 'ready_for_review',
+    });
+    const approved = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+      status: 'approved',
+      storagePath: await writePreviewGeoJson(
+        'outputs/runs/phase-p-test/rbac_classification.geojson',
+      ),
+    });
+    const statistics = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+      layerType: 'statistics',
+      status: 'approved',
+      storagePath: 'outputs/runs/phase-p-test/statistics.json',
+    });
+    const normalAdmin = await createAdminUser({
+      fullName: 'Normal Publishing Admin',
+      emailPrefix: 'normal-ai-publish-admin',
+    });
+    const viewer = await createViewerToken();
+
+    await request(app)
+      .post(`${API_PREFIX}/ai/layers/${approved.layerId}/publish`)
+      .set(authHeader(normalAdmin.token))
+      .expect(403);
+    await request(app)
+      .post(`${API_PREFIX}/ai/layers/${approved.layerId}/publish`)
+      .set(authHeader(viewer.token))
+      .expect(403);
+    await request(app)
+      .post(`${API_PREFIX}/ai/layers/${draft.layerId}/publish`)
+      .set(authHeader(admin.token))
+      .expect(409);
+    await request(app)
+      .post(`${API_PREFIX}/ai/layers/${statistics.layerId}/publish`)
+      .set(authHeader(admin.token))
+      .expect(400);
+    await request(app)
+      .post(`${API_PREFIX}/ai/layers/${approved.layerId}/unpublish`)
+      .set(authHeader(admin.token))
+      .expect(409);
+  });
+
+  test('published AI layers stay hidden while project AI is disabled', async () => {
+    const { admin, project } = await createProjectFixture('AI Layer Disabled Gate');
+    const { layerId } = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+      status: 'approved',
+      storagePath: await writePreviewGeoJson('outputs/runs/phase-p-test/disabled_gate.geojson'),
+    });
+    const viewer = await createViewerToken();
+
+    await request(app)
+      .post(`${API_PREFIX}/ai/layers/${layerId}/publish`)
+      .set(authHeader(admin.token))
+      .expect(409);
+
+    await enableProjectAiSettings({ projectId: project.id, userId: admin.user.id });
+    await request(app)
+      .post(`${API_PREFIX}/ai/layers/${layerId}/publish`)
+      .set(authHeader(admin.token))
+      .expect(200);
+
+    await pool.query(
+      `UPDATE ai_project_settings
+       SET is_enabled = false
+       WHERE project_id = $1`,
+      [project.id],
+    );
+
+    await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/ai/published-layers`)
+      .set(authHeader(viewer.token))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data).toEqual([]);
+      });
+    await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/features`)
+      .set(authHeader(viewer.token))
+      .expect(403);
+  });
+
   test('RBAC allows only protected super-admin users without cross-project leaks', async () => {
     const first = await createProjectFixture('AI RBAC First');
     const second = await createProjectFixture('AI RBAC Second', {
@@ -1493,6 +1966,50 @@ describe('AI result review phase I', () => {
         published_at: null,
       }),
     );
+  });
+
+  test('keep draft unpublishes previously published AI map layers', async () => {
+    const { admin, project } = await createProjectFixture('AI Review Draft Published');
+    await enableProjectAiSettings({ projectId: project.id, userId: admin.user.id });
+    const { runId, layerId } = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+      status: 'approved',
+      storagePath: await writePreviewGeoJson('outputs/runs/phase-p-test/review_unpublish.geojson'),
+    });
+    const viewer = await createViewerToken();
+
+    await request(app)
+      .post(`${API_PREFIX}/ai/layers/${layerId}/publish`)
+      .set(authHeader(admin.token))
+      .expect(200);
+
+    await request(app)
+      .post(`${API_PREFIX}/ai/runs/${runId}/review`)
+      .set(authHeader(admin.token))
+      .send({ action: 'keep_draft' })
+      .expect(200);
+
+    const layerResult = await pool.query(
+      `SELECT status, published_at, published_by
+       FROM ai_output_layer
+       WHERE id = $1`,
+      [layerId],
+    );
+    expect(layerResult.rows[0]).toEqual(
+      expect.objectContaining({
+        status: 'draft',
+        published_at: null,
+        published_by: null,
+      }),
+    );
+    await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/ai/published-layers`)
+      .set(authHeader(viewer.token))
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data).toEqual([]);
+      });
   });
 
   test('only protected super-admin can review AI runs', async () => {

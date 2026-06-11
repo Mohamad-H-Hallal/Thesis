@@ -12,12 +12,12 @@ const { asyncHandler } = require('../middleware/error');
 const router = express.Router();
 
 router.use(authenticate);
-router.use(requireProtectedSuperAdmin);
 
 router.get(
   '/runs/:runId',
   uuidValidation('runId'),
   validate,
+  requireProtectedSuperAdmin,
   asyncHandler(aiController.getAiRun),
 );
 
@@ -25,6 +25,7 @@ router.get(
   '/runs/:runId/metrics',
   uuidValidation('runId'),
   validate,
+  requireProtectedSuperAdmin,
   asyncHandler(aiController.listAiRunMetrics),
 );
 
@@ -32,6 +33,7 @@ router.get(
   '/runs/:runId/layers',
   uuidValidation('runId'),
   validate,
+  requireProtectedSuperAdmin,
   asyncHandler(aiController.listAiRunLayers),
 );
 
@@ -42,10 +44,27 @@ router.get(
   asyncHandler(aiController.getAiLayerFeatures),
 );
 
+router.post(
+  '/layers/:layerId/publish',
+  uuidValidation('layerId'),
+  validate,
+  requireProtectedSuperAdmin,
+  asyncHandler(aiController.publishAiLayer),
+);
+
+router.post(
+  '/layers/:layerId/unpublish',
+  uuidValidation('layerId'),
+  validate,
+  requireProtectedSuperAdmin,
+  asyncHandler(aiController.unpublishAiLayer),
+);
+
 router.get(
   '/runs/:runId/reviews',
   uuidValidation('runId'),
   validate,
+  requireProtectedSuperAdmin,
   asyncHandler(aiController.listAiRunReviews),
 );
 
@@ -54,6 +73,7 @@ router.post(
   uuidValidation('runId'),
   aiValidation.reviewRun,
   validate,
+  requireProtectedSuperAdmin,
   asyncHandler(aiController.reviewAiRun),
 );
 
@@ -62,6 +82,7 @@ router.get(
   uuidValidation('runId'),
   paginationValidation,
   validate,
+  requireProtectedSuperAdmin,
   asyncHandler(aiController.listAiRunLogs),
 );
 

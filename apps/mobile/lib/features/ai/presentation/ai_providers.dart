@@ -72,6 +72,17 @@ final aiRunLayersProvider = FutureProvider.family<List<AiOutputLayer>, String>((
   return ref.read(aiRepositoryProvider).fetchRunLayers(runId: runId);
 });
 
+final publishedAiLayersProvider =
+    FutureProvider.family<List<AiOutputLayer>, String>((ref, projectId) async {
+      ref.watch(workflowRefreshTickProvider);
+      if (projectId.trim().isEmpty) {
+        return const <AiOutputLayer>[];
+      }
+      return ref
+          .read(aiRepositoryProvider)
+          .fetchPublishedProjectLayers(projectId: projectId);
+    });
+
 final aiLayerFeaturesProvider =
     FutureProvider.family<AiLayerFeatureCollection, AiLayerFeaturesQuery>((
       ref,

@@ -112,6 +112,14 @@ router.get(
 );
 
 router.get(
+  '/:projectId/ai/published-layers',
+  uuidValidation('projectId'),
+  validate,
+  checkProjectAccess,
+  asyncHandler(aiController.listProjectPublishedAiLayers),
+);
+
+router.get(
   '/:projectId/ai/settings',
   uuidValidation('projectId'),
   validate,
