@@ -2199,21 +2199,23 @@ class _LayerStatusSummary extends StatelessWidget {
         for (final layer in layers)
           Padding(
             padding: const EdgeInsets.only(top: AppSpacing.xs),
-            child: Row(
+            child: Wrap(
+              spacing: AppSpacing.sm,
+              runSpacing: 2,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                Expanded(
-                  child: Text(
-                    layer.layerType == 'statistics'
-                        ? 'Statistics: Report summary'
-                        : '${_friendlyLayerTypeLabel(layer.layerType)}: '
-                              '${_friendlyLayerStatusTitle(layer.status)}',
-                  ),
+                Text(
+                  layer.layerType == 'statistics'
+                      ? 'Statistics: Report summary'
+                      : '${_friendlyLayerTypeLabel(layer.layerType)}: '
+                            '${_friendlyLayerStatusTitle(layer.status)}',
                 ),
                 Text(
                   layer.layerType == 'statistics'
                       ? 'Not a map overlay'
                       : _layerVisibilityText(layer),
                   style: Theme.of(context).textTheme.bodySmall,
+                  softWrap: true,
                 ),
               ],
             ),

@@ -1728,6 +1728,42 @@ void main() {
     expect(find.textContaining('statistics_layer.json'), findsOneWidget);
   });
 
+  testWidgets('AI output layer summary wraps on narrow screens', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(360, 780));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
+      layers: _reviewableLayers(),
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    await tester.ensureVisible(find.text('Run 00f4bb0c'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Run 00f4bb0c'));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Output layers'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Output layers'), findsOneWidget);
+    expect(find.textContaining('Statistics: Report summary'), findsOneWidget);
+    expect(find.textContaining('Not a map overlay'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('approved AI output layer can be published and unpublished', (
     tester,
   ) async {
