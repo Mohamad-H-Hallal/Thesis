@@ -1764,6 +1764,76 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('run detail expandable sections use material surfaces', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
+      layers: _reviewableLayers(),
+      logs: _phaseFLogs(),
+      reviews: <AiReviewDecision>[
+        ..._reviewHistory(),
+        AiReviewDecision(
+          id: 'review-older',
+          aiRunId: '00f4bb0c-66cc-4fec-80c3-f3ecc96175f4',
+          decision: 'keep_draft',
+          reason: 'Keep internal while checking map artifacts.',
+          decidedBy: 'NCRS Administrator',
+          decidedAt: DateTime.utc(2026, 6, 5, 12),
+          metadata: const <String, dynamic>{
+            'viewer_publication_enabled': false,
+          },
+        ),
+      ],
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    await tester.ensureVisible(find.text('Run 00f4bb0c'));
+    await tester.tap(find.text('Run 00f4bb0c'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Output layers'), findsOneWidget);
+    expect(find.text('Review and publishing'), findsOneWidget);
+
+    Future<void> openExpansion(String label) async {
+      final finder = find.text(label);
+      await tester.scrollUntilVisible(
+        finder,
+        600,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(finder);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    }
+
+    for (final label in <String>[
+      'Layer details',
+      'Layer technical details',
+      'Review history',
+      'Detailed run results',
+      'Technical output files',
+      'Worker logs',
+      'Technical metadata',
+    ]) {
+      await openExpansion(label);
+    }
+  });
+
   testWidgets('approved AI output layer can be published and unpublished', (
     tester,
   ) async {

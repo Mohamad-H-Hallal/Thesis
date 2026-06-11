@@ -1701,12 +1701,13 @@ class _RunDetailSectionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: scheme.surface,
-        border: Border.all(color: scheme.outlineVariant),
+    return Material(
+      color: scheme.surface,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: scheme.outlineVariant),
         borderRadius: BorderRadius.circular(8),
       ),
+      clipBehavior: Clip.antiAlias,
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.md),
         child: Column(
