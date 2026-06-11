@@ -40,6 +40,7 @@ const createService = (root, overrides = {}) =>
     pythonBin: process.execPath,
     timeoutMs: 1000,
     mode: 'dry_run',
+    runConfigDir: path.join(root, 'run-configs'),
     ...overrides,
   }));
 
@@ -51,6 +52,10 @@ describe('AI pipeline adapter phase E', () => {
   test('runs only approved commands with argument arrays and sanitized logs', async () => {
     const root = await createTempPipelineRoot();
     const service = createService(root);
+    const runConfigDir = path.join(root, 'run-configs');
+    await fs.mkdir(runConfigDir, { recursive: true });
+    const runConfigPath = path.join(runConfigDir, 'run-config.json');
+    await fs.writeFile(runConfigPath, JSON.stringify({ run_id: 'test-run' }), 'utf8');
 
     const configResult = await service.checkConfig();
     expect(configResult).toEqual(
@@ -63,12 +68,14 @@ describe('AI pipeline adapter phase E', () => {
     expect(configResult.sanitizedLog).toContain('DB_PASSWORD=[redacted]');
     expect(configResult.sanitizedLog).not.toContain('super-secret');
 
-    const dryRunResult = await service.dryRun();
+    const dryRunResult = await service.dryRun(runConfigPath);
     expect(dryRunResult.sanitizedLog).toContain('--dry-run');
+    expect(dryRunResult.sanitizedLog).toContain('--config');
+    expect(dryRunResult.sanitizedLog).toContain('run-config.json');
     expect(dryRunResult.sanitizedLog).toContain('TOKEN=[redacted]');
     expect(dryRunResult.sanitizedLog).not.toContain('hidden-token');
 
-    const probeResult = await service.probeProject(TEST_PROJECT_ID, 'L4_descr');
+    const probeResult = await service.probeProject(TEST_PROJECT_ID, 'L4_descr', runConfigPath);
     expect(probeResult.sanitizedLog).toContain('--probe-db');
     expect(probeResult.sanitizedLog).toContain(TEST_PROJECT_ID);
     expect(probeResult.sanitizedLog).toContain('L4_descr');
@@ -83,9 +90,11 @@ describe('AI pipeline adapter phase E', () => {
       TEST_PROJECT_ID,
       'L4_descr',
       'app-ai-test-run',
+      runConfigPath,
     );
     expect(extractionResult.sanitizedLog).toContain('--regional-feature-extraction');
     expect(extractionResult.sanitizedLog).toContain('--ground-truth');
+    expect(extractionResult.sanitizedLog).toContain('--config');
     expect(extractionResult.outputPaths).toEqual([
       'outputs/runs/app-ai-test-run/feature_table.csv',
       'outputs/runs/app-ai-test-run/feature_extraction_summary.json',
@@ -95,9 +104,12 @@ describe('AI pipeline adapter phase E', () => {
       TEST_PROJECT_ID,
       'L4_descr',
       'app-ai-test-run',
+      undefined,
+      runConfigPath,
     );
     expect(evalResult.sanitizedLog).toContain('--regional-model-eval');
     expect(evalResult.sanitizedLog).toContain('--feature-table');
+    expect(evalResult.sanitizedLog).toContain('--config');
     expect(evalResult.outputPaths).toEqual([
       'outputs/runs/app-ai-test-run/metrics.json',
       'outputs/runs/app-ai-test-run/model_metadata.json',
@@ -110,6 +122,9 @@ describe('AI pipeline adapter phase E', () => {
       TEST_PROJECT_ID,
       'L4_descr',
       'app-ai-test-run',
+      undefined,
+      undefined,
+      runConfigPath,
     );
     expect(classificationResult.sanitizedLog).toContain('--regional-classification');
     expect(classificationResult.sanitizedLog).toContain('--region-preset');
@@ -123,6 +138,9 @@ describe('AI pipeline adapter phase E', () => {
       TEST_PROJECT_ID,
       'L4_descr',
       'app-ai-test-run',
+      undefined,
+      undefined,
+      runConfigPath,
     );
     expect(vectorResult.sanitizedLog).toContain('--regional-vectorization-artifacts');
     expect(vectorResult.sanitizedLog).toContain('--region-preset');
@@ -192,6 +210,15 @@ describe('AI pipeline adapter phase E', () => {
     expect(() =>
       service.prepareRegionalVectorArtifacts(TEST_PROJECT_ID, 'L4_descr', '../unsafe'),
     ).toThrow('Invalid AI regional run id');
+  });
+
+  test('rejects run config paths outside the configured config directory', async () => {
+    const root = await createTempPipelineRoot();
+    const service = createService(root);
+    const result = await service.dryRun(path.join(root, 'outside.json'));
+
+    expect(result.success).toBe(false);
+    expect(result.sanitizedLog).toContain('AI run config path must stay inside');
   });
 
   test('redacts common secret shapes', () => {

@@ -845,7 +845,12 @@ describe('AI worker skeleton phase D', () => {
     );
     expect(pipelineService.checkConfig).toHaveBeenCalledTimes(1);
     expect(pipelineService.dryRun).toHaveBeenCalledTimes(1);
-    expect(pipelineService.probeProject).toHaveBeenCalledWith(project.id, 'L4_descr');
+    expect(pipelineService.dryRun).toHaveBeenCalledWith(expect.stringMatching(/\.json$/));
+    expect(pipelineService.probeProject).toHaveBeenCalledWith(
+      project.id,
+      'L4_descr',
+      expect.stringMatching(/\.json$/),
+    );
     expect(pipelineService.exportGroundTruthLocal).not.toHaveBeenCalled();
 
     const runResult = await pool.query(
@@ -860,6 +865,14 @@ describe('AI worker skeleton phase D', () => {
         execution_mode: 'dry_run',
         pipeline_bridge_phase: 'phase_f',
         real_ai_execution: false,
+        run_config_path: expect.stringMatching(/\.json$/),
+        run_config: expect.objectContaining({
+          training_samples_area_type: 'project_area',
+          prediction_area_type: 'project_area',
+          national_scope_enabled: false,
+          allow_spatial_feature_writes: false,
+          publish_outputs: false,
+        }),
       }),
     );
     expect(runResult.rows[0].metadata.command_results).toHaveLength(3);
@@ -914,6 +927,7 @@ describe('AI worker skeleton phase D', () => {
 
     expect(result.finalStatus).toBe('ready_for_review');
     expect(pipelineService.exportGroundTruthLocal).toHaveBeenCalledWith(project.id, 'L4_descr');
+    expect(pipelineService.dryRun).toHaveBeenCalledWith(expect.stringMatching(/\.json$/));
 
     const runResult = await pool.query(
       `SELECT metadata
@@ -969,6 +983,7 @@ describe('AI worker skeleton phase D', () => {
       project.id,
       'L4_descr',
       regionalRunId,
+      expect.stringMatching(/\.json$/),
     );
     expect(pipelineService.evaluateRegionalModel).not.toHaveBeenCalled();
 
@@ -986,6 +1001,20 @@ describe('AI worker skeleton phase D', () => {
         ai_pipeline_run_id: regionalRunId,
         real_ai_execution: true,
         feature_table_path: `outputs/runs/${regionalRunId}/feature_table.csv`,
+        run_config_path: expect.stringMatching(/\.json$/),
+      }),
+    );
+    expect(runResult.rows[0].metadata.pipeline_execution_support).toEqual(
+      expect.objectContaining({
+        python_pipeline_config_consumed: true,
+        effective_pipeline_settings: expect.arrayContaining([
+          'satellite_source',
+          'date_range',
+          'feature_inputs',
+          'preferred_model',
+          'training_samples_area_type',
+          'prediction_area_type',
+        ]),
       }),
     );
     expect(runResult.rows[0].metadata.class_counts).toEqual(
@@ -1014,6 +1043,115 @@ describe('AI worker skeleton phase D', () => {
     );
     expect(await countRows('spatial_feature')).toBe(beforeSpatialCount);
     expect(await countRows('ai_output_layer')).toBe(beforeLayerCount);
+  });
+
+  test('writes settings-driven run config JSON from the run snapshot', async () => {
+    const { admin, project } = await createProjectFixture('AI Worker Phase Q Config');
+    await insertReadyRegionalFeatures({
+      projectId: project.id,
+      userId: admin.user.id,
+    });
+    const customPolygon = {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [35.2, 33.5],
+          [35.8, 33.5],
+          [35.8, 34.0],
+          [35.2, 34.0],
+          [35.2, 33.5],
+        ],
+      ],
+    };
+    const runId = await insertQueuedRun({
+      projectId: project.id,
+      userId: admin.user.id,
+      scopeType: 'custom_polygon',
+      metadata: {
+        test: 'ai-worker-phase-q',
+        execution_mode: 'regional_feature_extraction',
+        min_samples_per_class: 2,
+        training_samples_area_type: 'custom_ai_area',
+        prediction_area_type: 'custom_ai_area',
+        ai_settings: {
+          satellite_source: 'sentinel2',
+          target_year: 2025,
+          season: 'dry',
+          date_from: '2025-06-01',
+          date_to: '2025-08-31',
+          feature_inputs: ['B2', 'B3', 'NDVI'],
+          preferred_model: 'random_forest',
+          scope_type: 'custom_polygon',
+          training_samples_area_type: 'custom_ai_area',
+          prediction_area_type: 'custom_ai_area',
+        },
+      },
+    });
+    await pool.query(
+      `UPDATE ai_run
+       SET scope_geometry = ST_SetSRID(ST_GeomFromGeoJSON($2), 4326)
+       WHERE id = $1`,
+      [runId, JSON.stringify(customPolygon)],
+    );
+    const pipelineService = createMockPipelineService({
+      config: pipelineConfig({
+        mode: 'regional_feature_extraction',
+      }),
+    });
+
+    const result = await runAiWorkerOnce({
+      pipelineService,
+      workerId: 'phase-q-config-worker',
+    });
+
+    expect(result.finalStatus).toBe('ready_for_review');
+    const runResult = await pool.query(
+      `SELECT metadata
+       FROM ai_run
+       WHERE id = $1`,
+      [runId],
+    );
+    const metadata = runResult.rows[0].metadata;
+    expect(metadata.run_config_path).toEqual(expect.stringMatching(/\.json$/));
+    expect(metadata.pipeline_execution_support).toEqual(
+      expect.objectContaining({
+        python_pipeline_config_consumed: true,
+        pending_pipeline_settings: [],
+      }),
+    );
+    const runConfig = JSON.parse(
+      await fs.readFile(path.resolve(metadata.run_config_path), 'utf8'),
+    );
+    expect(runConfig).toEqual(
+      expect.objectContaining({
+        run_id: runId,
+        project_id: project.id,
+        label_field: 'L4_descr',
+        execution_mode: 'regional_feature_extraction',
+        satellite_source: 'sentinel2',
+        year: 2025,
+        season: 'dry',
+        from_date: '2025-06-01',
+        to_date: '2025-08-31',
+        selected_extracted_features: ['B2', 'B3', 'NDVI'],
+        preferred_model: 'random_forest',
+        training_samples_area_type: 'custom_ai_area',
+        prediction_area_type: 'custom_ai_area',
+        custom_polygon: expect.objectContaining({ type: 'Polygon' }),
+        output_directory: expect.stringMatching(/^outputs\/runs\//),
+        safety_flags: {
+          national_scope_enabled: false,
+          allow_spatial_feature_writes: false,
+          publish_outputs: false,
+        },
+      }),
+    );
+    expect(pipelineService.extractRegionalFeatures).toHaveBeenCalledWith(
+      project.id,
+      'L4_descr',
+      expect.any(String),
+      path.resolve(metadata.run_config_path),
+    );
   });
 
   test('runs regional model evaluation through training and evaluating statuses', async () => {
@@ -1055,11 +1193,14 @@ describe('AI worker skeleton phase D', () => {
       project.id,
       'L4_descr',
       regionalRunId,
+      expect.stringMatching(/\.json$/),
     );
     expect(pipelineService.evaluateRegionalModel).toHaveBeenCalledWith(
       project.id,
       'L4_descr',
       regionalRunId,
+      undefined,
+      expect.stringMatching(/\.json$/),
     );
 
     const runResult = await pool.query(
@@ -1133,6 +1274,8 @@ describe('AI worker skeleton phase D', () => {
       'L4_descr',
       regionalRunId,
       `outputs/runs/${regionalRunId}/model_metadata.json`,
+      undefined,
+      expect.stringMatching(/\.json$/),
     );
     expect(pipelineService.prepareRegionalVectorArtifacts).not.toHaveBeenCalled();
 
@@ -1226,11 +1369,16 @@ describe('AI worker skeleton phase D', () => {
       'L4_descr',
       regionalRunId,
       'outputs/runs/app-ai-phase-f-model-run/model_metadata.json',
+      undefined,
+      expect.stringMatching(/\.json$/),
     );
     expect(pipelineService.prepareRegionalVectorArtifacts).toHaveBeenCalledWith(
       project.id,
       'L4_descr',
       regionalRunId,
+      undefined,
+      undefined,
+      expect.stringMatching(/\.json$/),
     );
 
     const runResult = await pool.query(

@@ -1,8 +1,12 @@
 import type { PoolClient, QueryResultRow } from 'pg';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { query, transaction } from '../config/database';
 import {
   createAiPipelineService,
+  resolveRunConfigDir,
   type AiPipelineCommandResult,
+  type AiPipelineConfig,
   type AiPipelineService,
 } from '../services/aiPipeline.service';
 import { registerAiRunArtifactsForReview } from '../services/aiArtifactRegistration.service';
@@ -26,6 +30,7 @@ type AiRunRow = QueryResultRow & {
   status: string;
   label_field: string;
   scope_type: string | null;
+  scope_geometry: Record<string, unknown> | null;
   region_preset: string | null;
   metadata: Record<string, unknown> | null;
 };
@@ -42,6 +47,12 @@ type AiRunSafetySummary = {
   label_counts: Array<{ class_label: string; sample_count: number }>;
   eligible_classes: Array<{ class_label: string; sample_count: number }>;
   excluded_classes: Array<{ class_label: string; sample_count: number }>;
+  spatial_extent: {
+    min_lon: number;
+    min_lat: number;
+    max_lon: number;
+    max_lat: number;
+  } | null;
   warnings: string[];
   blockers: string[];
 };
@@ -158,7 +169,14 @@ const insertRunLog = async (
 
 const peekQueuedAiRun = async (): Promise<AiRunRow | null> => {
   const result = await query<AiRunRow>(
-    `SELECT id, project_id, status, label_field, scope_type, region_preset, metadata
+    `SELECT id,
+            project_id,
+            status,
+            label_field,
+            scope_type,
+            ST_AsGeoJSON(scope_geometry)::json AS scope_geometry,
+            region_preset,
+            metadata
      FROM ai_run
      WHERE status = 'queued'
      ORDER BY created_at ASC
@@ -190,6 +208,7 @@ const claimQueuedRun = async (client: PoolClient, workerId: string): Promise<AiR
                run.status,
                run.label_field,
                run.scope_type,
+               ST_AsGeoJSON(run.scope_geometry)::json AS scope_geometry,
                run.region_preset,
                run.metadata`,
     [
@@ -225,7 +244,14 @@ const updateRunStatus = async (
          updated_at = CURRENT_TIMESTAMP
      WHERE id = $1
        AND status = $2
-     RETURNING id, project_id, status, label_field, scope_type, region_preset, metadata`,
+     RETURNING id,
+               project_id,
+               status,
+               label_field,
+               scope_type,
+               ST_AsGeoJSON(scope_geometry)::json AS scope_geometry,
+               region_preset,
+               metadata`,
     [
       runId,
       fromStatus,
@@ -262,7 +288,14 @@ const failRun = async (
          updated_at = CURRENT_TIMESTAMP
      WHERE id = $1
        AND status = $2
-     RETURNING id, project_id, status, label_field, scope_type, region_preset, metadata`,
+     RETURNING id,
+               project_id,
+               status,
+               label_field,
+               scope_type,
+               ST_AsGeoJSON(scope_geometry)::json AS scope_geometry,
+               region_preset,
+               metadata`,
     [
       runId,
       fromStatus,
@@ -382,6 +415,264 @@ const metadataMinSamplesPerClass = (metadata: Record<string, unknown> | null): n
   return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 10000) : 50;
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value && typeof value === 'object' && !Array.isArray(value));
+
+const stringOrNull = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const stringListFrom = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => stringOrNull(item))
+    .filter((item): item is string => item !== null);
+};
+
+const numberOrNull = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const areaTypeFromScope = (
+  scopeType: string | null | undefined,
+): 'project_area' | 'custom_ai_area' | 'national_lebanon' => {
+  if (scopeType === 'custom_polygon' || scopeType === 'custom_ai_area') {
+    return 'custom_ai_area';
+  }
+  if (scopeType === 'national' || scopeType === 'national_lebanon') {
+    return 'national_lebanon';
+  }
+  return 'project_area';
+};
+
+const firstString = (values: unknown[]): string | null => {
+  for (const value of values) {
+    const normalized = stringOrNull(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return null;
+};
+
+const metadataSettings = (metadata: Record<string, unknown> | null): Record<string, unknown> =>
+  isRecord(metadata?.ai_settings) ? metadata.ai_settings : {};
+
+const metadataSupport = (metadata: Record<string, unknown> | null): Record<string, unknown> =>
+  isRecord(metadata?.pipeline_execution_support) ? metadata.pipeline_execution_support : {};
+
+const mergeUnique = (...lists: string[][]): string[] => Array.from(new Set(lists.flat()));
+
+const buildRunConfigSupportPatch = (
+  metadata: Record<string, unknown> | null,
+): Record<string, unknown> => {
+  const support = metadataSupport(metadata);
+  const existingEffective = stringListFrom(support.effective_pipeline_settings);
+  const existingPending = stringListFrom(support.pending_pipeline_settings);
+  const settings = metadataSettings(metadata);
+  const trainingArea = areaTypeFromScope(
+    firstString([
+      metadata?.training_samples_area_type,
+      settings.training_samples_area_type,
+      settings.scope_type,
+    ]),
+  );
+  const predictionArea = areaTypeFromScope(
+    firstString([
+      metadata?.prediction_area_type,
+      settings.prediction_area_type,
+      settings.scope_type,
+    ]),
+  );
+  const newlyEffective = [
+    'satellite_source',
+    'date_range',
+    'feature_inputs',
+    'preferred_model',
+    'label_field',
+    'execution_mode',
+    'training_samples_area_type',
+    'prediction_area_type',
+    ...(trainingArea === 'custom_ai_area' || predictionArea === 'custom_ai_area'
+      ? ['custom_area']
+      : []),
+  ];
+  const effective = mergeUnique(existingEffective, newlyEffective);
+  return {
+    ...support,
+    settings_saved_for_run: true,
+    backend_scope_applied: true,
+    pipeline_config_payload_ready: true,
+    python_pipeline_config_consumed: true,
+    effective_pipeline_settings: effective,
+    pending_pipeline_settings: existingPending.filter((setting) => !effective.includes(setting)),
+  };
+};
+
+const projectBoundsFrom = (
+  metadata: Record<string, unknown> | null,
+  safetySummary: AiRunSafetySummary | null,
+): Record<string, number> | null => {
+  if (safetySummary?.spatial_extent) {
+    return safetySummary.spatial_extent;
+  }
+  const bounds = metadata?.project_bounds;
+  if (!isRecord(bounds)) {
+    return null;
+  }
+  const minLon = numberOrNull(bounds.min_lon);
+  const minLat = numberOrNull(bounds.min_lat);
+  const maxLon = numberOrNull(bounds.max_lon);
+  const maxLat = numberOrNull(bounds.max_lat);
+  if ([minLon, minLat, maxLon, maxLat].some((value) => value === null)) {
+    return null;
+  }
+  return {
+    min_lon: minLon as number,
+    min_lat: minLat as number,
+    max_lon: maxLon as number,
+    max_lat: maxLat as number,
+  };
+};
+
+const safeRunConfigFileName = (runId: string): string => `${runId}.json`;
+
+const writeAiRunPipelineConfig = async ({
+  run,
+  regionalRunId,
+  executionMode,
+  pipelineConfig,
+  projectName,
+  safetySummary,
+}: {
+  run: AiRunRow;
+  regionalRunId: string;
+  executionMode: AiRunExecutionMode;
+  pipelineConfig: AiPipelineConfig;
+  projectName: string | null;
+  safetySummary: AiRunSafetySummary | null;
+}): Promise<{
+  path: string;
+  relativePath: string;
+  payload: Record<string, unknown>;
+  summary: Record<string, unknown>;
+  supportPatch: Record<string, unknown>;
+}> => {
+  const runConfigDir = resolveRunConfigDir(pipelineConfig);
+  await fs.mkdir(runConfigDir, { recursive: true });
+  const configPath = path.join(runConfigDir, safeRunConfigFileName(run.id));
+  const relativePath = path.relative(process.cwd(), configPath);
+  const settings = metadataSettings(run.metadata);
+  const trainingArea = areaTypeFromScope(
+    firstString([
+      run.metadata?.training_samples_area_type,
+      settings.training_samples_area_type,
+      settings.scope_type,
+      run.scope_type,
+    ]),
+  );
+  const predictionArea = areaTypeFromScope(
+    firstString([
+      run.metadata?.prediction_area_type,
+      settings.prediction_area_type,
+      settings.scope_type,
+      run.scope_type,
+    ]),
+  );
+  if (trainingArea === 'national_lebanon' || predictionArea === 'national_lebanon') {
+    throw new Error('National Lebanon scope is blocked for settings-driven regional execution.');
+  }
+
+  const featureInputs = stringListFrom(
+    settings.feature_inputs ?? settings.selected_extracted_features,
+  );
+  const projectBounds = projectBoundsFrom(run.metadata, safetySummary);
+  const customPolygon =
+    trainingArea === 'custom_ai_area' || predictionArea === 'custom_ai_area'
+      ? run.scope_geometry
+      : null;
+  const supportPatch = buildRunConfigSupportPatch(run.metadata);
+  const payload: Record<string, unknown> = {
+    contract_version: 1,
+    run_id: run.id,
+    ai_pipeline_run_id: regionalRunId,
+    project_id: run.project_id,
+    project_name: projectName,
+    label_field: run.label_field,
+    execution_mode: executionMode,
+    satellite_source: firstString([settings.satellite_source]) ?? 'sentinel2',
+    year: numberOrNull(settings.target_year ?? settings.year),
+    season: firstString([settings.season]) ?? null,
+    from_date: firstString([settings.date_from, settings.from_date]),
+    to_date: firstString([settings.date_to, settings.to_date]),
+    selected_extracted_features: featureInputs,
+    preferred_model: firstString([settings.preferred_model]) ?? null,
+    training_samples_area_type: trainingArea,
+    prediction_area_type: predictionArea,
+    custom_polygon: customPolygon,
+    custom_polygon_summary:
+      customPolygon && isRecord(settings.custom_polygon_summary)
+        ? settings.custom_polygon_summary
+        : customPolygon
+          ? {
+              saved_for_run: true,
+              geometry_type: isRecord(customPolygon) ? customPolygon.type ?? null : null,
+            }
+          : null,
+    project_bounds: projectBounds,
+    output_directory: `outputs/runs/${regionalRunId}`,
+    safety_flags: {
+      national_scope_enabled: false,
+      allow_spatial_feature_writes: false,
+      publish_outputs: false,
+    },
+    support: {
+      consumed_by_python_pipeline: true,
+      unsupported_settings: [],
+    },
+  };
+  const summary = {
+    contract_version: 1,
+    ai_pipeline_run_id: regionalRunId,
+    config_path: relativePath,
+    satellite_source: payload.satellite_source,
+    season: payload.season,
+    from_date: payload.from_date,
+    to_date: payload.to_date,
+    selected_extracted_feature_count: featureInputs.length,
+    preferred_model: payload.preferred_model,
+    training_samples_area_type: trainingArea,
+    prediction_area_type: predictionArea,
+    custom_polygon_configured: customPolygon !== null,
+    national_scope_enabled: false,
+    allow_spatial_feature_writes: false,
+    publish_outputs: false,
+  };
+
+  await fs.writeFile(configPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+
+  return {
+    path: configPath,
+    relativePath,
+    payload,
+    summary,
+    supportPatch,
+  };
+};
+
 const requestedNationalScope = (run: AiRunRow): boolean => {
   const metadata = run.metadata ?? {};
   return (
@@ -445,6 +736,28 @@ const summarizeRunReadiness = async (
      ORDER BY sample_count DESC, class_label ASC`,
     [projectId, labelField],
   );
+  const extentResult = await query<{
+    min_lon: number | null;
+    min_lat: number | null;
+    max_lon: number | null;
+    max_lat: number | null;
+  }>(
+    `WITH extent AS (
+       SELECT ST_Extent(geom)::box3d AS bbox
+       FROM spatial_feature
+       WHERE project_id = $1
+         AND status = 'approved'
+         AND geom IS NOT NULL
+         AND ST_IsValid(geom)
+         AND NULLIF(BTRIM(attributes ->> $2), '') IS NOT NULL
+     )
+     SELECT ST_XMin(bbox)::float8 AS min_lon,
+            ST_YMin(bbox)::float8 AS min_lat,
+            ST_XMax(bbox)::float8 AS max_lon,
+            ST_YMax(bbox)::float8 AS max_lat
+     FROM extent`,
+    [projectId, labelField],
+  );
 
   const totals = totalsResult.rows[0] ?? {
     approved_feature_count: 0,
@@ -462,6 +775,20 @@ const summarizeRunReadiness = async (
     (total, row) => total + row.sample_count,
     0,
   );
+  const extent = extentResult.rows[0];
+  const spatialExtent =
+    extent &&
+    extent.min_lon !== null &&
+    extent.min_lat !== null &&
+    extent.max_lon !== null &&
+    extent.max_lat !== null
+      ? {
+          min_lon: Number(extent.min_lon),
+          min_lat: Number(extent.min_lat),
+          max_lon: Number(extent.max_lon),
+          max_lat: Number(extent.max_lat),
+        }
+      : null;
   const warnings: string[] = [];
   const blockers: string[] = [];
 
@@ -509,6 +836,7 @@ const summarizeRunReadiness = async (
       label_counts: labelCounts,
       eligible_classes: eligibleClasses,
       excluded_classes: excludedClasses,
+      spatial_extent: spatialExtent,
       warnings,
       blockers,
     },
@@ -751,7 +1079,12 @@ const runPipelineExecution = async ({
   const statuses: AiRunWorkerStatus[] = ['extracting_features'];
   let currentStatus: AiRunActiveStatus = 'extracting_features';
   let safetySummary: AiRunSafetySummary | null = null;
+  let projectName: string | null = null;
   let artifactRegistrationMetadata: Record<string, unknown> | null = null;
+  let runConfigPath: string | null = null;
+  let runConfigRelativePath: string | null = null;
+  let runConfigSummary: Record<string, unknown> | null = null;
+  let runConfigSupportPatch: Record<string, unknown> | null = null;
   let logsWritten = 0;
 
   await insertRunLog(
@@ -786,6 +1119,12 @@ const runPipelineExecution = async ({
       real_ai_execution: realAiExecution,
       scientific_limitations: REGIONAL_SCIENTIFIC_LIMITATIONS,
     };
+
+    if (runConfigRelativePath && runConfigSummary) {
+      metadata.run_config_path = runConfigRelativePath;
+      metadata.run_config = runConfigSummary;
+      metadata.pipeline_execution_support = runConfigSupportPatch;
+    }
 
     if (safetySummary) {
       metadata.readiness_status = safetySummary.status;
@@ -876,6 +1215,7 @@ const runPipelineExecution = async ({
       minSamplesPerClass,
     );
     safetySummary = readiness.summary;
+    projectName = readiness.projectName;
 
     await insertRunLog(claimedRun.id, 'info', 'AI regional safety checks completed.', {
       status: currentStatus,
@@ -907,6 +1247,62 @@ const runPipelineExecution = async ({
     }
   }
 
+  try {
+    const runConfig = await writeAiRunPipelineConfig({
+      run: claimedRun,
+      regionalRunId,
+      executionMode,
+      pipelineConfig: pipelineService.getConfig(),
+      projectName,
+      safetySummary,
+    });
+    runConfigPath = runConfig.path;
+    runConfigRelativePath = runConfig.relativePath;
+    runConfigSummary = runConfig.summary;
+    runConfigSupportPatch = runConfig.supportPatch;
+    await query(
+      `UPDATE ai_run
+       SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [
+        claimedRun.id,
+        safeMetadata({
+          run_config_path: runConfigRelativePath,
+          run_config: runConfigSummary,
+          pipeline_execution_support: runConfigSupportPatch,
+        }),
+      ],
+    );
+    await insertRunLog(claimedRun.id, 'info', 'AI pipeline run config written.', {
+      status: currentStatus,
+      worker_phase: WORKER_PHASE,
+      execution_mode: executionMode,
+      worker_id: workerId,
+      ai_pipeline_run_id: regionalRunId,
+      real_ai_execution: realAiExecution,
+      run_config: runConfigSummary,
+      secrets_included: false,
+    });
+    logsWritten += 1;
+  } catch (error) {
+    const failureReason =
+      error instanceof Error
+        ? `AI run config creation failed: ${error.message}`
+        : 'AI run config creation failed.';
+    await insertRunLog(claimedRun.id, 'error', failureReason, {
+      status: 'failed',
+      failed_from_status: currentStatus,
+      worker_phase: WORKER_PHASE,
+      execution_mode: executionMode,
+      worker_id: workerId,
+      ai_pipeline_run_id: regionalRunId,
+      real_ai_execution: realAiExecution,
+    });
+    logsWritten += 1;
+    return failFromCurrentStatus(failureReason);
+  }
+
   const steps: Array<{
     message: string;
     run: () => Promise<AiPipelineCommandResult>;
@@ -917,11 +1313,16 @@ const runPipelineExecution = async ({
     },
     {
       message: 'AI pipeline dry-run',
-      run: () => pipelineService.dryRun(),
+      run: () => pipelineService.dryRun(runConfigPath ?? undefined),
     },
     {
       message: 'AI pipeline project readiness probe',
-      run: () => pipelineService.probeProject(claimedRun.project_id, claimedRun.label_field),
+      run: () =>
+        pipelineService.probeProject(
+          claimedRun.project_id,
+          claimedRun.label_field,
+          runConfigPath ?? undefined,
+        ),
     },
   ];
 
@@ -948,6 +1349,7 @@ const runPipelineExecution = async ({
             claimedRun.project_id,
             claimedRun.label_field,
             regionalRunId,
+            runConfigPath ?? undefined,
           ),
       },
     );
@@ -998,6 +1400,8 @@ const runPipelineExecution = async ({
           claimedRun.project_id,
           claimedRun.label_field,
           regionalRunId,
+          undefined,
+          runConfigPath ?? undefined,
         ),
     });
     commandResults.push(result);
@@ -1108,6 +1512,8 @@ const runPipelineExecution = async ({
             claimedRun.label_field,
             regionalRunId,
             sourceModelMetadataPath,
+            undefined,
+            runConfigPath ?? undefined,
           ),
       });
     commandResults.push(classificationResult);
@@ -1133,6 +1539,9 @@ const runPipelineExecution = async ({
               claimedRun.project_id,
               claimedRun.label_field,
               regionalRunId,
+              undefined,
+              undefined,
+              runConfigPath ?? undefined,
             ),
         });
       commandResults.push(vectorizationResult);

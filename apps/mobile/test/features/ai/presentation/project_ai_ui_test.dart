@@ -326,6 +326,94 @@ AiRun _phaseFRegionalRun({
   );
 }
 
+AiRun _phaseQRegionalRun({required String projectId}) {
+  final base = _phaseFRegionalRun(
+    projectId: projectId,
+    id: 'phase-q-settings-driven-run',
+    executionMode: 'regional_feature_extraction',
+  );
+  final metadata = Map<String, dynamic>.from(base.metadata);
+  metadata['run_config_path'] =
+      'tmp/ai-run-configs/phase-q-settings-driven-run.json';
+  metadata['run_config'] = <String, dynamic>{
+    'contract_version': 1,
+    'satellite_source': 'sentinel2',
+    'season': 'summer',
+    'from_date': '2025-06-01',
+    'to_date': '2025-08-31',
+    'selected_extracted_feature_count': 10,
+    'preferred_model': 'random_forest',
+    'training_samples_area_type': 'project_area',
+    'prediction_area_type': 'project_area',
+    'custom_polygon_used': false,
+    'national_scope_enabled': false,
+    'allow_spatial_feature_writes': false,
+    'publish_outputs': false,
+  };
+  metadata['ai_settings'] = <String, dynamic>{
+    'satellite_source': 'sentinel2',
+    'target_year': 2025,
+    'season': 'summer',
+    'date_from': '2025-06-01',
+    'date_to': '2025-08-31',
+    'feature_inputs': <String>[
+      'B2',
+      'B3',
+      'B4',
+      'B5',
+      'B8',
+      'B11',
+      'B12',
+      'NDVI',
+      'EVI',
+      'NDRE',
+    ],
+    'preferred_model': 'random_forest',
+    'scope_type': 'project',
+    'training_samples_area_type': 'project_area',
+    'prediction_area_type': 'project_area',
+    'custom_scope_applied': false,
+  };
+  metadata['pipeline_execution_support'] = <String, dynamic>{
+    'settings_saved_for_run': true,
+    'backend_scope_applied': true,
+    'pipeline_config_payload_ready': true,
+    'python_pipeline_config_consumed': true,
+    'effective_pipeline_settings': <String>[
+      'satellite_source',
+      'date_range',
+      'feature_inputs',
+      'preferred_model',
+      'label_field',
+      'execution_mode',
+      'training_samples_area_type',
+      'prediction_area_type',
+    ],
+    'pending_pipeline_settings': <String>[],
+  };
+
+  return AiRun(
+    id: base.id,
+    projectId: base.projectId,
+    projectName: base.projectName,
+    status: base.status,
+    labelField: base.labelField,
+    scopeType: base.scopeType,
+    regionPreset: base.regionPreset,
+    trainingFeatureCount: base.trainingFeatureCount,
+    eligibleFeatureCount: base.eligibleFeatureCount,
+    excludedFeatureCount: base.excludedFeatureCount,
+    selectedModel: 'random_forest',
+    startedAt: base.startedAt,
+    completedAt: base.completedAt,
+    failedAt: base.failedAt,
+    failureReason: base.failureReason,
+    createdAt: base.createdAt,
+    updatedAt: base.updatedAt,
+    metadata: metadata,
+  );
+}
+
 List<AiRunLog> _phaseFLogs() {
   return <AiRunLog>[
     AiRunLog(
@@ -1572,6 +1660,56 @@ void main() {
       find.textContaining('Settings: Not recorded for this run'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('Phase Q runs show effective settings consumed by pipeline', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1080, 1700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[_phaseQRegionalRun(projectId: project.id)],
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    await tester.tap(find.text('Run phase-q-'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Run configuration'), findsOneWidget);
+    expect(find.textContaining('Satellite source: Sentinel-2'), findsOneWidget);
+    expect(find.textContaining('Year: 2025'), findsOneWidget);
+    expect(find.textContaining('Season: Summer'), findsOneWidget);
+    expect(
+      find.textContaining('Date range: 2025-06-01 to 2025-08-31'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Selected features: 10 selected'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Preferred model requested: Random Forest'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Pipeline use: Effective now'), findsWidgets);
+    expect(
+      find.textContaining(
+        'Effective now: satellite, date range, selected features, preferred model, label field, execution mode, training samples area, prediction area',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Pipeline support pending:'), findsNothing);
   });
 
   testWidgets('model result prefers structured metric rows over metadata', (

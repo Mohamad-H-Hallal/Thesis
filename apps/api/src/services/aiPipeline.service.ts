@@ -18,6 +18,7 @@ type AiPipelineConfig = {
   pythonBin: string;
   timeoutMs: number;
   mode: AiPipelineMode;
+  runConfigDir?: string | null;
 };
 
 type AiPipelineCommandName =
@@ -43,8 +44,12 @@ type AiPipelineCommandResult = {
 type AiPipelineService = {
   getConfig: () => AiPipelineConfig;
   checkConfig: () => Promise<AiPipelineCommandResult>;
-  dryRun: () => Promise<AiPipelineCommandResult>;
-  probeProject: (projectId: string, labelField: string) => Promise<AiPipelineCommandResult>;
+  dryRun: (runConfigPath?: string) => Promise<AiPipelineCommandResult>;
+  probeProject: (
+    projectId: string,
+    labelField: string,
+    runConfigPath?: string,
+  ) => Promise<AiPipelineCommandResult>;
   exportGroundTruthLocal: (
     projectId: string,
     labelField: string,
@@ -53,12 +58,14 @@ type AiPipelineService = {
     projectId: string,
     labelField: string,
     regionalRunId: string,
+    runConfigPath?: string,
   ) => Promise<AiPipelineCommandResult>;
   evaluateRegionalModel: (
     projectId: string,
     labelField: string,
     regionalRunId: string,
     featureTablePath?: string,
+    runConfigPath?: string,
   ) => Promise<AiPipelineCommandResult>;
   classifyRegional: (
     projectId: string,
@@ -66,6 +73,7 @@ type AiPipelineService = {
     regionalRunId: string,
     modelMetadataPath?: string,
     regionPreset?: string,
+    runConfigPath?: string,
   ) => Promise<AiPipelineCommandResult>;
   prepareRegionalVectorArtifacts: (
     projectId: string,
@@ -73,6 +81,7 @@ type AiPipelineService = {
     regionalRunId: string,
     classificationSummaryPath?: string,
     regionPreset?: string,
+    runConfigPath?: string,
   ) => Promise<AiPipelineCommandResult>;
 };
 
@@ -118,6 +127,9 @@ const loadAiPipelineConfigFromEnv = (): AiPipelineConfig => ({
   pythonBin: process.env.AI_PYTHON_BIN?.trim() || 'python',
   timeoutMs: parseTimeoutMs(process.env.AI_PIPELINE_TIMEOUT_MS),
   mode: resolvePipelineMode(process.env.AI_PIPELINE_MODE),
+  runConfigDir: process.env.AI_PIPELINE_RUN_CONFIG_DIR?.trim()
+    ? path.resolve(process.env.AI_PIPELINE_RUN_CONFIG_DIR.trim())
+    : path.resolve(process.cwd(), 'tmp', 'ai-run-configs'),
 });
 
 const sanitizeLog = (value: string): string => {
@@ -185,6 +197,40 @@ const validateRegionalPreset = (regionPreset: string): void => {
   }
 };
 
+const resolveRunConfigDir = (config: AiPipelineConfig): string =>
+  path.resolve(config.runConfigDir ?? path.join(process.cwd(), 'tmp', 'ai-run-configs'));
+
+const validateRunConfigPath = (config: AiPipelineConfig, runConfigPath: string): string => {
+  if (!runConfigPath.trim()) {
+    throw new Error('Invalid AI run config path for pipeline command.');
+  }
+  if (runConfigPath.includes('\0')) {
+    throw new Error('Invalid AI run config path for pipeline command.');
+  }
+
+  const resolved = path.resolve(runConfigPath);
+  const allowedRoot = resolveRunConfigDir(config);
+  const relative = path.relative(allowedRoot, resolved);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('AI run config path must stay inside the configured run-config directory.');
+  }
+  if (path.extname(resolved).toLowerCase() !== '.json') {
+    throw new Error('AI run config path must be a JSON file.');
+  }
+  return resolved;
+};
+
+const appendRunConfigArg = (
+  config: AiPipelineConfig,
+  args: string[],
+  runConfigPath?: string,
+): string[] => {
+  if (!runConfigPath) {
+    return args;
+  }
+  return [...args, '--config', validateRunConfigPath(config, runConfigPath)];
+};
+
 class DefaultAiPipelineService implements AiPipelineService {
   private readonly configLoader: () => AiPipelineConfig;
 
@@ -200,20 +246,30 @@ class DefaultAiPipelineService implements AiPipelineService {
     return this.runAllowedCommand('config_check', 'config.py', ['--check']);
   }
 
-  dryRun(): Promise<AiPipelineCommandResult> {
-    return this.runAllowedCommand('dry_run', 'run_pipeline.py', ['--dry-run']);
+  dryRun(runConfigPath?: string): Promise<AiPipelineCommandResult> {
+    return this.runAllowedCommand('dry_run', 'run_pipeline.py', ['--dry-run'], [], runConfigPath);
   }
 
-  probeProject(projectId: string, labelField: string): Promise<AiPipelineCommandResult> {
+  probeProject(
+    projectId: string,
+    labelField: string,
+    runConfigPath?: string,
+  ): Promise<AiPipelineCommandResult> {
     validateProjectId(projectId);
     validateLabelField(labelField);
-    return this.runAllowedCommand('probe_project', 'run_pipeline.py', [
-      '--probe-db',
-      '--project-id',
-      projectId,
-      '--label-field',
-      labelField,
-    ]);
+    return this.runAllowedCommand(
+      'probe_project',
+      'run_pipeline.py',
+      [
+        '--probe-db',
+        '--project-id',
+        projectId,
+        '--label-field',
+        labelField,
+      ],
+      [],
+      runConfigPath,
+    );
   }
 
   exportGroundTruthLocal(projectId: string, labelField: string): Promise<AiPipelineCommandResult> {
@@ -231,6 +287,7 @@ class DefaultAiPipelineService implements AiPipelineService {
     projectId: string,
     labelField: string,
     regionalRunId: string,
+    runConfigPath?: string,
   ): Promise<AiPipelineCommandResult> {
     validateProjectId(projectId);
     validateLabelField(labelField);
@@ -253,6 +310,7 @@ class DefaultAiPipelineService implements AiPipelineService {
         `outputs/runs/${regionalRunId}/feature_table.csv`,
         `outputs/runs/${regionalRunId}/feature_extraction_summary.json`,
       ],
+      runConfigPath,
     );
   }
 
@@ -261,6 +319,7 @@ class DefaultAiPipelineService implements AiPipelineService {
     labelField: string,
     regionalRunId: string,
     featureTablePath = `outputs/runs/${regionalRunId}/feature_table.csv`,
+    runConfigPath?: string,
   ): Promise<AiPipelineCommandResult> {
     validateProjectId(projectId);
     validateLabelField(labelField);
@@ -286,6 +345,7 @@ class DefaultAiPipelineService implements AiPipelineService {
         `outputs/runs/${regionalRunId}/classification_report.csv`,
         `outputs/runs/${regionalRunId}/feature_importance.csv`,
       ],
+      runConfigPath,
     );
   }
 
@@ -295,6 +355,7 @@ class DefaultAiPipelineService implements AiPipelineService {
     regionalRunId: string,
     modelMetadataPath = `outputs/runs/${regionalRunId}/model_metadata.json`,
     regionPreset = 'south_lebanon',
+    runConfigPath?: string,
   ): Promise<AiPipelineCommandResult> {
     validateProjectId(projectId);
     validateLabelField(labelField);
@@ -319,6 +380,7 @@ class DefaultAiPipelineService implements AiPipelineService {
       [
         `outputs/runs/${regionalRunId}/regional_classification_summary.json`,
       ],
+      runConfigPath,
     );
   }
 
@@ -328,6 +390,7 @@ class DefaultAiPipelineService implements AiPipelineService {
     regionalRunId: string,
     classificationSummaryPath = `outputs/runs/${regionalRunId}/regional_classification_summary.json`,
     regionPreset = 'south_lebanon',
+    runConfigPath?: string,
   ): Promise<AiPipelineCommandResult> {
     validateProjectId(projectId);
     validateLabelField(labelField);
@@ -355,6 +418,7 @@ class DefaultAiPipelineService implements AiPipelineService {
         `outputs/runs/${regionalRunId}/uncertainty_areas.geojson`,
         `outputs/runs/${regionalRunId}/vectorization_summary.json`,
       ],
+      runConfigPath,
     );
   }
 
@@ -363,6 +427,7 @@ class DefaultAiPipelineService implements AiPipelineService {
     scriptName: 'config.py' | 'run_pipeline.py' | '01_export_ground_truth.py',
     args: string[],
     outputPaths: string[] = [],
+    runConfigPath?: string,
   ): Promise<AiPipelineCommandResult> {
     const startedAt = performance.now();
     const config = this.getConfig();
@@ -393,10 +458,24 @@ class DefaultAiPipelineService implements AiPipelineService {
       );
     }
 
+    let commandArgs: string[];
+    try {
+      commandArgs =
+        scriptName === 'run_pipeline.py'
+          ? appendRunConfigArg(config, args, runConfigPath)
+          : args;
+    } catch (error) {
+      return failureResult(
+        command,
+        error instanceof Error ? error.message : 'Invalid AI pipeline command arguments.',
+        startedAt,
+      );
+    }
+
     return new Promise<AiPipelineCommandResult>((resolve) => {
       execFile(
         config.pythonBin,
-        [scriptName, ...args],
+        [scriptName, ...commandArgs],
         {
           cwd: config.root as string,
           timeout: config.timeoutMs,
@@ -441,6 +520,7 @@ const createAiPipelineService = (configLoader?: () => AiPipelineConfig): AiPipel
 export {
   createAiPipelineService,
   loadAiPipelineConfigFromEnv,
+  resolveRunConfigDir,
   sanitizeLog,
   type AiPipelineCommandName,
   type AiPipelineCommandResult,

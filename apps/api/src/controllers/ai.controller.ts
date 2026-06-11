@@ -1297,6 +1297,7 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
     'satellite_source',
     'date_range',
     'feature_inputs',
+    'preferred_model',
     'prediction_area_type',
     ...(scopeType === 'custom_polygon' ? ['custom_area'] : []),
   ];

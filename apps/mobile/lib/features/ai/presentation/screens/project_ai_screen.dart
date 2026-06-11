@@ -5839,6 +5839,8 @@ String _friendlyPendingPipelineSetting(String value) {
       return 'date range';
     case 'feature_inputs':
       return 'selected features';
+    case 'preferred_model':
+      return 'preferred model';
     case 'custom_area':
       return 'custom AI area';
     case 'training_samples_area_type':
