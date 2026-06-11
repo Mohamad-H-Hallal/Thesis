@@ -1366,7 +1366,7 @@ void main() {
     );
     expect(
       find.text(
-        'Creates a reviewable AI run configuration. Phase Q will connect saved settings to the Python pipeline.',
+        'Creates a reviewable AI run configuration. Worker processing uses the saved settings when the run is queued.',
       ),
       findsOneWidget,
     );

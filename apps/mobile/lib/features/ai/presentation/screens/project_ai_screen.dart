@@ -1473,7 +1473,7 @@ class _ProjectAiRunsSectionState extends ConsumerState<ProjectAiRunsSection> {
               ),
               const SizedBox(height: AppSpacing.xs),
               const Text(
-                'Creates a reviewable AI run configuration. Phase Q will connect saved settings to the Python pipeline.',
+                'Creates a reviewable AI run configuration. Worker processing uses the saved settings when the run is queued.',
               ),
             ],
           ),
@@ -5444,6 +5444,10 @@ String _whatHappenedMessage(String executionMode) {
       return 'Extracted satellite features for approved project samples.';
     case 'regional_model_eval':
       return 'Evaluated regional AI models using approved project data.';
+    case 'regional_classification':
+      return 'Generated regional AI review predictions from extracted sample features.';
+    case 'regional_vectorization_artifacts':
+      return 'Prepared regional classification, confidence, and uncertainty review artifacts.';
     case 'dry_run':
       return 'Checked the AI pipeline without running model processing.';
     case 'mock':
@@ -5683,6 +5687,10 @@ String _friendlyExecutionModeLabel(String mode) {
       return 'Regional feature extraction';
     case 'regional_model_eval':
       return 'Regional model evaluation';
+    case 'regional_classification':
+      return 'Regional review prediction';
+    case 'regional_vectorization_artifacts':
+      return 'Regional review artifacts';
     case 'dry_run':
       return 'Dry run';
     case 'mock':

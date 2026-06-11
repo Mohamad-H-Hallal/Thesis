@@ -976,7 +976,7 @@ describe('AI backend endpoints phase B', () => {
       .expect(422);
   });
 
-  test('creates draft AI runs, lists runs, exposes placeholder child resources, and leaves spatial_feature untouched', async () => {
+  test('creates draft AI runs, lists runs, exposes empty child resources, and leaves spatial_feature untouched', async () => {
     const { admin, project } = await createProjectFixture('AI Run Draft');
     await request(app)
       .put(`${API_PREFIX}/projects/${project.id}/ai/settings`)

@@ -1301,6 +1301,14 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
     'prediction_area_type',
     ...(scopeType === 'custom_polygon' ? ['custom_area'] : []),
   ];
+  const runCreatedLogMessage =
+    status === 'queued'
+      ? 'AI run queued for backend worker processing; worker has not started yet.'
+      : 'AI run draft created; no worker execution started.';
+  const runCreatedResponseMessage =
+    status === 'queued'
+      ? 'AI run queued. Worker processing has not started yet.'
+      : 'AI run draft created. No AI worker has been started.';
   const createdRun = await transaction(async (client: PoolClient) => {
     const runResult = await client.query(
       `INSERT INTO ai_run (
@@ -1408,7 +1416,7 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
             pending_pipeline_settings: pendingPipelineSettings,
           },
           min_samples_per_class: minSamplesPerClass,
-          worker_execution: 'not_started_phase_f',
+          worker_execution: 'not_started',
           execution_mode: executionMode,
           real_ai_execution: false,
           regional_ai_execution_requested: regionalExecutionModes.includes(executionMode),
@@ -1427,11 +1435,9 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
        VALUES ($1, 'info', $2, $3::jsonb)`,
       [
         runResult.rows[0].id,
-        status === 'queued'
-          ? 'AI run queued as a backend placeholder; no worker execution started.'
-          : 'AI run draft created; no worker execution started.',
+        runCreatedLogMessage,
         JSON.stringify({
-          phase: 'backend_phase_f',
+          phase: 'backend_run_creation',
           readiness_status: readiness.status,
           execution_mode: executionMode,
           real_ai_execution: false,
@@ -1444,7 +1450,7 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
 
   res.status(201).json({
     success: true,
-    message: 'AI run record created. No AI worker has been started.',
+    message: runCreatedResponseMessage,
     data: normalizeRunRow(createdRun),
   });
 };
