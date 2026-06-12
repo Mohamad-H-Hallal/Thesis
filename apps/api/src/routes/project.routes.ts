@@ -128,6 +128,25 @@ router.get(
 );
 
 router.get(
+  '/:projectId/ai/prediction-validation-tasks',
+  uuidValidation('projectId'),
+  paginationValidation,
+  aiValidation.listPredictionValidationTasks,
+  validate,
+  requireProtectedSuperAdmin,
+  asyncHandler(aiController.listProjectAiPredictionValidationTasks),
+);
+
+router.post(
+  '/:projectId/ai/prediction-validation-tasks/generate',
+  uuidValidation('projectId'),
+  aiValidation.generatePredictionValidationTasks,
+  validate,
+  requireProtectedSuperAdmin,
+  asyncHandler(aiController.generateProjectAiPredictionValidationTasks),
+);
+
+router.get(
   '/:projectId/ai/settings',
   uuidValidation('projectId'),
   validate,

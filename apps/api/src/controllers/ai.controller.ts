@@ -6,6 +6,16 @@ import type { Request, Response } from 'express';
 const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const { createAiPipelineService } = require('../services/aiPipeline.service');
+import {
+  assignPredictionValidationTask,
+  createPredictionValidationSubmission,
+  generatePredictionValidationTasks,
+  getPredictionValidationTaskForUser,
+  listAssignedPredictionValidationTasks,
+  listProjectPredictionValidationTasks,
+  reviewPredictionValidationTask,
+  updatePredictionValidationTaskStatus,
+} from '../services/aiPredictionValidation.service';
 import { publicVisibleStatuses, synchronizeProjectStatuses } from '../lib/projectLifecycle';
 import { isProtectedSuperAdminEmail } from '../lib/userWorkflow';
 
@@ -220,6 +230,14 @@ const parsePagination = (req: Request): { page: number; limit: number; offset: n
     limit,
     offset: (page - 1) * limit,
   };
+};
+
+const parseOptionalBodyNumber = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 };
 
 const serializeGeometry = (geometry: unknown): string | null => {
@@ -2713,6 +2731,180 @@ const listProjectPublishedAiPredictions = async (
   });
 };
 
+const listProjectAiPredictionValidationTasks = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const { page, limit } = parsePagination(req);
+  const result = await listProjectPredictionValidationTasks(req.params.projectId, {
+    page,
+    limit,
+    status: normalizeOptionalString(req.query.status),
+    assignedTo: normalizeOptionalString(req.query.assigned_to),
+    aiRunId: normalizeOptionalString(req.query.ai_run_id),
+  });
+
+  res.json({
+    success: true,
+    data: {
+      tasks: result.tasks,
+      status_counts: result.status_counts,
+      no_spatial_feature_writes: true,
+      not_official_field_data: true,
+    },
+    pagination: result.pagination,
+  });
+};
+
+const generateProjectAiPredictionValidationTasks = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const result = await generatePredictionValidationTasks({
+    projectId: req.params.projectId,
+    createdBy: (req.user as Express.UserContext).id,
+    aiRunId: normalizeOptionalString(req.body?.ai_run_id),
+    aiOutputLayerId: normalizeOptionalString(req.body?.ai_output_layer_id),
+    aiPredictionFeatureId:
+      normalizeOptionalString(req.body?.ai_prediction_feature_id) ??
+      normalizeOptionalString(req.body?.prediction_feature_id),
+    confidenceThreshold: parseOptionalBodyNumber(req.body?.confidence_threshold),
+    limit: parseOptionalBodyNumber(req.body?.limit),
+    priority: parseOptionalBodyNumber(req.body?.priority),
+  });
+
+  res.status(201).json({
+    success: true,
+    message: 'AI prediction validation tasks generated.',
+    data: result,
+  });
+};
+
+const assignAiPredictionValidationTask = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const assignedTo = normalizeOptionalString(req.body?.assigned_to);
+  if (!assignedTo) {
+    throw new AppError('assigned_to is required.', 400);
+  }
+
+  const task = await assignPredictionValidationTask({
+    taskId: req.params.taskId,
+    assignedTo,
+  });
+
+  res.json({
+    success: true,
+    message: 'AI prediction validation task assigned.',
+    data: task,
+  });
+};
+
+const updateAiPredictionValidationTaskStatus = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const status = normalizeOptionalString(req.body?.status);
+  if (!status) {
+    throw new AppError('status is required.', 400);
+  }
+
+  const task = await updatePredictionValidationTaskStatus({
+    taskId: req.params.taskId,
+    status: status as any,
+  });
+
+  res.json({
+    success: true,
+    message: 'AI prediction validation task status updated.',
+    data: task,
+  });
+};
+
+const getAiPredictionValidationTask = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const task = await getPredictionValidationTaskForUser(
+    req.params.taskId,
+    req.user as Express.UserContext,
+  );
+
+  res.json({
+    success: true,
+    data: task,
+  });
+};
+
+const listMyAiValidationTasks = async (req: Request, res: Response): Promise<void> => {
+  const { page, limit } = parsePagination(req);
+  const result = await listAssignedPredictionValidationTasks(req.user as Express.UserContext, {
+    page,
+    limit,
+    status: normalizeOptionalString(req.query.status),
+    aiRunId: normalizeOptionalString(req.query.ai_run_id),
+  });
+
+  res.json({
+    success: true,
+    data: {
+      tasks: result.tasks,
+      no_spatial_feature_writes: true,
+      not_official_field_data: true,
+    },
+    pagination: result.pagination,
+  });
+};
+
+const submitAiPredictionValidation = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const currentUser = req.user as Express.UserContext;
+  if (currentUser.role !== 'contributor') {
+    throw new AppError('Only contributors can submit AI validation evidence.', 403);
+  }
+
+  const result = await createPredictionValidationSubmission({
+    taskId: req.params.taskId,
+    submittedBy: currentUser.id,
+    result: normalizeOptionalString(req.body?.result) as any,
+    correctedClass: normalizeOptionalString(req.body?.corrected_class),
+    note: normalizeOptionalString(req.body?.note),
+    evidence:
+      req.body?.evidence && typeof req.body.evidence === 'object' && !Array.isArray(req.body.evidence)
+        ? req.body.evidence
+        : {},
+    linkedFeatureId: normalizeOptionalString(req.body?.linked_feature_id),
+  });
+
+  res.status(201).json({
+    success: true,
+    message: 'AI validation evidence submitted for admin review.',
+    data: result,
+  });
+};
+
+const reviewAiPredictionValidationTask = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const result = await reviewPredictionValidationTask({
+    taskId: req.params.taskId,
+    reviewedBy: (req.user as Express.UserContext).id,
+    decision: normalizeOptionalString(req.body?.decision) as any,
+    reason: normalizeOptionalString(req.body?.reason),
+    submissionId: normalizeOptionalString(req.body?.submission_id),
+  });
+
+  res.json({
+    success: true,
+    message: 'AI prediction validation review saved.',
+    data: result,
+  });
+};
+
 const getAiLayerFeatures = async (req: Request, res: Response): Promise<void> => {
   const featureQuery = parseAiLayerFeatureQuery(req);
   const layerResult = await query(
@@ -3313,8 +3505,16 @@ module.exports = {
   listAiRunLayers,
   listProjectPublishedAiLayers,
   listProjectPublishedAiPredictions,
+  listProjectAiPredictionValidationTasks,
+  generateProjectAiPredictionValidationTasks,
   getAiLayerFeatures,
   getAiLayerPredictions,
+  assignAiPredictionValidationTask,
+  updateAiPredictionValidationTaskStatus,
+  getAiPredictionValidationTask,
+  listMyAiValidationTasks,
+  submitAiPredictionValidation,
+  reviewAiPredictionValidationTask,
   listAiRunLogs,
   listAiRunReviews,
   reviewAiRun,

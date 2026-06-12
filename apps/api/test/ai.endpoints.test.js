@@ -353,6 +353,104 @@ const insertAiPredictionFeature = async ({
   return result.rows[0].id;
 };
 
+const insertAiOutputLayerForRun = async ({
+  projectId,
+  runId,
+  layerType = 'uncertainty',
+  status = 'ready_for_review',
+  storagePath = 'outputs/runs/phase-s1-test/ai_uncertainty_areas.geojson',
+}) => {
+  const result = await pool.query(
+    `INSERT INTO ai_output_layer (
+       ai_run_id,
+       project_id,
+       layer_type,
+       status,
+       name,
+       description,
+       storage_path,
+       crs,
+       style
+     )
+     VALUES (
+       $1,
+       $2,
+       $3,
+       $4,
+       'Regional AI validation candidate layer',
+       'Unpublished AI validation candidate layer.',
+       $5,
+       'EPSG:4326',
+       '{}'::jsonb
+     )
+     RETURNING id`,
+    [runId, projectId, layerType, status, storagePath],
+  );
+  return result.rows[0].id;
+};
+
+const insertAiClassStatistic = async ({ runId, classLabel, featureCount = 12 }) => {
+  await pool.query(
+    `INSERT INTO ai_class_statistic (
+       ai_run_id,
+       class_label,
+       feature_count,
+       statistics
+     )
+     VALUES ($1, $2, $3, '{}'::jsonb)
+     ON CONFLICT (ai_run_id, class_label)
+     DO UPDATE SET feature_count = EXCLUDED.feature_count`,
+    [runId, classLabel, featureCount],
+  );
+};
+
+const assignContributorToProject = async ({ projectId, userId, approvedBy }) => {
+  await pool.query(
+    `INSERT INTO project_assignment (
+       project_id,
+       user_id,
+       role,
+       status,
+       approved_by_user_id,
+       approved_date
+     )
+     VALUES ($1, $2, 'contributor', 'approved', $3, CURRENT_DATE)
+     ON CONFLICT (project_id, user_id)
+     DO UPDATE SET
+       role = 'contributor',
+       status = 'approved',
+       approved_by_user_id = $3,
+       approved_date = CURRENT_DATE`,
+    [projectId, userId, approvedBy],
+  );
+};
+
+const insertPendingSpatialFeature = async ({ projectId, userId }) => {
+  const result = await pool.query(
+    `INSERT INTO spatial_feature (
+       project_id,
+       collected_by_user_id,
+       geom,
+       attributes,
+       status,
+       submitted_at,
+       source
+     )
+     VALUES (
+       $1,
+       $2,
+       ST_SetSRID(ST_MakePoint(35.42, 33.82), 4326),
+       '{"source":"ai_validation_test"}'::jsonb,
+       'pending_review',
+       NOW(),
+       'ai_validation'
+     )
+     RETURNING id`,
+    [projectId, userId],
+  );
+  return result.rows[0].id;
+};
+
 const writePreviewGeoJson = async (
   relativePath = 'outputs/runs/phase-o-test/ai_classification_review.geojson',
   features = [
@@ -1790,6 +1888,408 @@ describe('AI backend endpoints phase B', () => {
       'SELECT COUNT(*)::int AS count FROM spatial_feature',
     );
     expect(afterFeatureCount.rows[0].count).toBe(beforeFeatureCount.rows[0].count);
+  });
+
+  test('AI prediction validation generation creates low-confidence tasks idempotently without spatial_feature writes', async () => {
+    const { admin, project } = await createProjectFixture('AI Prediction Validation Generate');
+    const tableCheck = await pool.query(
+      `SELECT to_regclass('public.ai_prediction_validation_task') AS task_table,
+              to_regclass('public.ai_prediction_validation_submission') AS submission_table`,
+    );
+    expect(tableCheck.rows[0]).toEqual(
+      expect.objectContaining({
+        task_table: 'ai_prediction_validation_task',
+        submission_table: 'ai_prediction_validation_submission',
+      }),
+    );
+
+    const { runId, layerId } = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+    });
+    const uncertaintyLayerId = await insertAiOutputLayerForRun({
+      projectId: project.id,
+      runId,
+      layerType: 'uncertainty',
+    });
+    await insertAiPredictionFeature({
+      projectId: project.id,
+      runId,
+      layerId,
+      artifactFeatureId: 'classification-high-confidence',
+      confidence: 0.91,
+      uncertaintyScore: 0.09,
+    });
+    await insertAiPredictionFeature({
+      projectId: project.id,
+      runId,
+      layerId,
+      artifactFeatureId: 'classification-low-confidence',
+      confidence: 0.52,
+      uncertaintyScore: 0.48,
+    });
+    await insertAiPredictionFeature({
+      projectId: project.id,
+      runId,
+      layerId: uncertaintyLayerId,
+      artifactFeatureId: 'uncertainty-candidate-1',
+      confidence: 0.52,
+      uncertaintyScore: 0.48,
+    });
+    await insertAiPredictionFeature({
+      projectId: project.id,
+      runId,
+      layerId: uncertaintyLayerId,
+      artifactFeatureId: 'uncertainty-candidate-2',
+      predictedClass: 'citrus fruit trees',
+      confidence: 0.47,
+      uncertaintyScore: 0.53,
+      lon: 35.26,
+    });
+    const beforeSpatialFeatureCount = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM spatial_feature',
+    );
+    const beforePredictionFeatureCount = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM ai_prediction_feature',
+    );
+
+    const firstGenerate = await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/prediction-validation-tasks/generate`)
+      .set(authHeader(admin.token))
+      .send({ ai_run_id: runId })
+      .expect(201);
+
+    expect(firstGenerate.body.data).toEqual(
+      expect.objectContaining({
+        candidate_count: 2,
+        created_count: 2,
+        existing_active_count: 0,
+        candidate_layer_type: 'uncertainty',
+        criterion: 'uncertainty_layer',
+        no_spatial_feature_writes: true,
+      }),
+    );
+    expect(firstGenerate.body.data.task_ids).toHaveLength(2);
+
+    const secondGenerate = await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/prediction-validation-tasks/generate`)
+      .set(authHeader(admin.token))
+      .send({ ai_run_id: runId })
+      .expect(201);
+    expect(secondGenerate.body.data).toEqual(
+      expect.objectContaining({
+        candidate_count: 2,
+        created_count: 0,
+        existing_active_count: 2,
+      }),
+    );
+
+    const listResponse = await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/ai/prediction-validation-tasks`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(listResponse.body.data.status_counts.open).toBe(2);
+    expect(listResponse.body.data.tasks).toHaveLength(2);
+    expect(listResponse.body.data.tasks[0]).toEqual(
+      expect.objectContaining({
+        status: 'open',
+        not_official_field_data: true,
+        no_spatial_feature_writes: true,
+        prediction: expect.objectContaining({
+          source: 'ai_prediction',
+          layer: expect.objectContaining({
+            layer_type: 'uncertainty',
+          }),
+        }),
+      }),
+    );
+
+    const afterSpatialFeatureCount = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM spatial_feature',
+    );
+    const afterPredictionFeatureCount = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM ai_prediction_feature',
+    );
+    expect(afterSpatialFeatureCount.rows[0].count).toBe(beforeSpatialFeatureCount.rows[0].count);
+    expect(afterPredictionFeatureCount.rows[0].count).toBe(beforePredictionFeatureCount.rows[0].count);
+  });
+
+  test('AI prediction validation permissions expose only assigned contributor tasks', async () => {
+    const { admin, project } = await createProjectFixture('AI Prediction Validation RBAC');
+    const { runId, layerId } = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+    });
+    await insertAiPredictionFeature({
+      projectId: project.id,
+      runId,
+      layerId,
+      artifactFeatureId: 'validation-rbac-low-1',
+      confidence: 0.51,
+      uncertaintyScore: 0.49,
+    });
+    await insertAiPredictionFeature({
+      projectId: project.id,
+      runId,
+      layerId,
+      artifactFeatureId: 'validation-rbac-low-2',
+      predictedClass: 'citrus fruit trees',
+      confidence: 0.42,
+      uncertaintyScore: 0.58,
+      lon: 35.3,
+    });
+    const contributor = await createContributorToken({
+      adminToken: admin.token,
+      emailPrefix: 'ai-validation-assigned-contributor',
+    });
+    const otherContributor = await createContributorToken({
+      adminToken: admin.token,
+      emailPrefix: 'ai-validation-other-contributor',
+    });
+    await assignContributorToProject({
+      projectId: project.id,
+      userId: contributor.user.id,
+      approvedBy: admin.user.id,
+    });
+    await assignContributorToProject({
+      projectId: project.id,
+      userId: otherContributor.user.id,
+      approvedBy: admin.user.id,
+    });
+    const viewer = await createViewerToken();
+
+    await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/prediction-validation-tasks/generate`)
+      .set(authHeader(admin.token))
+      .send({ ai_run_id: runId, confidence_threshold: 0.6 })
+      .expect(201);
+    const taskResult = await pool.query(
+      `SELECT id
+       FROM ai_prediction_validation_task
+       WHERE project_id = $1
+       ORDER BY created_at ASC`,
+      [project.id],
+    );
+    const assignedTaskId = taskResult.rows[0].id;
+    const unassignedTaskId = taskResult.rows[1].id;
+
+    await request(app)
+      .patch(`${API_PREFIX}/ai/prediction-validation-tasks/${assignedTaskId}/assign`)
+      .set(authHeader(admin.token))
+      .send({ assigned_to: contributor.user.id })
+      .expect(200);
+
+    await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/ai/prediction-validation-tasks`)
+      .set(authHeader(viewer.token))
+      .expect(403);
+    await request(app)
+      .get(`${API_PREFIX}/me/ai-validation-tasks`)
+      .set(authHeader(viewer.token))
+      .expect(403);
+    await request(app)
+      .patch(`${API_PREFIX}/ai/prediction-validation-tasks/${assignedTaskId}/assign`)
+      .set(authHeader(contributor.token))
+      .send({ assigned_to: otherContributor.user.id })
+      .expect(403);
+    await request(app)
+      .post(`${API_PREFIX}/ai/prediction-validation-tasks/${assignedTaskId}/review`)
+      .set(authHeader(contributor.token))
+      .send({ decision: 'accepted' })
+      .expect(403);
+
+    const assignedList = await request(app)
+      .get(`${API_PREFIX}/me/ai-validation-tasks`)
+      .set(authHeader(contributor.token))
+      .expect(200);
+    expect(assignedList.body.data.tasks).toHaveLength(1);
+    expect(assignedList.body.data.tasks[0].id).toBe(assignedTaskId);
+
+    await request(app)
+      .get(`${API_PREFIX}/ai/prediction-validation-tasks/${assignedTaskId}`)
+      .set(authHeader(contributor.token))
+      .expect(200);
+    await request(app)
+      .get(`${API_PREFIX}/ai/prediction-validation-tasks/${unassignedTaskId}`)
+      .set(authHeader(contributor.token))
+      .expect(403);
+
+    const otherList = await request(app)
+      .get(`${API_PREFIX}/me/ai-validation-tasks`)
+      .set(authHeader(otherContributor.token))
+      .expect(200);
+    expect(otherList.body.data.tasks).toEqual([]);
+  });
+
+  test('AI prediction validation submissions require eligible classes and review without auto-approval', async () => {
+    const { admin, project } = await createProjectFixture('AI Prediction Validation Submit');
+    const { runId, layerId } = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+    });
+    await insertAiClassStatistic({ runId, classLabel: 'olives' });
+    await insertAiClassStatistic({ runId, classLabel: 'citrus fruit trees' });
+    const firstPredictionId = await insertAiPredictionFeature({
+      projectId: project.id,
+      runId,
+      layerId,
+      artifactFeatureId: 'validation-submit-low-1',
+      confidence: 0.51,
+      uncertaintyScore: 0.49,
+    });
+    await insertAiPredictionFeature({
+      projectId: project.id,
+      runId,
+      layerId,
+      artifactFeatureId: 'validation-submit-low-2',
+      predictedClass: 'citrus fruit trees',
+      confidence: 0.42,
+      uncertaintyScore: 0.58,
+      lon: 35.31,
+    });
+    const contributor = await createContributorToken({
+      adminToken: admin.token,
+      emailPrefix: 'ai-validation-submit-contributor',
+    });
+    await assignContributorToProject({
+      projectId: project.id,
+      userId: contributor.user.id,
+      approvedBy: admin.user.id,
+    });
+
+    await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/prediction-validation-tasks/generate`)
+      .set(authHeader(admin.token))
+      .send({
+        ai_prediction_feature_id: firstPredictionId,
+        priority: 3,
+      })
+      .expect(201);
+    await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/prediction-validation-tasks/generate`)
+      .set(authHeader(admin.token))
+      .send({ ai_run_id: runId, confidence_threshold: 0.6 })
+      .expect(201);
+
+    const taskResult = await pool.query(
+      `SELECT id, ai_prediction_feature_id
+       FROM ai_prediction_validation_task
+       WHERE project_id = $1
+       ORDER BY priority DESC, created_at ASC`,
+      [project.id],
+    );
+    const reviewedTaskId = taskResult.rows[0].id;
+    const notTargetTaskId = taskResult.rows.find(
+      (row) => row.ai_prediction_feature_id !== firstPredictionId,
+    ).id;
+
+    await request(app)
+      .patch(`${API_PREFIX}/ai/prediction-validation-tasks/${reviewedTaskId}/assign`)
+      .set(authHeader(admin.token))
+      .send({ assigned_to: contributor.user.id })
+      .expect(200);
+    await request(app)
+      .patch(`${API_PREFIX}/ai/prediction-validation-tasks/${notTargetTaskId}/assign`)
+      .set(authHeader(admin.token))
+      .send({ assigned_to: contributor.user.id })
+      .expect(200);
+
+    await request(app)
+      .post(`${API_PREFIX}/ai/prediction-validation-tasks/${reviewedTaskId}/submissions`)
+      .set(authHeader(contributor.token))
+      .send({ result: 'wrong_class', note: 'Observed in the field.' })
+      .expect(400);
+    await request(app)
+      .post(`${API_PREFIX}/ai/prediction-validation-tasks/${reviewedTaskId}/submissions`)
+      .set(authHeader(contributor.token))
+      .send({
+        result: 'wrong_class',
+        corrected_class: 'banana',
+        note: 'Observed a different trained class.',
+      })
+      .expect(400);
+
+    const pendingFeatureId = await insertPendingSpatialFeature({
+      projectId: project.id,
+      userId: contributor.user.id,
+    });
+    const beforeSpatialFeatureCount = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM spatial_feature',
+    );
+    const beforePredictionFeatureCount = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM ai_prediction_feature',
+    );
+
+    const submitResponse = await request(app)
+      .post(`${API_PREFIX}/ai/prediction-validation-tasks/${reviewedTaskId}/submissions`)
+      .set(authHeader(contributor.token))
+      .send({
+        result: 'wrong_class',
+        corrected_class: 'citrus fruit trees',
+        note: 'Field check found citrus fruit trees, not olives.',
+        evidence: { field_visit: true },
+        linked_feature_id: pendingFeatureId,
+      })
+      .expect(201);
+    expect(submitResponse.body.data).toEqual(
+      expect.objectContaining({
+        submission_id: expect.any(String),
+        no_spatial_feature_writes: true,
+        no_auto_approval: true,
+      }),
+    );
+    expect(submitResponse.body.data.task).toEqual(
+      expect.objectContaining({
+        status: 'submitted',
+        latest_submission: expect.objectContaining({
+          result: 'wrong_class',
+          corrected_class: 'citrus fruit trees',
+          linked_feature_id: pendingFeatureId,
+        }),
+      }),
+    );
+
+    const reviewResponse = await request(app)
+      .post(`${API_PREFIX}/ai/prediction-validation-tasks/${reviewedTaskId}/review`)
+      .set(authHeader(admin.token))
+      .send({
+        decision: 'accepted',
+        reason: 'Contributor evidence is clear.',
+      })
+      .expect(200);
+    expect(reviewResponse.body.data.task).toEqual(
+      expect.objectContaining({
+        status: 'accepted',
+        review_decision: 'accepted',
+        review_reason: 'Contributor evidence is clear.',
+      }),
+    );
+
+    await request(app)
+      .post(`${API_PREFIX}/ai/prediction-validation-tasks/${notTargetTaskId}/submissions`)
+      .set(authHeader(contributor.token))
+      .send({
+        result: 'not_target_class',
+        note: 'This area is not part of the target class set.',
+        evidence: { field_visit: true },
+      })
+      .expect(201);
+
+    const pendingFeatureStatus = await pool.query(
+      `SELECT status
+       FROM spatial_feature
+       WHERE id = $1`,
+      [pendingFeatureId],
+    );
+    const afterSpatialFeatureCount = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM spatial_feature',
+    );
+    const afterPredictionFeatureCount = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM ai_prediction_feature',
+    );
+    expect(pendingFeatureStatus.rows[0].status).toBe('pending_review');
+    expect(afterSpatialFeatureCount.rows[0].count).toBe(beforeSpatialFeatureCount.rows[0].count);
+    expect(afterPredictionFeatureCount.rows[0].count).toBe(beforePredictionFeatureCount.rows[0].count);
   });
 
   test('AI layer preview denies non-protected users and unsafe artifact paths', async () => {

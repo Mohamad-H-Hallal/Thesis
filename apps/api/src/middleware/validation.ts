@@ -438,6 +438,21 @@ const aiScopeTypes = [
   'custom_polygon',
   'national',
 ];
+const aiPredictionValidationTaskStatuses = [
+  'open',
+  'assigned',
+  'in_progress',
+  'submitted',
+  'accepted',
+  'rejected',
+  'cancelled',
+];
+const aiPredictionValidationResults = [
+  'correct',
+  'wrong_class',
+  'not_target_class',
+  'unsure',
+];
 
 const aiValidation = {
   readiness: [
@@ -576,6 +591,123 @@ const aiValidation = {
       .isLength({ max: 4000 })
       .withMessage('reason must be 4000 characters or fewer')
       .withMessage('reason must be 4000 characters or fewer'),
+  ] as ValidationChain[],
+  listPredictionValidationTasks: [
+    queryParam('status')
+      .optional()
+      .isIn(aiPredictionValidationTaskStatuses)
+      .withMessage('status is invalid'),
+    queryParam('assigned_to')
+      .optional()
+      .isUUID()
+      .withMessage('assigned_to must be a valid UUID'),
+    queryParam('ai_run_id')
+      .optional()
+      .isUUID()
+      .withMessage('ai_run_id must be a valid UUID'),
+  ] as ValidationChain[],
+  generatePredictionValidationTasks: [
+    body('ai_run_id')
+      .optional({ nullable: true })
+      .isUUID()
+      .withMessage('ai_run_id must be a valid UUID'),
+    body('ai_output_layer_id')
+      .optional({ nullable: true })
+      .isUUID()
+      .withMessage('ai_output_layer_id must be a valid UUID'),
+    body('ai_prediction_feature_id')
+      .optional({ nullable: true })
+      .isUUID()
+      .withMessage('ai_prediction_feature_id must be a valid UUID'),
+    body('prediction_feature_id')
+      .optional({ nullable: true })
+      .isUUID()
+      .withMessage('prediction_feature_id must be a valid UUID'),
+    body()
+      .custom((value) => !(value?.ai_prediction_feature_id && value?.prediction_feature_id))
+      .withMessage('Use only one prediction feature id field'),
+    body('confidence_threshold')
+      .optional({ nullable: true })
+      .isFloat({ min: 0, max: 1 })
+      .withMessage('confidence_threshold must be between 0 and 1'),
+    body('limit')
+      .optional({ nullable: true })
+      .isInt({ min: 1, max: 10000 })
+      .withMessage('limit must be between 1 and 10000'),
+    body('priority')
+      .optional({ nullable: true })
+      .isInt({ min: 0, max: 1000 })
+      .withMessage('priority must be between 0 and 1000'),
+  ] as ValidationChain[],
+  assignPredictionValidationTask: [
+    body('assigned_to').isUUID().withMessage('assigned_to must be a valid UUID'),
+  ] as ValidationChain[],
+  updatePredictionValidationTaskStatus: [
+    body('status')
+      .isIn(aiPredictionValidationTaskStatuses)
+      .withMessage('status is invalid'),
+  ] as ValidationChain[],
+  submitPredictionValidation: [
+    body('result')
+      .isIn(aiPredictionValidationResults)
+      .withMessage('result must be correct, wrong_class, not_target_class, or unsure'),
+    body('note')
+      .trim()
+      .notEmpty()
+      .withMessage('note is required')
+      .isLength({ max: 4000 })
+      .withMessage('note must be 4000 characters or fewer'),
+    body('corrected_class')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ min: 1, max: 200 })
+      .withMessage('corrected_class must be between 1 and 200 characters'),
+    body()
+      .custom((value) => {
+        if (value?.result === 'wrong_class') {
+          return typeof value?.corrected_class === 'string' && value.corrected_class.trim().length > 0;
+        }
+        return true;
+      })
+      .withMessage('corrected_class is required when result is wrong_class'),
+    body()
+      .custom((value) => {
+        if (value?.result === 'not_target_class') {
+          return value?.corrected_class === undefined || value?.corrected_class === null || String(value.corrected_class).trim().length === 0;
+        }
+        return true;
+      })
+      .withMessage('corrected_class must be empty when result is not_target_class'),
+    body('evidence')
+      .optional({ nullable: true })
+      .isObject()
+      .withMessage('evidence must be an object'),
+    body('linked_feature_id')
+      .optional({ nullable: true })
+      .isUUID()
+      .withMessage('linked_feature_id must be a valid UUID'),
+  ] as ValidationChain[],
+  reviewPredictionValidationTask: [
+    body('decision')
+      .isIn(['accepted', 'rejected'])
+      .withMessage('decision must be accepted or rejected'),
+    body('reason')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 4000 })
+      .withMessage('reason must be 4000 characters or fewer'),
+    body('submission_id')
+      .optional({ nullable: true })
+      .isUUID()
+      .withMessage('submission_id must be a valid UUID'),
+    body()
+      .custom((value) => {
+        if (value?.decision === 'rejected') {
+          return typeof value?.reason === 'string' && value.reason.trim().length > 0;
+        }
+        return true;
+      })
+      .withMessage('reason is required when decision is rejected'),
   ] as ValidationChain[],
 };
 

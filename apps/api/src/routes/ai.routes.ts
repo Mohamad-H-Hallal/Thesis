@@ -67,6 +67,48 @@ router.post(
   asyncHandler(aiController.unpublishAiLayer),
 );
 
+router.patch(
+  '/prediction-validation-tasks/:taskId/assign',
+  uuidValidation('taskId'),
+  aiValidation.assignPredictionValidationTask,
+  validate,
+  requireProtectedSuperAdmin,
+  asyncHandler(aiController.assignAiPredictionValidationTask),
+);
+
+router.patch(
+  '/prediction-validation-tasks/:taskId/status',
+  uuidValidation('taskId'),
+  aiValidation.updatePredictionValidationTaskStatus,
+  validate,
+  requireProtectedSuperAdmin,
+  asyncHandler(aiController.updateAiPredictionValidationTaskStatus),
+);
+
+router.post(
+  '/prediction-validation-tasks/:taskId/review',
+  uuidValidation('taskId'),
+  aiValidation.reviewPredictionValidationTask,
+  validate,
+  requireProtectedSuperAdmin,
+  asyncHandler(aiController.reviewAiPredictionValidationTask),
+);
+
+router.post(
+  '/prediction-validation-tasks/:taskId/submissions',
+  uuidValidation('taskId'),
+  aiValidation.submitPredictionValidation,
+  validate,
+  asyncHandler(aiController.submitAiPredictionValidation),
+);
+
+router.get(
+  '/prediction-validation-tasks/:taskId',
+  uuidValidation('taskId'),
+  validate,
+  asyncHandler(aiController.getAiPredictionValidationTask),
+);
+
 router.get(
   '/runs/:runId/reviews',
   uuidValidation('runId'),

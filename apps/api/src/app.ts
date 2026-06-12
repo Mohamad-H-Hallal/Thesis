@@ -24,6 +24,7 @@ const featureRoutes = require('./routes/feature.routes');
 const importRoutes = require('./routes/import.routes');
 const exportRoutes = require('./routes/export.routes');
 const aiRoutes = require('./routes/ai.routes');
+const meRoutes = require('./routes/me.routes');
 const {
   assignmentRouter,
   photoRouter,
@@ -210,6 +211,7 @@ const buildApp = (env) => {
         assignments: `${normalizedApiPrefix}/assignments`,
         imports: `${normalizedApiPrefix}/imports`,
         ai: `${normalizedApiPrefix}/ai`,
+        me: `${normalizedApiPrefix}/me`,
         photos: `${normalizedApiPrefix}/photos`,
         categories: `${normalizedApiPrefix}/categories`,
         notifications: `${normalizedApiPrefix}/notifications`,
@@ -233,6 +235,7 @@ const buildApp = (env) => {
     app.use(`${prefix}/imports`, importRoutes);
     app.use(`${prefix}/exports`, exportRoutes);
     app.use(`${prefix}/ai`, aiRoutes);
+    app.use(`${prefix}/me`, meRoutes);
     app.use(`${prefix}/assignments`, assignmentRouter);
     app.use(`${prefix}/photos`, photoRouter);
     app.use(`${prefix}/categories`, categoryRouter);
