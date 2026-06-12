@@ -997,10 +997,13 @@ describe('AI backend endpoints phase B', () => {
     expect(scopedReadiness.body.data.readiness.national_scope_eligibility).toEqual(
       expect.objectContaining({
         eligible: false,
-        unmet_requirements: expect.arrayContaining([
-          'National mode is enabled for this project.',
-          'Lebanon boundary is configured for AI prediction.',
-          'The AI pipeline supports the selected satellite, dates, features, and national boundary.',
+        requirements: expect.arrayContaining([
+          expect.objectContaining({ key: 'national_mode_allowed', passed: false }),
+          expect.objectContaining({ key: 'lebanon_boundary_configured', passed: false }),
+          expect.objectContaining({
+            key: 'pipeline_supports_national_processing',
+            passed: false,
+          }),
         ]),
       }),
     );
@@ -1020,8 +1023,8 @@ describe('AI backend endpoints phase B', () => {
         national_scope_enabled: false,
         national_scope_eligibility: expect.objectContaining({
           eligible: false,
-          unmet_requirements: expect.arrayContaining([
-            'National mode is enabled for this project.',
+          requirements: expect.arrayContaining([
+            expect.objectContaining({ key: 'national_mode_allowed', passed: false }),
           ]),
         }),
       }),
@@ -1111,12 +1114,19 @@ describe('AI backend endpoints phase B', () => {
     expect(readiness.body.data.readiness.national_scope_eligibility).toEqual(
       expect.objectContaining({
         eligible: false,
-        unmet_requirements: expect.arrayContaining([
-          'National mode is enabled for this project.',
-          'Lebanon boundary is configured for AI prediction.',
-          'Approved training samples cover multiple Lebanese regions and environmental conditions.',
-          'Every class has enough approved samples: minimum 50, recommended 100+.',
-          'The AI pipeline supports the selected satellite, dates, features, and national boundary.',
+        requirements: expect.arrayContaining([
+          expect.objectContaining({ key: 'national_mode_allowed', passed: false }),
+          expect.objectContaining({ key: 'lebanon_boundary_configured', passed: false }),
+          expect.objectContaining({
+            key: 'pipeline_supports_national_processing',
+            passed: false,
+          }),
+          expect.objectContaining({ key: 'minimum_samples_per_class', passed: false }),
+          expect.objectContaining({
+            key: 'regional_coverage_configured',
+            passed: false,
+            message: 'Regional coverage check is not configured yet.',
+          }),
         ]),
         warnings: expect.arrayContaining([
           'National Lebanon prediction is locked until national readiness requirements are met.',
@@ -1157,6 +1167,97 @@ describe('AI backend endpoints phase B', () => {
         scope_type: 'national',
       })
       .expect(422);
+  });
+
+  test('National Lebanon AI scope becomes eligible only when every backend requirement passes', async () => {
+    const { admin, project } = await createProjectFixture('AI National Eligible');
+    for (let index = 0; index < 50; index += 1) {
+      await insertApprovedFeature({
+        projectId: project.id,
+        userId: admin.user.id,
+        attributes: { feature_type: 'Olives' },
+        lon: 35.15 + (index % 10) * 0.15,
+        lat: 33.05 + Math.floor(index / 10) * 0.36,
+      });
+      await insertApprovedFeature({
+        projectId: project.id,
+        userId: admin.user.id,
+        attributes: { feature_type: 'Citrus' },
+        lon: 35.17 + (index % 10) * 0.15,
+        lat: 33.07 + Math.floor(index / 10) * 0.36,
+      });
+    }
+
+    const nationalPreferences = {
+      national_mode_allowed: true,
+      lebanon_boundary_configured: true,
+      pipeline_supports_national_scope: true,
+      backend_bridge_supports_national_scope: true,
+      python_pipeline_supports_national_scope: true,
+      national_regional_coverage_configured: true,
+      national_sample_spread_confirmed: true,
+      national_imbalance_review_supported: true,
+      national_validation_plan_recorded: true,
+    };
+
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}/ai/settings`)
+      .set(authHeader(admin.token))
+      .send({
+        is_enabled: true,
+        label_field: 'feature_type',
+        scope_type: 'project',
+        min_samples_per_class: 50,
+        model_preferences: nationalPreferences,
+      })
+      .expect(200);
+
+    const readiness = await request(app)
+      .get(
+        `${API_PREFIX}/projects/${project.id}/ai/readiness?label_field=feature_type&scope_type=national&min_samples_per_class=50`,
+      )
+      .set(authHeader(admin.token))
+      .expect(200);
+
+    expect(readiness.body.data.readiness.national_scope_enabled).toBe(false);
+    expect(readiness.body.data.readiness.national_scope_eligibility).toEqual(
+      expect.objectContaining({
+        eligible: true,
+        requirements: expect.arrayContaining([
+          expect.objectContaining({ key: 'national_mode_allowed', passed: true }),
+          expect.objectContaining({ key: 'minimum_samples_per_class', passed: true }),
+          expect.objectContaining({ key: 'validation_plan_recorded', passed: true }),
+        ]),
+      }),
+    );
+    expect(
+      readiness.body.data.readiness.national_scope_eligibility.requirements.every(
+        (requirement) => requirement.passed === true,
+      ),
+    ).toBe(true);
+
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}/ai/settings`)
+      .set(authHeader(admin.token))
+      .send({
+        is_enabled: true,
+        label_field: 'feature_type',
+        scope_type: 'project',
+        min_samples_per_class: 50,
+        model_preferences: {
+          ...nationalPreferences,
+          national_scope_enabled: true,
+        },
+      })
+      .expect(200);
+
+    const enabledReadiness = await request(app)
+      .get(
+        `${API_PREFIX}/projects/${project.id}/ai/readiness?label_field=feature_type&scope_type=national&min_samples_per_class=50`,
+      )
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(enabledReadiness.body.data.readiness.national_scope_enabled).toBe(true);
   });
 
   test('creates draft AI runs, lists runs, exposes empty child resources, and leaves spatial_feature untouched', async () => {
@@ -1757,13 +1858,15 @@ describe('AI backend endpoints phase B', () => {
       status: 'approved',
       storagePath: 'outputs/runs/phase-r-test/confidence.geojson',
     });
-    const { runId: uncertaintyRunId, layerId: uncertaintyLayerId } = await createPreviewableAiLayer({
-      projectId: project.id,
-      userId: admin.user.id,
-      layerType: 'uncertainty',
-      status: 'approved',
-      storagePath: 'outputs/runs/phase-r-test/uncertainty.geojson',
-    });
+    const { runId: uncertaintyRunId, layerId: uncertaintyLayerId } = await createPreviewableAiLayer(
+      {
+        projectId: project.id,
+        userId: admin.user.id,
+        layerType: 'uncertainty',
+        status: 'approved',
+        storagePath: 'outputs/runs/phase-r-test/uncertainty.geojson',
+      },
+    );
     await insertAiPredictionFeature({
       projectId: project.id,
       runId,
@@ -1848,9 +1951,9 @@ describe('AI backend endpoints phase B', () => {
       .set(authHeader(viewer.token))
       .expect(200);
     expect(projectResponse.body.data.layers).toHaveLength(3);
-    expect(projectResponse.body.data.layers.every((layer) => layer.storage_path === undefined)).toBe(
-      true,
-    );
+    expect(
+      projectResponse.body.data.layers.every((layer) => layer.storage_path === undefined),
+    ).toBe(true);
     expect(projectResponse.body.data.total_count).toBe(1);
     expect(projectResponse.body.data.primary_layer_type).toBe('classification');
     expect(projectResponse.body.data.primary_prediction_count).toBe(1);
@@ -2011,10 +2114,12 @@ describe('AI backend endpoints phase B', () => {
       'SELECT COUNT(*)::int AS count FROM ai_prediction_feature',
     );
     expect(afterSpatialFeatureCount.rows[0].count).toBe(beforeSpatialFeatureCount.rows[0].count);
-    expect(afterPredictionFeatureCount.rows[0].count).toBe(beforePredictionFeatureCount.rows[0].count);
+    expect(afterPredictionFeatureCount.rows[0].count).toBe(
+      beforePredictionFeatureCount.rows[0].count,
+    );
   });
 
-  test('AI prediction validation permissions expose only assigned contributor tasks', async () => {
+  test('AI prediction validation permissions expose project tasks to assigned contributors', async () => {
     const { admin, project } = await createProjectFixture('AI Prediction Validation RBAC');
     const { runId, layerId } = await createPreviewableAiLayer({
       projectId: project.id,
@@ -2102,8 +2207,9 @@ describe('AI backend endpoints phase B', () => {
       .get(`${API_PREFIX}/me/ai-validation-tasks`)
       .set(authHeader(contributor.token))
       .expect(200);
-    expect(assignedList.body.data.tasks).toHaveLength(1);
-    expect(assignedList.body.data.tasks[0].id).toBe(assignedTaskId);
+    expect(assignedList.body.data.tasks.map((task) => task.id)).toEqual(
+      expect.arrayContaining([assignedTaskId, unassignedTaskId]),
+    );
 
     await request(app)
       .get(`${API_PREFIX}/ai/prediction-validation-tasks/${assignedTaskId}`)
@@ -2112,13 +2218,48 @@ describe('AI backend endpoints phase B', () => {
     await request(app)
       .get(`${API_PREFIX}/ai/prediction-validation-tasks/${unassignedTaskId}`)
       .set(authHeader(contributor.token))
-      .expect(403);
+      .expect(200);
 
     const otherList = await request(app)
       .get(`${API_PREFIX}/me/ai-validation-tasks`)
       .set(authHeader(otherContributor.token))
       .expect(200);
-    expect(otherList.body.data.tasks).toEqual([]);
+    expect(otherList.body.data.tasks.map((task) => task.id)).toEqual([unassignedTaskId]);
+
+    const otherProjectFixture = await createProjectFixture('AI Validation Other Project', {
+      protectedSuperAdmin: false,
+    });
+    const { runId: otherRunId, layerId: otherLayerId } = await createPreviewableAiLayer({
+      projectId: otherProjectFixture.project.id,
+      userId: otherProjectFixture.admin.user.id,
+    });
+    await insertAiPredictionFeature({
+      projectId: otherProjectFixture.project.id,
+      runId: otherRunId,
+      layerId: otherLayerId,
+      artifactFeatureId: 'validation-rbac-other-project',
+      confidence: 0.41,
+      uncertaintyScore: 0.59,
+      lon: 35.4,
+    });
+    await request(app)
+      .post(
+        `${API_PREFIX}/projects/${otherProjectFixture.project.id}/ai/prediction-validation-tasks/generate`,
+      )
+      .set(authHeader(otherProjectFixture.admin.token))
+      .send({ ai_run_id: otherRunId, confidence_threshold: 0.6 })
+      .expect(201);
+    const otherProjectTaskResult = await pool.query(
+      `SELECT id
+       FROM ai_prediction_validation_task
+       WHERE project_id = $1
+       LIMIT 1`,
+      [otherProjectFixture.project.id],
+    );
+    await request(app)
+      .get(`${API_PREFIX}/ai/prediction-validation-tasks/${otherProjectTaskResult.rows[0].id}`)
+      .set(authHeader(contributor.token))
+      .expect(403);
   });
 
   test('AI prediction validation submissions require eligible classes and review without auto-approval', async () => {
@@ -2151,9 +2292,18 @@ describe('AI backend endpoints phase B', () => {
       adminToken: admin.token,
       emailPrefix: 'ai-validation-submit-contributor',
     });
+    const secondContributor = await createContributorToken({
+      adminToken: admin.token,
+      emailPrefix: 'ai-validation-submit-second-contributor',
+    });
     await assignContributorToProject({
       projectId: project.id,
       userId: contributor.user.id,
+      approvedBy: admin.user.id,
+    });
+    await assignContributorToProject({
+      projectId: project.id,
+      userId: secondContributor.user.id,
       approvedBy: admin.user.id,
     });
 
@@ -2182,17 +2332,6 @@ describe('AI backend endpoints phase B', () => {
     const notTargetTaskId = taskResult.rows.find(
       (row) => row.ai_prediction_feature_id !== firstPredictionId,
     ).id;
-
-    await request(app)
-      .patch(`${API_PREFIX}/ai/prediction-validation-tasks/${reviewedTaskId}/assign`)
-      .set(authHeader(admin.token))
-      .send({ assigned_to: contributor.user.id })
-      .expect(200);
-    await request(app)
-      .patch(`${API_PREFIX}/ai/prediction-validation-tasks/${notTargetTaskId}/assign`)
-      .set(authHeader(admin.token))
-      .send({ assigned_to: contributor.user.id })
-      .expect(200);
 
     await request(app)
       .post(`${API_PREFIX}/ai/prediction-validation-tasks/${reviewedTaskId}/submissions`)
@@ -2249,12 +2388,33 @@ describe('AI backend endpoints phase B', () => {
       }),
     );
 
+    await request(app)
+      .post(`${API_PREFIX}/ai/prediction-validation-tasks/${reviewedTaskId}/submissions`)
+      .set(authHeader(contributor.token))
+      .send({
+        result: 'wrong_class',
+        corrected_class: 'citrus fruit trees',
+        note: 'Duplicate active evidence should be blocked.',
+      })
+      .expect(409);
+
+    const secondSubmitResponse = await request(app)
+      .post(`${API_PREFIX}/ai/prediction-validation-tasks/${reviewedTaskId}/submissions`)
+      .set(authHeader(secondContributor.token))
+      .send({
+        result: 'wrong_class',
+        corrected_class: 'citrus fruit trees',
+        note: 'Second project contributor confirmed the same correction.',
+      })
+      .expect(201);
+
     const reviewResponse = await request(app)
       .post(`${API_PREFIX}/ai/prediction-validation-tasks/${reviewedTaskId}/review`)
       .set(authHeader(admin.token))
       .send({
         decision: 'accepted',
         reason: 'Contributor evidence is clear.',
+        submission_id: secondSubmitResponse.body.data.submission_id,
       })
       .expect(200);
     expect(reviewResponse.body.data.task).toEqual(
@@ -2289,7 +2449,9 @@ describe('AI backend endpoints phase B', () => {
     );
     expect(pendingFeatureStatus.rows[0].status).toBe('pending_review');
     expect(afterSpatialFeatureCount.rows[0].count).toBe(beforeSpatialFeatureCount.rows[0].count);
-    expect(afterPredictionFeatureCount.rows[0].count).toBe(beforePredictionFeatureCount.rows[0].count);
+    expect(afterPredictionFeatureCount.rows[0].count).toBe(
+      beforePredictionFeatureCount.rows[0].count,
+    );
   });
 
   test('AI layer preview denies non-protected users and unsafe artifact paths', async () => {

@@ -225,17 +225,56 @@ class AiNationalScopeEligibility {
     required this.eligible,
     required this.unmetRequirements,
     required this.warnings,
+    this.requirements = const <AiNationalScopeRequirement>[],
   });
 
   final bool eligible;
   final List<String> unmetRequirements;
   final List<String> warnings;
+  final List<AiNationalScopeRequirement> requirements;
 
   factory AiNationalScopeEligibility.fromMap(Map<String, dynamic> map) {
     return AiNationalScopeEligibility(
       eligible: _toBool(map['eligible']) ?? false,
+      requirements: _toList(map['requirements'])
+          .whereType<Map>()
+          .map(
+            (row) => AiNationalScopeRequirement.fromMap(
+              Map<String, dynamic>.from(row),
+            ),
+          )
+          .toList(growable: false),
       unmetRequirements: _toStringList(map['unmet_requirements']),
       warnings: _toStringList(map['warnings']),
+    );
+  }
+}
+
+class AiNationalScopeRequirement {
+  const AiNationalScopeRequirement({
+    required this.key,
+    required this.label,
+    required this.passed,
+    this.currentValue,
+    this.requiredValue,
+    required this.message,
+  });
+
+  final String key;
+  final String label;
+  final bool passed;
+  final Object? currentValue;
+  final Object? requiredValue;
+  final String message;
+
+  factory AiNationalScopeRequirement.fromMap(Map<String, dynamic> map) {
+    return AiNationalScopeRequirement(
+      key: _toStringOrNull(map['key']) ?? '',
+      label: _toStringOrNull(map['label']) ?? '',
+      passed: _toBool(map['passed']) ?? false,
+      currentValue: map['current_value'],
+      requiredValue: map['required_value'],
+      message: _toStringOrNull(map['message']) ?? '',
     );
   }
 }
@@ -755,6 +794,355 @@ class AiRunReviewResult {
   }
 }
 
+const List<String> aiPredictionValidationTaskStatuses = <String>[
+  'open',
+  'assigned',
+  'in_progress',
+  'submitted',
+  'accepted',
+  'rejected',
+  'cancelled',
+];
+
+const List<String> aiPredictionValidationResults = <String>[
+  'correct',
+  'wrong_class',
+  'not_target_class',
+  'unsure',
+];
+
+class AiPredictionValidationUser {
+  const AiPredictionValidationUser({required this.id, this.fullName});
+
+  final String id;
+  final String? fullName;
+
+  String get displayName => fullName?.trim().isNotEmpty == true
+      ? fullName!.trim()
+      : id.length <= 8
+      ? id
+      : id.substring(0, 8);
+
+  factory AiPredictionValidationUser.fromMap(Map<String, dynamic> map) {
+    return AiPredictionValidationUser(
+      id: _toStringOrNull(map['id']) ?? '',
+      fullName: _toStringOrNull(map['full_name']),
+    );
+  }
+}
+
+class AiPredictionValidationLayerRef {
+  const AiPredictionValidationLayerRef({
+    required this.id,
+    required this.layerType,
+    required this.name,
+  });
+
+  final String id;
+  final String layerType;
+  final String name;
+
+  factory AiPredictionValidationLayerRef.fromMap(Map<String, dynamic> map) {
+    return AiPredictionValidationLayerRef(
+      id: _toStringOrNull(map['id']) ?? '',
+      layerType: _toStringOrNull(map['layer_type']) ?? 'classification',
+      name: _toStringOrNull(map['name']) ?? 'AI prediction layer',
+    );
+  }
+}
+
+class AiPredictionValidationPrediction {
+  const AiPredictionValidationPrediction({
+    required this.id,
+    this.artifactFeatureId,
+    required this.geometry,
+    this.geometryType,
+    this.predictedClass,
+    this.confidence,
+    this.uncertaintyScore,
+    this.modelName,
+    required this.source,
+    required this.status,
+    required this.metadata,
+    this.layer,
+    required this.notOfficialFieldData,
+  });
+
+  final String id;
+  final String? artifactFeatureId;
+  final Map<String, dynamic> geometry;
+  final String? geometryType;
+  final String? predictedClass;
+  final double? confidence;
+  final double? uncertaintyScore;
+  final String? modelName;
+  final String source;
+  final String status;
+  final Map<String, dynamic> metadata;
+  final AiPredictionValidationLayerRef? layer;
+  final bool notOfficialFieldData;
+
+  factory AiPredictionValidationPrediction.fromMap(Map<String, dynamic> map) {
+    final layerMap = _toMapOrNull(map['layer']);
+    return AiPredictionValidationPrediction(
+      id: _toStringOrNull(map['id']) ?? '',
+      artifactFeatureId: _toStringOrNull(map['artifact_feature_id']),
+      geometry: _toMap(map['geometry']),
+      geometryType: _toStringOrNull(map['geometry_type']),
+      predictedClass: _toStringOrNull(map['predicted_class']),
+      confidence: _toDouble(map['confidence']),
+      uncertaintyScore: _toDouble(map['uncertainty_score']),
+      modelName: _toStringOrNull(map['model_name']),
+      source: _toStringOrNull(map['source']) ?? 'ai_prediction',
+      status: _toStringOrNull(map['status']) ?? 'draft',
+      metadata: _toMap(map['metadata']),
+      layer: layerMap == null
+          ? null
+          : AiPredictionValidationLayerRef.fromMap(layerMap),
+      notOfficialFieldData: _toBool(map['not_official_field_data']) ?? true,
+    );
+  }
+}
+
+class AiPredictionValidationSubmission {
+  const AiPredictionValidationSubmission({
+    required this.id,
+    required this.result,
+    this.correctedClass,
+    this.note,
+    required this.evidence,
+    this.linkedFeatureId,
+    required this.status,
+    this.submittedBy,
+    this.createdAt,
+    this.reviewedAt,
+    this.reviewedBy,
+  });
+
+  final String id;
+  final String result;
+  final String? correctedClass;
+  final String? note;
+  final Map<String, dynamic> evidence;
+  final String? linkedFeatureId;
+  final String status;
+  final String? submittedBy;
+  final DateTime? createdAt;
+  final DateTime? reviewedAt;
+  final String? reviewedBy;
+
+  factory AiPredictionValidationSubmission.fromMap(Map<String, dynamic> map) {
+    return AiPredictionValidationSubmission(
+      id: _toStringOrNull(map['id']) ?? '',
+      result: _toStringOrNull(map['result']) ?? 'unsure',
+      correctedClass: _toStringOrNull(map['corrected_class']),
+      note: _toStringOrNull(map['note']),
+      evidence: _toMap(map['evidence']),
+      linkedFeatureId: _toStringOrNull(map['linked_feature_id']),
+      status: _toStringOrNull(map['status']) ?? 'submitted',
+      submittedBy: _toStringOrNull(map['submitted_by']),
+      createdAt: _toDateTime(map['created_at']),
+      reviewedAt: _toDateTime(map['reviewed_at']),
+      reviewedBy: _toStringOrNull(map['reviewed_by']),
+    );
+  }
+}
+
+class AiPredictionValidationTask {
+  const AiPredictionValidationTask({
+    required this.id,
+    required this.projectId,
+    required this.aiRunId,
+    required this.aiPredictionFeatureId,
+    required this.status,
+    this.assignedTo,
+    this.assignedUser,
+    this.createdBy,
+    this.createdUser,
+    this.reviewedBy,
+    this.reviewedUser,
+    this.reviewDecision,
+    this.reviewReason,
+    required this.priority,
+    this.dueAt,
+    required this.metadata,
+    required this.prediction,
+    this.latestSubmission,
+    required this.notOfficialFieldData,
+    required this.noSpatialFeatureWrites,
+    this.createdAt,
+    this.updatedAt,
+  });
+
+  final String id;
+  final String projectId;
+  final String aiRunId;
+  final String aiPredictionFeatureId;
+  final String status;
+  final String? assignedTo;
+  final AiPredictionValidationUser? assignedUser;
+  final String? createdBy;
+  final AiPredictionValidationUser? createdUser;
+  final String? reviewedBy;
+  final AiPredictionValidationUser? reviewedUser;
+  final String? reviewDecision;
+  final String? reviewReason;
+  final int priority;
+  final DateTime? dueAt;
+  final Map<String, dynamic> metadata;
+  final AiPredictionValidationPrediction prediction;
+  final AiPredictionValidationSubmission? latestSubmission;
+  final bool notOfficialFieldData;
+  final bool noSpatialFeatureWrites;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+
+  bool get canSubmit =>
+      status == 'open' ||
+      status == 'assigned' ||
+      status == 'in_progress' ||
+      status == 'submitted';
+  bool get canReview => status == 'submitted' && latestSubmission != null;
+  bool get hasSubmission => latestSubmission != null;
+
+  factory AiPredictionValidationTask.fromMap(Map<String, dynamic> map) {
+    AiPredictionValidationUser? userFrom(Object? value) {
+      final userMap = _toMapOrNull(value);
+      if (userMap == null) {
+        return null;
+      }
+      final user = AiPredictionValidationUser.fromMap(userMap);
+      return user.id.isEmpty ? null : user;
+    }
+
+    final submissionMap = _toMapOrNull(map['latest_submission']);
+    return AiPredictionValidationTask(
+      id: _toStringOrNull(map['id']) ?? '',
+      projectId: _toStringOrNull(map['project_id']) ?? '',
+      aiRunId: _toStringOrNull(map['ai_run_id']) ?? '',
+      aiPredictionFeatureId:
+          _toStringOrNull(map['ai_prediction_feature_id']) ?? '',
+      status: _toStringOrNull(map['status']) ?? 'open',
+      assignedTo: _toStringOrNull(map['assigned_to']),
+      assignedUser: userFrom(map['assigned_user']),
+      createdBy: _toStringOrNull(map['created_by']),
+      createdUser: userFrom(map['created_user']),
+      reviewedBy: _toStringOrNull(map['reviewed_by']),
+      reviewedUser: userFrom(map['reviewed_user']),
+      reviewDecision: _toStringOrNull(map['review_decision']),
+      reviewReason: _toStringOrNull(map['review_reason']),
+      priority: _toInt(map['priority']) ?? 0,
+      dueAt: _toDateTime(map['due_at']),
+      metadata: _toMap(map['metadata']),
+      prediction: AiPredictionValidationPrediction.fromMap(
+        _toMap(map['prediction']),
+      ),
+      latestSubmission: submissionMap == null
+          ? null
+          : AiPredictionValidationSubmission.fromMap(submissionMap),
+      notOfficialFieldData: _toBool(map['not_official_field_data']) ?? true,
+      noSpatialFeatureWrites: _toBool(map['no_spatial_feature_writes']) ?? true,
+      createdAt: _toDateTime(map['created_at']),
+      updatedAt: _toDateTime(map['updated_at']),
+    );
+  }
+}
+
+class AiPredictionValidationTaskList {
+  const AiPredictionValidationTaskList({
+    required this.tasks,
+    required this.statusCounts,
+    required this.page,
+    required this.limit,
+    required this.total,
+    required this.hasMore,
+    required this.notOfficialFieldData,
+    required this.noSpatialFeatureWrites,
+  });
+
+  final List<AiPredictionValidationTask> tasks;
+  final Map<String, int> statusCounts;
+  final int page;
+  final int limit;
+  final int total;
+  final bool hasMore;
+  final bool notOfficialFieldData;
+  final bool noSpatialFeatureWrites;
+
+  factory AiPredictionValidationTaskList.fromResponse(
+    Map<String, dynamic> payload, {
+    int fallbackPage = 1,
+    int fallbackLimit = 50,
+  }) {
+    final data = _toMap(payload['data']);
+    final pagination = _toMap(payload['pagination']);
+    final tasks = _toList(data['tasks'])
+        .whereType<Map>()
+        .map(
+          (row) => AiPredictionValidationTask.fromMap(
+            Map<String, dynamic>.from(row),
+          ),
+        )
+        .toList(growable: false);
+    final page = _toInt(pagination['page']) ?? fallbackPage;
+    final limit = _toInt(pagination['limit']) ?? fallbackLimit;
+    final total = _toInt(pagination['total']) ?? tasks.length;
+    return AiPredictionValidationTaskList(
+      tasks: tasks,
+      statusCounts: _toIntMap(data['status_counts']),
+      page: page,
+      limit: limit,
+      total: total,
+      hasMore:
+          _toBool(pagination['has_more']) ??
+          (page * limit < total && tasks.isNotEmpty),
+      notOfficialFieldData: _toBool(data['not_official_field_data']) ?? true,
+      noSpatialFeatureWrites:
+          _toBool(data['no_spatial_feature_writes']) ?? true,
+    );
+  }
+}
+
+class AiPredictionValidationGenerateResult {
+  const AiPredictionValidationGenerateResult({
+    required this.createdCount,
+    required this.candidateCount,
+    required this.existingActiveCount,
+    this.threshold,
+    this.thresholdSource,
+    this.candidateLayerType,
+    this.criterion,
+    required this.taskIds,
+    required this.noSpatialFeatureWrites,
+  });
+
+  final int createdCount;
+  final int candidateCount;
+  final int existingActiveCount;
+  final double? threshold;
+  final String? thresholdSource;
+  final String? candidateLayerType;
+  final String? criterion;
+  final List<String> taskIds;
+  final bool noSpatialFeatureWrites;
+
+  factory AiPredictionValidationGenerateResult.fromMap(
+    Map<String, dynamic> map,
+  ) {
+    return AiPredictionValidationGenerateResult(
+      createdCount: _toInt(map['created_count']) ?? 0,
+      candidateCount: _toInt(map['candidate_count']) ?? 0,
+      existingActiveCount: _toInt(map['existing_active_count']) ?? 0,
+      threshold: _toDouble(map['threshold']),
+      thresholdSource: _toStringOrNull(map['threshold_source']),
+      candidateLayerType: _toStringOrNull(map['candidate_layer_type']),
+      criterion: _toStringOrNull(map['criterion']),
+      taskIds: _toStringList(map['task_ids']),
+      noSpatialFeatureWrites: _toBool(map['no_spatial_feature_writes']) ?? true,
+    );
+  }
+}
+
 class AiReadinessQuery {
   const AiReadinessQuery({
     required this.projectId,
@@ -809,6 +1197,39 @@ class AiRunsQuery {
 }
 
 typedef AiRunsPage = PaginatedResult<AiRun>;
+
+class AiPredictionValidationTasksQuery {
+  const AiPredictionValidationTasksQuery({
+    this.projectId,
+    this.status,
+    this.assignedTo,
+    this.aiRunId,
+    this.page = 1,
+    this.limit = 50,
+  });
+
+  final String? projectId;
+  final String? status;
+  final String? assignedTo;
+  final String? aiRunId;
+  final int page;
+  final int limit;
+
+  @override
+  bool operator ==(Object other) {
+    return other is AiPredictionValidationTasksQuery &&
+        other.projectId == projectId &&
+        other.status == status &&
+        other.assignedTo == assignedTo &&
+        other.aiRunId == aiRunId &&
+        other.page == page &&
+        other.limit == limit;
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(projectId, status, assignedTo, aiRunId, page, limit);
+}
 
 String? _toStringOrNull(dynamic value) {
   if (value == null) {

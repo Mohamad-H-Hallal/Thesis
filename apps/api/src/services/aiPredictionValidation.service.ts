@@ -74,6 +74,29 @@ const ALL_TASK_STATUSES = [
 const isProtectedSuperAdminUser = (user: Express.UserContext | undefined): boolean =>
   user?.role === 'admin' && isProtectedSuperAdminEmail(user.email);
 
+const contributorHasApprovedProjectAccess = async ({
+  projectId,
+  userId,
+  client,
+}: {
+  projectId: string;
+  userId: string;
+  client?: PoolClient;
+}): Promise<boolean> => {
+  const executor = client ?? { query };
+  const result = await executor.query(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM project_assignment
+       WHERE project_id = $1
+         AND user_id = $2
+         AND status = 'approved'
+     ) AS has_project_assignment`,
+    [projectId, userId],
+  );
+  return result.rows[0]?.has_project_assignment === true;
+};
+
 const normalizeOptionalString = (value: unknown): string | null => {
   if (typeof value !== 'string') {
     return null;
@@ -274,7 +297,9 @@ const pushTaskFilters = ({
 }): void => {
   const status = normalizeOptionalString(filters.status);
   if (status) {
-    conditions.push(`${tableAlias}.status = $${params.length + 1}::ai_prediction_validation_task_status`);
+    conditions.push(
+      `${tableAlias}.status = $${params.length + 1}::ai_prediction_validation_task_status`,
+    );
     params.push(status);
   }
   const assignedTo = normalizeOptionalString(filters.assignedTo);
@@ -696,12 +721,30 @@ const listAssignedPredictionValidationTasks = async (
   filters: TaskFilterOptions,
 ) => {
   if (user.role !== 'contributor') {
-    throw new AppError('Only contributors can access assigned AI validation tasks.', 403);
+    throw new AppError('Only project contributors can access AI validation tasks.', 403);
   }
 
   const { page, limit, offset } = parsePageLimit(filters);
   const params: unknown[] = [user.id];
-  const conditions = ['t.assigned_to = $1'];
+  const conditions = [
+    `EXISTS (
+       SELECT 1
+       FROM project_assignment pa
+       WHERE pa.project_id = t.project_id
+         AND pa.user_id = $1
+         AND pa.status = 'approved'
+     )`,
+    `(
+       (t.assigned_to IS NULL AND t.status IN ('open', 'submitted'))
+       OR t.assigned_to = $1
+       OR EXISTS (
+         SELECT 1
+         FROM ai_prediction_validation_submission own_submission
+         WHERE own_submission.validation_task_id = t.id
+           AND own_submission.submitted_by = $1
+       )
+     )`,
+  ];
   pushTaskFilters({
     params,
     conditions,
@@ -723,6 +766,30 @@ const listAssignedPredictionValidationTasks = async (
      WHERE ${whereSql}`,
     params,
   );
+  const statusResult = await query(
+    `SELECT t.status, COUNT(*)::int AS count
+     FROM ai_prediction_validation_task t
+     WHERE EXISTS (
+       SELECT 1
+       FROM project_assignment pa
+       WHERE pa.project_id = t.project_id
+         AND pa.user_id = $1
+         AND pa.status = 'approved'
+     )
+       AND (
+         (t.assigned_to IS NULL AND t.status IN ('open', 'submitted'))
+         OR t.assigned_to = $1
+         OR EXISTS (
+           SELECT 1
+           FROM ai_prediction_validation_submission own_submission
+           WHERE own_submission.validation_task_id = t.id
+             AND own_submission.submitted_by = $1
+         )
+       )
+     GROUP BY t.status
+     ORDER BY t.status ASC`,
+    [user.id],
+  );
   const total = Number(countResult.rows[0]?.total ?? 0);
 
   return {
@@ -734,19 +801,39 @@ const listAssignedPredictionValidationTasks = async (
       pages: Math.max(1, Math.ceil(total / limit)),
       has_more: offset + result.rows.length < total,
     },
+    status_counts: Object.fromEntries(
+      statusResult.rows.map((row) => [row.status, Number(row.count ?? 0)]),
+    ),
   };
 };
 
-const getPredictionValidationTaskForUser = async (
-  taskId: string,
-  user: Express.UserContext,
-) => {
+const getPredictionValidationTaskForUser = async (taskId: string, user: Express.UserContext) => {
   const task = await getTaskById(taskId);
-  if (isProtectedSuperAdminUser(user)) {
+  if (user.role === 'admin' || isProtectedSuperAdminUser(user)) {
     return task;
   }
-  if (user.role === 'contributor' && task.assigned_to === user.id) {
-    return task;
+  if (user.role === 'contributor') {
+    const hasProjectAccess = await contributorHasApprovedProjectAccess({
+      projectId: task.project_id,
+      userId: user.id,
+    });
+    if (!hasProjectAccess) {
+      throw new AppError('You do not have access to this AI validation task.', 403);
+    }
+    if (!task.assigned_to || task.assigned_to === user.id) {
+      return task;
+    }
+    const ownSubmission = await query(
+      `SELECT 1
+       FROM ai_prediction_validation_submission
+       WHERE validation_task_id = $1
+         AND submitted_by = $2
+       LIMIT 1`,
+      [taskId, user.id],
+    );
+    if (ownSubmission.rows.length > 0) {
+      return task;
+    }
   }
   throw new AppError('You do not have access to this AI validation task.', 403);
 };
@@ -841,7 +928,10 @@ const updatePredictionValidationTaskStatus = async ({
     throw new AppError('Submit contributor evidence to move a task to submitted.', 400);
   }
   if (status === 'accepted' || status === 'rejected') {
-    throw new AppError('Use the AI validation review endpoint for accepted or rejected tasks.', 400);
+    throw new AppError(
+      'Use the AI validation review endpoint for accepted or rejected tasks.',
+      400,
+    );
   }
 
   return transaction(async (client: PoolClient) => {
@@ -1030,11 +1120,31 @@ const createPredictionValidationSubmission = async (input: SubmitValidationInput
       throw new AppError('AI prediction validation task not found', 404);
     }
     const task = taskResult.rows[0];
-    if (task.assigned_to !== input.submittedBy) {
-      throw new AppError('You can only submit assigned AI validation tasks.', 403);
+    const hasProjectAccess = await contributorHasApprovedProjectAccess({
+      projectId: task.project_id,
+      userId: input.submittedBy,
+      client,
+    });
+    if (!hasProjectAccess) {
+      throw new AppError('You can only submit AI validation tasks for assigned projects.', 403);
     }
-    if (!['assigned', 'in_progress'].includes(task.status)) {
-      throw new AppError('Only assigned or in-progress AI validation tasks can be submitted.', 409);
+    if (task.assigned_to && task.assigned_to !== input.submittedBy) {
+      throw new AppError('This AI validation task is assigned to another contributor.', 403);
+    }
+    if (!['open', 'assigned', 'in_progress', 'submitted'].includes(task.status)) {
+      throw new AppError('This AI validation task is no longer accepting submissions.', 409);
+    }
+    const duplicateSubmission = await client.query(
+      `SELECT id
+       FROM ai_prediction_validation_submission
+       WHERE validation_task_id = $1
+         AND submitted_by = $2
+         AND status = 'submitted'
+       LIMIT 1`,
+      [input.taskId, input.submittedBy],
+    );
+    if (duplicateSubmission.rows.length > 0) {
+      throw new AppError('You already submitted active evidence for this AI validation task.', 409);
     }
 
     if (correctedClass) {
@@ -1125,10 +1235,7 @@ const reviewPredictionValidationTask = async (input: ReviewValidationInput) => {
     }
 
     const submissionParams: unknown[] = [input.taskId];
-    const submissionConditions = [
-      'validation_task_id = $1',
-      "status = 'submitted'",
-    ];
+    const submissionConditions = ['validation_task_id = $1', "status = 'submitted'"];
     const submissionId = normalizeOptionalString(input.submissionId);
     if (submissionId) {
       submissionParams.push(submissionId);

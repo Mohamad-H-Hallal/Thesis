@@ -55,7 +55,7 @@ class ProjectAiPanel extends ConsumerWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Configure AI settings and prepared runs.',
+                      'Configure AI settings, regional runs, and validation.',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
@@ -99,7 +99,7 @@ class ProjectAiPanel extends ConsumerWidget {
           const _InlineNotice(
             icon: Icons.info_outline,
             text:
-                'Worker execution is controlled from backend commands; this panel does not start AI.',
+                'Project AI can queue regional runs; backend worker processing must be running to finish them.',
           ),
           const SizedBox(height: AppSpacing.md),
           FilledButton.icon(

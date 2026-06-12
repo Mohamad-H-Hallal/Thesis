@@ -27,6 +27,8 @@ import '../../../projects/domain/project.dart';
 import '../../domain/ai_models.dart';
 import '../ai_permissions.dart';
 import '../ai_providers.dart';
+import '../widgets/ai_validation_widgets.dart';
+import 'project_ai_validation_section.dart';
 
 class ProjectAiScreen extends ConsumerStatefulWidget {
   const ProjectAiScreen({
@@ -99,28 +101,45 @@ class _ProjectAiScreenState extends ConsumerState<ProjectAiScreen> {
                     'AI uses approved project data. Regional worker results appear here after review.',
                   ),
                   const SizedBox(height: AppSpacing.md),
-                  SegmentedButton<String>(
-                    showSelectedIcon: false,
-                    segments: const [
-                      ButtonSegment(
-                        value: 'readiness',
-                        icon: Icon(Icons.fact_check_outlined),
-                        label: Text('Ready', maxLines: 1),
-                      ),
-                      ButtonSegment(
-                        value: 'settings',
-                        icon: Icon(Icons.tune_outlined),
-                        label: Text('Settings', maxLines: 1),
-                      ),
-                      ButtonSegment(
-                        value: 'runs',
-                        icon: Icon(Icons.manage_history_outlined),
-                        label: Text('Runs', maxLines: 1),
-                      ),
-                    ],
-                    selected: {_section},
-                    onSelectionChanged: (selection) {
-                      setState(() => _section = selection.first);
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      return SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            minWidth: constraints.maxWidth,
+                          ),
+                          child: SegmentedButton<String>(
+                            showSelectedIcon: false,
+                            segments: const [
+                              ButtonSegment(
+                                value: 'readiness',
+                                icon: Icon(Icons.fact_check_outlined),
+                                label: Text('Ready', maxLines: 1),
+                              ),
+                              ButtonSegment(
+                                value: 'settings',
+                                icon: Icon(Icons.tune_outlined),
+                                label: Text('Settings', maxLines: 1),
+                              ),
+                              ButtonSegment(
+                                value: 'runs',
+                                icon: Icon(Icons.manage_history_outlined),
+                                label: Text('Runs', maxLines: 1),
+                              ),
+                              ButtonSegment(
+                                value: 'validation',
+                                icon: Icon(Icons.rule_folder_outlined),
+                                label: Text('Validate', maxLines: 1),
+                              ),
+                            ],
+                            selected: {_section},
+                            onSelectionChanged: (selection) {
+                              setState(() => _section = selection.first);
+                            },
+                          ),
+                        ),
+                      );
                     },
                   ),
                 ],
@@ -131,8 +150,10 @@ class _ProjectAiScreenState extends ConsumerState<ProjectAiScreen> {
               ProjectAiReadinessSection(project: project)
             else if (_section == 'settings')
               ProjectAiSettingsSection(project: project)
-            else
+            else if (_section == 'runs')
               ProjectAiRunsSection(project: project),
+            if (_section == 'validation')
+              ProjectAiValidationSection(project: project),
           ],
         );
       },
@@ -647,6 +668,8 @@ class _ProjectAiSettingsSectionState
                           value,
                           nationalScopeEligible: nationalScopeEligible,
                           nationalScopeEnabled: nationalScopeEnabled,
+                          nationalScopeEligibility:
+                              nationalReadiness?.nationalScopeEligibility,
                           settings: settings,
                         ),
                 ),
@@ -1073,6 +1096,7 @@ class _ProjectAiSettingsSectionState
     String? value, {
     required bool nationalScopeEligible,
     required bool nationalScopeEnabled,
+    required AiNationalScopeEligibility? nationalScopeEligibility,
     required AiProjectSettings settings,
   }) {
     if (value == null) {
@@ -1095,7 +1119,7 @@ class _ProjectAiSettingsSectionState
       if (nationalScopeEligible) {
         _showEnableNationalModeDialog(settings);
       } else {
-        _showNationalScopeLockedDialog();
+        _showNationalScopeLockedDialog(nationalScopeEligibility);
       }
       return;
     }
@@ -1105,40 +1129,32 @@ class _ProjectAiSettingsSectionState
     });
   }
 
-  Future<void> _showNationalScopeLockedDialog() async {
+  Future<void> _showNationalScopeLockedDialog(
+    AiNationalScopeEligibility? eligibility,
+  ) async {
+    final requirements =
+        eligibility?.requirements ?? const <AiNationalScopeRequirement>[];
+    final unmetRequirements =
+        eligibility?.unmetRequirements ?? const <String>[];
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('National Lebanon is locked'),
-        content: const SingleChildScrollView(
+        content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'National AI can be enabled only when the project has enough reliable training data across Lebanon and the AI pipeline can process a national prediction area.',
+              const Text(
+                'Backend readiness requirements must pass before National Lebanon can be enabled.',
               ),
-              SizedBox(height: AppSpacing.sm),
-              Text('1. National mode is enabled for this project.'),
-              Text('2. Lebanon boundary is configured for AI prediction.'),
-              Text(
-                '3. Approved training samples cover multiple Lebanese regions and environmental conditions.',
-              ),
-              Text(
-                '4. Every class has enough approved samples: minimum 50, recommended 100+.',
-              ),
-              Text(
-                '5. All samples used for training have valid and consistent labels.',
-              ),
-              Text(
-                '6. No class or region is dangerously underrepresented, or the warning is reviewed.',
-              ),
-              Text(
-                '7. The AI pipeline supports the selected satellite, dates, features, and national boundary.',
-              ),
-              Text(
-                '8. A validation/review plan exists before national results are published.',
-              ),
+              const SizedBox(height: AppSpacing.sm),
+              if (requirements.isNotEmpty)
+                for (final requirement in requirements)
+                  _NationalRequirementRow(requirement: requirement)
+              else
+                for (final requirement in unmetRequirements)
+                  _NoticeRow(icon: Icons.cancel_outlined, text: requirement),
             ],
           ),
         ),
@@ -1454,16 +1470,23 @@ class _ProjectAiRunsSectionState extends ConsumerState<ProjectAiRunsSection> {
                   final canStartRun =
                       !_startingRun &&
                       (settings.labelField?.trim().isNotEmpty ?? false);
-                  return FilledButton.tonalIcon(
-                    onPressed: canStartRun ? () => _startAiRun(settings) : null,
-                    icon: _startingRun
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.play_arrow_outlined),
-                    label: Text(_startingRun ? 'Starting...' : 'Start AI run'),
+                  return SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.tonalIcon(
+                      onPressed: canStartRun
+                          ? () => _startAiRun(settings)
+                          : null,
+                      icon: _startingRun
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.play_arrow_outlined),
+                      label: Text(
+                        _startingRun ? 'Starting...' : 'Start AI run',
+                      ),
+                    ),
                   );
                 },
               ),
@@ -1652,6 +1675,11 @@ class _AiRunDetailCard extends ConsumerWidget {
             _RunDetailSectionCard(
               title: 'Review and publishing',
               child: _ReviewSection(run: run, reviewsAsync: reviewsAsync),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            _RunDetailSectionCard(
+              title: 'Validation summary',
+              child: _RunValidationSummary(run: run),
             ),
             const SizedBox(height: AppSpacing.md),
             _RunDetailSectionCard(
@@ -1893,6 +1921,7 @@ class _ModelResultSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _KeyValueList(title: 'Model result', rows: rows),
+        _ModelArtifactAvailability(run: run),
         if (metrics.length > 1) ...[
           const SizedBox(height: AppSpacing.sm),
           _KeyValueList(
@@ -1908,6 +1937,86 @@ class _ModelResultSection extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+class _ModelArtifactAvailability extends StatelessWidget {
+  const _ModelArtifactAvailability({required this.run});
+
+  final AiRun run;
+
+  @override
+  Widget build(BuildContext context) {
+    final chips = <Widget>[
+      if (_firstOutputPath(run.metadata, 'confusion_matrix') != null)
+        const Chip(
+          avatar: Icon(Icons.grid_on_outlined, size: 18),
+          label: Text('Confusion matrix available'),
+        ),
+      if (_firstOutputPath(run.metadata, 'feature_importance') != null)
+        const Chip(
+          avatar: Icon(Icons.bar_chart_outlined, size: 18),
+          label: Text('Feature importance available'),
+        ),
+    ];
+    if (chips.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: AppSpacing.sm),
+      child: Wrap(
+        spacing: AppSpacing.xs,
+        runSpacing: AppSpacing.xs,
+        children: chips,
+      ),
+    );
+  }
+}
+
+class _RunValidationSummary extends ConsumerWidget {
+  const _RunValidationSummary({required this.run});
+
+  final AiRun run;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final query = AiPredictionValidationTasksQuery(
+      projectId: run.projectId,
+      aiRunId: run.id,
+      limit: 1,
+    );
+    final tasksAsync = ref.watch(projectAiValidationTasksProvider(query));
+
+    return tasksAsync.when(
+      loading: () => const LinearProgressIndicator(),
+      error: (error, _) => Text(
+        userFacingErrorMessage(
+          error,
+          fallback: 'Unable to load validation task summary.',
+        ),
+      ),
+      data: (tasks) {
+        if (tasks.total == 0) {
+          return const _NoticeRow(
+            icon: Icons.rule_folder_outlined,
+            text:
+                'No AI prediction validation tasks are linked to this run yet.',
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AiValidationStatusCounts(counts: tasks.statusCounts),
+            const SizedBox(height: AppSpacing.xs),
+            const _NoticeRow(
+              icon: Icons.info_outline,
+              text:
+                  'Accepted validation is training evidence only; it does not approve official field data.',
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -2239,7 +2348,7 @@ class _AiOutputLayerTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final summaryRows = _layerSummaryRows(layer, latestReview);
+    final summaryRows = _layerSummaryRows(layer, latestReview, run);
     final technicalRows = _layerTechnicalRows(layer);
     return Padding(
       padding: const EdgeInsets.only(top: AppSpacing.sm),
@@ -5061,11 +5170,21 @@ class _TechnicalDetailsSection extends StatelessWidget {
 List<MapEntry<String, String>> _layerSummaryRows(
   AiOutputLayer layer,
   AiReviewDecision? latestReview,
+  AiRun run,
 ) {
+  final modelName = _firstString([
+    run.selectedModel,
+    _metadataText(run.metadata, 'selected_model'),
+    _metadataText(run.metadata, 'final_model'),
+    _metadataText(run.metadata, 'model_name'),
+  ]);
   final rows = <MapEntry<String, String>>[
     MapEntry('Layer name', layer.name),
     MapEntry('Layer type', _friendlyLayerTypeLabel(layer.layerType)),
     MapEntry('Status', _friendlyLayerStatusTitle(layer.status)),
+    MapEntry('Run', _shortId(run.id)),
+    if (run.createdAt != null) MapEntry('Run date', _formatDate(run.createdAt)),
+    if (modelName != null) MapEntry('Model', _friendlyModelLabel(modelName)),
     MapEntry(
       layer.layerType == 'statistics' ? 'Usage' : 'Viewer visibility',
       _layerVisibilityText(layer),
@@ -5322,12 +5441,7 @@ List<MapEntry<String, String>> _runPredictionAreaRows(AiRun run) {
                 : 'Recorded for run',
           ),
         if (isNational || nationalEligibility.isNotEmpty)
-          MapEntry(
-            'National Lebanon',
-            nationalEligibility['eligible'] == true
-                ? 'Eligible'
-                : 'Locked / requirements unmet',
-          ),
+          MapEntry('National Lebanon', _nationalLebanonStatusForRun(run)),
       ]
       .map((row) => MapEntry(row.key, _safeText(row.value)))
       .toList(growable: false);
@@ -5432,7 +5546,7 @@ List<MapEntry<String, String>> _runExecutionSupportRows(AiRun run) {
             effective.map(_friendlyPendingPipelineSetting).join(', '),
           ),
         if (_mapValue(run.metadata['national_scope_eligibility']).isNotEmpty)
-          MapEntry('National Lebanon', 'Locked / requirements unmet'),
+          MapEntry('National Lebanon', _nationalLebanonStatusForRun(run)),
       ]
       .map((row) => MapEntry(row.key, _safeText(row.value)))
       .toList(growable: false);
@@ -5742,21 +5856,21 @@ String _friendlyReviewDecisionLabel(String decision) {
 String _friendlyLayerStatusLabel(String status) {
   switch (status) {
     case 'ready_for_review':
-      return 'ready for review';
+      return 'Ready for review';
     case 'approved':
-      return 'approved for future publication';
+      return 'Approved';
     case 'rejected':
-      return 'rejected';
+      return 'Rejected';
     case 'published':
-      return 'published';
+      return 'Published';
     case 'unpublished':
-      return 'unpublished';
+      return 'Draft';
     case 'draft':
-      return 'draft';
+      return 'Draft';
     case 'failed':
-      return 'failed';
+      return 'Failed';
     default:
-      return status.replaceAll('_', ' ');
+      return _titleCase(status.replaceAll('_', ' '));
   }
 }
 
@@ -5765,13 +5879,13 @@ String _friendlyLayerStatusTitle(String status) {
     case 'ready_for_review':
       return 'Ready for review';
     case 'approved':
-      return 'Approved for future publication';
+      return 'Approved';
     case 'rejected':
       return 'Rejected';
     case 'published':
       return 'Published';
     case 'unpublished':
-      return 'Not published';
+      return 'Draft';
     case 'draft':
       return 'Draft';
     case 'failed':
@@ -5806,12 +5920,25 @@ String _friendlyScopeLabel(String scope) {
       return 'Custom AI area';
     case 'national':
     case 'national_lebanon':
-      return 'National Lebanon - locked';
+      return 'National Lebanon';
     case '':
       return _notRecordedForRun;
     default:
       return _titleCase(scope.replaceAll('_', ' '));
   }
+}
+
+String _nationalLebanonStatusForRun(AiRun run) {
+  final eligibility = _mapValue(run.metadata['national_scope_eligibility']);
+  final eligible = eligibility['eligible'] == true;
+  final enabled = run.metadata['national_scope_enabled'] == true && eligible;
+  if (enabled) {
+    return 'Enabled';
+  }
+  if (eligible) {
+    return 'Ready';
+  }
+  return 'Locked / requirements unmet';
 }
 
 String _friendlySatelliteLabel(String? value) {
@@ -6178,6 +6305,14 @@ String _formatDuration(Duration duration) {
 String _formatDate(DateTime? date) =>
     date == null ? 'Unknown' : formatLebanonDate(date);
 
+String _shortId(String id) {
+  final trimmed = id.trim();
+  if (trimmed.length <= 8) {
+    return trimmed;
+  }
+  return trimmed.substring(0, 8);
+}
+
 String _formatMetric(double? value) =>
     value == null ? 'n/a' : value.toStringAsFixed(3);
 
@@ -6345,13 +6480,74 @@ class _NoticeRow extends StatelessWidget {
   }
 }
 
+class _NationalRequirementRow extends StatelessWidget {
+  const _NationalRequirementRow({required this.requirement});
+
+  final AiNationalScopeRequirement requirement;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final iconColor = requirement.passed
+        ? Colors.green.shade700
+        : colorScheme.error;
+    final current = _readableRequirementValue(requirement.currentValue);
+    final required = _readableRequirementValue(requirement.requiredValue);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            requirement.passed
+                ? Icons.check_circle_outline
+                : Icons.cancel_outlined,
+            size: 18,
+            color: iconColor,
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  requirement.label,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                if (requirement.message.trim().isNotEmpty)
+                  Text(requirement.message),
+                if (current != null || required != null)
+                  Text(
+                    [
+                      if (current != null) 'Current: $current',
+                      if (required != null) 'Required: $required',
+                    ].join(' | '),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String? _readableRequirementValue(Object? value) {
+  if (value == null) {
+    return null;
+  }
+  final text = value.toString().trim();
+  return text.isEmpty ? null : text;
+}
+
 extension on AiProjectSettings {
   String get updatedKey =>
       '${isEnabled ? 1 : 0}:$scopeType:$minSamplesPerClass:${modelPreferences.hashCode}';
 }
 
 String _normalizedSection(String value) {
-  if (value == 'settings' || value == 'runs') {
+  if (value == 'settings' || value == 'runs' || value == 'validation') {
     return value;
   }
   return 'readiness';

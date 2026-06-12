@@ -14,6 +14,7 @@ class ApiAiRepository implements AiRepository {
 
   String get _projectsBasePath => '${AppEnv.apiVersionPrefix}/projects';
   String get _aiBasePath => '${AppEnv.apiVersionPrefix}/ai';
+  String get _meBasePath => '${AppEnv.apiVersionPrefix}/me';
 
   @override
   Future<AiReadinessResult> fetchReadiness({
@@ -415,6 +416,260 @@ class ApiAiRepository implements AiRepository {
         fallback: 'Unable to unpublish this AI layer right now.',
       );
     }
+  }
+
+  @override
+  Future<AiPredictionValidationTaskList> fetchMyValidationTasks({
+    String? status,
+    String? aiRunId,
+    int page = 1,
+    int limit = 50,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_meBasePath/ai-validation-tasks',
+        queryParameters: _validationTaskQueryParameters(
+          status: status,
+          aiRunId: aiRunId,
+          page: page,
+          limit: limit,
+        ),
+      );
+      return AiPredictionValidationTaskList.fromResponse(
+        response.data ?? const <String, dynamic>{},
+        fallbackPage: page,
+        fallbackLimit: limit,
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load AI validation tasks right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiPredictionValidationTaskList> fetchProjectValidationTasks({
+    required String projectId,
+    String? status,
+    String? assignedTo,
+    String? aiRunId,
+    int page = 1,
+    int limit = 50,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/prediction-validation-tasks',
+        queryParameters: _validationTaskQueryParameters(
+          status: status,
+          assignedTo: assignedTo,
+          aiRunId: aiRunId,
+          page: page,
+          limit: limit,
+        ),
+      );
+      return AiPredictionValidationTaskList.fromResponse(
+        response.data ?? const <String, dynamic>{},
+        fallbackPage: page,
+        fallbackLimit: limit,
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load AI validation tasks right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiPredictionValidationGenerateResult> generateValidationTasks({
+    required String projectId,
+    String? aiRunId,
+    String? aiOutputLayerId,
+    String? aiPredictionFeatureId,
+    double? confidenceThreshold,
+    int? limit,
+    int? priority,
+  }) async {
+    final data = <String, dynamic>{
+      if (_nonEmpty(aiRunId) != null) 'ai_run_id': _nonEmpty(aiRunId),
+      if (_nonEmpty(aiOutputLayerId) != null)
+        'ai_output_layer_id': _nonEmpty(aiOutputLayerId),
+      if (_nonEmpty(aiPredictionFeatureId) != null)
+        'ai_prediction_feature_id': _nonEmpty(aiPredictionFeatureId),
+    };
+    if (confidenceThreshold != null) {
+      data['confidence_threshold'] = confidenceThreshold;
+    }
+    if (limit != null) {
+      data['limit'] = limit;
+    }
+    if (priority != null) {
+      data['priority'] = priority;
+    }
+
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/prediction-validation-tasks/generate',
+        data: data,
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiPredictionValidationGenerateResult.fromMap(
+        _toMap(payload['data']),
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to generate AI validation tasks right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiPredictionValidationTask> fetchValidationTask({
+    required String taskId,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_aiBasePath/prediction-validation-tasks/$taskId',
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiPredictionValidationTask.fromMap(_toMap(payload['data']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load this AI validation task right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiPredictionValidationTask> assignValidationTask({
+    required String taskId,
+    required String assignedTo,
+  }) async {
+    try {
+      final response = await _apiClient.dio.patch<Map<String, dynamic>>(
+        '$_aiBasePath/prediction-validation-tasks/$taskId/assign',
+        data: <String, dynamic>{'assigned_to': assignedTo.trim()},
+      );
+      return _taskFromActionPayload(response.data);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to assign this AI validation task right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiPredictionValidationTask> updateValidationTaskStatus({
+    required String taskId,
+    required String status,
+  }) async {
+    try {
+      final response = await _apiClient.dio.patch<Map<String, dynamic>>(
+        '$_aiBasePath/prediction-validation-tasks/$taskId/status',
+        data: <String, dynamic>{'status': status.trim()},
+      );
+      return _taskFromActionPayload(response.data);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to update this AI validation task right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiPredictionValidationTask> submitValidationTask({
+    required String taskId,
+    required String result,
+    String? correctedClass,
+    required String note,
+    Map<String, dynamic> evidence = const <String, dynamic>{},
+    String? linkedFeatureId,
+  }) async {
+    final data = <String, dynamic>{
+      'result': result,
+      'note': note.trim(),
+      'evidence': evidence,
+      if (_nonEmpty(correctedClass) != null)
+        'corrected_class': _nonEmpty(correctedClass),
+      if (_nonEmpty(linkedFeatureId) != null)
+        'linked_feature_id': _nonEmpty(linkedFeatureId),
+    };
+
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_aiBasePath/prediction-validation-tasks/$taskId/submissions',
+        data: data,
+      );
+      return _taskFromNestedTaskPayload(response.data);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to submit this AI validation task right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiPredictionValidationTask> reviewValidationTask({
+    required String taskId,
+    required String decision,
+    String? reason,
+    String? submissionId,
+  }) async {
+    final data = <String, dynamic>{
+      'decision': decision,
+      if (_nonEmpty(reason) != null) 'reason': _nonEmpty(reason),
+      if (_nonEmpty(submissionId) != null)
+        'submission_id': _nonEmpty(submissionId),
+    };
+
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_aiBasePath/prediction-validation-tasks/$taskId/review',
+        data: data,
+      );
+      return _taskFromNestedTaskPayload(response.data);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to review this AI validation task right now.',
+      );
+    }
+  }
+
+  Map<String, dynamic> _validationTaskQueryParameters({
+    String? status,
+    String? assignedTo,
+    String? aiRunId,
+    int page = 1,
+    int limit = 50,
+  }) {
+    return <String, dynamic>{
+      'page': page,
+      'limit': limit,
+      if (_nonEmpty(status) != null) 'status': _nonEmpty(status),
+      if (_nonEmpty(assignedTo) != null) 'assigned_to': _nonEmpty(assignedTo),
+      if (_nonEmpty(aiRunId) != null) 'ai_run_id': _nonEmpty(aiRunId),
+    };
+  }
+
+  AiPredictionValidationTask _taskFromActionPayload(
+    Map<String, dynamic>? payload,
+  ) {
+    final data = _toMap((payload ?? const <String, dynamic>{})['data']);
+    return AiPredictionValidationTask.fromMap(data);
+  }
+
+  AiPredictionValidationTask _taskFromNestedTaskPayload(
+    Map<String, dynamic>? payload,
+  ) {
+    final data = _toMap((payload ?? const <String, dynamic>{})['data']);
+    return AiPredictionValidationTask.fromMap(_toMap(data['task']));
   }
 
   List<Map<String, dynamic>> _rows(Map<String, dynamic>? payload) {

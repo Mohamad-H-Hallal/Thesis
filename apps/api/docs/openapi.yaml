@@ -165,8 +165,8 @@ paths:
       tags: [AI]
       security:
         - bearerAuth: []
-      summary: List assigned AI validation tasks for the current contributor
-      description: Contributor-only endpoint. Returns only tasks assigned to the authenticated contributor. Viewers and unassigned users are denied. These tasks validate AI predictions and are not official field data.
+      summary: List AI validation tasks for the current contributor
+      description: Contributor-only endpoint. Returns open project validation tasks, tasks assigned to the authenticated contributor, and the contributor's submitted/reviewed validation evidence. Viewers and unassigned users are denied. These tasks validate AI predictions and are not official field data.
       parameters:
         - in: query
           name: status
@@ -192,7 +192,7 @@ paths:
             default: 50
       responses:
         '200':
-          description: Assigned AI validation tasks
+          description: Available and submitted AI validation tasks for the contributor
           content:
             application/json:
               schema:
@@ -456,7 +456,7 @@ paths:
       security:
         - bearerAuth: []
       summary: List AI prediction validation tasks for a project
-      description: Protected super-admin only. Lists validation tasks backed by ai_prediction_feature rows. These tasks are not official field data and never approve or insert spatial_feature rows.
+      description: Admin-only endpoint. Lists validation tasks backed by ai_prediction_feature rows. Assignment is optional; open tasks are available to project contributors. These tasks are not official field data and never approve or insert spatial_feature rows.
       parameters:
         - $ref: '#/components/parameters/projectId'
         - in: query
@@ -505,7 +505,7 @@ paths:
       security:
         - bearerAuth: []
       summary: Generate AI prediction validation tasks
-      description: Protected super-admin only. Creates open validation tasks from ai_prediction_feature rows, preferring uncertainty-layer predictions when available and otherwise low-confidence classification predictions. Generation is idempotent for active tasks and does not write to spatial_feature.
+      description: Admin-only endpoint. Creates open validation tasks from ai_prediction_feature rows, preferring uncertainty-layer predictions when available and otherwise low-confidence classification predictions. Generation is idempotent for active tasks and does not write to spatial_feature.
       parameters:
         - $ref: '#/components/parameters/projectId'
       requestBody:
@@ -2398,6 +2398,48 @@ components:
                   type: array
                   items:
                     type: object
+                national_scope_enabled:
+                  type: boolean
+                  description: True only after backend eligibility passes and national mode has been explicitly enabled.
+                national_scope_eligibility:
+                  type: object
+                  properties:
+                    eligible:
+                      type: boolean
+                    requirements:
+                      type: array
+                      items:
+                        type: object
+                        required: [key, label, passed, message]
+                        properties:
+                          key:
+                            type: string
+                          label:
+                            type: string
+                          passed:
+                            type: boolean
+                          current_value:
+                            nullable: true
+                            oneOf:
+                              - type: string
+                              - type: number
+                              - type: boolean
+                          required_value:
+                            nullable: true
+                            oneOf:
+                              - type: string
+                              - type: number
+                              - type: boolean
+                          message:
+                            type: string
+                    unmet_requirements:
+                      type: array
+                      items:
+                        type: string
+                    warnings:
+                      type: array
+                      items:
+                        type: string
                 warnings:
                   type: array
                   items:

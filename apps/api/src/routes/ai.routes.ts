@@ -1,6 +1,6 @@
 const express = require('express');
 const aiController = require('../controllers/ai.controller');
-const { authenticate, requireProtectedSuperAdmin } = require('../middleware/auth');
+const { authenticate, authorize, requireProtectedSuperAdmin } = require('../middleware/auth');
 const {
   aiValidation,
   validate,
@@ -72,7 +72,7 @@ router.patch(
   uuidValidation('taskId'),
   aiValidation.assignPredictionValidationTask,
   validate,
-  requireProtectedSuperAdmin,
+  authorize('admin'),
   asyncHandler(aiController.assignAiPredictionValidationTask),
 );
 
@@ -81,7 +81,7 @@ router.patch(
   uuidValidation('taskId'),
   aiValidation.updatePredictionValidationTaskStatus,
   validate,
-  requireProtectedSuperAdmin,
+  authorize('admin'),
   asyncHandler(aiController.updateAiPredictionValidationTaskStatus),
 );
 
@@ -90,7 +90,7 @@ router.post(
   uuidValidation('taskId'),
   aiValidation.reviewPredictionValidationTask,
   validate,
-  requireProtectedSuperAdmin,
+  authorize('admin'),
   asyncHandler(aiController.reviewAiPredictionValidationTask),
 );
 

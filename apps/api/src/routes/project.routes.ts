@@ -23,12 +23,7 @@ import { auditAction } from '../middleware/audit';
 router.use(authenticate);
 
 // Get all projects (filtered by user access)
-router.get(
-  '/',
-  paginationValidation,
-  validate,
-  asyncHandler(projectController.getAllProjects)
-);
+router.get('/', paginationValidation, validate, asyncHandler(projectController.getAllProjects));
 
 // Create new project (admin only)
 router.post(
@@ -41,7 +36,7 @@ router.post(
   }),
   projectValidation.create,
   validate,
-  asyncHandler(projectController.createProject)
+  asyncHandler(projectController.createProject),
 );
 
 // Get single project
@@ -50,7 +45,7 @@ router.get(
   uuidValidation('projectId'),
   validate,
   checkProjectAccess,
-  asyncHandler(projectController.getProject)
+  asyncHandler(projectController.getProject),
 );
 
 // Update project (admin or project admin)
@@ -65,7 +60,7 @@ router.put(
   }),
   projectValidation.update,
   validate,
-  asyncHandler(projectController.updateProject)
+  asyncHandler(projectController.updateProject),
 );
 
 // Delete/Archive project (admin or project admin)
@@ -80,7 +75,7 @@ router.delete(
     resolveEntityId: (req) => req.params.projectId ?? null,
     resolveNewValues: () => ({ status: 'archived' }),
   }),
-  asyncHandler(projectController.deleteProject)
+  asyncHandler(projectController.deleteProject),
 );
 
 // Get project statistics
@@ -89,7 +84,7 @@ router.get(
   uuidValidation('projectId'),
   validate,
   checkProjectAccess,
-  asyncHandler(projectController.getProjectStats)
+  asyncHandler(projectController.getProjectStats),
 );
 
 // Get project features
@@ -99,7 +94,7 @@ router.get(
   paginationValidation,
   validate,
   checkProjectAccess,
-  asyncHandler(projectController.getProjectFeatures)
+  asyncHandler(projectController.getProjectFeatures),
 );
 
 router.get(
@@ -133,7 +128,7 @@ router.get(
   paginationValidation,
   aiValidation.listPredictionValidationTasks,
   validate,
-  requireProtectedSuperAdmin,
+  authorize('admin'),
   asyncHandler(aiController.listProjectAiPredictionValidationTasks),
 );
 
@@ -142,7 +137,7 @@ router.post(
   uuidValidation('projectId'),
   aiValidation.generatePredictionValidationTasks,
   validate,
-  requireProtectedSuperAdmin,
+  authorize('admin'),
   asyncHandler(aiController.generateProjectAiPredictionValidationTasks),
 );
 

@@ -72,4 +72,60 @@ abstract class AiRepository {
   Future<AiOutputLayer> publishLayer({required String layerId});
 
   Future<AiOutputLayer> unpublishLayer({required String layerId});
+
+  Future<AiPredictionValidationTaskList> fetchMyValidationTasks({
+    String? status,
+    String? aiRunId,
+    int page = 1,
+    int limit = 50,
+  });
+
+  Future<AiPredictionValidationTaskList> fetchProjectValidationTasks({
+    required String projectId,
+    String? status,
+    String? assignedTo,
+    String? aiRunId,
+    int page = 1,
+    int limit = 50,
+  });
+
+  Future<AiPredictionValidationGenerateResult> generateValidationTasks({
+    required String projectId,
+    String? aiRunId,
+    String? aiOutputLayerId,
+    String? aiPredictionFeatureId,
+    double? confidenceThreshold,
+    int? limit,
+    int? priority,
+  });
+
+  Future<AiPredictionValidationTask> fetchValidationTask({
+    required String taskId,
+  });
+
+  Future<AiPredictionValidationTask> assignValidationTask({
+    required String taskId,
+    required String assignedTo,
+  });
+
+  Future<AiPredictionValidationTask> updateValidationTaskStatus({
+    required String taskId,
+    required String status,
+  });
+
+  Future<AiPredictionValidationTask> submitValidationTask({
+    required String taskId,
+    required String result,
+    String? correctedClass,
+    required String note,
+    Map<String, dynamic> evidence = const <String, dynamic>{},
+    String? linkedFeatureId,
+  });
+
+  Future<AiPredictionValidationTask> reviewValidationTask({
+    required String taskId,
+    required String decision,
+    String? reason,
+    String? submissionId,
+  });
 }

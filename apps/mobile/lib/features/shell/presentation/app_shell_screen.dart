@@ -18,6 +18,7 @@ import '../../admin/presentation/screens/categories_screen.dart';
 import '../../admin/presentation/screens/contributor_requests_screen.dart';
 import '../../admin/presentation/screens/projects_management_screen.dart';
 import '../../admin/presentation/screens/users_management_screen.dart';
+import '../../ai/presentation/screens/ai_validation_tasks_screen.dart';
 import '../../auth/domain/auth_models.dart';
 import '../../drafts/presentation/screens/drafts_screen.dart';
 import '../../exports/presentation/screens/exports_dashboard_screen.dart';
@@ -287,6 +288,7 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
     }
     return path == AppRoutes.projects ||
         path == AppRoutes.assignedProjects ||
+        path == AppRoutes.aiValidation ||
         path == AppRoutes.notifications;
   }
 
@@ -297,7 +299,8 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
     return path == AppRoutes.projects ||
         path == AppRoutes.assignedProjects ||
         path == AppRoutes.drafts ||
-        path == AppRoutes.submissions;
+        path == AppRoutes.submissions ||
+        path == AppRoutes.aiValidation;
   }
 
   List<_ShellItem> _mobilePrimaryItems(AppUser user, List<_ShellItem> items) {
@@ -381,6 +384,9 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
     }
     if (path == AppRoutes.submissions && user.role == UserRole.contributor) {
       return const DraftsScreen(showSubmittedOnly: true);
+    }
+    if (path == AppRoutes.aiValidation && user.role == UserRole.contributor) {
+      return const AiValidationTasksScreen();
     }
     if (path == AppRoutes.reviewQueue && user.role == UserRole.admin) {
       return const ReviewQueueScreen();
@@ -615,6 +621,13 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
         path: AppRoutes.assignedProjects,
         icon: Icons.assignment_outlined,
         selectedIcon: Icons.assignment,
+      ),
+      const _ShellItem(
+        label: 'AI Validation',
+        mobileLabel: 'Validate',
+        path: AppRoutes.aiValidation,
+        icon: Icons.rule_folder_outlined,
+        selectedIcon: Icons.rule_folder,
       ),
       const _ShellItem(
         label: 'Imports',

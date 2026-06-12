@@ -5,6 +5,7 @@ class AppRoutes {
   static const focusSourceReviewFeature = 'reviewFeature';
   static const focusSourceImportFeature = 'importFeature';
   static const focusSourceApprovedContext = 'approvedProjectContext';
+  static const focusSourceAiValidationTask = 'aiValidationTask';
 
   static const splash = '/splash';
   static const login = '/login';
@@ -23,6 +24,7 @@ class AppRoutes {
   static const assignments = '/app/assignments';
   static const drafts = '/app/drafts';
   static const submissions = '/app/submissions';
+  static const aiValidation = '/app/ai-validation';
   static const reviewQueue = '/app/review-queue';
   static const imports = '/app/imports';
   static const exports = '/app/exports';

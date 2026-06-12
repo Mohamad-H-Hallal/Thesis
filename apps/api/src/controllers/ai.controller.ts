@@ -101,19 +101,45 @@ const lebanonApproxBounds = {
   max_lat: 34.75,
 };
 
-const nationalScopeUnmetRequirements = [
-  'National mode is enabled for this project.',
-  'Lebanon boundary is configured for AI prediction.',
-  'Approved training samples cover multiple Lebanese regions and environmental conditions.',
-  'Every class has enough approved samples: minimum 50, recommended 100+.',
-  'All samples used for training have valid and consistent labels.',
-  'No class or region is dangerously underrepresented, or the warning is reviewed.',
-  'The AI pipeline supports the selected satellite, dates, features, and national boundary.',
-  'A validation/review plan exists before national results are published.',
-];
+const NATIONAL_MIN_SAMPLES_PER_CLASS = 50;
+const NATIONAL_RECOMMENDED_SAMPLES_PER_CLASS = 100;
+
+type NationalScopeRequirement = {
+  key: string;
+  label: string;
+  passed: boolean;
+  current_value: string | number | boolean | null;
+  required_value: string | number | boolean;
+  message: string;
+};
 
 const boolPreference = (preferences: Record<string, unknown> | null | undefined, key: string) =>
   preferences?.[key] === true;
+
+const boolPreferenceText = (value: boolean): string => (value ? 'configured' : 'not configured');
+
+const nationalRequirement = ({
+  key,
+  label,
+  passed,
+  currentValue,
+  requiredValue,
+  message,
+}: {
+  key: string;
+  label: string;
+  passed: boolean;
+  currentValue: string | number | boolean | null;
+  requiredValue: string | number | boolean;
+  message: string;
+}): NationalScopeRequirement => ({
+  key,
+  label,
+  passed,
+  current_value: currentValue,
+  required_value: requiredValue,
+  message,
+});
 
 const aiAreaTypeFromScope = (
   scopeType: string,
@@ -143,58 +169,144 @@ const nationalScopeEligibilityFor = ({
   warnings?: string[];
   modelPreferences?: Record<string, unknown>;
 }) => {
-  const unmetRequirements: string[] = [];
   const nationalModeAllowed = boolPreference(modelPreferences, 'national_mode_allowed');
   const lebanonBoundaryConfigured = boolPreference(modelPreferences, 'lebanon_boundary_configured');
+  const regionalCoverageConfigured = boolPreference(
+    modelPreferences,
+    'national_regional_coverage_configured',
+  );
   const nationalSampleSpreadConfirmed = boolPreference(
     modelPreferences,
     'national_sample_spread_confirmed',
   );
+  const minClassSampleCount =
+    labelCounts.length > 0
+      ? Math.min(...labelCounts.map((row) => Number(row.sample_count ?? 0)))
+      : 0;
   const minimumSamplesPerClassMet =
-    labelCounts.length > 0 && labelCounts.every((row) => Number(row.sample_count) >= 50);
+    labelCounts.length > 0 &&
+    labelCounts.every((row) => Number(row.sample_count) >= NATIONAL_MIN_SAMPLES_PER_CLASS);
+  const missingLabelCount = Number(totals?.missing_label_count ?? 0);
+  const invalidGeometryCount = Number(totals?.invalid_geometry_count ?? 0);
   const labelsValid =
-    Number(totals?.missing_label_count ?? 0) === 0 &&
-    Number(totals?.invalid_geometry_count ?? 0) === 0;
-  const imbalanceWarningsReviewed =
-    !warnings.some((warning) => /balance|spatially limited|below/i.test(warning)) ||
-    boolPreference(modelPreferences, 'national_imbalance_reviewed');
-  const pipelineSupportsNational = boolPreference(
-    modelPreferences,
-    'pipeline_supports_national_scope',
+    labelCounts.length > 0 && missingLabelCount === 0 && invalidGeometryCount === 0;
+  const imbalanceWarnings = warnings.filter((warning) =>
+    /balance|coverage|dominates|underrepresented|spatially limited|below/i.test(warning),
   );
+  const imbalanceReviewSupported = boolPreference(
+    modelPreferences,
+    'national_imbalance_review_supported',
+  );
+  const imbalanceReviewed = boolPreference(modelPreferences, 'national_imbalance_reviewed');
+  const imbalanceReady =
+    imbalanceReviewSupported && (imbalanceWarnings.length === 0 || imbalanceReviewed);
+  const pipelineSupportsNational =
+    boolPreference(modelPreferences, 'pipeline_supports_national_scope') &&
+    boolPreference(modelPreferences, 'backend_bridge_supports_national_scope') &&
+    boolPreference(modelPreferences, 'python_pipeline_supports_national_scope');
   const validationPlanRecorded = boolPreference(
     modelPreferences,
     'national_validation_plan_recorded',
   );
-
-  if (!nationalModeAllowed) {
-    unmetRequirements.push(nationalScopeUnmetRequirements[0]);
-  }
-  if (!lebanonBoundaryConfigured) {
-    unmetRequirements.push(nationalScopeUnmetRequirements[1]);
-  }
-  if (!nationalSampleSpreadConfirmed) {
-    unmetRequirements.push(nationalScopeUnmetRequirements[2]);
-  }
-  if (!minimumSamplesPerClassMet) {
-    unmetRequirements.push(nationalScopeUnmetRequirements[3]);
-  }
-  if (!labelsValid) {
-    unmetRequirements.push(nationalScopeUnmetRequirements[4]);
-  }
-  if (!imbalanceWarningsReviewed) {
-    unmetRequirements.push(nationalScopeUnmetRequirements[5]);
-  }
-  if (!pipelineSupportsNational) {
-    unmetRequirements.push(nationalScopeUnmetRequirements[6]);
-  }
-  if (!validationPlanRecorded) {
-    unmetRequirements.push(nationalScopeUnmetRequirements[7]);
-  }
-
+  const requirements = [
+    nationalRequirement({
+      key: 'national_mode_allowed',
+      label: 'National mode allowed for this project',
+      passed: nationalModeAllowed,
+      currentValue: nationalModeAllowed,
+      requiredValue: true,
+      message: nationalModeAllowed
+        ? 'A protected super-admin has allowed national AI mode for this project.'
+        : 'A protected super-admin must allow national AI mode for this project.',
+    }),
+    nationalRequirement({
+      key: 'lebanon_boundary_configured',
+      label: 'Lebanon boundary configured',
+      passed: lebanonBoundaryConfigured,
+      currentValue: boolPreferenceText(lebanonBoundaryConfigured),
+      requiredValue: 'usable Lebanon boundary',
+      message: lebanonBoundaryConfigured
+        ? 'A Lebanon boundary/ROI is configured for AI processing.'
+        : 'Lebanon boundary/ROI must be configured before national mode can be enabled.',
+    }),
+    nationalRequirement({
+      key: 'pipeline_supports_national_processing',
+      label: 'Pipeline supports national processing',
+      passed: pipelineSupportsNational,
+      currentValue: `national scope: ${boolPreference(modelPreferences, 'pipeline_supports_national_scope')}; backend bridge: ${boolPreference(modelPreferences, 'backend_bridge_supports_national_scope')}; Python pipeline: ${boolPreference(modelPreferences, 'python_pipeline_supports_national_scope')}`,
+      requiredValue: 'backend bridge and Python pipeline support national ROI',
+      message: pipelineSupportsNational
+        ? 'The backend bridge and Python pipeline support national ROI/config processing.'
+        : 'National mode stays locked until the backend bridge and Python pipeline support national ROI/config processing.',
+    }),
+    nationalRequirement({
+      key: 'minimum_samples_per_class',
+      label: 'Enough approved samples per class',
+      passed: minimumSamplesPerClassMet,
+      currentValue: minClassSampleCount,
+      requiredValue: `${NATIONAL_MIN_SAMPLES_PER_CLASS} minimum (${NATIONAL_RECOMMENDED_SAMPLES_PER_CLASS}+ recommended)`,
+      message: minimumSamplesPerClassMet
+        ? `Every target class has at least ${NATIONAL_MIN_SAMPLES_PER_CLASS} approved labeled samples.`
+        : `Every target class needs at least ${NATIONAL_MIN_SAMPLES_PER_CLASS} approved labeled samples; ${NATIONAL_RECOMMENDED_SAMPLES_PER_CLASS}+ is recommended.`,
+    }),
+    nationalRequirement({
+      key: 'labels_valid',
+      label: 'Labels are valid',
+      passed: labelsValid,
+      currentValue: `missing labels: ${missingLabelCount}; invalid geometries: ${invalidGeometryCount}`,
+      requiredValue: '0 missing labels and 0 invalid geometries',
+      message: labelsValid
+        ? 'Approved training samples have valid selected labels and usable geometries.'
+        : 'Samples used for training must have valid selected labels and usable geometries.',
+    }),
+    nationalRequirement({
+      key: 'regional_coverage_configured',
+      label: 'Geographic coverage is broad enough',
+      passed: regionalCoverageConfigured && nationalSampleSpreadConfirmed,
+      currentValue: regionalCoverageConfigured
+        ? boolPreferenceText(nationalSampleSpreadConfirmed)
+        : 'coverage check not configured',
+      requiredValue: 'configured regional/governorate or environmental-zone coverage check',
+      message: !regionalCoverageConfigured
+        ? 'Regional coverage check is not configured yet.'
+        : nationalSampleSpreadConfirmed
+          ? 'Approved samples cover multiple Lebanese regions or configured environmental zones.'
+          : 'Approved samples must cover multiple Lebanese regions or configured environmental zones.',
+    }),
+    nationalRequirement({
+      key: 'imbalance_reviewed',
+      label: 'Class/region imbalance is acceptable or reviewed',
+      passed: imbalanceReady,
+      currentValue: imbalanceReviewSupported
+        ? imbalanceWarnings.length === 0
+          ? 'no imbalance warnings'
+          : imbalanceReviewed
+            ? 'warnings reviewed'
+            : 'warnings not reviewed'
+        : 'reviewed warning support not configured',
+      requiredValue: 'imbalance warnings supported and reviewed when present',
+      message: imbalanceReady
+        ? 'Class and region imbalance is acceptable or has been reviewed.'
+        : 'National mode stays locked until class/region imbalance warnings can be reviewed and accepted.',
+    }),
+    nationalRequirement({
+      key: 'validation_plan_recorded',
+      label: 'Validation plan exists',
+      passed: validationPlanRecorded,
+      currentValue: validationPlanRecorded,
+      requiredValue: true,
+      message: validationPlanRecorded
+        ? 'A validation plan has been recorded before national publishing.'
+        : 'A super-admin must record/confirm a validation plan before national results can be published.',
+    }),
+  ];
+  const unmetRequirements = requirements
+    .filter((requirement) => !requirement.passed)
+    .map((requirement) => requirement.message);
   const eligible = unmetRequirements.length === 0;
   return {
     eligible,
+    requirements,
     unmet_requirements: unmetRequirements,
     warnings:
       requestedNational && !eligible
@@ -906,10 +1018,12 @@ const getFeatureReadinessSummary = async ({
       missing_label_count: Number(totals.missing_label_count),
       invalid_geometry_count: Number(totals.invalid_geometry_count),
     },
-    warnings:
-      scopeType === 'national' && spatialExtent === null
+    warnings: [
+      ...warnings,
+      ...(scopeType === 'national' && spatialExtent === null
         ? ['No approved sample extent is available for national readiness evaluation.']
-        : [],
+        : []),
+    ],
     modelPreferences,
   });
   const nationalScopeEnabled =
@@ -1773,9 +1887,7 @@ const parseOptionalUnitScore = (value: unknown, label: string): number | null =>
   return score;
 };
 
-const parseAiLayerFeatureQuery = (
-  req: Request,
-): AiLayerFeatureQueryOptions => {
+const parseAiLayerFeatureQuery = (req: Request): AiLayerFeatureQueryOptions => {
   const rawDetailValue = normalizeOptionalString(req.query.detail) ?? 'overview';
   const rawDetail = rawDetailValue === 'preview' ? 'overview' : rawDetailValue;
   if (rawDetail !== 'overview' && rawDetail !== 'full') {
@@ -2035,10 +2147,7 @@ const filterAiLayerFeatures = (
       }
     }
     if (uncertaintyMin !== null || uncertaintyMax !== null) {
-      const uncertainty = aiFeatureNumericProperty(feature, [
-        'uncertainty_score',
-        'uncertainty',
-      ]);
+      const uncertainty = aiFeatureNumericProperty(feature, ['uncertainty_score', 'uncertainty']);
       if (uncertainty === null) {
         return false;
       }
@@ -2385,10 +2494,7 @@ const buildAiLayerFeatureCollection = (
   };
 };
 
-const loadPreviewableAiLayerForUser = async (
-  layerId: string,
-  user: Express.UserContext,
-) => {
+const loadPreviewableAiLayerForUser = async (layerId: string, user: Express.UserContext) => {
   const layerResult = await query(
     `SELECT l.id,
             l.ai_run_id,
@@ -2597,10 +2703,7 @@ const getAiLayerPredictions = async (req: Request, res: Response): Promise<void>
   });
 };
 
-const listProjectPublishedAiPredictions = async (
-  req: Request,
-  res: Response,
-): Promise<void> => {
+const listProjectPublishedAiPredictions = async (req: Request, res: Response): Promise<void> => {
   const user = req.user as Express.UserContext;
   await assertProjectReadableForAiLayer(req.params.projectId, user);
   const settings = await getEffectiveAiSettings(req.params.projectId);
@@ -2689,14 +2792,17 @@ const listProjectPublishedAiPredictions = async (
      ORDER BY layer_type ASC, published_at DESC`,
     [req.params.projectId],
   );
-  const layerCounts: Record<string, number> = result.rows.reduce((counts, row) => {
-    const layerType = typeof row.layer_type === 'string' ? row.layer_type : 'unknown';
-    counts[layerType] = (counts[layerType] ?? 0) + 1;
-    return counts;
-  }, {} as Record<string, number>);
+  const layerCounts: Record<string, number> = result.rows.reduce(
+    (counts, row) => {
+      const layerType = typeof row.layer_type === 'string' ? row.layer_type : 'unknown';
+      counts[layerType] = (counts[layerType] ?? 0) + 1;
+      return counts;
+    },
+    {} as Record<string, number>,
+  );
   const primaryLayerType = layerCounts.classification
     ? 'classification'
-    : Object.keys(layerCounts)[0] ?? 'classification';
+    : (Object.keys(layerCounts)[0] ?? 'classification');
   const primaryRows = result.rows.filter((row) => row.layer_type === primaryLayerType);
   const aggregateLayer = {
     id: null,
@@ -2780,10 +2886,7 @@ const generateProjectAiPredictionValidationTasks = async (
   });
 };
 
-const assignAiPredictionValidationTask = async (
-  req: Request,
-  res: Response,
-): Promise<void> => {
+const assignAiPredictionValidationTask = async (req: Request, res: Response): Promise<void> => {
   const assignedTo = normalizeOptionalString(req.body?.assigned_to);
   if (!assignedTo) {
     throw new AppError('assigned_to is required.', 400);
@@ -2822,10 +2925,7 @@ const updateAiPredictionValidationTaskStatus = async (
   });
 };
 
-const getAiPredictionValidationTask = async (
-  req: Request,
-  res: Response,
-): Promise<void> => {
+const getAiPredictionValidationTask = async (req: Request, res: Response): Promise<void> => {
   const task = await getPredictionValidationTaskForUser(
     req.params.taskId,
     req.user as Express.UserContext,
@@ -2857,10 +2957,7 @@ const listMyAiValidationTasks = async (req: Request, res: Response): Promise<voi
   });
 };
 
-const submitAiPredictionValidation = async (
-  req: Request,
-  res: Response,
-): Promise<void> => {
+const submitAiPredictionValidation = async (req: Request, res: Response): Promise<void> => {
   const currentUser = req.user as Express.UserContext;
   if (currentUser.role !== 'contributor') {
     throw new AppError('Only contributors can submit AI validation evidence.', 403);
@@ -2873,7 +2970,9 @@ const submitAiPredictionValidation = async (
     correctedClass: normalizeOptionalString(req.body?.corrected_class),
     note: normalizeOptionalString(req.body?.note),
     evidence:
-      req.body?.evidence && typeof req.body.evidence === 'object' && !Array.isArray(req.body.evidence)
+      req.body?.evidence &&
+      typeof req.body.evidence === 'object' &&
+      !Array.isArray(req.body.evidence)
         ? req.body.evidence
         : {},
     linkedFeatureId: normalizeOptionalString(req.body?.linked_feature_id),
@@ -2886,10 +2985,7 @@ const submitAiPredictionValidation = async (
   });
 };
 
-const reviewAiPredictionValidationTask = async (
-  req: Request,
-  res: Response,
-): Promise<void> => {
+const reviewAiPredictionValidationTask = async (req: Request, res: Response): Promise<void> => {
   const result = await reviewPredictionValidationTask({
     taskId: req.params.taskId,
     reviewedBy: (req.user as Express.UserContext).id,

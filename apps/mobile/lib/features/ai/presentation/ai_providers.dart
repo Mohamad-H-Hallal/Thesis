@@ -149,3 +149,56 @@ final aiRunReviewsProvider =
       ref.watch(workflowRefreshTickProvider);
       return ref.read(aiRepositoryProvider).fetchRunReviews(runId: runId);
     });
+
+final myAiValidationTasksProvider =
+    FutureProvider.family<
+      AiPredictionValidationTaskList,
+      AiPredictionValidationTasksQuery
+    >((ref, query) async {
+      ref.watch(workflowRefreshTickProvider);
+      return ref
+          .read(aiRepositoryProvider)
+          .fetchMyValidationTasks(
+            status: query.status,
+            aiRunId: query.aiRunId,
+            page: query.page,
+            limit: query.limit,
+          );
+    });
+
+final projectAiValidationTasksProvider =
+    FutureProvider.family<
+      AiPredictionValidationTaskList,
+      AiPredictionValidationTasksQuery
+    >((ref, query) async {
+      ref.watch(workflowRefreshTickProvider);
+      final projectId = query.projectId?.trim();
+      if (projectId == null || projectId.isEmpty) {
+        return const AiPredictionValidationTaskList(
+          tasks: <AiPredictionValidationTask>[],
+          statusCounts: <String, int>{},
+          page: 1,
+          limit: 50,
+          total: 0,
+          hasMore: false,
+          notOfficialFieldData: true,
+          noSpatialFeatureWrites: true,
+        );
+      }
+      return ref
+          .read(aiRepositoryProvider)
+          .fetchProjectValidationTasks(
+            projectId: projectId,
+            status: query.status,
+            assignedTo: query.assignedTo,
+            aiRunId: query.aiRunId,
+            page: query.page,
+            limit: query.limit,
+          );
+    });
+
+final aiValidationTaskProvider =
+    FutureProvider.family<AiPredictionValidationTask, String>((ref, taskId) {
+      ref.watch(workflowRefreshTickProvider);
+      return ref.read(aiRepositoryProvider).fetchValidationTask(taskId: taskId);
+    });

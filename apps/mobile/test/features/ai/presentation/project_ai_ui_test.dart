@@ -230,9 +230,24 @@ AiRun _phaseFRegionalRun({
       'national_scope_enabled': false,
       'national_scope_eligibility': <String, dynamic>{
         'eligible': false,
+        'requirements': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'key': 'national_mode_allowed',
+            'label': 'National mode allowed for this project',
+            'passed': false,
+            'message':
+                'A protected super-admin must allow national AI mode for this project.',
+          },
+          <String, dynamic>{
+            'key': 'regional_coverage_configured',
+            'label': 'Geographic coverage is broad enough',
+            'passed': false,
+            'message': 'Regional coverage check is not configured yet.',
+          },
+        ],
         'unmet_requirements': <String>[
-          'National mode is enabled for this project.',
-          'Approved training samples cover multiple Lebanese regions and environmental conditions.',
+          'A protected super-admin must allow national AI mode for this project.',
+          'Regional coverage check is not configured yet.',
         ],
         'warnings': <String>[],
       },
@@ -939,52 +954,16 @@ void main() {
     expect(find.text('National Lebanon is locked'), findsOneWidget);
     expect(
       find.text(
-        'National AI can be enabled only when the project has enough reliable training data across Lebanon and the AI pipeline can process a national prediction area.',
+        'Backend readiness requirements must pass before National Lebanon can be enabled.',
       ),
       findsOneWidget,
     );
+    expect(find.text('National mode allowed for this project'), findsOneWidget);
+    expect(find.text('Lebanon boundary configured'), findsOneWidget);
+    expect(find.text('Pipeline supports national processing'), findsOneWidget);
+    expect(find.text('Geographic coverage is broad enough'), findsOneWidget);
     expect(
-      find.text('1. National mode is enabled for this project.'),
-      findsOneWidget,
-    );
-    expect(
-      find.text('2. Lebanon boundary is configured for AI prediction.'),
-      findsOneWidget,
-    );
-    expect(
-      find.text(
-        '3. Approved training samples cover multiple Lebanese regions and environmental conditions.',
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.text(
-        '4. Every class has enough approved samples: minimum 50, recommended 100+.',
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.text(
-        '5. All samples used for training have valid and consistent labels.',
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.text(
-        '6. No class or region is dangerously underrepresented, or the warning is reviewed.',
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.text(
-        '7. The AI pipeline supports the selected satellite, dates, features, and national boundary.',
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.text(
-        '8. A validation/review plan exists before national results are published.',
-      ),
+      find.text('Regional coverage check is not configured yet.'),
       findsOneWidget,
     );
 
@@ -2345,7 +2324,7 @@ void main() {
     expect(find.byType(FlutterMap), findsNothing);
   });
 
-  testWidgets('AI output layer review decisions use future-publication wording', (
+  testWidgets('AI output layer review decisions stay separate from status', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1080, 2200));
@@ -2390,9 +2369,10 @@ void main() {
     await tester.tap(find.text('Layer details'));
     await tester.pumpAndSettle();
 
+    expect(find.textContaining('Status: Approved'), findsOneWidget);
     expect(
       find.textContaining('Status: Approved for future publication'),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
       find.textContaining('Usage: Review/report summary only'),
