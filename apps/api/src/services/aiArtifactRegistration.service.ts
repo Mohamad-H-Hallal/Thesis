@@ -22,6 +22,7 @@ type AiArtifactRegistrationResult = {
   metricsRegistered: number;
   classStatisticsRegistered: number;
   outputLayersRegistered: number;
+  predictionFeaturesRegistered: number;
   warnings: string[];
   artifactPaths: RegisteredArtifactPaths;
   metadataPatch: JsonRecord;
@@ -69,6 +70,30 @@ type ClassStatisticRow = {
   areaHa: number | null;
   confidenceMean: number | null;
   statistics: JsonRecord;
+};
+
+type ReviewLayerType = 'classification' | 'confidence' | 'uncertainty' | 'statistics';
+
+type InsertedOutputLayer = {
+  id: string;
+  layerType: ReviewLayerType;
+  storagePath: string;
+};
+
+type ReviewOutputLayerInsertResult = {
+  inserted: number;
+  layers: Partial<Record<ReviewLayerType, InsertedOutputLayer>>;
+};
+
+type PredictionFeatureRow = {
+  artifactFeatureId: string;
+  geometryType: string;
+  geometry: JsonRecord;
+  predictedClass: string | null;
+  confidence: number | null;
+  uncertaintyScore: number | null;
+  modelName: string | null;
+  metadata: JsonRecord;
 };
 
 const KNOWN_ARTIFACT_FILENAMES: Record<KnownArtifactKey, string> = {
@@ -497,6 +522,160 @@ const existingArtifactPath = async (
     return null;
   }
   return artifact.relativePath;
+};
+
+const readGeoJsonFeatureCollection = async (
+  artifact: ResolvedArtifact | undefined,
+  warnings: string[],
+): Promise<JsonRecord> => {
+  if (!artifact) {
+    return {};
+  }
+  if (!(await fileExists(artifact.absolutePath))) {
+    warnings.push(`AI artifact not found: ${artifact.relativePath}.`);
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(await fs.readFile(artifact.absolutePath, 'utf8'));
+    const collection = toRecord(parsed);
+    if (collection.type !== 'FeatureCollection' || !Array.isArray(collection.features)) {
+      warnings.push(`AI GeoJSON artifact is not a FeatureCollection: ${artifact.relativePath}.`);
+      return {};
+    }
+    return collection;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown GeoJSON parse error.';
+    warnings.push(`Could not parse ${artifact.relativePath}: ${message}`);
+    return {};
+  }
+};
+
+const boundedScore = (value: unknown): number | null => {
+  const parsed = toNumberValue(value);
+  if (parsed === null || parsed < 0 || parsed > 1) {
+    return null;
+  }
+  return parsed;
+};
+
+const firstNumber = (values: unknown[]): number | null => {
+  for (const value of values) {
+    const parsed = boundedScore(value);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+  return null;
+};
+
+const predictionArtifactFeatureId = (
+  feature: JsonRecord,
+  properties: JsonRecord,
+  artifactKey: KnownArtifactKey,
+  index: number,
+): string =>
+  firstString([
+    feature.id,
+    properties.id,
+    properties.feature_id,
+    properties.artifact_feature_id,
+    properties.source_feature_id,
+    properties.source_id,
+    properties.prediction_id,
+    properties.objectid,
+    properties.OBJECTID,
+    properties.fid,
+    properties.FID,
+    properties.gid,
+  ]) ?? `${artifactKey}-${index + 1}`;
+
+const predictionClassFrom = (properties: JsonRecord): string | null =>
+  firstString([
+    properties.predicted_class,
+    properties.class_label,
+    properties.dominant_class,
+    properties.suggested_class,
+    properties.label,
+    properties.L4_descr,
+    properties.class,
+    properties.prediction,
+  ]);
+
+const predictionModelFrom = (
+  properties: JsonRecord,
+  selectedModel: string | null,
+): string | null =>
+  firstString([
+    properties.model_name,
+    properties.model,
+    properties.classification_model,
+    selectedModel,
+  ]);
+
+const predictionConfidenceFrom = (properties: JsonRecord): number | null =>
+  firstNumber([
+    properties.confidence,
+    properties.confidence_score,
+    properties.probability,
+    properties.max_probability,
+    properties.prediction_confidence,
+    properties.mean_confidence,
+  ]);
+
+const predictionUncertaintyFrom = (properties: JsonRecord): number | null =>
+  firstNumber([
+    properties.uncertainty_score,
+    properties.uncertainty,
+    properties.prediction_uncertainty,
+  ]);
+
+const predictionRowsFromGeoJson = ({
+  collection,
+  artifactKey,
+  layerType,
+  selectedModel,
+  limitations,
+}: {
+  collection: JsonRecord;
+  artifactKey: KnownArtifactKey;
+  layerType: 'classification' | 'confidence' | 'uncertainty';
+  selectedModel: string | null;
+  limitations: string[];
+}): PredictionFeatureRow[] => {
+  return toArray(collection.features)
+    .map((item, index): PredictionFeatureRow | null => {
+      const feature = toRecord(item);
+      const properties = toRecord(feature.properties);
+      const geometry = toRecord(feature.geometry);
+      const geometryType = toStringValue(geometry.type);
+      if (!geometryType || !Array.isArray(geometry.coordinates)) {
+        return null;
+      }
+
+      return {
+        artifactFeatureId: predictionArtifactFeatureId(feature, properties, artifactKey, index),
+        geometryType,
+        geometry,
+        predictedClass: predictionClassFrom(properties),
+        confidence: predictionConfidenceFrom(properties),
+        uncertaintyScore: predictionUncertaintyFrom(properties),
+        modelName: predictionModelFrom(properties, selectedModel),
+        metadata: {
+          properties,
+          artifact_key: artifactKey,
+          layer_type: layerType,
+          source: 'ai_prediction',
+          area: properties.area ?? properties.area_ha ?? properties.area_sq_m ?? null,
+          regional_review_prediction: true,
+          not_official_field_data: true,
+          no_spatial_feature_writes: true,
+          not_national_classification: true,
+          limitations,
+        },
+      };
+    })
+    .filter((row): row is PredictionFeatureRow => row !== null);
 };
 
 const featureImportanceForModel = (
@@ -932,11 +1111,11 @@ const insertOutputLayer = async ({
   name: string;
   description: string;
   storagePath: string | null;
-}): Promise<number> => {
+}): Promise<InsertedOutputLayer | null> => {
   if (!storagePath) {
-    return 0;
+    return null;
   }
-  await client.query(
+  const result = await client.query(
     `INSERT INTO ai_output_layer (
        ai_run_id,
        project_id,
@@ -958,10 +1137,15 @@ const insertOutputLayer = async ({
        $6,
        'EPSG:4326',
        '{}'::jsonb
-     )`,
+     )
+     RETURNING id, layer_type`,
     [runId, projectId, layerType, name, description, storagePath],
   );
-  return 1;
+  return {
+    id: result.rows[0].id,
+    layerType: result.rows[0].layer_type,
+    storagePath,
+  };
 };
 
 const insertReviewOutputLayers = async ({
@@ -980,9 +1164,15 @@ const insertReviewOutputLayers = async ({
   classificationPath: string | null;
   confidencePath: string | null;
   uncertaintyPath: string | null;
-}): Promise<number> => {
-  let inserted = 0;
-  inserted += await insertOutputLayer({
+}): Promise<ReviewOutputLayerInsertResult> => {
+  const layers: Partial<Record<ReviewLayerType, InsertedOutputLayer>> = {};
+  const track = (layer: InsertedOutputLayer | null): void => {
+    if (layer) {
+      layers[layer.layerType] = layer;
+    }
+  };
+
+  track(await insertOutputLayer({
     client,
     runId,
     projectId,
@@ -990,8 +1180,8 @@ const insertReviewOutputLayers = async ({
     name: 'Regional AI statistics',
     description: 'Unpublished regional AI metrics and class statistics for admin review.',
     storagePath: metricsPath,
-  });
-  inserted += await insertOutputLayer({
+  }));
+  track(await insertOutputLayer({
     client,
     runId,
     projectId,
@@ -999,8 +1189,8 @@ const insertReviewOutputLayers = async ({
     name: 'Regional AI classification review layer',
     description: 'Unpublished regional classification polygons for super-admin review only.',
     storagePath: classificationPath,
-  });
-  inserted += await insertOutputLayer({
+  }));
+  track(await insertOutputLayer({
     client,
     runId,
     projectId,
@@ -1008,8 +1198,8 @@ const insertReviewOutputLayers = async ({
     name: 'Regional AI confidence review layer',
     description: 'Unpublished regional confidence artifact for super-admin review only.',
     storagePath: confidencePath,
-  });
-  inserted += await insertOutputLayer({
+  }));
+  track(await insertOutputLayer({
     client,
     runId,
     projectId,
@@ -1017,8 +1207,158 @@ const insertReviewOutputLayers = async ({
     name: 'Regional AI uncertainty review layer',
     description: 'Unpublished regional uncertainty artifact for contributor validation planning.',
     storagePath: uncertaintyPath,
+  }));
+  return {
+    inserted: Object.keys(layers).length,
+    layers,
+  };
+};
+
+const updateOutputLayerBounds = async (
+  client: PoolClient,
+  layerId: string,
+): Promise<void> => {
+  await client.query(
+    `UPDATE ai_output_layer l
+     SET bounds = bounds_summary.bounds,
+         updated_at = NOW()
+     FROM (
+       SELECT ST_SetSRID(ST_Envelope(ST_Extent(geom)::geometry), 4326) AS bounds
+       FROM ai_prediction_feature
+       WHERE ai_output_layer_id = $1
+     ) AS bounds_summary
+     WHERE l.id = $1
+       AND bounds_summary.bounds IS NOT NULL`,
+    [layerId],
+  );
+};
+
+const insertPredictionFeatureRows = async ({
+  client,
+  runId,
+  projectId,
+  layer,
+  rows,
+}: {
+  client: PoolClient;
+  runId: string;
+  projectId: string;
+  layer: InsertedOutputLayer | undefined;
+  rows: PredictionFeatureRow[];
+}): Promise<number> => {
+  if (!layer || rows.length === 0) {
+    return 0;
+  }
+
+  let registered = 0;
+  for (const row of rows) {
+    await client.query(
+      `INSERT INTO ai_prediction_feature (
+         project_id,
+         ai_run_id,
+         ai_output_layer_id,
+         artifact_feature_id,
+         geom,
+         geometry_type,
+         predicted_class,
+         confidence,
+         uncertainty_score,
+         model_name,
+         source,
+         status,
+         metadata
+       )
+       VALUES (
+         $1,
+         $2,
+         $3,
+         $4,
+         ST_SetSRID(ST_GeomFromGeoJSON($5), 4326),
+         $6,
+         $7,
+         $8,
+         $9,
+         $10,
+         'ai_prediction',
+         'ready_for_review',
+         $11::jsonb
+       )
+       ON CONFLICT (ai_output_layer_id, artifact_feature_id)
+       DO UPDATE SET
+         geom = EXCLUDED.geom,
+         geometry_type = EXCLUDED.geometry_type,
+         predicted_class = EXCLUDED.predicted_class,
+         confidence = EXCLUDED.confidence,
+         uncertainty_score = EXCLUDED.uncertainty_score,
+         model_name = EXCLUDED.model_name,
+         source = 'ai_prediction',
+         status = CASE
+           WHEN ai_prediction_feature.status = 'published' THEN ai_prediction_feature.status
+           ELSE EXCLUDED.status
+         END,
+         metadata = EXCLUDED.metadata,
+         updated_at = NOW()`,
+      [
+        projectId,
+        runId,
+        layer.id,
+        row.artifactFeatureId,
+        JSON.stringify(row.geometry),
+        row.geometryType,
+        row.predictedClass,
+        row.confidence,
+        row.uncertaintyScore,
+        row.modelName,
+        JSON.stringify(row.metadata),
+      ],
+    );
+    registered += 1;
+  }
+
+  await updateOutputLayerBounds(client, layer.id);
+  return registered;
+};
+
+const insertPredictionFeaturesForReviewLayers = async ({
+  client,
+  runId,
+  projectId,
+  layers,
+  classificationRows,
+  confidenceRows,
+  uncertaintyRows,
+}: {
+  client: PoolClient;
+  runId: string;
+  projectId: string;
+  layers: Partial<Record<ReviewLayerType, InsertedOutputLayer>>;
+  classificationRows: PredictionFeatureRow[];
+  confidenceRows: PredictionFeatureRow[];
+  uncertaintyRows: PredictionFeatureRow[];
+}): Promise<number> => {
+  const classificationCount = await insertPredictionFeatureRows({
+    client,
+    runId,
+    projectId,
+    layer: layers.classification,
+    rows: classificationRows,
   });
-  return inserted;
+  const confidenceCount = await insertPredictionFeatureRows({
+    client,
+    runId,
+    projectId,
+    layer: layers.confidence,
+    rows: confidenceRows,
+  });
+  const uncertaintyCount = await insertPredictionFeatureRows({
+    client,
+    runId,
+    projectId,
+    layer: layers.uncertainty,
+    rows: uncertaintyRows,
+  });
+
+  return classificationCount + confidenceCount + uncertaintyCount;
 };
 
 const classCountMetadataFromRows = (
@@ -1057,6 +1397,7 @@ const registerAiRunArtifactsForReview = async (
       metricsRegistered: 0,
       classStatisticsRegistered: 0,
       outputLayersRegistered: 0,
+      predictionFeaturesRegistered: 0,
       warnings: [
         'Artifact registration is only enabled for regional model or regional artifact runs.',
       ],
@@ -1156,6 +1497,13 @@ const registerAiRunArtifactsForReview = async (
     existingArtifactPath(confidenceArtifact, warnings),
     existingArtifactPath(uncertaintyArtifact, warnings),
   ]);
+  const limitations = [
+    ...toArray(regionalClassificationSummary.limitations),
+    ...toArray(vectorizationSummary.limitations),
+    ...toArray(artifactMetadata.limitations),
+  ]
+    .map(String)
+    .filter((value, index, array) => value.trim().length > 0 && array.indexOf(value) === index);
   const selectedModel =
     toStringValue(metricsPayload.best_model) ??
     toStringValue(modelMetadata.best_model) ??
@@ -1165,6 +1513,36 @@ const registerAiRunArtifactsForReview = async (
     toStringValue(vectorizationSummary.classification_output_model);
   const modelMetricsSummary =
     Object.keys(metricsPayload).length > 0 ? modelMetricsSummaryFrom(metricsPayload) : {};
+  const [
+    classificationCollection,
+    confidenceCollection,
+    uncertaintyCollection,
+  ] = await Promise.all([
+    readGeoJsonFeatureCollection(classificationArtifact, warnings),
+    readGeoJsonFeatureCollection(confidenceArtifact, warnings),
+    readGeoJsonFeatureCollection(uncertaintyArtifact, warnings),
+  ]);
+  const classificationPredictionRows = predictionRowsFromGeoJson({
+    collection: classificationCollection,
+    artifactKey: classificationArtifact?.key ?? 'ai_classification_review',
+    layerType: 'classification',
+    selectedModel,
+    limitations,
+  });
+  const confidencePredictionRows = predictionRowsFromGeoJson({
+    collection: confidenceCollection,
+    artifactKey: confidenceArtifact?.key ?? 'ai_confidence_review',
+    layerType: 'confidence',
+    selectedModel,
+    limitations,
+  });
+  const uncertaintyPredictionRows = predictionRowsFromGeoJson({
+    collection: uncertaintyCollection,
+    artifactKey: uncertaintyArtifact?.key ?? 'ai_uncertainty_areas',
+    layerType: 'uncertainty',
+    selectedModel,
+    limitations,
+  });
 
   const result = await transaction(async (client: PoolClient) => {
     await client.query(`DELETE FROM ai_run_metric WHERE ai_run_id = $1`, [input.runId]);
@@ -1188,7 +1566,7 @@ const registerAiRunArtifactsForReview = async (
     );
     const hasReviewableStructuredResults =
       metricRows.length > 0 || classStatisticRows.length > 0;
-    const outputLayersRegistered = await insertReviewOutputLayers({
+    const outputLayerResult = await insertReviewOutputLayers({
       client,
       runId: input.runId,
       projectId: input.projectId,
@@ -1196,6 +1574,15 @@ const registerAiRunArtifactsForReview = async (
       classificationPath,
       confidencePath,
       uncertaintyPath,
+    });
+    const predictionFeaturesRegistered = await insertPredictionFeaturesForReviewLayers({
+      client,
+      runId: input.runId,
+      projectId: input.projectId,
+      layers: outputLayerResult.layers,
+      classificationRows: classificationPredictionRows,
+      confidenceRows: confidencePredictionRows,
+      uncertaintyRows: uncertaintyPredictionRows,
     });
     if (selectedModel) {
       await client.query(`UPDATE ai_run SET selected_model = $2 WHERE id = $1`, [
@@ -1207,7 +1594,8 @@ const registerAiRunArtifactsForReview = async (
     return {
       metricsRegistered,
       classStatisticsRegistered,
-      outputLayersRegistered,
+      outputLayersRegistered: outputLayerResult.inserted,
+      predictionFeaturesRegistered,
     };
   });
 
@@ -1219,11 +1607,13 @@ const registerAiRunArtifactsForReview = async (
       metrics_registered: result.metricsRegistered,
       class_statistics_registered: result.classStatisticsRegistered,
       output_layers_registered: result.outputLayersRegistered,
+      prediction_features_registered: result.predictionFeaturesRegistered,
       warnings,
       artifact_paths: artifactPaths,
       unpublished_only: true,
       review_only: true,
       no_spatial_feature_writes: true,
+      prediction_feature_store: true,
     },
     registered_artifact_paths: artifactPaths,
   };
@@ -1271,13 +1661,6 @@ const registerAiRunArtifactsForReview = async (
     toIntValue(regionalClassificationSummary.uncertainty_feature_count) ??
     toIntValue(confidenceSummary.uncertain_feature_count);
   const regionalScope = toRecord(regionalClassificationSummary.scope);
-  const limitations = [
-    ...toArray(regionalClassificationSummary.limitations),
-    ...toArray(vectorizationSummary.limitations),
-    ...toArray(artifactMetadata.limitations),
-  ]
-    .map(String)
-    .filter((value, index, array) => value.trim().length > 0 && array.indexOf(value) === index);
 
   if (classificationModel) {
     metadataPatch.classification_model = classificationModel;

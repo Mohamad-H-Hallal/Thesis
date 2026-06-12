@@ -5449,9 +5449,9 @@ String _whatHappenedMessage(String executionMode) {
     case 'regional_classification':
       return 'Generated regional AI review predictions from extracted sample features.';
     case 'regional_vectorization_artifacts':
-      return 'Prepared regional classification, confidence, and uncertainty review artifacts.';
+      return 'Generated regional vector review artifacts and stored AI predictions in the app database for review.';
     case 'regional_full_review_artifacts':
-      return 'Ran the full regional review workflow: approved data export, feature extraction, model evaluation, review predictions, and vector review artifacts.';
+      return 'Ran the full regional review workflow: approved data export, feature extraction, model evaluation, review predictions, vector artifacts, and database prediction rows.';
     case 'dry_run':
       return 'Checked the AI pipeline without running model processing.';
     case 'mock':
@@ -5695,7 +5695,7 @@ String _friendlyExecutionModeLabel(String mode) {
     case 'regional_classification':
       return 'Regional review prediction';
     case 'regional_vectorization_artifacts':
-      return 'Regional review artifacts';
+      return 'Regional prediction store';
     case 'regional_full_review_artifacts':
       return 'Full regional review run';
     case 'dry_run':

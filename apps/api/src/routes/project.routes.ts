@@ -120,6 +120,14 @@ router.get(
 );
 
 router.get(
+  '/:projectId/ai/published-predictions',
+  uuidValidation('projectId'),
+  validate,
+  checkProjectAccess,
+  asyncHandler(aiController.listProjectPublishedAiPredictions),
+);
+
+router.get(
   '/:projectId/ai/settings',
   uuidValidation('projectId'),
   validate,

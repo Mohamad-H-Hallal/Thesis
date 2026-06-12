@@ -268,6 +268,91 @@ const createPreviewableAiLayer = async ({
   };
 };
 
+const insertAiPredictionFeature = async ({
+  projectId,
+  runId,
+  layerId,
+  artifactFeatureId,
+  predictedClass = 'olives',
+  confidence = 0.82,
+  uncertaintyScore = null,
+  modelName = 'random_forest',
+  status = 'ready_for_review',
+  lon = 35.22,
+  lat = 33.2,
+}) => {
+  const geometry = {
+    type: 'Polygon',
+    coordinates: [
+      [
+        [lon, lat],
+        [lon + 0.01, lat],
+        [lon + 0.01, lat + 0.01],
+        [lon, lat + 0.01],
+        [lon, lat],
+      ],
+    ],
+  };
+  const result = await pool.query(
+    `INSERT INTO ai_prediction_feature (
+       project_id,
+       ai_run_id,
+       ai_output_layer_id,
+       artifact_feature_id,
+       geom,
+       geometry_type,
+       predicted_class,
+       confidence,
+       uncertainty_score,
+       model_name,
+       source,
+       status,
+       metadata
+     )
+     VALUES (
+       $1,
+       $2,
+       $3,
+       $4,
+       ST_SetSRID(ST_GeomFromGeoJSON($5), 4326),
+       'Polygon',
+       $6,
+       $7,
+       $8,
+       $9,
+       'ai_prediction',
+       $10,
+       $11::jsonb
+     )
+     RETURNING id`,
+    [
+      projectId,
+      runId,
+      layerId,
+      artifactFeatureId,
+      JSON.stringify(geometry),
+      predictedClass,
+      confidence,
+      uncertaintyScore,
+      modelName,
+      status,
+      JSON.stringify({
+        properties: {
+          source_feature_id: artifactFeatureId,
+          predicted_class: predictedClass,
+          confidence,
+          uncertainty_score: uncertaintyScore,
+          model_name: modelName,
+          source: 'ai_prediction',
+        },
+        not_official_field_data: true,
+        no_spatial_feature_writes: true,
+      }),
+    ],
+  );
+  return result.rows[0].id;
+};
+
 const writePreviewGeoJson = async (
   relativePath = 'outputs/runs/phase-o-test/ai_classification_review.geojson',
   features = [
@@ -1452,6 +1537,259 @@ describe('AI backend endpoints phase B', () => {
     expect(
       exactFeatureResponse.body.data.feature_collection.features[0].properties.predicted_class,
     ).toBe('olives');
+  });
+
+  test('AI prediction endpoint loads database prediction rows with filters and stable counts', async () => {
+    const { admin, project } = await createProjectFixture('AI DB Predictions');
+    const { runId, layerId } = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+      storagePath: 'outputs/runs/phase-r-test/../unsafe.geojson',
+    });
+    await insertAiPredictionFeature({
+      projectId: project.id,
+      runId,
+      layerId,
+      artifactFeatureId: 'prediction-olives-high',
+      predictedClass: 'olives',
+      confidence: 0.91,
+      uncertaintyScore: 0.09,
+      lon: 35.2,
+    });
+    await insertAiPredictionFeature({
+      projectId: project.id,
+      runId,
+      layerId,
+      artifactFeatureId: 'prediction-citrus-low',
+      predictedClass: 'citrus fruit trees',
+      confidence: 0.58,
+      uncertaintyScore: 0.42,
+      lon: 35.24,
+    });
+    await insertAiPredictionFeature({
+      projectId: project.id,
+      runId,
+      layerId,
+      artifactFeatureId: 'prediction-fruit-mid',
+      predictedClass: 'fruit trees',
+      confidence: 0.74,
+      uncertaintyScore: 0.26,
+      lon: 35.28,
+    });
+    const spatialFeatureCountBefore = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM spatial_feature',
+    );
+
+    const filteredResponse = await request(app)
+      .get(
+        `${API_PREFIX}/ai/layers/${layerId}/predictions?detail=full&geometry=full&confidence_min=0.7&confidence_max=0.8`,
+      )
+      .set(authHeader(admin.token))
+      .expect(200);
+
+    expect(filteredResponse.body.data.layer).toEqual(
+      expect.objectContaining({
+        id: layerId,
+        status: 'ready_for_review',
+        viewer_published: false,
+        source: 'ai_prediction_feature',
+      }),
+    );
+    expect(filteredResponse.body.data.layer.storage_path).toBeUndefined();
+    expect(filteredResponse.body.data.total_count).toBe(3);
+    expect(filteredResponse.body.data.visible_count).toBe(1);
+    expect(filteredResponse.body.data.returned_count).toBe(1);
+    expect(filteredResponse.body.data.class_counts).toEqual({
+      olives: 1,
+      'citrus fruit trees': 1,
+      'fruit trees': 1,
+    });
+    expect(filteredResponse.body.data.feature_collection.features[0]).toEqual(
+      expect.objectContaining({
+        id: 'prediction-fruit-mid',
+        properties: expect.objectContaining({
+          prediction_feature_id: expect.any(String),
+          artifact_feature_id: 'prediction-fruit-mid',
+          predicted_class: 'fruit trees',
+          confidence: 0.74,
+          uncertainty_score: 0.26,
+          source: 'ai_prediction',
+          not_official_field_data: true,
+          no_spatial_feature_writes: true,
+        }),
+      }),
+    );
+
+    const uncertaintyResponse = await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/predictions?uncertainty_min=0.4`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(uncertaintyResponse.body.data.total_count).toBe(3);
+    expect(uncertaintyResponse.body.data.visible_count).toBe(1);
+    expect(
+      uncertaintyResponse.body.data.feature_collection.features[0].properties.predicted_class,
+    ).toBe('citrus fruit trees');
+
+    const compatibilityResponse = await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/features?feature_id=prediction-olives-high`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(compatibilityResponse.body.data.source).toBe('ai_prediction_feature');
+    expect(compatibilityResponse.body.data.visible_count).toBe(1);
+
+    const spatialFeatureCountAfter = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM spatial_feature',
+    );
+    expect(spatialFeatureCountAfter.rows[0].count).toBe(spatialFeatureCountBefore.rows[0].count);
+  });
+
+  test('published AI prediction permissions expose only published database predictions', async () => {
+    const { admin, project } = await createProjectFixture('AI DB Prediction Permissions');
+    await enableProjectAiSettings({ projectId: project.id, userId: admin.user.id });
+    const { runId, layerId } = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+      status: 'approved',
+      storagePath: 'outputs/runs/phase-r-test/missing-file.geojson',
+    });
+    const { runId: confidenceRunId, layerId: confidenceLayerId } = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+      layerType: 'confidence',
+      status: 'approved',
+      storagePath: 'outputs/runs/phase-r-test/confidence.geojson',
+    });
+    const { runId: uncertaintyRunId, layerId: uncertaintyLayerId } = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+      layerType: 'uncertainty',
+      status: 'approved',
+      storagePath: 'outputs/runs/phase-r-test/uncertainty.geojson',
+    });
+    await insertAiPredictionFeature({
+      projectId: project.id,
+      runId,
+      layerId,
+      artifactFeatureId: 'published-db-prediction',
+      status: 'approved',
+      confidence: 0.88,
+    });
+    await insertAiPredictionFeature({
+      projectId: project.id,
+      runId: confidenceRunId,
+      layerId: confidenceLayerId,
+      artifactFeatureId: 'published-db-confidence',
+      predictedClass: 'confidence',
+      status: 'approved',
+      confidence: 0.88,
+    });
+    await insertAiPredictionFeature({
+      projectId: project.id,
+      runId: uncertaintyRunId,
+      layerId: uncertaintyLayerId,
+      artifactFeatureId: 'published-db-uncertainty',
+      predictedClass: 'uncertainty',
+      status: 'approved',
+      confidence: 0.54,
+      uncertaintyScore: 0.46,
+    });
+    const viewer = await createViewerToken();
+    const normalAdmin = await createAdminUser({
+      fullName: 'Normal DB Prediction Admin',
+      emailPrefix: 'normal-db-prediction-admin',
+    });
+    const beforeFeatureCount = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM spatial_feature',
+    );
+
+    await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/predictions`)
+      .set(authHeader(viewer.token))
+      .expect(403);
+    await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/predictions`)
+      .set(authHeader(normalAdmin.token))
+      .expect(403);
+
+    await request(app)
+      .post(`${API_PREFIX}/ai/layers/${layerId}/publish`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    await request(app)
+      .post(`${API_PREFIX}/ai/layers/${confidenceLayerId}/publish`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    await request(app)
+      .post(`${API_PREFIX}/ai/layers/${uncertaintyLayerId}/publish`)
+      .set(authHeader(admin.token))
+      .expect(200);
+
+    const viewerResponse = await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/predictions?detail=full&geometry=full`)
+      .set(authHeader(viewer.token))
+      .expect(200);
+    expect(viewerResponse.body.data.layer).toEqual(
+      expect.objectContaining({
+        id: layerId,
+        status: 'published',
+        viewer_published: true,
+      }),
+    );
+    expect(viewerResponse.body.data.layer.storage_path).toBeUndefined();
+    expect(viewerResponse.body.data.total_count).toBe(1);
+    expect(viewerResponse.body.data.feature_collection.features[0].properties).toEqual(
+      expect.objectContaining({
+        source: 'ai_prediction',
+        status: 'published',
+        not_official_field_data: true,
+      }),
+    );
+
+    const projectResponse = await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/ai/published-predictions`)
+      .set(authHeader(viewer.token))
+      .expect(200);
+    expect(projectResponse.body.data.layers).toHaveLength(3);
+    expect(projectResponse.body.data.layers.every((layer) => layer.storage_path === undefined)).toBe(
+      true,
+    );
+    expect(projectResponse.body.data.total_count).toBe(1);
+    expect(projectResponse.body.data.primary_layer_type).toBe('classification');
+    expect(projectResponse.body.data.primary_prediction_count).toBe(1);
+    expect(projectResponse.body.data.total_prediction_row_count).toBe(3);
+    expect(projectResponse.body.data.layer_counts).toEqual(
+      expect.objectContaining({
+        classification: 1,
+        confidence: 1,
+        uncertainty: 1,
+      }),
+    );
+    expect(projectResponse.body.data.layer.layer_type).toBe('classification');
+    expect(projectResponse.body.data.feature_collection.features).toHaveLength(1);
+    expect(projectResponse.body.data.class_counts).toEqual(
+      expect.objectContaining({
+        olives: 1,
+      }),
+    );
+
+    await request(app)
+      .post(`${API_PREFIX}/ai/layers/${layerId}/unpublish`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    await request(app)
+      .get(`${API_PREFIX}/ai/layers/${layerId}/predictions`)
+      .set(authHeader(viewer.token))
+      .expect(403);
+
+    const predictionStatus = await pool.query(
+      `SELECT status FROM ai_prediction_feature WHERE ai_output_layer_id = $1`,
+      [layerId],
+    );
+    expect(predictionStatus.rows[0].status).toBe('approved');
+    const afterFeatureCount = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM spatial_feature',
+    );
+    expect(afterFeatureCount.rows[0].count).toBe(beforeFeatureCount.rows[0].count);
   });
 
   test('AI layer preview denies non-protected users and unsafe artifact paths', async () => {

@@ -378,10 +378,80 @@ const writeRegionalClassificationArtifacts = async ({ root, regionalRunId }) => 
 
 const writePhaseMReviewArtifacts = async ({ root, regionalRunId, projectId }) => {
   const runDir = `outputs/runs/${regionalRunId}`;
-  const emptyFeatureCollection = {
+  const predictionFeature = ({
+    id,
+    predictedClass,
+    confidence,
+    uncertaintyScore,
+    lon,
+  }) => ({
+    type: 'Feature',
+    id,
+    properties: {
+      source_feature_id: id,
+      predicted_class: predictedClass,
+      confidence,
+      uncertainty_score: uncertaintyScore,
+      model_name: 'random_forest',
+      source: 'ai_prediction',
+      area_ha: 1.25,
+    },
+    geometry: {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [lon, 33.45],
+          [lon + 0.004, 33.45],
+          [lon + 0.004, 33.454],
+          [lon, 33.454],
+          [lon, 33.45],
+        ],
+      ],
+    },
+  });
+  const classificationFeatures = [
+    predictionFeature({
+      id: 'phase-m-citrus-1',
+      predictedClass: 'citrus fruit trees',
+      confidence: 0.66,
+      uncertaintyScore: 0.34,
+      lon: 35.35,
+    }),
+    predictionFeature({
+      id: 'phase-m-fruit-1',
+      predictedClass: 'fruit trees',
+      confidence: 0.51,
+      uncertaintyScore: 0.49,
+      lon: 35.36,
+    }),
+    predictionFeature({
+      id: 'phase-m-olives-1',
+      predictedClass: 'olives',
+      confidence: 0.88,
+      uncertaintyScore: 0.12,
+      lon: 35.37,
+    }),
+  ];
+  const confidenceFeatures = classificationFeatures.map((feature) => ({
+    ...feature,
+    properties: {
+      ...feature.properties,
+      confidence_artifact: true,
+    },
+  }));
+  const uncertaintyFeatures = classificationFeatures
+    .filter((feature) => feature.properties.uncertainty_score >= 0.34)
+    .map((feature) => ({
+      ...feature,
+      properties: {
+        ...feature.properties,
+        uncertainty_artifact: true,
+      },
+    }));
+  const featureCollection = (features) => ({
     type: 'FeatureCollection',
-    features: [],
-  };
+    features,
+  });
   const confidenceSummary = {
     min: 0.336667,
     mean: 0.753197,
@@ -526,9 +596,21 @@ const writePhaseMReviewArtifacts = async ({ root, regionalRunId, projectId }) =>
     { class_label: 'fruit trees', predicted_feature_count: 66 },
     { class_label: 'olives', predicted_feature_count: 1147 },
   ]);
-  await writeJsonArtifact(root, `${runDir}/ai_classification_review.geojson`, emptyFeatureCollection);
-  await writeJsonArtifact(root, `${runDir}/ai_confidence_review.geojson`, emptyFeatureCollection);
-  await writeJsonArtifact(root, `${runDir}/ai_uncertainty_areas.geojson`, emptyFeatureCollection);
+  await writeJsonArtifact(
+    root,
+    `${runDir}/ai_classification_review.geojson`,
+    featureCollection(classificationFeatures),
+  );
+  await writeJsonArtifact(
+    root,
+    `${runDir}/ai_confidence_review.geojson`,
+    featureCollection(confidenceFeatures),
+  );
+  await writeJsonArtifact(
+    root,
+    `${runDir}/ai_uncertainty_areas.geojson`,
+    featureCollection(uncertaintyFeatures),
+  );
 };
 
 beforeEach(async () => {
@@ -1776,6 +1858,89 @@ describe('AI worker skeleton phase D', () => {
         exclusion_reason: 'below_minimum_samples',
       }),
     );
+
+    const predictionRows = await pool.query(
+      `SELECT l.layer_type,
+              COUNT(*)::int AS count,
+              MIN(p.status::text) AS min_status,
+              BOOL_AND(p.source = 'ai_prediction') AS ai_source_only
+       FROM ai_prediction_feature p
+       JOIN ai_output_layer l ON l.id = p.ai_output_layer_id
+       WHERE p.ai_run_id = $1
+       GROUP BY l.layer_type
+       ORDER BY l.layer_type ASC`,
+      [runId],
+    );
+    expect(predictionRows.rows).toEqual([
+      {
+        layer_type: 'classification',
+        count: 3,
+        min_status: 'ready_for_review',
+        ai_source_only: true,
+      },
+      {
+        layer_type: 'confidence',
+        count: 3,
+        min_status: 'ready_for_review',
+        ai_source_only: true,
+      },
+      {
+        layer_type: 'uncertainty',
+        count: 2,
+        min_status: 'ready_for_review',
+        ai_source_only: true,
+      },
+    ]);
+    const predictionDetail = await pool.query(
+      `SELECT predicted_class, confidence, uncertainty_score, model_name, metadata
+       FROM ai_prediction_feature
+       WHERE ai_run_id = $1
+         AND artifact_feature_id = 'phase-m-olives-1'
+       ORDER BY ai_output_layer_id
+       LIMIT 1`,
+      [runId],
+    );
+    expect(predictionDetail.rows[0]).toEqual(
+      expect.objectContaining({
+        predicted_class: 'olives',
+        confidence: 0.88,
+        uncertainty_score: 0.12,
+        model_name: 'random_forest',
+        metadata: expect.objectContaining({
+          not_official_field_data: true,
+          no_spatial_feature_writes: true,
+          not_national_classification: true,
+        }),
+      }),
+    );
+    const predictionCountBeforeRerun = await countRows('ai_prediction_feature');
+    const duplicateResult = await registerAiRunArtifactsForReview({
+      runId,
+      projectId: project.id,
+      labelField: 'L4_descr',
+      metadata: {
+        execution_mode: 'regional_vectorization_artifacts',
+        ai_pipeline_run_id: 'phase-m-real-regional-proof',
+        output_paths: {
+          ai_classification_review:
+            'outputs/runs/phase-m-real-regional-proof/ai_classification_review.geojson',
+          ai_confidence_review:
+            'outputs/runs/phase-m-real-regional-proof/ai_confidence_review.geojson',
+          ai_uncertainty_areas:
+            'outputs/runs/phase-m-real-regional-proof/ai_uncertainty_areas.geojson',
+          ai_class_statistics_json:
+            'outputs/runs/phase-m-real-regional-proof/ai_class_statistics.json',
+          ai_class_statistics_csv:
+            'outputs/runs/phase-m-real-regional-proof/ai_class_statistics.csv',
+        },
+      },
+      pipelineConfig: pipelineConfig({
+        root: artifactRoot,
+        mode: 'regional_vectorization_artifacts',
+      }),
+    });
+    expect(duplicateResult.predictionFeaturesRegistered).toBe(8);
+    expect(await countRows('ai_prediction_feature')).toBe(predictionCountBeforeRerun);
     expect(await countRows('spatial_feature')).toBe(beforeSpatialCount);
   });
 

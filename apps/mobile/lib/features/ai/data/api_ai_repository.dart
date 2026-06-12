@@ -290,7 +290,7 @@ class ApiAiRepository implements AiRepository {
         queryParameters['feature_id'] = featureIdValue;
       }
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
-        '$_aiBasePath/layers/$layerId/features',
+        '$_aiBasePath/layers/$layerId/predictions',
         queryParameters: queryParameters,
       );
       final payload = response.data ?? const <String, dynamic>{};

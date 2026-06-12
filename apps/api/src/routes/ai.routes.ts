@@ -44,6 +44,13 @@ router.get(
   asyncHandler(aiController.getAiLayerFeatures),
 );
 
+router.get(
+  '/layers/:layerId/predictions',
+  uuidValidation('layerId'),
+  validate,
+  asyncHandler(aiController.getAiLayerPredictions),
+);
+
 router.post(
   '/layers/:layerId/publish',
   uuidValidation('layerId'),

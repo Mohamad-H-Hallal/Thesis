@@ -1393,7 +1393,7 @@ void main() {
     expect(find.text('Run queued. Worker is not running.'), findsWidgets);
     expect(
       find.text(
-        'Ran the full regional review workflow: approved data export, feature extraction, model evaluation, review predictions, and vector review artifacts.',
+        'Ran the full regional review workflow: approved data export, feature extraction, model evaluation, review predictions, vector artifacts, and database prediction rows.',
       ),
       findsOneWidget,
     );

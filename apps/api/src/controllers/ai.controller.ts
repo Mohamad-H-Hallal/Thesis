@@ -1698,6 +1698,23 @@ type AiLayerBounds = {
   north: number;
 };
 
+type AiLayerFeatureQueryOptions = {
+  detail: AiLayerDetail;
+  geometry: AiLayerGeometry;
+  limit: number;
+  page: number;
+  offset: number;
+  search: string | null;
+  classLabel: string | null;
+  featureId: string | null;
+  bounds: AiLayerBounds | null;
+  zoom: number | null;
+  confidenceMin: number | null;
+  confidenceMax: number | null;
+  uncertaintyMin: number | null;
+  uncertaintyMax: number | null;
+};
+
 const parseAiLayerBounds = (value: unknown): AiLayerBounds | null => {
   const raw = normalizeOptionalString(value);
   if (!raw) {
@@ -1726,20 +1743,21 @@ const parseOptionalZoom = (value: unknown): number | null => {
   return zoom;
 };
 
+const parseOptionalUnitScore = (value: unknown, label: string): number | null => {
+  const raw = normalizeOptionalString(value);
+  if (!raw) {
+    return null;
+  }
+  const score = Number.parseFloat(raw);
+  if (!Number.isFinite(score) || score < 0 || score > 1) {
+    throw new AppError(`${label} must be between 0 and 1.`, 400);
+  }
+  return score;
+};
+
 const parseAiLayerFeatureQuery = (
   req: Request,
-): {
-  detail: AiLayerDetail;
-  geometry: AiLayerGeometry;
-  limit: number;
-  page: number;
-  offset: number;
-  search: string | null;
-  classLabel: string | null;
-  featureId: string | null;
-  bounds: AiLayerBounds | null;
-  zoom: number | null;
-} => {
+): AiLayerFeatureQueryOptions => {
   const rawDetailValue = normalizeOptionalString(req.query.detail) ?? 'overview';
   const rawDetail = rawDetailValue === 'preview' ? 'overview' : rawDetailValue;
   if (rawDetail !== 'overview' && rawDetail !== 'full') {
@@ -1766,6 +1784,28 @@ const parseAiLayerFeatureQuery = (
     DEFAULT_AI_LAYER_OVERVIEW_FEATURE_LIMIT,
     MAX_AI_LAYER_PREVIEW_FEATURES,
   );
+  const confidenceMin = parseOptionalUnitScore(
+    req.query.confidence_min ?? req.query.min_confidence,
+    'AI layer confidence_min',
+  );
+  const confidenceMax = parseOptionalUnitScore(
+    req.query.confidence_max ?? req.query.max_confidence,
+    'AI layer confidence_max',
+  );
+  const uncertaintyMin = parseOptionalUnitScore(
+    req.query.uncertainty_min ?? req.query.min_uncertainty,
+    'AI layer uncertainty_min',
+  );
+  const uncertaintyMax = parseOptionalUnitScore(
+    req.query.uncertainty_max ?? req.query.max_uncertainty,
+    'AI layer uncertainty_max',
+  );
+  if (confidenceMin !== null && confidenceMax !== null && confidenceMin > confidenceMax) {
+    throw new AppError('AI layer confidence_min cannot be greater than confidence_max.', 400);
+  }
+  if (uncertaintyMin !== null && uncertaintyMax !== null && uncertaintyMin > uncertaintyMax) {
+    throw new AppError('AI layer uncertainty_min cannot be greater than uncertainty_max.', 400);
+  }
   return {
     detail: rawDetail,
     geometry,
@@ -1777,6 +1817,10 @@ const parseAiLayerFeatureQuery = (
     featureId: normalizeOptionalString(req.query.feature_id),
     bounds: parseAiLayerBounds(req.query.bounds),
     zoom,
+    confidenceMin,
+    confidenceMax,
+    uncertaintyMin,
+    uncertaintyMax,
   };
 };
 
@@ -1897,18 +1941,52 @@ const aiFeatureSearchBlob = (feature: any): string => {
     .toLowerCase();
 };
 
+const aiFeatureNumericProperty = (feature: any, keys: string[]): number | null => {
+  const properties =
+    feature?.properties && typeof feature.properties === 'object' ? feature.properties : {};
+  for (const key of keys) {
+    const value = properties[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const parsed = Number.parseFloat(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+  return null;
+};
+
 const filterAiLayerFeatures = (
   features: any[],
   options: {
     search: string | null;
     classLabel: string | null;
     featureId: string | null;
+    confidenceMin?: number | null;
+    confidenceMax?: number | null;
+    uncertaintyMin?: number | null;
+    uncertaintyMax?: number | null;
   },
 ): any[] => {
   const search = options.search?.toLowerCase() ?? null;
   const classLabel = options.classLabel?.toLowerCase() ?? null;
   const featureId = options.featureId?.toLowerCase() ?? null;
-  if (!search && !classLabel && !featureId) {
+  const confidenceMin = options.confidenceMin ?? null;
+  const confidenceMax = options.confidenceMax ?? null;
+  const uncertaintyMin = options.uncertaintyMin ?? null;
+  const uncertaintyMax = options.uncertaintyMax ?? null;
+  if (
+    !search &&
+    !classLabel &&
+    !featureId &&
+    confidenceMin === null &&
+    confidenceMax === null &&
+    uncertaintyMin === null &&
+    uncertaintyMax === null
+  ) {
     return features;
   }
   return features.filter((feature, index) => {
@@ -1920,6 +1998,38 @@ const filterAiLayerFeatures = (
     }
     if (search && !aiFeatureSearchBlob(feature).includes(search)) {
       return false;
+    }
+    if (confidenceMin !== null || confidenceMax !== null) {
+      const confidence = aiFeatureNumericProperty(feature, [
+        'confidence',
+        'confidence_score',
+        'probability',
+        'max_probability',
+      ]);
+      if (confidence === null) {
+        return false;
+      }
+      if (confidenceMin !== null && confidence < confidenceMin) {
+        return false;
+      }
+      if (confidenceMax !== null && confidence > confidenceMax) {
+        return false;
+      }
+    }
+    if (uncertaintyMin !== null || uncertaintyMax !== null) {
+      const uncertainty = aiFeatureNumericProperty(feature, [
+        'uncertainty_score',
+        'uncertainty',
+      ]);
+      if (uncertainty === null) {
+        return false;
+      }
+      if (uncertaintyMin !== null && uncertainty < uncertaintyMin) {
+        return false;
+      }
+      if (uncertaintyMax !== null && uncertainty > uncertaintyMax) {
+        return false;
+      }
     }
     return true;
   });
@@ -2120,6 +2230,8 @@ const overviewPropertiesFor = (feature: any): Record<string, unknown> => {
     feature?.properties && typeof feature.properties === 'object' ? feature.properties : {};
   const allowedKeys = [
     'id',
+    'prediction_feature_id',
+    'artifact_feature_id',
     'feature_id',
     'source_feature_id',
     'predicted_class',
@@ -2130,13 +2242,16 @@ const overviewPropertiesFor = (feature: any): Record<string, unknown> => {
     'confidence_score',
     'probability',
     'max_probability',
+    'uncertainty_score',
     'model_name',
     'model',
     'run_id',
     'source',
+    'status',
     'area',
     'area_ha',
     'limitation_note',
+    'not_official_field_data',
   ];
   return Object.fromEntries(
     allowedKeys
@@ -2157,6 +2272,10 @@ const buildAiLayerFeatureCollection = (
     featureId: string | null;
     bounds: AiLayerBounds | null;
     zoom: number | null;
+    confidenceMin?: number | null;
+    confidenceMax?: number | null;
+    uncertaintyMin?: number | null;
+    uncertaintyMax?: number | null;
   },
 ): {
   featureCollection: Record<string, unknown>;
@@ -2174,6 +2293,10 @@ const buildAiLayerFeatureCollection = (
     search: options.search,
     classLabel: options.classLabel,
     featureId: options.featureId,
+    confidenceMin: options.confidenceMin,
+    confidenceMax: options.confidenceMax,
+    uncertaintyMin: options.uncertaintyMin,
+    uncertaintyMax: options.uncertaintyMax,
   });
   const boundedFeatures = options.bounds
     ? filteredFeatures.filter((feature: any) => {
@@ -2244,6 +2367,352 @@ const buildAiLayerFeatureCollection = (
   };
 };
 
+const loadPreviewableAiLayerForUser = async (
+  layerId: string,
+  user: Express.UserContext,
+) => {
+  const layerResult = await query(
+    `SELECT l.id,
+            l.ai_run_id,
+            l.project_id,
+            l.layer_type,
+            l.status,
+            l.name,
+            l.description,
+            l.storage_path,
+            l.crs,
+            l.published_at,
+            ar.project_id AS run_project_id
+     FROM ai_output_layer l
+     JOIN ai_run ar ON ar.id = l.ai_run_id
+     WHERE l.id = $1`,
+    [layerId],
+  );
+
+  if (layerResult.rows.length === 0) {
+    throw new AppError('AI output layer not found', 404);
+  }
+
+  const layer = layerResult.rows[0];
+  if (layer.project_id !== layer.run_project_id) {
+    throw new AppError('AI output layer project mismatch.', 400);
+  }
+  if (!previewableLayerTypes.has(layer.layer_type)) {
+    throw new AppError('This AI output layer is not a map-preview layer.', 400);
+  }
+  const protectedSuperAdmin = isProtectedSuperAdminUser(user);
+  const viewerPublished = layer.status === 'published' && layer.published_at !== null;
+  if (protectedSuperAdmin) {
+    if (!previewableLayerStatuses.has(layer.status)) {
+      throw new AppError('This AI output layer is not available for preview.', 403);
+    }
+  } else {
+    if (!viewerPublished) {
+      throw new AppError('This AI output layer is not published.', 403);
+    }
+    const settings = await getEffectiveAiSettings(layer.project_id);
+    if (!settings.is_enabled) {
+      throw new AppError('AI layers are disabled for this project.', 403);
+    }
+    await assertProjectReadableForAiLayer(layer.project_id, user);
+  }
+
+  return {
+    layer,
+    viewerPublished,
+  };
+};
+
+const predictionFeaturePropertiesFromRow = (row: any): Record<string, unknown> => {
+  const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  const originalProperties =
+    metadata.properties && typeof metadata.properties === 'object'
+      ? (metadata.properties as Record<string, unknown>)
+      : {};
+  return {
+    ...originalProperties,
+    id: row.artifact_feature_id,
+    prediction_feature_id: row.id,
+    artifact_feature_id: row.artifact_feature_id,
+    predicted_class: row.predicted_class,
+    confidence: row.confidence,
+    uncertainty_score: row.uncertainty_score,
+    model_name: row.model_name,
+    run_id: row.ai_run_id,
+    source: row.source ?? 'ai_prediction',
+    status: row.status,
+    layer_id: row.ai_output_layer_id,
+    not_official_field_data: true,
+    no_spatial_feature_writes: true,
+  };
+};
+
+const predictionRowsToGeoJsonFeatures = (rows: any[]): Record<string, unknown>[] =>
+  rows.map((row) => ({
+    type: 'Feature',
+    id: row.artifact_feature_id,
+    properties: predictionFeaturePropertiesFromRow(row),
+    geometry: row.geometry,
+  }));
+
+const loadPredictionFeaturesForLayer = async (layerId: string): Promise<any[]> => {
+  const result = await query(
+    `SELECT id,
+            project_id,
+            ai_run_id,
+            ai_output_layer_id,
+            artifact_feature_id,
+            ST_AsGeoJSON(geom)::json AS geometry,
+            geometry_type,
+            predicted_class,
+            confidence,
+            uncertainty_score,
+            model_name,
+            source,
+            status,
+            metadata,
+            created_at,
+            updated_at
+     FROM ai_prediction_feature
+     WHERE ai_output_layer_id = $1
+     ORDER BY created_at ASC, artifact_feature_id ASC`,
+    [layerId],
+  );
+  return result.rows;
+};
+
+const aiLayerPredictionResponseData = ({
+  layer,
+  viewerPublished,
+  featureQuery,
+  rows,
+}: {
+  layer: any;
+  viewerPublished: boolean;
+  featureQuery: AiLayerFeatureQueryOptions;
+  rows: any[];
+}) => {
+  const parsed = {
+    type: 'FeatureCollection',
+    features: predictionRowsToGeoJsonFeatures(rows),
+  };
+  const {
+    featureCollection,
+    returnedFeatureCount,
+    sourceFeatureCount,
+    matchingFeatureCount,
+    capped,
+    cap,
+    layerBounds,
+    classCounts,
+    geometryTypes,
+  } = buildAiLayerFeatureCollection(parsed, featureQuery);
+
+  return {
+    layer: {
+      id: layer.id,
+      ai_run_id: layer.ai_run_id,
+      project_id: layer.project_id,
+      layer_type: layer.layer_type,
+      status: layer.status,
+      name: layer.name,
+      description: layer.description,
+      crs: layer.crs,
+      published_at: layer.published_at,
+      viewer_published: viewerPublished,
+      source: 'ai_prediction_feature',
+    },
+    feature_collection: featureCollection,
+    feature_count: sourceFeatureCount,
+    total_count: sourceFeatureCount,
+    matching_feature_count: matchingFeatureCount,
+    visible_count: matchingFeatureCount,
+    returned_feature_count: returnedFeatureCount,
+    returned_count: returnedFeatureCount,
+    capped,
+    cap,
+    pagination: {
+      page: featureQuery.page,
+      limit: featureQuery.limit,
+      total: matchingFeatureCount,
+      pages: Math.max(1, Math.ceil(matchingFeatureCount / featureQuery.limit)),
+      has_more: featureQuery.offset + returnedFeatureCount < matchingFeatureCount,
+    },
+    detail: featureQuery.detail,
+    geometry_mode: featureQuery.geometry,
+    optimized_preview: featureQuery.detail === 'overview',
+    available_detail_modes: ['overview', 'full'],
+    available_geometry_modes: ['aggregate', 'simplified', 'full'],
+    q: featureQuery.search,
+    class_label: featureQuery.classLabel,
+    confidence_min: featureQuery.confidenceMin,
+    confidence_max: featureQuery.confidenceMax,
+    uncertainty_min: featureQuery.uncertaintyMin,
+    uncertainty_max: featureQuery.uncertaintyMax,
+    layer_bounds: layerBounds,
+    class_counts: classCounts,
+    geometry_types: geometryTypes,
+    bounds: featureQuery.bounds,
+    zoom: featureQuery.zoom,
+    source: 'ai_prediction_feature',
+    not_official_field_data: true,
+  };
+};
+
+const getAiLayerPredictions = async (req: Request, res: Response): Promise<void> => {
+  const featureQuery = parseAiLayerFeatureQuery(req);
+  const currentUser = req.user as Express.UserContext;
+  const { layer, viewerPublished } = await loadPreviewableAiLayerForUser(
+    req.params.layerId,
+    currentUser,
+  );
+  const rows = await loadPredictionFeaturesForLayer(layer.id);
+
+  res.json({
+    success: true,
+    data: aiLayerPredictionResponseData({
+      layer,
+      viewerPublished,
+      featureQuery,
+      rows,
+    }),
+  });
+};
+
+const listProjectPublishedAiPredictions = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const user = req.user as Express.UserContext;
+  await assertProjectReadableForAiLayer(req.params.projectId, user);
+  const settings = await getEffectiveAiSettings(req.params.projectId);
+  if (!settings.is_enabled) {
+    res.json({
+      success: true,
+      data: {
+        project_id: req.params.projectId,
+        layers: [],
+        feature_collection: {
+          type: 'FeatureCollection',
+          features: [],
+        },
+        feature_count: 0,
+        total_count: 0,
+        matching_feature_count: 0,
+        visible_count: 0,
+        returned_feature_count: 0,
+        returned_count: 0,
+        capped: false,
+        cap: DEFAULT_AI_LAYER_OVERVIEW_FEATURE_LIMIT,
+        class_counts: {},
+        geometry_types: [],
+        source: 'ai_prediction_feature',
+        primary_layer_type: 'classification',
+        primary_prediction_count: 0,
+        layer_counts: {},
+        total_prediction_row_count: 0,
+        count_semantics: 'primary_prediction_layer',
+      },
+    });
+    return;
+  }
+
+  const featureQuery = parseAiLayerFeatureQuery(req);
+  const result = await query(
+    `SELECT p.id,
+            p.project_id,
+            p.ai_run_id,
+            p.ai_output_layer_id,
+            p.artifact_feature_id,
+            ST_AsGeoJSON(p.geom)::json AS geometry,
+            p.geometry_type,
+            p.predicted_class,
+            p.confidence,
+            p.uncertainty_score,
+            p.model_name,
+            p.source,
+            p.status,
+            p.metadata,
+            p.created_at,
+            p.updated_at,
+            l.layer_type,
+            l.name AS layer_name,
+            l.status AS layer_status,
+            l.published_at
+     FROM ai_prediction_feature p
+     JOIN ai_output_layer l ON l.id = p.ai_output_layer_id
+     WHERE p.project_id = $1
+       AND l.status = 'published'
+       AND l.published_at IS NOT NULL
+     ORDER BY l.layer_type ASC, p.created_at ASC, p.artifact_feature_id ASC`,
+    [req.params.projectId],
+  );
+  const layerResult = await query(
+    `SELECT id,
+            ai_run_id,
+            project_id,
+            layer_type,
+            status,
+            name,
+            description,
+            NULL::text AS storage_path,
+            asset_id,
+            crs,
+            ST_AsGeoJSON(bounds)::json AS bounds,
+            style,
+            published_at,
+            published_by,
+            created_at,
+            updated_at
+     FROM ai_output_layer
+     WHERE project_id = $1
+       AND status = 'published'
+       AND published_at IS NOT NULL
+     ORDER BY layer_type ASC, published_at DESC`,
+    [req.params.projectId],
+  );
+  const layerCounts: Record<string, number> = result.rows.reduce((counts, row) => {
+    const layerType = typeof row.layer_type === 'string' ? row.layer_type : 'unknown';
+    counts[layerType] = (counts[layerType] ?? 0) + 1;
+    return counts;
+  }, {} as Record<string, number>);
+  const primaryLayerType = layerCounts.classification
+    ? 'classification'
+    : Object.keys(layerCounts)[0] ?? 'classification';
+  const primaryRows = result.rows.filter((row) => row.layer_type === primaryLayerType);
+  const aggregateLayer = {
+    id: null,
+    ai_run_id: null,
+    project_id: req.params.projectId,
+    layer_type: primaryLayerType,
+    status: 'published',
+    name: 'Published AI predictions',
+    description: 'Primary read-only AI predictions stored in the application database.',
+    crs: 'EPSG:4326',
+    published_at: null,
+  };
+  const data = aiLayerPredictionResponseData({
+    layer: aggregateLayer,
+    viewerPublished: true,
+    featureQuery,
+    rows: primaryRows,
+  });
+
+  res.json({
+    success: true,
+    data: {
+      ...data,
+      project_id: req.params.projectId,
+      layers: layerResult.rows.map(({ storage_path: _storagePath, ...row }) => row),
+      primary_layer_type: primaryLayerType,
+      primary_prediction_count: layerCounts[primaryLayerType] ?? 0,
+      layer_counts: layerCounts,
+      total_prediction_row_count: result.rows.length,
+      count_semantics: 'primary_prediction_layer',
+    },
+  });
+};
+
 const getAiLayerFeatures = async (req: Request, res: Response): Promise<void> => {
   const featureQuery = parseAiLayerFeatureQuery(req);
   const layerResult = await query(
@@ -2291,6 +2760,19 @@ const getAiLayerFeatures = async (req: Request, res: Response): Promise<void> =>
       throw new AppError('AI layers are disabled for this project.', 403);
     }
     await assertProjectReadableForAiLayer(layer.project_id, currentUser);
+  }
+  const predictionRows = await loadPredictionFeaturesForLayer(layer.id);
+  if (predictionRows.length > 0) {
+    res.json({
+      success: true,
+      data: aiLayerPredictionResponseData({
+        layer,
+        viewerPublished,
+        featureQuery,
+        rows: predictionRows,
+      }),
+    });
+    return;
   }
   const storagePath = normalizeOptionalString(layer.storage_path);
   if (!storagePath) {
@@ -2532,6 +3014,16 @@ const reviewAiRun = async (req: Request, res: Response): Promise<void> => {
                  published_by`,
       [lockedRun.id, config.layerStatus, preservePublishedLayers],
     );
+    await client.query(
+      `UPDATE ai_prediction_feature p
+       SET status = $2::ai_prediction_feature_status,
+           updated_at = NOW()
+       FROM ai_output_layer l
+       WHERE p.ai_output_layer_id = l.id
+         AND l.ai_run_id = $1
+         AND ($3::boolean = false OR p.status <> 'published')`,
+      [lockedRun.id, config.layerStatus, preservePublishedLayers],
+    );
 
     const updatedRunResult = await client.query(
       `UPDATE ai_run
@@ -2680,6 +3172,13 @@ const publishAiLayer = async (req: Request, res: Response): Promise<void> => {
                  updated_at`,
       [layer.id, currentUser.id],
     );
+    await client.query(
+      `UPDATE ai_prediction_feature
+       SET status = 'published',
+           updated_at = NOW()
+       WHERE ai_output_layer_id = $1`,
+      [layer.id],
+    );
 
     await client.query(
       `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
@@ -2765,6 +3264,14 @@ const unpublishAiLayer = async (req: Request, res: Response): Promise<void> => {
                  updated_at`,
       [layer.id],
     );
+    await client.query(
+      `UPDATE ai_prediction_feature
+       SET status = 'approved',
+           updated_at = NOW()
+       WHERE ai_output_layer_id = $1
+         AND status = 'published'`,
+      [layer.id],
+    );
 
     await client.query(
       `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
@@ -2805,7 +3312,9 @@ module.exports = {
   listAiRunMetrics,
   listAiRunLayers,
   listProjectPublishedAiLayers,
+  listProjectPublishedAiPredictions,
   getAiLayerFeatures,
+  getAiLayerPredictions,
   listAiRunLogs,
   listAiRunReviews,
   reviewAiRun,
