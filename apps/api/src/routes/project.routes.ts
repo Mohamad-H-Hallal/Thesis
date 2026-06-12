@@ -120,6 +120,16 @@ router.get(
 );
 
 router.get(
+  '/:projectId/ai/uncertainty-areas',
+  uuidValidation('projectId'),
+  paginationValidation,
+  aiValidation.listUncertaintyAreas,
+  validate,
+  authorize('admin'),
+  asyncHandler(aiController.listProjectUncertaintyAreas),
+);
+
+router.get(
   '/:projectId/ai/settings',
   uuidValidation('projectId'),
   validate,

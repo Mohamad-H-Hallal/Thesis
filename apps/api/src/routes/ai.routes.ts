@@ -1,6 +1,6 @@
 const express = require('express');
 const aiController = require('../controllers/ai.controller');
-const { authenticate, requireProtectedSuperAdmin } = require('../middleware/auth');
+const { authenticate, authorize, requireProtectedSuperAdmin } = require('../middleware/auth');
 const {
   aiValidation,
   validate,
@@ -42,6 +42,39 @@ router.get(
   uuidValidation('layerId'),
   validate,
   asyncHandler(aiController.getAiLayerFeatures),
+);
+
+router.patch(
+  '/uncertainty-areas/:id/assign',
+  uuidValidation('id'),
+  aiValidation.assignUncertaintyArea,
+  validate,
+  authorize('admin'),
+  asyncHandler(aiController.assignUncertaintyArea),
+);
+
+router.patch(
+  '/uncertainty-areas/:id/status',
+  uuidValidation('id'),
+  aiValidation.updateUncertaintyAreaStatus,
+  validate,
+  authorize('admin'),
+  asyncHandler(aiController.updateUncertaintyAreaStatus),
+);
+
+router.post(
+  '/uncertainty-areas/:id/submit-validation',
+  uuidValidation('id'),
+  aiValidation.submitUncertaintyValidation,
+  validate,
+  asyncHandler(aiController.submitUncertaintyValidation),
+);
+
+router.get(
+  '/uncertainty-areas/:id',
+  uuidValidation('id'),
+  validate,
+  asyncHandler(aiController.getUncertaintyArea),
 );
 
 router.post(

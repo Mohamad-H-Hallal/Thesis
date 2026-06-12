@@ -5,6 +5,7 @@ class AppRoutes {
   static const focusSourceReviewFeature = 'reviewFeature';
   static const focusSourceImportFeature = 'importFeature';
   static const focusSourceApprovedContext = 'approvedProjectContext';
+  static const focusSourceAiValidationTask = 'aiValidationTask';
 
   static const splash = '/splash';
   static const login = '/login';
@@ -21,6 +22,7 @@ class AppRoutes {
   static const projects = '/app/projects';
   static const assignedProjects = '/app/assigned-projects';
   static const assignments = '/app/assignments';
+  static const aiValidationTasks = '/app/ai-validation-tasks';
   static const drafts = '/app/drafts';
   static const submissions = '/app/submissions';
   static const reviewQueue = '/app/review-queue';
@@ -94,6 +96,7 @@ class AppRoutes {
     String projectId, {
     String? featureId,
     String? focusSource,
+    String? aiTaskId,
     bool startCapture = false,
   }) {
     final queryParameters = <String, String>{};
@@ -103,6 +106,9 @@ class AppRoutes {
     if (focusSource?.trim().isNotEmpty ?? false) {
       queryParameters['focusSource'] = focusSource!.trim();
     }
+    if (aiTaskId?.trim().isNotEmpty ?? false) {
+      queryParameters['aiTaskId'] = aiTaskId!.trim();
+    }
     if (startCapture) {
       queryParameters['startCapture'] = '1';
     }
@@ -111,5 +117,13 @@ class AppRoutes {
       queryParameters: queryParameters.isEmpty ? null : queryParameters,
     );
     return uri.toString();
+  }
+
+  static String mapForAiValidationTask(String projectId, String taskId) {
+    return mapForProject(
+      projectId,
+      aiTaskId: taskId,
+      focusSource: focusSourceAiValidationTask,
+    );
   }
 }

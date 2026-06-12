@@ -2342,6 +2342,71 @@ void main() {
     expect(find.byType(FlutterMap), findsNothing);
   });
 
+  testWidgets('Project AI validation section shows uncertainty task counts', (
+    tester,
+  ) async {
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      uncertaintyAreas: <AiUncertaintyArea>[
+        AiUncertaintyArea(
+          id: 'task-open-1',
+          aiRunId: 'run-1',
+          projectId: project.id,
+          projectName: project.name,
+          geometry: const <String, dynamic>{
+            'type': 'Point',
+            'coordinates': <double>[35.5, 33.9],
+          },
+          suggestedClass: 'olives',
+          uncertaintyScore: 0.72,
+          confidenceScore: 0.28,
+          status: 'open',
+        ),
+        AiUncertaintyArea(
+          id: 'task-assigned-1',
+          aiRunId: 'run-1',
+          projectId: project.id,
+          projectName: project.name,
+          geometry: const <String, dynamic>{
+            'type': 'Point',
+            'coordinates': <double>[35.52, 33.91],
+          },
+          suggestedClass: 'citrus fruit trees',
+          uncertaintyScore: 0.61,
+          confidenceScore: 0.39,
+          status: 'assigned',
+          assignedTo: 'contributor-1',
+          assignedToName: 'Field Contributor',
+        ),
+      ],
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'uncertainty',
+    );
+
+    expect(find.text('Uncertainty Validation'), findsOneWidget);
+    expect(find.text('Status counts'), findsOneWidget);
+    expect(find.text('Total 2'), findsOneWidget);
+    expect(find.text('Open 1'), findsOneWidget);
+    expect(find.text('Assigned 1'), findsOneWidget);
+    expect(find.text('Olives'), findsWidgets);
+    expect(find.text('Citrus Fruit Trees'), findsWidgets);
+    expect(find.text('Assign'), findsOneWidget);
+    expect(find.text('Reassign'), findsOneWidget);
+    expect(
+      find.textContaining('AI validation task, not official field data'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('AI output layer review decisions use future-publication wording', (
     tester,
   ) async {

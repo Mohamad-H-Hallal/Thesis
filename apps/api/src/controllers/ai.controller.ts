@@ -68,6 +68,17 @@ const reviewActions = {
 
 const previewableLayerStatuses = new Set(['draft', 'ready_for_review', 'approved', 'published']);
 const previewableLayerTypes = new Set(['classification', 'confidence', 'uncertainty']);
+const uncertaintyAreaStatuses = new Set([
+  'open',
+  'assigned',
+  'in_progress',
+  'in_review',
+  'validated',
+  'rejected',
+  'cancelled',
+  'dismissed',
+]);
+const terminalUncertaintyAreaStatuses = new Set(['validated', 'rejected', 'cancelled', 'dismissed']);
 const MAX_AI_LAYER_GEOJSON_BYTES = 20 * 1024 * 1024;
 const MAX_AI_LAYER_PREVIEW_FEATURES = 2500;
 const DEFAULT_AI_LAYER_OVERVIEW_FEATURE_LIMIT = 1800;
@@ -1024,6 +1035,173 @@ const assertProjectReadableForAiLayer = async (
   }
   throw new AppError('You do not have access to this project', 403);
 };
+
+const ensureAdminCanManageUncertaintyTasks = (user: Express.UserContext): void => {
+  if (user.role !== 'admin') {
+    throw new AppError('Only admins can manage AI uncertainty validation tasks.', 403);
+  }
+};
+
+const normalizeUncertaintyAreaMetadata = (metadata: unknown): Record<string, unknown> =>
+  metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? (metadata as Record<string, unknown>)
+    : {};
+
+const confidenceFromUncertaintyAreaRow = (row: any): number | null => {
+  const metadata = normalizeUncertaintyAreaMetadata(row.metadata);
+  const metadataConfidence = metadata.confidence_score;
+  if (typeof metadataConfidence === 'number' && Number.isFinite(metadataConfidence)) {
+    return metadataConfidence;
+  }
+  if (typeof metadataConfidence === 'string') {
+    const parsed = Number(metadataConfidence);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  if (row.uncertainty_score === null || row.uncertainty_score === undefined) {
+    return null;
+  }
+  return Number((1 - Number(row.uncertainty_score)).toFixed(6));
+};
+
+const mapUncertaintyAreaRow = (row: any) => ({
+  id: row.id,
+  ai_run_id: row.ai_run_id,
+  project_id: row.project_id,
+  project_name: row.project_name ?? null,
+  ai_output_layer_id: row.ai_output_layer_id ?? null,
+  artifact_feature_id: row.artifact_feature_id ?? null,
+  geometry: row.geometry ?? null,
+  suggested_class: row.suggested_class ?? null,
+  uncertainty_score:
+    row.uncertainty_score === null || row.uncertainty_score === undefined
+      ? null
+      : Number(row.uncertainty_score),
+  confidence_score: confidenceFromUncertaintyAreaRow(row),
+  status: row.status,
+  assigned_to: row.assigned_to ?? null,
+  assigned_to_name: row.assigned_to_name ?? null,
+  assigned_to_email: row.assigned_to_email ?? null,
+  validated_feature_id: row.validated_feature_id ?? null,
+  validated_feature_status: row.validated_feature_status ?? null,
+  metadata: normalizeUncertaintyAreaMetadata(row.metadata),
+  run_status: row.run_status ?? null,
+  layer_status: row.layer_status ?? null,
+  layer_type: row.layer_type ?? null,
+  created_at: row.created_at,
+  updated_at: row.updated_at,
+});
+
+const uncertaintyAreaSelect = `
+  SELECT aua.id,
+         aua.ai_run_id,
+         aua.project_id,
+         p.name AS project_name,
+         aua.ai_output_layer_id,
+         aua.artifact_feature_id,
+         ST_AsGeoJSON(aua.geom)::json AS geometry,
+         aua.uncertainty_score,
+         aua.suggested_class,
+         aua.status,
+         aua.assigned_to,
+         assigned.full_name AS assigned_to_name,
+         assigned.email AS assigned_to_email,
+         aua.validated_feature_id,
+         validated.status AS validated_feature_status,
+         aua.metadata,
+         aua.created_at,
+         aua.updated_at,
+         ar.status AS run_status,
+         aol.status AS layer_status,
+         aol.layer_type
+  FROM ai_uncertainty_area aua
+  JOIN project p ON p.id = aua.project_id
+  JOIN ai_run ar ON ar.id = aua.ai_run_id
+  LEFT JOIN ai_output_layer aol ON aol.id = aua.ai_output_layer_id
+  LEFT JOIN "user" assigned ON assigned.id = aua.assigned_to
+  LEFT JOIN spatial_feature validated ON validated.id = aua.validated_feature_id
+`;
+
+const loadUncertaintyAreaOrFail = async (id: string) => {
+  const result = await query(`${uncertaintyAreaSelect} WHERE aua.id = $1`, [id]);
+  if (result.rows.length === 0) {
+    throw new AppError('AI uncertainty validation task not found.', 404);
+  }
+  return result.rows[0];
+};
+
+const assertUncertaintyAreaReadable = (task: any, user: Express.UserContext): void => {
+  if (user.role === 'admin') {
+    return;
+  }
+  if (user.role === 'contributor' && task.assigned_to === user.id) {
+    return;
+  }
+  throw new AppError('You can only access assigned AI validation tasks.', 403);
+};
+
+const assertAssignableContributor = async (projectId: string, userId: string) => {
+  const result = await query(
+    `SELECT u.id,
+            u.full_name,
+            u.email
+     FROM "user" u
+     JOIN project_assignment pa ON pa.user_id = u.id
+     WHERE u.id = $1
+       AND u.role = 'contributor'
+       AND u.is_active = TRUE
+       AND pa.project_id = $2
+       AND pa.role = 'contributor'
+       AND pa.status = 'approved'
+     LIMIT 1`,
+    [userId, projectId],
+  );
+  if (result.rows.length === 0) {
+    throw new AppError('Assigned user must be an active contributor on this project.', 422);
+  }
+  return result.rows[0];
+};
+
+const loadValidationFeature = async (
+  client: PoolClient,
+  featureId: string,
+  projectId: string,
+  options: { contributorId?: string; allowedStatuses: string[] },
+) => {
+  const featureResult = await client.query(
+    `SELECT id,
+            project_id,
+            collected_by_user_id,
+            status
+     FROM spatial_feature
+     WHERE id = $1
+     FOR UPDATE`,
+    [featureId],
+  );
+  if (featureResult.rows.length === 0) {
+    throw new AppError('Validation feature was not found.', 404);
+  }
+
+  const feature = featureResult.rows[0];
+  if (feature.project_id !== projectId) {
+    throw new AppError('Validation feature must belong to the same project.', 422);
+  }
+  if (options.contributorId && feature.collected_by_user_id !== options.contributorId) {
+    throw new AppError('Validation feature must be submitted by the assigned contributor.', 403);
+  }
+  if (!options.allowedStatuses.includes(feature.status)) {
+    throw new AppError(
+      `Validation feature status must be one of: ${options.allowedStatuses.join(', ')}.`,
+      409,
+    );
+  }
+
+  return feature;
+};
+
+const uncertaintyStatusHistoryFrom = (metadata: Record<string, unknown>): unknown[] =>
+  Array.isArray(metadata.status_history) ? metadata.status_history : [];
 
 const getProjectAiReadiness = async (req: Request, res: Response): Promise<void> => {
   const { projectId } = req.params;
@@ -2387,6 +2565,475 @@ const getAiLayerFeatures = async (req: Request, res: Response): Promise<void> =>
   });
 };
 
+const listProjectUncertaintyAreas = async (req: Request, res: Response): Promise<void> => {
+  const currentUser = req.user as Express.UserContext;
+  ensureAdminCanManageUncertaintyTasks(currentUser);
+  const { projectId } = req.params;
+  await getProjectOrFail(projectId);
+  const { page, limit, offset } = parsePagination(req);
+  const status = normalizeOptionalString(req.query.status);
+  const assignedTo = normalizeOptionalString(req.query.assigned_to);
+
+  if (status && !uncertaintyAreaStatuses.has(status)) {
+    throw new AppError('AI uncertainty task status is invalid.', 400);
+  }
+
+  const whereClauses = ['aua.project_id = $1'];
+  const values: unknown[] = [projectId];
+  if (status) {
+    values.push(status);
+    whereClauses.push(`aua.status = $${values.length}`);
+  }
+  if (assignedTo) {
+    values.push(assignedTo);
+    whereClauses.push(`aua.assigned_to = $${values.length}`);
+  }
+
+  const summaryResult = await query(
+    `SELECT status,
+            COUNT(*)::int AS count
+     FROM ai_uncertainty_area
+     WHERE project_id = $1
+     GROUP BY status
+     ORDER BY status ASC`,
+    [projectId],
+  );
+
+  values.push(limit, offset);
+  const result = await query(
+    `${uncertaintyAreaSelect}
+     WHERE ${whereClauses.join(' AND ')}
+     ORDER BY aua.created_at DESC, aua.id ASC
+     LIMIT $${values.length - 1} OFFSET $${values.length}`,
+    values,
+  );
+  const countResult = await query(
+    `SELECT COUNT(*)::int AS total
+     FROM ai_uncertainty_area aua
+     WHERE ${whereClauses.join(' AND ')}`,
+    values.slice(0, -2),
+  );
+  const total = Number(countResult.rows[0]?.total ?? 0);
+
+  res.json({
+    success: true,
+    data: result.rows.map(mapUncertaintyAreaRow),
+    summary: summaryResult.rows.reduce((summary: Record<string, number>, row: any) => {
+      summary[row.status] = Number(row.count);
+      return summary;
+    }, {}),
+    pagination: {
+      page,
+      limit,
+      total,
+      pages: Math.max(1, Math.ceil(total / limit)),
+      has_more: offset + result.rows.length < total,
+    },
+  });
+};
+
+const listMyAiValidationTasks = async (req: Request, res: Response): Promise<void> => {
+  const currentUser = req.user as Express.UserContext;
+  if (currentUser.role !== 'contributor') {
+    throw new AppError('Only contributors can list assigned AI validation tasks.', 403);
+  }
+  const { page, limit, offset } = parsePagination(req);
+  const status = normalizeOptionalString(req.query.status);
+  if (status && !uncertaintyAreaStatuses.has(status)) {
+    throw new AppError('AI uncertainty task status is invalid.', 400);
+  }
+
+  const whereClauses = ['aua.assigned_to = $1'];
+  const values: unknown[] = [currentUser.id];
+  if (status) {
+    values.push(status);
+    whereClauses.push(`aua.status = $${values.length}`);
+  }
+
+  values.push(limit, offset);
+  const result = await query(
+    `${uncertaintyAreaSelect}
+     WHERE ${whereClauses.join(' AND ')}
+     ORDER BY aua.updated_at DESC, aua.created_at DESC, aua.id ASC
+     LIMIT $${values.length - 1} OFFSET $${values.length}`,
+    values,
+  );
+  const countResult = await query(
+    `SELECT COUNT(*)::int AS total
+     FROM ai_uncertainty_area aua
+     WHERE ${whereClauses.join(' AND ')}`,
+    values.slice(0, -2),
+  );
+  const total = Number(countResult.rows[0]?.total ?? 0);
+
+  res.json({
+    success: true,
+    data: result.rows.map(mapUncertaintyAreaRow),
+    pagination: {
+      page,
+      limit,
+      total,
+      pages: Math.max(1, Math.ceil(total / limit)),
+      has_more: offset + result.rows.length < total,
+    },
+  });
+};
+
+const getUncertaintyArea = async (req: Request, res: Response): Promise<void> => {
+  const task = await loadUncertaintyAreaOrFail(req.params.id);
+  assertUncertaintyAreaReadable(task, req.user as Express.UserContext);
+
+  res.json({
+    success: true,
+    data: mapUncertaintyAreaRow(task),
+  });
+};
+
+const assignUncertaintyArea = async (req: Request, res: Response): Promise<void> => {
+  const currentUser = req.user as Express.UserContext;
+  ensureAdminCanManageUncertaintyTasks(currentUser);
+  const assignedTo = normalizeOptionalString(req.body?.assigned_to);
+  const notes = normalizeOptionalString(req.body?.notes);
+  if (!assignedTo) {
+    throw new AppError('assigned_to is required.', 400);
+  }
+
+  const result = await transaction(async (client: PoolClient) => {
+    const lockedResult = await client.query(
+      `SELECT id,
+              ai_run_id,
+              project_id,
+              status,
+              metadata
+       FROM ai_uncertainty_area
+       WHERE id = $1
+       FOR UPDATE`,
+      [req.params.id],
+    );
+    if (lockedResult.rows.length === 0) {
+      throw new AppError('AI uncertainty validation task not found.', 404);
+    }
+
+    const task = lockedResult.rows[0];
+    await assertAssignableContributor(task.project_id, assignedTo);
+    if (terminalUncertaintyAreaStatuses.has(task.status)) {
+      throw new AppError('This AI validation task cannot be assigned in its current status.', 409);
+    }
+
+    const metadata = normalizeUncertaintyAreaMetadata(task.metadata);
+    const updatedMetadata = {
+      ...metadata,
+      assignment: {
+        assigned_to: assignedTo,
+        assigned_by: currentUser.id,
+        assigned_at: new Date().toISOString(),
+        notes,
+      },
+      status_history: [
+        ...uncertaintyStatusHistoryFrom(metadata),
+        {
+          from: task.status,
+          to: 'assigned',
+          changed_by: currentUser.id,
+          changed_at: new Date().toISOString(),
+          notes,
+        },
+      ],
+      official_field_data: false,
+      auto_approved: false,
+      spatial_feature_approval_write: false,
+    };
+
+    const updated = await client.query(
+      `UPDATE ai_uncertainty_area
+       SET assigned_to = $2,
+           status = 'assigned',
+           metadata = $3::jsonb,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id`,
+      [task.id, assignedTo, JSON.stringify(updatedMetadata)],
+    );
+
+    await client.query(
+      `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
+       VALUES ($1, 'info', 'AI uncertainty validation task assigned.', $2::jsonb)`,
+      [
+        task.ai_run_id,
+        JSON.stringify({
+          phase: 'phase_s2_uncertainty_validation',
+          uncertainty_area_id: task.id,
+          assigned_to: assignedTo,
+          assigned_by: currentUser.id,
+          spatial_feature_writes: false,
+          auto_approved: false,
+        }),
+      ],
+    );
+
+    return updated.rows[0].id;
+  });
+
+  const task = await loadUncertaintyAreaOrFail(result);
+  res.json({
+    success: true,
+    message: 'AI validation task assigned.',
+    data: mapUncertaintyAreaRow(task),
+  });
+};
+
+const updateUncertaintyAreaStatus = async (req: Request, res: Response): Promise<void> => {
+  const currentUser = req.user as Express.UserContext;
+  ensureAdminCanManageUncertaintyTasks(currentUser);
+  const status = normalizeOptionalString(req.body?.status);
+  const notes = normalizeOptionalString(req.body?.notes);
+  const requestedFeatureId = normalizeOptionalString(req.body?.validated_feature_id);
+  if (!status || !uncertaintyAreaStatuses.has(status)) {
+    throw new AppError('AI uncertainty task status is invalid.', 400);
+  }
+
+  const result = await transaction(async (client: PoolClient) => {
+    const lockedResult = await client.query(
+      `SELECT id,
+              ai_run_id,
+              project_id,
+              status,
+              assigned_to,
+              validated_feature_id,
+              metadata
+       FROM ai_uncertainty_area
+       WHERE id = $1
+       FOR UPDATE`,
+      [req.params.id],
+    );
+    if (lockedResult.rows.length === 0) {
+      throw new AppError('AI uncertainty validation task not found.', 404);
+    }
+
+    const task = lockedResult.rows[0];
+    const nextFeatureId = requestedFeatureId ?? task.validated_feature_id ?? null;
+    let featureStatus: string | null = null;
+    if (status === 'validated') {
+      if (!nextFeatureId) {
+        throw new AppError('validated_feature_id is required before marking a task validated.', 422);
+      }
+      const feature = await loadValidationFeature(client, nextFeatureId, task.project_id, {
+        allowedStatuses: ['approved'],
+      });
+      featureStatus = feature.status;
+    } else if (status === 'in_review' && nextFeatureId) {
+      const feature = await loadValidationFeature(client, nextFeatureId, task.project_id, {
+        allowedStatuses: ['pending_review', 'approved'],
+      });
+      featureStatus = feature.status;
+    }
+
+    const metadata = normalizeUncertaintyAreaMetadata(task.metadata);
+    const updatedMetadata = {
+      ...metadata,
+      status_history: [
+        ...uncertaintyStatusHistoryFrom(metadata),
+        {
+          from: task.status,
+          to: status,
+          changed_by: currentUser.id,
+          changed_at: new Date().toISOString(),
+          notes,
+          validated_feature_id: nextFeatureId,
+          validated_feature_status: featureStatus,
+        },
+      ],
+      admin_status_update: {
+        status,
+        notes,
+        updated_by: currentUser.id,
+        updated_at: new Date().toISOString(),
+        validated_feature_id: nextFeatureId,
+        validated_feature_status: featureStatus,
+      },
+      official_field_data: false,
+      auto_approved: false,
+      spatial_feature_approval_write: false,
+    };
+
+    const updated = await client.query(
+      `UPDATE ai_uncertainty_area
+       SET status = $2::ai_uncertainty_area_status,
+           assigned_to = CASE
+             WHEN $2::ai_uncertainty_area_status = 'open'::ai_uncertainty_area_status THEN NULL
+             ELSE assigned_to
+           END,
+           validated_feature_id = COALESCE($3, validated_feature_id),
+           metadata = $4::jsonb,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id`,
+      [task.id, status, nextFeatureId, JSON.stringify(updatedMetadata)],
+    );
+
+    await client.query(
+      `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
+       VALUES ($1, 'info', 'AI uncertainty validation task status updated.', $2::jsonb)`,
+      [
+        task.ai_run_id,
+        JSON.stringify({
+          phase: 'phase_s2_uncertainty_validation',
+          uncertainty_area_id: task.id,
+          previous_status: task.status,
+          status,
+          changed_by: currentUser.id,
+          validated_feature_id: nextFeatureId,
+          validated_feature_status: featureStatus,
+          spatial_feature_approval_writes: false,
+          auto_approved: false,
+        }),
+      ],
+    );
+
+    return updated.rows[0].id;
+  });
+
+  const task = await loadUncertaintyAreaOrFail(result);
+  res.json({
+    success: true,
+    message: 'AI validation task status updated.',
+    data: mapUncertaintyAreaRow(task),
+  });
+};
+
+const submitUncertaintyValidation = async (req: Request, res: Response): Promise<void> => {
+  const currentUser = req.user as Express.UserContext;
+  if (currentUser.role !== 'contributor') {
+    throw new AppError('Only assigned contributors can submit AI validation tasks.', 403);
+  }
+  const validatedFeatureId = normalizeOptionalString(req.body?.validated_feature_id);
+  const notes = normalizeOptionalString(req.body?.notes);
+  if (!validatedFeatureId) {
+    throw new AppError('validated_feature_id is required.', 400);
+  }
+
+  const result = await transaction(async (client: PoolClient) => {
+    const taskResult = await client.query(
+      `SELECT id,
+              ai_run_id,
+              project_id,
+              status,
+              assigned_to,
+              metadata
+       FROM ai_uncertainty_area
+       WHERE id = $1
+       FOR UPDATE`,
+      [req.params.id],
+    );
+    if (taskResult.rows.length === 0) {
+      throw new AppError('AI uncertainty validation task not found.', 404);
+    }
+
+    const task = taskResult.rows[0];
+    if (task.assigned_to !== currentUser.id) {
+      throw new AppError('You can only submit assigned AI validation tasks.', 403);
+    }
+    if (!['assigned', 'in_progress'].includes(task.status)) {
+      throw new AppError('This AI validation task is not open for contributor submission.', 409);
+    }
+
+    const feature = await loadValidationFeature(client, validatedFeatureId, task.project_id, {
+      contributorId: currentUser.id,
+      allowedStatuses: ['draft', 'pending_review'],
+    });
+    const submittedDraft = feature.status === 'draft';
+    if (submittedDraft) {
+      await client.query(
+        `UPDATE spatial_feature
+         SET status = 'pending_review',
+             submitted_at = NOW(),
+             version = version + 1
+         WHERE id = $1`,
+        [feature.id],
+      );
+    }
+
+    const metadata = normalizeUncertaintyAreaMetadata(task.metadata);
+    const updatedMetadata = {
+      ...metadata,
+      contributor_validation: {
+        submitted_by: currentUser.id,
+        submitted_at: new Date().toISOString(),
+        validated_feature_id: feature.id,
+        feature_previous_status: feature.status,
+        feature_status: 'pending_review',
+        submitted_draft: submittedDraft,
+        notes,
+      },
+      status_history: [
+        ...uncertaintyStatusHistoryFrom(metadata),
+        {
+          from: task.status,
+          to: 'in_review',
+          changed_by: currentUser.id,
+          changed_at: new Date().toISOString(),
+          notes,
+          validated_feature_id: feature.id,
+          validated_feature_status: 'pending_review',
+        },
+      ],
+      official_field_data: false,
+      auto_approved: false,
+      spatial_feature_approval_write: false,
+      normal_feature_review_required: true,
+    };
+
+    const updated = await client.query(
+      `UPDATE ai_uncertainty_area
+       SET status = 'in_review',
+           validated_feature_id = $2,
+           metadata = $3::jsonb,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id`,
+      [task.id, feature.id, JSON.stringify(updatedMetadata)],
+    );
+
+    await client.query(
+      `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
+       VALUES ($1, 'info', 'Contributor submitted AI uncertainty validation for normal feature review.', $2::jsonb)`,
+      [
+        task.ai_run_id,
+        JSON.stringify({
+          phase: 'phase_s2_uncertainty_validation',
+          uncertainty_area_id: task.id,
+          contributor_id: currentUser.id,
+          validated_feature_id: feature.id,
+          feature_previous_status: feature.status,
+          feature_status: 'pending_review',
+          normal_feature_review_required: true,
+          spatial_feature_approval_writes: false,
+          auto_approved: false,
+        }),
+      ],
+    );
+
+    return {
+      taskId: updated.rows[0].id,
+      featureStatus: 'pending_review',
+      submittedDraft,
+    };
+  });
+
+  const task = await loadUncertaintyAreaOrFail(result.taskId);
+  res.json({
+    success: true,
+    message: 'AI validation submitted through normal feature review.',
+    data: {
+      task: mapUncertaintyAreaRow(task),
+      validated_feature_id: task.validated_feature_id,
+      feature_status: result.featureStatus,
+      submitted_draft: result.submittedDraft,
+      auto_approved: false,
+    },
+  });
+};
+
 const listAiRunLogs = async (req: Request, res: Response): Promise<void> => {
   const run = await assertRunReadable(req.params.runId, req.user as Express.UserContext);
   const { page, limit, offset } = parsePagination(req);
@@ -2804,6 +3451,12 @@ module.exports = {
   listAiRunLayers,
   listProjectPublishedAiLayers,
   getAiLayerFeatures,
+  listProjectUncertaintyAreas,
+  listMyAiValidationTasks,
+  getUncertaintyArea,
+  assignUncertaintyArea,
+  updateUncertaintyAreaStatus,
+  submitUncertaintyValidation,
   listAiRunLogs,
   listAiRunReviews,
   reviewAiRun,

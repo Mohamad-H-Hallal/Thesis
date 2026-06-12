@@ -544,6 +544,68 @@ const aiValidation = {
       ])
       .withMessage('status is invalid'),
   ] as ValidationChain[],
+  listUncertaintyAreas: [
+    queryParam('status')
+      .optional()
+      .isIn([
+        'open',
+        'assigned',
+        'in_progress',
+        'in_review',
+        'validated',
+        'rejected',
+        'cancelled',
+        'dismissed',
+      ])
+      .withMessage('status is invalid'),
+    queryParam('assigned_to')
+      .optional()
+      .isUUID()
+      .withMessage('assigned_to must be a valid UUID'),
+  ] as ValidationChain[],
+  assignUncertaintyArea: [
+    body('assigned_to')
+      .isUUID()
+      .withMessage('assigned_to must be a valid contributor user UUID'),
+    body('notes')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 2000 })
+      .withMessage('notes must be 2000 characters or fewer'),
+  ] as ValidationChain[],
+  updateUncertaintyAreaStatus: [
+    body('status')
+      .isIn([
+        'open',
+        'assigned',
+        'in_progress',
+        'in_review',
+        'validated',
+        'rejected',
+        'cancelled',
+        'dismissed',
+      ])
+      .withMessage('status is invalid'),
+    body('validated_feature_id')
+      .optional({ nullable: true })
+      .isUUID()
+      .withMessage('validated_feature_id must be a valid UUID'),
+    body('notes')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 2000 })
+      .withMessage('notes must be 2000 characters or fewer'),
+  ] as ValidationChain[],
+  submitUncertaintyValidation: [
+    body('validated_feature_id')
+      .isUUID()
+      .withMessage('validated_feature_id must be a valid UUID'),
+    body('notes')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 2000 })
+      .withMessage('notes must be 2000 characters or fewer'),
+  ] as ValidationChain[],
   reviewRun: [
     body('action')
       .isIn(['approve_for_publication', 'reject', 'request_more_data', 'keep_draft'])

@@ -28,6 +28,7 @@ import '../../../../core/widgets/app_text_field.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../../ai/domain/ai_models.dart';
 import '../../../ai/presentation/ai_providers.dart';
+import '../../../ai/presentation/widgets/ai_uncertainty_task_widgets.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/app_tile_provider.dart';
 import '../../domain/current_location_service.dart';
@@ -36,6 +37,8 @@ import '../../domain/map_feature.dart';
 import '../../domain/map_geometry.dart';
 import 'add_feature_screen.dart';
 import '../widgets/feature_photo_gallery.dart';
+
+const Color _aiValidationTaskColor = Color(0xFFC2185B);
 
 enum _OfflineMapAction {
   saveOverview,
@@ -64,6 +67,7 @@ class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({
     this.initialProjectId,
     this.initialFeatureId,
+    this.initialAiTaskId,
     this.initialFeatureSource,
     this.startCaptureOnOpen = false,
     this.lockProjectSelection = false,
@@ -72,6 +76,7 @@ class MapScreen extends ConsumerStatefulWidget {
 
   final String? initialProjectId;
   final String? initialFeatureId;
+  final String? initialAiTaskId;
   final String? initialFeatureSource;
   final bool startCaptureOnOpen;
   final bool lockProjectSelection;
@@ -102,6 +107,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   _publishedAiPolygonHitNotifier = ValueNotifier(null);
   final LayerHitNotifier<_PublishedAiMapFeature>
   _publishedAiPolylineHitNotifier = ValueNotifier(null);
+  final LayerHitNotifier<AiUncertaintyArea>
+  _aiValidationTaskPolygonHitNotifier = ValueNotifier(null);
+  final LayerHitNotifier<AiUncertaintyArea>
+  _aiValidationTaskPolylineHitNotifier = ValueNotifier(null);
   final Set<String> _visibleStatuses = Set<String>.from(_projectMapStatusOrder);
   final List<LatLng> _captureVertices = <LatLng>[];
   final Map<String, Future<_OfflineTileAssets?>> _offlineTileAssetsFutureCache =
@@ -112,7 +121,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   String? _tileFailureMessage;
   String? _locationNoticeMessage;
   String? _autoOpenedFeatureId;
+  String? _autoOpenedAiValidationTaskId;
   String? _focusedFeatureId;
+  String? _focusedAiValidationTaskId;
   String? _offlineDownloadProgressLabel;
   String? _offlineDownloadResultLabel;
   double? _offlineDownloadProgressValue;
@@ -201,10 +212,20 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     super.didUpdateWidget(oldWidget);
     final previousTarget = oldWidget.initialFeatureId?.trim();
     final nextTarget = widget.initialFeatureId?.trim();
+    final previousAiTaskTarget = oldWidget.initialAiTaskId?.trim();
+    final nextAiTaskTarget = widget.initialAiTaskId?.trim();
     if (previousTarget != nextTarget ||
         oldWidget.initialFeatureSource != widget.initialFeatureSource) {
       _autoOpenedFeatureId = null;
       _focusedFeatureId = (nextTarget?.isEmpty ?? true) ? null : nextTarget;
+      _lastAutoFrameKey = null;
+    }
+    if (previousAiTaskTarget != nextAiTaskTarget ||
+        oldWidget.initialFeatureSource != widget.initialFeatureSource) {
+      _autoOpenedAiValidationTaskId = null;
+      _focusedAiValidationTaskId = (nextAiTaskTarget?.isEmpty ?? true)
+          ? null
+          : nextAiTaskTarget;
       _lastAutoFrameKey = null;
     }
   }
@@ -432,6 +453,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     _projectPolylineHitNotifier.dispose();
     _publishedAiPolygonHitNotifier.dispose();
     _publishedAiPolylineHitNotifier.dispose();
+    _aiValidationTaskPolygonHitNotifier.dispose();
+    _aiValidationTaskPolylineHitNotifier.dispose();
     _searchController.dispose();
     _projectMapSearchFocusNode.dispose();
     super.dispose();
@@ -739,6 +762,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       return null;
     }
     return featureId;
+  }
+
+  String? get _initialAiTaskId {
+    final taskId = widget.initialAiTaskId?.trim();
+    if (taskId == null || taskId.isEmpty) {
+      return null;
+    }
+    return taskId;
   }
 
   void _focusLebanonWorkspace({bool queueUntilReady = false}) {
@@ -1137,6 +1168,15 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         final publishedAiLayersAsync = ref.watch(
           publishedAiLayersProvider(project.id),
         );
+        final assignedAiValidationTasksAsync = role == UserRole.contributor
+            ? ref.watch(
+                myAiValidationTasksProvider(const AiUncertaintyTasksQuery()),
+              )
+            : null;
+        final focusedAiValidationTaskId = _initialAiTaskId;
+        final focusedAiValidationTaskAsync = focusedAiValidationTaskId == null
+            ? null
+            : ref.watch(aiUncertaintyAreaProvider(focusedAiValidationTaskId));
         _selectedProjectId ??= project.id;
         final viewportQuery =
             _projectViewportQuery ?? _buildProjectViewportQuery(project.id);
@@ -1341,6 +1381,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
         Widget buildWorkspace({Widget? embeddedControls}) {
           Widget buildLoadedWorkspace(List<MapFeatureSummary> features) {
+            final aiValidationTasks = _aiValidationTasksForProject(
+              projectId: project.id,
+              assignedPage: assignedAiValidationTasksAsync?.valueOrNull,
+              focusedTask: focusedAiValidationTaskAsync?.valueOrNull,
+            );
             final publishedAiLayers = _publishedAiMapLayers(
               publishedAiLayersAsync.valueOrNull ?? const <AiOutputLayer>[],
             );
@@ -1472,11 +1517,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               canCollectOnMap: canCollectOnMap,
               canReview: canReview,
             );
+            _maybeOpenInitialAiValidationTaskDetails(
+              project: project,
+              tasks: aiValidationTasks,
+            );
 
             return _buildMapWorkspace(
               context,
               project: project,
               features: filteredFeatures,
+              aiValidationTasks: aiValidationTasks,
               totalFeatureCount: totalFeatureCount,
               quickFeatureChips: quickFeatureChips,
               offlinePackageAsync: offlineMapPackageAsync,
@@ -1561,6 +1611,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     BuildContext context, {
     required ProjectSummary project,
     required List<MapFeatureSummary> features,
+    required List<AiUncertaintyArea> aiValidationTasks,
     required int totalFeatureCount,
     required List<String> quickFeatureChips,
     required AsyncValue<OfflineMapPackage?> offlinePackageAsync,
@@ -1583,6 +1634,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           context,
           project: project,
           features: features,
+          aiValidationTasks: aiValidationTasks,
           totalFeatureCount: totalFeatureCount,
           quickFeatureChips: quickFeatureChips,
           offlinePackage: offlinePackageAsync.valueOrNull,
@@ -1724,6 +1776,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       color: _statusColor('rejected'),
                     ),
                     _LegendChip(label: 'Draft', color: _statusColor('draft')),
+                    if (aiValidationTasks.isNotEmpty)
+                      _LegendChip(
+                        label: 'AI validation task',
+                        color: _aiValidationTaskColor,
+                      ),
                   ],
                 ),
               )
@@ -1739,6 +1796,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               context,
               project: project,
               features: features,
+              aiValidationTasks: aiValidationTasks,
               totalFeatureCount: totalFeatureCount,
               quickFeatureChips: quickFeatureChips,
               offlinePackage: offlinePackageAsync.valueOrNull,
@@ -1866,6 +1924,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     BuildContext context, {
     required ProjectSummary project,
     required List<MapFeatureSummary> features,
+    required List<AiUncertaintyArea> aiValidationTasks,
     required int totalFeatureCount,
     required List<String> quickFeatureChips,
     required OfflineMapPackage? offlinePackage,
@@ -1924,6 +1983,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               child: _buildMapCanvas(
                 project: project,
                 features: features,
+                aiValidationTasks: aiValidationTasks,
                 offlinePackage: offlinePackage,
                 canCollectOnMap: canCollectOnMap,
                 canReview: canReview,
@@ -2284,6 +2344,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Widget _buildMapCanvas({
     required ProjectSummary project,
     required List<MapFeatureSummary> features,
+    required List<AiUncertaintyArea> aiValidationTasks,
     required OfflineMapPackage? offlinePackage,
     required bool canCollectOnMap,
     required bool canReview,
@@ -2377,6 +2438,18 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               canReview: canReview,
               interactive: !_isProjectMapCaptureMode,
             ),
+            if (aiValidationTasks.isNotEmpty) ...[
+              _aiValidationTaskPolygonLayer(
+                tasks: aiValidationTasks,
+                project: project,
+                interactive: !_isProjectMapCaptureMode,
+              ),
+              _aiValidationTaskPolylineLayer(
+                tasks: aiValidationTasks,
+                project: project,
+                interactive: !_isProjectMapCaptureMode,
+              ),
+            ],
             if (_showPublishedAiLayers &&
                 publishedAiLayerCollections.isNotEmpty) ...[
               _publishedAiPolygonLayer(publishedAiLayerCollections),
@@ -2500,6 +2573,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 interactive: !_isProjectMapCaptureMode,
               ),
             ),
+            if (aiValidationTasks.isNotEmpty)
+              MarkerLayer(
+                markers: _aiValidationTaskMarkerOverlays(
+                  tasks: aiValidationTasks,
+                  project: project,
+                  interactive: !_isProjectMapCaptureMode,
+                ),
+              ),
           ],
         );
       },
@@ -2510,6 +2591,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     BuildContext context, {
     required ProjectSummary project,
     required List<MapFeatureSummary> features,
+    required List<AiUncertaintyArea> aiValidationTasks,
     required int totalFeatureCount,
     required List<String> quickFeatureChips,
     required OfflineMapPackage? offlinePackage,
@@ -2613,6 +2695,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       canCollectOnMap: canCollectOnMap,
                       canReview: canReview,
                     ),
+                    if (aiValidationTasks.isNotEmpty) ...[
+                      _aiValidationTaskPolygonLayer(
+                        tasks: aiValidationTasks,
+                        project: project,
+                      ),
+                      _aiValidationTaskPolylineLayer(
+                        tasks: aiValidationTasks,
+                        project: project,
+                      ),
+                    ],
                     if (_showPublishedAiLayers &&
                         publishedAiLayerCollections.isNotEmpty) ...[
                       _publishedAiPolygonLayer(publishedAiLayerCollections),
@@ -2646,6 +2738,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         canReview,
                       ),
                     ),
+                    if (aiValidationTasks.isNotEmpty)
+                      MarkerLayer(
+                        markers: _aiValidationTaskMarkerOverlays(
+                          tasks: aiValidationTasks,
+                          project: project,
+                        ),
+                      ),
                   ],
                 ),
               );
@@ -4209,6 +4308,54 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     });
   }
 
+  List<AiUncertaintyArea> _aiValidationTasksForProject({
+    required String projectId,
+    required AiUncertaintyAreasPage? assignedPage,
+    required AiUncertaintyArea? focusedTask,
+  }) {
+    final tasksById = <String, AiUncertaintyArea>{};
+    for (final task in assignedPage?.items ?? const <AiUncertaintyArea>[]) {
+      if (task.projectId == projectId) {
+        tasksById[task.id] = task;
+      }
+    }
+    if (focusedTask != null && focusedTask.projectId == projectId) {
+      tasksById[focusedTask.id] = focusedTask;
+    }
+    return tasksById.values.toList(growable: false);
+  }
+
+  void _maybeOpenInitialAiValidationTaskDetails({
+    required ProjectSummary project,
+    required List<AiUncertaintyArea> tasks,
+  }) {
+    final targetTaskId = _initialAiTaskId;
+    if (targetTaskId == null ||
+        targetTaskId.isEmpty ||
+        _autoOpenedAiValidationTaskId == targetTaskId) {
+      return;
+    }
+
+    AiUncertaintyArea? targetTask;
+    for (final task in tasks) {
+      if (task.id == targetTaskId) {
+        targetTask = task;
+        break;
+      }
+    }
+    if (targetTask == null) {
+      return;
+    }
+
+    _autoOpenedAiValidationTaskId = targetTaskId;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _openAiValidationTaskDetails(project: project, task: targetTask!);
+    });
+  }
+
   void _focusFeature(
     MapFeatureSummary feature, {
     bool detailsSheetAware = false,
@@ -4350,6 +4497,241 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       canCollectOnMap: canCollectOnMap,
       canReview: canReview,
     );
+  }
+
+  Widget _aiValidationTaskPolygonLayer({
+    required List<AiUncertaintyArea> tasks,
+    required ProjectSummary project,
+    bool interactive = true,
+  }) {
+    final layer = PolygonLayer<AiUncertaintyArea>(
+      polygons: _aiValidationTaskPolygonOverlays(tasks),
+      hitNotifier: interactive ? _aiValidationTaskPolygonHitNotifier : null,
+    );
+    return MouseRegion(
+      cursor: interactive ? SystemMouseCursors.click : MouseCursor.defer,
+      hitTestBehavior: HitTestBehavior.deferToChild,
+      child: GestureDetector(
+        behavior: HitTestBehavior.deferToChild,
+        onTap: interactive
+            ? () => _handleAiValidationTaskLayerHit(
+                _aiValidationTaskPolygonHitNotifier,
+                project: project,
+              )
+            : null,
+        child: layer,
+      ),
+    );
+  }
+
+  Widget _aiValidationTaskPolylineLayer({
+    required List<AiUncertaintyArea> tasks,
+    required ProjectSummary project,
+    bool interactive = true,
+  }) {
+    final layer = PolylineLayer<AiUncertaintyArea>(
+      polylines: _aiValidationTaskPolylineOverlays(tasks),
+      hitNotifier: interactive ? _aiValidationTaskPolylineHitNotifier : null,
+      minimumHitbox: 14,
+    );
+    return MouseRegion(
+      cursor: interactive ? SystemMouseCursors.click : MouseCursor.defer,
+      hitTestBehavior: HitTestBehavior.deferToChild,
+      child: GestureDetector(
+        behavior: HitTestBehavior.deferToChild,
+        onTap: interactive
+            ? () => _handleAiValidationTaskLayerHit(
+                _aiValidationTaskPolylineHitNotifier,
+                project: project,
+              )
+            : null,
+        child: layer,
+      ),
+    );
+  }
+
+  List<Polygon<AiUncertaintyArea>> _aiValidationTaskPolygonOverlays(
+    List<AiUncertaintyArea> tasks,
+  ) {
+    final polygons = <Polygon<AiUncertaintyArea>>[];
+    for (final task in tasks) {
+      if (!isPolygonGeometry(task.geometry)) {
+        continue;
+      }
+      final focused = _focusedAiValidationTaskId == task.id;
+      for (final points in polygonGeometrySegments(task.geometry)) {
+        if (!isValidPolygonRing(points)) {
+          continue;
+        }
+        polygons.add(
+          Polygon<AiUncertaintyArea>(
+            points: points,
+            color: _aiValidationTaskColor.withValues(
+              alpha: focused ? 0.26 : 0.16,
+            ),
+            borderColor: focused ? Colors.black87 : _aiValidationTaskColor,
+            borderStrokeWidth: focused ? 3.6 : 2.6,
+            hitValue: task,
+          ),
+        );
+      }
+    }
+    return polygons;
+  }
+
+  List<Polyline<AiUncertaintyArea>> _aiValidationTaskPolylineOverlays(
+    List<AiUncertaintyArea> tasks,
+  ) {
+    final polylines = <Polyline<AiUncertaintyArea>>[];
+    for (final task in tasks) {
+      if (!isLineGeometry(task.geometry)) {
+        continue;
+      }
+      final focused = _focusedAiValidationTaskId == task.id;
+      for (final points in lineGeometrySegments(task.geometry)) {
+        if (points.length < 2) {
+          continue;
+        }
+        polylines.add(
+          Polyline<AiUncertaintyArea>(
+            points: points,
+            color: focused ? Colors.black87 : _aiValidationTaskColor,
+            strokeWidth: focused ? 5.2 : 4,
+            hitValue: task,
+          ),
+        );
+      }
+    }
+    return polylines;
+  }
+
+  List<Marker> _aiValidationTaskMarkerOverlays({
+    required List<AiUncertaintyArea> tasks,
+    required ProjectSummary project,
+    bool interactive = true,
+  }) {
+    final markers = <Marker>[];
+    for (final task in tasks) {
+      final point = geometryFocusPoint(task.geometry);
+      if (point == null) {
+        continue;
+      }
+      final focused = _focusedAiValidationTaskId == task.id;
+      markers.add(
+        Marker(
+          point: point,
+          width: focused ? 48 : 40,
+          height: focused ? 48 : 40,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: !interactive
+                ? null
+                : () => _openAiValidationTaskDetails(
+                    project: project,
+                    task: task,
+                  ),
+            child: Center(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: _aiValidationTaskColor,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: focused ? Colors.black87 : Colors.white,
+                    width: focused ? 2.4 : 1.8,
+                  ),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x33000000),
+                      blurRadius: 7,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: const SizedBox.square(
+                  dimension: 28,
+                  child: Icon(
+                    Icons.warning_amber_rounded,
+                    color: Colors.white,
+                    size: 17,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    return markers;
+  }
+
+  void _handleAiValidationTaskLayerHit(
+    LayerHitNotifier<AiUncertaintyArea> notifier, {
+    required ProjectSummary project,
+  }) {
+    if (_isProjectMapCaptureMode) {
+      return;
+    }
+    final hits = notifier.value?.hitValues;
+    if (hits == null || hits.isEmpty) {
+      return;
+    }
+    _openAiValidationTaskDetails(project: project, task: hits.first);
+  }
+
+  void _openAiValidationTaskDetails({
+    required ProjectSummary project,
+    required AiUncertaintyArea task,
+  }) {
+    _focusAiValidationTask(task);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => _AiValidationTaskDetailsSheet(
+        project: project,
+        task: task,
+        canSubmit: _canSubmitAiValidationTask(task),
+        onSubmit: () {
+          Navigator.of(sheetContext).pop();
+          showAiUncertaintySubmitDialog(
+            context,
+            task: task,
+            onSubmitted: () => bumpWorkflowRefresh(ref),
+          );
+        },
+      ),
+    );
+  }
+
+  bool _canSubmitAiValidationTask(AiUncertaintyArea task) {
+    final user = ref.read(authControllerProvider).session?.user;
+    return user?.role == UserRole.contributor &&
+        task.assignedTo == user?.id &&
+        (task.status == 'assigned' || task.status == 'in_progress');
+  }
+
+  void _focusAiValidationTask(AiUncertaintyArea task) {
+    final points = geometryPoints(task.geometry);
+    setState(() => _focusedAiValidationTaskId = task.id);
+    if (points.isEmpty) {
+      return;
+    }
+    _runMainMapAction(() {
+      if (points.length > 1 &&
+          !geometryPointsCollapseToSingleLocation(points)) {
+        _mapController.fitCamera(
+          CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints(points),
+            padding: const EdgeInsets.all(76),
+            maxZoom: 16,
+          ),
+        );
+        return;
+      }
+      final center = geometryPointsCenter(points);
+      if (center != null) {
+        _mapController.move(center, 16);
+      }
+    }, queueUntilReady: true);
   }
 
   Widget _publishedAiPolygonLayer(List<AiLayerFeatureCollection> collections) {
@@ -4955,6 +5337,38 @@ String _publishedAiLayerChipLabel(String layerType, int? count) {
   return '$label $count';
 }
 
+String _assignedValidationTaskLabel(AiUncertaintyArea task) {
+  if (task.assignedToName?.trim().isNotEmpty == true) {
+    return 'Assigned to ${task.assignedToName!.trim()}';
+  }
+  if (task.assignedToEmail?.trim().isNotEmpty == true) {
+    return 'Assigned to ${task.assignedToEmail!.trim()}';
+  }
+  if (task.assignedTo?.trim().isNotEmpty == true) {
+    return 'Assigned';
+  }
+  return 'Unassigned';
+}
+
+String _geometrySummaryForTask(Map<String, dynamic> geometry) {
+  final type = geometry['type']?.toString() ?? 'Unknown';
+  final normalizedType = type.toLowerCase();
+  final focusPoint = geometryFocusPoint(geometry);
+  if (normalizedType == 'point' && focusPoint != null) {
+    return 'Point at ${focusPoint.latitude.toStringAsFixed(5)}, ${focusPoint.longitude.toStringAsFixed(5)}';
+  }
+  if (normalizedType == 'multipoint') {
+    return 'Point task with ${geometryPoints(geometry).length} points';
+  }
+  if (normalizedType == 'linestring' || normalizedType == 'multilinestring') {
+    return 'Line task with ${lineGeometryPoints(geometry).length} vertices';
+  }
+  if (normalizedType == 'polygon' || normalizedType == 'multipolygon') {
+    return 'Polygon task with ${polygonGeometryPoints(geometry).length} boundary points';
+  }
+  return type;
+}
+
 List<_PublishedAiMapFeature> _publishedAiFeatures(
   List<AiLayerFeatureCollection> collections, {
   _PublishedAiMapFeature? focusedOverride,
@@ -5258,6 +5672,150 @@ class _PublishedAiFeatureDetailsSheet extends StatelessWidget {
                 Expanded(
                   child: Text(
                     'Read-only AI prediction. Not approved field data and not editable.',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AiValidationTaskDetailsSheet extends StatelessWidget {
+  const _AiValidationTaskDetailsSheet({
+    required this.project,
+    required this.task,
+    required this.canSubmit,
+    required this.onSubmit,
+  });
+
+  final ProjectSummary project;
+  final AiUncertaintyArea task;
+  final bool canSubmit;
+  final VoidCallback onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset =
+        MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
+    final linkedFeatureId = task.validatedFeatureId?.trim();
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.72,
+      minChildSize: 0.42,
+      maxChildSize: 0.94,
+      builder: (context, controller) => ListView(
+        controller: controller,
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.md,
+          AppSpacing.sm,
+          AppSpacing.md,
+          bottomInset,
+        ),
+        children: [
+          Center(
+            child: Container(
+              width: 44,
+              height: 5,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.outlineVariant,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      aiUncertaintyClassLabel(task),
+                      style: Theme.of(context).textTheme.titleLarge,
+                      softWrap: true,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${project.name} - AI validation task ${aiUncertaintyCompactId(task.id)}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                      softWrap: true,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              StatusChip(status: task.status),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          const AiUncertaintyTaskWarning(),
+          const SizedBox(height: AppSpacing.md),
+          _DetailSection(
+            title: 'AI uncertainty',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AiUncertaintyMetricPills(task: task, includeStatus: false),
+                const SizedBox(height: AppSpacing.sm),
+                Text(_geometrySummaryForTask(task.geometry), softWrap: true),
+              ],
+            ),
+          ),
+          _DetailSection(
+            title: 'Assignment',
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _MapInfoPill(
+                  icon: Icons.person_outline,
+                  label: _assignedValidationTaskLabel(task),
+                ),
+                if (task.aiRunId.trim().isNotEmpty)
+                  _MapInfoPill(
+                    icon: Icons.memory_outlined,
+                    label: 'Run ${aiUncertaintyCompactId(task.aiRunId)}',
+                  ),
+              ],
+            ),
+          ),
+          if (linkedFeatureId != null && linkedFeatureId.isNotEmpty)
+            _DetailSection(
+              title: 'Linked feature',
+              child: Text(
+                '$linkedFeatureId (${task.validatedFeatureStatus ?? 'review pending'})',
+                softWrap: true,
+              ),
+            ),
+          if (canSubmit)
+            Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.md),
+              child: AppActionButtons(
+                maxColumns: 1,
+                fillRows: true,
+                children: [
+                  FilledButton.icon(
+                    onPressed: onSubmit,
+                    icon: const Icon(Icons.link_outlined),
+                    label: const Text('Submit/link validation'),
+                  ),
+                ],
+              ),
+            ),
+          const _DetailSection(
+            title: 'Data status',
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.lock_outline, size: 20),
+                SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text(
+                    'Validation target only. It is not official field data and cannot be edited or deleted as a project feature.',
                   ),
                 ),
               ],

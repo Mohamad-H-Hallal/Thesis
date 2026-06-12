@@ -18,6 +18,7 @@ import '../../admin/presentation/screens/categories_screen.dart';
 import '../../admin/presentation/screens/contributor_requests_screen.dart';
 import '../../admin/presentation/screens/projects_management_screen.dart';
 import '../../admin/presentation/screens/users_management_screen.dart';
+import '../../ai/presentation/screens/ai_validation_tasks_screen.dart';
 import '../../auth/domain/auth_models.dart';
 import '../../drafts/presentation/screens/drafts_screen.dart';
 import '../../exports/presentation/screens/exports_dashboard_screen.dart';
@@ -376,6 +377,10 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
         title: 'Assigned Projects',
       );
     }
+    if (path == AppRoutes.aiValidationTasks &&
+        user.role == UserRole.contributor) {
+      return const AiValidationTasksScreen();
+    }
     if (path == AppRoutes.drafts && user.role == UserRole.contributor) {
       return const DraftsScreen(showSubmittedOnly: false);
     }
@@ -615,6 +620,13 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
         path: AppRoutes.assignedProjects,
         icon: Icons.assignment_outlined,
         selectedIcon: Icons.assignment,
+      ),
+      const _ShellItem(
+        label: 'AI Validation',
+        mobileLabel: 'AI Tasks',
+        path: AppRoutes.aiValidationTasks,
+        icon: Icons.fact_check_outlined,
+        selectedIcon: Icons.fact_check,
       ),
       const _ShellItem(
         label: 'Imports',

@@ -324,6 +324,45 @@ paths:
           description: Forbidden
         '404':
           description: Project not found
+  /api/v1/projects/{projectId}/ai/uncertainty-areas:
+    get:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: List project AI uncertainty validation tasks
+      description: Admin and protected super-admin management endpoint. Returns uncertainty tasks registered from AI artifacts. It does not expose or approve field data and never inserts AI predictions into spatial_feature.
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [open, assigned, in_progress, in_review, validated, rejected, cancelled, dismissed]
+        - in: query
+          name: assigned_to
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: AI uncertainty validation task list
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: Project not found
   /api/v1/projects/{projectId}/ai/settings:
     get:
       tags: [AI]
@@ -508,6 +547,41 @@ paths:
           description: Forbidden
         '404':
           description: AI run not found
+  /api/v1/me/ai-validation-tasks:
+    get:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: List my assigned AI validation tasks
+      description: Contributor-only endpoint. Returns only AI uncertainty validation tasks assigned to the authenticated contributor. Viewers and admins are denied from this personal task queue.
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [open, assigned, in_progress, in_review, validated, rejected, cancelled, dismissed]
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Assigned AI validation task list
+        '400':
+          description: Validation failed
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
   /api/v1/ai/layers/{layerId}/features:
     get:
       tags: [AI]
@@ -575,6 +649,108 @@ paths:
           description: Forbidden
         '404':
           description: AI layer or artifact not found
+  /api/v1/ai/uncertainty-areas/{uncertaintyAreaId}:
+    get:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Get an AI uncertainty validation task
+      description: Admins can read any task. Contributors can read only tasks assigned to them. Viewers are denied.
+      parameters:
+        - $ref: '#/components/parameters/uncertaintyAreaId'
+      responses:
+        '200':
+          description: AI uncertainty validation task
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: Task not found
+  /api/v1/ai/uncertainty-areas/{uncertaintyAreaId}/assign:
+    patch:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Assign an AI uncertainty validation task
+      description: Admin and protected super-admin management endpoint. Assigns a registered uncertainty task to an approved contributor on the same project. Does not write to spatial_feature.
+      parameters:
+        - $ref: '#/components/parameters/uncertaintyAreaId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiUncertaintyAssignRequest'
+      responses:
+        '200':
+          description: Task assigned
+        '400':
+          description: Invalid payload
+        '403':
+          description: Forbidden
+        '404':
+          description: Task not found
+        '409':
+          description: Task cannot be assigned in its current status
+        '422':
+          description: Assignee is not an approved contributor for the project
+  /api/v1/ai/uncertainty-areas/{uncertaintyAreaId}/status:
+    patch:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Update an AI uncertainty validation task status
+      description: Admin and protected super-admin management endpoint. Marking a task validated requires an already approved spatial_feature in the same project; this endpoint never approves field data itself.
+      parameters:
+        - $ref: '#/components/parameters/uncertaintyAreaId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiUncertaintyStatusRequest'
+      responses:
+        '200':
+          description: Task status updated
+        '400':
+          description: Invalid payload
+        '403':
+          description: Forbidden
+        '404':
+          description: Task or feature not found
+        '409':
+          description: Feature status is not valid for the requested task status
+        '422':
+          description: Required validation feature is missing or belongs to another project
+  /api/v1/ai/uncertainty-areas/{uncertaintyAreaId}/submit-validation:
+    post:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Submit contributor validation for an AI uncertainty task
+      description: Assigned contributors link a task to their own draft or pending-review spatial_feature. Draft features are submitted to the normal pending_review workflow; this endpoint never approves spatial_feature records.
+      parameters:
+        - $ref: '#/components/parameters/uncertaintyAreaId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiUncertaintySubmitValidationRequest'
+      responses:
+        '200':
+          description: Validation submitted through normal feature review
+        '400':
+          description: Invalid payload
+        '403':
+          description: Forbidden
+        '404':
+          description: Task or feature not found
+        '409':
+          description: Task or feature is not in a submittable status
+        '422':
+          description: Feature belongs to a different project
   /api/v1/ai/layers/{layerId}/publish:
     post:
       tags: [AI]
@@ -1557,6 +1733,13 @@ components:
       schema:
         type: string
         format: uuid
+    uncertaintyAreaId:
+      in: path
+      name: uncertaintyAreaId
+      required: true
+      schema:
+        type: string
+        format: uuid
   schemas:
     RegisterRequest:
       type: object
@@ -1654,6 +1837,46 @@ components:
           nullable: true
           maxLength: 4000
           description: Required for reject and request_more_data.
+    AiUncertaintyAssignRequest:
+      type: object
+      required: [assigned_to]
+      properties:
+        assigned_to:
+          type: string
+          format: uuid
+          description: Approved contributor user assigned to validate the task.
+        notes:
+          type: string
+          nullable: true
+          maxLength: 2000
+    AiUncertaintyStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [open, assigned, in_progress, in_review, validated, rejected, cancelled, dismissed]
+        validated_feature_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Existing same-project spatial_feature linked through the normal feature review workflow. Required before marking a task validated, and that feature must already be approved.
+        notes:
+          type: string
+          nullable: true
+          maxLength: 2000
+    AiUncertaintySubmitValidationRequest:
+      type: object
+      required: [validated_feature_id]
+      properties:
+        validated_feature_id:
+          type: string
+          format: uuid
+          description: Contributor-owned draft or pending-review spatial_feature in the same project. Drafts are submitted to pending_review; they are not auto-approved.
+        notes:
+          type: string
+          nullable: true
+          maxLength: 2000
     AiReadinessResponse:
       type: object
       properties:

@@ -14,6 +14,7 @@ class ApiAiRepository implements AiRepository {
 
   String get _projectsBasePath => '${AppEnv.apiVersionPrefix}/projects';
   String get _aiBasePath => '${AppEnv.apiVersionPrefix}/ai';
+  String get _meBasePath => '${AppEnv.apiVersionPrefix}/me';
 
   @override
   Future<AiReadinessResult> fetchReadiness({
@@ -408,6 +409,167 @@ class ApiAiRepository implements AiRepository {
       throw userFacingDioMessage(
         error,
         fallback: 'Unable to unpublish this AI layer right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiUncertaintyAreasPage> fetchProjectUncertaintyAreas({
+    required String projectId,
+    String? status,
+    String? assignedTo,
+    int page = 1,
+    int limit = 100,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/uncertainty-areas',
+        queryParameters: <String, dynamic>{
+          'page': page,
+          'limit': limit,
+          if (_nonEmpty(status) != null) 'status': _nonEmpty(status),
+          if (_nonEmpty(assignedTo) != null)
+            'assigned_to': _nonEmpty(assignedTo),
+        },
+      );
+      return AiUncertaintyAreasPage.fromResponse(
+        response.data ?? const <String, dynamic>{},
+        fallbackPage: page,
+        fallbackLimit: limit,
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load AI validation tasks right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiUncertaintyAreasPage> fetchMyValidationTasks({
+    String? status,
+    int page = 1,
+    int limit = 100,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_meBasePath/ai-validation-tasks',
+        queryParameters: <String, dynamic>{
+          'page': page,
+          'limit': limit,
+          if (_nonEmpty(status) != null) 'status': _nonEmpty(status),
+        },
+      );
+      return AiUncertaintyAreasPage.fromResponse(
+        response.data ?? const <String, dynamic>{},
+        fallbackPage: page,
+        fallbackLimit: limit,
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load assigned AI validation tasks right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiUncertaintyArea> fetchUncertaintyArea({required String id}) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_aiBasePath/uncertainty-areas/$id',
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiUncertaintyArea.fromMap(_toMap(payload['data']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load this AI validation task right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiUncertaintyArea> assignUncertaintyArea({
+    required String id,
+    required String assignedTo,
+    String? notes,
+  }) async {
+    final data = <String, dynamic>{'assigned_to': assignedTo};
+    final normalizedNotes = _nonEmpty(notes);
+    if (normalizedNotes != null) {
+      data['notes'] = normalizedNotes;
+    }
+    try {
+      final response = await _apiClient.dio.patch<Map<String, dynamic>>(
+        '$_aiBasePath/uncertainty-areas/$id/assign',
+        data: data,
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiUncertaintyArea.fromMap(_toMap(payload['data']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to assign this AI validation task right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiUncertaintyArea> updateUncertaintyAreaStatus({
+    required String id,
+    required String status,
+    String? validatedFeatureId,
+    String? notes,
+  }) async {
+    final data = <String, dynamic>{'status': status};
+    final normalizedFeatureId = _nonEmpty(validatedFeatureId);
+    final normalizedNotes = _nonEmpty(notes);
+    if (normalizedFeatureId != null) {
+      data['validated_feature_id'] = normalizedFeatureId;
+    }
+    if (normalizedNotes != null) {
+      data['notes'] = normalizedNotes;
+    }
+    try {
+      final response = await _apiClient.dio.patch<Map<String, dynamic>>(
+        '$_aiBasePath/uncertainty-areas/$id/status',
+        data: data,
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiUncertaintyArea.fromMap(_toMap(payload['data']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to update this AI validation task right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiUncertaintyValidationSubmission> submitUncertaintyValidation({
+    required String id,
+    required String validatedFeatureId,
+    String? notes,
+  }) async {
+    final data = <String, dynamic>{'validated_feature_id': validatedFeatureId};
+    final normalizedNotes = _nonEmpty(notes);
+    if (normalizedNotes != null) {
+      data['notes'] = normalizedNotes;
+    }
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_aiBasePath/uncertainty-areas/$id/submit-validation',
+        data: data,
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiUncertaintyValidationSubmission.fromResponse(
+        _toMap(payload['data']),
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to submit this AI validation task right now.',
       );
     }
   }

@@ -12,6 +12,7 @@ const {
   approveContributorRequest,
   createCategory,
   createProject,
+  createAssignment,
 } = require('./helpers/api-test-helpers');
 const fs = require('node:fs/promises');
 const os = require('node:os');
@@ -343,6 +344,110 @@ const createViewerToken = async () => {
     user: registered.user,
     token: login.token,
   };
+};
+
+const createUncertaintyTaskFixture = async ({
+  projectId,
+  userId,
+  status = 'open',
+  assignedTo = null,
+  artifactFeatureId = `phase-s2-task-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+  uncertaintyScore = 0.78,
+  suggestedClass = 'olives',
+} = {}) => {
+  const { runId, layerId } = await createPreviewableAiLayer({
+    projectId,
+    userId,
+    layerType: 'uncertainty',
+    status: 'ready_for_review',
+    storagePath: `outputs/runs/phase-s2/${artifactFeatureId}.geojson`,
+  });
+  const result = await pool.query(
+    `INSERT INTO ai_uncertainty_area (
+       ai_run_id,
+       project_id,
+       ai_output_layer_id,
+       artifact_feature_id,
+       geom,
+       uncertainty_score,
+       suggested_class,
+       status,
+       assigned_to,
+       metadata
+     )
+     VALUES (
+       $1,
+       $2,
+       $3,
+       $4,
+       ST_SetSRID(ST_GeomFromText($5), 4326),
+       $6,
+       $7,
+       $8,
+       $9,
+       $10::jsonb
+     )
+     RETURNING id`,
+    [
+      runId,
+      projectId,
+      layerId,
+      artifactFeatureId,
+      'POLYGON((35.20 33.20,35.21 33.20,35.21 33.21,35.20 33.21,35.20 33.20))',
+      uncertaintyScore,
+      suggestedClass,
+      status,
+      assignedTo,
+      JSON.stringify({
+        source: 'ai_uncertainty_artifact',
+        artifact_feature_id: artifactFeatureId,
+        confidence_score: Number((1 - uncertaintyScore).toFixed(6)),
+        official_field_data: false,
+        auto_approved: false,
+        spatial_feature_write: false,
+        validation_task: true,
+      }),
+    ],
+  );
+
+  return {
+    runId,
+    layerId,
+    taskId: result.rows[0].id,
+    artifactFeatureId,
+  };
+};
+
+const createSpatialFeatureFixture = async ({
+  projectId,
+  userId,
+  status = 'draft',
+  attributes = { feature_type: 'olive', condition: 'good' },
+  lon = 35.55,
+  lat = 33.85,
+} = {}) => {
+  const result = await pool.query(
+    `INSERT INTO spatial_feature (
+       project_id,
+       collected_by_user_id,
+       geom,
+       attributes,
+       status,
+       source
+     )
+     VALUES (
+       $1,
+       $2,
+       ST_SetSRID(ST_MakePoint($3, $4), 4326),
+       $5::jsonb,
+       $6,
+       'field'
+     )
+     RETURNING id`,
+    [projectId, userId, lon, lat, JSON.stringify(attributes), status],
+  );
+
+  return result.rows[0].id;
 };
 
 beforeEach(async () => {
@@ -1758,6 +1863,256 @@ describe('AI backend endpoints phase B', () => {
       .get(`${API_PREFIX}/ai/runs/${runResponse.body.data.id}`)
       .set(authHeader(assignedProjectAdmin.token))
       .expect(403);
+  });
+});
+
+describe('AI uncertainty validation phase S2', () => {
+  test('admin lists and assigns uncertainty tasks while contributors see only assigned tasks', async () => {
+    const { admin, project } = await createProjectFixture('AI Uncertainty Tasks', {
+      protectedSuperAdmin: false,
+    });
+    const contributor = await createContributorToken({
+      adminToken: admin.token,
+      emailPrefix: 'ai-uncertainty-contributor',
+    });
+    const viewer = await createViewerToken();
+    await createAssignment({
+      token: admin.token,
+      projectId: project.id,
+      userId: contributor.user.id,
+    });
+
+    const beforeFeatureCount = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM spatial_feature`,
+    );
+    const taskOne = await createUncertaintyTaskFixture({
+      projectId: project.id,
+      userId: admin.user.id,
+      artifactFeatureId: 'phase-s2-task-one',
+    });
+    const taskTwo = await createUncertaintyTaskFixture({
+      projectId: project.id,
+      userId: admin.user.id,
+      artifactFeatureId: 'phase-s2-task-two',
+      uncertaintyScore: 0.64,
+      suggestedClass: 'citrus',
+    });
+
+    const listResponse = await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/ai/uncertainty-areas`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    const listedIds = listResponse.body.data.map((task) => task.id);
+    expect(listedIds).toEqual(expect.arrayContaining([taskOne.taskId, taskTwo.taskId]));
+    expect(listResponse.body.summary.open).toBeGreaterThanOrEqual(2);
+
+    await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/ai/uncertainty-areas`)
+      .set(authHeader(viewer.token))
+      .expect(403);
+
+    const assignResponse = await request(app)
+      .patch(`${API_PREFIX}/ai/uncertainty-areas/${taskOne.taskId}/assign`)
+      .set(authHeader(admin.token))
+      .send({
+        assigned_to: contributor.user.id,
+        notes: 'Please validate this uncertainty area in the field.',
+      })
+      .expect(200);
+    expect(assignResponse.body.data).toEqual(
+      expect.objectContaining({
+        id: taskOne.taskId,
+        assigned_to: contributor.user.id,
+        status: 'assigned',
+      }),
+    );
+    expect(assignResponse.body.data.metadata).toEqual(
+      expect.objectContaining({
+        official_field_data: false,
+        auto_approved: false,
+        spatial_feature_approval_write: false,
+      }),
+    );
+
+    const myTasksResponse = await request(app)
+      .get(`${API_PREFIX}/me/ai-validation-tasks`)
+      .set(authHeader(contributor.token))
+      .expect(200);
+    expect(myTasksResponse.body.data.map((task) => task.id)).toEqual([taskOne.taskId]);
+
+    await request(app)
+      .get(`${API_PREFIX}/me/ai-validation-tasks`)
+      .set(authHeader(viewer.token))
+      .expect(403);
+
+    await request(app)
+      .get(`${API_PREFIX}/ai/uncertainty-areas/${taskOne.taskId}`)
+      .set(authHeader(contributor.token))
+      .expect(200);
+    await request(app)
+      .get(`${API_PREFIX}/ai/uncertainty-areas/${taskTwo.taskId}`)
+      .set(authHeader(contributor.token))
+      .expect(403);
+    await request(app)
+      .get(`${API_PREFIX}/ai/uncertainty-areas/${taskOne.taskId}`)
+      .set(authHeader(viewer.token))
+      .expect(403);
+
+    const afterFeatureCount = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM spatial_feature`,
+    );
+    expect(afterFeatureCount.rows[0].count).toBe(beforeFeatureCount.rows[0].count);
+  });
+
+  test('submit-validation links a contributor feature to normal review without auto-approval', async () => {
+    const { admin, project } = await createProjectFixture('AI Uncertainty Submission', {
+      protectedSuperAdmin: false,
+    });
+    const contributor = await createContributorToken({
+      adminToken: admin.token,
+      emailPrefix: 'ai-uncertainty-submit-contributor',
+    });
+    await createAssignment({
+      token: admin.token,
+      projectId: project.id,
+      userId: contributor.user.id,
+    });
+
+    const assignedTask = await createUncertaintyTaskFixture({
+      projectId: project.id,
+      userId: admin.user.id,
+      status: 'assigned',
+      assignedTo: contributor.user.id,
+      artifactFeatureId: 'phase-s2-submit-assigned',
+    });
+    const unassignedTask = await createUncertaintyTaskFixture({
+      projectId: project.id,
+      userId: admin.user.id,
+      artifactFeatureId: 'phase-s2-submit-unassigned',
+    });
+    const featureId = await createSpatialFeatureFixture({
+      projectId: project.id,
+      userId: contributor.user.id,
+      status: 'draft',
+    });
+    const beforeFeatureCount = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM spatial_feature`,
+    );
+
+    await request(app)
+      .post(`${API_PREFIX}/ai/uncertainty-areas/${unassignedTask.taskId}/submit-validation`)
+      .set(authHeader(contributor.token))
+      .send({ validated_feature_id: featureId })
+      .expect(403);
+
+    const submitResponse = await request(app)
+      .post(`${API_PREFIX}/ai/uncertainty-areas/${assignedTask.taskId}/submit-validation`)
+      .set(authHeader(contributor.token))
+      .send({
+        validated_feature_id: featureId,
+        notes: 'Submitted field validation through the normal review queue.',
+      })
+      .expect(200);
+    expect(submitResponse.body.data).toEqual(
+      expect.objectContaining({
+        validated_feature_id: featureId,
+        feature_status: 'pending_review',
+        submitted_draft: true,
+        auto_approved: false,
+      }),
+    );
+    expect(submitResponse.body.data.task).toEqual(
+      expect.objectContaining({
+        id: assignedTask.taskId,
+        status: 'in_review',
+        validated_feature_id: featureId,
+        validated_feature_status: 'pending_review',
+      }),
+    );
+    expect(submitResponse.body.data.task.metadata).toEqual(
+      expect.objectContaining({
+        normal_feature_review_required: true,
+        official_field_data: false,
+        auto_approved: false,
+        spatial_feature_approval_write: false,
+      }),
+    );
+
+    const submittedFeature = await pool.query(
+      `SELECT status, submitted_at, reviewed_at, reviewed_by_user_id
+       FROM spatial_feature
+       WHERE id = $1`,
+      [featureId],
+    );
+    expect(submittedFeature.rows[0].status).toBe('pending_review');
+    expect(submittedFeature.rows[0].submitted_at).toBeTruthy();
+    expect(submittedFeature.rows[0].reviewed_at).toBeNull();
+    expect(submittedFeature.rows[0].reviewed_by_user_id).toBeNull();
+
+    const afterSubmitFeatureCount = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM spatial_feature`,
+    );
+    expect(afterSubmitFeatureCount.rows[0].count).toBe(beforeFeatureCount.rows[0].count);
+
+    await request(app)
+      .patch(`${API_PREFIX}/ai/uncertainty-areas/${assignedTask.taskId}/status`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'validated',
+        validated_feature_id: featureId,
+        notes: 'Cannot validate until normal review approves the linked feature.',
+      })
+      .expect(409);
+
+    await request(app)
+      .post(`${API_PREFIX}/features/${featureId}/review`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'approved',
+        review_notes: 'Approved by normal feature review.',
+      })
+      .expect(200);
+
+    const validateResponse = await request(app)
+      .patch(`${API_PREFIX}/ai/uncertainty-areas/${assignedTask.taskId}/status`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'validated',
+        validated_feature_id: featureId,
+        notes: 'Linked feature completed normal review.',
+      })
+      .expect(200);
+    expect(validateResponse.body.data).toEqual(
+      expect.objectContaining({
+        id: assignedTask.taskId,
+        status: 'validated',
+        validated_feature_id: featureId,
+        validated_feature_status: 'approved',
+      }),
+    );
+    expect(validateResponse.body.data.metadata).toEqual(
+      expect.objectContaining({
+        normal_feature_review_required: true,
+        official_field_data: false,
+        auto_approved: false,
+        spatial_feature_approval_write: false,
+      }),
+    );
+
+    const approvedFeature = await pool.query(
+      `SELECT status, reviewed_at, reviewed_by_user_id
+       FROM spatial_feature
+       WHERE id = $1`,
+      [featureId],
+    );
+    expect(approvedFeature.rows[0].status).toBe('approved');
+    expect(approvedFeature.rows[0].reviewed_at).toBeTruthy();
+    expect(approvedFeature.rows[0].reviewed_by_user_id).toBe(admin.user.id);
+
+    const afterValidationFeatureCount = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM spatial_feature`,
+    );
+    expect(afterValidationFeatureCount.rows[0].count).toBe(beforeFeatureCount.rows[0].count);
   });
 });
 

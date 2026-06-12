@@ -1464,6 +1464,82 @@ void main() {
     },
   );
 
+  testWidgets(
+    'project map opens assigned AI validation task details without feature edit actions',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(430, 932));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final project = _projectSummary(
+        name: 'South Lebanon Fruit Trees Training Dataset',
+      );
+      final task = AiUncertaintyArea(
+        id: 'task-map-1',
+        aiRunId: 'run-1',
+        projectId: project.id,
+        projectName: project.name,
+        geometry: const <String, dynamic>{
+          'type': 'Point',
+          'coordinates': <double>[35.5, 33.9],
+        },
+        suggestedClass: 'citrus fruit trees',
+        uncertaintyScore: 0.67,
+        confidenceScore: 0.33,
+        status: 'assigned',
+        assignedTo: 'contributor-1',
+        assignedToName: 'Field Contributor',
+      );
+
+      await tester.pumpWidget(
+        _wrapWithScope(
+          aiRepository: FakeAiRepository(
+            uncertaintyAreas: <AiUncertaintyArea>[task],
+          ),
+          overrides: <Override>[
+            authControllerProvider.overrideWith(
+              (ref) =>
+                  _AuthenticatedAuthController(_session(UserRole.contributor)),
+            ),
+            syncControllerProvider.overrideWith(
+              (ref) => _buildSyncController(),
+            ),
+            mapProjectsProvider.overrideWith(
+              (ref) async => <ProjectSummary>[project],
+            ),
+            projectMapFeaturesProvider.overrideWith(
+              (ref, projectId) async => const <MapFeatureSummary>[],
+            ),
+            offlineMapPackageProvider.overrideWith((ref) async => null),
+          ],
+          child: const MapScreen(
+            initialProjectId: 'project-1',
+            initialAiTaskId: 'task-map-1',
+            lockProjectSelection: true,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Citrus Fruit Trees'), findsWidgets);
+      expect(find.text('Uncertainty 67%'), findsOneWidget);
+      expect(find.text('Confidence 33%'), findsOneWidget);
+      expect(
+        find.textContaining('AI validation task, not official field data'),
+        findsOneWidget,
+      );
+      await tester.drag(find.byType(ListView).last, const Offset(0, -360));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Submit/link validation'), findsOneWidget);
+      expect(find.text('Edit Draft'), findsNothing);
+      expect(find.text('Delete Draft'), findsNothing);
+      expect(find.text('Approve'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('project feature browser uses a readable feature title', (
     tester,
   ) async {

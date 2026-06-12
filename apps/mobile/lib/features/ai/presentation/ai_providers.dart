@@ -149,3 +149,41 @@ final aiRunReviewsProvider =
       ref.watch(workflowRefreshTickProvider);
       return ref.read(aiRepositoryProvider).fetchRunReviews(runId: runId);
     });
+
+final projectAiUncertaintyAreasProvider =
+    FutureProvider.family<
+      AiUncertaintyAreasPage,
+      AiProjectUncertaintyAreasQuery
+    >((ref, query) async {
+      ref.watch(workflowRefreshTickProvider);
+      return ref
+          .read(aiRepositoryProvider)
+          .fetchProjectUncertaintyAreas(
+            projectId: query.projectId,
+            status: query.status,
+            assignedTo: query.assignedTo,
+            page: query.page,
+            limit: query.limit,
+          );
+    });
+
+final myAiValidationTasksProvider =
+    FutureProvider.family<AiUncertaintyAreasPage, AiUncertaintyTasksQuery>((
+      ref,
+      query,
+    ) async {
+      ref.watch(workflowRefreshTickProvider);
+      return ref
+          .read(aiRepositoryProvider)
+          .fetchMyValidationTasks(
+            status: query.status,
+            page: query.page,
+            limit: query.limit,
+          );
+    });
+
+final aiUncertaintyAreaProvider =
+    FutureProvider.family<AiUncertaintyArea, String>((ref, id) async {
+      ref.watch(workflowRefreshTickProvider);
+      return ref.read(aiRepositoryProvider).fetchUncertaintyArea(id: id);
+    });

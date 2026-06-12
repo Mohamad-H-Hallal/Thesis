@@ -71,4 +71,39 @@ abstract class AiRepository {
   Future<AiOutputLayer> publishLayer({required String layerId});
 
   Future<AiOutputLayer> unpublishLayer({required String layerId});
+
+  Future<AiUncertaintyAreasPage> fetchProjectUncertaintyAreas({
+    required String projectId,
+    String? status,
+    String? assignedTo,
+    int page = 1,
+    int limit = 100,
+  });
+
+  Future<AiUncertaintyAreasPage> fetchMyValidationTasks({
+    String? status,
+    int page = 1,
+    int limit = 100,
+  });
+
+  Future<AiUncertaintyArea> fetchUncertaintyArea({required String id});
+
+  Future<AiUncertaintyArea> assignUncertaintyArea({
+    required String id,
+    required String assignedTo,
+    String? notes,
+  });
+
+  Future<AiUncertaintyArea> updateUncertaintyAreaStatus({
+    required String id,
+    required String status,
+    String? validatedFeatureId,
+    String? notes,
+  });
+
+  Future<AiUncertaintyValidationSubmission> submitUncertaintyValidation({
+    required String id,
+    required String validatedFeatureId,
+    String? notes,
+  });
 }

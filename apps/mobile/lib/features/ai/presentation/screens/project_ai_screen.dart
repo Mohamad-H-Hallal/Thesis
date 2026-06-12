@@ -13,12 +13,16 @@ import '../../../../core/pagination/paginated_result.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/utils/lebanon_time.dart';
+import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
+import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
+import '../../../admin/domain/admin_models.dart';
 import '../../../map/domain/app_tile_provider.dart';
 import '../../../map/domain/lebanon_map.dart';
 import '../../../map/domain/map_geometry.dart';
@@ -27,6 +31,7 @@ import '../../../projects/domain/project.dart';
 import '../../domain/ai_models.dart';
 import '../ai_permissions.dart';
 import '../ai_providers.dart';
+import '../widgets/ai_uncertainty_task_widgets.dart';
 
 class ProjectAiScreen extends ConsumerStatefulWidget {
   const ProjectAiScreen({
@@ -117,6 +122,11 @@ class _ProjectAiScreenState extends ConsumerState<ProjectAiScreen> {
                         icon: Icon(Icons.manage_history_outlined),
                         label: Text('Runs', maxLines: 1),
                       ),
+                      ButtonSegment(
+                        value: 'uncertainty',
+                        icon: Icon(Icons.fact_check_outlined),
+                        label: Text('Tasks', maxLines: 1),
+                      ),
                     ],
                     selected: {_section},
                     onSelectionChanged: (selection) {
@@ -131,6 +141,8 @@ class _ProjectAiScreenState extends ConsumerState<ProjectAiScreen> {
               ProjectAiReadinessSection(project: project)
             else if (_section == 'settings')
               ProjectAiSettingsSection(project: project)
+            else if (_section == 'uncertainty')
+              ProjectAiUncertaintySection(project: project)
             else
               ProjectAiRunsSection(project: project),
           ],
@@ -1405,6 +1417,447 @@ class _FeatureInputSelector extends StatelessWidget {
         Text('* recommended', style: Theme.of(context).textTheme.bodySmall),
       ],
     );
+  }
+}
+
+class ProjectAiUncertaintySection extends ConsumerStatefulWidget {
+  const ProjectAiUncertaintySection({required this.project, super.key});
+
+  final ProjectSummary project;
+
+  @override
+  ConsumerState<ProjectAiUncertaintySection> createState() =>
+      _ProjectAiUncertaintySectionState();
+}
+
+class _ProjectAiUncertaintySectionState
+    extends ConsumerState<ProjectAiUncertaintySection> {
+  String? _selectedStatus;
+
+  @override
+  Widget build(BuildContext context) {
+    final query = AiProjectUncertaintyAreasQuery(
+      projectId: widget.project.id,
+      status: _selectedStatus,
+    );
+    final tasksAsync = ref.watch(projectAiUncertaintyAreasProvider(query));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SectionHeader(
+                title: 'Uncertainty Validation',
+                subtitle:
+                    'Review AI uncertainty tasks and assign field validation work.',
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              const AiUncertaintyTaskWarning(),
+              const SizedBox(height: AppSpacing.md),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    label: const Text('All'),
+                    selected: _selectedStatus == null,
+                    onSelected: (_) => setState(() => _selectedStatus = null),
+                  ),
+                  for (final status in aiUncertaintyAreaStatuses)
+                    ChoiceChip(
+                      label: Text(aiUncertaintyStatusLabel(status)),
+                      selected: _selectedStatus == status,
+                      onSelected: (_) =>
+                          setState(() => _selectedStatus = status),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        tasksAsync.when(
+          loading: () =>
+              const AppCard(child: Center(child: CircularProgressIndicator())),
+          error: (error, _) => AppEmptyState(
+            icon: Icons.error_outline,
+            title: 'Uncertainty tasks unavailable',
+            message: userFacingErrorMessage(
+              error,
+              fallback: 'Unable to load AI uncertainty validation tasks.',
+            ),
+            actionLabel: 'Retry',
+            onAction: () =>
+                ref.invalidate(projectAiUncertaintyAreasProvider(query)),
+          ),
+          data: (page) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _AiUncertaintyStatusCountsCard(page: page),
+                const SizedBox(height: AppSpacing.md),
+                if (page.items.isEmpty)
+                  const AppCard(
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.assignment_turned_in_outlined),
+                      title: Text('No uncertainty tasks match this filter'),
+                      subtitle: Text(
+                        'Tasks are created when uncertainty artifacts are registered.',
+                      ),
+                    ),
+                  )
+                else
+                  AppCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Tasks (${page.total})',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        for (final task in page.items) ...[
+                          _ProjectAiUncertaintyTaskTile(
+                            task: task,
+                            onOpenMap: () => context.push(
+                              AppRoutes.mapForAiValidationTask(
+                                widget.project.id,
+                                task.id,
+                              ),
+                            ),
+                            onAssign: task.isTerminal
+                                ? null
+                                : () => _assignTask(task),
+                          ),
+                          if (task != page.items.last)
+                            const Divider(height: AppSpacing.lg),
+                        ],
+                      ],
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Future<void> _assignTask(AiUncertaintyArea task) async {
+    final assigned = await showDialog<bool>(
+      context: context,
+      builder: (_) => _AssignAiUncertaintyTaskDialog(
+        projectId: widget.project.id,
+        task: task,
+      ),
+    );
+    if (assigned == true && mounted) {
+      bumpWorkflowRefresh(ref);
+    }
+  }
+}
+
+class _AiUncertaintyStatusCountsCard extends StatelessWidget {
+  const _AiUncertaintyStatusCountsCard({required this.page});
+
+  final AiUncertaintyAreasPage page;
+
+  @override
+  Widget build(BuildContext context) {
+    final counts = page.statusCounts;
+    final total = counts.isEmpty ? page.total : page.countTotal;
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Status counts', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: AppSpacing.sm),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _AiUncertaintyCountPill(label: 'Total', count: total),
+              for (final status in aiUncertaintyAreaStatuses)
+                _AiUncertaintyCountPill(
+                  label: aiUncertaintyStatusLabel(status),
+                  count: counts[status] ?? 0,
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AiUncertaintyCountPill extends StatelessWidget {
+  const _AiUncertaintyCountPill({required this.label, required this.count});
+
+  final String label;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Chip(
+      avatar: const Icon(Icons.circle, size: 12),
+      label: Text('$label $count'),
+    );
+  }
+}
+
+class _ProjectAiUncertaintyTaskTile extends StatelessWidget {
+  const _ProjectAiUncertaintyTaskTile({
+    required this.task,
+    required this.onOpenMap,
+    this.onAssign,
+  });
+
+  final AiUncertaintyArea task;
+  final VoidCallback onOpenMap;
+  final VoidCallback? onAssign;
+
+  @override
+  Widget build(BuildContext context) {
+    final assignedLabel = task.assignedToName?.trim().isNotEmpty == true
+        ? task.assignedToName!.trim()
+        : task.assignedToEmail?.trim().isNotEmpty == true
+        ? task.assignedToEmail!.trim()
+        : task.assignedTo?.trim().isNotEmpty == true
+        ? task.assignedTo!.trim()
+        : 'Unassigned';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.fact_check_outlined),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    aiUncertaintyClassLabel(task),
+                    style: Theme.of(context).textTheme.titleMedium,
+                    softWrap: true,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Task ${aiUncertaintyCompactId(task.id)} - $assignedLabel',
+                    style: Theme.of(context).textTheme.bodySmall,
+                    softWrap: true,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            StatusChip(status: task.status),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        AiUncertaintyMetricPills(task: task, includeStatus: false),
+        if (task.validatedFeatureId?.trim().isNotEmpty ?? false) ...[
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'Linked feature: ${task.validatedFeatureId} (${task.validatedFeatureStatus ?? 'review pending'})',
+            style: Theme.of(context).textTheme.bodySmall,
+            softWrap: true,
+          ),
+        ],
+        const SizedBox(height: AppSpacing.sm),
+        AppActionButtons(
+          maxColumns: 2,
+          fillRows: true,
+          children: [
+            OutlinedButton.icon(
+              onPressed: onOpenMap,
+              icon: const Icon(Icons.map_outlined),
+              label: const Text('Open on map'),
+            ),
+            FilledButton.tonalIcon(
+              onPressed: onAssign,
+              icon: const Icon(Icons.assignment_ind_outlined),
+              label: Text(task.isAssigned ? 'Reassign' : 'Assign'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _AssignAiUncertaintyTaskDialog extends ConsumerStatefulWidget {
+  const _AssignAiUncertaintyTaskDialog({
+    required this.projectId,
+    required this.task,
+  });
+
+  final String projectId;
+  final AiUncertaintyArea task;
+
+  @override
+  ConsumerState<_AssignAiUncertaintyTaskDialog> createState() =>
+      _AssignAiUncertaintyTaskDialogState();
+}
+
+class _AssignAiUncertaintyTaskDialogState
+    extends ConsumerState<_AssignAiUncertaintyTaskDialog> {
+  late Future<List<ManagedAssignmentSummary>> _contributorsFuture;
+  final _notesController = TextEditingController();
+  String? _selectedUserId;
+  bool _assigning = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _contributorsFuture = ref
+        .read(adminRepositoryProvider)
+        .fetchProjectAssignmentsPage(
+          projectId: widget.projectId,
+          status: 'approved',
+          limit: 100,
+        )
+        .then(
+          (page) => page.items
+              .where((item) => item.role == 'contributor')
+              .toList(growable: false),
+        );
+  }
+
+  @override
+  void dispose() {
+    _notesController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.task.isAssigned ? 'Reassign task' : 'Assign task'),
+      content: FutureBuilder<List<ManagedAssignmentSummary>>(
+        future: _contributorsFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const SizedBox(
+              width: 280,
+              child: Center(child: CircularProgressIndicator()),
+            );
+          }
+          if (snapshot.hasError) {
+            return Text(
+              userFacingErrorMessage(
+                snapshot.error ?? StateError('Unable to load contributors.'),
+                fallback: 'Unable to load project contributors.',
+              ),
+            );
+          }
+          final contributors =
+              snapshot.data ?? const <ManagedAssignmentSummary>[];
+          if (contributors.isEmpty) {
+            return const Text(
+              'No approved project contributors are available for this task.',
+            );
+          }
+          _selectedUserId ??= contributors.first.userId;
+          return SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: _selectedUserId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Contributor'),
+                  items: [
+                    for (final contributor in contributors)
+                      DropdownMenuItem(
+                        value: contributor.userId,
+                        child: Text(
+                          '${contributor.fullName} - ${contributor.email}',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: _assigning
+                      ? null
+                      : (value) => setState(() => _selectedUserId = value),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                AppTextField(
+                  label: 'Notes',
+                  controller: _notesController,
+                  minLines: 2,
+                  maxLines: 4,
+                  textCapitalization: TextCapitalization.sentences,
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+      actions: [
+        AppDialogActions(
+          cancel: TextButton(
+            onPressed: _assigning
+                ? null
+                : () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          confirm: FilledButton.icon(
+            onPressed: _assigning || _selectedUserId == null ? null : _assign,
+            icon: _assigning
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.assignment_ind_outlined),
+            label: Text(_assigning ? 'Assigning...' : 'Assign'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _assign() async {
+    final selectedUserId = _selectedUserId;
+    if (selectedUserId == null) {
+      return;
+    }
+    setState(() => _assigning = true);
+    try {
+      await ref
+          .read(aiRepositoryProvider)
+          .assignUncertaintyArea(
+            id: widget.task.id,
+            assignedTo: selectedUserId,
+            notes: _notesController.text,
+          );
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context).pop(true);
+      AppSnackbar.showSuccess(context, 'AI validation task assigned.');
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to assign this AI validation task right now.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _assigning = false);
+      }
+    }
   }
 }
 
@@ -6344,7 +6797,7 @@ extension on AiProjectSettings {
 }
 
 String _normalizedSection(String value) {
-  if (value == 'settings' || value == 'runs') {
+  if (value == 'settings' || value == 'runs' || value == 'uncertainty') {
     return value;
   }
   return 'readiness';

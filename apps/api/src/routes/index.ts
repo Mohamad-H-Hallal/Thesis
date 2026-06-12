@@ -1,5 +1,6 @@
 const express = require('express');
 const assignmentController = require('../controllers/assignment.controller');
+const aiController = require('../controllers/ai.controller');
 const photoController = require('../controllers/photo.controller');
 const {
   categoryController,
@@ -11,6 +12,7 @@ const {
 const { authenticate, authorize, checkProjectAdmin } = require('../middleware/auth');
 const {
   assignmentValidation,
+  aiValidation,
   categoryValidation,
   notificationValidation,
   settingsValidation,
@@ -325,6 +327,19 @@ offlineMapRouter.use(authenticate);
 offlineMapRouter.get('/current', asyncHandler(offlineMapController.getCurrent));
 
 // ============================================================================
+// CURRENT USER ROUTES
+// ============================================================================
+const meRouter = express.Router();
+meRouter.use(authenticate);
+meRouter.get(
+  '/ai-validation-tasks',
+  paginationValidation,
+  aiValidation.listUncertaintyAreas,
+  validate,
+  asyncHandler(aiController.listMyAiValidationTasks),
+);
+
+// ============================================================================
 // USER MANAGEMENT ROUTES (Admin only)
 // ============================================================================
 const userRouter = express.Router();
@@ -476,6 +491,7 @@ module.exports = {
   notificationRouter,
   offlineMapRouter,
   settingsRouter,
+  meRouter,
   userRouter,
 };
 

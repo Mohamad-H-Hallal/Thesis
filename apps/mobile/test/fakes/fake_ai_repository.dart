@@ -13,6 +13,7 @@ class FakeAiRepository implements AiRepository {
         const <String, AiLayerFeatureCollection>{},
     List<AiRunLog> logs = const <AiRunLog>[],
     List<AiReviewDecision> reviews = const <AiReviewDecision>[],
+    List<AiUncertaintyArea> uncertaintyAreas = const <AiUncertaintyArea>[],
     this.failReadiness = false,
   }) : settings = settings ?? AiProjectSettings.defaults('project-1'),
        readiness = readiness ?? fakeReadiness(projectId: 'project-1'),
@@ -23,7 +24,8 @@ class FakeAiRepository implements AiRepository {
          layerFeatures,
        ),
        logs = List<AiRunLog>.from(logs),
-       reviews = List<AiReviewDecision>.from(reviews);
+       reviews = List<AiReviewDecision>.from(reviews),
+       uncertaintyAreas = List<AiUncertaintyArea>.from(uncertaintyAreas);
 
   AiProjectSettings settings;
   AiReadinessResult readiness;
@@ -36,6 +38,7 @@ class FakeAiRepository implements AiRepository {
       <AiLayerFeaturesQuery>[];
   List<AiRunLog> logs;
   List<AiReviewDecision> reviews;
+  List<AiUncertaintyArea> uncertaintyAreas;
   bool failReadiness;
   int saveCount = 0;
   int createCount = 0;
@@ -43,6 +46,9 @@ class FakeAiRepository implements AiRepository {
   int publishCount = 0;
   int unpublishCount = 0;
   int readinessFetchCount = 0;
+  int assignUncertaintyCount = 0;
+  int updateUncertaintyStatusCount = 0;
+  int submitUncertaintyValidationCount = 0;
 
   @override
   Future<AiRun> createRun({
@@ -416,6 +422,157 @@ class FakeAiRepository implements AiRepository {
   }
 
   @override
+  Future<AiUncertaintyArea> assignUncertaintyArea({
+    required String id,
+    required String assignedTo,
+    String? notes,
+  }) async {
+    assignUncertaintyCount++;
+    final index = uncertaintyAreas.indexWhere((area) => area.id == id);
+    if (index < 0) {
+      throw StateError('AI validation task not found');
+    }
+    final updated = _copyUncertaintyArea(
+      uncertaintyAreas[index],
+      status: 'assigned',
+      assignedTo: assignedTo,
+      assignedToName: 'Assigned Contributor',
+      assignedToEmail: 'assigned@example.com',
+      metadata: <String, dynamic>{
+        ...uncertaintyAreas[index].metadata,
+        'assignment': <String, dynamic>{
+          'assigned_to': assignedTo,
+          if (notes?.trim().isNotEmpty ?? false) 'notes': notes!.trim(),
+        },
+        'official_field_data': false,
+        'auto_approved': false,
+      },
+    );
+    uncertaintyAreas = <AiUncertaintyArea>[
+      ...uncertaintyAreas.take(index),
+      updated,
+      ...uncertaintyAreas.skip(index + 1),
+    ];
+    return updated;
+  }
+
+  @override
+  Future<AiUncertaintyArea> fetchUncertaintyArea({required String id}) async {
+    return uncertaintyAreas.firstWhere(
+      (area) => area.id == id,
+      orElse: () => throw StateError('AI validation task not found'),
+    );
+  }
+
+  @override
+  Future<AiUncertaintyAreasPage> fetchMyValidationTasks({
+    String? status,
+    int page = 1,
+    int limit = 100,
+  }) async {
+    final filtered = uncertaintyAreas
+        .where((area) => area.assignedTo?.trim().isNotEmpty == true)
+        .where((area) => status == null || area.status == status)
+        .toList(growable: false);
+    return _uncertaintyPage(filtered, page: page, limit: limit);
+  }
+
+  @override
+  Future<AiUncertaintyAreasPage> fetchProjectUncertaintyAreas({
+    required String projectId,
+    String? status,
+    String? assignedTo,
+    int page = 1,
+    int limit = 100,
+  }) async {
+    final filtered = uncertaintyAreas
+        .where((area) => area.projectId == projectId)
+        .where((area) => status == null || area.status == status)
+        .where((area) => assignedTo == null || area.assignedTo == assignedTo)
+        .toList(growable: false);
+    return _uncertaintyPage(filtered, page: page, limit: limit);
+  }
+
+  @override
+  Future<AiUncertaintyValidationSubmission> submitUncertaintyValidation({
+    required String id,
+    required String validatedFeatureId,
+    String? notes,
+  }) async {
+    submitUncertaintyValidationCount++;
+    final index = uncertaintyAreas.indexWhere((area) => area.id == id);
+    if (index < 0) {
+      throw StateError('AI validation task not found');
+    }
+    final updated = _copyUncertaintyArea(
+      uncertaintyAreas[index],
+      status: 'in_review',
+      validatedFeatureId: validatedFeatureId,
+      validatedFeatureStatus: 'pending_review',
+      metadata: <String, dynamic>{
+        ...uncertaintyAreas[index].metadata,
+        'contributor_validation': <String, dynamic>{
+          'validated_feature_id': validatedFeatureId,
+          if (notes?.trim().isNotEmpty ?? false) 'notes': notes!.trim(),
+        },
+        'normal_feature_review_required': true,
+        'official_field_data': false,
+        'auto_approved': false,
+      },
+    );
+    uncertaintyAreas = <AiUncertaintyArea>[
+      ...uncertaintyAreas.take(index),
+      updated,
+      ...uncertaintyAreas.skip(index + 1),
+    ];
+    return AiUncertaintyValidationSubmission(
+      task: updated,
+      validatedFeatureId: validatedFeatureId,
+      featureStatus: 'pending_review',
+      submittedDraft: true,
+      autoApproved: false,
+    );
+  }
+
+  @override
+  Future<AiUncertaintyArea> updateUncertaintyAreaStatus({
+    required String id,
+    required String status,
+    String? validatedFeatureId,
+    String? notes,
+  }) async {
+    updateUncertaintyStatusCount++;
+    final index = uncertaintyAreas.indexWhere((area) => area.id == id);
+    if (index < 0) {
+      throw StateError('AI validation task not found');
+    }
+    final updated = _copyUncertaintyArea(
+      uncertaintyAreas[index],
+      status: status,
+      validatedFeatureId:
+          validatedFeatureId ?? uncertaintyAreas[index].validatedFeatureId,
+      validatedFeatureStatus: status == 'validated'
+          ? 'approved'
+          : uncertaintyAreas[index].validatedFeatureStatus,
+      metadata: <String, dynamic>{
+        ...uncertaintyAreas[index].metadata,
+        'admin_status_update': <String, dynamic>{
+          'status': status,
+          if (notes?.trim().isNotEmpty ?? false) 'notes': notes!.trim(),
+        },
+        'official_field_data': false,
+        'auto_approved': false,
+      },
+    );
+    uncertaintyAreas = <AiUncertaintyArea>[
+      ...uncertaintyAreas.take(index),
+      updated,
+      ...uncertaintyAreas.skip(index + 1),
+    ];
+    return updated;
+  }
+
+  @override
   Future<AiReadinessResult> fetchReadiness({
     required String projectId,
     String? labelField,
@@ -524,6 +681,69 @@ String _fakeAiFeatureSearchBlob(AiLayerFeature feature) {
       .where((value) => value.trim().isNotEmpty)
       .join(' ')
       .toLowerCase();
+}
+
+AiUncertaintyAreasPage _uncertaintyPage(
+  List<AiUncertaintyArea> areas, {
+  required int page,
+  required int limit,
+}) {
+  final safePage = page < 1 ? 1 : page;
+  final safeLimit = limit < 1 ? 20 : limit;
+  final start = (safePage - 1) * safeLimit;
+  final end = (start + safeLimit).clamp(0, areas.length);
+  final items = start >= areas.length
+      ? const <AiUncertaintyArea>[]
+      : areas.sublist(start, end);
+  final counts = <String, int>{};
+  for (final area in areas) {
+    counts[area.status] = (counts[area.status] ?? 0) + 1;
+  }
+  return AiUncertaintyAreasPage(
+    items: items,
+    page: safePage,
+    limit: safeLimit,
+    total: areas.length,
+    hasMore: end < areas.length,
+    statusCounts: counts,
+  );
+}
+
+AiUncertaintyArea _copyUncertaintyArea(
+  AiUncertaintyArea area, {
+  String? status,
+  String? assignedTo,
+  String? assignedToName,
+  String? assignedToEmail,
+  String? validatedFeatureId,
+  String? validatedFeatureStatus,
+  Map<String, dynamic>? metadata,
+}) {
+  return AiUncertaintyArea(
+    id: area.id,
+    aiRunId: area.aiRunId,
+    projectId: area.projectId,
+    projectName: area.projectName,
+    aiOutputLayerId: area.aiOutputLayerId,
+    artifactFeatureId: area.artifactFeatureId,
+    geometry: area.geometry,
+    suggestedClass: area.suggestedClass,
+    uncertaintyScore: area.uncertaintyScore,
+    confidenceScore: area.confidenceScore,
+    status: status ?? area.status,
+    assignedTo: assignedTo ?? area.assignedTo,
+    assignedToName: assignedToName ?? area.assignedToName,
+    assignedToEmail: assignedToEmail ?? area.assignedToEmail,
+    validatedFeatureId: validatedFeatureId ?? area.validatedFeatureId,
+    validatedFeatureStatus:
+        validatedFeatureStatus ?? area.validatedFeatureStatus,
+    metadata: metadata ?? area.metadata,
+    runStatus: area.runStatus,
+    layerStatus: area.layerStatus,
+    layerType: area.layerType,
+    createdAt: area.createdAt,
+    updatedAt: DateTime.utc(2026, 6, 12),
+  );
 }
 
 AiOutputLayer _copyLayer(

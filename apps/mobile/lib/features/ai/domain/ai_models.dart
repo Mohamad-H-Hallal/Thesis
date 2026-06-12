@@ -11,6 +11,17 @@ const List<String> aiScopeTypes = <String>[
 
 const List<String> aiEditableScopeTypes = <String>['project', 'custom_polygon'];
 
+const List<String> aiUncertaintyAreaStatuses = <String>[
+  'open',
+  'assigned',
+  'in_progress',
+  'in_review',
+  'validated',
+  'rejected',
+  'cancelled',
+  'dismissed',
+];
+
 class AiProjectSettings {
   const AiProjectSettings({
     this.id,
@@ -755,6 +766,203 @@ class AiRunReviewResult {
   }
 }
 
+class AiUncertaintyArea {
+  const AiUncertaintyArea({
+    required this.id,
+    required this.aiRunId,
+    required this.projectId,
+    required this.geometry,
+    required this.status,
+    this.projectName,
+    this.aiOutputLayerId,
+    this.artifactFeatureId,
+    this.suggestedClass,
+    this.uncertaintyScore,
+    this.confidenceScore,
+    this.assignedTo,
+    this.assignedToName,
+    this.assignedToEmail,
+    this.validatedFeatureId,
+    this.validatedFeatureStatus,
+    this.metadata = const <String, dynamic>{},
+    this.runStatus,
+    this.layerStatus,
+    this.layerType,
+    this.createdAt,
+    this.updatedAt,
+  });
+
+  final String id;
+  final String aiRunId;
+  final String projectId;
+  final String? projectName;
+  final String? aiOutputLayerId;
+  final String? artifactFeatureId;
+  final Map<String, dynamic> geometry;
+  final String? suggestedClass;
+  final double? uncertaintyScore;
+  final double? confidenceScore;
+  final String status;
+  final String? assignedTo;
+  final String? assignedToName;
+  final String? assignedToEmail;
+  final String? validatedFeatureId;
+  final String? validatedFeatureStatus;
+  final Map<String, dynamic> metadata;
+  final String? runStatus;
+  final String? layerStatus;
+  final String? layerType;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+
+  bool get isAssigned => assignedTo?.trim().isNotEmpty == true;
+
+  bool get isTerminal =>
+      status == 'validated' ||
+      status == 'rejected' ||
+      status == 'cancelled' ||
+      status == 'dismissed';
+
+  factory AiUncertaintyArea.fromMap(Map<String, dynamic> map) {
+    return AiUncertaintyArea(
+      id: _toStringOrNull(map['id']) ?? '',
+      aiRunId: _toStringOrNull(map['ai_run_id']) ?? '',
+      projectId: _toStringOrNull(map['project_id']) ?? '',
+      projectName: _toStringOrNull(map['project_name']),
+      aiOutputLayerId: _toStringOrNull(map['ai_output_layer_id']),
+      artifactFeatureId: _toStringOrNull(map['artifact_feature_id']),
+      geometry: _toMap(map['geometry']),
+      suggestedClass: _toStringOrNull(map['suggested_class']),
+      uncertaintyScore: _toDouble(map['uncertainty_score']),
+      confidenceScore: _toDouble(map['confidence_score']),
+      status: _toStringOrNull(map['status']) ?? 'open',
+      assignedTo: _toStringOrNull(map['assigned_to']),
+      assignedToName: _toStringOrNull(map['assigned_to_name']),
+      assignedToEmail: _toStringOrNull(map['assigned_to_email']),
+      validatedFeatureId: _toStringOrNull(map['validated_feature_id']),
+      validatedFeatureStatus: _toStringOrNull(map['validated_feature_status']),
+      metadata: _toMap(map['metadata']),
+      runStatus: _toStringOrNull(map['run_status']),
+      layerStatus: _toStringOrNull(map['layer_status']),
+      layerType: _toStringOrNull(map['layer_type']),
+      createdAt: _toDateTime(map['created_at']),
+      updatedAt: _toDateTime(map['updated_at']),
+    );
+  }
+
+  AiUncertaintyArea copyWith({
+    String? status,
+    String? assignedTo,
+    String? assignedToName,
+    String? assignedToEmail,
+    String? validatedFeatureId,
+    String? validatedFeatureStatus,
+    Map<String, dynamic>? metadata,
+    DateTime? updatedAt,
+  }) {
+    return AiUncertaintyArea(
+      id: id,
+      aiRunId: aiRunId,
+      projectId: projectId,
+      projectName: projectName,
+      aiOutputLayerId: aiOutputLayerId,
+      artifactFeatureId: artifactFeatureId,
+      geometry: geometry,
+      suggestedClass: suggestedClass,
+      uncertaintyScore: uncertaintyScore,
+      confidenceScore: confidenceScore,
+      status: status ?? this.status,
+      assignedTo: assignedTo ?? this.assignedTo,
+      assignedToName: assignedToName ?? this.assignedToName,
+      assignedToEmail: assignedToEmail ?? this.assignedToEmail,
+      validatedFeatureId: validatedFeatureId ?? this.validatedFeatureId,
+      validatedFeatureStatus:
+          validatedFeatureStatus ?? this.validatedFeatureStatus,
+      metadata: metadata ?? this.metadata,
+      runStatus: runStatus,
+      layerStatus: layerStatus,
+      layerType: layerType,
+      createdAt: createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+}
+
+class AiUncertaintyAreasPage {
+  const AiUncertaintyAreasPage({
+    required this.items,
+    required this.page,
+    required this.limit,
+    required this.total,
+    required this.hasMore,
+    this.statusCounts = const <String, int>{},
+  });
+
+  final List<AiUncertaintyArea> items;
+  final int page;
+  final int limit;
+  final int total;
+  final bool hasMore;
+  final Map<String, int> statusCounts;
+
+  int get countTotal =>
+      statusCounts.values.fold<int>(0, (sum, count) => sum + count);
+
+  factory AiUncertaintyAreasPage.fromResponse(
+    Map<String, dynamic> payload, {
+    int fallbackPage = 1,
+    int fallbackLimit = 20,
+  }) {
+    final rows = _toList(payload['data']).whereType<Map>().toList();
+    final items = rows
+        .map((row) => AiUncertaintyArea.fromMap(Map<String, dynamic>.from(row)))
+        .toList(growable: false);
+    final pagination = _toMap(payload['pagination']);
+    final total = _toInt(pagination['total']) ?? items.length;
+    final page = _toInt(pagination['page']) ?? fallbackPage;
+    final limit = _toInt(pagination['limit']) ?? fallbackLimit;
+    return AiUncertaintyAreasPage(
+      items: items,
+      page: page,
+      limit: limit,
+      total: total,
+      hasMore:
+          _toBool(pagination['has_more']) ??
+          (page * limit < total && items.isNotEmpty),
+      statusCounts: _toIntMap(payload['summary']),
+    );
+  }
+}
+
+class AiUncertaintyValidationSubmission {
+  const AiUncertaintyValidationSubmission({
+    required this.task,
+    required this.validatedFeatureId,
+    required this.featureStatus,
+    required this.submittedDraft,
+    required this.autoApproved,
+  });
+
+  final AiUncertaintyArea task;
+  final String validatedFeatureId;
+  final String featureStatus;
+  final bool submittedDraft;
+  final bool autoApproved;
+
+  factory AiUncertaintyValidationSubmission.fromResponse(
+    Map<String, dynamic> data,
+  ) {
+    return AiUncertaintyValidationSubmission(
+      task: AiUncertaintyArea.fromMap(_toMap(data['task'])),
+      validatedFeatureId: _toStringOrNull(data['validated_feature_id']) ?? '',
+      featureStatus:
+          _toStringOrNull(data['feature_status']) ?? 'pending_review',
+      submittedDraft: _toBool(data['submitted_draft']) ?? false,
+      autoApproved: _toBool(data['auto_approved']) ?? false,
+    );
+  }
+}
+
 class AiReadinessQuery {
   const AiReadinessQuery({
     required this.projectId,
@@ -809,6 +1017,54 @@ class AiRunsQuery {
 }
 
 typedef AiRunsPage = PaginatedResult<AiRun>;
+
+class AiUncertaintyTasksQuery {
+  const AiUncertaintyTasksQuery({this.status, this.page = 1, this.limit = 100});
+
+  final String? status;
+  final int page;
+  final int limit;
+
+  @override
+  bool operator ==(Object other) {
+    return other is AiUncertaintyTasksQuery &&
+        other.status == status &&
+        other.page == page &&
+        other.limit == limit;
+  }
+
+  @override
+  int get hashCode => Object.hash(status, page, limit);
+}
+
+class AiProjectUncertaintyAreasQuery {
+  const AiProjectUncertaintyAreasQuery({
+    required this.projectId,
+    this.status,
+    this.assignedTo,
+    this.page = 1,
+    this.limit = 100,
+  });
+
+  final String projectId;
+  final String? status;
+  final String? assignedTo;
+  final int page;
+  final int limit;
+
+  @override
+  bool operator ==(Object other) {
+    return other is AiProjectUncertaintyAreasQuery &&
+        other.projectId == projectId &&
+        other.status == status &&
+        other.assignedTo == assignedTo &&
+        other.page == page &&
+        other.limit == limit;
+  }
+
+  @override
+  int get hashCode => Object.hash(projectId, status, assignedTo, page, limit);
+}
 
 String? _toStringOrNull(dynamic value) {
   if (value == null) {

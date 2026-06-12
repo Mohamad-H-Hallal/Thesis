@@ -530,6 +530,45 @@ const writePhaseMReviewArtifacts = async ({ root, regionalRunId, projectId }) =>
   await writeJsonArtifact(root, `${runDir}/ai_uncertainty_areas.geojson`, emptyFeatureCollection);
 };
 
+const uncertaintyTaskFeatureCollection = () => ({
+  type: 'FeatureCollection',
+  features: [
+    {
+      type: 'Feature',
+      id: 'uncertainty-task-1',
+      properties: {
+        predicted_class: 'olives',
+        uncertainty_score: 0.82,
+        confidence: 0.18,
+      },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [35.15, 33.15],
+            [35.16, 33.15],
+            [35.16, 33.16],
+            [35.15, 33.16],
+            [35.15, 33.15],
+          ],
+        ],
+      },
+    },
+    {
+      type: 'Feature',
+      properties: {
+        feature_id: 'uncertainty-task-2',
+        class_label: 'citrus',
+        confidence_score: 0.37,
+      },
+      geometry: {
+        type: 'Point',
+        coordinates: [35.2, 33.2],
+      },
+    },
+  ],
+});
+
 beforeEach(async () => {
   await resetDb();
 });
@@ -1639,6 +1678,213 @@ describe('AI worker skeleton phase D', () => {
     expect(await countRows('spatial_feature')).toBe(beforeSpatialCount);
   });
 
+  test('registers uncertainty artifact features as open validation tasks without spatial writes', async () => {
+    const { admin, project } = await createProjectFixture('AI Worker Uncertainty Task Registration');
+    await insertReadyRegionalFeatures({
+      projectId: project.id,
+      userId: admin.user.id,
+    });
+    const runId = await insertQueuedRun({
+      projectId: project.id,
+      userId: admin.user.id,
+      metadata: {
+        test: 'ai-worker',
+        execution_mode: 'regional_vectorization_artifacts',
+        ai_pipeline_run_id: 'phase-s-task-registration',
+        output_paths: {
+          ai_classification_review:
+            'outputs/runs/phase-s-task-registration/ai_classification_review.geojson',
+          ai_confidence_review:
+            'outputs/runs/phase-s-task-registration/ai_confidence_review.geojson',
+          ai_uncertainty_areas:
+            'outputs/runs/phase-s-task-registration/ai_uncertainty_areas.geojson',
+        },
+      },
+    });
+    const artifactRoot = await createTempArtifactRoot();
+    const runDir = 'outputs/runs/phase-s-task-registration';
+    const emptyFeatureCollection = {
+      type: 'FeatureCollection',
+      features: [],
+    };
+    await writeJsonArtifact(
+      artifactRoot,
+      `${runDir}/ai_classification_review.geojson`,
+      emptyFeatureCollection,
+    );
+    await writeJsonArtifact(
+      artifactRoot,
+      `${runDir}/ai_confidence_review.geojson`,
+      emptyFeatureCollection,
+    );
+    await writeJsonArtifact(
+      artifactRoot,
+      `${runDir}/ai_uncertainty_areas.geojson`,
+      uncertaintyTaskFeatureCollection(),
+    );
+    const beforeSpatialCount = await countRows('spatial_feature');
+    const registrationInput = {
+      runId,
+      projectId: project.id,
+      labelField: 'L4_descr',
+      metadata: {
+        execution_mode: 'regional_vectorization_artifacts',
+        ai_pipeline_run_id: 'phase-s-task-registration',
+        output_paths: {
+          ai_classification_review:
+            'outputs/runs/phase-s-task-registration/ai_classification_review.geojson',
+          ai_confidence_review:
+            'outputs/runs/phase-s-task-registration/ai_confidence_review.geojson',
+          ai_uncertainty_areas:
+            'outputs/runs/phase-s-task-registration/ai_uncertainty_areas.geojson',
+        },
+      },
+      pipelineConfig: pipelineConfig({
+        root: artifactRoot,
+        mode: 'regional_vectorization_artifacts',
+      }),
+    };
+
+    const firstResult = await registerAiRunArtifactsForReview(registrationInput);
+
+    expect(firstResult).toEqual(
+      expect.objectContaining({
+        success: true,
+        skipped: false,
+        outputLayersRegistered: 3,
+        uncertaintyTasksRegistered: 2,
+      }),
+    );
+    expect(firstResult.metadataPatch.artifact_registration).toEqual(
+      expect.objectContaining({
+        uncertainty_tasks_registered: 2,
+        no_spatial_feature_writes: true,
+      }),
+    );
+
+    const tasksResult = await pool.query(
+      `SELECT aua.artifact_feature_id,
+              aua.ai_output_layer_id,
+              aua.uncertainty_score,
+              aua.suggested_class,
+              aua.status,
+              aua.metadata,
+              ST_AsGeoJSON(aua.geom)::json AS geometry,
+              aol.layer_type,
+              aol.storage_path
+       FROM ai_uncertainty_area aua
+       LEFT JOIN ai_output_layer aol ON aol.id = aua.ai_output_layer_id
+       WHERE aua.ai_run_id = $1
+       ORDER BY aua.artifact_feature_id ASC`,
+      [runId],
+    );
+    expect(tasksResult.rows).toHaveLength(2);
+    expect(tasksResult.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          artifact_feature_id: 'uncertainty-task-1',
+          suggested_class: 'olives',
+          status: 'open',
+          layer_type: 'uncertainty',
+          storage_path: 'outputs/runs/phase-s-task-registration/ai_uncertainty_areas.geojson',
+        }),
+        expect.objectContaining({
+          artifact_feature_id: 'uncertainty-task-2',
+          suggested_class: 'citrus',
+          status: 'open',
+          layer_type: 'uncertainty',
+          storage_path: 'outputs/runs/phase-s-task-registration/ai_uncertainty_areas.geojson',
+        }),
+      ]),
+    );
+    const firstTask = tasksResult.rows.find(
+      (row) => row.artifact_feature_id === 'uncertainty-task-1',
+    );
+    const secondTask = tasksResult.rows.find(
+      (row) => row.artifact_feature_id === 'uncertainty-task-2',
+    );
+    expect(firstTask.ai_output_layer_id).toBeTruthy();
+    expect(firstTask.geometry.type).toBe('Polygon');
+    expect(Number(firstTask.uncertainty_score)).toBeCloseTo(0.82, 6);
+    expect(firstTask.metadata).toEqual(
+      expect.objectContaining({
+        source: 'ai_uncertainty_artifact',
+        artifact_feature_id: 'uncertainty-task-1',
+        uncertainty_score: 0.82,
+        confidence_score: 0.18,
+        suggested_class: 'olives',
+        official_field_data: false,
+        auto_approved: false,
+        spatial_feature_write: false,
+        validation_task: true,
+      }),
+    );
+    expect(secondTask.geometry.type).toBe('Point');
+    expect(Number(secondTask.uncertainty_score)).toBeCloseTo(0.63, 6);
+    expect(secondTask.metadata).toEqual(
+      expect.objectContaining({
+        confidence_score: 0.37,
+        official_field_data: false,
+        auto_approved: false,
+        spatial_feature_write: false,
+      }),
+    );
+    expect(await countRows('spatial_feature')).toBe(beforeSpatialCount);
+
+    await pool.query(
+      `UPDATE ai_uncertainty_area
+       SET status = 'assigned',
+           assigned_to = $2
+       WHERE ai_run_id = $1
+         AND artifact_feature_id = 'uncertainty-task-1'`,
+      [runId, admin.user.id],
+    );
+    const beforeRerunTask = await pool.query(
+      `SELECT id, ai_output_layer_id
+       FROM ai_uncertainty_area
+       WHERE ai_run_id = $1
+         AND artifact_feature_id = 'uncertainty-task-1'`,
+      [runId],
+    );
+
+    const duplicateResult = await registerAiRunArtifactsForReview(registrationInput);
+    expect(duplicateResult.uncertaintyTasksRegistered).toBe(0);
+
+    const duplicateCheck = await pool.query(
+      `SELECT COUNT(*)::int AS count,
+              COUNT(DISTINCT artifact_feature_id)::int AS distinct_count
+       FROM ai_uncertainty_area
+       WHERE ai_run_id = $1`,
+      [runId],
+    );
+    expect(duplicateCheck.rows[0]).toEqual({
+      count: 2,
+      distinct_count: 2,
+    });
+    const preservedTask = await pool.query(
+      `SELECT id,
+              ai_output_layer_id,
+              status,
+              assigned_to
+       FROM ai_uncertainty_area
+       WHERE ai_run_id = $1
+         AND artifact_feature_id = 'uncertainty-task-1'`,
+      [runId],
+    );
+    expect(preservedTask.rows[0]).toEqual(
+      expect.objectContaining({
+        id: beforeRerunTask.rows[0].id,
+        status: 'assigned',
+        assigned_to: admin.user.id,
+      }),
+    );
+    expect(preservedTask.rows[0].ai_output_layer_id).toBeTruthy();
+    expect(preservedTask.rows[0].ai_output_layer_id).not.toBe(
+      beforeRerunTask.rows[0].ai_output_layer_id,
+    );
+    expect(await countRows('spatial_feature')).toBe(beforeSpatialCount);
+  });
+
   test('registers regional model artifacts as unpublished review data', async () => {
     const { admin, project } = await createProjectFixture('AI Worker Artifact Registration');
     await insertReadyRegionalFeatures({
@@ -1866,6 +2112,23 @@ describe('AI worker skeleton phase D', () => {
           execution_mode: 'regional_vectorization_artifacts',
           classification_polygons_path:
             'outputs/runs/app-ai-safe/../secrets/classification_polygons.geojson',
+        },
+        pipelineConfig: pipelineConfig({
+          root: artifactRoot,
+          mode: 'regional_vectorization_artifacts',
+        }),
+      }),
+    ).rejects.toThrow('AI artifact path traversal is not allowed');
+
+    await expect(
+      registerAiRunArtifactsForReview({
+        runId: '00000000-0000-4000-8000-000000000001',
+        projectId: '00000000-0000-4000-8000-000000000002',
+        labelField: 'L4_descr',
+        metadata: {
+          execution_mode: 'regional_vectorization_artifacts',
+          ai_uncertainty_areas_path:
+            'outputs/runs/app-ai-safe/../secrets/ai_uncertainty_areas.geojson',
         },
         pipelineConfig: pipelineConfig({
           root: artifactRoot,

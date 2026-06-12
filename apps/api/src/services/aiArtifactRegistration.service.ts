@@ -22,6 +22,7 @@ type AiArtifactRegistrationResult = {
   metricsRegistered: number;
   classStatisticsRegistered: number;
   outputLayersRegistered: number;
+  uncertaintyTasksRegistered: number;
   warnings: string[];
   artifactPaths: RegisteredArtifactPaths;
   metadataPatch: JsonRecord;
@@ -1018,6 +1019,161 @@ const insertReviewOutputLayers = async ({
   return inserted;
 };
 
+const clamp01 = (value: number | null): number | null => {
+  if (value === null || !Number.isFinite(value)) {
+    return null;
+  }
+  return Math.max(0, Math.min(1, value));
+};
+
+const uncertaintyScoreFromProperties = (properties: JsonRecord): number => {
+  const direct = clamp01(
+    toNumberValue(properties.uncertainty_score) ??
+      toNumberValue(properties.uncertainty) ??
+      toNumberValue(properties.score),
+  );
+  if (direct !== null) {
+    return direct;
+  }
+  const confidence = clamp01(
+    toNumberValue(properties.confidence) ??
+      toNumberValue(properties.confidence_score) ??
+      toNumberValue(properties.probability),
+  );
+  return confidence === null ? 0.5 : Number((1 - confidence).toFixed(6));
+};
+
+const confidenceScoreFromProperties = (
+  properties: JsonRecord,
+  uncertaintyScore: number,
+): number => {
+  const direct = clamp01(
+    toNumberValue(properties.confidence) ??
+      toNumberValue(properties.confidence_score) ??
+      toNumberValue(properties.probability),
+  );
+  return direct === null ? Number((1 - uncertaintyScore).toFixed(6)) : direct;
+};
+
+const suggestedClassFromProperties = (properties: JsonRecord): string | null =>
+  firstString([
+    properties.suggested_class,
+    properties.predicted_class,
+    properties.class_label,
+    properties.class,
+    properties.label,
+  ]);
+
+const artifactFeatureIdFor = (feature: JsonRecord, index: number): string => {
+  const properties = toRecord(feature.properties);
+  return (
+    firstString([
+      feature.id,
+      properties.feature_id,
+      properties.id,
+      properties.ai_feature_id,
+      properties.source_feature_id,
+    ]) ?? `uncertainty-${index + 1}`
+  );
+};
+
+const insertUncertaintyAreaTasks = async ({
+  client,
+  runId,
+  projectId,
+  layerId,
+  sourcePath,
+  uncertaintyGeoJson,
+}: {
+  client: PoolClient;
+  runId: string;
+  projectId: string;
+  layerId: string | null;
+  sourcePath: string | null;
+  uncertaintyGeoJson: JsonRecord;
+}): Promise<number> => {
+  const features = toArray(uncertaintyGeoJson.features).filter(
+    (feature): feature is JsonRecord =>
+      Boolean(feature) && typeof feature === 'object' && !Array.isArray(feature),
+  );
+  let inserted = 0;
+
+  for (const [index, feature] of features.entries()) {
+    const geometry = feature.geometry;
+    if (!geometry || typeof geometry !== 'object' || Array.isArray(geometry)) {
+      continue;
+    }
+    const properties = toRecord(feature.properties);
+    const artifactFeatureId = artifactFeatureIdFor(feature, index);
+    const uncertaintyScore = uncertaintyScoreFromProperties(properties);
+    const confidenceScore = confidenceScoreFromProperties(properties, uncertaintyScore);
+    const suggestedClass = suggestedClassFromProperties(properties);
+    const result = await client.query(
+      `INSERT INTO ai_uncertainty_area (
+         ai_run_id,
+         project_id,
+         ai_output_layer_id,
+         artifact_feature_id,
+         geom,
+         uncertainty_score,
+         suggested_class,
+         status,
+         metadata
+       )
+       VALUES (
+         $1,
+         $2,
+         $3,
+         $4,
+         ST_SetSRID(ST_GeomFromGeoJSON($5), 4326),
+         $6,
+         $7,
+         'open',
+         $8::jsonb
+       )
+       ON CONFLICT (ai_run_id, artifact_feature_id)
+       WHERE artifact_feature_id IS NOT NULL
+       DO NOTHING`,
+      [
+        runId,
+        projectId,
+        layerId,
+        artifactFeatureId,
+        JSON.stringify(geometry),
+        uncertaintyScore,
+        suggestedClass,
+        JSON.stringify({
+          source: 'ai_uncertainty_artifact',
+          source_artifact_path: sourcePath,
+          artifact_feature_id: artifactFeatureId,
+          uncertainty_score: uncertaintyScore,
+          confidence_score: confidenceScore,
+          suggested_class: suggestedClass,
+          properties,
+          official_field_data: false,
+          auto_approved: false,
+          spatial_feature_write: false,
+          validation_task: true,
+        }),
+      ],
+    );
+    inserted += result.rowCount ?? 0;
+    if ((result.rowCount ?? 0) === 0 && artifactFeatureId && layerId) {
+      await client.query(
+        `UPDATE ai_uncertainty_area
+         SET ai_output_layer_id = $3,
+             updated_at = NOW()
+         WHERE ai_run_id = $1
+           AND artifact_feature_id = $2
+           AND ai_output_layer_id IS NULL`,
+        [runId, artifactFeatureId, layerId],
+      );
+    }
+  }
+
+  return inserted;
+};
+
 const classCountMetadataFromRows = (
   rows: ClassStatisticRow[],
 ): { classCounts: JsonRecord[]; excludedClasses: JsonRecord[] } => {
@@ -1053,6 +1209,7 @@ const registerAiRunArtifactsForReview = async (
       metricsRegistered: 0,
       classStatisticsRegistered: 0,
       outputLayersRegistered: 0,
+      uncertaintyTasksRegistered: 0,
       warnings: [
         'Artifact registration is only enabled for regional model or regional artifact runs.',
       ],
@@ -1152,6 +1309,9 @@ const registerAiRunArtifactsForReview = async (
     existingArtifactPath(confidenceArtifact, warnings),
     existingArtifactPath(uncertaintyArtifact, warnings),
   ]);
+  const uncertaintyAreasGeoJson = uncertaintyPath
+    ? await readJsonArtifact(uncertaintyArtifact, warnings)
+    : {};
   const selectedModel =
     toStringValue(metricsPayload.best_model) ??
     toStringValue(modelMetadata.best_model) ??
@@ -1163,6 +1323,20 @@ const registerAiRunArtifactsForReview = async (
     Object.keys(metricsPayload).length > 0 ? modelMetricsSummaryFrom(metricsPayload) : {};
 
   const result = await transaction(async (client: PoolClient) => {
+    await client.query(
+      `UPDATE ai_uncertainty_area
+       SET ai_output_layer_id = NULL,
+           updated_at = NOW()
+       WHERE ai_run_id = $1
+         AND ai_output_layer_id IN (
+           SELECT id
+           FROM ai_output_layer
+           WHERE ai_run_id = $1
+             AND status <> 'published'
+             AND layer_type = 'uncertainty'
+         )`,
+      [input.runId],
+    );
     await client.query(`DELETE FROM ai_run_metric WHERE ai_run_id = $1`, [input.runId]);
     await client.query(`DELETE FROM ai_class_statistic WHERE ai_run_id = $1`, [input.runId]);
     await client.query(
@@ -1193,6 +1367,27 @@ const registerAiRunArtifactsForReview = async (
       confidencePath,
       uncertaintyPath,
     });
+    const uncertaintyLayerResult = uncertaintyPath
+      ? await client.query(
+          `SELECT id
+           FROM ai_output_layer
+           WHERE ai_run_id = $1
+             AND project_id = $2
+             AND layer_type = 'uncertainty'
+             AND storage_path = $3
+           ORDER BY created_at DESC
+           LIMIT 1`,
+          [input.runId, input.projectId, uncertaintyPath],
+        )
+      : { rows: [] };
+    const uncertaintyTasksRegistered = await insertUncertaintyAreaTasks({
+      client,
+      runId: input.runId,
+      projectId: input.projectId,
+      layerId: uncertaintyLayerResult.rows[0]?.id ?? null,
+      sourcePath: uncertaintyPath,
+      uncertaintyGeoJson: uncertaintyAreasGeoJson,
+    });
     if (selectedModel) {
       await client.query(`UPDATE ai_run SET selected_model = $2 WHERE id = $1`, [
         input.runId,
@@ -1204,6 +1399,7 @@ const registerAiRunArtifactsForReview = async (
       metricsRegistered,
       classStatisticsRegistered,
       outputLayersRegistered,
+      uncertaintyTasksRegistered,
     };
   });
 
@@ -1215,6 +1411,7 @@ const registerAiRunArtifactsForReview = async (
       metrics_registered: result.metricsRegistered,
       class_statistics_registered: result.classStatisticsRegistered,
       output_layers_registered: result.outputLayersRegistered,
+      uncertainty_tasks_registered: result.uncertaintyTasksRegistered,
       warnings,
       artifact_paths: artifactPaths,
       unpublished_only: true,

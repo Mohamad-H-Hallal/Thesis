@@ -31,6 +31,7 @@ const {
   notificationRouter,
   offlineMapRouter,
   settingsRouter,
+  meRouter,
   userRouter,
 } = require('./routes/index');
 
@@ -210,6 +211,7 @@ const buildApp = (env) => {
         assignments: `${normalizedApiPrefix}/assignments`,
         imports: `${normalizedApiPrefix}/imports`,
         ai: `${normalizedApiPrefix}/ai`,
+        me: `${normalizedApiPrefix}/me`,
         photos: `${normalizedApiPrefix}/photos`,
         categories: `${normalizedApiPrefix}/categories`,
         notifications: `${normalizedApiPrefix}/notifications`,
@@ -233,6 +235,7 @@ const buildApp = (env) => {
     app.use(`${prefix}/imports`, importRoutes);
     app.use(`${prefix}/exports`, exportRoutes);
     app.use(`${prefix}/ai`, aiRoutes);
+    app.use(`${prefix}/me`, meRouter);
     app.use(`${prefix}/assignments`, assignmentRouter);
     app.use(`${prefix}/photos`, photoRouter);
     app.use(`${prefix}/categories`, categoryRouter);

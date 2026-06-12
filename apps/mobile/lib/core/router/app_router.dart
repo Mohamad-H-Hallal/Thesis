@@ -144,6 +144,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         AppRoutes.contributorRequests,
         AppRoutes.projects,
         AppRoutes.assignedProjects,
+        AppRoutes.aiValidationTasks,
         AppRoutes.drafts,
         AppRoutes.submissions,
         AppRoutes.assignments,
@@ -438,6 +439,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         pageBuilder: (_, state) {
           final projectId = state.pathParameters['projectId'] ?? '';
           final featureId = state.uri.queryParameters['featureId'];
+          final aiTaskId = state.uri.queryParameters['aiTaskId'];
           final focusSource = state.uri.queryParameters['focusSource'];
           final startCapture = state.uri.queryParameters['startCapture'] == '1';
           return _buildPage(
@@ -448,6 +450,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
               body: MapScreen(
                 initialProjectId: projectId,
                 initialFeatureId: featureId,
+                initialAiTaskId: aiTaskId,
                 initialFeatureSource: focusSource,
                 startCaptureOnOpen: startCapture,
                 lockProjectSelection: true,
@@ -615,6 +618,7 @@ Set<String> _allowedPathsForUser(AppUser user) {
       return <String>{
         AppRoutes.projects,
         AppRoutes.assignedProjects,
+        AppRoutes.aiValidationTasks,
         AppRoutes.imports,
         AppRoutes.drafts,
         AppRoutes.submissions,
