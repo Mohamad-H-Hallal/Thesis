@@ -10,7 +10,8 @@ type AiPipelineMode =
   | 'regional_feature_extraction'
   | 'regional_model_eval'
   | 'regional_classification'
-  | 'regional_vectorization_artifacts';
+  | 'regional_vectorization_artifacts'
+  | 'regional_full_review_artifacts';
 
 type AiPipelineConfig = {
   enabled: boolean;
@@ -97,6 +98,7 @@ const validPipelineModes = new Set<AiPipelineMode>([
   'regional_model_eval',
   'regional_classification',
   'regional_vectorization_artifacts',
+  'regional_full_review_artifacts',
 ]);
 
 const parseBoolean = (value: string | undefined): boolean => {

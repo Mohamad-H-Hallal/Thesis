@@ -439,8 +439,8 @@ paths:
       tags: [AI]
       security:
         - bearerAuth: []
-      summary: Create a draft or queued AI run record without worker execution
-      description: Creates only an ai_run row and ai_run_log entry. Phase F execution modes are limited to mock, dry-run, local-only ground-truth export, regional feature extraction, or regional model evaluation. National classification, publishing, and DB output insertion are not started.
+      summary: Create a draft or queued AI run record
+      description: Creates an ai_run row and ai_run_log entry. A queued run is processed only when the backend AI worker command is running. Regional execution modes can run the controlled project-area pipeline and register review artifacts; national classification, publishing, Redis-backed queueing, and spatial_feature insertion are not started.
       parameters:
         - $ref: '#/components/parameters/projectId'
       requestBody:
@@ -1635,8 +1635,9 @@ components:
             - regional_model_eval
             - regional_classification
             - regional_vectorization_artifacts
+            - regional_full_review_artifacts
           default: mock
-          description: Safe worker mode. Regional classification/vectorization modes prepare review artifacts only; national classification, viewer publishing, spatial_feature insertion, and Redis-backed queueing remain unavailable.
+          description: Safe worker mode. regional_full_review_artifacts runs the controlled project-area sequence for ground-truth export, feature extraction, model evaluation, regional review predictions, and vector review artifacts. National classification, viewer publishing, spatial_feature insertion, and Redis-backed queueing remain unavailable.
     AiRunReviewRequest:
       type: object
       required: [action]

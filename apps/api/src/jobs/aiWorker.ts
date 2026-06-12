@@ -22,7 +22,8 @@ type AiRunExecutionMode =
   | 'regional_feature_extraction'
   | 'regional_model_eval'
   | 'regional_classification'
-  | 'regional_vectorization_artifacts';
+  | 'regional_vectorization_artifacts'
+  | 'regional_full_review_artifacts';
 
 type AiRunRow = QueryResultRow & {
   id: string;
@@ -106,6 +107,14 @@ const AI_WORKER_REGIONAL_ARTIFACT_STATUS_SEQUENCE: AiRunWorkerStatus[] = [
   'ready_for_review',
 ];
 
+const AI_WORKER_REGIONAL_FULL_REVIEW_STATUS_SEQUENCE: AiRunWorkerStatus[] = [
+  'extracting_features',
+  'training',
+  'evaluating',
+  'classifying',
+  'ready_for_review',
+];
+
 const activeStatusSet = new Set<AiRunActiveStatus>([
   'extracting_features',
   'training',
@@ -121,6 +130,7 @@ const executionModeSet = new Set<AiRunExecutionMode>([
   'regional_model_eval',
   'regional_classification',
   'regional_vectorization_artifacts',
+  'regional_full_review_artifacts',
 ]);
 
 const LOG_METADATA_MAX_CHARS = 4000;
@@ -136,15 +146,23 @@ const createWorkerId = (): string => `phase-f-worker-${process.pid}-${Date.now()
 const regionalClassificationModeSet = new Set<AiRunExecutionMode>([
   'regional_classification',
   'regional_vectorization_artifacts',
+  'regional_full_review_artifacts',
 ]);
 
 const regionalModelOrArtifactModeSet = new Set<AiRunExecutionMode>([
   'regional_model_eval',
+  'regional_full_review_artifacts',
 ]);
 
 const regionalFeatureOrLaterModeSet = new Set<AiRunExecutionMode>([
   'regional_feature_extraction',
   'regional_model_eval',
+  'regional_full_review_artifacts',
+]);
+
+const regionalVectorArtifactModeSet = new Set<AiRunExecutionMode>([
+  'regional_vectorization_artifacts',
+  'regional_full_review_artifacts',
 ]);
 
 const safeMetadata = (metadata: Record<string, unknown>): string => JSON.stringify(metadata);
@@ -1106,9 +1124,12 @@ const runPipelineExecution = async ({
     const outputPaths = outputPathsFrom(commandResults);
     const metadata: Record<string, unknown> = {
       execution_mode: executionMode,
-      pipeline_bridge_phase: regionalClassificationModeSet.has(executionMode)
-        ? 'phase_k'
-        : 'phase_f',
+      pipeline_bridge_phase:
+        executionMode === 'regional_full_review_artifacts'
+          ? 'phase_r_full_regional_review'
+          : regionalClassificationModeSet.has(executionMode)
+            ? 'phase_k'
+            : 'phase_f',
       worker_phase: WORKER_PHASE,
       ai_pipeline_run_id: regionalRunId,
       project_id: claimedRun.project_id,
@@ -1171,7 +1192,7 @@ const runPipelineExecution = async ({
         metadata.source_model_metadata_path = sourceModelMetadataPath;
       }
     }
-    if (executionMode === 'regional_vectorization_artifacts') {
+    if (regionalVectorArtifactModeSet.has(executionMode)) {
       metadata.classification_polygons_path =
         `outputs/runs/${regionalRunId}/classification_polygons.geojson`;
       metadata.confidence_polygons_path =
@@ -1426,54 +1447,56 @@ const runPipelineExecution = async ({
     });
     logsWritten += 1;
 
-    try {
-      const registrationResult = await registerAiRunArtifactsForReview({
-        runId: claimedRun.id,
-        projectId: claimedRun.project_id,
-        labelField: claimedRun.label_field,
-        metadata: completionMetadata(),
-        pipelineConfig: pipelineService.getConfig(),
-      });
-      artifactRegistrationMetadata = registrationResult.metadataPatch;
-      await insertRunLog(
-        claimedRun.id,
-        registrationResult.warnings.length > 0 ? 'warning' : 'info',
-        'AI artifacts registered for review.',
-        {
-          status: currentStatus,
+    if (executionMode === 'regional_model_eval') {
+      try {
+        const registrationResult = await registerAiRunArtifactsForReview({
+          runId: claimedRun.id,
+          projectId: claimedRun.project_id,
+          labelField: claimedRun.label_field,
+          metadata: completionMetadata(),
+          pipelineConfig: pipelineService.getConfig(),
+        });
+        artifactRegistrationMetadata = registrationResult.metadataPatch;
+        await insertRunLog(
+          claimedRun.id,
+          registrationResult.warnings.length > 0 ? 'warning' : 'info',
+          'AI artifacts registered for review.',
+          {
+            status: currentStatus,
+            worker_phase: WORKER_PHASE,
+            registration_phase: 'phase_h_artifact_registration',
+            execution_mode: executionMode,
+            worker_id: workerId,
+            ai_pipeline_run_id: regionalRunId,
+            real_ai_execution: realAiExecution,
+            metrics_registered: registrationResult.metricsRegistered,
+            class_statistics_registered: registrationResult.classStatisticsRegistered,
+            output_layers_registered: registrationResult.outputLayersRegistered,
+            warnings: registrationResult.warnings,
+            artifact_paths: registrationResult.artifactPaths,
+            unpublished_only: true,
+            no_spatial_feature_writes: true,
+          },
+        );
+        logsWritten += 1;
+      } catch (error) {
+        const failureReason =
+          error instanceof Error
+            ? `AI artifact registration failed: ${error.message}`
+            : 'AI artifact registration failed.';
+        await insertRunLog(claimedRun.id, 'error', failureReason, {
+          status: 'failed',
+          failed_from_status: currentStatus,
           worker_phase: WORKER_PHASE,
           registration_phase: 'phase_h_artifact_registration',
           execution_mode: executionMode,
           worker_id: workerId,
           ai_pipeline_run_id: regionalRunId,
           real_ai_execution: realAiExecution,
-          metrics_registered: registrationResult.metricsRegistered,
-          class_statistics_registered: registrationResult.classStatisticsRegistered,
-          output_layers_registered: registrationResult.outputLayersRegistered,
-          warnings: registrationResult.warnings,
-          artifact_paths: registrationResult.artifactPaths,
-          unpublished_only: true,
-          no_spatial_feature_writes: true,
-        },
-      );
-      logsWritten += 1;
-    } catch (error) {
-      const failureReason =
-        error instanceof Error
-          ? `AI artifact registration failed: ${error.message}`
-          : 'AI artifact registration failed.';
-      await insertRunLog(claimedRun.id, 'error', failureReason, {
-        status: 'failed',
-        failed_from_status: currentStatus,
-        worker_phase: WORKER_PHASE,
-        registration_phase: 'phase_h_artifact_registration',
-        execution_mode: executionMode,
-        worker_id: workerId,
-        ai_pipeline_run_id: regionalRunId,
-        real_ai_execution: realAiExecution,
-      });
-      logsWritten += 1;
-      return failFromCurrentStatus(failureReason);
+        });
+        logsWritten += 1;
+        return failFromCurrentStatus(failureReason);
+      }
     }
   }
 
@@ -1525,7 +1548,7 @@ const runPipelineExecution = async ({
       return failFromCurrentStatus(failureReason);
     }
 
-    if (executionMode === 'regional_vectorization_artifacts') {
+    if (regionalVectorArtifactModeSet.has(executionMode)) {
       const { result: vectorizationResult, logsWritten: vectorizationLogsWritten } =
         await runPipelineCommandWithLogs({
           run: claimedRun,
@@ -1728,6 +1751,7 @@ export {
   AI_WORKER_PIPELINE_STATUS_SEQUENCE,
   AI_WORKER_REGIONAL_MODEL_STATUS_SEQUENCE,
   AI_WORKER_REGIONAL_ARTIFACT_STATUS_SEQUENCE,
+  AI_WORKER_REGIONAL_FULL_REVIEW_STATUS_SEQUENCE,
   peekQueuedAiRun,
   runAiWorkerOnce,
   type AiRunActiveStatus,

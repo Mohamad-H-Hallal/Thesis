@@ -21,10 +21,12 @@ Verified scope:
 
 The app-integrated regional AI path is real for the regional proof-of-concept workflow. The backend creates a run configuration JSON from saved AI settings, passes it to the Python pipeline with a safe argument array, and the Python pipeline consumes the selected settings for regional feature extraction, model evaluation, and review artifact generation.
 
-The current integrated path is intentionally split into two app-triggered worker runs:
+The verified Phase R path was intentionally split into two worker runs:
 
 1. A `regional_model_eval` run for ground-truth export, Sentinel-2 feature extraction, and model evaluation.
 2. A `regional_vectorization_artifacts` run for regional review predictions and classification/confidence/uncertainty review artifacts.
+
+The current app action now queues a single `regional_full_review_artifacts` run that executes those regional steps in one worker pass when `npm run ai:worker:bridge-once` is running.
 
 This is real regional processing, but it is not wall-to-wall national Lebanon classification and it is not official field data.
 
@@ -179,15 +181,16 @@ Before and after the integrated verification:
 
 Corrected wording:
 
-- The AI run helper no longer says Phase Q will connect settings later. It now says worker processing uses saved settings when a run is queued.
+- The AI run helper says the app queues a regional review run and results appear after the backend AI worker processes it.
 - The backend no longer describes queued runs as placeholders. It says queued runs are waiting for worker processing.
 - Regional artifact modes now have explicit labels:
   - Regional review prediction
   - Regional review artifacts
+  - Full regional review run
 
 Still intentionally honest:
 
-- `Prepare AI run` remains correct in mobile because the mobile button creates a draft/config run and does not start worker processing by itself.
+- `Start AI run` queues a regional worker run. It does not claim completion; if the worker is not running, the UI shows the run as queued.
 - National Lebanon remains locked/future until backend readiness requirements are met.
 - AI predictions are shown as review/published AI overlays, not approved field data.
 - Statistics are report summaries, not editable official field features.

@@ -256,8 +256,8 @@ class _ReadinessCard extends StatelessWidget {
     };
     final message = switch (readiness.status) {
       'ready' => 'Approved project data is enough for an AI run.',
-      'warning' => 'A regional run can be prepared, but review the limits.',
-      _ => 'Resolve blockers before preparing an AI run.',
+      'warning' => 'A regional run can be queued, but review the limits.',
+      _ => 'Resolve blockers before starting an AI run.',
     };
 
     return AppCard(
@@ -570,7 +570,7 @@ class _ProjectAiSettingsSectionState
                     : (value) => setState(() => _isEnabled = value),
                 title: const Text('Enable AI for this project'),
                 subtitle: const Text(
-                  'Settings prepare worker runs but do not start one.',
+                  'Settings are saved for worker runs but do not start one.',
                 ),
               ),
               const SizedBox(height: AppSpacing.sm),
@@ -1211,7 +1211,7 @@ class _ProjectAiSettingsSectionState
         });
         AppSnackbar.showSuccess(
           context,
-          'National mode enabled. Select National Lebanon when preparing a run.',
+          'National mode enabled. Select National Lebanon when starting a run.',
         );
       }
     } catch (error) {
@@ -1420,7 +1420,7 @@ class ProjectAiRunsSection extends ConsumerStatefulWidget {
 
 class _ProjectAiRunsSectionState extends ConsumerState<ProjectAiRunsSection> {
   String? _selectedRunId;
-  bool _creatingDraft = false;
+  bool _startingRun = false;
 
   @override
   Widget build(BuildContext context) {
@@ -1447,33 +1447,29 @@ class _ProjectAiRunsSectionState extends ConsumerState<ProjectAiRunsSection> {
                 error: (error, _) => Text(
                   userFacingErrorMessage(
                     error,
-                    fallback: 'Unable to load settings for draft creation.',
+                    fallback: 'Unable to load AI run settings.',
                   ),
                 ),
                 data: (settings) {
-                  final canCreateDraft =
-                      !_creatingDraft &&
+                  final canStartRun =
+                      !_startingRun &&
                       (settings.labelField?.trim().isNotEmpty ?? false);
                   return FilledButton.tonalIcon(
-                    onPressed: canCreateDraft
-                        ? () => _prepareAiRun(settings)
-                        : null,
-                    icon: _creatingDraft
+                    onPressed: canStartRun ? () => _startAiRun(settings) : null,
+                    icon: _startingRun
                         ? const SizedBox(
                             width: 16,
                             height: 16,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Icon(Icons.note_add_outlined),
-                    label: Text(
-                      _creatingDraft ? 'Preparing...' : 'Prepare AI run',
-                    ),
+                        : const Icon(Icons.play_arrow_outlined),
+                    label: Text(_startingRun ? 'Starting...' : 'Start AI run'),
                   );
                 },
               ),
               const SizedBox(height: AppSpacing.xs),
               const Text(
-                'Creates a reviewable AI run configuration. Worker processing uses the saved settings when the run is queued.',
+                'Queues a regional review run from saved settings. Results appear after the backend AI worker processes it.',
               ),
             ],
           ),
@@ -1502,7 +1498,7 @@ class _ProjectAiRunsSectionState extends ConsumerState<ProjectAiRunsSection> {
                   leading: Icon(Icons.history_outlined),
                   title: Text('No AI run records yet'),
                   subtitle: Text(
-                    'Prepare a run when settings and readiness are ready to review.',
+                    'Start a regional run when settings and readiness are ready.',
                   ),
                 ),
               );
@@ -1549,25 +1545,23 @@ class _ProjectAiRunsSectionState extends ConsumerState<ProjectAiRunsSection> {
     );
   }
 
-  Future<void> _prepareAiRun(AiProjectSettings settings) async {
-    setState(() => _creatingDraft = true);
+  Future<void> _startAiRun(AiProjectSettings settings) async {
+    setState(() => _startingRun = true);
     try {
       final run = await ref
           .read(aiRepositoryProvider)
           .createRun(
             projectId: widget.project.id,
-            status: 'draft',
+            status: 'queued',
             labelField: settings.labelField,
             scopeType: settings.scopeType,
             minSamplesPerClass: settings.minSamplesPerClass,
+            executionMode: 'regional_full_review_artifacts',
           );
       _selectedRunId = run.id;
       bumpWorkflowRefresh(ref);
       if (mounted) {
-        AppSnackbar.showSuccess(
-          context,
-          'AI run prepared. No worker command was started.',
-        );
+        AppSnackbar.showSuccess(context, 'Run queued. Worker is not running.');
       }
     } catch (error) {
       if (mounted) {
@@ -1575,13 +1569,13 @@ class _ProjectAiRunsSectionState extends ConsumerState<ProjectAiRunsSection> {
           context,
           userFacingErrorMessage(
             error,
-            fallback: 'Unable to prepare AI run right now.',
+            fallback: 'Unable to start AI run right now.',
           ),
         );
       }
     } finally {
       if (mounted) {
-        setState(() => _creatingDraft = false);
+        setState(() => _startingRun = false);
       }
     }
   }
@@ -1963,12 +1957,14 @@ class _NextStepSection extends StatelessWidget {
       data: (layers) {
         final messages = <String>[
           _statusExplanation(run),
-          if (_executionMode(run) != 'regional_model_eval')
+          if (!_runIncludesModelEvaluation(run))
             'Model metrics will appear after a regional model evaluation run.',
         ];
         if (layers.isEmpty) {
-          messages.add('No published AI layers yet.');
-          messages.add('AI map layers are planned for a later phase.');
+          messages.add('No AI output layers are registered yet.');
+          messages.add(
+            'Worker processing must finish before review layers appear.',
+          );
         } else {
           for (final layer in layers) {
             if (layer.layerType == 'statistics') {
@@ -5163,6 +5159,12 @@ Set<String> _excludedClassLabels(AiRun run) {
 String _executionMode(AiRun run) =>
     _metadataText(run.metadata, 'execution_mode') ?? 'not set';
 
+bool _runIncludesModelEvaluation(AiRun run) {
+  final mode = _executionMode(run);
+  return mode == 'regional_model_eval' ||
+      mode == 'regional_full_review_artifacts';
+}
+
 List<MapEntry<String, String>> _runStatusRows(AiRun run) {
   final rows = <MapEntry<String, String>>[
     MapEntry('Status', _friendlyStatusLabel(run.status)),
@@ -5448,6 +5450,8 @@ String _whatHappenedMessage(String executionMode) {
       return 'Generated regional AI review predictions from extracted sample features.';
     case 'regional_vectorization_artifacts':
       return 'Prepared regional classification, confidence, and uncertainty review artifacts.';
+    case 'regional_full_review_artifacts':
+      return 'Ran the full regional review workflow: approved data export, feature extraction, model evaluation, review predictions, and vector review artifacts.';
     case 'dry_run':
       return 'Checked the AI pipeline without running model processing.';
     case 'mock':
@@ -5485,6 +5489,7 @@ List<MapEntry<String, String>> _whatHappenedRows(AiRun run) {
       ]);
       break;
     case 'regional_model_eval':
+    case 'regional_full_review_artifacts':
       final summary = _mapValue(run.metadata['model_metrics_summary']);
       rows.addAll([
         MapEntry('Approved samples', '${run.trainingFeatureCount}'),
@@ -5691,6 +5696,8 @@ String _friendlyExecutionModeLabel(String mode) {
       return 'Regional review prediction';
     case 'regional_vectorization_artifacts':
       return 'Regional review artifacts';
+    case 'regional_full_review_artifacts':
+      return 'Full regional review run';
     case 'dry_run':
       return 'Dry run';
     case 'mock':
@@ -5999,7 +6006,7 @@ String _statusExplanation(AiRun run) {
     case 'draft':
       return 'AI run prepared. No worker processing has started.';
     case 'queued':
-      return 'Queued for the worker.';
+      return 'Run queued. Worker is not running.';
     case 'extracting_features':
       return 'The worker is extracting satellite features.';
     case 'training':

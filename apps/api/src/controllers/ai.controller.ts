@@ -30,6 +30,7 @@ const allowedExecutionModes = [
   'regional_model_eval',
   'regional_classification',
   'regional_vectorization_artifacts',
+  'regional_full_review_artifacts',
 ];
 
 const regionalExecutionModes = [
@@ -37,6 +38,7 @@ const regionalExecutionModes = [
   'regional_model_eval',
   'regional_classification',
   'regional_vectorization_artifacts',
+  'regional_full_review_artifacts',
 ];
 
 const reviewActions = {
@@ -1268,7 +1270,7 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
 
   if (!allowedExecutionModes.includes(executionMode)) {
     throw new AppError(
-      'Unsupported AI execution_mode. Allowed modes are mock, dry_run, local_ground_truth_export, regional_feature_extraction, regional_model_eval, regional_classification, or regional_vectorization_artifacts.',
+      'Unsupported AI execution_mode. Allowed modes are mock, dry_run, local_ground_truth_export, regional_feature_extraction, regional_model_eval, regional_classification, regional_vectorization_artifacts, or regional_full_review_artifacts.',
       400,
     );
   }

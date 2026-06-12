@@ -143,15 +143,20 @@ class ApiAiRepository implements AiRepository {
     String? labelField,
     String? scopeType,
     int? minSamplesPerClass,
+    String? executionMode,
   }) async {
     final data = <String, dynamic>{'status': status};
     final normalizedLabelField = _nonEmpty(labelField);
     final normalizedScopeType = _nonEmpty(scopeType);
+    final normalizedExecutionMode = _nonEmpty(executionMode);
     if (normalizedLabelField != null) {
       data['label_field'] = normalizedLabelField;
     }
     if (normalizedScopeType != null) {
       data['scope_type'] = normalizedScopeType;
+    }
+    if (normalizedExecutionMode != null) {
+      data['execution_mode'] = normalizedExecutionMode;
     }
     if (minSamplesPerClass != null) {
       data['min_samples_per_class'] = minSamplesPerClass;

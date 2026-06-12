@@ -29,6 +29,7 @@ abstract class AiRepository {
     String? labelField,
     String? scopeType,
     int? minSamplesPerClass,
+    String? executionMode,
   });
 
   Future<AiRun> fetchRun({required String runId});

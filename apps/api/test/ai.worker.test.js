@@ -18,6 +18,7 @@ const {
   AI_WORKER_MOCK_STATUS_SEQUENCE,
   AI_WORKER_PIPELINE_STATUS_SEQUENCE,
   AI_WORKER_REGIONAL_ARTIFACT_STATUS_SEQUENCE,
+  AI_WORKER_REGIONAL_FULL_REVIEW_STATUS_SEQUENCE,
   AI_WORKER_REGIONAL_MODEL_STATUS_SEQUENCE,
   runAiWorkerOnce,
 } = require('../src/jobs/aiWorker');
@@ -1440,6 +1441,145 @@ describe('AI worker skeleton phase D', () => {
         }),
       ]),
     );
+    expect(await countRows('spatial_feature')).toBe(beforeSpatialCount);
+  });
+
+  test('runs the full regional review workflow from one queued app run', async () => {
+    const { admin, project } = await createProjectFixture('AI Worker Full Regional Review');
+    await insertReadyRegionalFeatures({
+      projectId: project.id,
+      userId: admin.user.id,
+    });
+    const runId = await insertQueuedRun({
+      projectId: project.id,
+      userId: admin.user.id,
+      metadata: {
+        test: 'ai-worker',
+        execution_mode: 'regional_full_review_artifacts',
+        min_samples_per_class: 2,
+      },
+    });
+    const regionalRunId = regionalRunIdForTest(runId);
+    const artifactRoot = await createTempArtifactRoot();
+    await writeRegionalModelArtifacts({
+      root: artifactRoot,
+      projectId: project.id,
+      regionalRunId,
+    });
+    await writeRegionalClassificationArtifacts({
+      root: artifactRoot,
+      regionalRunId,
+    });
+    const beforeSpatialCount = await countRows('spatial_feature');
+    const beforePublishedLayerCount = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM ai_output_layer WHERE status = 'published'`,
+    );
+    const pipelineService = createMockPipelineService({
+      config: pipelineConfig({
+        root: artifactRoot,
+        mode: 'regional_full_review_artifacts',
+      }),
+    });
+
+    const result = await runAiWorkerOnce({
+      pipelineService,
+      workerId: 'phase-r-full-regional-worker',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        processed: true,
+        executionMode: 'regional_full_review_artifacts',
+        finalStatus: 'ready_for_review',
+        statuses: AI_WORKER_REGIONAL_FULL_REVIEW_STATUS_SEQUENCE,
+      }),
+    );
+    expect(pipelineService.exportGroundTruthLocal).toHaveBeenCalledWith(project.id, 'L4_descr');
+    expect(pipelineService.extractRegionalFeatures).toHaveBeenCalledWith(
+      project.id,
+      'L4_descr',
+      regionalRunId,
+      expect.stringMatching(/\.json$/),
+    );
+    expect(pipelineService.evaluateRegionalModel).toHaveBeenCalledWith(
+      project.id,
+      'L4_descr',
+      regionalRunId,
+      undefined,
+      expect.stringMatching(/\.json$/),
+    );
+    expect(pipelineService.classifyRegional).toHaveBeenCalledWith(
+      project.id,
+      'L4_descr',
+      regionalRunId,
+      `outputs/runs/${regionalRunId}/model_metadata.json`,
+      undefined,
+      expect.stringMatching(/\.json$/),
+    );
+    expect(pipelineService.prepareRegionalVectorArtifacts).toHaveBeenCalledWith(
+      project.id,
+      'L4_descr',
+      regionalRunId,
+      undefined,
+      undefined,
+      expect.stringMatching(/\.json$/),
+    );
+
+    const runResult = await pool.query(
+      `SELECT status, metadata
+       FROM ai_run
+       WHERE id = $1`,
+      [runId],
+    );
+    expect(runResult.rows[0].status).toBe('ready_for_review');
+    expect(runResult.rows[0].metadata).toEqual(
+      expect.objectContaining({
+        execution_mode: 'regional_full_review_artifacts',
+        pipeline_bridge_phase: 'phase_r_full_regional_review',
+        metrics_path: `outputs/runs/${regionalRunId}/metrics.json`,
+        regional_classification_summary_path:
+          `outputs/runs/${regionalRunId}/regional_classification_summary.json`,
+        vectorization_summary_path: `outputs/runs/${regionalRunId}/vectorization_summary.json`,
+        real_ai_execution: true,
+      }),
+    );
+
+    const layersResult = await pool.query(
+      `SELECT layer_type, status, published_at
+       FROM ai_output_layer
+       WHERE ai_run_id = $1
+       ORDER BY layer_type ASC`,
+      [runId],
+    );
+    expect(layersResult.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ layer_type: 'classification', status: 'ready_for_review' }),
+        expect.objectContaining({ layer_type: 'confidence', status: 'ready_for_review' }),
+        expect.objectContaining({ layer_type: 'statistics', status: 'ready_for_review' }),
+        expect.objectContaining({ layer_type: 'uncertainty', status: 'ready_for_review' }),
+      ]),
+    );
+    expect(layersResult.rows.every((row) => row.published_at === null)).toBe(true);
+    const registrationLogs = await pool.query(
+      `SELECT level, metadata
+       FROM ai_run_log
+       WHERE ai_run_id = $1
+         AND message = 'AI artifacts registered for review.'
+       ORDER BY created_at ASC`,
+      [runId],
+    );
+    expect(registrationLogs.rows).toHaveLength(1);
+    expect(registrationLogs.rows[0].level).toBe('info');
+    expect(registrationLogs.rows[0].metadata).toEqual(
+      expect.objectContaining({
+        output_layers_registered: 4,
+        warnings: [],
+      }),
+    );
+    const afterPublishedLayerCount = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM ai_output_layer WHERE status = 'published'`,
+    );
+    expect(afterPublishedLayerCount.rows[0].count).toBe(beforePublishedLayerCount.rows[0].count);
     expect(await countRows('spatial_feature')).toBe(beforeSpatialCount);
   });
 

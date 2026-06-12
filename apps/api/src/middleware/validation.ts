@@ -522,6 +522,19 @@ const aiValidation = {
       .trim()
       .isLength({ max: 120 })
       .withMessage('region_preset must be 120 characters or fewer'),
+    body('execution_mode')
+      .optional()
+      .isIn([
+        'mock',
+        'dry_run',
+        'local_ground_truth_export',
+        'regional_feature_extraction',
+        'regional_model_eval',
+        'regional_classification',
+        'regional_vectorization_artifacts',
+        'regional_full_review_artifacts',
+      ])
+      .withMessage('execution_mode is invalid'),
     body('min_samples_per_class')
       .optional()
       .isInt({ min: 1, max: 10000 })

@@ -1096,7 +1096,7 @@ void main() {
       );
       expect(
         find.text(
-          'National mode enabled. Select National Lebanon when preparing a run.',
+          'National mode enabled. Select National Lebanon when starting a run.',
         ),
         findsOneWidget,
       );
@@ -1341,7 +1341,7 @@ void main() {
     },
   );
 
-  testWidgets('runs list displays empty state and creates draft metadata only', (
+  testWidgets('runs list displays empty state and queues full regional run', (
     tester,
   ) async {
     final project = _project();
@@ -1366,22 +1366,22 @@ void main() {
     );
     expect(
       find.text(
-        'Creates a reviewable AI run configuration. Worker processing uses the saved settings when the run is queued.',
+        'Queues a regional review run from saved settings. Results appear after the backend AI worker processes it.',
       ),
       findsOneWidget,
     );
 
-    await tester.tap(find.text('Prepare AI run'));
+    await tester.tap(find.text('Start AI run'));
     await tester.pumpAndSettle();
 
     expect(repository.createCount, 1);
     expect(find.text('Run summary'), findsOneWidget);
-    expect(find.textContaining('Execution mode: Not set'), findsWidgets);
-    expect(find.text('Detailed run results'), findsOneWidget);
     expect(
-      find.text('AI run prepared. No worker processing has started.'),
-      findsNothing,
+      find.textContaining('Execution mode: Full regional review run'),
+      findsWidgets,
     );
+    expect(find.text('Detailed run results'), findsOneWidget);
+    expect(find.text('Run queued. Worker is not running.'), findsOneWidget);
 
     await tester.ensureVisible(find.text('Detailed run results'));
     await tester.pumpAndSettle();
@@ -1390,19 +1390,19 @@ void main() {
     await tester.tap(find.text('Detailed run results'));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('AI run prepared. No worker processing has started.'),
-      findsOneWidget,
-    );
+    expect(find.text('Run queued. Worker is not running.'), findsWidgets);
     expect(
       find.text(
-        'Model metrics will appear after a regional model evaluation run.',
+        'Ran the full regional review workflow: approved data export, feature extraction, model evaluation, review predictions, and vector review artifacts.',
       ),
       findsOneWidget,
     );
-    expect(find.text('No published AI layers yet.'), findsOneWidget);
     expect(
-      find.text('AI map layers are planned for a later phase.'),
+      find.text('No AI output layers are registered yet.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Worker processing must finish before review layers appear.'),
       findsOneWidget,
     );
   });
@@ -1558,9 +1558,12 @@ void main() {
     expect(find.textContaining('Metrics file:'), findsOneWidget);
     expect(find.textContaining('metrics.json'), findsWidgets);
     expect(find.textContaining('model_metadata.json'), findsWidgets);
-    expect(find.text('No published AI layers yet.'), findsOneWidget);
     expect(
-      find.text('AI map layers are planned for a later phase.'),
+      find.text('No AI output layers are registered yet.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Worker processing must finish before review layers appear.'),
       findsOneWidget,
     );
   });
@@ -2999,7 +3002,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Detailed run results'));
     await tester.pumpAndSettle();
-    expect(find.text('No published AI layers yet.'), findsOneWidget);
+    expect(
+      find.text('No AI output layers are registered yet.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('runs expand inline and toggle selected details', (tester) async {

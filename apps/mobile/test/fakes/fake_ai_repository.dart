@@ -51,6 +51,7 @@ class FakeAiRepository implements AiRepository {
     String? labelField,
     String? scopeType,
     int? minSamplesPerClass,
+    String? executionMode,
   }) async {
     createCount++;
     final run = AiRun(
@@ -62,6 +63,10 @@ class FakeAiRepository implements AiRepository {
       trainingFeatureCount: readiness.approvedFeatureCount,
       eligibleFeatureCount: readiness.eligibleFeatureCount,
       excludedFeatureCount: readiness.excludedFeatureCount,
+      metadata: <String, dynamic>{
+        if (executionMode?.trim().isNotEmpty ?? false)
+          'execution_mode': executionMode!.trim(),
+      },
       createdAt: DateTime.utc(2026, 6, 1),
     );
     runs = <AiRun>[run, ...runs];
@@ -69,7 +74,9 @@ class FakeAiRepository implements AiRepository {
       AiRunLog(
         id: 'log-$createCount',
         level: 'info',
-        message: 'Draft AI run record created. No worker command was started.',
+        message: status == 'queued'
+            ? 'AI run queued. Worker processing has not started yet.'
+            : 'Draft AI run record created. No worker command was started.',
         createdAt: DateTime.utc(2026, 6, 1),
       ),
       ...logs,

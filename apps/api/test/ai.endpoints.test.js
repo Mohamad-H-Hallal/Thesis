@@ -1130,6 +1130,23 @@ describe('AI backend endpoints phase B', () => {
       }),
     );
 
+    const fullRegionalResponse = await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'queued',
+        execution_mode: 'regional_full_review_artifacts',
+      })
+      .expect(201);
+    expect(fullRegionalResponse.body.data.status).toBe('queued');
+    expect(fullRegionalResponse.body.data.metadata).toEqual(
+      expect.objectContaining({
+        execution_mode: 'regional_full_review_artifacts',
+        regional_ai_execution_requested: true,
+        real_ai_execution: false,
+      }),
+    );
+
     await request(app)
       .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
       .set(authHeader(admin.token))

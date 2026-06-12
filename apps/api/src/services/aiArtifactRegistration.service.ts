@@ -247,8 +247,11 @@ const collectArtifactCandidates = (
   const executionMode = toStringValue(metadata.execution_mode);
   const hasRegionalClassificationArtifacts =
     executionMode === 'regional_classification' ||
-    executionMode === 'regional_vectorization_artifacts';
-  const hasRegionalVectorArtifacts = executionMode === 'regional_vectorization_artifacts';
+    executionMode === 'regional_vectorization_artifacts' ||
+    executionMode === 'regional_full_review_artifacts';
+  const hasRegionalVectorArtifacts =
+    executionMode === 'regional_vectorization_artifacts' ||
+    executionMode === 'regional_full_review_artifacts';
 
   return {
     metrics:
@@ -1045,6 +1048,7 @@ const registerAiRunArtifactsForReview = async (
     'regional_model_eval',
     'regional_classification',
     'regional_vectorization_artifacts',
+    'regional_full_review_artifacts',
   ]);
   if (!executionMode || !registrationEnabledModes.has(executionMode)) {
     return {

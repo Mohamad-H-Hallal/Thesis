@@ -76,7 +76,8 @@ export interface EnvConfig {
     | 'regional_feature_extraction'
     | 'regional_model_eval'
     | 'regional_classification'
-    | 'regional_vectorization_artifacts';
+    | 'regional_vectorization_artifacts'
+    | 'regional_full_review_artifacts';
 }
 
 const envSchema = Joi.object({
@@ -224,6 +225,7 @@ const envSchema = Joi.object({
       'regional_model_eval',
       'regional_classification',
       'regional_vectorization_artifacts',
+      'regional_full_review_artifacts',
     )
     .default('disabled'),
 }).unknown(true);
