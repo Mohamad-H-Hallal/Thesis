@@ -1,5 +1,3 @@
-import { validateEnv } from '../config/env';
-
 type JsonRecord = Record<string, unknown>;
 
 export type AiServerRunStatus =
@@ -62,21 +60,41 @@ const stripTrailingSlash = (value: string): string => value.replace(/\/+$/, '');
 
 const normalizeBaseUrl = (value: string): string => stripTrailingSlash(value.trim());
 
+const envString = (key: string, fallback = ''): string => process.env[key] ?? fallback;
+
+const parsePort = (value: string | undefined): number => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 65535 ? parsed : 3000;
+};
+
+const parseAiServerTimeoutMs = (value: string | undefined): number => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 1000 && parsed <= 120000 ? parsed : 30000;
+};
+
+const normalizeApiPrefix = (value: string | undefined): string => {
+  const trimmed = (value ?? '/api/v1').trim() || '/api/v1';
+  const prefixed = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+  return stripTrailingSlash(prefixed);
+};
+
 const toJsonRecord = (value: unknown): JsonRecord =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : {};
 
 export const loadAiServerConfigFromEnv = (): AiServerConfig => {
-  const env = validateEnv();
-  const port = env.PORT || 3000;
+  const port = parsePort(process.env.PORT);
+  const configuredAppPublicApiUrl = envString('APP_PUBLIC_API_URL').trim();
   const appPublicApiUrl = stripTrailingSlash(
-    (env.APP_PUBLIC_API_URL || `http://localhost:${port}`).trim(),
+    configuredAppPublicApiUrl || `http://localhost:${port}`,
   );
+  const configuredCallbackBaseUrl = envString('AI_CALLBACK_BASE_URL').trim();
+
   return {
-    baseUrl: normalizeBaseUrl(env.AI_SERVER_URL ?? ''),
-    timeoutMs: env.AI_SERVER_TIMEOUT_MS,
-    callbackSecret: env.AI_CALLBACK_SECRET,
+    baseUrl: normalizeBaseUrl(envString('AI_SERVER_URL')),
+    timeoutMs: parseAiServerTimeoutMs(process.env.AI_SERVER_TIMEOUT_MS),
+    callbackSecret: envString('AI_CALLBACK_SECRET', 'dev-ai-callback-secret-change-me'),
     appPublicApiUrl,
-    callbackBaseUrl: stripTrailingSlash((env.AI_CALLBACK_BASE_URL || appPublicApiUrl).trim()),
+    callbackBaseUrl: stripTrailingSlash(configuredCallbackBaseUrl || appPublicApiUrl),
   };
 };
 
@@ -96,8 +114,7 @@ class AiServerClient {
   }
 
   callbackUrl(runId: string): string {
-    const env = validateEnv();
-    const prefix = env.API_VERSION_PREFIX || '/api/v1';
+    const prefix = normalizeApiPrefix(process.env.API_VERSION_PREFIX);
     return `${this.config.callbackBaseUrl}${prefix}/ai/runs/${runId}/callback`;
   }
 
