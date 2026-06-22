@@ -5,6 +5,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const AdmZip = require('adm-zip');
 import { sanitizeManagedFeatureAttributes } from '../lib/featureAttributes';
+import { isProtectedSuperAdminEmail } from '../lib/userWorkflow';
 
 // For shapefile generation
 const shpwrite = require('@mapbox/shp-write');
@@ -12,6 +13,8 @@ const shpwrite = require('@mapbox/shp-write');
 // Export directory
 const EXPORT_DIR = process.env.EXPORT_DIR ?? './exports';
 const RETENTION_DAYS = Number.parseInt(process.env.EXPORT_RETENTION_DAYS ?? '7', 10);
+const EXPORT_FILE_EXPIRED_MESSAGE =
+  'This export completed successfully, but the download file was removed after the retention period to save storage. Regenerate the export to download it again.';
 
 // Ensure export directory exists
 const ensureExportDir = async () => {
@@ -28,6 +31,49 @@ const normalizeOptionalString = (value: unknown) => {
   }
   const normalized = String(value).trim();
   return normalized.length === 0 ? undefined : normalized;
+};
+
+const exportLifecycleFields = `
+  se.status AS job_status,
+  se.file_status,
+  CASE
+    WHEN se.status = 'completed' AND se.file_status IN ('expired', 'deleted') THEN 'expired'
+    ELSE se.status::text
+  END AS display_status,
+  CASE
+    WHEN se.status = 'completed'
+      AND se.file_status = 'available'
+      AND se.file_path IS NOT NULL
+    THEN TRUE
+    ELSE FALSE
+  END AS is_downloadable,
+  CASE
+    WHEN se.status = 'completed' AND se.file_status IN ('expired', 'deleted')
+    THEN '${EXPORT_FILE_EXPIRED_MESSAGE.replace(/'/g, "''")}'
+    ELSE se.error_message
+  END AS display_message,
+  CASE
+    WHEN se.status = 'failed' OR (
+      se.status = 'completed' AND se.file_status IN ('expired', 'deleted')
+    )
+    THEN TRUE
+    ELSE FALSE
+  END AS can_regenerate
+`;
+
+const markExportFileExpired = async (exportId: string, fileDeletedAt = new Date()) => {
+  await query(
+    `UPDATE shapefile_export
+     SET file_status = 'expired',
+         file_path = NULL,
+         file_deleted_at = COALESCE(file_deleted_at, $2),
+         retention_expired_at = COALESCE(retention_expired_at, $2),
+         retention_expires_at = COALESCE(retention_expires_at, $2),
+         error_message = $3
+     WHERE id = $1
+       AND status = 'completed'`,
+    [exportId, fileDeletedAt, 'Export completed, but the file expired. Regenerate it to download again.'],
+  );
 };
 
 const parseBbox = (value: unknown) => {
@@ -120,6 +166,12 @@ const normalizeFeatureType = (value: unknown) => {
   return normalized && normalized.toLowerCase() !== 'all' ? normalized : undefined;
 };
 
+const normalizeBooleanFlag = (value: unknown): boolean =>
+  value === true || value === 'true' || value === 1 || value === '1';
+
+const isProtectedSuperAdminUser = (user: any): boolean =>
+  user?.role === 'admin' && isProtectedSuperAdminEmail(user?.email);
+
 const appendExportFilters = ({ sql, params, paramIndex, filters, tableAlias = 'sf' }) => {
   let queryText = sql;
   let nextParamIndex = paramIndex;
@@ -170,6 +222,62 @@ const appendExportFilters = ({ sql, params, paramIndex, filters, tableAlias = 's
   return { sql: queryText, paramIndex: nextParamIndex };
 };
 
+const appendAiPredictionExportFilters = ({ sql, params, paramIndex, filters }) => {
+  let queryText = sql;
+  let nextParamIndex = paramIndex;
+  if (filters.bbox) {
+    queryText += `
+      AND ST_Intersects(
+        p.geom,
+        ST_MakeEnvelope($${nextParamIndex}, $${nextParamIndex + 1}, $${nextParamIndex + 2}, $${nextParamIndex + 3}, 4326)
+      )`;
+    params.push(filters.bbox.minLon, filters.bbox.minLat, filters.bbox.maxLon, filters.bbox.maxLat);
+    nextParamIndex += 4;
+  }
+  if (filters.export_polygon) {
+    queryText += `
+      AND ST_Intersects(
+        p.geom,
+        ST_SetSRID(ST_GeomFromGeoJSON($${nextParamIndex}), 4326)
+      )`;
+    params.push(JSON.stringify(filters.export_polygon));
+    nextParamIndex++;
+  }
+  if (filters.geometry_types && filters.geometry_types.length > 0) {
+    const geomTypes = filters.geometry_types.map((t) => String(t).replace(/^ST_/i, ''));
+    queryText += ` AND REPLACE(ST_GeometryType(COALESCE(p.processed_geom, p.geom)), 'ST_', '') = ANY($${nextParamIndex}::text[])`;
+    params.push(geomTypes);
+    nextParamIndex++;
+  }
+  return { sql: queryText, paramIndex: nextParamIndex };
+};
+
+const findPublishedAiLayerForExport = async (projectId: string) => {
+  const result = await query(
+    `SELECT l.id,
+            l.ai_run_id,
+            l.name,
+            l.published_at,
+            COUNT(p.id)::int AS prediction_count
+     FROM ai_output_layer l
+     JOIN ai_run ar ON ar.id = l.ai_run_id
+     JOIN ai_project_settings aps ON aps.project_id = l.project_id
+     LEFT JOIN ai_prediction_feature p ON p.ai_output_layer_id = l.id
+     WHERE l.project_id = $1
+       AND aps.is_enabled = true
+       AND l.status = 'published'
+       AND l.published_at IS NOT NULL
+       AND l.layer_type = 'classification'
+       AND ar.published_at IS NOT NULL
+       AND ar.unpublished_at IS NULL
+     GROUP BY l.id
+     ORDER BY l.published_at DESC
+     LIMIT 1`,
+    [projectId],
+  );
+  return result.rows[0] ?? null;
+};
+
 const getPagination = (pageRaw: unknown, limitRaw: unknown) => {
   const page = Math.max(1, Number.parseInt(String(pageRaw ?? '1'), 10) || 1);
   const requestedLimit = Math.max(1, Number.parseInt(String(limitRaw ?? '20'), 10) || 20);
@@ -193,7 +301,11 @@ const requestExport = async (req, res) => {
     include_photos = true,
     coordinate_system = 'EPSG:4326',
     format = 'geojson', // Default to geojson
+    category_id,
+    export_ai_predictions,
+    regenerated_from_export_id,
   } = req.body;
+  const useAiPredictions = normalizeBooleanFlag(export_ai_predictions);
 
   // Validate format
   const validFormats = ['shapefile', 'geojson'];
@@ -201,67 +313,122 @@ const requestExport = async (req, res) => {
     throw new AppError(`Invalid format. Must be one of: ${validFormats.join(', ')}`, 400);
   }
 
+  if (useAiPredictions && !isProtectedSuperAdminUser(req.user)) {
+    throw new AppError(
+      'Only the protected super administrator can export AI prediction features.',
+      403,
+    );
+  }
+
   // Validate project exists and user has access
-  const projectCheck = await query('SELECT id, name FROM project WHERE id = $1', [projectId]);
+  const projectCheck = await query('SELECT id, name, category_id FROM project WHERE id = $1', [
+    projectId,
+  ]);
 
   if (projectCheck.rows.length === 0) {
     throw new AppError('Project not found', 404);
   }
 
   const project = projectCheck.rows[0];
+  const normalizedCategoryId = normalizeOptionalString(category_id);
+  const regeneratedFromExportId = normalizeOptionalString(regenerated_from_export_id);
+  if (normalizedCategoryId && project.category_id !== normalizedCategoryId) {
+    throw new AppError('Selected project does not belong to the selected export category.', 400);
+  }
 
   const normalizedDateFrom = normalizeOptionalString(date_from);
   const normalizedDateTo = normalizeOptionalString(date_to);
   const normalizedBbox = parseBbox(bbox);
   const normalizedPolygon = parsePolygonFilter(export_polygon);
   const normalizedFeatureType = normalizeFeatureType(feature_type);
+  const publishedAiLayer = useAiPredictions ? await findPublishedAiLayerForExport(projectId) : null;
+  if (useAiPredictions && !publishedAiLayer) {
+    throw new AppError(
+      'This project does not have a published AI prediction layer to export.',
+      409,
+    );
+  }
 
   // Build export parameters
   const exportParams = {
+    source: useAiPredictions ? 'ai_predictions' : 'project_features',
     status_filter: Array.isArray(status_filter) ? status_filter : [status_filter],
     date_from: normalizedDateFrom,
     date_to: normalizedDateTo,
     bbox: normalizedBbox,
     export_polygon: normalizedPolygon,
-    feature_type: normalizedFeatureType,
+    feature_type: useAiPredictions ? undefined : normalizedFeatureType,
     geometry_types,
-    include_photos,
+    include_photos: useAiPredictions ? false : include_photos,
     coordinate_system,
     format, // Store user's format preference
+    category_id: normalizedCategoryId,
+    ai_output_layer_id: publishedAiLayer?.id,
+    ai_run_id: publishedAiLayer?.ai_run_id,
   };
 
-  let availabilityQuery = `
-    SELECT COUNT(*)::int AS feature_count
-    FROM spatial_feature sf
-    WHERE sf.project_id = $1
-  `;
-  const availabilityParams: unknown[] = [projectId];
-  let availabilityParamIndex = 2;
+  if (useAiPredictions) {
+    let availabilityQuery = `
+      SELECT COUNT(*)::int AS feature_count
+      FROM ai_prediction_feature p
+      WHERE p.project_id = $1
+        AND p.ai_output_layer_id = $2
+    `;
+    const availabilityParams: unknown[] = [projectId, publishedAiLayer.id];
+    const availabilityFilter = appendAiPredictionExportFilters({
+      sql: availabilityQuery,
+      params: availabilityParams,
+      paramIndex: 3,
+      filters: exportParams,
+    });
+    availabilityQuery = availabilityFilter.sql;
+    const availabilityResult = await query(availabilityQuery, availabilityParams);
+    const featureCount = availabilityResult.rows[0]?.feature_count ?? 0;
+    if (featureCount <= 0) {
+      throw new AppError(
+        'No AI prediction features are available for the current published AI layer and selected area.',
+        409,
+      );
+    }
+  } else {
+    let availabilityQuery = `
+      SELECT COUNT(*)::int AS feature_count
+      FROM spatial_feature sf
+      WHERE sf.project_id = $1
+    `;
+    const availabilityParams: unknown[] = [projectId];
+    let availabilityParamIndex = 2;
 
-  const availabilityFilter = appendExportFilters({
-    sql: availabilityQuery,
-    params: availabilityParams,
-    paramIndex: availabilityParamIndex,
-    filters: exportParams,
-  });
-  availabilityQuery = availabilityFilter.sql;
+    const availabilityFilter = appendExportFilters({
+      sql: availabilityQuery,
+      params: availabilityParams,
+      paramIndex: availabilityParamIndex,
+      filters: exportParams,
+    });
+    availabilityQuery = availabilityFilter.sql;
 
-  const availabilityResult = await query(availabilityQuery, availabilityParams);
-  const featureCount = availabilityResult.rows[0]?.feature_count ?? 0;
-  if (featureCount <= 0) {
-    throw new AppError(
-      'Exports can be requested after this project has at least one approved feature that matches the selected filters.',
-      409,
-    );
+    const availabilityResult = await query(availabilityQuery, availabilityParams);
+    const featureCount = availabilityResult.rows[0]?.feature_count ?? 0;
+    if (featureCount <= 0) {
+      throw new AppError(
+        'Exports can be requested after this project has at least one approved feature that matches the selected filters.',
+        409,
+      );
+    }
   }
 
   // Create export request
   const result = await query(
     `INSERT INTO shapefile_export (
-      project_id, requested_by_user_id, export_parameters, status
-    ) VALUES ($1, $2, $3, 'pending')
+      project_id,
+      requested_by_user_id,
+      export_parameters,
+      status,
+      file_status,
+      regenerated_from_export_id
+    ) VALUES ($1, $2, $3, 'pending', 'missing', $4)
     RETURNING id, requested_at`,
-    [projectId, req.user.id, JSON.stringify(exportParams)],
+    [projectId, req.user.id, JSON.stringify(exportParams), regeneratedFromExportId ?? null],
   );
 
   const exportId = result.rows[0].id;
@@ -276,6 +443,7 @@ const requestExport = async (req, res) => {
     projectId,
     userId: req.user.id,
     format,
+    source: exportParams.source,
   });
 
   res.status(202).json({
@@ -294,7 +462,15 @@ const requestExport = async (req, res) => {
 const processExport = async (exportId, projectName) => {
   try {
     // Update status to processing
-    await query(`UPDATE shapefile_export SET status = 'processing' WHERE id = $1`, [exportId]);
+    await query(
+      `UPDATE shapefile_export
+       SET status = 'processing',
+           file_status = 'missing',
+           file_deleted_at = NULL,
+           retention_expired_at = NULL
+       WHERE id = $1`,
+      [exportId],
+    );
 
     logger.info('Starting export processing:', { exportId });
 
@@ -315,56 +491,112 @@ const processExport = async (exportId, projectName) => {
     const params = exportData.export_parameters;
     const projectId = exportData.project_id;
     const format = params.format || 'geojson';
+    const exportSource = params.source === 'ai_predictions' ? 'ai_predictions' : 'project_features';
 
-    // Build query to get features
-    let featureQuery = `
-      SELECT 
-        sf.id,
-        ST_AsGeoJSON(sf.geom) as geojson_geometry,
-        ST_GeometryType(sf.geom) as geometry_type,
-        sf.attributes,
-        sf.collected_at,
-        u.full_name as collected_by,
-        COALESCE(photo_rollup.photo_count, 0)::int AS photo_count,
-        COALESCE(photo_rollup.photos, '[]'::json) AS photos
-      FROM spatial_feature sf
-      JOIN "user" u ON sf.collected_by_user_id = u.id
-      LEFT JOIN LATERAL (
+    let featureQuery;
+    let queryParams;
+    if (exportSource === 'ai_predictions') {
+      featureQuery = `
         SELECT
-          COUNT(*)::int AS photo_count,
-          json_agg(
-            json_build_object(
-              'id', ph.id,
-              'feature_id', ph.feature_id,
-              'file_path', ph.file_path,
-              'thumbnail_path', ph.thumbnail_path,
-              'status', ph.status,
-              'display_order', ph.display_order,
-              'taken_at', ph.taken_at,
-              'uploaded_at', ph.uploaded_at,
-              'file_size_bytes', ph.file_size_bytes
-            )
-            ORDER BY ph.display_order ASC, ph.uploaded_at ASC
-          ) AS photos
-        FROM photo ph
-        WHERE ph.feature_id = sf.id
-          AND ph.status <> 'rejected'
-      ) photo_rollup ON TRUE
-      WHERE sf.project_id = $1
-    `;
+          p.id,
+          ST_AsGeoJSON(COALESCE(p.processed_geom, p.geom)) as geojson_geometry,
+          COALESCE(
+            NULLIF(BTRIM(p.geometry_type), ''),
+            REPLACE(ST_GeometryType(COALESCE(p.processed_geom, p.geom)), 'ST_', '')
+          ) as geometry_type,
+          '{}'::jsonb AS attributes,
+          p.created_at AS collected_at,
+          NULL::text AS collected_by,
+          0::int AS photo_count,
+          '[]'::json AS photos,
+          p.artifact_feature_id,
+          p.predicted_class,
+          p.confidence,
+          p.uncertainty_score,
+          p.model_name,
+          p.source,
+          p.status,
+          p.admin_validation_status,
+          p.approved_class,
+          p.ai_run_id,
+          p.ai_output_layer_id,
+          l.name AS layer_name,
+          l.published_at,
+          p.metadata,
+          p.source_resolution_m,
+          p.raw_area_m2,
+          p.processed_area_m2,
+          p.area_change_percent,
+          p.processing_method,
+          p.minimum_mapping_unit_m2,
+          p.simplification_tolerance_m,
+          p.smoothing_iterations,
+          p.geometry_quality,
+          'ai_predictions' AS export_source
+        FROM ai_prediction_feature p
+        JOIN ai_output_layer l ON l.id = p.ai_output_layer_id
+        WHERE p.project_id = $1
+          AND p.ai_output_layer_id = $2
+      `;
+      queryParams = [projectId, params.ai_output_layer_id];
+      const featureFilter = appendAiPredictionExportFilters({
+        sql: featureQuery,
+        params: queryParams,
+        paramIndex: 3,
+        filters: params,
+      });
+      featureQuery = featureFilter.sql;
+    } else {
+      // Build query to get project map features.
+      featureQuery = `
+        SELECT
+          sf.id,
+          ST_AsGeoJSON(sf.geom) as geojson_geometry,
+          ST_GeometryType(sf.geom) as geometry_type,
+          sf.attributes,
+          sf.collected_at,
+          u.full_name as collected_by,
+          COALESCE(photo_rollup.photo_count, 0)::int AS photo_count,
+          COALESCE(photo_rollup.photos, '[]'::json) AS photos,
+          'project_features' AS export_source
+        FROM spatial_feature sf
+        JOIN "user" u ON sf.collected_by_user_id = u.id
+        LEFT JOIN LATERAL (
+          SELECT
+            COUNT(*)::int AS photo_count,
+            json_agg(
+              json_build_object(
+                'id', ph.id,
+                'feature_id', ph.feature_id,
+                'file_path', ph.file_path,
+                'thumbnail_path', ph.thumbnail_path,
+                'status', ph.status,
+                'display_order', ph.display_order,
+                'taken_at', ph.taken_at,
+                'uploaded_at', ph.uploaded_at,
+                'file_size_bytes', ph.file_size_bytes
+              )
+              ORDER BY ph.display_order ASC, ph.uploaded_at ASC
+            ) AS photos
+          FROM photo ph
+          WHERE ph.feature_id = sf.id
+            AND ph.status <> 'rejected'
+        ) photo_rollup ON TRUE
+        WHERE sf.project_id = $1
+      `;
 
-    const queryParams = [projectId];
-    let paramIndex = 2;
+      queryParams = [projectId];
 
-    const featureFilter = appendExportFilters({
-      sql: featureQuery,
-      params: queryParams,
-      paramIndex,
-      filters: params,
-    });
-    featureQuery = featureFilter.sql;
+      const featureFilter = appendExportFilters({
+        sql: featureQuery,
+        params: queryParams,
+        paramIndex: 2,
+        filters: params,
+      });
+      featureQuery = featureFilter.sql;
+    }
 
-    logger.info('Querying features:', { exportId, format });
+    logger.info('Querying features:', { exportId, format, source: exportSource });
 
     const features = await query(featureQuery, queryParams);
 
@@ -376,15 +608,17 @@ const processExport = async (exportId, projectName) => {
 
     // Create export directory for this request
     const exportTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const exportName = `${projectName.replace(/[^a-zA-Z0-9]/g, '_')}_${exportTimestamp}`;
+    const sourceSuffix = exportSource === 'ai_predictions' ? '_ai_predictions' : '';
+    const exportName = `${projectName.replace(/[^a-zA-Z0-9]/g, '_')}${sourceSuffix}_${exportTimestamp}`;
     const exportPath = path.join(EXPORT_DIR, exportId);
     await fs.mkdir(exportPath, { recursive: true });
 
     logger.info('Created export directory:', { exportId, path: exportPath });
 
-    const photoManifest = params.include_photos
-      ? await attachExportPhotos(exportPath, features.rows)
-      : [];
+    const photoManifest =
+      params.include_photos && exportSource !== 'ai_predictions'
+        ? await attachExportPhotos(exportPath, features.rows)
+        : [];
 
     // Group features by geometry type
     const featuresByType: Record<string, any[]> = {};
@@ -449,6 +683,7 @@ const processExport = async (exportId, projectName) => {
     // Create metadata file
     const metadata = {
       project_name: projectName,
+      source: exportSource,
       export_date: formatLebanonDateTime(new Date()),
       time_zone: LEBANON_TIME_ZONE,
       feature_count: features.rows.length,
@@ -462,18 +697,22 @@ const processExport = async (exportId, projectName) => {
         bbox: params.bbox,
         export_polygon: params.export_polygon ? 'GeoJSON Polygon filter applied' : null,
         feature_type: params.feature_type,
-        include_photos: params.include_photos === true,
+        include_photos: params.include_photos === true && exportSource !== 'ai_predictions',
       },
+      ai_output_layer_id: params.ai_output_layer_id ?? null,
+      ai_run_id: params.ai_run_id ?? null,
       files: generatedFiles,
       photo_manifest: photoManifest.length > 0 ? 'photos_manifest.json' : null,
       notes:
-        format === 'shapefile'
-          ? 'Shapefile format: Field names limited to 10 characters, strings to 254 characters (DBF limitations)'
-          : 'GeoJSON format: Modern, web-friendly format compatible with all GIS software',
+        exportSource === 'ai_predictions'
+          ? 'AI-derived polygons are post-processed from satellite classification. Raw pixel geometry is retained for audit when available; default exports use processed polygons.'
+          : format === 'shapefile'
+            ? 'Shapefile format: Field names limited to 10 characters, strings to 254 characters (DBF limitations)'
+            : 'GeoJSON format: Modern, web-friendly format compatible with all GIS software',
     };
 
     await fs.writeFile(path.join(exportPath, 'metadata.json'), JSON.stringify(metadata, null, 2));
-    if (params.include_photos) {
+    if (params.include_photos && exportSource !== 'ai_predictions') {
       await fs.writeFile(
         path.join(exportPath, 'photos_manifest.json'),
         JSON.stringify(photoManifest, null, 2),
@@ -507,12 +746,17 @@ const processExport = async (exportId, projectName) => {
       await client.query(
         `UPDATE shapefile_export 
          SET status = 'completed',
+             file_status = 'available',
              completed_at = CURRENT_TIMESTAMP,
              file_path = $1,
              feature_count = $2,
-             file_size_bytes = $3
-         WHERE id = $4`,
-        [zipPath, features.rows.length, fileSizeBytes, exportId],
+             file_size_bytes = $3,
+             error_message = NULL,
+             file_deleted_at = NULL,
+             retention_expired_at = NULL,
+             retention_expires_at = CURRENT_TIMESTAMP + ($4::int * INTERVAL '1 day')
+         WHERE id = $5`,
+        [zipPath, features.rows.length, fileSizeBytes, RETENTION_DAYS, exportId],
       );
 
       await client.query(
@@ -553,6 +797,7 @@ const processExport = async (exportId, projectName) => {
       await client.query(
         `UPDATE shapefile_export 
          SET status = 'failed',
+             file_status = 'missing',
              completed_at = CURRENT_TIMESTAMP,
              error_message = $1
          WHERE id = $2`,
@@ -593,6 +838,32 @@ const processExport = async (exportId, projectName) => {
 const createShapefile = async (outputDir, fileName, features, _geometryType) => {
   const geojsonFeatures = features.map((f) => {
     const geom = JSON.parse(f.geojson_geometry);
+    if (f.export_source === 'ai_predictions') {
+      const properties = {
+        pred_id: String(f.id ?? '').substring(0, 10),
+        art_id: String(f.artifact_feature_id ?? '').substring(0, 20),
+        pred_cls: String(f.predicted_class ?? '').substring(0, 80),
+        conf: typeof f.confidence === 'number' ? f.confidence : null,
+        uncert: typeof f.uncertainty_score === 'number' ? f.uncertainty_score : null,
+        model: String(f.model_name ?? '').substring(0, 80),
+        status: String(f.status ?? '').substring(0, 32),
+        val_stat: String(f.admin_validation_status ?? '').substring(0, 32),
+        appr_cls: String(f.approved_class ?? '').substring(0, 80),
+        run_id: String(f.ai_run_id ?? '').substring(0, 36),
+        layer_id: String(f.ai_output_layer_id ?? '').substring(0, 36),
+        res_m: typeof f.source_resolution_m === 'number' ? f.source_resolution_m : null,
+        area_m2: typeof f.processed_area_m2 === 'number' ? f.processed_area_m2 : null,
+        area_ha: typeof f.processed_area_m2 === 'number' ? f.processed_area_m2 / 10000 : null,
+        geom_q: String(f.geometry_quality ?? '').substring(0, 32),
+        proc: String(f.processing_method ?? '').substring(0, 80),
+        source: 'ai_prediction',
+      };
+      return {
+        type: 'Feature',
+        geometry: geom,
+        properties,
+      };
+    }
 
     const properties = {
       feat_id: f.id.substring(0, 10),
@@ -671,6 +942,40 @@ const createGeoJSON = (features, projectName, geometryType) => {
     },
     features: features.map((f) => {
       const geom = JSON.parse(f.geojson_geometry);
+      if (f.export_source === 'ai_predictions') {
+        return {
+          type: 'Feature',
+          geometry: geom,
+          properties: {
+            prediction_feature_id: f.id,
+            artifact_feature_id: f.artifact_feature_id,
+            predicted_class: f.predicted_class,
+            confidence: f.confidence,
+            uncertainty_score: f.uncertainty_score,
+            model_name: f.model_name,
+            status: f.status,
+            validation_status: f.admin_validation_status,
+            approved_class: f.approved_class,
+            ai_run_id: f.ai_run_id,
+            ai_output_layer_id: f.ai_output_layer_id,
+            layer_name: f.layer_name,
+            published_at: formatLebanonDateTime(f.published_at),
+            source_resolution_m: f.source_resolution_m,
+            raw_area_m2: f.raw_area_m2,
+            processed_area_m2: f.processed_area_m2,
+            processed_area_ha:
+              typeof f.processed_area_m2 === 'number' ? f.processed_area_m2 / 10000 : null,
+            area_change_percent: f.area_change_percent,
+            processing_method: f.processing_method,
+            minimum_mapping_unit_m2: f.minimum_mapping_unit_m2,
+            simplification_tolerance_m: f.simplification_tolerance_m,
+            smoothing_iterations: f.smoothing_iterations,
+            geometry_quality: f.geometry_quality,
+            source: 'ai_prediction',
+            note: 'AI-derived polygon, post-processed from satellite classification.',
+          },
+        };
+      }
       return {
         type: 'Feature',
         geometry: geom,
@@ -1039,7 +1344,7 @@ const getMyExports = async (req, res) => {
   const isAdmin = req.user?.role === 'admin';
 
   let queryText = `
-    SELECT se.*, p.name as project_name
+    SELECT se.*, p.name as project_name, ${exportLifecycleFields}
     FROM shapefile_export se
     JOIN project p ON se.project_id = p.id
     WHERE 1=1
@@ -1054,7 +1359,9 @@ const getMyExports = async (req, res) => {
     paramIndex++;
   }
 
-  if (status) {
+  if (status === 'expired') {
+    queryText += ` AND se.status = 'completed' AND se.file_status IN ('expired', 'deleted')`;
+  } else if (status) {
     queryText += ` AND se.status = $${paramIndex}`;
     params.push(status);
     paramIndex++;
@@ -1098,7 +1405,9 @@ const getMyExports = async (req, res) => {
     countParamIndex++;
   }
 
-  if (status) {
+  if (status === 'expired') {
+    countQuery += ` AND se.status = 'completed' AND se.file_status IN ('expired', 'deleted')`;
+  } else if (status) {
     countQuery += ` AND se.status = $${countParamIndex}`;
     countParams.push(status);
     countParamIndex++;
@@ -1130,8 +1439,9 @@ const getMyExports = async (req, res) => {
       COUNT(*)::int AS total,
       COUNT(*) FILTER (WHERE se.status = 'pending')::int AS pending,
       COUNT(*) FILTER (WHERE se.status = 'processing')::int AS processing,
-      COUNT(*) FILTER (WHERE se.status = 'completed')::int AS completed,
-      COUNT(*) FILTER (WHERE se.status = 'failed')::int AS failed
+      COUNT(*) FILTER (WHERE se.status = 'completed' AND se.file_status NOT IN ('expired', 'deleted'))::int AS completed,
+      COUNT(*) FILTER (WHERE se.status = 'failed')::int AS failed,
+      COUNT(*) FILTER (WHERE se.status = 'completed' AND se.file_status IN ('expired', 'deleted'))::int AS expired
     FROM shapefile_export se
     JOIN project p ON se.project_id = p.id
     WHERE 1=1
@@ -1145,7 +1455,9 @@ const getMyExports = async (req, res) => {
     summaryParamIndex++;
   }
 
-  if (status) {
+  if (status === 'expired') {
+    summaryQuery += ` AND se.status = 'completed' AND se.file_status IN ('expired', 'deleted')`;
+  } else if (status) {
     summaryQuery += ` AND se.status = $${summaryParamIndex}`;
     summaryParams.push(status);
     summaryParamIndex++;
@@ -1176,6 +1488,7 @@ const getMyExports = async (req, res) => {
     processing: 0,
     completed: 0,
     failed: 0,
+    expired: 0,
   };
 
   res.json({
@@ -1194,6 +1507,7 @@ const getMyExports = async (req, res) => {
       processing: summary.processing ?? 0,
       completed: summary.completed ?? 0,
       failed: summary.failed ?? 0,
+      expired: summary.expired ?? 0,
     },
   });
 };
@@ -1204,7 +1518,7 @@ const getExportStatus = async (req, res) => {
   const isAdmin = req.user?.role === 'admin';
 
   const result = await query(
-    `SELECT se.*, p.name as project_name
+    `SELECT se.*, p.name as project_name, ${exportLifecycleFields}
      FROM shapefile_export se
      JOIN project p ON se.project_id = p.id
      WHERE se.id = $1
@@ -1228,10 +1542,17 @@ const downloadExport = async (req, res) => {
   const isAdmin = req.user?.role === 'admin';
 
   const result = await query(
-    `SELECT file_path, status, project_id, export_parameters
-     FROM shapefile_export
-     WHERE id = $1
-       AND ($2::boolean = TRUE OR requested_by_user_id = $3)`,
+    `SELECT se.file_path,
+            se.status,
+            se.file_status,
+            se.project_id,
+            se.export_parameters,
+            se.completed_at,
+            se.retention_expires_at,
+            se.retention_expired_at
+     FROM shapefile_export se
+     WHERE se.id = $1
+       AND ($2::boolean = TRUE OR se.requested_by_user_id = $3)`,
     [exportId, isAdmin, req.user.id],
   );
 
@@ -1245,6 +1566,23 @@ const downloadExport = async (req, res) => {
     throw new AppError(`Export is not ready. Current status: ${exportData.status}`, 400);
   }
 
+  if (['expired', 'deleted'].includes(String(exportData.file_status))) {
+    res.status(410).json({
+      success: false,
+      code: 'EXPORT_FILE_EXPIRED',
+      message: EXPORT_FILE_EXPIRED_MESSAGE,
+      data: {
+        export_id: exportId,
+        job_status: exportData.status,
+        file_status: exportData.file_status,
+        retention_expires_at: exportData.retention_expires_at,
+        retention_expired_at: exportData.retention_expired_at,
+        can_regenerate: true,
+      },
+    });
+    return;
+  }
+
   if (!exportData.file_path) {
     throw new AppError('Export file not found', 404);
   }
@@ -1254,6 +1592,27 @@ const downloadExport = async (req, res) => {
     await fs.access(exportData.file_path);
   } catch (_error) {
     logger.error('Export file not accessible:', { exportId, path: exportData.file_path });
+    const completedAt = exportData.completed_at ? new Date(exportData.completed_at) : null;
+    const retentionExpired =
+      exportData.retention_expires_at && new Date(exportData.retention_expires_at) <= new Date();
+    const oldEnoughForRetention =
+      completedAt !== null &&
+      completedAt.getTime() < Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    if (retentionExpired || oldEnoughForRetention) {
+      await markExportFileExpired(exportId);
+      res.status(410).json({
+        success: false,
+        code: 'EXPORT_FILE_EXPIRED',
+        message: EXPORT_FILE_EXPIRED_MESSAGE,
+        data: {
+          export_id: exportId,
+          job_status: 'completed',
+          file_status: 'expired',
+          can_regenerate: true,
+        },
+      });
+      return;
+    }
     throw new AppError('Export file no longer available', 404);
   }
 
@@ -1282,7 +1641,9 @@ const cleanupOldExports = async () => {
 
     const oldExports = await query(
       `SELECT id, file_path FROM shapefile_export 
-       WHERE completed_at < $1 AND status = 'completed'`,
+       WHERE completed_at < $1
+         AND status = 'completed'
+         AND file_status = 'available'`,
       [cutoffDate],
     );
 
@@ -1295,11 +1656,14 @@ const cleanupOldExports = async () => {
 
       await query(
         `UPDATE shapefile_export 
-         SET status = 'failed',
-             file_path = NULL, 
-             error_message = 'File deleted after retention period'
+         SET file_status = 'expired',
+             file_path = NULL,
+             file_deleted_at = CURRENT_TIMESTAMP,
+             retention_expired_at = CURRENT_TIMESTAMP,
+             retention_expires_at = COALESCE(retention_expires_at, completed_at + ($2::int * INTERVAL '1 day')),
+             error_message = 'Export completed, but the file expired. Regenerate it to download again.'
          WHERE id = $1`,
-        [exp.id],
+        [exp.id, RETENTION_DAYS],
       );
     }
 

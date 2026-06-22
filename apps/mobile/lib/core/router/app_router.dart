@@ -17,6 +17,7 @@ import '../../features/imports/presentation/screens/import_detail_screen.dart';
 import '../../features/imports/presentation/screens/import_map_screen.dart';
 import '../../features/imports/presentation/screens/imports_screen.dart';
 import '../../features/admin/presentation/screens/project_form_screen.dart';
+import '../../features/ai/presentation/screens/project_ai_screen.dart';
 import '../../features/map/presentation/screens/add_feature_screen.dart';
 import '../../features/map/presentation/screens/map_screen.dart';
 import '../../features/projects/presentation/screens/project_details_screen.dart';
@@ -381,6 +382,45 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         },
       ),
       GoRoute(
+        path: '/app/projects/:projectId/ai/runs/:runId/preview',
+        pageBuilder: (_, state) {
+          final projectId = state.pathParameters['projectId'] ?? '';
+          final runId = state.pathParameters['runId'] ?? '';
+          return _buildPage(
+            state,
+            Scaffold(
+              resizeToAvoidBottomInset: false,
+              appBar: AppBar(title: const Text('AI preview map')),
+              body: ProjectAiPreviewMapScreen(
+                projectId: projectId,
+                runId: runId,
+              ),
+            ),
+          );
+        },
+      ),
+      GoRoute(
+        path: '/app/projects/:projectId/ai',
+        pageBuilder: (_, state) {
+          final projectId = state.pathParameters['projectId'] ?? '';
+          final section = state.uri.queryParameters['section'] ?? 'readiness';
+          final runId = state.uri.queryParameters['runId'];
+          return _buildPage(
+            state,
+            AppScaffold(
+              title: 'Project AI',
+              showBackButton: true,
+              showOfflineBanner: false,
+              body: ProjectAiScreen(
+                projectId: projectId,
+                initialSection: section,
+                initialRunId: runId,
+              ),
+            ),
+          );
+        },
+      ),
+      GoRoute(
         path: '/app/projects/:projectId',
         pageBuilder: (_, state) {
           final projectId = state.pathParameters['projectId'] ?? '';
@@ -480,6 +520,23 @@ String _postAuthRedirectTarget({
   required Uri currentUri,
   required AppUser user,
 }) {
+  final requested = _requestedTargetFromUri(currentUri);
+  if (requested != null && requested.isNotEmpty) {
+    final requestedUri = Uri.tryParse(requested);
+    if (requestedUri != null) {
+      final requestedPath = requestedUri.path;
+      final allowedPaths = _allowedPathsForUser(user);
+      final isAllowed =
+          requestedPath == AppRoutes.app ||
+          allowedPaths.any(
+            (allowedPath) => requestedPath.startsWith(allowedPath),
+          );
+      if (isAllowed) {
+        return requestedUri.toString();
+      }
+    }
+  }
+
   if (currentUri.path == AppRoutes.login ||
       currentUri.path == AppRoutes.signup ||
       currentUri.path == AppRoutes.splash ||
@@ -488,26 +545,7 @@ String _postAuthRedirectTarget({
     return _defaultHomeForUser(user);
   }
 
-  final requested = _requestedTargetFromUri(currentUri);
-  if (requested == null || requested.isEmpty) {
-    return _defaultHomeForUser(user);
-  }
-
-  final requestedUri = Uri.tryParse(requested);
-  if (requestedUri == null) {
-    return _defaultHomeForUser(user);
-  }
-
-  final requestedPath = requestedUri.path;
-  final allowedPaths = _allowedPathsForUser(user);
-  final isAllowed =
-      requestedPath == AppRoutes.app ||
-      allowedPaths.any((allowedPath) => requestedPath.startsWith(allowedPath));
-  if (!isAllowed) {
-    return _defaultHomeForUser(user);
-  }
-
-  return requestedUri.toString();
+  return _defaultHomeForUser(user);
 }
 
 String? _requestedTargetFromUri(Uri currentUri) {

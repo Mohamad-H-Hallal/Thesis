@@ -21,6 +21,8 @@ const AdmZip = require('adm-zip');
 const fs = require('fs').promises;
 const path = require('path');
 const sharp = require('sharp');
+const jwt = require('jsonwebtoken');
+const { cleanupOldExports } = require('../src/controllers/export.controller');
 
 jest.setTimeout(90000);
 
@@ -400,6 +402,106 @@ describe('Phase 10 E2E workflow', () => {
     expect(noPhotoFeature.properties.photo_count).toBe(0);
     expect(noPhotoFeature.properties.primary_photo_path).toBeNull();
     expect(noPhotoFeature.properties.photo_paths).toEqual([]);
+  });
+
+  test('retention cleanup marks completed export file expired without failing job', async () => {
+    const admin = await createAdminUser({
+      fullName: 'Retention Admin',
+      emailPrefix: 'retention-admin',
+    });
+    const token = jwt.sign(
+      { userId: admin.user.id, role: 'admin' },
+      process.env.JWT_SECRET_CURRENT || process.env.JWT_SECRET,
+      { expiresIn: '1h' },
+    );
+    const category = await pool.query(
+      `INSERT INTO project_category (name, description)
+       VALUES ($1, $2)
+       RETURNING id`,
+      [`Retention Category ${Date.now()}`, 'Retention test category'],
+    );
+    const project = await pool.query(
+      `INSERT INTO project (category_id, created_by_user_id, name, description, status)
+       VALUES ($1, $2, $3, $4, 'draft')
+       RETURNING id`,
+      [
+        category.rows[0].id,
+        admin.user.id,
+        `Retention Project ${Date.now()}`,
+        'Retention test project',
+      ],
+    );
+    await pool.query(`
+      ALTER TABLE shapefile_export
+        DROP CONSTRAINT IF EXISTS chk_export_completed_requires_file,
+        ADD CONSTRAINT chk_export_completed_requires_file
+          CHECK (
+            status <> 'completed'
+            OR file_status IN ('expired', 'deleted')
+            OR NULLIF(file_path, '') IS NOT NULL
+          )
+    `);
+    const exportFile = path.join(
+      __dirname,
+      `retention-export-${Date.now()}-${Math.random().toString(16).slice(2)}.zip`,
+    );
+    await fs.writeFile(exportFile, Buffer.from('retention export'));
+    tempFiles.push(exportFile);
+
+    const inserted = await pool.query(
+      `INSERT INTO shapefile_export (
+         project_id,
+         requested_by_user_id,
+         completed_at,
+         file_path,
+         feature_count,
+         export_parameters,
+         status,
+         file_status,
+         file_size_bytes,
+         retention_expires_at
+       )
+       VALUES (
+         $1,
+         $2,
+         CURRENT_TIMESTAMP - INTERVAL '10 days',
+         $3,
+         1,
+         '{"format":"geojson"}'::jsonb,
+         'completed',
+         'available',
+         $4,
+         CURRENT_TIMESTAMP - INTERVAL '3 days'
+       )
+       RETURNING id`,
+      [project.rows[0].id, admin.user.id, exportFile, Buffer.byteLength('retention export')],
+    );
+    const exportId = inserted.rows[0].id;
+
+    await cleanupOldExports();
+
+    const row = await pool.query(
+      `SELECT status, file_status, file_path, file_deleted_at, retention_expired_at, error_message
+       FROM shapefile_export
+       WHERE id = $1`,
+      [exportId],
+    );
+    expect(row.rows[0]).toMatchObject({
+      status: 'completed',
+      file_status: 'expired',
+      file_path: null,
+    });
+    expect(row.rows[0].file_deleted_at).toBeTruthy();
+    expect(row.rows[0].retention_expired_at).toBeTruthy();
+    expect(row.rows[0].error_message).toContain('file expired');
+
+    const downloadResponse = await request(app)
+      .get(`${API_PREFIX}/exports/${exportId}/download`)
+      .set(authHeader(token));
+
+    expect(downloadResponse.status).toBe(410);
+    expect(downloadResponse.body.code).toBe('EXPORT_FILE_EXPIRED');
+    expect(downloadResponse.body.message).toContain('completed successfully');
   });
 
   test('mobile-style export request accepts blank optional fields and exports only approved features inside bbox', async () => {

@@ -425,7 +425,7 @@ void main() {
       );
 
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Show quick filters'));
+      await tester.tap(find.byTooltip('Filter'));
       await tester.pumpAndSettle();
 
       expect(find.textContaining('1 imported feature'), findsWidgets);

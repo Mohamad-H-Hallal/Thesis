@@ -9,6 +9,7 @@ import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
+import '../../../../core/widgets/app_search_action_bar.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
 import '../../domain/admin_models.dart';
 
@@ -75,42 +76,20 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
               Padding(
                 padding: const EdgeInsets.only(bottom: AppSpacing.md),
                 child: AppCard(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final createButton = FilledButton.icon(
+                  child: AppSearchActionBar(
+                    searchBar: SearchBar(
+                      controller: _searchController,
+                      hintText: 'Search category name or description',
+                      leading: const Icon(Icons.search),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    actions: [
+                      FilledButton.icon(
                         onPressed: () => context.push(AppRoutes.categoryCreate),
                         icon: const Icon(Icons.add),
                         label: const Text('Create'),
-                      );
-                      final searchBar = SearchBar(
-                        controller: _searchController,
-                        hintText: 'Search category name or description',
-                        leading: const Icon(Icons.search),
-                        onChanged: (_) => setState(() {}),
-                      );
-
-                      if (constraints.maxWidth < 560) {
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            searchBar,
-                            const SizedBox(height: AppSpacing.sm),
-                            SizedBox(
-                              width: double.infinity,
-                              child: createButton,
-                            ),
-                          ],
-                        );
-                      }
-
-                      return Row(
-                        children: [
-                          Expanded(child: searchBar),
-                          const SizedBox(width: AppSpacing.sm),
-                          SizedBox(width: 180, child: createButton),
-                        ],
-                      );
-                    },
+                      ),
+                    ],
                   ),
                 ),
               ),

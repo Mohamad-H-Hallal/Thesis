@@ -1,0 +1,9 @@
+-- Historical migration marker.
+--
+-- Some development databases already recorded this Phase S migration name
+-- before the prediction validation schema was consolidated into
+-- 0028_ai_prediction_validation_phase_s1.sql and
+-- 0029_ai_prediction_validation_phase_s2.sql.
+--
+-- Keep this no-op file so schema_migrations history remains reproducible
+-- without applying additional schema or data changes.

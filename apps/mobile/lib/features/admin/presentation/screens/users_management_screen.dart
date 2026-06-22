@@ -8,6 +8,7 @@ import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_empty_state.dart';
+import '../../../../core/widgets/app_search_action_bar.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/utils/lebanese_phone.dart';
@@ -212,9 +213,15 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final filterButton = OutlinedButton.icon(
+                  AppSearchActionBar(
+                    searchBar: SearchBar(
+                      controller: _searchController,
+                      hintText: 'Search name, email, or phone',
+                      leading: const Icon(Icons.search),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    actions: [
+                      OutlinedButton.icon(
                         onPressed: () =>
                             setState(() => _showFilters = !_showFilters),
                         icon: Icon(
@@ -223,37 +230,8 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
                               : Icons.filter_alt_outlined,
                         ),
                         label: Text(_showFilters ? 'Hide' : 'Filter'),
-                      );
-
-                      final searchBar = SearchBar(
-                        controller: _searchController,
-                        hintText: 'Search name, email, or phone',
-                        leading: const Icon(Icons.search),
-                        onChanged: (_) => setState(() {}),
-                      );
-
-                      if (constraints.maxWidth < 560) {
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            searchBar,
-                            const SizedBox(height: AppSpacing.sm),
-                            SizedBox(
-                              width: double.infinity,
-                              child: filterButton,
-                            ),
-                          ],
-                        );
-                      }
-
-                      return Row(
-                        children: [
-                          Expanded(child: searchBar),
-                          const SizedBox(width: AppSpacing.sm),
-                          filterButton,
-                        ],
-                      );
-                    },
+                      ),
+                    ],
                   ),
                   if (_showFilters) ...[
                     const SizedBox(height: AppSpacing.sm),

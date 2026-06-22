@@ -50,7 +50,7 @@ const applyTestEnvDefaults = (): TestDbConfig => {
   loadTestEnvFiles();
 
   const host = process.env.TEST_DB_HOST?.trim() || 'localhost';
-  const port = resolveNumber(process.env.TEST_DB_PORT, 55433);
+  const port = resolveNumber(process.env.TEST_DB_PORT, 55578);
   const database = process.env.TEST_DB_NAME?.trim() || 'gis_app_test';
   const user = process.env.TEST_DB_USER?.trim() || 'gis_user';
   const password = process.env.TEST_DB_PASSWORD ?? 'change_me';
@@ -91,6 +91,12 @@ const applyTestEnvDefaults = (): TestDbConfig => {
   setDefault('SMTP_SECURE', 'false');
   setDefault('SMTP_FROM_EMAIL', 'no-reply@gis.local');
   setDefault('SMTP_FROM_NAME', 'Lebanese GIS Collector');
+  setDefault('AI_PIPELINE_ENABLED', 'false');
+  setDefault('AI_PIPELINE_ROOT', '');
+  setDefault('AI_PIPELINE_OUTPUT_ROOT', '');
+  setDefault('AI_PYTHON_BIN', 'python');
+  setDefault('AI_PIPELINE_TIMEOUT_MS', '60000');
+  setDefault('AI_PIPELINE_MODE', 'disabled');
 
   return {
     host,

@@ -5,6 +5,7 @@ class AppRoutes {
   static const focusSourceReviewFeature = 'reviewFeature';
   static const focusSourceImportFeature = 'importFeature';
   static const focusSourceApprovedContext = 'approvedProjectContext';
+  static const focusSourceAiValidationTask = 'aiValidationTask';
 
   static const splash = '/splash';
   static const login = '/login';
@@ -23,6 +24,7 @@ class AppRoutes {
   static const assignments = '/app/assignments';
   static const drafts = '/app/drafts';
   static const submissions = '/app/submissions';
+  static const aiValidation = '/app/ai-validation';
   static const reviewQueue = '/app/review-queue';
   static const imports = '/app/imports';
   static const exports = '/app/exports';
@@ -37,6 +39,24 @@ class AppRoutes {
   static String projectAssignments(String id) =>
       '/app/projects/$id/assignments';
   static String projectDetails(String id) => '/app/projects/$id';
+  static String projectAi(
+    String id, {
+    String section = 'readiness',
+    String? runId,
+  }) {
+    final uri = Uri(
+      path: '/app/projects/$id/ai',
+      queryParameters: {
+        'section': section,
+        if (runId != null && runId.trim().isNotEmpty) 'runId': runId,
+      },
+    );
+    return uri.toString();
+  }
+
+  static String projectAiPreview(String projectId, String runId) =>
+      '/app/projects/$projectId/ai/runs/$runId/preview';
+
   static String projectReviewQueue(String id) => '/app/projects/$id/reviews';
   static String projectApprovedReviews(String id) =>
       '/app/projects/$id/approved-reviews';

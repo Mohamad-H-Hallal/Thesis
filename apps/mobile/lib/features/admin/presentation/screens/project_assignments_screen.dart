@@ -9,6 +9,7 @@ import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
+import '../../../../core/widgets/app_search_action_bar.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/utils/lebanese_phone.dart';
 import '../../domain/admin_models.dart';
@@ -398,54 +399,29 @@ class _ProjectAssignmentsScreenState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final searchBar = SearchBar(
-                        controller: _searchController,
-                        hintText: constraints.maxWidth < 420
-                            ? 'Search contributors'
-                            : isViewOnlyProject
-                            ? 'Search assigned contributors'
-                            : 'Search contributors and project requests',
-                        leading: const Icon(Icons.search),
-                        onChanged: (_) => setState(() {}),
-                      );
-                      final filterButton = OutlinedButton.icon(
-                        onPressed: isViewOnlyProject
-                            ? null
-                            : () =>
+                  AppSearchActionBar(
+                    searchBar: SearchBar(
+                      controller: _searchController,
+                      hintText: isViewOnlyProject
+                          ? 'Search assigned contributors'
+                          : 'Search contributors and project requests',
+                      leading: const Icon(Icons.search),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    actions: isViewOnlyProject
+                        ? const <Widget>[]
+                        : [
+                            OutlinedButton.icon(
+                              onPressed: () =>
                                   setState(() => _showFilters = !_showFilters),
-                        icon: Icon(
-                          _showFilters
-                              ? Icons.filter_alt_off_outlined
-                              : Icons.filter_alt_outlined,
-                        ),
-                        label: Text(_showFilters ? 'Hide filters' : 'Filter'),
-                      );
-
-                      if (isViewOnlyProject) {
-                        return searchBar;
-                      }
-
-                      if (constraints.maxWidth < 720) {
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            searchBar,
-                            const SizedBox(height: AppSpacing.sm),
-                            filterButton,
+                              icon: Icon(
+                                _showFilters
+                                    ? Icons.filter_alt_off_outlined
+                                    : Icons.filter_alt_outlined,
+                              ),
+                              label: Text(_showFilters ? 'Hide' : 'Filter'),
+                            ),
                           ],
-                        );
-                      }
-
-                      return Row(
-                        children: [
-                          Expanded(child: searchBar),
-                          const SizedBox(width: AppSpacing.sm),
-                          SizedBox(width: 180, child: filterButton),
-                        ],
-                      );
-                    },
                   ),
                   if (isViewOnlyProject)
                     Text(

@@ -32,6 +32,7 @@ class StatusChip extends StatelessWidget {
       case 'submitted':
       case 'under_review':
       case 'paused':
+      case 'expired':
         bg = Colors.orange.withValues(alpha: 0.18);
         fg = Colors.orange.shade900;
         label = normalized == 'pending_review'

@@ -61,22 +61,22 @@ const writeAuditLog = async (
   entityId: string,
   responseBody: any
 ): Promise<void> => {
-  if (process.env.AUDIT_LOG_ENABLED === 'false') {
-    return;
-  }
-
-  if (!isUuid(entityId)) {
-    return;
-  }
-
-  const oldValues = options.resolveOldValues
-    ? sanitizeObject(options.resolveOldValues(req, res, responseBody))
-    : null;
-  const newValues = options.resolveNewValues
-    ? sanitizeObject(options.resolveNewValues(req, res, responseBody))
-    : sanitizeObject(req.body ?? null);
-
   try {
+    if (process.env.AUDIT_LOG_ENABLED === 'false') {
+      return;
+    }
+
+    if (!isUuid(entityId)) {
+      return;
+    }
+
+    const oldValues = options.resolveOldValues
+      ? sanitizeObject(options.resolveOldValues(req, res, responseBody))
+      : null;
+    const newValues = options.resolveNewValues
+      ? sanitizeObject(options.resolveNewValues(req, res, responseBody))
+      : sanitizeObject(req.body ?? null);
+
     await query(
       `INSERT INTO audit_log (user_id, action_type, entity_type, entity_id, old_values, new_values, ip_address)
        VALUES ($1, $2, $3, $4, $5, $6, $7::inet)`,
@@ -100,6 +100,22 @@ const writeAuditLog = async (
   }
 };
 
+const sendJsonAfterAudit = (
+  req: Request,
+  res: Response,
+  originalJson: Response['json'],
+  body: any,
+  options: AuditActionOptions,
+  entityId: string
+): Response => {
+  void (async () => {
+    await writeAuditLog(req, res, options, entityId, body);
+    originalJson(body);
+  })();
+
+  return res;
+};
+
 const auditAction = (options: AuditActionOptions) => {
   return (req: Request, res: Response, next: NextFunction): void => {
     const originalJson = res.json.bind(res);
@@ -108,7 +124,7 @@ const auditAction = (options: AuditActionOptions) => {
       if (res.statusCode >= 200 && res.statusCode < 400) {
         const entityId = options.resolveEntityId(req, res, body);
         if (entityId) {
-          void writeAuditLog(req, res, options, entityId, body);
+          return sendJsonAfterAudit(req, res, originalJson, body, options, entityId);
         }
       }
 
@@ -128,7 +144,7 @@ const auditDynamicAction = (options: DynamicAuditActionOptions) => {
         const actionType = options.resolveActionType(req, res, body);
         const entityId = options.resolveEntityId(req, res, body);
         if (actionType && entityId) {
-          void writeAuditLog(req, res, { ...options, actionType }, entityId, body);
+          return sendJsonAfterAudit(req, res, originalJson, body, { ...options, actionType }, entityId);
         }
       }
 

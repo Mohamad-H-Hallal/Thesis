@@ -5,18 +5,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lebanese_gis_mobile/core/network/api_client.dart';
+import 'package:lebanese_gis_mobile/core/network/network_availability_base.dart';
 import 'package:lebanese_gis_mobile/core/offline/local_models.dart';
 import 'package:lebanese_gis_mobile/core/offline/local_store.dart';
+import 'package:lebanese_gis_mobile/core/pagination/paginated_result.dart';
 import 'package:lebanese_gis_mobile/core/providers/providers.dart';
 import 'package:lebanese_gis_mobile/core/router/route_paths.dart';
 import 'package:lebanese_gis_mobile/core/sync/sync_controller.dart';
 import 'package:lebanese_gis_mobile/core/sync/sync_engine.dart';
+import 'package:lebanese_gis_mobile/features/admin/domain/admin_models.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_failure.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_models.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_repository.dart';
 import 'package:lebanese_gis_mobile/features/auth/presentation/controllers/auth_controller.dart';
 import 'package:lebanese_gis_mobile/features/auth/presentation/screens/login_screen.dart';
 import 'package:lebanese_gis_mobile/features/projects/domain/project.dart';
+import 'package:lebanese_gis_mobile/features/projects/domain/projects_repository.dart';
 
 class _TestAuthRepository implements AuthRepository {
   const _TestAuthRepository({
@@ -153,6 +157,16 @@ class _UnauthenticatedAuthController extends AuthController {
   }
 }
 
+class _AlwaysOnlineNetworkAvailability implements NetworkAvailabilityService {
+  const _AlwaysOnlineNetworkAvailability();
+
+  @override
+  Stream<bool> get onOnlineStatusChanged => const Stream<bool>.empty();
+
+  @override
+  Future<bool> isOnline() async => true;
+}
+
 class _FakeLocalStore implements LocalStore {
   @override
   Future<void> cacheProjects(List<ProjectSummary> projects) async {}
@@ -175,12 +189,49 @@ class _FakeLocalStore implements LocalStore {
   Future<LocalDraftFeature?> getDraftById(String draftId) async => null;
 
   @override
+  Future<void> discardDraft(String draftId) async {}
+
+  @override
   Future<void> upsertOfflineMapPackage(OfflineMapPackage package) async {}
 
   @override
   Future<OfflineMapPackage?> getCurrentOfflineMapPackage({
     required String ownerUserId,
   }) async => null;
+
+  @override
+  Future<void> upsertOfflineProjectPackage(
+    OfflineProjectPackage package,
+  ) async {}
+
+  @override
+  Future<OfflineProjectPackage?> getOfflineProjectPackage({
+    required String ownerUserId,
+    required String projectId,
+  }) async => null;
+
+  @override
+  Future<List<OfflineProjectPackage>> getOfflineProjectPackages({
+    required String ownerUserId,
+  }) async => const <OfflineProjectPackage>[];
+
+  @override
+  Future<void> deleteOfflineProjectPackage({
+    required String ownerUserId,
+    required String projectId,
+  }) async {}
+
+  @override
+  Future<int> countOfflineProjectPackagesUsingBaseMap({
+    required String ownerUserId,
+    required String baseMapVersion,
+  }) async => 0;
+
+  @override
+  Future<int> countUnsyncedDraftsForProject({
+    required String ownerUserId,
+    required String projectId,
+  }) async => 0;
 
   @override
   Future<List<SyncQueueItem>> getDueSyncItems(
@@ -252,6 +303,78 @@ class _FakeLocalStore implements LocalStore {
   }) async {}
 }
 
+class _EmptyProjectsRepository implements ProjectsRepository {
+  const _EmptyProjectsRepository();
+
+  @override
+  Future<List<ProjectSummary>> fetchProjects({
+    required String userId,
+    required UserRole role,
+    required ProjectViewScope scope,
+  }) async => const <ProjectSummary>[];
+
+  @override
+  Future<PaginatedResult<ProjectSummary>> fetchProjectsPage({
+    required String userId,
+    required UserRole role,
+    required ProjectViewScope scope,
+    String? query,
+    String? status,
+    String? categoryId,
+    int page = 1,
+    int limit = 20,
+  }) async => PaginatedResult<ProjectSummary>(
+    items: const <ProjectSummary>[],
+    page: page,
+    limit: limit,
+    total: 0,
+    hasMore: false,
+  );
+
+  @override
+  Future<ProjectSummary?> byId({
+    required String id,
+    required String userId,
+    required UserRole role,
+  }) async => null;
+
+  @override
+  Future<OfflineProjectPackage> fetchOfflinePackage({
+    required String projectId,
+    required String ownerUserId,
+  }) {
+    throw UnimplementedError(
+      'Offline packages are not used in auth routing tests.',
+    );
+  }
+
+  @override
+  Future<ProjectSummary> updateContributorVisibility({
+    required String projectId,
+    required bool visibleToContributors,
+  }) {
+    throw UnimplementedError(
+      'Project updates are not used in auth routing tests.',
+    );
+  }
+
+  @override
+  Future<ProjectSummary> updateViewerVisibility({
+    required String projectId,
+    required bool visibleToViewers,
+  }) {
+    throw UnimplementedError(
+      'Project updates are not used in auth routing tests.',
+    );
+  }
+
+  @override
+  Future<void> requestProjectAccess({required String projectId}) async {}
+
+  @override
+  Future<void> cancelProjectAccessRequest({required String projectId}) async {}
+}
+
 SyncController _buildSyncController() {
   final localStore = _FakeLocalStore();
   return SyncController(
@@ -260,8 +383,31 @@ SyncController _buildSyncController() {
       apiClient: ApiClient(dio: Dio()),
     ),
     localStore: localStore,
+    networkAvailability: const _AlwaysOnlineNetworkAvailability(),
   );
 }
+
+List<Override> _routedShellOverrides() => <Override>[
+  networkAvailabilityServiceProvider.overrideWithValue(
+    const _AlwaysOnlineNetworkAvailability(),
+  ),
+  projectsRepositoryProvider.overrideWithValue(
+    const _EmptyProjectsRepository(),
+  ),
+  syncControllerProvider.overrideWith((ref) => _buildSyncController()),
+  projectsProvider.overrideWith((ref) async => const <ProjectSummary>[]),
+  projectListProvider.overrideWith(
+    (ref, scope) async => const <ProjectSummary>[],
+  ),
+  supportSettingsProvider.overrideWith(
+    (ref) async => const SupportContactSettings(
+      supportEmail: null,
+      supportPhone: null,
+      officeHours: null,
+      helpText: null,
+    ),
+  ),
+];
 
 AuthSession _sessionForRole(
   UserRole role, {
@@ -292,6 +438,12 @@ Widget _buildRoutedApp(ProviderContainer container) {
   );
 }
 
+Future<void> _pumpRoutedShell(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 500));
+  await tester.pump();
+}
+
 void main() {
   testWidgets('logout clears session and routes back to login', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1440, 1200));
@@ -307,26 +459,22 @@ void main() {
             session: _sessionForRole(UserRole.viewer),
           ),
         ),
-        syncControllerProvider.overrideWith((ref) => _buildSyncController()),
-        projectsProvider.overrideWith((ref) async => const <ProjectSummary>[]),
-        projectListProvider.overrideWith(
-          (ref, scope) async => const <ProjectSummary>[],
-        ),
+        ..._routedShellOverrides(),
       ],
     );
     addTearDown(container.dispose);
 
     await tester.pumpWidget(_buildRoutedApp(container));
-    await tester.pumpAndSettle();
+    await _pumpRoutedShell(tester);
 
     final router = container.read(routerProvider);
     router.go(AppRoutes.profile);
-    await tester.pumpAndSettle();
+    await _pumpRoutedShell(tester);
 
     expect(find.text('Profile'), findsWidgets);
 
     await tester.tap(find.byIcon(Icons.logout).first);
-    await tester.pumpAndSettle();
+    await _pumpRoutedShell(tester);
     expect(find.text('Do you want to logout?'), findsOneWidget);
 
     await tester.tap(
@@ -335,7 +483,7 @@ void main() {
         matching: find.widgetWithText(FilledButton, 'Logout'),
       ),
     );
-    await tester.pumpAndSettle();
+    await _pumpRoutedShell(tester);
 
     expect(find.text('Sign in'), findsOneWidget);
     expect(
@@ -360,24 +508,20 @@ void main() {
             session: _sessionForRole(UserRole.viewer),
           ),
         ),
-        syncControllerProvider.overrideWith((ref) => _buildSyncController()),
-        projectsProvider.overrideWith((ref) async => const <ProjectSummary>[]),
-        projectListProvider.overrideWith(
-          (ref, scope) async => const <ProjectSummary>[],
-        ),
+        ..._routedShellOverrides(),
       ],
     );
     addTearDown(container.dispose);
 
     await tester.pumpWidget(_buildRoutedApp(container));
-    await tester.pumpAndSettle();
+    await _pumpRoutedShell(tester);
 
     final router = container.read(routerProvider);
     router.go(AppRoutes.profile);
-    await tester.pumpAndSettle();
+    await _pumpRoutedShell(tester);
 
     await container.read(authControllerProvider.notifier).selfDeactivate();
-    await tester.pumpAndSettle();
+    await _pumpRoutedShell(tester);
 
     expect(find.byType(LoginScreen), findsOneWidget);
     expect(
@@ -456,21 +600,17 @@ void main() {
             session: _sessionForRole(UserRole.viewer),
           ),
         ),
-        syncControllerProvider.overrideWith((ref) => _buildSyncController()),
-        projectsProvider.overrideWith((ref) async => const <ProjectSummary>[]),
-        projectListProvider.overrideWith(
-          (ref, scope) async => const <ProjectSummary>[],
-        ),
+        ..._routedShellOverrides(),
       ],
     );
     addTearDown(container.dispose);
 
     await tester.pumpWidget(_buildRoutedApp(container));
-    await tester.pumpAndSettle();
+    await _pumpRoutedShell(tester);
 
     final router = container.read(routerProvider);
     router.go(AppRoutes.reviewQueue);
-    await tester.pumpAndSettle();
+    await _pumpRoutedShell(tester);
 
     expect(find.text('Projects'), findsWidgets);
     expect(find.text('Reviews'), findsNothing);
@@ -538,17 +678,13 @@ void main() {
             ),
           ),
         ),
-        syncControllerProvider.overrideWith((ref) => _buildSyncController()),
-        projectsProvider.overrideWith((ref) async => const <ProjectSummary>[]),
-        projectListProvider.overrideWith(
-          (ref, scope) async => const <ProjectSummary>[],
-        ),
+        ..._routedShellOverrides(),
       ],
     );
     addTearDown(container.dispose);
 
     await tester.pumpWidget(_buildRoutedApp(container));
-    await tester.pumpAndSettle();
+    await _pumpRoutedShell(tester);
 
     expect(find.text('Admin Panel'), findsWidgets);
     expect(find.text('Users'), findsWidgets);

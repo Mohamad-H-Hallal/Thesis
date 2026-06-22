@@ -11,6 +11,7 @@ import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_empty_state.dart';
+import '../../../../core/widgets/app_search_action_bar.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
@@ -82,73 +83,53 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
             ),
             const SizedBox(height: AppSpacing.sm),
             AppCard(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final searchBar = SearchBar(
-                    controller: _searchController,
-                    hintText: hasFixedProject
-                        ? 'Search reviews by collector or feature ID'
-                        : 'Search reviews by project, collector, or ID',
-                    leading: const Icon(Icons.search),
-                    onChanged: (_) => setState(() {}),
-                  );
-                  final filterButton = OutlinedButton.icon(
-                    onPressed: () =>
-                        setState(() => _showFilters = !_showFilters),
-                    icon: Icon(
-                      _showFilters
-                          ? Icons.filter_alt_off_outlined
-                          : Icons.filter_alt_outlined,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AppSearchActionBar(
+                    searchBar: SearchBar(
+                      controller: _searchController,
+                      hintText: hasFixedProject
+                          ? 'Search reviews by collector or feature ID'
+                          : 'Search reviews by project, collector, or ID',
+                      leading: const Icon(Icons.search),
+                      onChanged: (_) => setState(() {}),
                     ),
-                    label: Text(_showFilters ? 'Hide filters' : 'Filter'),
-                  );
-                  final searchAndAction = constraints.maxWidth < 720
-                      ? Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            searchBar,
-                            const SizedBox(height: AppSpacing.sm),
-                            filterButton,
-                          ],
-                        )
-                      : Row(
-                          children: [
-                            Expanded(child: searchBar),
-                            const SizedBox(width: AppSpacing.sm),
-                            SizedBox(width: 180, child: filterButton),
-                          ],
-                        );
-
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      searchAndAction,
-                      if (_showFilters) ...[
-                        const SizedBox(height: AppSpacing.sm),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            ChoiceChip(
-                              label: const Text('Pending'),
-                              selected: _filter == _ReviewFilter.pending,
-                              onSelected: (_) => setState(
-                                () => _filter = _ReviewFilter.pending,
-                              ),
-                            ),
-                            ChoiceChip(
-                              label: const Text('Rejected'),
-                              selected: _filter == _ReviewFilter.rejected,
-                              onSelected: (_) => setState(
-                                () => _filter = _ReviewFilter.rejected,
-                              ),
-                            ),
-                          ],
+                    actions: [
+                      OutlinedButton.icon(
+                        onPressed: () =>
+                            setState(() => _showFilters = !_showFilters),
+                        icon: Icon(
+                          _showFilters
+                              ? Icons.filter_alt_off_outlined
+                              : Icons.filter_alt_outlined,
+                        ),
+                        label: Text(_showFilters ? 'Hide' : 'Filter'),
+                      ),
+                    ],
+                  ),
+                  if (_showFilters) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ChoiceChip(
+                          label: const Text('Pending'),
+                          selected: _filter == _ReviewFilter.pending,
+                          onSelected: (_) =>
+                              setState(() => _filter = _ReviewFilter.pending),
+                        ),
+                        ChoiceChip(
+                          label: const Text('Rejected'),
+                          selected: _filter == _ReviewFilter.rejected,
+                          onSelected: (_) =>
+                              setState(() => _filter = _ReviewFilter.rejected),
                         ),
                       ],
-                    ],
-                  );
-                },
+                    ),
+                  ],
+                ],
               ),
             ),
             const SizedBox(height: AppSpacing.md),

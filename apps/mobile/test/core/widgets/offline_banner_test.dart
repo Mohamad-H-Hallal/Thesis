@@ -3,11 +3,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lebanese_gis_mobile/core/network/api_client.dart';
+import 'package:lebanese_gis_mobile/core/network/network_availability_base.dart';
 import 'package:lebanese_gis_mobile/core/offline/local_store_web.dart';
 import 'package:lebanese_gis_mobile/core/providers/providers.dart';
 import 'package:lebanese_gis_mobile/core/sync/sync_controller.dart';
 import 'package:lebanese_gis_mobile/core/sync/sync_engine.dart';
 import 'package:lebanese_gis_mobile/core/widgets/offline_banner.dart';
+
+class _AlwaysOnlineNetworkAvailability implements NetworkAvailabilityService {
+  const _AlwaysOnlineNetworkAvailability();
+
+  @override
+  Stream<bool> get onOnlineStatusChanged => const Stream<bool>.empty();
+
+  @override
+  Future<bool> isOnline() async => true;
+}
 
 class _StaticSyncController extends SyncController {
   _StaticSyncController(SyncState initialState, {required this.store})
@@ -17,6 +28,7 @@ class _StaticSyncController extends SyncController {
           apiClient: ApiClient(dio: Dio()),
         ),
         localStore: store,
+        networkAvailability: const _AlwaysOnlineNetworkAvailability(),
       ) {
     state = initialState;
   }

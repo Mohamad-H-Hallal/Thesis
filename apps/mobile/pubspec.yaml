@@ -1,5 +1,5 @@
 name: lebanese_gis_mobile
-description: AI-Enhanced Geospatial Mobile GIS Collector UI foundation.
+description: TerraLeb mobile GIS and AI land intelligence app.
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -29,6 +29,8 @@ dependencies:
   flutter_map_cancellable_tile_provider: ^3.0.2
   web_socket_channel: ^3.0.3
   timezone: ^0.11.0
+  connectivity_plus: ^7.1.1
+  flutter_foreground_task: ^9.2.2
 
 dev_dependencies:
   flutter_test:
@@ -38,4 +40,4 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/branding/logo_placeholder.svg
+    - assets/branding/

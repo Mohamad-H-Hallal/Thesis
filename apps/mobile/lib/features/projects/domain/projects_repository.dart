@@ -1,4 +1,5 @@
 import '../../auth/domain/auth_models.dart';
+import '../../../core/offline/local_models.dart';
 import '../../../core/pagination/paginated_result.dart';
 import 'project.dart';
 
@@ -24,6 +25,11 @@ abstract class ProjectsRepository {
     required String id,
     required String userId,
     required UserRole role,
+  });
+
+  Future<OfflineProjectPackage> fetchOfflinePackage({
+    required String projectId,
+    required String ownerUserId,
   });
 
   Future<ProjectSummary> updateViewerVisibility({

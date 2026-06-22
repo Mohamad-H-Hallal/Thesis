@@ -64,6 +64,25 @@ export interface EnvConfig {
   SUPER_ADMIN_EMAIL: string;
   SUPER_ADMIN_PASSWORD: string;
   SUPER_ADMIN_FULL_NAME: string;
+  AI_PIPELINE_ENABLED: boolean;
+  AI_PIPELINE_ROOT: string;
+  AI_PIPELINE_OUTPUT_ROOT: string;
+  AI_PYTHON_BIN: string;
+  AI_PIPELINE_TIMEOUT_MS: number;
+  AI_PIPELINE_MODE:
+    | 'disabled'
+    | 'dry_run'
+    | 'local_ground_truth_export'
+    | 'regional_feature_extraction'
+    | 'regional_model_eval'
+    | 'regional_classification'
+    | 'regional_vectorization_artifacts'
+    | 'regional_full_review_artifacts';
+  AI_SERVER_URL: string;
+  APP_PUBLIC_API_URL: string;
+  AI_CALLBACK_BASE_URL: string;
+  AI_CALLBACK_SECRET: string;
+  AI_SERVER_TIMEOUT_MS: number;
 }
 
 const envSchema = Joi.object({
@@ -92,22 +111,53 @@ const envSchema = Joi.object({
 
   CORS_ORIGIN: Joi.string().allow('').default(''),
   CORS_STRICT: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(true),
-  CORS_CREDENTIALS: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(true),
+  CORS_CREDENTIALS: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(true),
   API_VERSION_PREFIX: Joi.string().default('/api/v1'),
-  ENABLE_LEGACY_API_PREFIX: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(true),
-  RATE_LIMIT_WINDOW_MS: Joi.number().integer().min(1000).default(15 * 60 * 1000),
+  ENABLE_LEGACY_API_PREFIX: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(true),
+  RATE_LIMIT_WINDOW_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(15 * 60 * 1000),
   RATE_LIMIT_MAX_REQUESTS: Joi.number().integer().min(1).default(100),
   RATE_LIMIT_AUTH_MAX_REQUESTS: Joi.number().integer().min(1).default(20),
   RATE_LIMIT_EXPORT_MAX_REQUESTS: Joi.number().integer().min(1).default(40),
 
-  LOG_LEVEL: Joi.string().valid('error', 'warn', 'info', 'http', 'verbose', 'debug', 'silly').default('info'),
-  AUDIT_LOG_ENABLED: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(true),
-  METRICS_ENABLED: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(false),
+  LOG_LEVEL: Joi.string()
+    .valid('error', 'warn', 'info', 'http', 'verbose', 'debug', 'silly')
+    .default('info'),
+  AUDIT_LOG_ENABLED: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(true),
+  METRICS_ENABLED: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(false),
   METRICS_TOKEN: Joi.string().allow('').default(''),
 
   UPLOAD_DIR: Joi.string().default('./uploads'),
-  PHOTO_MAX_SIZE: Joi.number().integer().min(1).default(5 * 1024 * 1024),
-  IMPORT_MAX_SIZE: Joi.number().integer().min(1).default(25 * 1024 * 1024),
+  PHOTO_MAX_SIZE: Joi.number()
+    .integer()
+    .min(1)
+    .default(5 * 1024 * 1024),
+  IMPORT_MAX_SIZE: Joi.number()
+    .integer()
+    .min(1)
+    .default(25 * 1024 * 1024),
   IMPORT_MAX_FEATURES: Joi.number().integer().min(1).max(50000).default(20000),
 
   EXPORT_DIR: Joi.string().default('./exports'),
@@ -152,14 +202,45 @@ const envSchema = Joi.object({
   SMTP_SECURE: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(false),
   SMTP_USER: Joi.string().allow('').default(''),
   SMTP_PASS: Joi.string().allow('').default(''),
-  SMTP_FROM_EMAIL: Joi.string().email({ tlds: { allow: false } }).allow('').default(''),
+  SMTP_FROM_EMAIL: Joi.string()
+    .email({ tlds: { allow: false } })
+    .allow('')
+    .default(''),
   SMTP_FROM_NAME: Joi.string().allow('').default('Lebanese GIS Collector'),
 
   SUPER_ADMIN_EMAIL: Joi.string().allow('').default(''),
   SUPER_ADMIN_PASSWORD: Joi.string().allow('').default(''),
   SUPER_ADMIN_FULL_NAME: Joi.string().allow('').default(''),
-})
-  .unknown(true);
+  AI_PIPELINE_ENABLED: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(false),
+  AI_PIPELINE_ROOT: Joi.string().allow('').default(''),
+  AI_PIPELINE_OUTPUT_ROOT: Joi.string().allow('').default(''),
+  AI_PYTHON_BIN: Joi.string().allow('').default('python'),
+  AI_PIPELINE_TIMEOUT_MS: Joi.number().integer().min(1000).max(600000).default(60000),
+  AI_PIPELINE_MODE: Joi.string()
+    .valid(
+      'disabled',
+      'dry_run',
+      'local_ground_truth_export',
+      'regional_feature_extraction',
+      'regional_model_eval',
+      'regional_classification',
+      'regional_vectorization_artifacts',
+      'regional_full_review_artifacts',
+    )
+    .default('disabled'),
+  AI_SERVER_URL: Joi.string().allow('').default(''),
+  APP_PUBLIC_API_URL: Joi.string().allow('').default('http://localhost:3000'),
+  AI_CALLBACK_BASE_URL: Joi.string().allow('').default(''),
+  AI_CALLBACK_SECRET: Joi.string()
+    .allow('')
+    .default('dev-ai-callback-secret-change-me'),
+  AI_SERVER_TIMEOUT_MS: Joi.number().integer().min(1000).max(120000).default(30000),
+}).unknown(true);
 
 const validateEnv = (): EnvConfig => {
   const { error, value } = envSchema.validate(process.env, { abortEarly: false });
@@ -188,13 +269,13 @@ const validateEnv = (): EnvConfig => {
 
   if (hasSuperAdminConfig && !hasCompleteSuperAdminConfig) {
     throw new Error(
-      'Environment validation failed: SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD, and SUPER_ADMIN_FULL_NAME must be set together'
+      'Environment validation failed: SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD, and SUPER_ADMIN_FULL_NAME must be set together',
     );
   }
 
   if (value.NODE_ENV === 'production' && !hasCompleteSuperAdminConfig) {
     throw new Error(
-      'Environment validation failed: production requires SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD, and SUPER_ADMIN_FULL_NAME'
+      'Environment validation failed: production requires SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD, and SUPER_ADMIN_FULL_NAME',
     );
   }
 
@@ -202,27 +283,21 @@ const validateEnv = (): EnvConfig => {
     (item: string) => item.trim().length > 0,
   );
   const hasExplicitSmtpPort =
-    typeof process.env.SMTP_PORT === 'string' &&
-    process.env.SMTP_PORT.trim().length > 0;
+    typeof process.env.SMTP_PORT === 'string' && process.env.SMTP_PORT.trim().length > 0;
 
-  if (
-    value.MAIL_TRANSPORT === 'smtp' &&
-    (!hasSmtpConfig || !hasExplicitSmtpPort)
-  ) {
+  if (value.MAIL_TRANSPORT === 'smtp' && (!hasSmtpConfig || !hasExplicitSmtpPort)) {
     throw new Error(
-      'Environment validation failed: MAIL_TRANSPORT=smtp requires SMTP_HOST, SMTP_PORT, and SMTP_FROM_EMAIL'
+      'Environment validation failed: MAIL_TRANSPORT=smtp requires SMTP_HOST, SMTP_PORT, and SMTP_FROM_EMAIL',
     );
   }
 
   if (value.NODE_ENV === 'production' && value.MAIL_TRANSPORT !== 'smtp') {
-    throw new Error(
-      'Environment validation failed: production requires MAIL_TRANSPORT=smtp'
-    );
+    throw new Error('Environment validation failed: production requires MAIL_TRANSPORT=smtp');
   }
 
   if (value.NODE_ENV === 'production' && !hasSmtpConfig) {
     throw new Error(
-      'Environment validation failed: production requires SMTP_HOST and SMTP_FROM_EMAIL'
+      'Environment validation failed: production requires SMTP_HOST and SMTP_FROM_EMAIL',
     );
   }
 
@@ -235,7 +310,7 @@ const validateEnv = (): EnvConfig => {
 
     if (!hasInlineFirebaseConfig) {
       throw new Error(
-        'Environment validation failed: PUSH_NOTIFICATIONS_ENABLED=true requires Firebase service account configuration'
+        'Environment validation failed: PUSH_NOTIFICATIONS_ENABLED=true requires Firebase service account configuration',
       );
     }
   }
@@ -244,4 +319,3 @@ const validateEnv = (): EnvConfig => {
 };
 
 export { validateEnv };
-

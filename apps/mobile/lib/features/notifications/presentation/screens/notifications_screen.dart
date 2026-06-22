@@ -162,8 +162,8 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                 message: _filter == _NotificationFilter.unread
                     ? 'You have no unread updates right now.'
                     : _filter == _NotificationFilter.read
-                  ? 'You have no read notifications right now.'
-                  : 'Contributor requests, project requests, review outcomes, and export updates will appear here.',
+                    ? 'You have no read notifications right now.'
+                    : 'Contributor requests, project requests, review outcomes, and export updates will appear here.',
               )
             else
               LayoutBuilder(
@@ -174,9 +174,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                       children: List<Widget>.generate(filtered.length, (index) {
                         final item = filtered[index];
                         return Padding(
-                          padding: const EdgeInsets.only(
-                            bottom: AppSpacing.sm,
-                          ),
+                          padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                           child: AnimatedReveal(
                             delay: Duration(milliseconds: index * 45),
                             child: _NotificationCard(item: item),
@@ -187,12 +185,12 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                   }
 
                   const gap = AppSpacing.sm;
-                  final columns = (constraints.maxWidth / 380)
-                      .floor()
-                      .clamp(2, 3);
+                  final columns = (constraints.maxWidth / 380).floor().clamp(
+                    2,
+                    3,
+                  );
                   final itemWidth =
-                      (constraints.maxWidth - (gap * (columns - 1))) /
-                      columns;
+                      (constraints.maxWidth - (gap * (columns - 1))) / columns;
                   return Wrap(
                     spacing: gap,
                     runSpacing: gap,
@@ -240,6 +238,16 @@ class _NotificationCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final actionButton = _NotificationActionButton(
+      item: item,
+      onPressed: () => item.isRead
+          ? ref
+                .read(notificationsControllerProvider.notifier)
+                .markAsUnread(item.id)
+          : ref
+                .read(notificationsControllerProvider.notifier)
+                .markAsRead(item.id),
+    );
     return AppCard(
       onTap: item.isRead
           ? null
@@ -283,32 +291,71 @@ class _NotificationCard extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              Chip(label: Text(item.isRead ? 'Read' : 'Unread')),
-              Chip(label: Text(item.timestamp)),
-              if (!item.isRead)
-                OutlinedButton.icon(
-                  onPressed: () => ref
-                      .read(notificationsControllerProvider.notifier)
-                      .markAsRead(item.id),
-                  icon: const Icon(Icons.done_outlined, size: 18),
-                  label: const Text('Mark read'),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final statusText = Text(
+                item.isRead ? 'Read' : 'Unread',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
-              if (item.isRead)
-                OutlinedButton.icon(
-                  onPressed: () => ref
-                      .read(notificationsControllerProvider.notifier)
-                      .markAsUnread(item.id),
-                  icon: const Icon(Icons.mark_email_unread_outlined, size: 18),
-                  label: const Text('Mark unread'),
+              );
+              final timeText = Text(
+                item.timestamp,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
-            ],
+              );
+              if (constraints.maxWidth < 340) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        SizedBox(width: 82, child: statusText),
+                        Expanded(child: timeText),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    SizedBox(height: 48, child: actionButton),
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  SizedBox(width: 82, child: statusText),
+                  Expanded(child: timeText),
+                  const SizedBox(width: AppSpacing.sm),
+                  SizedBox(width: 150, height: 48, child: actionButton),
+                ],
+              );
+            },
           ),
         ],
       ),
+    );
+  }
+}
+
+class _NotificationActionButton extends StatelessWidget {
+  const _NotificationActionButton({
+    required this.item,
+    required this.onPressed,
+  });
+
+  final AppNotification item;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(
+        item.isRead ? Icons.mark_email_unread_outlined : Icons.done_outlined,
+        size: 18,
+      ),
+      label: Text(item.isRead ? 'Mark unread' : 'Mark read'),
     );
   }
 }

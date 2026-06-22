@@ -430,6 +430,389 @@ const importValidation = {
   ] as ValidationChain[],
 };
 
+const aiScopeTypes = ['project', 'governorate', 'district', 'city', 'custom_polygon', 'national'];
+const aiPredictionValidationTaskStatuses = [
+  'open',
+  'assigned',
+  'in_progress',
+  'submitted',
+  'accepted',
+  'rejected',
+  'cancelled',
+];
+const aiPredictionValidationResults = ['correct', 'wrong_class', 'not_target_class', 'unsure'];
+const aiPredictionFeatureValidationResults = ['correct', 'incorrect', 'unsure', 'cannot_verify'];
+const aiPreferredModels = [
+  'auto',
+  'random_forest',
+  'rf',
+  'svm',
+  'svm_rbf',
+  'gradient_boosting',
+  'gradient_boost',
+  'gradient_tree_boost',
+  'gb',
+];
+
+const aiValidation = {
+  readiness: [
+    queryParam('label_field')
+      .optional()
+      .trim()
+      .isLength({ min: 1, max: 120 })
+      .withMessage('label_field must be between 1 and 120 characters'),
+    queryParam('scope_type').optional().isIn(aiScopeTypes).withMessage('scope_type is invalid'),
+    queryParam('min_samples_per_class')
+      .optional()
+      .isInt({ min: 1, max: 10000 })
+      .withMessage('min_samples_per_class must be a positive integer'),
+  ] as ValidationChain[],
+  settings: [
+    body('is_enabled').optional().isBoolean().withMessage('is_enabled must be a boolean'),
+    body('label_field')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ min: 1, max: 120 })
+      .withMessage('label_field must be between 1 and 120 characters'),
+    body('scope_type').optional().isIn(aiScopeTypes).withMessage('scope_type is invalid'),
+    body('scope_geometry')
+      .optional({ nullable: true })
+      .custom((value) => {
+        if (value === null) {
+          return true;
+        }
+        return (
+          value &&
+          typeof value === 'object' &&
+          ['Polygon', 'MultiPolygon', 'GeometryCollection'].includes(value.type) &&
+          Array.isArray(value.coordinates ?? value.geometries)
+        );
+      })
+      .withMessage('scope_geometry must be a GeoJSON polygon geometry when provided'),
+    body('min_samples_per_class')
+      .optional()
+      .isInt({ min: 1, max: 10000 })
+      .withMessage('min_samples_per_class must be a positive integer'),
+    body('model_preferences')
+      .optional()
+      .isObject()
+      .withMessage('model_preferences must be an object'),
+    body('model_preferences.preferred_model')
+      .optional()
+      .custom((value) => {
+        const model = String(value ?? '')
+          .trim()
+          .toLowerCase()
+          .replace(/[-\s]+/g, '_');
+        return model.length === 0 || aiPreferredModels.includes(model);
+      })
+      .withMessage('preferred_model must be Auto, Random Forest, SVM, or Gradient Boosting'),
+  ] as ValidationChain[],
+  createRun: [
+    body('status')
+      .optional()
+      .isIn(['draft', 'queued', 'created', 'starting', 'running'])
+      .withMessage('status must be draft, queued, created, starting, or running'),
+    body('label_field')
+      .optional()
+      .trim()
+      .isLength({ min: 1, max: 120 })
+      .withMessage('label_field must be between 1 and 120 characters'),
+    body('scope_type').optional().isIn(aiScopeTypes).withMessage('scope_type is invalid'),
+    body('scope_geometry')
+      .optional({ nullable: true })
+      .custom((value) => {
+        if (value === null) {
+          return true;
+        }
+        return (
+          value &&
+          typeof value === 'object' &&
+          ['Polygon', 'MultiPolygon', 'GeometryCollection'].includes(value.type) &&
+          Array.isArray(value.coordinates ?? value.geometries)
+        );
+      })
+      .withMessage('scope_geometry must be a GeoJSON polygon geometry when provided'),
+    body('region_preset')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 120 })
+      .withMessage('region_preset must be 120 characters or fewer'),
+    body('execution_mode')
+      .optional()
+      .isIn([
+        'mock',
+        'dry_run',
+        'local_ground_truth_export',
+        'regional_feature_extraction',
+        'regional_model_eval',
+        'regional_classification',
+        'regional_vectorization_artifacts',
+        'regional_full_review_artifacts',
+      ])
+      .withMessage('execution_mode is invalid'),
+    body('min_samples_per_class')
+      .optional()
+      .isInt({ min: 1, max: 10000 })
+      .withMessage('min_samples_per_class must be a positive integer'),
+  ] as ValidationChain[],
+  listRuns: [
+    queryParam('status')
+      .optional()
+      .isIn([
+        'draft',
+        'created',
+        'queued',
+        'starting',
+        'running',
+        'extracting_features',
+        'training',
+        'evaluating',
+        'classifying',
+        'ready_for_review',
+        'completed',
+        'cancelling',
+        'paused',
+        'published',
+        'failed',
+        'cancelled',
+      ])
+      .withMessage('status is invalid'),
+  ] as ValidationChain[],
+  reviewRun: [
+    body('action')
+      .isIn(['approve_for_publication', 'reject', 'request_more_data', 'keep_draft'])
+      .withMessage(
+        'action must be approve_for_publication, reject, request_more_data, or keep_draft',
+      ),
+    body()
+      .custom((value) => {
+        const action = value?.action;
+        if (action === 'reject' || action === 'request_more_data') {
+          return typeof value?.reason === 'string' && value.reason.trim().length > 0;
+        }
+        return true;
+      })
+      .withMessage('reason is required for reject and request_more_data actions'),
+    body('reason')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 4000 })
+      .withMessage('reason must be 4000 characters or fewer')
+      .withMessage('reason must be 4000 characters or fewer'),
+  ] as ValidationChain[],
+  listPredictionValidationTasks: [
+    queryParam('status')
+      .optional()
+      .isIn(aiPredictionValidationTaskStatuses)
+      .withMessage('status is invalid'),
+    queryParam('assigned_to').optional().isUUID().withMessage('assigned_to must be a valid UUID'),
+    queryParam('ai_run_id').optional().isUUID().withMessage('ai_run_id must be a valid UUID'),
+  ] as ValidationChain[],
+  generatePredictionValidationTasks: [
+    body('ai_run_id')
+      .optional({ nullable: true })
+      .isUUID()
+      .withMessage('ai_run_id must be a valid UUID'),
+    body('ai_output_layer_id')
+      .optional({ nullable: true })
+      .isUUID()
+      .withMessage('ai_output_layer_id must be a valid UUID'),
+    body('ai_prediction_feature_id')
+      .optional({ nullable: true })
+      .isUUID()
+      .withMessage('ai_prediction_feature_id must be a valid UUID'),
+    body('prediction_feature_id')
+      .optional({ nullable: true })
+      .isUUID()
+      .withMessage('prediction_feature_id must be a valid UUID'),
+    body()
+      .custom((value) => !(value?.ai_prediction_feature_id && value?.prediction_feature_id))
+      .withMessage('Use only one prediction feature id field'),
+    body('confidence_threshold')
+      .optional({ nullable: true })
+      .isFloat({ min: 0, max: 1 })
+      .withMessage('confidence_threshold must be between 0 and 1'),
+    body('limit')
+      .optional({ nullable: true })
+      .isInt({ min: 1, max: 10000 })
+      .withMessage('limit must be between 1 and 10000'),
+    body('priority')
+      .optional({ nullable: true })
+      .isInt({ min: 0, max: 1000 })
+      .withMessage('priority must be between 0 and 1000'),
+  ] as ValidationChain[],
+  assignPredictionValidationTask: [
+    body('assigned_to').isUUID().withMessage('assigned_to must be a valid UUID'),
+  ] as ValidationChain[],
+  updatePredictionValidationTaskStatus: [
+    body('status').isIn(aiPredictionValidationTaskStatuses).withMessage('status is invalid'),
+  ] as ValidationChain[],
+  submitPredictionValidation: [
+    body('result')
+      .isIn(aiPredictionValidationResults)
+      .withMessage('result must be correct, wrong_class, not_target_class, or unsure'),
+    body('note')
+      .trim()
+      .notEmpty()
+      .withMessage('note is required')
+      .isLength({ max: 4000 })
+      .withMessage('note must be 4000 characters or fewer'),
+    body('corrected_class')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ min: 1, max: 200 })
+      .withMessage('corrected_class must be between 1 and 200 characters'),
+    body()
+      .custom((value) => {
+        if (value?.result === 'wrong_class') {
+          return (
+            typeof value?.corrected_class === 'string' && value.corrected_class.trim().length > 0
+          );
+        }
+        return true;
+      })
+      .withMessage('corrected_class is required when result is wrong_class'),
+    body()
+      .custom((value) => {
+        if (value?.result === 'not_target_class') {
+          return (
+            value?.corrected_class === undefined ||
+            value?.corrected_class === null ||
+            String(value.corrected_class).trim().length === 0
+          );
+        }
+        return true;
+      })
+      .withMessage('corrected_class must be empty when result is not_target_class'),
+    body('evidence')
+      .optional({ nullable: true })
+      .isObject()
+      .withMessage('evidence must be an object'),
+    body('linked_feature_id')
+      .optional({ nullable: true })
+      .isUUID()
+      .withMessage('linked_feature_id must be a valid UUID'),
+  ] as ValidationChain[],
+  reviewPredictionValidationTask: [
+    body('decision')
+      .isIn(['accepted', 'rejected'])
+      .withMessage('decision must be accepted or rejected'),
+    body('reason')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 4000 })
+      .withMessage('reason must be 4000 characters or fewer'),
+    body('submission_id')
+      .optional({ nullable: true })
+      .isUUID()
+      .withMessage('submission_id must be a valid UUID'),
+    body()
+      .custom((value) => {
+        if (value?.decision === 'rejected') {
+          return typeof value?.reason === 'string' && value.reason.trim().length > 0;
+        }
+        return true;
+      })
+      .withMessage('reason is required when decision is rejected'),
+  ] as ValidationChain[],
+  submitPredictionFeatureValidation: [
+    body('validation_result')
+      .optional({ nullable: true })
+      .isIn(aiPredictionFeatureValidationResults)
+      .withMessage('validation_result must be correct, incorrect, unsure, or cannot_verify'),
+    body('result')
+      .optional({ nullable: true })
+      .isIn(aiPredictionFeatureValidationResults)
+      .withMessage('result must be correct, incorrect, unsure, or cannot_verify'),
+    body()
+      .custom((value) => Boolean(value?.validation_result || value?.result))
+      .withMessage('validation_result is required'),
+    body('note')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 4000 })
+      .withMessage('note must be 4000 characters or fewer'),
+    body('corrected_class')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ min: 1, max: 200 })
+      .withMessage('corrected_class must be between 1 and 200 characters'),
+    body()
+      .custom((value) => {
+        const result = value?.validation_result ?? value?.result;
+        if (result === 'incorrect') {
+          return (
+            typeof value?.corrected_class === 'string' && value.corrected_class.trim().length > 0
+          );
+        }
+        return true;
+      })
+      .withMessage('corrected_class is required when validation_result is incorrect'),
+    body()
+      .custom((value) => {
+        const result = value?.validation_result ?? value?.result;
+        if (result !== 'incorrect') {
+          return (
+            value?.corrected_class === undefined ||
+            value?.corrected_class === null ||
+            String(value.corrected_class).trim().length === 0
+          );
+        }
+        return true;
+      })
+      .withMessage('corrected_class is only allowed when validation_result is incorrect'),
+    body('photo_media_ids')
+      .optional({ nullable: true })
+      .isArray()
+      .withMessage('photo_media_ids must be an array'),
+    body('photo_media_ids.*')
+      .optional()
+      .isString()
+      .withMessage('photo_media_ids entries must be strings'),
+    body('gps_location')
+      .optional({ nullable: true })
+      .isObject()
+      .withMessage('gps_location must be an object'),
+    body('gps_accuracy_m')
+      .optional({ nullable: true })
+      .isFloat({ min: 0 })
+      .withMessage('gps_accuracy_m must be zero or greater'),
+    body('metadata')
+      .optional({ nullable: true })
+      .isObject()
+      .withMessage('metadata must be an object'),
+  ] as ValidationChain[],
+  reviewPredictionFeature: [
+    body('approval_status')
+      .optional({ nullable: true })
+      .isIn(['approved', 'rejected', 'needs_more_validation'])
+      .withMessage('approval_status must be approved, rejected, or needs_more_validation'),
+    body('status')
+      .optional({ nullable: true })
+      .isIn(['approved', 'rejected', 'needs_more_validation'])
+      .withMessage('status must be approved, rejected, or needs_more_validation'),
+    body()
+      .custom((value) => Boolean(value?.approval_status || value?.status))
+      .withMessage('approval_status is required'),
+    body('admin_note')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 4000 })
+      .withMessage('admin_note must be 4000 characters or fewer'),
+    body('note')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 4000 })
+      .withMessage('note must be 4000 characters or fewer'),
+    body('approved_class')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ min: 1, max: 200 })
+      .withMessage('approved_class must be between 1 and 200 characters'),
+  ] as ValidationChain[],
+};
+
 // Export validation rules
 const exportValidation = {
   create: [
@@ -452,6 +835,8 @@ const exportValidation = {
       .isIn(['Point', 'LineString', 'Polygon'])
       .withMessage('geometry_types contains invalid geometry type'),
     body('include_photos').optional().isBoolean(),
+    body('export_ai_predictions').optional().isBoolean(),
+    body('category_id').optional({ values: 'falsy' }).isUUID(),
     body('feature_type')
       .optional({ values: 'falsy' })
       .trim()
@@ -519,6 +904,11 @@ const tileFeatureQueryValidation: ValidationChain[] = [
     .optional()
     .isIn(['draft', 'pending_review', 'approved', 'rejected'])
     .withMessage('Invalid status value'),
+  queryParam('feature_type')
+    .optional()
+    .trim()
+    .isLength({ max: 100 })
+    .withMessage('feature_type must be 100 characters or fewer'),
 ];
 
 const bboxValidation: ValidationChain[] = [
@@ -574,6 +964,7 @@ export {
   settingsValidation,
   notificationValidation,
   importValidation,
+  aiValidation,
   exportValidation,
   paginationValidation,
   bboxPaginationValidation,

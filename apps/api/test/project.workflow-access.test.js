@@ -366,32 +366,26 @@ describe('Project workflow access and feature visibility', () => {
     expect(contributorGlobalResponse.body.data.map((item) => item.id)).toEqual(
       expect.arrayContaining([approvedId, pendingId, rejectedOwnId]),
     );
-    expect(
-      contributorGlobalResponse.body.data.map((item) => item.id),
-    ).not.toEqual(
+    expect(contributorGlobalResponse.body.data.map((item) => item.id)).not.toEqual(
       expect.arrayContaining([pendingOtherId, rejectedOtherId, draftOtherId]),
     );
     expect(contributorBboxResponse.status).toBe(200);
-    expect(
-      contributorBboxResponse.body.data.features.map((item) => item.id),
-    ).toEqual(expect.arrayContaining([approvedId, pendingId, rejectedOwnId]));
-    expect(
-      contributorBboxResponse.body.data.features.map((item) => item.id),
-    ).not.toEqual(
+    expect(contributorBboxResponse.body.data.features.map((item) => item.id)).toEqual(
+      expect.arrayContaining([approvedId, pendingId, rejectedOwnId]),
+    );
+    expect(contributorBboxResponse.body.data.features.map((item) => item.id)).not.toEqual(
       expect.arrayContaining([pendingOtherId, rejectedOtherId, draftOtherId]),
     );
     expect(unassignedContributorFeatures.status).toBe(200);
-    expect(unassignedContributorFeatures.body.data.map((item) => item.id)).toEqual([
+    expect(unassignedContributorFeatures.body.data.map((item) => item.id)).toEqual([approvedId]);
+    expect(unassignedContributorGlobalFeatures.status).toBe(200);
+    expect(unassignedContributorGlobalFeatures.body.data.map((item) => item.id)).toEqual([
       approvedId,
     ]);
-    expect(unassignedContributorGlobalFeatures.status).toBe(200);
-    expect(
-      unassignedContributorGlobalFeatures.body.data.map((item) => item.id),
-    ).toEqual([approvedId]);
     expect(unassignedContributorBbox.status).toBe(200);
-    expect(
-      unassignedContributorBbox.body.data.features.map((item) => item.id),
-    ).toEqual([approvedId]);
+    expect(unassignedContributorBbox.body.data.features.map((item) => item.id)).toEqual([
+      approvedId,
+    ]);
     expect(contributorApprovedFeature.status).toBe(200);
     expect(contributorOwnRejectedFeature.status).toBe(200);
     expect(contributorOtherPendingFeature.status).toBe(403);
@@ -399,5 +393,218 @@ describe('Project workflow access and feature visibility', () => {
 
     expect(adminResponse.status).toBe(200);
     expect(adminResponse.body.data).toHaveLength(6);
+  });
+
+  test('offline project packages are available only to assigned contributors', async () => {
+    const admin = await createAdminUser({
+      fullName: 'Offline Admin',
+      emailPrefix: 'offline-package-admin',
+    });
+    const viewer = await registerUser({
+      role: 'viewer',
+      fullName: 'Offline Viewer',
+      emailPrefix: 'offline-package-viewer',
+    });
+    const assignedContributor = await registerUser({
+      role: 'contributor',
+      fullName: 'Assigned Offline Contributor',
+      emailPrefix: 'offline-package-assigned',
+    });
+    const publicContributor = await registerUser({
+      role: 'contributor',
+      fullName: 'Public Offline Contributor',
+      emailPrefix: 'offline-package-public',
+    });
+
+    await approveContributorRequest({
+      token: admin.token,
+      userId: assignedContributor.user.id,
+    });
+    await approveContributorRequest({
+      token: admin.token,
+      userId: publicContributor.user.id,
+    });
+
+    const category = await createCategory({
+      token: admin.token,
+      name: `Offline Package Category ${Date.now()}`,
+    });
+    const project = await createProject({
+      token: admin.token,
+      categoryId: category.id,
+      name: `Offline Package Project ${Date.now()}`,
+      visibleToViewers: true,
+      visibleToContributors: true,
+    });
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'active',
+        visible_to_viewers: true,
+        visible_to_contributors: true,
+      })
+      .expect(200);
+
+    const assignment = await createAssignment({
+      token: admin.token,
+      projectId: project.id,
+      userId: assignedContributor.user.id,
+      role: 'contributor',
+    });
+    await updateAssignmentStatus({
+      token: admin.token,
+      assignmentId: assignment.id,
+      status: 'approved',
+    });
+
+    const viewerLogin = await loginUser({
+      email: viewer.email,
+      password: viewer.password,
+    });
+    const assignedLogin = await loginUser({
+      email: assignedContributor.email,
+      password: assignedContributor.password,
+    });
+    const publicLogin = await loginUser({
+      email: publicContributor.email,
+      password: publicContributor.password,
+    });
+
+    const adminResponse = await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/offline-package`)
+      .set(authHeader(admin.token));
+    const viewerResponse = await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/offline-package`)
+      .set(authHeader(viewerLogin.token));
+    const publicContributorResponse = await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/offline-package`)
+      .set(authHeader(publicLogin.token));
+    const assignedContributorResponse = await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/offline-package`)
+      .set(authHeader(assignedLogin.token));
+
+    expect(adminResponse.status).toBe(403);
+    expect(viewerResponse.status).toBe(403);
+    expect(publicContributorResponse.status).toBe(403);
+    expect(publicContributorResponse.body.message).toBe(
+      'Offline project downloads are available only to assigned contributors.',
+    );
+    expect(assignedContributorResponse.status).toBe(200);
+    expect(assignedContributorResponse.body.data.project.id).toBe(project.id);
+    expect(assignedContributorResponse.body.data.base_map.version).toBeTruthy();
+  });
+
+  test('offline sync rejects stale contributor assignments before writes', async () => {
+    const admin = await createAdminUser({
+      fullName: 'Offline Sync Admin',
+      emailPrefix: 'offline-sync-admin',
+    });
+    const contributor = await registerUser({
+      role: 'contributor',
+      fullName: 'Offline Sync Contributor',
+      emailPrefix: 'offline-sync-contributor',
+    });
+    await approveContributorRequest({
+      token: admin.token,
+      userId: contributor.user.id,
+    });
+
+    const category = await createCategory({
+      token: admin.token,
+      name: `Offline Sync Category ${Date.now()}`,
+    });
+    const project = await createProject({
+      token: admin.token,
+      categoryId: category.id,
+      name: `Offline Sync Project ${Date.now()}`,
+      visibleToContributors: true,
+    });
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}`)
+      .set(authHeader(admin.token))
+      .send({ status: 'active', visible_to_contributors: true })
+      .expect(200);
+
+    const assignment = await createAssignment({
+      token: admin.token,
+      projectId: project.id,
+      userId: contributor.user.id,
+      role: 'contributor',
+    });
+    await updateAssignmentStatus({
+      token: admin.token,
+      assignmentId: assignment.id,
+      status: 'approved',
+    });
+
+    const contributorLogin = await loginUser({
+      email: contributor.email,
+      password: contributor.password,
+    });
+
+    const acceptedOfflineFeatureId = '77777777-7777-4777-8777-777777777777';
+    const rejectedOfflineFeatureId = '88888888-8888-4888-8888-888888888888';
+    const offlinePayload = {
+      project_id: project.id,
+      geom: { type: 'Point', coordinates: [35.5, 33.9] },
+      attributes: { feature_type: 'olive', condition: 'good' },
+      collected_offline: true,
+    };
+
+    const acceptedCreate = await request(app)
+      .post(`${API_PREFIX}/features`)
+      .set(authHeader(contributorLogin.token))
+      .send({ ...offlinePayload, id: acceptedOfflineFeatureId });
+    expect(acceptedCreate.status).toBe(201);
+
+    await pool.query(
+      `DELETE FROM project_assignment
+       WHERE project_id = $1 AND user_id = $2`,
+      [project.id, contributor.user.id],
+    );
+
+    const rejectedCreate = await request(app)
+      .post(`${API_PREFIX}/features`)
+      .set(authHeader(contributorLogin.token))
+      .send({ ...offlinePayload, id: rejectedOfflineFeatureId });
+    const rejectedUpdate = await request(app)
+      .put(`${API_PREFIX}/features/${acceptedOfflineFeatureId}`)
+      .set(authHeader(contributorLogin.token))
+      .send({
+        geom: { type: 'Point', coordinates: [35.6, 33.95] },
+        attributes: { feature_type: 'olive', condition: 'fair' },
+      });
+    const rejectedSubmit = await request(app)
+      .post(`${API_PREFIX}/features/${acceptedOfflineFeatureId}/submit`)
+      .set(authHeader(contributorLogin.token));
+
+    expect(rejectedCreate.status).toBe(403);
+    expect(rejectedUpdate.status).toBe(403);
+    expect(rejectedSubmit.status).toBe(403);
+    expect(rejectedCreate.body.message).toBe(
+      'You are no longer assigned to this project. Offline draft was discarded.',
+    );
+    expect(rejectedUpdate.body.message).toBe(
+      'You are no longer assigned to this project. Offline draft was discarded.',
+    );
+    expect(rejectedSubmit.body.message).toBe(
+      'You are no longer assigned to this project. Offline draft was discarded.',
+    );
+
+    const rejectedInsertCheck = await pool.query('SELECT id FROM spatial_feature WHERE id = $1', [
+      rejectedOfflineFeatureId,
+    ]);
+    expect(rejectedInsertCheck.rows).toHaveLength(0);
+
+    const acceptedFeatureCheck = await pool.query(
+      'SELECT status, attributes FROM spatial_feature WHERE id = $1',
+      [acceptedOfflineFeatureId],
+    );
+    expect(acceptedFeatureCheck.rows[0].status).toBe('draft');
+    expect(acceptedFeatureCheck.rows[0].attributes).toMatchObject({
+      feature_type: 'olive',
+      condition: 'good',
+    });
   });
 });

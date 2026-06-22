@@ -72,12 +72,16 @@ void main() {
       'fetchProjectFeaturesViewport sends camera zoom to tile API',
       () async {
         final requestedZooms = <Object?>[];
+        final requestedFeatureTypes = <Object?>[];
         final dio = Dio(BaseOptions(baseUrl: 'http://localhost:3000'));
         dio.interceptors.add(
           InterceptorsWrapper(
             onRequest: (options, handler) {
               if (options.path.contains('/features/tiles/')) {
                 requestedZooms.add(options.queryParameters['zoom']);
+                requestedFeatureTypes.add(
+                  options.queryParameters['feature_type'],
+                );
                 handler.resolve(
                   Response<Map<String, dynamic>>(
                     requestOptions: options,
@@ -120,10 +124,13 @@ void main() {
           maxLon: 36.645,
           maxLat: 34.695,
           zoom: 10.25,
+          featureType: 'Vineyards',
         );
 
         expect(requestedZooms, isNotEmpty);
         expect(requestedZooms.toSet(), <String>{'10.25'});
+        expect(requestedFeatureTypes, isNotEmpty);
+        expect(requestedFeatureTypes.toSet(), <String>{'Vineyards'});
       },
     );
   });

@@ -42,7 +42,9 @@ interface FormSchemaField {
 
 type ProjectReadScope = 'admin' | 'project_admin' | 'assigned' | 'public' | 'none';
 
-const publicVisibilityColumnForRole = (role: string): 'visible_to_viewers' | 'visible_to_contributors' =>
+const publicVisibilityColumnForRole = (
+  role: string,
+): 'visible_to_viewers' | 'visible_to_contributors' =>
   role === 'viewer' ? 'visible_to_viewers' : 'visible_to_contributors';
 
 const MAX_PAGE_LIMIT = 500;
@@ -94,8 +96,7 @@ const getBboxPagination = (pageRaw: unknown, limitRaw: unknown): Pagination => {
   const page = Math.max(1, Number.parseInt(String(pageRaw ?? '1'), 10) || 1);
   const requestedLimit = Math.max(
     1,
-    Number.parseInt(String(limitRaw ?? String(MAX_BBOX_PAGE_LIMIT)), 10) ||
-        MAX_BBOX_PAGE_LIMIT,
+    Number.parseInt(String(limitRaw ?? String(MAX_BBOX_PAGE_LIMIT)), 10) || MAX_BBOX_PAGE_LIMIT,
   );
   const limit = Math.min(requestedLimit, MAX_BBOX_PAGE_LIMIT);
   const offset = (page - 1) * limit;
@@ -122,11 +123,7 @@ const getTileBounds = (zRaw: unknown, xRaw: unknown, yRaw: unknown): TileBounds 
   };
 };
 
-const mapRenderGeometrySql = (
-  geometrySql: string,
-  zoom: number,
-  simplifyTolerance: number
-) => {
+const mapRenderGeometrySql = (geometrySql: string, zoom: number, simplifyTolerance: number) => {
   const zoomLiteral = Number(zoom.toFixed(2));
   const toleranceLiteral = Number(simplifyTolerance.toFixed(8));
   return `
@@ -162,7 +159,14 @@ const isPosition = (value: unknown): value is [number, number] => {
   const lon = Number(value[0]);
   const lat = Number(value[1]);
 
-  return Number.isFinite(lon) && Number.isFinite(lat) && lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90;
+  return (
+    Number.isFinite(lon) &&
+    Number.isFinite(lat) &&
+    lon >= -180 &&
+    lon <= 180 &&
+    lat >= -90 &&
+    lat <= 90
+  );
 };
 
 const validateCoordinates = (type: GeometryType, coordinates: unknown): boolean => {
@@ -246,7 +250,7 @@ const getProjectReadScope = async (
            AND ${visibilityColumn} = TRUE
            AND status::text = ANY($3::text[])
        ) AS is_public_project`,
-    [projectId, user.id, publicVisibleStatuses]
+    [projectId, user.id, publicVisibleStatuses],
   );
 
   const assignmentRole = accessCheck.rows[0]?.assignment_role;
@@ -359,7 +363,10 @@ const appendGlobalReadVisibility = (
   return paramIndex + 2;
 };
 
-const hasProjectAdminAccess = async (projectId: string, user: Express.UserContext): Promise<boolean> => {
+const hasProjectAdminAccess = async (
+  projectId: string,
+  user: Express.UserContext,
+): Promise<boolean> => {
   if (user.role === 'admin') {
     return true;
   }
@@ -371,7 +378,7 @@ const hasProjectAdminAccess = async (projectId: string, user: Express.UserContex
        AND role = 'admin'
        AND status = 'approved'
      LIMIT 1`,
-    [projectId, user.id]
+    [projectId, user.id],
   );
 
   return accessCheck.rows.length > 0;
@@ -421,7 +428,7 @@ const ensureAttributesObject = (attributes: unknown): Record<string, unknown> =>
 const getProjectFormSchema = async (projectId: string): Promise<Record<string, unknown>> => {
   const projectResult = await query(
     'SELECT id, collection_form_schema FROM project WHERE id = $1',
-    [projectId]
+    [projectId],
   );
   if (projectResult.rows.length === 0) {
     throw new AppError('Project not found', 404);
@@ -437,10 +444,9 @@ const getProjectFormSchema = async (projectId: string): Promise<Record<string, u
 
 const assertProjectAllowsCollectionMutations = async (projectId: string): Promise<void> => {
   await synchronizeProjectStatuses(projectId);
-  const projectResult = await query(
-    'SELECT id, name, status FROM project WHERE id = $1',
-    [projectId]
-  );
+  const projectResult = await query('SELECT id, name, status FROM project WHERE id = $1', [
+    projectId,
+  ]);
 
   if (projectResult.rows.length === 0) {
     throw new AppError('Project not found', 404);
@@ -454,14 +460,43 @@ const assertProjectAllowsCollectionMutations = async (projectId: string): Promis
   if (project.status === 'paused') {
     throw new AppError(
       'This project is paused. Feature collection is view-only until the project is reactivated.',
-      409
+      409,
     );
   }
 
   throw new AppError(
     `Feature collection is unavailable while the project status is ${project.status}.`,
-    409
+    409,
   );
+};
+
+const offlineAssignmentRevokedMessage =
+  'You are no longer assigned to this project. Offline draft was discarded.';
+
+const assertContributorAssignedForOfflineSync = async (
+  projectId: string,
+  user: Express.UserContext | undefined,
+  executor?: { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> },
+): Promise<void> => {
+  if (!user || user.role !== 'contributor') {
+    throw new AppError('Offline contribution sync is only available to contributors', 403);
+  }
+
+  const runQuery = executor?.query.bind(executor) ?? query;
+  const assignmentResult = await runQuery(
+    `SELECT id
+     FROM project_assignment
+     WHERE project_id = $1
+       AND user_id = $2
+       AND role = 'contributor'
+       AND status = 'approved'
+     LIMIT 1`,
+    [projectId, user.id],
+  );
+
+  if (assignmentResult.rows.length === 0) {
+    throw new AppError(offlineAssignmentRevokedMessage, 403);
+  }
 };
 
 const validateType = (value: unknown, expectedType: string): boolean => {
@@ -489,20 +524,22 @@ const validateType = (value: unknown, expectedType: string): boolean => {
 
 const validateAttributesAgainstSchema = (
   attributesInput: unknown,
-  schema: Record<string, unknown>
+  schema: Record<string, unknown>,
 ): Record<string, unknown> => {
   const attributes = ensureAttributesObject(attributesInput);
 
-  const jsonSchemaRequired = Array.isArray(schema.required)
-    ? (schema.required as string[])
-    : [];
+  const jsonSchemaRequired = Array.isArray(schema.required) ? (schema.required as string[]) : [];
   const jsonSchemaProps =
     schema.properties && typeof schema.properties === 'object' && !Array.isArray(schema.properties)
       ? (schema.properties as Record<string, Record<string, unknown>>)
       : {};
 
   for (const requiredKey of jsonSchemaRequired) {
-    if (attributes[requiredKey] === undefined || attributes[requiredKey] === null || attributes[requiredKey] === '') {
+    if (
+      attributes[requiredKey] === undefined ||
+      attributes[requiredKey] === null ||
+      attributes[requiredKey] === ''
+    ) {
       throw new AppError(`Missing required attribute: ${requiredKey}`, 422);
     }
   }
@@ -549,7 +586,7 @@ const validateAttributesAgainstSchema = (
 
 const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
   await synchronizeProjectStatuses(
-    typeof req.query.project_id === 'string' ? req.query.project_id : undefined
+    typeof req.query.project_id === 'string' ? req.query.project_id : undefined,
   );
   const { project_id, status } = req.query;
   const searchQuery = typeof req.query.q === 'string' ? req.query.q.trim() : '';
@@ -814,7 +851,7 @@ const getFeature = async (req: Request, res: Response): Promise<void> => {
      LEFT JOIN "user" r ON sf.reviewed_by_user_id = r.id
      LEFT JOIN project p ON sf.project_id = p.id
      WHERE sf.id = $1`,
-    [featureId]
+    [featureId],
   );
 
   if (result.rows.length === 0) {
@@ -856,6 +893,12 @@ const createFeature = async (req: Request, res: Response): Promise<void> => {
   const { id, project_id, geom, attributes, collected_offline = false } = req.body;
 
   await assertProjectAllowsCollectionMutations(project_id);
+  if (collected_offline) {
+    await assertContributorAssignedForOfflineSync(
+      project_id,
+      req.user as Express.UserContext | undefined,
+    );
+  }
   const normalizedGeometry = validateGeoJsonGeometry(geom);
   const formSchema = await getProjectFormSchema(project_id);
   const normalizedAttributes = validateAttributesAgainstSchema(attributes, formSchema);
@@ -863,7 +906,7 @@ const createFeature = async (req: Request, res: Response): Promise<void> => {
   const accessCheck = await query(
     `SELECT id FROM project_assignment
      WHERE project_id = $1 AND user_id = $2 AND status = 'approved'`,
-    [project_id, req.user?.id]
+    [project_id, req.user?.id],
   );
 
   if (accessCheck.rows.length === 0 && req.user?.role !== 'admin') {
@@ -893,7 +936,7 @@ const createFeature = async (req: Request, res: Response): Promise<void> => {
       JSON.stringify(normalizedAttributes),
       null,
       collected_offline,
-    ]
+    ],
   );
 
   logger.info('Feature created:', {
@@ -917,10 +960,10 @@ const updateFeature = async (req: Request, res: Response): Promise<void> => {
   const { attributes, geom } = req.body;
 
   const featureCheck = await query(
-    `SELECT id, status, collected_by_user_id, project_id
+    `SELECT id, status, collected_by_user_id, project_id, collected_offline
      FROM spatial_feature
      WHERE id = $1`,
-    [featureId]
+    [featureId],
   );
 
   if (featureCheck.rows.length === 0) {
@@ -934,6 +977,12 @@ const updateFeature = async (req: Request, res: Response): Promise<void> => {
   }
 
   await assertProjectAllowsCollectionMutations(feature.project_id);
+  if (feature.collected_offline) {
+    await assertContributorAssignedForOfflineSync(
+      feature.project_id,
+      req.user as Express.UserContext | undefined,
+    );
+  }
 
   if (feature.status !== 'draft') {
     throw new AppError('Only draft features can be updated', 400);
@@ -947,10 +996,7 @@ const updateFeature = async (req: Request, res: Response): Promise<void> => {
   const normalizedAttributes =
     attributes === undefined
       ? null
-      : validateAttributesAgainstSchema(
-          attributes,
-          await getProjectFormSchema(feature.project_id)
-        );
+      : validateAttributesAgainstSchema(attributes, await getProjectFormSchema(feature.project_id));
 
   const result = await query(
     `
@@ -968,7 +1014,7 @@ const updateFeature = async (req: Request, res: Response): Promise<void> => {
       normalizedAttributes === null ? null : JSON.stringify(normalizedAttributes),
       normalizedGeometry === null ? null : JSON.stringify(normalizedGeometry),
       featureId,
-    ]
+    ],
   );
 
   logger.info('Feature updated:', { featureId, userId: req.user?.id });
@@ -990,7 +1036,7 @@ const deleteFeature = async (req: Request, res: Response): Promise<void> => {
     `SELECT id, status, collected_by_user_id, project_id
      FROM spatial_feature
      WHERE id = $1`,
-    [featureId]
+    [featureId],
   );
 
   if (featureCheck.rows.length === 0) {
@@ -1023,11 +1069,11 @@ const submitFeature = async (req: Request, res: Response): Promise<void> => {
   const { featureId } = req.params;
   await transaction(async (client: any) => {
     const ownerCheck = await client.query(
-      `SELECT sf.id, sf.status, sf.project_id, p.name as project_name
+      `SELECT sf.id, sf.status, sf.project_id, sf.collected_offline, p.name as project_name
        FROM spatial_feature sf
        JOIN project p ON p.id = sf.project_id
        WHERE sf.id = $1 AND sf.collected_by_user_id = $2`,
-      [featureId, req.user?.id]
+      [featureId, req.user?.id],
     );
 
     if (ownerCheck.rows.length === 0) {
@@ -1039,16 +1085,23 @@ const submitFeature = async (req: Request, res: Response): Promise<void> => {
     }
 
     await assertProjectAllowsCollectionMutations(ownerCheck.rows[0].project_id);
+    if (ownerCheck.rows[0].collected_offline) {
+      await assertContributorAssignedForOfflineSync(
+        ownerCheck.rows[0].project_id,
+        req.user as Express.UserContext | undefined,
+        client,
+      );
+    }
 
     await client.query(
       `UPDATE spatial_feature
        SET status = 'pending_review', submitted_at = NOW(), version = version + 1
        WHERE id = $1`,
-      [featureId]
+      [featureId],
     );
 
     const adminUsers = await client.query(
-      `SELECT id FROM "user" WHERE role = 'admin' AND is_active = TRUE`
+      `SELECT id FROM "user" WHERE role = 'admin' AND is_active = TRUE`,
     );
 
     for (const admin of adminUsers.rows) {
@@ -1065,7 +1118,7 @@ const submitFeature = async (req: Request, res: Response): Promise<void> => {
             project_name: ownerCheck.rows[0].project_name,
             status: 'pending_review',
           }),
-        ]
+        ],
       );
     }
   });
@@ -1091,7 +1144,7 @@ const reviewFeature = async (req: Request, res: Response): Promise<void> => {
      FROM spatial_feature sf
      JOIN project p ON p.id = sf.project_id
      WHERE sf.id = $1`,
-    [featureId]
+    [featureId],
   );
 
   if (featureCheck.rows.length === 0) {
@@ -1101,11 +1154,14 @@ const reviewFeature = async (req: Request, res: Response): Promise<void> => {
   if (!['pending_review', 'approved', 'rejected'].includes(featureCheck.rows[0].status)) {
     throw new AppError(
       'Only submitted or previously reviewed features can be reviewed through this action',
-      400
+      400,
     );
   }
 
-  const canReview = await hasProjectAdminAccess(featureCheck.rows[0].project_id, req.user as Express.UserContext);
+  const canReview = await hasProjectAdminAccess(
+    featureCheck.rows[0].project_id,
+    req.user as Express.UserContext,
+  );
   if (!canReview) {
     throw new AppError('You are not allowed to review this feature', 403);
   }
@@ -1119,7 +1175,7 @@ const reviewFeature = async (req: Request, res: Response): Promise<void> => {
            reviewed_at = NOW(),
            version = version + 1
        WHERE id = $4`,
-      [status, req.user?.id, review_notes, featureId]
+      [status, req.user?.id, review_notes, featureId],
     );
 
     await client.query(
@@ -1128,8 +1184,8 @@ const reviewFeature = async (req: Request, res: Response): Promise<void> => {
       [
         featureCheck.rows[0].collected_by_user_id,
         status === 'approved'
-            ? `Feature approved in ${featureCheck.rows[0].project_name}`
-            : `Feature rejected in ${featureCheck.rows[0].project_name}`,
+          ? `Feature approved in ${featureCheck.rows[0].project_name}`
+          : `Feature rejected in ${featureCheck.rows[0].project_name}`,
         status === 'approved'
           ? `Your feature in ${featureCheck.rows[0].project_name} was approved${review_notes ? ` with note: ${review_notes}` : '.'}`
           : `Your feature in ${featureCheck.rows[0].project_name} was rejected${review_notes ? ` with note: ${review_notes}` : '.'}`,
@@ -1140,7 +1196,7 @@ const reviewFeature = async (req: Request, res: Response): Promise<void> => {
           status,
           review_notes,
         }),
-      ]
+      ],
     );
   });
 
@@ -1161,7 +1217,10 @@ const findFeaturesNearby = async (req: Request, res: Response): Promise<void> =>
   const lat = Number.parseFloat(String(req.query.lat ?? ''));
   const radius = Number.parseFloat(String(req.query.radius ?? '1000'));
   const projectId = req.query.project_id ? String(req.query.project_id) : null;
-  const limit = Math.min(Math.max(1, Number.parseInt(String(req.query.limit ?? '50'), 10) || 50), 200);
+  const limit = Math.min(
+    Math.max(1, Number.parseInt(String(req.query.limit ?? '50'), 10) || 50),
+    200,
+  );
 
   if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
     throw new AppError('Longitude and latitude are required and must be valid numbers', 400);
@@ -1260,7 +1319,12 @@ const findFeaturesByBbox = async (req: Request, res: Response): Promise<void> =>
   const { page, limit, offset } = getBboxPagination(req.query.page, req.query.limit);
   let projectReadScope: ProjectReadScope | undefined;
 
-  if (!Number.isFinite(minLon) || !Number.isFinite(minLat) || !Number.isFinite(maxLon) || !Number.isFinite(maxLat)) {
+  if (
+    !Number.isFinite(minLon) ||
+    !Number.isFinite(minLat) ||
+    !Number.isFinite(maxLon) ||
+    !Number.isFinite(maxLat)
+  ) {
     throw new AppError('Bounding box coordinates must be valid numbers', 400);
   }
 
@@ -1274,9 +1338,7 @@ const findFeaturesByBbox = async (req: Request, res: Response): Promise<void> =>
     }
   }
 
-  const whereClauses: string[] = [
-    'sf.geom && ST_MakeEnvelope($1, $2, $3, $4, 4326)',
-  ];
+  const whereClauses: string[] = ['sf.geom && ST_MakeEnvelope($1, $2, $3, $4, 4326)'];
   const params: unknown[] = [minLon, minLat, maxLon, maxLat];
   let paramIndex = 5;
 
@@ -1348,24 +1410,24 @@ const findFeaturesByBbox = async (req: Request, res: Response): Promise<void> =>
 
   const features = dataResult.rows.map((row: any) => ({
     type: 'Feature',
-      id: row.id,
-      geometry: JSON.parse(row.geometry),
-      properties: {
-        project_id: row.project_id,
-        status: row.status,
-        attributes: sanitizeManagedFeatureAttributes(row.attributes),
-        source_geometry_type: row.source_geometry_type,
-        collected_at: row.collected_at,
-        submitted_at: row.submitted_at,
-        reviewed_at: row.reviewed_at,
-        review_notes: row.review_notes,
-        collected_by: row.collected_by,
-        reviewed_by: row.reviewed_by,
-        photo_count: Number(row.photo_count ?? 0),
-        version: row.version,
-        is_summary: true,
-      },
-    }));
+    id: row.id,
+    geometry: JSON.parse(row.geometry),
+    properties: {
+      project_id: row.project_id,
+      status: row.status,
+      attributes: sanitizeManagedFeatureAttributes(row.attributes),
+      source_geometry_type: row.source_geometry_type,
+      collected_at: row.collected_at,
+      submitted_at: row.submitted_at,
+      reviewed_at: row.reviewed_at,
+      review_notes: row.review_notes,
+      collected_by: row.collected_by,
+      reviewed_by: row.reviewed_by,
+      photo_count: Number(row.photo_count ?? 0),
+      version: row.version,
+      is_summary: true,
+    },
+  }));
 
   const total = Number(countResult.rows[0]?.total ?? 0);
 
@@ -1389,6 +1451,8 @@ const findFeaturesTile = async (req: Request, res: Response): Promise<void> => {
   const projectId = String(req.query.project_id ?? '');
   const requestedStatus = req.query.status ? String(req.query.status) : null;
   const status = req.user?.role === 'viewer' ? 'approved' : requestedStatus;
+  const featureType =
+    typeof req.query.feature_type === 'string' ? req.query.feature_type.trim() : '';
   const zoom = normalizeMapZoom(req.query.zoom ?? req.params.z, 11);
   const simplifyTolerance = mapSimplifyTolerance(zoom);
   const bounds = getTileBounds(req.params.z, req.params.x, req.params.y);
@@ -1402,18 +1466,24 @@ const findFeaturesTile = async (req: Request, res: Response): Promise<void> => {
     'sf.geom && ST_MakeEnvelope($1, $2, $3, $4, 4326)',
     'sf.project_id = $5',
   ];
-  const params: unknown[] = [
-    bounds.minLon,
-    bounds.minLat,
-    bounds.maxLon,
-    bounds.maxLat,
-    projectId,
-  ];
+  const params: unknown[] = [bounds.minLon, bounds.minLat, bounds.maxLon, bounds.maxLat, projectId];
   let paramIndex = 6;
 
   if (status) {
     whereClauses.push(`sf.status = $${paramIndex}`);
     params.push(status);
+    paramIndex += 1;
+  }
+
+  if (featureType) {
+    whereClauses.push(`
+      EXISTS (
+        SELECT 1
+        FROM jsonb_each_text(COALESCE(sf.attributes, '{}'::jsonb)) AS attr(key, value)
+        WHERE LOWER(BTRIM(attr.value)) = LOWER($${paramIndex})
+      )
+    `);
+    params.push(featureType);
     paramIndex += 1;
   }
 
@@ -1428,9 +1498,9 @@ const findFeaturesTile = async (req: Request, res: Response): Promise<void> => {
   }
 
   const geometrySql = mapRenderGeometrySql('sf.geom', zoom, simplifyTolerance);
-  const tileFeatureLimit =
-    zoom < 10.5 ? MAP_TILE_LOW_ZOOM_LIMIT : MAP_TILE_HIGH_ZOOM_LIMIT;
+  const tileFeatureLimit = zoom < 10.5 ? MAP_TILE_LOW_ZOOM_LIMIT : MAP_TILE_HIGH_ZOOM_LIMIT;
   const lowZoom = zoom < 10.5;
+  const lowZoomUnclusteredThreshold = 50;
   const result = lowZoom
     ? await query(
         `WITH visible AS (
@@ -1462,11 +1532,23 @@ const findFeaturesTile = async (req: Request, res: Response): Promise<void> => {
            FROM visible
            WHERE marker_geom && ST_MakeEnvelope($1, $2, $3, $4, 4326)
          ),
+         counted AS (
+           SELECT *,
+                  COUNT(*) OVER ()::int AS visible_marker_count
+           FROM marker_filtered
+         ),
          bucketed AS (
            SELECT *,
                   FLOOR(ST_Y(marker_geom) / $${paramIndex})::int AS lat_bucket,
-                  FLOOR(ST_X(marker_geom) / $${paramIndex})::int AS lon_bucket
-            FROM marker_filtered
+                  FLOOR(ST_X(marker_geom) / $${paramIndex})::int AS lon_bucket,
+                  CASE
+                    WHEN visible_marker_count <= $${paramIndex + 1} THEN id::text
+                    ELSE CONCAT('bucket:', status, ':',
+                      FLOOR(ST_Y(marker_geom) / $${paramIndex})::int::text, ':',
+                      FLOOR(ST_X(marker_geom) / $${paramIndex})::int::text
+                    )
+                  END AS grouping_key
+            FROM counted
          )
          SELECT CASE
                   WHEN COUNT(*) = 1 THEN (ARRAY_AGG(id::text ORDER BY collected_at DESC NULLS LAST, id ASC))[1]
@@ -1503,10 +1585,10 @@ const findFeaturesTile = async (req: Request, res: Response): Promise<void> => {
                 (COUNT(*) > 1) AS is_aggregate,
                 COUNT(*)::int AS cluster_count
          FROM bucketed
-         GROUP BY status, lat_bucket, lon_bucket
+         GROUP BY status, lat_bucket, lon_bucket, grouping_key
          ORDER BY MIN(collected_at) DESC NULLS LAST
-         LIMIT $${paramIndex + 1}`,
-        [...params, mapClusterCellSizeDegrees(zoom), tileFeatureLimit],
+         LIMIT $${paramIndex + 2}`,
+        [...params, mapClusterCellSizeDegrees(zoom), lowZoomUnclusteredThreshold, tileFeatureLimit],
       )
     : await query(
         `SELECT sf.id,
@@ -1591,25 +1673,32 @@ const batchCreateFeatures = async (req: Request, res: Response): Promise<void> =
        WHERE user_id = $1
          AND status = 'approved'
          AND project_id = ANY($2::uuid[])`,
-      [req.user?.id, projectIds]
+      [req.user?.id, projectIds],
     );
 
     const accessibleProjects = new Set(accessResult.rows.map((row: any) => row.project_id));
     const unauthorizedProject = projectIds.find((projectId) => !accessibleProjects.has(projectId));
-      if (unauthorizedProject) {
-        throw new AppError(`You do not have access to project ${unauthorizedProject}`, 403);
-      }
+    if (unauthorizedProject) {
+      throw new AppError(`You do not have access to project ${unauthorizedProject}`, 403);
     }
+  }
 
-    for (const projectId of projectIds) {
-      await assertProjectAllowsCollectionMutations(projectId);
-    }
+  for (const projectId of projectIds) {
+    await assertProjectAllowsCollectionMutations(projectId);
+  }
 
   const createdFeatures = await transaction(async (client: any) => {
     const results: any[] = [];
 
     for (const feature of features) {
       const { id, project_id, geom, attributes, collected_offline } = feature;
+      if (collected_offline) {
+        await assertContributorAssignedForOfflineSync(
+          project_id,
+          req.user as Express.UserContext | undefined,
+          client,
+        );
+      }
       const normalizedGeometry = validateGeoJsonGeometry(geom);
       const formSchema = await getProjectFormSchema(project_id);
       const normalizedAttributes = validateAttributesAgainstSchema(attributes, formSchema);
@@ -1637,7 +1726,7 @@ const batchCreateFeatures = async (req: Request, res: Response): Promise<void> =
           JSON.stringify(normalizedAttributes),
           null,
           collected_offline || false,
-        ]
+        ],
       );
 
       results.push(result.rows[0]);

@@ -14,6 +14,8 @@ import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
+import '../../../ai/presentation/ai_permissions.dart';
+import '../../../ai/presentation/widgets/project_ai_panel.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../../map/presentation/widgets/project_quick_map_card.dart';
 import '../../domain/project.dart';
@@ -255,6 +257,10 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
         }
 
         final isUserRole = role == UserRole.viewer;
+        final canManageAi = canManageProjectAi(
+          user: session?.user,
+          project: project,
+        );
         final hasContributorAssignment =
             role == UserRole.contributor &&
             project.hasApprovedCurrentUserAssignment;
@@ -332,6 +338,10 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                                 : 'Photos optional',
                           ),
                         ),
+                        if (project.publishedAiLayerCount > 0)
+                          _PublishedAiSummaryPill(
+                            text: _publishedAiLayerSummary(project),
+                          ),
                       ],
                     ),
                   ],
@@ -435,6 +445,18 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
               ),
             ),
             const SizedBox(height: AppSpacing.lg),
+            if (canManageAi) ...[
+              AnimatedReveal(
+                delay: const Duration(milliseconds: 120),
+                child: const SectionHeader(title: 'AI'),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              AnimatedReveal(
+                delay: const Duration(milliseconds: 125),
+                child: ProjectAiPanel(project: project),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+            ],
             AnimatedReveal(
               delay: const Duration(milliseconds: 130),
               child: const SectionHeader(title: 'Map Preview'),
@@ -581,6 +603,58 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
 
   String _formatDate(DateTime? value) {
     return formatLebanonDate(value);
+  }
+
+  String _publishedAiLayerSummary(ProjectSummary project) {
+    if (project.publishedAiLayerCount > 1) {
+      return 'This project has published AI results available.';
+    }
+    return 'AI classification layer is published for this project.';
+  }
+}
+
+class _PublishedAiSummaryPill extends StatelessWidget {
+  const _PublishedAiSummaryPill({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 520),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: scheme.outlineVariant),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.auto_awesome_outlined,
+                size: 18,
+                color: scheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  text,
+                  softWrap: true,
+                  overflow: TextOverflow.visible,
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

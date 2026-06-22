@@ -552,7 +552,9 @@ const seedExports = async (
            feature_count,
            export_parameters,
            status,
+           file_status,
            file_size_bytes,
+           retention_expires_at,
            error_message
          )
          VALUES (
@@ -565,7 +567,9 @@ const seedExports = async (
            $6::jsonb,
            $7::export_status,
            $8,
-           $9
+           $9,
+           ${completed ? "NOW() + INTERVAL '7 days'" : 'NULL'},
+           $10
          )`,
         [
           project.id,
@@ -579,6 +583,7 @@ const seedExports = async (
             seeded_in_phase: 11,
           }),
           status,
+          completed ? 'available' : 'missing',
           fileSize,
           null,
         ]

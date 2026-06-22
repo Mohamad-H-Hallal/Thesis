@@ -181,7 +181,7 @@ class MockExportsRepository implements ExportsRepository {
     for (final job in _jobs) {
       if (job.id == exportId &&
           job.requestedByUserId == requestedByUserId &&
-          job.status == ExportJobStatus.failed) {
+          job.canRetryOrRegenerate) {
         final retried = job.copyWith(
           status: ExportJobStatus.pending,
           errorMessage: null,

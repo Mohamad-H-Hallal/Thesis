@@ -4420,6 +4420,7 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
              geom,
              attributes,
              status,
+             source,
              submitted_at,
              reviewed_by_user_id,
              review_notes,
@@ -4437,6 +4438,7 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
                       NOT IN ('accuracy', 'accuracymeter', 'accuracymeters')
                   ), '{}'::jsonb),
                   'approved',
+                  'import',
                   CURRENT_TIMESTAMP,
                   $${baseParamIndex + 3},
                   $${baseParamIndex + 4},

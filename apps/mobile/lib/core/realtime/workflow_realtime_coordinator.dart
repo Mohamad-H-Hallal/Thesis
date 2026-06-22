@@ -46,7 +46,10 @@ class _WorkflowRealtimeCoordinatorState
     if (state == AppLifecycleState.resumed) {
       // Reconnect only. Foreground updates are delivered as targeted socket
       // events; unsolicited refreshes make active screens feel unstable.
-      _syncRealtime(ref.read(authControllerProvider).session);
+      _syncRealtime(
+        ref.read(authControllerProvider).session,
+        isOnline: ref.read(networkOnlineProvider).valueOrNull,
+      );
       return;
     }
 
@@ -63,12 +66,13 @@ class _WorkflowRealtimeCoordinatorState
     final session = ref.watch(
       authControllerProvider.select((state) => state.session),
     );
-    _syncRealtime(session);
+    final isOnline = ref.watch(networkOnlineProvider).valueOrNull;
+    _syncRealtime(session, isOnline: isOnline);
     return widget.child;
   }
 
-  void _syncRealtime(AuthSession? session) {
-    if (AppEnv.useMockData || session == null) {
+  void _syncRealtime(AuthSession? session, {bool? isOnline}) {
+    if (AppEnv.useMockData || session == null || isOnline != true) {
       _connectedRealtimeToken = null;
       _workflowRealtimeService.disconnect();
       return;

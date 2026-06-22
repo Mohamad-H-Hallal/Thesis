@@ -68,7 +68,7 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
               (item) => NavigationDrawerDestination(
                 icon: Icon(item.icon),
                 selectedIcon: Icon(item.selectedIcon ?? item.icon),
-                label: Text(item.label),
+                label: Text(item.label, style: const TextStyle(fontSize: 13)),
               ),
             )
             .toList(growable: false);
@@ -109,7 +109,7 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
                         const SizedBox(height: 8),
                         Text(
                           AppBranding.shortName,
-                          style: Theme.of(context).textTheme.titleMedium,
+                          style: Theme.of(context).textTheme.titleSmall,
                         ),
                         Text(
                           '${session.user.fullName} • ${session.user.roleLabel}',
@@ -180,7 +180,10 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
                 ...items.map(
                   (item) => ListTile(
                     leading: Icon(item.icon),
-                    title: Text(item.label),
+                    title: Text(
+                      item.label,
+                      style: const TextStyle(fontSize: 14),
+                    ),
                     selected: item.path == selectedItem.path,
                     onTap: () {
                       Navigator.pop(context);
@@ -328,7 +331,16 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
     }
 
     if (user.role == UserRole.contributor) {
-      return items;
+      return items
+          .where(
+            (item) =>
+                item.path == AppRoutes.projects ||
+                item.path == AppRoutes.assignedProjects ||
+                item.path == AppRoutes.imports ||
+                item.path == AppRoutes.notifications ||
+                item.path == AppRoutes.profile,
+          )
+          .toList(growable: false);
     }
 
     return items;

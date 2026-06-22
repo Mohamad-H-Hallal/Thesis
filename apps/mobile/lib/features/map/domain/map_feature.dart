@@ -157,6 +157,7 @@ class ProjectMapViewportQuery {
     required this.maxLon,
     required this.maxLat,
     required this.zoom,
+    this.featureType,
   });
 
   final String projectId;
@@ -165,6 +166,7 @@ class ProjectMapViewportQuery {
   final double maxLon;
   final double maxLat;
   final double zoom;
+  final String? featureType;
 
   @override
   bool operator ==(Object other) {
@@ -174,10 +176,11 @@ class ProjectMapViewportQuery {
         other.minLat == minLat &&
         other.maxLon == maxLon &&
         other.maxLat == maxLat &&
-        other.zoom == zoom;
+        other.zoom == zoom &&
+        other.featureType == featureType;
   }
 
   @override
   int get hashCode =>
-      Object.hash(projectId, minLon, minLat, maxLon, maxLat, zoom);
+      Object.hash(projectId, minLon, minLat, maxLon, maxLat, zoom, featureType);
 }

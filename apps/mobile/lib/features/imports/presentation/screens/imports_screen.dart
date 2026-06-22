@@ -13,6 +13,7 @@ import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
+import '../../../../core/widgets/app_search_action_bar.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/status_chip.dart';
@@ -226,9 +227,9 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final filterButton = OutlinedButton.icon(
+                  AppSearchActionBar(
+                    actions: [
+                      OutlinedButton.icon(
                         onPressed: () =>
                             setState(() => _showFilters = !_showFilters),
                         icon: Icon(
@@ -236,21 +237,9 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                               ? Icons.filter_alt_off_outlined
                               : Icons.filter_alt_outlined,
                         ),
-                        label: Text(_showFilters ? 'Hide filters' : 'Filter'),
-                      );
-
-                      if (constraints.maxWidth < 560) {
-                        return SizedBox(
-                          width: double.infinity,
-                          child: filterButton,
-                        );
-                      }
-
-                      return Align(
-                        alignment: Alignment.centerLeft,
-                        child: SizedBox(width: 180, child: filterButton),
-                      );
-                    },
+                        label: Text(_showFilters ? 'Hide' : 'Filter'),
+                      ),
+                    ],
                   ),
                   if (_showFilters) ...[
                     const SizedBox(height: AppSpacing.sm),
