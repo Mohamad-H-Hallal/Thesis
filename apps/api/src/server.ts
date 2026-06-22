@@ -1,4 +1,6 @@
-require('dotenv').config();
+const { loadBackendEnvFiles } = require('./config/loadEnv');
+
+const loadedEnvFiles = loadBackendEnvFiles();
 
 const logger = require('./utils/logger');
 const { testConnection, closePool } = require('./config/database');
@@ -18,6 +20,54 @@ import { startWorkflowChangeListener } from './realtime/workflowEvents';
 const env = validateEnv();
 const app = buildApp(env);
 const apiPrefix = String(env.API_VERSION_PREFIX || '/api/v1').replace(/\/+$/, '') || '/api/v1';
+
+const sanitizeUrlForLog = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '(not configured)';
+  }
+
+  try {
+    const url = new URL(trimmed);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return '(invalid URL)';
+  }
+};
+
+const logAiServerRuntimeConfig = () => {
+  logger.info('Backend environment files checked', {
+    precedence: 'process env > apps/api/.env > root .env',
+    files: loadedEnvFiles.map((file) => ({
+      path: file.path,
+      keysLoaded: file.keys.length,
+    })),
+  });
+
+  if (String(env.AI_SERVER_URL ?? '').trim().length === 0) {
+    logger.warn('AI_SERVER_URL is not configured; AI runs are disabled until it is set.');
+  } else {
+    logger.info('AI server URL configured', {
+      aiServerUrl: sanitizeUrlForLog(env.AI_SERVER_URL),
+      timeoutMs: env.AI_SERVER_TIMEOUT_MS,
+    });
+  }
+
+  const callbackBaseUrl = env.AI_CALLBACK_BASE_URL || env.APP_PUBLIC_API_URL;
+  logger.info('AI callback base URL configured', {
+    callbackBaseUrl: sanitizeUrlForLog(callbackBaseUrl),
+    source: env.AI_CALLBACK_BASE_URL ? 'AI_CALLBACK_BASE_URL' : 'APP_PUBLIC_API_URL',
+  });
+
+  if (String(env.AI_CALLBACK_SECRET ?? '').trim().length === 0) {
+    logger.warn('AI_CALLBACK_SECRET is not configured; AI server callbacks will be rejected.');
+  } else if (
+    env.NODE_ENV === 'production' &&
+    env.AI_CALLBACK_SECRET === 'dev-ai-callback-secret-change-me'
+  ) {
+    logger.warn('AI_CALLBACK_SECRET is using the development placeholder in production.');
+  }
+};
 
 let server;
 let exportCleanupInterval;
@@ -138,6 +188,7 @@ const startServer = async () => {
       logger.info(`Health check: http://${env.HOST}:${env.PORT}/health`);
       logger.info(`API root: http://${env.HOST}:${env.PORT}${apiPrefix}`);
       logger.info(`API documentation: http://${env.HOST}:${env.PORT}/docs/openapi.yaml`);
+      logAiServerRuntimeConfig();
     });
     closeWorkflowSocket = attachWorkflowSocket(server, apiPrefix);
   } catch (error) {

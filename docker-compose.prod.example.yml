@@ -1,0 +1,162 @@
+# Production-oriented template. Copy .env.prod.example to an ignored .env or
+# point your deployment platform at equivalent secret-managed variables.
+# Reverse proxy/TLS can be handled by the nginx service here or by an external
+# load balancer in front of the api service.
+# Do not commit real DATABASE_URL, GEE keys, SMTP credentials, JWT secrets, or
+# AI_CALLBACK_SECRET. In real production set AI_DRY_RUN=false.
+name: ${COMPOSE_PROJECT_NAME:-gis_app_prod}
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    env_file:
+      - .env.prod.example
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-gis_app_prod}
+      POSTGRES_USER: ${POSTGRES_USER:-gis_service}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-replace-in-secret-manager}
+    volumes:
+      - postgis_prod_data:/var/lib/postgresql/data
+      - ./infra/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  ai-server:
+    build:
+      context: ../AI-ML-pipeline-for-AI-Enhanced-Mobile-GIS
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env.prod.example
+    environment:
+      # Real production runs need database access and GEE credentials.
+      AI_DRY_RUN: ${AI_DRY_RUN:-false}
+      APP_BACKEND_URL: http://api:3000
+      AI_CALLBACK_SECRET: ${AI_CALLBACK_SECRET:-replace-with-strong-ai-callback-secret}
+      DATABASE_URL: ${AI_DATABASE_URL:-}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-gis_app_prod}
+      DB_USER: ${POSTGRES_USER:-gis_service}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-replace-in-secret-manager}
+      OUTPUTS_DIR: /app/outputs
+      AI_OUTPUT_DIR: /app/outputs
+      AI_SERVER_MAX_WORKERS: ${AI_SERVER_MAX_WORKERS:-1}
+      # Mount GEE credentials and set GEE_PRIVATE_KEY_PATH or GEE_KEY_FILE to the container path.
+      GEE_PROJECT_ID: ${GEE_PROJECT_ID:-}
+      GEE_SERVICE_ACCOUNT: ${GEE_SERVICE_ACCOUNT:-}
+      GEE_PRIVATE_KEY_PATH: ${GEE_PRIVATE_KEY_PATH:-}
+      GEE_KEY_FILE: ${GEE_KEY_FILE:-}
+    expose:
+      - "8000"
+    volumes:
+      - ai_outputs:/app/outputs
+      # Example only:
+      # - /secure/gee-keys:/app/GEE-KEY:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import json,sys,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)); sys.exit(0 if data.get('status') != 'error' else 1)\"",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: "no"
+    env_file:
+      - .env.prod.example
+    environment:
+      NODE_ENV: production
+      DB_HOST: db
+      DB_PORT: 5432
+      MIGRATIONS_DIR: /app/infra/migrations
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["node", "dist/db/migrate.js"]
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env.prod.example
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      DB_HOST: db
+      DB_PORT: 5432
+      MIGRATIONS_DIR: /app/infra/migrations
+      # Internal Compose service URL. Do not point this at the public mobile URL.
+      AI_SERVER_URL: http://ai-server:8000
+      # Internal callback URL used by the AI server container.
+      AI_CALLBACK_BASE_URL: http://api:3000
+      # Public backend URL for users/mobile/deep links behind your reverse proxy/TLS.
+      APP_PUBLIC_API_URL: ${APP_PUBLIC_API_URL:-https://collector.example.gov.lb}
+      AI_CALLBACK_SECRET: ${AI_CALLBACK_SECRET:-replace-with-strong-ai-callback-secret}
+      AI_SERVER_TIMEOUT_MS: 30000
+    volumes:
+      - api_uploads:/app/apps/api/uploads
+      - api_exports:/app/apps/api/exports
+      - ai_outputs:/app/ai-outputs
+      - ./secrets:/run/secrets:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      ai-server:
+        condition: service_healthy
+    expose:
+      - "3000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  nginx:
+    image: nginxinc/nginx-unprivileged:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:8080"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./apps/mobile/build/web:/usr/share/nginx/html:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  postgis_prod_data:
+    name: ${POSTGIS_PROD_DATA_VOLUME:-gis_app_prod_postgis_data}
+  api_uploads:
+    name: ${API_UPLOADS_VOLUME:-gis_app_prod_api_uploads}
+  api_exports:
+    name: ${API_EXPORTS_VOLUME:-gis_app_prod_api_exports}
+  ai_outputs:
+    name: ${AI_OUTPUTS_VOLUME:-gis_app_prod_ai_outputs}

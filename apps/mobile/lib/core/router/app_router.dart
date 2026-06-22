@@ -146,7 +146,6 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         AppRoutes.assignedProjects,
         AppRoutes.drafts,
         AppRoutes.submissions,
-        AppRoutes.aiValidation,
         AppRoutes.assignments,
         AppRoutes.reviewQueue,
         AppRoutes.imports,
@@ -405,6 +404,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         pageBuilder: (_, state) {
           final projectId = state.pathParameters['projectId'] ?? '';
           final section = state.uri.queryParameters['section'] ?? 'readiness';
+          final runId = state.uri.queryParameters['runId'];
           return _buildPage(
             state,
             AppScaffold(
@@ -414,6 +414,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
               body: ProjectAiScreen(
                 projectId: projectId,
                 initialSection: section,
+                initialRunId: runId,
               ),
             ),
           );
@@ -619,7 +620,6 @@ Set<String> _allowedPathsForUser(AppUser user) {
         AppRoutes.imports,
         AppRoutes.drafts,
         AppRoutes.submissions,
-        AppRoutes.aiValidation,
         AppRoutes.notifications,
         AppRoutes.profile,
         '/app/imports/',

@@ -58,14 +58,25 @@ Copy-Item .env.dev.example .env
 # SUPER_ADMIN_PASSWORD=replace-with-strong-super-admin-password
 # SUPER_ADMIN_FULL_NAME=GIS Super Administrator
 docker compose up -d --build
+
+# Full development stack with the Python AI server in real mode:
+docker compose -f docker-compose.dev.yml up -d --build
 ```
 
 Notes:
 - This root compose stack is the official app runtime.
 - Runtime env ownership:
+  - real process/container environment wins first
+  - host-side API startup then loads `apps/api/.env`
+  - root `.env` is a fallback for missing host-side API values
   - root `.env` drives the Docker Compose app runtime
   - `apps/api/.env` drives host-side API commands like `npm run dev`
   - tracked `*.env.example` files stay as placeholders only
+- AI service URLs in Compose:
+  - API calls AI server at `http://ai-server:8000`
+  - AI server callbacks API at `http://api:3000`
+  - AI server connects to Postgres with the internal Docker URL
+    `postgresql://...@db:5432/gis_app`
 - Dev DB mapping in root compose is `55433:5432`.
 - Dev SMTP/UI now uses Mailpit through the same compose stack:
   - SMTP inside Docker: `mailpit:1025`
@@ -76,6 +87,63 @@ Notes:
 - Dev compose now runs the API with `npm run dev:docker`, which uses `nodemon --legacy-watch` for reliable source reloads on Windows bind mounts.
 - Backend validation and route changes should now trigger an in-container restart during normal Docker development without requiring a manual container recreate.
 - The old standalone `infra/db` compose stack is not part of the app runtime and should remain stopped unless you intentionally need an isolated DB experiment.
+
+## Docker Data Persistence And How Not To Lose The Database
+
+The development database is stored in a persistent Docker named volume mounted
+at `/var/lib/postgresql/data`. The stable local app volume is:
+
+```text
+gis_app_postgis_data
+```
+
+The AI development compose file uses the same stable DB volume by default, so
+switching between the normal app stack and the AI dev stack should not point the
+app at a new empty database. Isolated smoke tests must use their own project and
+volume names. If you start `smoke_ai_compose.ps1 -Start -IsolatedPorts`, that
+stack uses an isolated DB volume such as `gis_ai_verify_postgis_data`; the app
+can look empty there because it is intentionally not connected to
+`gis_app_postgis_data`.
+
+Safe stop:
+
+```powershell
+docker compose down
+```
+
+Dangerous commands:
+
+```powershell
+docker compose down -v
+docker volume prune
+docker system prune --volumes
+```
+
+`docker compose down` stops and removes containers/networks but keeps named
+volumes. `docker compose down -v` deletes the named volumes for that Compose
+project, including the Postgres data volume. `docker volume prune` and
+`docker system prune --volumes` can delete database volumes that are not
+currently attached to a running container.
+
+Back up before risky operations:
+
+```powershell
+cd D:\GIS_APP
+.\scripts\dev\backup_db.ps1
+```
+
+This writes a timestamped custom-format `pg_dump` file under `backups\db\`.
+
+Restore requires an explicit data-loss confirmation:
+
+```powershell
+cd D:\GIS_APP
+.\scripts\dev\restore_db.ps1 -BackupPath .\backups\db\gis_app-YYYYMMDD-HHMMSS.dump -ConfirmDataLoss
+```
+
+Do not run `npm run reset:runtime`, `ALLOW_RUNTIME_RESET=true npm run
+reset:runtime`, staging seed reset, `docker compose down -v`, or any prune
+command unless you have a verified backup and you intend to discard local data.
 
 ## API Local (without Docker)
 
@@ -91,6 +159,146 @@ npm ci
 npm run migrate
 npm run dev
 ```
+
+For local AI runs without Docker, set these in the active backend env
+(`apps/api/.env` for `npm run dev`, or root `.env` as fallback):
+
+```env
+AI_SERVER_URL=http://127.0.0.1:8000
+AI_CALLBACK_BASE_URL=http://127.0.0.1:3000
+APP_PUBLIC_API_URL=http://127.0.0.1:3000
+AI_CALLBACK_SECRET=dev-ai-callback-secret-change-me
+AI_SERVER_TIMEOUT_MS=30000
+```
+
+For the Python AI server in host/manual mode, `DATABASE_URL` must point from
+Windows to the Postgres host port, for example
+`postgresql://<user>:<password>@127.0.0.1:55578/gis_app`. In Docker Compose,
+the AI server runs inside the Compose network, so it uses the service name:
+`postgresql://<user>:<password>@db:5432/gis_app`.
+
+Then start the Python AI server from the AI repo:
+
+```powershell
+cd D:\AI-ML-pipeline-for-AI-Enhanced-Mobile-GIS
+Copy-Item .env.example .env
+.\scripts\start_ai_server.ps1
+# or:
+python -m uvicorn ai_server:app --host 127.0.0.1 --port 8000 --reload
+```
+
+## AI Server Integration
+
+Flutter never calls or starts Python. The active flow is:
+
+```text
+Flutter app
+  -> Node/Express API
+  -> Python FastAPI AI server
+  -> AI pipeline / GEE
+  -> callback to Node/Express API
+  -> Flutter run details refresh
+```
+
+### Do I need to start the Python AI server?
+
+- For normal app browsing and non-AI features, Flutter plus the Node/Express
+  backend may be enough.
+- For AI readiness, Start AI Run, status callbacks, retrain checks, and AI Run
+  Details refreshes, the Python FastAPI AI server must be running.
+- In manual local mode, start it yourself:
+
+  ```powershell
+  cd D:\AI-ML-pipeline-for-AI-Enhanced-Mobile-GIS
+  .\scripts\start_ai_server.ps1
+  ```
+
+- In Docker Compose mode, Compose starts the `ai-server` service automatically.
+- In production, the AI server must run as a managed service or container.
+- Flutter never starts the AI server and never calls it directly.
+
+If readiness says `AI server URL is not configured`, the backend process did
+not receive `AI_SERVER_URL`. Fix the active backend env file and restart the
+API; the backend intentionally does not fake a queued run when dispatch is not
+possible.
+
+URL rules:
+- Local manual: `AI_SERVER_URL=http://127.0.0.1:8000`,
+  `AI_CALLBACK_BASE_URL=http://127.0.0.1:3000`
+- Backend in Docker, AI server on Windows host:
+  `AI_SERVER_URL=http://host.docker.internal:8000`
+- Docker Compose: `AI_SERVER_URL=http://ai-server:8000`,
+  `AI_CALLBACK_BASE_URL=http://api:3000`
+
+Flutter's API base URL is separate from `AI_SERVER_URL`. `AI_SERVER_URL` is
+backend-only. For an Android emulator, Flutter may need
+`http://10.0.2.2:3000` as its backend URL; for a physical device, use the
+computer's LAN IP such as `http://192.168.x.x:3000`. Do not use `10.0.2.2` for
+`AI_SERVER_URL` unless the backend itself is running inside the emulator.
+
+Development helpers:
+
+```powershell
+cd D:\GIS_APP
+.\scripts\dev\start_ai_stack.ps1
+.\scripts\dev\check_ai_stack.ps1
+.\scripts\dev\smoke_ai_manual.ps1
+```
+
+`start_ai_stack.ps1` opens the host-side backend and Python AI server with the
+manual-mode development URLs and `AI_DRY_RUN=false`. Run Flutter separately.
+`check_ai_stack.ps1` checks backend and AI health. Authenticated readiness and
+Start AI Run checks need a protected super-admin token and a project id because
+the backend endpoints are protected.
+
+Smoke-only auth/project values:
+
+- `TEST_AUTH_TOKEN` is an optional JWT access token returned by the normal
+  backend login endpoint (`POST /api/v1/auth/login`). For AI run creation it
+  must belong to the protected super-admin. Its lifetime follows the backend
+  JWT config (`JWT_EXPIRE`, commonly 7 days in local dev). It is only for
+  command-line smoke scripts; the Flutter app gets its token from normal login.
+- `TEST_PROJECT_ID` is an optional project UUID from the backend `project`
+  table/API. For AI smoke runs, the project must have AI enabled, a label field,
+  approved/labeled ground-truth samples, valid AI settings/readiness, no active
+  AI run, and a connected AI server. It is only for smoke scripts; the Flutter
+  app uses the selected project id.
+
+You do not need to set those manually when using auto mode:
+
+```powershell
+cd D:\GIS_APP
+.\scripts\dev\smoke_ai_compose.ps1 -Start -StartRun -AutoAuth -AutoProject
+```
+
+`-AutoAuth` logs in through the real backend using `TEST_EMAIL`/`TEST_PASSWORD`
+when set, otherwise `SUPER_ADMIN_EMAIL`/`SUPER_ADMIN_PASSWORD` from the active
+env files. Tokens and passwords are never printed. `-AutoProject` lists projects
+through the authenticated backend API and selects the first AI-ready project.
+Set `AI_DRY_RUN=true` yourself only when you explicitly want a test-only smoke
+run without GEE/database writes.
+
+Docker Compose AI dev commands:
+
+```powershell
+cd D:\GIS_APP
+docker compose -f docker-compose.dev.yml up --build
+docker compose -f docker-compose.dev.yml logs -f api ai-server
+docker compose -f docker-compose.dev.yml down
+.\scripts\dev\smoke_ai_compose.ps1 -Start
+```
+
+Compose mode starts `api` and `ai-server`; do not manually run uvicorn in
+Compose mode. The dev Compose file also starts the AI server with
+`AI_DRY_RUN=false` and reads GEE settings from the AI pipeline repo `.env`
+without committing those secrets to this repository. AI run output files persist
+in the named `ai_outputs` volume.
+
+Production should run the AI server as a managed service/container, for example
+with `docker-compose.prod.example.yml`, systemd, Kubernetes, or the platform's
+service manager. The mobile app never starts it.
+
+More deployment detail lives in `docs/ai-deployment.md`.
 
 API tests:
 

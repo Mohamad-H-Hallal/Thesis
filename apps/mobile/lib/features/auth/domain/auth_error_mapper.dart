@@ -1,7 +1,4 @@
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart';
-
-import '../../../core/config/app_env.dart';
 import 'auth_failure.dart';
 
 AuthFailure mapAuthDioException(
@@ -121,13 +118,6 @@ AuthFailure mapAuthDioException(
 }
 
 String _localAndroidDevHint() {
-  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
-    return '';
-  }
-  if (AppEnv.flavor != AppFlavor.dev ||
-      !AppEnv.apiBaseUrl.contains('10.0.2.2')) {
-    return '';
-  }
   return ' If you are using a real Android device against the local API, 10.0.2.2 only works on the emulator. Use your computer\'s LAN IP in API_BASE_URL.';
 }
 

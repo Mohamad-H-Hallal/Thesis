@@ -16,6 +16,7 @@ class FakeAiRepository implements AiRepository {
     List<AiPredictionValidationTask> validationTasks =
         const <AiPredictionValidationTask>[],
     this.failReadiness = false,
+    this.onFetchRunStatus,
   }) : settings = settings ?? AiProjectSettings.defaults('project-1'),
        readiness = readiness ?? fakeReadiness(projectId: 'project-1'),
        runs = List<AiRun>.from(runs),
@@ -41,8 +42,11 @@ class FakeAiRepository implements AiRepository {
   List<AiReviewDecision> reviews;
   List<AiPredictionValidationTask> validationTasks;
   bool failReadiness;
+  final AiRun Function(AiRun current)? onFetchRunStatus;
   int saveCount = 0;
   int createCount = 0;
+  int statusFetchCount = 0;
+  int runPageFetchCount = 0;
   int reviewCount = 0;
   int publishCount = 0;
   int unpublishCount = 0;
@@ -52,6 +56,8 @@ class FakeAiRepository implements AiRepository {
   int validationStatusCount = 0;
   int validationSubmitCount = 0;
   int validationReviewCount = 0;
+  int predictionValidationSubmitCount = 0;
+  int predictionAdminReviewCount = 0;
 
   @override
   Future<AiRun> createRun({
@@ -66,12 +72,18 @@ class FakeAiRepository implements AiRepository {
     final run = AiRun(
       id: 'run-$createCount',
       projectId: projectId,
-      status: status,
+      status: status == 'queued' ? 'starting' : status,
       labelField: labelField ?? settings.labelField,
       scopeType: scopeType ?? settings.scopeType,
       trainingFeatureCount: readiness.approvedFeatureCount,
       eligibleFeatureCount: readiness.eligibleFeatureCount,
       excludedFeatureCount: readiness.excludedFeatureCount,
+      stage: status == 'draft' ? null : 'accepted',
+      progress: status == 'draft' ? 0 : 0.05,
+      message: status == 'draft'
+          ? 'Draft AI run record created.'
+          : 'Pipeline accepted by AI server.',
+      canCancel: status != 'draft',
       metadata: <String, dynamic>{
         if (executionMode?.trim().isNotEmpty ?? false)
           'execution_mode': executionMode!.trim(),
@@ -83,9 +95,9 @@ class FakeAiRepository implements AiRepository {
       AiRunLog(
         id: 'log-$createCount',
         level: 'info',
-        message: status == 'queued'
-            ? 'AI run queued. Worker processing has not started yet.'
-            : 'Draft AI run record created. No worker command was started.',
+        message: status == 'draft'
+            ? 'Draft AI run record created. No AI server execution started.'
+            : 'AI run dispatched to AI server.',
         createdAt: DateTime.utc(2026, 6, 1),
       ),
       ...logs,
@@ -107,6 +119,104 @@ class FakeAiRepository implements AiRepository {
         eligibleFeatureCount: 0,
         excludedFeatureCount: 0,
       ),
+    );
+  }
+
+  @override
+  Future<AiRun> fetchRunStatus({
+    required String projectId,
+    required String runId,
+  }) async {
+    statusFetchCount++;
+    final current = await fetchRun(runId: runId);
+    final updated = onFetchRunStatus?.call(current) ?? current;
+    final index = runs.indexWhere((run) => run.id == runId);
+    if (index >= 0) {
+      runs[index] = updated;
+    }
+    return updated;
+  }
+
+  @override
+  Future<AiRun> cancelRun({
+    required String projectId,
+    required String runId,
+  }) async {
+    final current = await fetchRun(runId: runId);
+    final updated = AiRun(
+      id: current.id,
+      projectId: current.projectId,
+      projectName: current.projectName,
+      status: 'cancelled',
+      labelField: current.labelField,
+      scopeType: current.scopeType,
+      regionPreset: current.regionPreset,
+      trainingFeatureCount: current.trainingFeatureCount,
+      eligibleFeatureCount: current.eligibleFeatureCount,
+      excludedFeatureCount: current.excludedFeatureCount,
+      selectedModel: current.selectedModel,
+      startedAt: current.startedAt,
+      completedAt: current.completedAt,
+      failedAt: current.failedAt,
+      failureReason: current.failureReason,
+      stage: 'cancelled',
+      progress: current.progress,
+      message: 'AI run cancelled.',
+      canResume: true,
+      createdAt: current.createdAt,
+      updatedAt: DateTime.utc(2026, 6, 1, 1),
+      metadata: current.metadata,
+    );
+    runs = runs.map((run) => run.id == runId ? updated : run).toList();
+    return updated;
+  }
+
+  @override
+  Future<AiRun> resumeRun({
+    required String projectId,
+    required String runId,
+  }) async {
+    final current = await fetchRun(runId: runId);
+    final updated = AiRun(
+      id: current.id,
+      projectId: current.projectId,
+      projectName: current.projectName,
+      status: 'starting',
+      labelField: current.labelField,
+      scopeType: current.scopeType,
+      regionPreset: current.regionPreset,
+      trainingFeatureCount: current.trainingFeatureCount,
+      eligibleFeatureCount: current.eligibleFeatureCount,
+      excludedFeatureCount: current.excludedFeatureCount,
+      selectedModel: current.selectedModel,
+      startedAt: current.startedAt,
+      completedAt: current.completedAt,
+      failedAt: current.failedAt,
+      failureReason: null,
+      stage: 'resume',
+      progress: 0,
+      message: 'AI run resume requested.',
+      canCancel: true,
+      createdAt: current.createdAt,
+      updatedAt: DateTime.utc(2026, 6, 1, 2),
+      metadata: current.metadata,
+    );
+    runs = runs.map((run) => run.id == runId ? updated : run).toList();
+    return updated;
+  }
+
+  @override
+  Future<AiRetrainRecommendation> fetchRetrainRecommendation({
+    required String projectId,
+    String? runId,
+  }) async {
+    return AiRetrainRecommendation(
+      projectId: projectId,
+      runId: runId,
+      shouldRetrain: false,
+      reason: 'Not enough new validation feedback for retraining yet',
+      recommendedAction: 'wait',
+      signals: const <String, dynamic>{'new_validated_features': 0},
     );
   }
 
@@ -190,6 +300,21 @@ class FakeAiRepository implements AiRepository {
           normalizedClass != null ||
           normalizedSearch != null ||
           normalizedFeatureId != null;
+      int? classTotal;
+      if (normalizedClass != null) {
+        for (final entry in collection.classCounts.entries) {
+          if (entry.key.toLowerCase() == normalizedClass) {
+            classTotal = entry.value;
+            break;
+          }
+        }
+      }
+      final filteredTotal =
+          normalizedSearch == null &&
+              normalizedFeatureId == null &&
+              classTotal != null
+          ? classTotal
+          : filteredFeatures.length;
       if (page == null || limit == null) {
         if (!isFiltered) {
           return collection;
@@ -197,9 +322,11 @@ class FakeAiRepository implements AiRepository {
         return AiLayerFeatureCollection(
           layer: collection.layer,
           features: filteredFeatures,
-          featureCount: collection.featureCount,
-          matchingFeatureCount: filteredFeatures.length,
+          featureCount: filteredTotal,
+          matchingFeatureCount: filteredTotal,
           returnedFeatureCount: filteredFeatures.length,
+          totalAreaM2: collection.totalAreaM2,
+          totalAreaHectares: collection.totalAreaHectares,
           detail: collection.detail,
           geometryMode: collection.geometryMode,
           optimizedPreview: collection.optimizedPreview,
@@ -220,11 +347,13 @@ class FakeAiRepository implements AiRepository {
       return AiLayerFeatureCollection(
         layer: collection.layer,
         features: pageFeatures,
-        featureCount: collection.featureCount,
+        featureCount: isFiltered ? filteredTotal : collection.featureCount,
         matchingFeatureCount: isFiltered
-            ? filteredFeatures.length
+            ? filteredTotal
             : collection.matchingFeatureCount,
         returnedFeatureCount: pageFeatures.length,
+        totalAreaM2: collection.totalAreaM2,
+        totalAreaHectares: collection.totalAreaHectares,
         detail: collection.detail,
         geometryMode: collection.geometryMode,
         optimizedPreview: collection.optimizedPreview,
@@ -432,6 +561,239 @@ class FakeAiRepository implements AiRepository {
   }
 
   @override
+  Future<AiRun> publishRun({
+    required String projectId,
+    required String runId,
+  }) async {
+    final run = await fetchRun(runId: runId);
+    final publishedAt = DateTime.utc(2026, 6, 9, 11, publishCount + 1);
+    final updated = _copyRun(
+      run,
+      publishedAt: publishedAt,
+      publishedBy: 'admin-1',
+      unpublishedAt: null,
+      unpublishedBy: null,
+    );
+    runs = runs.map((item) => item.id == runId ? updated : item).toList();
+    for (final layer in layers.where((layer) => layer.aiRunId == runId)) {
+      if (layer.layerType == 'classification' && layer.status != 'published') {
+        await publishLayer(layerId: layer.id);
+      }
+    }
+    return updated;
+  }
+
+  @override
+  Future<AiRun> unpublishRun({
+    required String projectId,
+    required String runId,
+  }) async {
+    final run = await fetchRun(runId: runId);
+    final unpublishedAt = DateTime.utc(2026, 6, 9, 12, unpublishCount + 1);
+    final updated = _copyRun(
+      run,
+      publishedAt: null,
+      publishedBy: null,
+      unpublishedAt: unpublishedAt,
+      unpublishedBy: 'admin-1',
+    );
+    runs = runs.map((item) => item.id == runId ? updated : item).toList();
+    for (final layer in layers.where((layer) => layer.aiRunId == runId)) {
+      if (layer.layerType == 'classification' && layer.status == 'published') {
+        await unpublishLayer(layerId: layer.id);
+      }
+    }
+    return updated;
+  }
+
+  @override
+  Future<AiRunPredictionValidationSummary> fetchRunValidationSummary({
+    required String projectId,
+    required String runId,
+  }) async {
+    final runLayers = layers.where((layer) => layer.aiRunId == runId).toList();
+    final layerIds = runLayers.map((layer) => layer.id).toSet();
+    final featureCount = layerFeatures.entries
+        .where((entry) => layerIds.contains(entry.key))
+        .fold<int>(0, (count, entry) => count + entry.value.featureCount);
+    return AiRunPredictionValidationSummary(
+      projectId: projectId,
+      aiRunId: runId,
+      totalAiFeatures: featureCount,
+      publishedFeatures: runLayers.any((layer) => layer.status == 'published')
+          ? featureCount
+          : 0,
+      contributorValidationsSubmitted: predictionValidationSubmitCount,
+      featuresValidatedByContributor: predictionValidationSubmitCount > 0
+          ? 1
+          : 0,
+      adminApprovedPromoted: predictionAdminReviewCount > 0 ? 1 : 0,
+      pending: featureCount,
+    );
+  }
+
+  @override
+  Future<AiPredictionFeatureDetails> fetchPredictionDetails({
+    required String projectId,
+    required String runId,
+    required String predictionId,
+  }) async {
+    final layer = layers.firstWhere(
+      (item) => item.aiRunId == runId,
+      orElse: () => AiOutputLayer(
+        id: 'layer-1',
+        aiRunId: runId,
+        projectId: projectId,
+        layerType: 'classification',
+        status: 'published',
+        name: 'Classification predictions',
+        publishedAt: DateTime.utc(2026, 6, 9),
+      ),
+    );
+    return AiPredictionFeatureDetails(
+      prediction: fakeAiValidationPrediction(
+        id: predictionId,
+        layer: AiPredictionValidationLayerRef(
+          id: layer.id,
+          layerType: layer.layerType,
+          name: layer.name,
+        ),
+      ),
+      layer: layer,
+      run: <String, dynamic>{'id': runId, 'label_field': settings.labelField},
+      validationSummary: AiPredictionValidationSummary(
+        total: predictionValidationSubmitCount,
+        correct: predictionValidationSubmitCount,
+        contributorCount: predictionValidationSubmitCount,
+      ),
+      published: layer.status == 'published',
+      assignedContributor: true,
+      canValidate:
+          layer.status == 'published' && predictionValidationSubmitCount == 0,
+      canAdminReview: true,
+    );
+  }
+
+  @override
+  Future<AiPredictionFeatureDetails> submitPredictionValidation({
+    required String projectId,
+    required String predictionId,
+    required String validationResult,
+    String? correctedClass,
+    String? note,
+    List<String> photoMediaIds = const <String>[],
+    Map<String, dynamic>? gpsLocation,
+    double? gpsAccuracyM,
+  }) async {
+    predictionValidationSubmitCount++;
+    if (validationResult == 'incorrect' &&
+        (correctedClass == null || correctedClass.trim().isEmpty)) {
+      throw StateError('corrected_class is required.');
+    }
+    final details = await fetchPredictionDetails(
+      projectId: projectId,
+      runId: layers.isEmpty ? 'run-1' : layers.first.aiRunId ?? 'run-1',
+      predictionId: predictionId,
+    );
+    return AiPredictionFeatureDetails(
+      prediction: details.prediction,
+      layer: details.layer,
+      run: details.run,
+      validationSummary: AiPredictionValidationSummary(
+        total: predictionValidationSubmitCount,
+        correct: validationResult == 'correct' ? 1 : 0,
+        incorrect: validationResult == 'incorrect' ? 1 : 0,
+        unsure: validationResult == 'unsure' ? 1 : 0,
+        cannotVerify: validationResult == 'cannot_verify' ? 1 : 0,
+        contributorCount: predictionValidationSubmitCount,
+      ),
+      myValidation: AiPredictionFeatureValidation(
+        id: 'prediction-validation-$predictionValidationSubmitCount',
+        projectId: projectId,
+        aiRunId: '${details.run['id'] ?? 'run-1'}',
+        aiPredictionFeatureId: predictionId,
+        contributorUserId: 'contributor-1',
+        validationResult: validationResult,
+        correctedClass: correctedClass,
+        note: note,
+        photoMediaIds: photoMediaIds,
+        gpsLocation: gpsLocation,
+        gpsAccuracyM: gpsAccuracyM,
+        createdAt: DateTime.utc(2026, 6, 12, 11),
+      ),
+      adminReview: details.adminReview,
+      published: details.published,
+      assignedContributor: details.assignedContributor,
+      validationClosed: false,
+      canValidate: false,
+      canAdminReview: details.canAdminReview,
+    );
+  }
+
+  @override
+  Future<List<String>> uploadPredictionValidationPhotos({
+    required String projectId,
+    required String predictionId,
+    required List<AiValidationPhotoUpload> photos,
+  }) async {
+    return photos
+        .map((photo) => '/uploads/photos/${photo.fileName}')
+        .toList(growable: false);
+  }
+
+  @override
+  Future<List<AiPredictionFeatureValidation>> fetchPredictionValidations({
+    required String projectId,
+    required String predictionId,
+  }) async {
+    final details = await fetchPredictionDetails(
+      projectId: projectId,
+      runId: layers.isEmpty ? 'run-1' : layers.first.aiRunId ?? 'run-1',
+      predictionId: predictionId,
+    );
+    final validation = details.myValidation;
+    return validation == null
+        ? const <AiPredictionFeatureValidation>[]
+        : <AiPredictionFeatureValidation>[validation];
+  }
+
+  @override
+  Future<AiPredictionFeatureDetails> reviewPredictionFeature({
+    required String projectId,
+    required String predictionId,
+    required String approvalStatus,
+    String? approvedClass,
+    String? adminNote,
+  }) async {
+    predictionAdminReviewCount++;
+    final details = await fetchPredictionDetails(
+      projectId: projectId,
+      runId: layers.isEmpty ? 'run-1' : layers.first.aiRunId ?? 'run-1',
+      predictionId: predictionId,
+    );
+    return AiPredictionFeatureDetails(
+      prediction: details.prediction,
+      layer: details.layer,
+      run: details.run,
+      validationSummary: details.validationSummary,
+      myValidation: details.myValidation,
+      adminReview: <String, dynamic>{
+        'status': approvalStatus,
+        'approved_class': approvedClass ?? details.prediction.predictedClass,
+        'note': adminNote,
+        'promoted_spatial_feature_id': approvalStatus == 'approved'
+            ? 'feature-from-ai-$predictionId'
+            : null,
+      },
+      published: details.published,
+      assignedContributor: details.assignedContributor,
+      validationClosed: approvalStatus != 'needs_more_validation',
+      canValidate: false,
+      canAdminReview: true,
+    );
+  }
+
+  @override
   Future<AiReadinessResult> fetchReadiness({
     required String projectId,
     String? labelField,
@@ -462,14 +824,17 @@ class FakeAiRepository implements AiRepository {
       sourceColumnAvailable: readiness.sourceColumnAvailable,
       sourceCounts: readiness.sourceCounts,
       spatialExtent: readiness.spatialExtent,
+      scopeType: readiness.scopeType,
+      trainingSamplesAreaType: readiness.trainingSamplesAreaType,
+      predictionAreaType: readiness.predictionAreaType,
+      customScopeApplied: readiness.customScopeApplied,
       coverageWarningApplies: readiness.coverageWarningApplies,
       warnings: readiness.warnings,
       blockers: readiness.blockers,
       settings: readiness.settings,
-      nationalScopeEnabled:
-          readiness.nationalScopeEligibility.eligible &&
-          settings.modelPreferences['national_scope_enabled'] == true,
+      nationalScopeEnabled: readiness.nationalScopeEligibility.eligible,
       nationalScopeEligibility: readiness.nationalScopeEligibility,
+      aiServer: readiness.aiServer,
     );
   }
 
@@ -480,15 +845,21 @@ class FakeAiRepository implements AiRepository {
     int page = 1,
     int limit = 20,
   }) async {
+    runPageFetchCount++;
     final filtered = status == null
         ? runs
         : runs.where((run) => run.status == status).toList(growable: false);
+    final start = (page - 1) * limit;
+    final end = (start + limit).clamp(0, filtered.length);
+    final items = start >= filtered.length
+        ? const <AiRun>[]
+        : filtered.sublist(start, end);
     return PaginatedResult<AiRun>(
-      items: filtered,
+      items: items,
       page: page,
       limit: limit,
       total: filtered.length,
-      hasMore: false,
+      hasMore: end < filtered.length,
     );
   }
 
@@ -505,14 +876,6 @@ class FakeAiRepository implements AiRepository {
     required AiProjectSettings settings,
   }) async {
     saveCount++;
-    final requestsNationalMode =
-        settings.scopeType == 'national' ||
-        settings.modelPreferences['national_scope_enabled'] == true;
-    if (requestsNationalMode && !readiness.nationalScopeEligibility.eligible) {
-      throw StateError(
-        'National Lebanon is locked until national readiness requirements are met.',
-      );
-    }
     this.settings = settings.copyWith(projectId: projectId, persisted: true);
     return this.settings;
   }
@@ -835,6 +1198,50 @@ String _fakeAiFeatureSearchBlob(AiLayerFeature feature) {
       .toLowerCase();
 }
 
+AiRun _copyRun(
+  AiRun run, {
+  DateTime? publishedAt,
+  String? publishedBy,
+  DateTime? unpublishedAt,
+  String? unpublishedBy,
+}) {
+  return AiRun(
+    id: run.id,
+    projectId: run.projectId,
+    projectName: run.projectName,
+    status: run.status,
+    labelField: run.labelField,
+    scopeType: run.scopeType,
+    regionPreset: run.regionPreset,
+    trainingFeatureCount: run.trainingFeatureCount,
+    eligibleFeatureCount: run.eligibleFeatureCount,
+    excludedFeatureCount: run.excludedFeatureCount,
+    selectedModel: run.selectedModel,
+    startedAt: run.startedAt,
+    completedAt: run.completedAt,
+    failedAt: run.failedAt,
+    failureReason: run.failureReason,
+    stage: run.stage,
+    progress: run.progress,
+    message: run.message,
+    aiServerRunId: run.aiServerRunId,
+    cancelledAt: run.cancelledAt,
+    callbackReceivedAt: run.callbackReceivedAt,
+    publishedAt: publishedAt,
+    publishedBy: publishedBy,
+    unpublishedAt: unpublishedAt,
+    unpublishedBy: unpublishedBy,
+    artifacts: run.artifacts,
+    counts: run.counts,
+    error: run.error,
+    canCancel: run.canCancel,
+    canResume: run.canResume,
+    createdAt: run.createdAt,
+    updatedAt: DateTime.utc(2026, 6, 9),
+    metadata: run.metadata,
+  );
+}
+
 AiOutputLayer _copyLayer(
   AiOutputLayer layer, {
   String? status,
@@ -1087,58 +1494,72 @@ AiReadinessResult fakeReadiness({
       ],
   List<String> warnings = const <String>[],
   List<String> blockers = const <String>[],
-  bool nationalScopeEnabled = false,
-  AiNationalScopeEligibility
-  nationalScopeEligibility = const AiNationalScopeEligibility(
-    eligible: false,
-    requirements: <AiNationalScopeRequirement>[
-      AiNationalScopeRequirement(
-        key: 'national_mode_allowed',
-        label: 'National mode allowed for this project',
-        passed: false,
-        currentValue: false,
-        requiredValue: true,
-        message:
-            'A protected super-admin must allow national AI mode for this project.',
-      ),
-      AiNationalScopeRequirement(
-        key: 'lebanon_boundary_configured',
-        label: 'Lebanon boundary configured',
-        passed: false,
-        currentValue: 'not configured',
-        requiredValue: 'usable Lebanon boundary',
-        message:
-            'Lebanon boundary/ROI must be configured before national mode can be enabled.',
-      ),
-      AiNationalScopeRequirement(
-        key: 'pipeline_supports_national_processing',
-        label: 'Pipeline supports national processing',
-        passed: false,
-        currentValue:
-            'national scope: false; backend bridge: false; Python pipeline: false',
-        requiredValue:
-            'backend bridge and Python pipeline support national ROI',
-        message:
-            'National mode stays locked until the backend bridge and Python pipeline support national ROI/config processing.',
-      ),
-      AiNationalScopeRequirement(
-        key: 'regional_coverage_configured',
-        label: 'Geographic coverage is broad enough',
-        passed: false,
-        currentValue: 'coverage check not configured',
-        requiredValue:
-            'configured regional/governorate or environmental-zone coverage check',
-        message: 'Regional coverage check is not configured yet.',
-      ),
-    ],
-    unmetRequirements: <String>[
-      'A protected super-admin must allow national AI mode for this project.',
-      'Lebanon boundary/ROI must be configured before national mode can be enabled.',
-      'National mode stays locked until the backend bridge and Python pipeline support national ROI/config processing.',
-      'Regional coverage check is not configured yet.',
-    ],
-    warnings: <String>[],
+  AiServerReadiness aiServer = const AiServerReadiness(
+    configured: true,
+    available: true,
+    status: 'ok',
+    dryRun: true,
+    callbackSecretConfigured: true,
   ),
+  bool nationalScopeEnabled = false,
+  AiNationalScopeEligibility nationalScopeEligibility =
+      const AiNationalScopeEligibility(
+        eligible: true,
+        requirements: <AiNationalScopeRequirement>[
+          AiNationalScopeRequirement(
+            key: 'governorate_coverage',
+            label: 'Governorates covered',
+            passed: true,
+            currentValue: '6 / 8',
+            requiredValue: '70% for good coverage',
+            message: 'Good coverage',
+          ),
+          AiNationalScopeRequirement(
+            key: 'spatial_spread',
+            label: 'Spatial spread',
+            passed: true,
+            currentValue: '14 / 20',
+            requiredValue: '70% for good coverage',
+            message: 'Good coverage',
+          ),
+          AiNationalScopeRequirement(
+            key: 'class_distribution',
+            label: 'Class coverage',
+            passed: true,
+            currentValue: '4 usable, 0 weak',
+            requiredValue: '70% for good coverage',
+            message: 'Good coverage',
+          ),
+          AiNationalScopeRequirement(
+            key: 'overall_coverage',
+            label: 'Overall coverage',
+            passed: true,
+            currentValue: 74,
+            requiredValue: '70 for good coverage',
+            message: 'Good for a national run.',
+          ),
+        ],
+        unmetRequirements: <String>[],
+        warnings: <String>[],
+        coverage: <String, dynamic>{
+          'governorates_covered': 6,
+          'total_governorates': 8,
+          'governorate_percent': 75,
+          'governorate_rating': 'good',
+          'grid_cells_covered': 14,
+          'total_grid_cells': 20,
+          'grid_percent': 70,
+          'grid_rating': 'good',
+          'usable_class_count': 4,
+          'weak_class_count': 0,
+          'total_class_count': 4,
+          'class_percent': 100,
+          'class_rating': 'good',
+          'elevation_measured': false,
+          'score': 74,
+          'rating': 'good',
+        },
+      ),
 }) {
   return AiReadinessResult(
     projectId: projectId,
@@ -1167,11 +1588,16 @@ AiReadinessResult fakeReadiness({
       maxLon: 35.68,
       maxLat: 33.58,
     ),
+    scopeType: 'project',
+    trainingSamplesAreaType: 'project_area',
+    predictionAreaType: 'project_area',
+    customScopeApplied: false,
     coverageWarningApplies: false,
     warnings: warnings,
     blockers: blockers,
     settings: fakeAiSettings(projectId: projectId),
     nationalScopeEnabled: nationalScopeEnabled,
     nationalScopeEligibility: nationalScopeEligibility,
+    aiServer: aiServer,
   );
 }

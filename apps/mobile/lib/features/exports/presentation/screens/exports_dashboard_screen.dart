@@ -59,6 +59,7 @@ class _ExportsDashboardScreenState
   final TextEditingController _bboxController = TextEditingController();
   Map<String, dynamic>? _selectedExportPolygon;
   String? _selectedFeatureType;
+  bool _exportAiPredictions = false;
   Timer? _jobsRefreshTimer;
   String? _fromDateError;
   String? _toDateError;
@@ -169,6 +170,12 @@ class _ExportsDashboardScreenState
           orElse: () => null,
         );
         final featureTypeOptions = _featureTypeOptions(selectedProject);
+        final canExportAiPredictions =
+            session?.user.isProtectedSuperAdmin == true &&
+            selectedProject != null &&
+            selectedProject.publishedAiLayerCount > 0;
+        final useAiPredictionExport =
+            canExportAiPredictions && _exportAiPredictions;
         final jobsQuery = _currentJobsQuery();
         final jobsAsync = ref.watch(paginatedExportJobsProvider(jobsQuery));
         final jobsController = ref.read(
@@ -355,6 +362,7 @@ class _ExportsDashboardScreenState
                               _selectedProjectId = null;
                               _selectedProjectName = '';
                               _selectedFeatureType = null;
+                              _exportAiPredictions = false;
                               _selectedExportPolygon = null;
                             });
                           },
@@ -387,6 +395,7 @@ class _ExportsDashboardScreenState
                                 _selectedProjectId = null;
                                 _selectedProjectName = '';
                                 _selectedFeatureType = null;
+                                _exportAiPredictions = false;
                                 _selectedExportPolygon = null;
                               });
                               return;
@@ -398,6 +407,7 @@ class _ExportsDashboardScreenState
                               _selectedProjectId = project.id;
                               _selectedProjectName = project.name;
                               _selectedFeatureType = null;
+                              _exportAiPredictions = false;
                               _selectedExportPolygon = null;
                             });
                           },
@@ -423,10 +433,29 @@ class _ExportsDashboardScreenState
                         ),
                       ),
                     ],
-                    onChanged: (value) {
-                      setState(() => _selectedFeatureType = value);
-                    },
+                    onChanged: useAiPredictionExport
+                        ? null
+                        : (value) {
+                            setState(() => _selectedFeatureType = value);
+                          },
                   ),
+                  if (canExportAiPredictions) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    CheckboxListTile(
+                      value: _exportAiPredictions,
+                      onChanged: (value) {
+                        setState(() {
+                          _exportAiPredictions = value ?? false;
+                          if (_exportAiPredictions) {
+                            _selectedFeatureType = null;
+                          }
+                        });
+                      },
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: const Text('Include AI results'),
+                    ),
+                  ],
                   const SizedBox(height: AppSpacing.sm),
                   Text('Format', style: Theme.of(context).textTheme.titleSmall),
                   const SizedBox(height: AppSpacing.sm),
@@ -580,6 +609,7 @@ class _ExportsDashboardScreenState
                           : () => _submit(
                               controller,
                               selectedProject: selectedProject,
+                              useAiPredictionExport: useAiPredictionExport,
                             ),
                       icon: const Icon(Icons.playlist_add),
                       label: Text(
@@ -698,6 +728,7 @@ class _ExportsDashboardScreenState
   void _resetExportFilters() {
     setState(() {
       _selectedFeatureType = null;
+      _exportAiPredictions = false;
       _selectedFormat = ExportFormat.geojson;
       _fromDateController.clear();
       _toDateController.clear();
@@ -712,13 +743,15 @@ class _ExportsDashboardScreenState
   Future<void> _submit(
     ExportsController controller, {
     required ProjectSummary? selectedProject,
+    required bool useAiPredictionExport,
   }) async {
     final projectId = _selectedProjectId;
     if (projectId == null || projectId.isEmpty) {
       AppSnackbar.showError(context, 'Select a project first.');
       return;
     }
-    if ((selectedProject?.approvedFeatures ?? 0) <= 0) {
+    if (!useAiPredictionExport &&
+        (selectedProject?.approvedFeatures ?? 0) <= 0) {
       await showDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
@@ -752,8 +785,12 @@ class _ExportsDashboardScreenState
         'date_from': fromDate,
         'date_to': toDate,
         'bbox': bbox,
-        'include_photos': true,
-        if (_selectedFeatureType?.trim().isNotEmpty ?? false)
+        'include_photos': !useAiPredictionExport,
+        'export_ai_predictions': useAiPredictionExport,
+        if (_selectedCategoryId?.trim().isNotEmpty ?? false)
+          'category_id': _selectedCategoryId!.trim(),
+        if (!useAiPredictionExport &&
+            (_selectedFeatureType?.trim().isNotEmpty ?? false))
           'feature_type': _selectedFeatureType!.trim(),
         if (_selectedExportPolygon != null)
           'export_polygon': jsonEncode(_selectedExportPolygon),
@@ -1832,6 +1869,11 @@ class _ExportJobCard extends StatelessWidget {
                     'Downloaded ${_formatDateTime(job.downloadedAt!)}',
                   ),
                 )
+              else if (job.status == ExportJobStatus.expired)
+                const Chip(
+                  avatar: Icon(Icons.schedule_outlined, size: 16),
+                  label: Text('File expired'),
+                )
               else if (job.completedAt != null)
                 Chip(
                   avatar: const Icon(Icons.task_alt, size: 16),
@@ -1839,11 +1881,15 @@ class _ExportJobCard extends StatelessWidget {
                 ),
             ],
           ),
-          if (job.errorMessage?.trim().isNotEmpty == true) ...[
+          if ((job.displayMessage ?? job.errorMessage)?.trim().isNotEmpty == true) ...[
             const SizedBox(height: AppSpacing.sm),
             Text(
-              job.errorMessage!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
+              (job.displayMessage ?? job.errorMessage)!,
+              style: TextStyle(
+                color: job.status == ExportJobStatus.expired
+                    ? Theme.of(context).colorScheme.onSurfaceVariant
+                    : Theme.of(context).colorScheme.error,
+              ),
             ),
           ],
           const SizedBox(height: AppSpacing.sm),
@@ -1857,11 +1903,15 @@ class _ExportJobCard extends StatelessWidget {
                 icon: const Icon(Icons.refresh, size: 18),
                 label: const Text('Check status'),
               ),
-              if (job.status == ExportJobStatus.failed)
+              if (job.canRetryOrRegenerate)
                 FilledButton.tonalIcon(
                   onPressed: onRetry,
                   icon: const Icon(Icons.restart_alt, size: 18),
-                  label: const Text('Retry'),
+                  label: Text(
+                    job.status == ExportJobStatus.expired
+                        ? 'Regenerate'
+                        : 'Retry',
+                  ),
                 ),
               if (job.canDownload)
                 FilledButton.icon(

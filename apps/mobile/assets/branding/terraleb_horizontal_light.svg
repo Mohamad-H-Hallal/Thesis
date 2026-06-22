@@ -1,0 +1,11 @@
+<svg width="420" height="120" viewBox="0 0 420 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="8" y="8" width="104" height="104" rx="24" fill="#F4F7F6"/>
+  <rect x="8" y="8" width="104" height="104" rx="24" stroke="#C9D8D0" stroke-width="2"/>
+  <path d="M31 42H89M31 60H89M31 78H89M42 31V89M60 31V89M78 31V89" stroke="#DDE8E2" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M60 22C45.6 22 34 33.6 34 48C34 66.6 60 95 60 95C60 95 86 66.6 86 48C86 33.6 74.4 22 60 22Z" fill="#E7F3ED" stroke="#236A4B" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M44 57C53 44 67 40 76 42C74 53.5 64.5 66 49 66.5C46.8 64 45.2 61 44 57Z" fill="#9CCBAD"/>
+  <path d="M48 61C57.5 57.7 66 53.4 73.5 45.5" stroke="#236A4B" stroke-width="4.2" stroke-linecap="round"/>
+  <path d="M41 72C52.5 74 66 73.5 79 67.8" stroke="#A48B5A" stroke-width="3.8" stroke-linecap="round"/>
+  <text x="138" y="57" fill="#173B2C" font-family="Inter, Arial, sans-serif" font-size="36" font-weight="700">TerraLeb</text>
+  <text x="140" y="84" fill="#5C6F65" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="500">Field GIS and AI land intelligence</text>
+</svg>

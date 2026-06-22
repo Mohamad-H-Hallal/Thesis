@@ -195,6 +195,83 @@ class ApiAiRepository implements AiRepository {
   }
 
   @override
+  Future<AiRun> fetchRunStatus({
+    required String projectId,
+    required String runId,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/runs/$runId/status',
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiRun.fromMap(_toMap(payload['data']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to refresh the AI run status right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiRun> cancelRun({
+    required String projectId,
+    required String runId,
+  }) async {
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/runs/$runId/cancel',
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiRun.fromMap(_toMap(payload['data']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to cancel the AI run right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiRun> resumeRun({
+    required String projectId,
+    required String runId,
+  }) async {
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/runs/$runId/resume',
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiRun.fromMap(_toMap(payload['data']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to resume the AI run right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiRetrainRecommendation> fetchRetrainRecommendation({
+    required String projectId,
+    String? runId,
+  }) async {
+    final path = runId?.trim().isNotEmpty ?? false
+        ? '$_projectsBasePath/$projectId/ai/runs/${runId!.trim()}/retrain-check'
+        : '$_projectsBasePath/$projectId/ai/retrain-check';
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(path);
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiRetrainRecommendation.fromMap(_toMap(payload['data']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to check retraining recommendation right now.',
+      );
+    }
+  }
+
+  @override
   Future<List<AiRunMetric>> fetchRunMetrics({required String runId}) async {
     try {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
@@ -414,6 +491,236 @@ class ApiAiRepository implements AiRepository {
       throw userFacingDioMessage(
         error,
         fallback: 'Unable to unpublish this AI layer right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiRun> publishRun({
+    required String projectId,
+    required String runId,
+  }) async {
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/runs/$runId/publish',
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiRun.fromMap(_toMap(_toMap(payload['data'])['run']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to publish this AI run right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiRun> unpublishRun({
+    required String projectId,
+    required String runId,
+  }) async {
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/runs/$runId/unpublish',
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiRun.fromMap(_toMap(_toMap(payload['data'])['run']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to unpublish this AI run right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiRunPredictionValidationSummary> fetchRunValidationSummary({
+    required String projectId,
+    required String runId,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/runs/$runId/validation-summary',
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiRunPredictionValidationSummary.fromMap(_toMap(payload['data']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load AI validation summary right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiPredictionFeatureDetails> fetchPredictionDetails({
+    required String projectId,
+    required String runId,
+    required String predictionId,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/runs/$runId/predictions/$predictionId',
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiPredictionFeatureDetails.fromMap(_toMap(payload['data']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load this AI prediction right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiPredictionFeatureDetails> submitPredictionValidation({
+    required String projectId,
+    required String predictionId,
+    required String validationResult,
+    String? correctedClass,
+    String? note,
+    List<String> photoMediaIds = const <String>[],
+    Map<String, dynamic>? gpsLocation,
+    double? gpsAccuracyM,
+  }) async {
+    final normalizedCorrectedClass = _nonEmpty(correctedClass);
+    final normalizedNote = _nonEmpty(note);
+    final data = <String, dynamic>{'validation_result': validationResult};
+    if (normalizedCorrectedClass != null) {
+      data['corrected_class'] = normalizedCorrectedClass;
+    }
+    if (normalizedNote != null) {
+      data['note'] = normalizedNote;
+    }
+    if (photoMediaIds.isNotEmpty) {
+      data['photo_media_ids'] = photoMediaIds;
+    }
+    if (gpsLocation != null) {
+      data['gps_location'] = gpsLocation;
+    }
+    if (gpsAccuracyM != null) {
+      data['gps_accuracy_m'] = gpsAccuracyM;
+    }
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/predictions/$predictionId/validations',
+        data: data,
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiPredictionFeatureDetails.fromMap(_toMap(payload['data']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to submit this AI validation right now.',
+      );
+    }
+  }
+
+  @override
+  Future<List<String>> uploadPredictionValidationPhotos({
+    required String projectId,
+    required String predictionId,
+    required List<AiValidationPhotoUpload> photos,
+  }) async {
+    if (photos.isEmpty) {
+      return const <String>[];
+    }
+
+    try {
+      final files = await Future.wait(
+        photos.map(
+          (photo) async => MultipartFile.fromBytes(
+            photo.bytes,
+            filename: photo.fileName.trim().isEmpty
+                ? 'validation-photo.jpg'
+                : photo.fileName.trim(),
+          ),
+        ),
+      );
+      final formData = FormData.fromMap(<String, dynamic>{'photos': files});
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/predictions/$predictionId/validation-photos',
+        data: formData,
+        options: Options(
+          headers: <String, dynamic>{'Content-Type': 'multipart/form-data'},
+        ),
+      );
+      final payload = _toMap(response.data?['data']);
+      final ids = _stringsFromList(payload['photo_media_ids']);
+      if (ids.isNotEmpty) {
+        return ids;
+      }
+      final photosPayload = payload['photos'];
+      if (photosPayload is List) {
+        return photosPayload
+            .map((item) {
+              final map = _toMap(item);
+              return _nonEmpty(
+                (map['id'] ?? map['url'] ?? map['photo_media_id'])?.toString(),
+              );
+            })
+            .whereType<String>()
+            .toList(growable: false);
+      }
+      return const <String>[];
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to upload validation photos right now.',
+      );
+    }
+  }
+
+  @override
+  Future<List<AiPredictionFeatureValidation>> fetchPredictionValidations({
+    required String projectId,
+    required String predictionId,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/predictions/$predictionId/validations',
+      );
+      final payload = _toMap(response.data?['data']);
+      final rows = payload['validations'];
+      if (rows is! List) {
+        return const <AiPredictionFeatureValidation>[];
+      }
+      return rows
+          .map((row) => AiPredictionFeatureValidation.fromMap(_toMap(row)))
+          .toList(growable: false);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load AI validation submissions right now.',
+      );
+    }
+  }
+
+  @override
+  Future<AiPredictionFeatureDetails> reviewPredictionFeature({
+    required String projectId,
+    required String predictionId,
+    required String approvalStatus,
+    String? approvedClass,
+    String? adminNote,
+  }) async {
+    final data = <String, dynamic>{
+      'approval_status': approvalStatus,
+      if (_nonEmpty(approvedClass) != null)
+        'approved_class': _nonEmpty(approvedClass),
+      if (_nonEmpty(adminNote) != null) 'admin_note': _nonEmpty(adminNote),
+    };
+    try {
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/predictions/$predictionId/admin-review',
+        data: data,
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      return AiPredictionFeatureDetails.fromMap(_toMap(payload['data']));
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to save this AI prediction review right now.',
       );
     }
   }
@@ -688,6 +995,17 @@ class ApiAiRepository implements AiRepository {
       return Map<String, dynamic>.from(raw);
     }
     return const <String, dynamic>{};
+  }
+
+  List<String> _stringsFromList(dynamic raw) {
+    if (raw is! List) {
+      return const <String>[];
+    }
+    return raw
+        .map((item) => item?.toString().trim())
+        .whereType<String>()
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
   }
 
   int? _toInt(dynamic value) {

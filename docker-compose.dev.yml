@@ -1,0 +1,155 @@
+name: ${COMPOSE_PROJECT_NAME:-gis_app}
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-gis_app}
+      POSTGRES_USER: ${POSTGRES_USER:-gis_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+    ports:
+      - "${POSTGRES_HOST_PORT:-55578}:5432"
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+      - ./infra/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  ai-server:
+    build:
+      context: ../AI-ML-pipeline-for-AI-Enhanced-Mobile-GIS
+      dockerfile: Dockerfile
+    env_file:
+      - ../AI-ML-pipeline-for-AI-Enhanced-Mobile-GIS/.env
+    environment:
+      AI_DRY_RUN: ${AI_DRY_RUN:-false}
+      APP_BACKEND_URL: http://api:3000
+      AI_CALLBACK_SECRET: ${AI_CALLBACK_SECRET:-dev-ai-callback-secret-change-me}
+      OUTPUTS_DIR: /app/outputs
+      AI_OUTPUT_DIR: /app/outputs
+      AI_SERVER_MAX_WORKERS: ${AI_SERVER_MAX_WORKERS:-1}
+      DATABASE_URL: ${AI_DATABASE_URL:-postgresql://gis_user:change_me@db:5432/gis_app}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-gis_app}
+      DB_USER: ${POSTGRES_USER:-gis_user}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ai_outputs:/app/outputs
+      # Mount GEE credentials only for real mode; never bake keys into the image.
+      - ../AI-ML-pipeline-for-AI-Enhanced-Mobile-GIS/GEE-KEY:/app/GEE-KEY:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import json,sys,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)); sys.exit(0 if data.get('status') != 'error' else 1)\"",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile.dev
+    working_dir: /workspace/apps/api
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      MIGRATIONS_DIR: /workspace/infra/migrations
+    depends_on:
+      db:
+        condition: service_healthy
+    command:
+      [
+        "sh",
+        "-lc",
+        "sh /workspace/apps/api/docker/dev-entrypoint.sh npm run migrate",
+      ]
+    volumes:
+      - .:/workspace
+      - api_node_modules:/workspace/apps/api/node_modules
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile.dev
+    working_dir: /workspace/apps/api
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      DB_HOST: db
+      DB_PORT: 5432
+      MIGRATIONS_DIR: /workspace/infra/migrations
+      AI_SERVER_URL: http://ai-server:8000
+      AI_CALLBACK_BASE_URL: http://api:3000
+      APP_PUBLIC_API_URL: http://localhost:3000
+      AI_CALLBACK_SECRET: ${AI_CALLBACK_SECRET:-dev-ai-callback-secret-change-me}
+      AI_SERVER_TIMEOUT_MS: 30000
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      ai-server:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/workspace
+      - ./secrets:/run/app-secrets:ro
+      - api_node_modules:/workspace/apps/api/node_modules
+      - api_uploads:/workspace/apps/api/uploads
+      - api_exports:/workspace/apps/api/exports
+      - ai_outputs:/app/ai-outputs
+    command:
+      [
+        "sh",
+        "-lc",
+        "sh /workspace/apps/api/docker/dev-entrypoint.sh npm run dev:docker",
+      ]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  postgis_data:
+    name: ${POSTGIS_DATA_VOLUME:-gis_app_postgis_data}
+  api_node_modules:
+    name: ${API_NODE_MODULES_VOLUME:-gis_app_api_node_modules}
+  api_uploads:
+    name: ${API_UPLOADS_VOLUME:-gis_app_api_uploads}
+  api_exports:
+    name: ${API_EXPORTS_VOLUME:-gis_app_api_exports}
+  ai_outputs:
+    name: ${AI_OUTPUTS_VOLUME:-gis_app_ai_outputs}

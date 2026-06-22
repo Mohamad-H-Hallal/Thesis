@@ -17,6 +17,7 @@ const {
   uuidValidation,
 } = require('../middleware/validation');
 const { asyncHandler } = require('../middleware/error');
+const { uploadMultiple } = require('../config/upload');
 import { auditAction } from '../middleware/audit';
 
 // All routes require authentication
@@ -87,6 +88,14 @@ router.get(
   asyncHandler(projectController.getProjectStats),
 );
 
+router.get(
+  '/:projectId/offline-package',
+  uuidValidation('projectId'),
+  validate,
+  checkProjectAccess,
+  asyncHandler(projectController.getProjectOfflinePackage),
+);
+
 // Get project features
 router.get(
   '/:projectId/features',
@@ -120,6 +129,83 @@ router.get(
   validate,
   checkProjectAccess,
   asyncHandler(aiController.listProjectPublishedAiPredictions),
+);
+
+router.get(
+  '/:projectId/ai/runs/:runId/validation-summary',
+  uuidValidation('projectId'),
+  uuidValidation('runId'),
+  validate,
+  checkProjectAccess,
+  asyncHandler(aiController.getProjectAiRunValidationSummary),
+);
+
+router.get(
+  '/:projectId/ai/runs/:runId/validations',
+  uuidValidation('projectId'),
+  uuidValidation('runId'),
+  paginationValidation,
+  validate,
+  authorize('admin'),
+  asyncHandler(aiController.listProjectAiRunValidations),
+);
+
+router.get(
+  '/:projectId/ai/runs/:runId/predictions/:predictionId',
+  uuidValidation('projectId'),
+  uuidValidation('runId'),
+  uuidValidation('predictionId'),
+  validate,
+  checkProjectAccess,
+  asyncHandler(aiController.getProjectAiPredictionDetails),
+);
+
+router.post(
+  '/:projectId/ai/predictions/:predictionId/validation-photos',
+  uuidValidation('projectId'),
+  uuidValidation('predictionId'),
+  validate,
+  checkProjectAccess,
+  uploadMultiple,
+  asyncHandler(aiController.uploadProjectAiPredictionValidationPhotos),
+);
+
+router.post(
+  '/:projectId/ai/predictions/:predictionId/validations',
+  uuidValidation('projectId'),
+  uuidValidation('predictionId'),
+  aiValidation.submitPredictionFeatureValidation,
+  validate,
+  checkProjectAccess,
+  asyncHandler(aiController.submitProjectAiPredictionValidation),
+);
+
+router.get(
+  '/:projectId/ai/predictions/:predictionId/my-validation',
+  uuidValidation('projectId'),
+  uuidValidation('predictionId'),
+  validate,
+  checkProjectAccess,
+  asyncHandler(aiController.getMyProjectAiPredictionValidation),
+);
+
+router.get(
+  '/:projectId/ai/predictions/:predictionId/validations',
+  uuidValidation('projectId'),
+  uuidValidation('predictionId'),
+  validate,
+  authorize('admin'),
+  asyncHandler(aiController.listProjectAiPredictionValidations),
+);
+
+router.post(
+  '/:projectId/ai/predictions/:predictionId/admin-review',
+  uuidValidation('projectId'),
+  uuidValidation('predictionId'),
+  aiValidation.reviewPredictionFeature,
+  validate,
+  authorize('admin'),
+  asyncHandler(aiController.reviewProjectAiPrediction),
 );
 
 router.get(
@@ -184,6 +270,77 @@ router.get(
   validate,
   requireProtectedSuperAdmin,
   asyncHandler(aiController.listProjectAiRuns),
+);
+
+router.get(
+  '/:projectId/ai/runs/:runId',
+  uuidValidation('projectId'),
+  uuidValidation('runId'),
+  validate,
+  requireProtectedSuperAdmin,
+  asyncHandler(aiController.getProjectAiRun),
+);
+
+router.get(
+  '/:projectId/ai/runs/:runId/status',
+  uuidValidation('projectId'),
+  uuidValidation('runId'),
+  validate,
+  requireProtectedSuperAdmin,
+  asyncHandler(aiController.getProjectAiRunStatus),
+);
+
+router.post(
+  '/:projectId/ai/runs/:runId/publish',
+  uuidValidation('projectId'),
+  uuidValidation('runId'),
+  validate,
+  authorize('admin'),
+  asyncHandler(aiController.publishProjectAiRun),
+);
+
+router.post(
+  '/:projectId/ai/runs/:runId/unpublish',
+  uuidValidation('projectId'),
+  uuidValidation('runId'),
+  validate,
+  authorize('admin'),
+  asyncHandler(aiController.unpublishProjectAiRun),
+);
+
+router.post(
+  '/:projectId/ai/runs/:runId/cancel',
+  uuidValidation('projectId'),
+  uuidValidation('runId'),
+  validate,
+  requireProtectedSuperAdmin,
+  asyncHandler(aiController.cancelProjectAiRun),
+);
+
+router.post(
+  '/:projectId/ai/runs/:runId/resume',
+  uuidValidation('projectId'),
+  uuidValidation('runId'),
+  validate,
+  requireProtectedSuperAdmin,
+  asyncHandler(aiController.resumeProjectAiRun),
+);
+
+router.post(
+  '/:projectId/ai/runs/:runId/retrain-check',
+  uuidValidation('projectId'),
+  uuidValidation('runId'),
+  validate,
+  requireProtectedSuperAdmin,
+  asyncHandler(aiController.retrainCheckProjectAiRun),
+);
+
+router.post(
+  '/:projectId/ai/retrain-check',
+  uuidValidation('projectId'),
+  validate,
+  requireProtectedSuperAdmin,
+  asyncHandler(aiController.retrainCheckProjectAiRun),
 );
 
 module.exports = router;

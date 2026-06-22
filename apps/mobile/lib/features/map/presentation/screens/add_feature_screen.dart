@@ -750,6 +750,38 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     });
 
     try {
+      final session = ref.read(authControllerProvider).session;
+      final isOnline = await ref
+          .read(networkAvailabilityServiceProvider)
+          .isOnline();
+      if (!isOnline) {
+        final offlinePackage = session == null
+            ? null
+            : await ref
+                  .read(localStoreProvider)
+                  .getOfflineProjectPackage(
+                    ownerUserId: session.user.id,
+                    projectId: project.id,
+                  );
+        if (offlinePackage == null) {
+          if (mounted) {
+            AppSnackbar.showError(
+              context,
+              'This project is not downloaded for offline use. Connect to the internet and download it first.',
+            );
+          }
+          return;
+        }
+        await _saveLocalDraft(
+          project: project,
+          draftId: draftId,
+          geometry: geometry,
+          attributes: attributes,
+          submit: submit,
+        );
+        return;
+      }
+
       final repository = ref.read(featureWorkflowRepositoryProvider);
       String featureId = _currentDraftFeatureId ?? '';
       if (featureId.isEmpty) {
@@ -912,6 +944,23 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       return false;
     }
 
+    await _saveLocalDraft(
+      project: project,
+      draftId: draftId,
+      geometry: geometry,
+      attributes: attributes,
+      submit: submit,
+    );
+    return true;
+  }
+
+  Future<void> _saveLocalDraft({
+    required ProjectSummary project,
+    required String draftId,
+    required Map<String, dynamic> geometry,
+    required Map<String, dynamic> attributes,
+    required bool submit,
+  }) async {
     final localStore = ref.read(localStoreProvider);
     final session = ref.read(authControllerProvider).session;
     final now = DateTime.now();
@@ -955,7 +1004,6 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
         ),
       );
     }
-    return true;
   }
 
   bool _shouldPersistLocally(Object error) {
@@ -1456,6 +1504,8 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     required ProjectSummary selectedProject,
   }) {
     final supportedGeometryTypes = _supportedGeometryTypes(selectedProject);
+    final isOnline = ref.watch(networkOnlineProvider).valueOrNull ?? false;
+    final offlineMapPackage = ref.watch(offlineMapPackageProvider).valueOrNull;
     switch (_currentStep) {
       case 0:
         return AppCard(
@@ -1528,6 +1578,8 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 mapController: _geometryMapController,
                 mapOptions: _geometryMapOptions,
                 basemapStyle: _drawingBasemapStyle,
+                offlineMapPackage: offlineMapPackage,
+                isOnline: isOnline,
                 geometryType: _selectedGeometryType ?? 'Point',
                 vertices: _geometryVertices,
                 isMapReady: _isGeometryMapReady,
@@ -1801,11 +1853,13 @@ class _PendingPhoto {
 
 enum _PhotoPickerSource { camera, gallery }
 
-class _GeometryCaptureMapCard extends StatelessWidget {
+class _GeometryCaptureMapCard extends ConsumerWidget {
   const _GeometryCaptureMapCard({
     required this.mapController,
     required this.mapOptions,
     required this.basemapStyle,
+    required this.offlineMapPackage,
+    required this.isOnline,
     required this.geometryType,
     required this.vertices,
     required this.isMapReady,
@@ -1821,6 +1875,8 @@ class _GeometryCaptureMapCard extends StatelessWidget {
   final MapController mapController;
   final MapOptions mapOptions;
   final LebanonBasemapStyle basemapStyle;
+  final OfflineMapPackage? offlineMapPackage;
+  final bool isOnline;
   final String geometryType;
   final List<LatLng> vertices;
   final bool isMapReady;
@@ -1832,8 +1888,26 @@ class _GeometryCaptureMapCard extends StatelessWidget {
   final ValueChanged<LebanonBasemapStyle> onToggleBasemap;
   final VoidCallback onFitLebanon;
 
+  Future<_GeometryOfflineTileAssets?> _loadOfflineTiles(WidgetRef ref) async {
+    final package = offlineMapPackage;
+    if (package == null) {
+      return null;
+    }
+    final manager = ref.read(offlineTileCacheManagerProvider);
+    final values = await Future.wait<Object>([
+      manager.localTileTemplate(package: package, basemapStyle: basemapStyle),
+      manager.transparentFallbackPath(),
+      manager.hasCachedTiles(package: package, basemapStyle: basemapStyle),
+    ]);
+    return _GeometryOfflineTileAssets(
+      templatePath: values[0] as String,
+      fallbackPath: values[1] as String,
+      hasCachedTiles: values[2] as bool,
+    );
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final polygonPoints = geometryType == 'Polygon' && vertices.length >= 3
         ? <LatLng>[...vertices, vertices.first]
         : const <LatLng>[];
@@ -1847,101 +1921,124 @@ class _GeometryCaptureMapCard extends StatelessWidget {
             borderRadius: AppRadii.lg,
             child: Stack(
               children: [
-                FlutterMap(
-                  mapController: mapController,
-                  options: mapOptions,
-                  children: [
-                    if (LebanonMapConfig.shouldRenderTileLayers)
-                      TileLayer(
-                        urlTemplate: LebanonMapConfig.basemapUrlTemplate(
-                          basemapStyle,
-                        ),
-                        tileProvider: appNetworkTileProvider(),
-                        userAgentPackageName: 'lb.gov.gis_collector',
-                      ),
-                    if (LebanonMapConfig.shouldRenderTileLayers &&
+                FutureBuilder<_GeometryOfflineTileAssets?>(
+                  future: _loadOfflineTiles(ref),
+                  builder: (context, snapshot) {
+                    final offlineTiles = snapshot.data;
+                    final useOfflineTiles =
+                        !isOnline && (offlineTiles?.hasCachedTiles ?? false);
+                    final labelOverlay =
                         LebanonMapConfig.referenceLabelUrlTemplate(
-                              basemapStyle,
-                            ) !=
-                            null)
-                      TileLayer(
-                        urlTemplate: LebanonMapConfig.referenceLabelUrlTemplate(
                           basemapStyle,
-                        )!,
-                        tileProvider: appNetworkTileProvider(),
-                        userAgentPackageName: 'lb.gov.gis_collector',
-                      ),
-                    if (polygonPoints.isNotEmpty)
-                      PolygonLayer(
-                        polygons: [
-                          Polygon(
-                            points: polygonPoints,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.primary.withValues(alpha: 0.20),
-                            borderColor: Theme.of(context).colorScheme.primary,
-                            borderStrokeWidth: 2.5,
+                        );
+                    return FlutterMap(
+                      mapController: mapController,
+                      options: mapOptions,
+                      children: [
+                        if (LebanonMapConfig.shouldRenderTileLayers &&
+                            useOfflineTiles)
+                          TileLayer(
+                            urlTemplate: offlineTiles!.templatePath,
+                            tileProvider: FileTileProvider(),
+                            fallbackUrl: offlineTiles.fallbackPath,
+                            userAgentPackageName: 'lb.gov.gis_collector',
                           ),
-                        ],
-                      ),
-                    if (geometryType == 'LineString' && vertices.length >= 2)
-                      PolylineLayer(
-                        polylines: [
-                          Polyline(
-                            points: vertices,
-                            color: Theme.of(context).colorScheme.primary,
-                            strokeWidth: 4,
-                          ),
-                        ],
-                      ),
-                    if (currentLocation != null)
-                      MarkerLayer(
-                        markers: [
-                          Marker(
-                            point: currentLocation!,
-                            width: 46,
-                            height: 46,
-                            child: const Icon(
-                              Icons.my_location,
-                              color: Color(0xFF1565C0),
-                              size: 28,
+                        if (LebanonMapConfig.shouldRenderTileLayers &&
+                            isOnline &&
+                            !useOfflineTiles)
+                          TileLayer(
+                            urlTemplate: LebanonMapConfig.basemapUrlTemplate(
+                              basemapStyle,
                             ),
+                            tileProvider: appNetworkTileProvider(),
+                            userAgentPackageName: 'lb.gov.gis_collector',
                           ),
-                        ],
-                      ),
-                    MarkerLayer(
-                      markers: vertices
-                          .asMap()
-                          .entries
-                          .map(
-                            (entry) => Marker(
-                              width: 34,
-                              height: 34,
-                              point: entry.value,
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Theme.of(context).colorScheme.primary,
-                                  border: Border.all(
-                                    color: Colors.white,
-                                    width: 2,
-                                  ),
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    '${entry.key + 1}',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .labelSmall
-                                        ?.copyWith(color: Colors.white),
-                                  ),
+                        if (LebanonMapConfig.shouldRenderTileLayers &&
+                            isOnline &&
+                            labelOverlay != null)
+                          TileLayer(
+                            urlTemplate: labelOverlay,
+                            tileProvider: appNetworkTileProvider(),
+                            userAgentPackageName: 'lb.gov.gis_collector',
+                          ),
+                        if (polygonPoints.isNotEmpty)
+                          PolygonLayer(
+                            polygons: [
+                              Polygon(
+                                points: polygonPoints,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.primary.withValues(alpha: 0.20),
+                                borderColor: Theme.of(
+                                  context,
+                                ).colorScheme.primary,
+                                borderStrokeWidth: 2.5,
+                              ),
+                            ],
+                          ),
+                        if (geometryType == 'LineString' &&
+                            vertices.length >= 2)
+                          PolylineLayer(
+                            polylines: [
+                              Polyline(
+                                points: vertices,
+                                color: Theme.of(context).colorScheme.primary,
+                                strokeWidth: 4,
+                              ),
+                            ],
+                          ),
+                        if (currentLocation != null)
+                          MarkerLayer(
+                            markers: [
+                              Marker(
+                                point: currentLocation!,
+                                width: 46,
+                                height: 46,
+                                child: const Icon(
+                                  Icons.my_location,
+                                  color: Color(0xFF1565C0),
+                                  size: 28,
                                 ),
                               ),
-                            ),
-                          )
-                          .toList(growable: false),
-                    ),
-                  ],
+                            ],
+                          ),
+                        MarkerLayer(
+                          markers: vertices
+                              .asMap()
+                              .entries
+                              .map(
+                                (entry) => Marker(
+                                  width: 34,
+                                  height: 34,
+                                  point: entry.value,
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.primary,
+                                      border: Border.all(
+                                        color: Colors.white,
+                                        width: 2,
+                                      ),
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        '${entry.key + 1}',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelSmall
+                                            ?.copyWith(color: Colors.white),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              )
+                              .toList(growable: false),
+                        ),
+                      ],
+                    );
+                  },
                 ),
                 Positioned(
                   left: 12,
@@ -2042,4 +2139,16 @@ class _GeometryCaptureMapCard extends StatelessWidget {
       ],
     );
   }
+}
+
+class _GeometryOfflineTileAssets {
+  const _GeometryOfflineTileAssets({
+    required this.templatePath,
+    required this.fallbackPath,
+    required this.hasCachedTiles,
+  });
+
+  final String templatePath;
+  final String fallbackPath;
+  final bool hasCachedTiles;
 }

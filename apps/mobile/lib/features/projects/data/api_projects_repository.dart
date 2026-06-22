@@ -1,6 +1,7 @@
 import '../../../core/config/app_env.dart';
 import '../../../core/network/api_error_message.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/offline/local_models.dart';
 import '../../../core/pagination/paginated_result.dart';
 import 'package:dio/dio.dart';
 import '../../auth/domain/auth_models.dart';
@@ -109,6 +110,48 @@ class ApiProjectsRepository implements ProjectsRepository {
   }
 
   @override
+  Future<OfflineProjectPackage> fetchOfflinePackage({
+    required String projectId,
+    required String ownerUserId,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/offline-package',
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      final data = Map<String, dynamic>.from(
+        payload['data'] as Map? ?? const <String, dynamic>{},
+      );
+      final project = _toProjectSummary(
+        Map<String, dynamic>.from(
+          data['project'] as Map? ?? const <String, dynamic>{},
+        ),
+      );
+      final baseMap = Map<String, dynamic>.from(
+        data['base_map'] as Map? ?? const <String, dynamic>{},
+      );
+      final now = DateTime.now();
+      return OfflineProjectPackage(
+        ownerUserId: ownerUserId,
+        project: project,
+        packageVersion:
+            (data['package_version'] as String?) ?? 'project-package-v1',
+        appResourcesVersion:
+            (data['app_resources_version'] as String?) ?? 'mobile-offline-v1',
+        baseMapVersion:
+            (baseMap['version'] as String?) ?? 'lebanon-satellite-v1',
+        downloadedAt: _toDateTime(data['downloaded_at']) ?? now,
+        refreshedAt: now,
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to download this project for offline use right now.',
+      );
+    }
+  }
+
+  @override
   Future<ProjectSummary> updateViewerVisibility({
     required String projectId,
     required bool visibleToViewers,
@@ -207,6 +250,15 @@ class ApiProjectsRepository implements ProjectsRepository {
           _toInt(row['published_ai_layer_count']) ??
           _toInt(row['publishedAiLayerCount']) ??
           0,
+      publishedAiRunId:
+          (row['published_ai_run_id'] as String?) ??
+          (row['publishedAiRunId'] as String?),
+      publishedAiLayerName:
+          (row['published_ai_layer_name'] as String?) ??
+          (row['publishedAiLayerName'] as String?),
+      publishedAiLayerPublishedAt:
+          _toDateTime(row['published_ai_layer_published_at']) ??
+          _toDateTime(row['publishedAiLayerPublishedAt']),
       description:
           (row['description'] as String?) ??
           (row['objectives'] as String?) ??

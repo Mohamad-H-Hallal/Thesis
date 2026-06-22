@@ -6,6 +6,12 @@ import type { Request, Response } from 'express';
 const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const { createAiPipelineService } = require('../services/aiPipeline.service');
+const logger = require('../utils/logger');
+import {
+  createAiServerClient,
+  type AiServerStartPayload,
+  type AiServerStatusPayload,
+} from '../services/aiServerClient.service';
 import {
   assignPredictionValidationTask,
   createPredictionValidationSubmission,
@@ -16,17 +22,32 @@ import {
   reviewPredictionValidationTask,
   updatePredictionValidationTaskStatus,
 } from '../services/aiPredictionValidation.service';
+import {
+  createPredictionFeatureValidation,
+  getMyPredictionFeatureValidation,
+  getPredictionFeatureDetailsForUser,
+  getRunPredictionValidationSummary,
+  listPredictionFeatureValidations,
+  listRunPredictionValidations,
+  reviewPredictionFeature,
+} from '../services/aiPredictionFeatureValidation.service';
 import { publicVisibleStatuses, synchronizeProjectStatuses } from '../lib/projectLifecycle';
 import { isProtectedSuperAdminEmail } from '../lib/userWorkflow';
 
 const allowedRunStatuses = [
   'draft',
+  'created',
   'queued',
+  'starting',
+  'running',
   'extracting_features',
   'training',
   'evaluating',
   'classifying',
   'ready_for_review',
+  'completed',
+  'cancelling',
+  'paused',
   'published',
   'failed',
   'cancelled',
@@ -79,7 +100,7 @@ const reviewActions = {
 } as const;
 
 const previewableLayerStatuses = new Set(['draft', 'ready_for_review', 'approved', 'published']);
-const previewableLayerTypes = new Set(['classification', 'confidence', 'uncertainty']);
+const previewableLayerTypes = new Set(['classification']);
 const MAX_AI_LAYER_GEOJSON_BYTES = 20 * 1024 * 1024;
 const MAX_AI_LAYER_PREVIEW_FEATURES = 2500;
 const DEFAULT_AI_LAYER_OVERVIEW_FEATURE_LIMIT = 1800;
@@ -91,6 +112,7 @@ const defaultSettings = {
   scope_type: 'project',
   scope_geometry: null,
   min_samples_per_class: 50,
+  confidence_threshold: 0.6,
   model_preferences: {},
 };
 
@@ -101,8 +123,19 @@ const lebanonApproxBounds = {
   max_lat: 34.75,
 };
 
-const NATIONAL_MIN_SAMPLES_PER_CLASS = 50;
-const NATIONAL_RECOMMENDED_SAMPLES_PER_CLASS = 100;
+const lebanonStaticGovernorateZones = [
+  { key: 'akkar', label: 'Akkar', min_lon: 35.65, min_lat: 34.35, max_lon: 36.65, max_lat: 34.75 },
+  { key: 'north', label: 'North', min_lon: 35.55, min_lat: 34.05, max_lon: 36.35, max_lat: 34.45 },
+  { key: 'beirut', label: 'Beirut', min_lon: 35.42, min_lat: 33.82, max_lon: 35.57, max_lat: 33.95 },
+  { key: 'mount_lebanon', label: 'Mount Lebanon', min_lon: 35.35, min_lat: 33.45, max_lon: 36.1, max_lat: 34.15 },
+  { key: 'bekaa', label: 'Bekaa', min_lon: 35.75, min_lat: 33.55, max_lon: 36.65, max_lat: 34.15 },
+  { key: 'baalbek_hermel', label: 'Baalbek-Hermel', min_lon: 36.0, min_lat: 34.0, max_lon: 36.7, max_lat: 34.65 },
+  { key: 'south', label: 'South', min_lon: 35.15, min_lat: 33.15, max_lon: 35.75, max_lat: 33.6 },
+  { key: 'nabatieh', label: 'Nabatieh', min_lon: 35.35, min_lat: 33.05, max_lon: 36.0, max_lat: 33.65 },
+] as const;
+
+const NATIONAL_GRID_COLUMNS = 5;
+const NATIONAL_GRID_ROWS = 4;
 
 type NationalScopeRequirement = {
   key: string;
@@ -113,10 +146,521 @@ type NationalScopeRequirement = {
   message: string;
 };
 
-const boolPreference = (preferences: Record<string, unknown> | null | undefined, key: string) =>
+type NationalCoverageSample = {
+  lon: number | null;
+  lat: number | null;
+  class_label: string | null;
+  governorate: string | null;
+  elevation_band: string | null;
+};
+
+const supportedSatelliteAliases: Record<string, 'sentinel2' | 'landsat'> = {
+  sentinel2: 'sentinel2',
+  'sentinel-2': 'sentinel2',
+  sentinel_2: 'sentinel2',
+  s2: 'sentinel2',
+  landsat: 'landsat',
+  'landsat-8': 'landsat',
+  'landsat-9': 'landsat',
+  landsat8: 'landsat',
+  landsat9: 'landsat',
+};
+
+const supportedSeasons = new Set(['growing', 'dry', 'harvest', 'winter']);
+const supportedFeatureGroups = new Set([
+  'spectral_bands',
+  'vegetation_indices',
+  'topography',
+  'texture',
+]);
+const sentinel2SpectralFeatures = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12'];
+const landsatSpectralFeatures = ['SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B6', 'SR_B7'];
+const sentinel2IndexFeatures = ['NDVI', 'EVI', 'NDRE', 'SAVI', 'NDWI'];
+const landsatIndexFeatures = ['NDVI', 'EVI', 'SAVI', 'NDWI'];
+const topographyFeatures = ['static_srtm_elevation', 'static_srtm_slope', 'static_srtm_aspect'];
+const textureFeatures = ['static_texture_pc1'];
+const textureDependencyMessage =
+  'Texture features require Sentinel-2 NDVI from the dry season. Add a Sentinel-2 dry season/timeframe and select NDVI, or remove static_texture_pc1.';
+const defaultFeatureGroups = ['spectral_bands', 'vegetation_indices', 'topography', 'texture'];
+const defaultSentinel2FeatureInputs = [
+  'B2',
+  'B3',
+  'B4',
+  'B5',
+  'B8',
+  'B11',
+  'B12',
+  'NDVI',
+  'EVI',
+  'NDRE',
+];
+const defaultLandsatFeatureInputs = [
+  'SR_B2',
+  'SR_B3',
+  'SR_B4',
+  'SR_B5',
+  'SR_B6',
+  'SR_B7',
+  'NDVI',
+  'EVI',
+  'SAVI',
+  'NDWI',
+];
+
+const normalizeSatelliteSource = (value: unknown): 'sentinel2' | 'landsat' | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  return supportedSatelliteAliases[value.trim().toLowerCase()] ?? null;
+};
+
+const normalizeSatelliteSources = (preferences: Record<string, unknown>): Array<'sentinel2' | 'landsat'> => {
+  const rawSources = Array.isArray(preferences.satellite_sources)
+    ? preferences.satellite_sources
+    : Array.isArray(preferences.satelliteSources)
+      ? preferences.satelliteSources
+      : preferences.satellite_source !== undefined
+        ? [preferences.satellite_source]
+        : preferences.satelliteSource !== undefined
+          ? [preferences.satelliteSource]
+          : ['sentinel2'];
+  const sources: Array<'sentinel2' | 'landsat'> = [];
+  for (const rawSource of rawSources) {
+    const source = normalizeSatelliteSource(rawSource);
+    if (source && !sources.includes(source)) {
+      sources.push(source);
+    }
+  }
+  return sources.length > 0 ? sources : ['sentinel2'];
+};
+
+const normalizeSeason = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'summer') {
+    return 'dry';
+  }
+  if (normalized === 'spring') {
+    return 'growing';
+  }
+  if (normalized === 'autumn' || normalized === 'fall') {
+    return 'harvest';
+  }
+  return supportedSeasons.has(normalized) ? normalized : null;
+};
+
+const defaultSeasonRange = (season: string, year: number): { from_date: string; to_date: string } => {
+  switch (season) {
+    case 'dry':
+      return { from_date: `${year}-06-01`, to_date: `${year}-08-31` };
+    case 'harvest':
+      return { from_date: `${year}-08-01`, to_date: `${year}-10-31` };
+    case 'winter':
+      return { from_date: `${year}-12-01`, to_date: `${year + 1}-02-28` };
+    case 'growing':
+    default:
+      return { from_date: `${year}-03-01`, to_date: `${year}-06-30` };
+  }
+};
+
+const normalizeDateString = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : null;
+};
+
+const normalizeYear = (value: unknown): number => {
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number.parseInt(value.trim(), 10)
+        : Number.NaN;
+  const currentYear = new Date().getFullYear();
+  return Number.isInteger(parsed) && parsed >= 1980 && parsed <= currentYear + 2
+    ? parsed
+    : currentYear - 1;
+};
+
+const normalizeSatelliteTimeframes = (
+  preferences: Record<string, unknown>,
+  satelliteSources: Array<'sentinel2' | 'landsat'>,
+): Record<string, { map_year: number; seasons: Array<{ season: string; from_date: string; to_date: string }> }> => {
+  const rawTimeframes =
+    preferences.satellite_timeframes && typeof preferences.satellite_timeframes === 'object'
+      ? (preferences.satellite_timeframes as Record<string, unknown>)
+      : preferences.satelliteTimeframes && typeof preferences.satelliteTimeframes === 'object'
+        ? (preferences.satelliteTimeframes as Record<string, unknown>)
+        : {};
+  const fallbackFrom = normalizeDateString(preferences.date_from ?? preferences.from_date ?? preferences.fromDate);
+  const fallbackTo = normalizeDateString(preferences.date_to ?? preferences.to_date ?? preferences.toDate);
+  const fallbackDateYear = fallbackFrom?.slice(0, 4);
+  const fallbackYear = normalizeYear(
+    preferences.target_year ?? preferences.year ?? preferences.mapYear ?? fallbackDateYear,
+  );
+  const fallbackSeason = normalizeSeason(preferences.season) ?? 'growing';
+  const fallbackRange = defaultSeasonRange(fallbackSeason, fallbackYear);
+  const normalized: Record<
+    string,
+    { map_year: number; seasons: Array<{ season: string; from_date: string; to_date: string }> }
+  > = {};
+
+  for (const source of satelliteSources) {
+    const rawForSource =
+      rawTimeframes[source] ??
+      rawTimeframes[source === 'sentinel2' ? 'sentinel-2' : source] ??
+      rawTimeframes[source === 'sentinel2' ? 'sentinel_2' : source];
+    const sourceRecord =
+      rawForSource && typeof rawForSource === 'object' && !Array.isArray(rawForSource)
+        ? (rawForSource as Record<string, unknown>)
+        : {};
+    const mapYear = normalizeYear(
+      sourceRecord.map_year ??
+        sourceRecord.mapYear ??
+        preferences.target_year ??
+        preferences.year ??
+        fallbackDateYear,
+    );
+    const rawSeasons = Array.isArray(sourceRecord.seasons)
+      ? sourceRecord.seasons
+      : sourceRecord.season !== undefined
+        ? [sourceRecord]
+        : [
+            {
+              season: fallbackSeason,
+              from_date: fallbackFrom ?? fallbackRange.from_date,
+              to_date: fallbackTo ?? fallbackRange.to_date,
+            },
+          ];
+    const seasons: Array<{ season: string; from_date: string; to_date: string }> = [];
+    for (const rawSeason of rawSeasons) {
+      const seasonRecord: Record<string, unknown> =
+        rawSeason && typeof rawSeason === 'object' && !Array.isArray(rawSeason)
+          ? (rawSeason as Record<string, unknown>)
+          : { season: rawSeason };
+      const season = normalizeSeason(seasonRecord.season) ?? fallbackSeason;
+      if (seasons.some((item) => item.season === season)) {
+        continue;
+      }
+      const range = defaultSeasonRange(season, mapYear);
+      const fromDate =
+        normalizeDateString(
+          seasonRecord.from_date ?? seasonRecord.fromDate ?? seasonRecord.date_from,
+        ) ??
+        (season === fallbackSeason ? fallbackFrom : null) ??
+        range.from_date;
+      const toDate =
+        normalizeDateString(seasonRecord.to_date ?? seasonRecord.toDate ?? seasonRecord.date_to) ??
+        (season === fallbackSeason ? fallbackTo : null) ??
+        range.to_date;
+      seasons.push({
+        season,
+        from_date: fromDate,
+        to_date: toDate,
+      });
+    }
+    normalized[source] = {
+      map_year: mapYear,
+      seasons: seasons.length > 0
+        ? seasons
+        : [{ season: fallbackSeason, from_date: fallbackRange.from_date, to_date: fallbackRange.to_date }],
+    };
+  }
+
+  return normalized;
+};
+
+const normalizeConfidenceThreshold = (value: unknown, fallback = defaultSettings.confidence_threshold): number => {
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim().length > 0
+        ? Number.parseFloat(value)
+        : Number.NaN;
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    return fallback;
+  }
+  return parsed;
+};
+
+const normalizeFeatureGroups = (value: unknown, fallbackInputs: string[] = []): string[] => {
+  const groups = Array.isArray(value)
+    ? value
+        .map((item) => (typeof item === 'string' ? item.trim().toLowerCase() : ''))
+        .filter((item) => supportedFeatureGroups.has(item))
+    : [];
+  if (groups.length > 0) {
+    return Array.from(new Set(groups));
+  }
+  const inferred = new Set<string>();
+  for (const input of fallbackInputs) {
+    if ([...sentinel2SpectralFeatures, ...landsatSpectralFeatures].includes(input)) {
+      inferred.add('spectral_bands');
+    }
+    if ([...sentinel2IndexFeatures, ...landsatIndexFeatures].includes(input)) {
+      inferred.add('vegetation_indices');
+    }
+    if (topographyFeatures.includes(input)) {
+      inferred.add('topography');
+    }
+    if (textureFeatures.includes(input)) {
+      inferred.add('texture');
+    }
+  }
+  return inferred.size > 0 ? Array.from(inferred) : defaultFeatureGroups;
+};
+
+const inferFeatureGroupsFromInputs = (inputs: string[]): string[] => {
+  const groups = new Set<string>();
+  for (const input of inputs) {
+    if ([...sentinel2SpectralFeatures, ...landsatSpectralFeatures].includes(input)) {
+      groups.add('spectral_bands');
+    }
+    if ([...sentinel2IndexFeatures, ...landsatIndexFeatures].includes(input)) {
+      groups.add('vegetation_indices');
+    }
+    if (topographyFeatures.includes(input)) {
+      groups.add('topography');
+    }
+    if (textureFeatures.includes(input)) {
+      groups.add('texture');
+    }
+  }
+  return Array.from(groups);
+};
+
+const expandFeatureGroups = (
+  groups: string[],
+  satelliteSources: Array<'sentinel2' | 'landsat'>,
+): string[] => {
+  const features = new Set<string>();
+  if (groups.includes('spectral_bands')) {
+    if (satelliteSources.includes('sentinel2')) {
+      sentinel2SpectralFeatures.forEach((feature) => features.add(feature));
+    }
+    if (satelliteSources.includes('landsat')) {
+      landsatSpectralFeatures.forEach((feature) => features.add(feature));
+    }
+  }
+  if (groups.includes('vegetation_indices')) {
+    if (satelliteSources.includes('sentinel2')) {
+      sentinel2IndexFeatures.forEach((feature) => features.add(feature));
+    }
+    if (satelliteSources.includes('landsat')) {
+      landsatIndexFeatures.forEach((feature) => features.add(feature));
+    }
+  }
+  if (groups.includes('topography')) {
+    topographyFeatures.forEach((feature) => features.add(feature));
+  }
+  if (groups.includes('texture')) {
+    textureFeatures.forEach((feature) => features.add(feature));
+  }
+  return Array.from(features);
+};
+
+const defaultFeatureInputsForSources = (satelliteSources: Array<'sentinel2' | 'landsat'>): string[] => {
+  const features = new Set<string>();
+  if (satelliteSources.includes('sentinel2')) {
+    defaultSentinel2FeatureInputs.forEach((feature) => features.add(feature));
+  }
+  if (satelliteSources.includes('landsat')) {
+    defaultLandsatFeatureInputs.forEach((feature) => features.add(feature));
+  }
+  return Array.from(features);
+};
+
+const hasSeason = (
+  satelliteTimeframes: Record<string, { seasons: Array<{ season: string }> }>,
+  source: 'sentinel2' | 'landsat',
+  season: string,
+): boolean => satelliteTimeframes[source]?.seasons?.some((item) => item.season === season) === true;
+
+const applyFeatureDependencyDefaults = ({
+  featureInputs,
+  featureGroups,
+  satelliteSources,
+  satelliteTimeframes,
+  strict,
+  featureInputsExplicit,
+}: {
+  featureInputs: string[];
+  featureGroups: string[];
+  satelliteSources: Array<'sentinel2' | 'landsat'>;
+  satelliteTimeframes: Record<string, { seasons: Array<{ season: string }> }>;
+  strict: boolean;
+  featureInputsExplicit: boolean;
+}): string[] => {
+  const features = new Set(featureInputs);
+  const errors: string[] = [];
+  const hasTexture =
+    features.has('static_texture_pc1') ||
+    (!featureInputsExplicit && featureGroups.includes('texture'));
+  const hasSentinel2 = satelliteSources.includes('sentinel2');
+  const hasLandsat = satelliteSources.includes('landsat');
+
+  if (hasTexture) {
+    if (!hasSentinel2) {
+      errors.push(textureDependencyMessage);
+    }
+    if (!features.has('NDVI')) {
+      errors.push(textureDependencyMessage);
+    }
+    if (!hasSeason(satelliteTimeframes, 'sentinel2', 'dry')) {
+      errors.push(textureDependencyMessage);
+    }
+  }
+
+  const sentinel2OnlyFeatures = new Set(['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12']);
+  if (!hasSentinel2 && [...features].some((feature) => sentinel2OnlyFeatures.has(feature))) {
+    errors.push('Sentinel-2 bands and red-edge indices require Sentinel-2.');
+  }
+  if (features.has('NDRE') && !hasSentinel2) {
+    errors.push('NDRE requires Sentinel-2 because it uses Sentinel-2 red-edge bands.');
+  }
+  if (!hasLandsat && [...features].some((feature) => landsatSpectralFeatures.includes(feature))) {
+    errors.push('Landsat bands require Landsat.');
+  }
+
+  if (strict && errors.length > 0) {
+    throw new AppError(Array.from(new Set(errors)).join(' '), 400);
+  }
+  return Array.from(features);
+};
+
+const supportedAiModelAliases: Record<string, string> = {
+  auto: 'auto',
+  random_forest: 'random_forest',
+  rf: 'random_forest',
+  svm: 'svm',
+  svm_rbf: 'svm',
+  gradient_boosting: 'gradient_boosting',
+  gb: 'gradient_boosting',
+  gradient_boost: 'gradient_boosting',
+  gradient_tree_boost: 'gradient_boosting',
+};
+
+const normalizePreferredAiModel = (
+  value: unknown,
+  options: { strict?: boolean } = {},
+): string => {
+  const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (!raw) {
+    return 'auto';
+  }
+  if (['mlp', 'neural', 'neural_network', 'neuralnet'].includes(raw)) {
+    if (options.strict) {
+      throw new AppError(
+        'MLP/neural network is not supported for new AI runs. Choose Auto, Random Forest, SVM, or Gradient Boosting.',
+        400,
+      );
+    }
+    return 'auto';
+  }
+  if (['xgb', 'xgboost'].includes(raw)) {
+    if (options.strict) {
+      throw new AppError(
+        'XGBoost is not supported end-to-end in the current GEE workflow. Choose Auto, Random Forest, SVM, or Gradient Boosting.',
+        400,
+      );
+    }
+    return 'auto';
+  }
+  const normalized = supportedAiModelAliases[raw];
+  if (!normalized) {
+    if (options.strict) {
+      throw new AppError(
+        'Unsupported AI model. Choose Auto, Random Forest, SVM, or Gradient Boosting.',
+        400,
+      );
+    }
+    return 'auto';
+  }
+  return normalized;
+};
+
+const normalizeFeatureInputs = (value: string[]): string[] => {
+  const seen = new Set<string>();
+  const inputs: string[] = [];
+  for (const item of value) {
+    const feature = item.trim();
+    if (!feature || seen.has(feature)) {
+      continue;
+    }
+    seen.add(feature);
+    inputs.push(feature);
+  }
+  return inputs;
+};
+
+const boolPreference = (preferences: Record<string, unknown> | null | undefined, key: string): boolean =>
   preferences?.[key] === true;
 
-const boolPreferenceText = (value: boolean): string => (value ? 'configured' : 'not configured');
+const normalizeAiModelPreferences = (
+  preferences: unknown,
+  options: { strictModel?: boolean } = {},
+): Record<string, unknown> => {
+  const raw =
+    preferences && typeof preferences === 'object' && !Array.isArray(preferences)
+      ? { ...(preferences as Record<string, unknown>) }
+      : {};
+  const satelliteSources = normalizeSatelliteSources(raw);
+  const satelliteTimeframes = normalizeSatelliteTimeframes(raw, satelliteSources);
+  const legacyFeatureInputs = Array.isArray(raw.feature_inputs)
+    ? raw.feature_inputs.filter((item): item is string => typeof item === 'string')
+    : Array.isArray(raw.selected_feature_inputs)
+      ? raw.selected_feature_inputs.filter((item): item is string => typeof item === 'string')
+      : Array.isArray(raw.selected_extracted_features)
+        ? raw.selected_extracted_features.filter((item): item is string => typeof item === 'string')
+        : [];
+  const rawFeatureInputs = normalizeFeatureInputs(legacyFeatureInputs);
+  const initialFeatureGroups = normalizeFeatureGroups(raw.feature_groups, rawFeatureInputs);
+  const hasExplicitFeatureGroups = Array.isArray(raw.feature_groups) && initialFeatureGroups.length > 0;
+  const baseFeatureInputs =
+    rawFeatureInputs.length > 0
+      ? rawFeatureInputs
+      : hasExplicitFeatureGroups
+        ? expandFeatureGroups(initialFeatureGroups, satelliteSources)
+        : defaultFeatureInputsForSources(satelliteSources);
+  const featureInputs = applyFeatureDependencyDefaults({
+    featureInputs: baseFeatureInputs,
+    featureGroups: hasExplicitFeatureGroups
+      ? initialFeatureGroups
+      : inferFeatureGroupsFromInputs(baseFeatureInputs),
+    satelliteSources,
+    satelliteTimeframes,
+    strict: options.strictModel === true,
+    featureInputsExplicit: rawFeatureInputs.length > 0,
+  });
+  const featureGroups = hasExplicitFeatureGroups
+    ? initialFeatureGroups
+    : inferFeatureGroupsFromInputs(featureInputs);
+  const primarySource = satelliteSources[0] ?? 'sentinel2';
+  const primaryFrame = satelliteTimeframes[primarySource];
+  const primarySeason = primaryFrame?.seasons[0];
+
+  return {
+    ...raw,
+    preferred_model: normalizePreferredAiModel(raw.preferred_model, {
+      strict: options.strictModel,
+    }),
+    satellite_sources: satelliteSources,
+    satellite_timeframes: satelliteTimeframes,
+    feature_groups: featureGroups,
+    feature_inputs: featureInputs,
+    selected_feature_inputs: featureInputs,
+    selected_extracted_features: featureInputs,
+    satellite_source: primarySource,
+    target_year: primaryFrame?.map_year ?? normalizeYear(raw.target_year ?? raw.year),
+    season: primarySeason?.season ?? normalizeSeason(raw.season) ?? 'growing',
+    date_from: primarySeason?.from_date ?? normalizeDateString(raw.date_from ?? raw.from_date),
+    date_to: primarySeason?.to_date ?? normalizeDateString(raw.date_to ?? raw.to_date),
+  };
+};
 
 const nationalRequirement = ({
   key,
@@ -153,24 +697,182 @@ const aiAreaTypeFromScope = (
   return 'project_area';
 };
 
+const percentOf = (value: number, total: number): number =>
+  total <= 0 ? 0 : Math.round((value / total) * 100);
+
+const coverageRatingFor = (percent: number): 'good' | 'limited' | 'weak' => {
+  if (percent >= 70) {
+    return 'good';
+  }
+  if (percent >= 40) {
+    return 'limited';
+  }
+  return 'weak';
+};
+
+const coverageRatingLabel = (rating: 'good' | 'limited' | 'weak'): string => {
+  switch (rating) {
+    case 'good':
+      return 'Good coverage';
+    case 'limited':
+      return 'Limited coverage';
+    case 'weak':
+    default:
+      return 'Weak coverage';
+  }
+};
+
+const normalizeGovernorateName = (value: string | null): string | null => {
+  const text = value?.trim().toLowerCase();
+  if (!text) {
+    return null;
+  }
+  if (text.includes('akkar')) return 'akkar';
+  if (text.includes('north') || text.includes('tripoli')) return 'north';
+  if (text.includes('beirut')) return 'beirut';
+  if (text.includes('mount') || text.includes('jabal')) return 'mount_lebanon';
+  if (text.includes('baalbek') || text.includes('hermel')) return 'baalbek_hermel';
+  if (text.includes('bekaa') || text.includes('beqaa')) return 'bekaa';
+  if (text.includes('nabatieh') || text.includes('nabatiye')) return 'nabatieh';
+  if (text.includes('south') || text.includes('saida') || text.includes('sidon')) return 'south';
+  return null;
+};
+
+const pointInBounds = (
+  sample: NationalCoverageSample,
+  bounds: { min_lon: number; min_lat: number; max_lon: number; max_lat: number },
+): boolean =>
+  typeof sample.lon === 'number' &&
+  typeof sample.lat === 'number' &&
+  sample.lon >= bounds.min_lon &&
+  sample.lon <= bounds.max_lon &&
+  sample.lat >= bounds.min_lat &&
+  sample.lat <= bounds.max_lat;
+
+const governorateKeyForSample = (sample: NationalCoverageSample): string | null => {
+  const fromAttributes = normalizeGovernorateName(sample.governorate);
+  if (fromAttributes) {
+    return fromAttributes;
+  }
+  const zone = lebanonStaticGovernorateZones.find((candidate) => pointInBounds(sample, candidate));
+  return zone?.key ?? null;
+};
+
+const gridCellKeyForSample = (sample: NationalCoverageSample): string | null => {
+  if (!pointInBounds(sample, lebanonApproxBounds) || sample.lon === null || sample.lat === null) {
+    return null;
+  }
+  const width = lebanonApproxBounds.max_lon - lebanonApproxBounds.min_lon;
+  const height = lebanonApproxBounds.max_lat - lebanonApproxBounds.min_lat;
+  const column = Math.min(
+    NATIONAL_GRID_COLUMNS - 1,
+    Math.max(0, Math.floor(((sample.lon - lebanonApproxBounds.min_lon) / width) * NATIONAL_GRID_COLUMNS)),
+  );
+  const row = Math.min(
+    NATIONAL_GRID_ROWS - 1,
+    Math.max(0, Math.floor(((sample.lat - lebanonApproxBounds.min_lat) / height) * NATIONAL_GRID_ROWS)),
+  );
+  return `${row}:${column}`;
+};
+
+const computeNationalCoverage = ({
+  samples,
+  labelCounts,
+  minSamplesPerClass,
+}: {
+  samples: NationalCoverageSample[];
+  labelCounts: Array<{ class_label: string; sample_count: number }>;
+  minSamplesPerClass: number;
+}) => {
+  const governorates = new Set<string>();
+  const gridCells = new Set<string>();
+  const elevationBands = new Set<string>();
+  for (const sample of samples) {
+    const governorate = governorateKeyForSample(sample);
+    if (governorate) {
+      governorates.add(governorate);
+    }
+    const gridCell = gridCellKeyForSample(sample);
+    if (gridCell) {
+      gridCells.add(gridCell);
+    }
+    const elevationBand = sample.elevation_band?.trim().toLowerCase();
+    if (elevationBand) {
+      elevationBands.add(elevationBand);
+    }
+  }
+  const totalGovernorates = lebanonStaticGovernorateZones.length;
+  const totalGridCells = NATIONAL_GRID_COLUMNS * NATIONAL_GRID_ROWS;
+  const usableClassCount = labelCounts.filter(
+    (row) => Number(row.sample_count) >= minSamplesPerClass,
+  ).length;
+  const weakClassCount = Math.max(0, labelCounts.length - usableClassCount);
+  const governoratePercent = percentOf(governorates.size, totalGovernorates);
+  const gridPercent = percentOf(gridCells.size, totalGridCells);
+  const classPercent = percentOf(usableClassCount, labelCounts.length);
+  const score = Math.round(governoratePercent * 0.4 + gridPercent * 0.4 + classPercent * 0.2);
+  const rating = coverageRatingFor(score);
+
+  return {
+    governorates_covered: governorates.size,
+    total_governorates: totalGovernorates,
+    governorate_percent: governoratePercent,
+    governorate_rating: coverageRatingFor(governoratePercent),
+    grid_cells_covered: gridCells.size,
+    total_grid_cells: totalGridCells,
+    grid_percent: gridPercent,
+    grid_rating: coverageRatingFor(gridPercent),
+    usable_class_count: usableClassCount,
+    weak_class_count: weakClassCount,
+    total_class_count: labelCounts.length,
+    class_percent: classPercent,
+    class_rating: coverageRatingFor(classPercent),
+    elevation_measured: elevationBands.size > 0,
+    elevation_bands: Array.from(elevationBands).sort(),
+    score,
+    rating,
+    rating_label: coverageRatingLabel(rating),
+    boundary_source: 'static_lebanon_boundary',
+  };
+};
+
 const nationalScopeEligibilityFor = ({
   requestedNational,
   labelCounts = [],
+  samples = [],
+  minSamplesPerClass,
+  modelPreferences = {},
   totals,
   warnings = [],
-  modelPreferences = {},
 }: {
   requestedNational: boolean;
-  labelCounts?: Array<{ sample_count: number }>;
+  labelCounts?: Array<{ class_label: string; sample_count: number }>;
+  samples?: NationalCoverageSample[];
+  minSamplesPerClass: number;
+  modelPreferences?: Record<string, unknown>;
   totals?: {
     missing_label_count?: number;
     invalid_geometry_count?: number;
   };
   warnings?: string[];
-  modelPreferences?: Record<string, unknown>;
 }) => {
+  const missingLabelCount = Number(totals?.missing_label_count ?? 0);
+  const invalidGeometryCount = Number(totals?.invalid_geometry_count ?? 0);
+  const coverage = computeNationalCoverage({ samples, labelCounts, minSamplesPerClass });
   const nationalModeAllowed = boolPreference(modelPreferences, 'national_mode_allowed');
-  const lebanonBoundaryConfigured = boolPreference(modelPreferences, 'lebanon_boundary_configured');
+  const lebanonBoundaryConfigured = boolPreference(
+    modelPreferences,
+    'lebanon_boundary_configured',
+  );
+  const pipelineSupportsNational =
+    boolPreference(modelPreferences, 'pipeline_supports_national_scope') &&
+    boolPreference(modelPreferences, 'backend_bridge_supports_national_scope') &&
+    boolPreference(modelPreferences, 'python_pipeline_supports_national_scope');
+  const minimumSamplesPerClassMet =
+    labelCounts.length >= 2 &&
+    labelCounts.every((row) => Number(row.sample_count) >= minSamplesPerClass);
+  const labelsValid =
+    labelCounts.length > 0 && missingLabelCount === 0 && invalidGeometryCount === 0;
   const regionalCoverageConfigured = boolPreference(
     modelPreferences,
     'national_regional_coverage_configured',
@@ -179,35 +881,18 @@ const nationalScopeEligibilityFor = ({
     modelPreferences,
     'national_sample_spread_confirmed',
   );
-  const minClassSampleCount =
-    labelCounts.length > 0
-      ? Math.min(...labelCounts.map((row) => Number(row.sample_count ?? 0)))
-      : 0;
-  const minimumSamplesPerClassMet =
-    labelCounts.length > 0 &&
-    labelCounts.every((row) => Number(row.sample_count) >= NATIONAL_MIN_SAMPLES_PER_CLASS);
-  const missingLabelCount = Number(totals?.missing_label_count ?? 0);
-  const invalidGeometryCount = Number(totals?.invalid_geometry_count ?? 0);
-  const labelsValid =
-    labelCounts.length > 0 && missingLabelCount === 0 && invalidGeometryCount === 0;
-  const imbalanceWarnings = warnings.filter((warning) =>
-    /balance|coverage|dominates|underrepresented|spatially limited|below/i.test(warning),
-  );
-  const imbalanceReviewSupported = boolPreference(
-    modelPreferences,
-    'national_imbalance_review_supported',
-  );
-  const imbalanceReviewed = boolPreference(modelPreferences, 'national_imbalance_reviewed');
-  const imbalanceReady =
-    imbalanceReviewSupported && (imbalanceWarnings.length === 0 || imbalanceReviewed);
-  const pipelineSupportsNational =
-    boolPreference(modelPreferences, 'pipeline_supports_national_scope') &&
-    boolPreference(modelPreferences, 'backend_bridge_supports_national_scope') &&
-    boolPreference(modelPreferences, 'python_pipeline_supports_national_scope');
+  const regionalCoverageReady = regionalCoverageConfigured && nationalSampleSpreadConfirmed;
   const validationPlanRecorded = boolPreference(
     modelPreferences,
     'national_validation_plan_recorded',
   );
+  const qualityWarnings =
+    requestedNational && coverage.score < 70
+      ? [
+          ...warnings,
+          'Samples are not well distributed across Lebanon. Results may be less reliable.',
+        ]
+      : warnings;
   const requirements = [
     nationalRequirement({
       key: 'national_mode_allowed',
@@ -223,8 +908,8 @@ const nationalScopeEligibilityFor = ({
       key: 'lebanon_boundary_configured',
       label: 'Lebanon boundary configured',
       passed: lebanonBoundaryConfigured,
-      currentValue: boolPreferenceText(lebanonBoundaryConfigured),
-      requiredValue: 'usable Lebanon boundary',
+      currentValue: lebanonBoundaryConfigured,
+      requiredValue: true,
       message: lebanonBoundaryConfigured
         ? 'A Lebanon boundary/ROI is configured for AI processing.'
         : 'Lebanon boundary/ROI must be configured before national mode can be enabled.',
@@ -233,8 +918,8 @@ const nationalScopeEligibilityFor = ({
       key: 'pipeline_supports_national_processing',
       label: 'Pipeline supports national processing',
       passed: pipelineSupportsNational,
-      currentValue: `national scope: ${boolPreference(modelPreferences, 'pipeline_supports_national_scope')}; backend bridge: ${boolPreference(modelPreferences, 'backend_bridge_supports_national_scope')}; Python pipeline: ${boolPreference(modelPreferences, 'python_pipeline_supports_national_scope')}`,
-      requiredValue: 'backend bridge and Python pipeline support national ROI',
+      currentValue: pipelineSupportsNational,
+      requiredValue: true,
       message: pipelineSupportsNational
         ? 'The backend bridge and Python pipeline support national ROI/config processing.'
         : 'National mode stays locked until the backend bridge and Python pipeline support national ROI/config processing.',
@@ -243,11 +928,11 @@ const nationalScopeEligibilityFor = ({
       key: 'minimum_samples_per_class',
       label: 'Enough approved samples per class',
       passed: minimumSamplesPerClassMet,
-      currentValue: minClassSampleCount,
-      requiredValue: `${NATIONAL_MIN_SAMPLES_PER_CLASS} minimum (${NATIONAL_RECOMMENDED_SAMPLES_PER_CLASS}+ recommended)`,
+      currentValue: coverage.usable_class_count,
+      requiredValue: `2+ classes with at least ${minSamplesPerClass} samples`,
       message: minimumSamplesPerClassMet
-        ? `Every target class has at least ${NATIONAL_MIN_SAMPLES_PER_CLASS} approved labeled samples.`
-        : `Every target class needs at least ${NATIONAL_MIN_SAMPLES_PER_CLASS} approved labeled samples; ${NATIONAL_RECOMMENDED_SAMPLES_PER_CLASS}+ is recommended.`,
+        ? 'Every target class has enough approved labeled samples.'
+        : `At least two classes need ${minSamplesPerClass} approved labeled samples.`,
     }),
     nationalRequirement({
       key: 'labels_valid',
@@ -262,9 +947,9 @@ const nationalScopeEligibilityFor = ({
     nationalRequirement({
       key: 'regional_coverage_configured',
       label: 'Geographic coverage is broad enough',
-      passed: regionalCoverageConfigured && nationalSampleSpreadConfirmed,
+      passed: regionalCoverageReady,
       currentValue: regionalCoverageConfigured
-        ? boolPreferenceText(nationalSampleSpreadConfirmed)
+        ? nationalSampleSpreadConfirmed
         : 'coverage check not configured',
       requiredValue: 'configured regional/governorate or environmental-zone coverage check',
       message: !regionalCoverageConfigured
@@ -272,22 +957,6 @@ const nationalScopeEligibilityFor = ({
         : nationalSampleSpreadConfirmed
           ? 'Approved samples cover multiple Lebanese regions or configured environmental zones.'
           : 'Approved samples must cover multiple Lebanese regions or configured environmental zones.',
-    }),
-    nationalRequirement({
-      key: 'imbalance_reviewed',
-      label: 'Class/region imbalance is acceptable or reviewed',
-      passed: imbalanceReady,
-      currentValue: imbalanceReviewSupported
-        ? imbalanceWarnings.length === 0
-          ? 'no imbalance warnings'
-          : imbalanceReviewed
-            ? 'warnings reviewed'
-            : 'warnings not reviewed'
-        : 'reviewed warning support not configured',
-      requiredValue: 'imbalance warnings supported and reviewed when present',
-      message: imbalanceReady
-        ? 'Class and region imbalance is acceptable or has been reviewed.'
-        : 'National mode stays locked until class/region imbalance warnings can be reviewed and accepted.',
     }),
     nationalRequirement({
       key: 'validation_plan_recorded',
@@ -300,10 +969,10 @@ const nationalScopeEligibilityFor = ({
         : 'A super-admin must record/confirm a validation plan before national results can be published.',
     }),
   ];
-  const unmetRequirements = requirements
-    .filter((requirement) => !requirement.passed)
-    .map((requirement) => requirement.message);
-  const eligible = unmetRequirements.length === 0;
+  const eligible = requirements.every((requirement) => requirement.passed);
+  const unmetRequirements = eligible
+    ? []
+    : requirements.filter((requirement) => !requirement.passed).map((requirement) => requirement.message);
   return {
     eligible,
     requirements,
@@ -311,10 +980,13 @@ const nationalScopeEligibilityFor = ({
     warnings:
       requestedNational && !eligible
         ? [
-            ...warnings,
+            ...qualityWarnings,
             'National Lebanon prediction is locked until national readiness requirements are met.',
           ]
-        : warnings,
+        : qualityWarnings,
+    coverage,
+    missing_label_count: missingLabelCount,
+    invalid_geometry_count: invalidGeometryCount,
   };
 };
 
@@ -509,6 +1181,7 @@ const getAiSettingsRow = async (projectId: string) => {
             scope_type,
             ST_AsGeoJSON(scope_geometry)::json AS scope_geometry,
             min_samples_per_class,
+            confidence_threshold,
             model_preferences,
             created_by,
             updated_by,
@@ -532,7 +1205,11 @@ const getEffectiveAiSettings = async (projectId: string) => {
     scope_type: existing?.scope_type ?? defaultSettings.scope_type,
     scope_geometry: existing?.scope_geometry ?? defaultSettings.scope_geometry,
     min_samples_per_class: existing?.min_samples_per_class ?? defaultSettings.min_samples_per_class,
-    model_preferences: existing?.model_preferences ?? defaultSettings.model_preferences,
+    confidence_threshold:
+      existing?.confidence_threshold ?? defaultSettings.confidence_threshold,
+    model_preferences: normalizeAiModelPreferences(
+      existing?.model_preferences ?? defaultSettings.model_preferences,
+    ),
     created_by: existing?.created_by ?? null,
     updated_by: existing?.updated_by ?? null,
     created_at: existing?.created_at ?? null,
@@ -859,6 +1536,11 @@ const getFeatureReadinessSummary = async ({
        WHERE project_id = $1
          AND status = 'approved'
          AND (
+           COALESCE(source, 'field') <> 'ai'
+           OR use_for_future_training = TRUE
+           OR attributes->>'useForFutureTraining' = 'true'
+         )
+         AND (
            $3::text IS NULL
            OR ST_Intersects(geom, ST_SetSRID(ST_GeomFromGeoJSON($3::text), 4326))
          )
@@ -895,6 +1577,11 @@ const getFeatureReadinessSummary = async ({
          WHERE project_id = $1
            AND status = 'approved'
            AND (
+             COALESCE(source, 'field') <> 'ai'
+             OR use_for_future_training = TRUE
+             OR attributes->>'useForFutureTraining' = 'true'
+           )
+           AND (
              $3::text IS NULL
              OR ST_Intersects(geom, ST_SetSRID(ST_GeomFromGeoJSON($3::text), 4326))
            )
@@ -915,6 +1602,11 @@ const getFeatureReadinessSummary = async ({
          WHERE project_id = $1
            AND status = 'approved'
            AND (
+             COALESCE(source, 'field') <> 'ai'
+             OR use_for_future_training = TRUE
+             OR attributes->>'useForFutureTraining' = 'true'
+           )
+           AND (
              $2::text IS NULL
              OR ST_Intersects(geom, ST_SetSRID(ST_GeomFromGeoJSON($2::text), 4326))
            )
@@ -932,6 +1624,11 @@ const getFeatureReadinessSummary = async ({
      FROM spatial_feature
      WHERE project_id = $1
        AND status = 'approved'
+       AND (
+         COALESCE(source, 'field') <> 'ai'
+         OR use_for_future_training = TRUE
+         OR attributes->>'useForFutureTraining' = 'true'
+       )
        AND (
          $2::text IS NULL
          OR ST_Intersects(geom, ST_SetSRID(ST_GeomFromGeoJSON($2::text), 4326))
@@ -956,11 +1653,63 @@ const getFeatureReadinessSummary = async ({
     sample_count: Number(row.sample_count),
   }));
 
+  const nationalSamplesResult = labelField
+    ? await query(
+        `SELECT ST_X(ST_PointOnSurface(geom))::float AS lon,
+                ST_Y(ST_PointOnSurface(geom))::float AS lat,
+                NULLIF(BTRIM(attributes ->> $2), '') AS class_label,
+                COALESCE(
+                  NULLIF(BTRIM(attributes ->> 'governorate'), ''),
+                  NULLIF(BTRIM(attributes ->> 'Governorate'), ''),
+                  NULLIF(BTRIM(attributes ->> 'mohafaza'), ''),
+                  NULLIF(BTRIM(attributes ->> 'Mohafaza'), ''),
+                  NULLIF(BTRIM(attributes ->> 'admin1'), ''),
+                  NULLIF(BTRIM(attributes ->> 'admin_1'), ''),
+                  NULLIF(BTRIM(attributes ->> 'region'), ''),
+                  NULLIF(BTRIM(attributes ->> 'Region'), '')
+                ) AS governorate,
+                COALESCE(
+                  NULLIF(BTRIM(attributes ->> 'elevation_band'), ''),
+                  NULLIF(BTRIM(attributes ->> 'elevationBand'), ''),
+                  NULLIF(BTRIM(attributes ->> 'topography_band'), ''),
+                  NULLIF(BTRIM(attributes ->> 'topographyBand'), '')
+                ) AS elevation_band
+         FROM spatial_feature
+         WHERE project_id = $1
+           AND status = 'approved'
+           AND (
+             COALESCE(source, 'field') <> 'ai'
+             OR use_for_future_training = TRUE
+             OR attributes->>'useForFutureTraining' = 'true'
+           )
+           AND (
+             $3::text IS NULL
+             OR ST_Intersects(geom, ST_SetSRID(ST_GeomFromGeoJSON($3::text), 4326))
+           )
+           AND geom IS NOT NULL
+           AND ST_IsValid(geom)
+           AND NULLIF(BTRIM(attributes ->> $2), '') IS NOT NULL`,
+        [projectId, labelField, scopeGeometryText],
+      )
+    : { rows: [] };
+  const nationalSamples: NationalCoverageSample[] = nationalSamplesResult.rows.map((row) => ({
+    lon: row.lon === null || row.lon === undefined ? null : Number(row.lon),
+    lat: row.lat === null || row.lat === undefined ? null : Number(row.lat),
+    class_label: normalizeOptionalString(row.class_label),
+    governorate: normalizeOptionalString(row.governorate),
+    elevation_band: normalizeOptionalString(row.elevation_band),
+  }));
+
   if (!labelField) {
     blockers.push('No AI label field is configured or requested.');
   }
   if (Number(totals.approved_feature_count) === 0) {
     blockers.push('Project has no approved field/import features available for AI.');
+  }
+  if (scopeType !== 'custom_polygon' && scopeType !== 'national' && spatialExtent === null) {
+    blockers.push(
+      'Project area scope is not configured. AI runs need an AOI to clip imagery and generate predictions.',
+    );
   }
   if (labelCounts.length < 2) {
     blockers.push('At least two labeled classes are required for supervised training.');
@@ -972,14 +1721,16 @@ const getFeatureReadinessSummary = async ({
   const eligibleFeatureCount = classesAtMinimum.reduce((total, row) => total + row.sample_count, 0);
   const validLabeledFeatureCount = Number(totals.valid_labeled_feature_count);
 
-  if (labelCounts.length >= 2 && eligibleClassCount < 2) {
+  if (labelCounts.length >= 2 && eligibleClassCount < 2 && scopeType !== 'national') {
     blockers.push(`At least two classes must meet the minimum of ${minSamplesPerClass} samples.`);
   } else if (classesBelowMinimum.length > 0) {
     const excluded = classesBelowMinimum
       .map((row) => `${row.class_label} (${row.sample_count})`)
       .join(', ');
     warnings.push(
-      `Classes below ${minSamplesPerClass} samples will be excluded from the AI run: ${excluded}.`,
+      scopeType === 'national'
+        ? `Classes with too few samples will be skipped: ${excluded}.`
+        : `Classes below ${minSamplesPerClass} samples will be excluded from the AI run: ${excluded}.`,
     );
   }
 
@@ -1010,10 +1761,12 @@ const getFeatureReadinessSummary = async ({
     }
   }
 
-  const status = blockers.length > 0 ? 'not_ready' : warnings.length > 0 ? 'warning' : 'ready';
   const nationalScopeEligibility = nationalScopeEligibilityFor({
     requestedNational: scopeType === 'national',
     labelCounts,
+    samples: nationalSamples,
+    minSamplesPerClass,
+    modelPreferences,
     totals: {
       missing_label_count: Number(totals.missing_label_count),
       invalid_geometry_count: Number(totals.invalid_geometry_count),
@@ -1024,10 +1777,17 @@ const getFeatureReadinessSummary = async ({
         ? ['No approved sample extent is available for national readiness evaluation.']
         : []),
     ],
-    modelPreferences,
   });
+  const topLevelWarnings =
+    scopeType === 'national'
+      ? Array.from(new Set([...warnings, ...nationalScopeEligibility.warnings]))
+      : warnings;
+  const status =
+    blockers.length > 0 ? 'not_ready' : topLevelWarnings.length > 0 ? 'warning' : 'ready';
   const nationalScopeEnabled =
-    boolPreference(modelPreferences, 'national_scope_enabled') && nationalScopeEligibility.eligible;
+    (scopeType === 'national' || scopeType === 'national_lebanon') &&
+    nationalScopeEligibility.eligible &&
+    boolPreference(modelPreferences, 'national_scope_enabled');
 
   return {
     status,
@@ -1055,18 +1815,738 @@ const getFeatureReadinessSummary = async ({
     national_scope_enabled: nationalScopeEnabled,
     national_scope_eligibility: nationalScopeEligibility,
     custom_scope_applied: scopeGeometryText !== null,
-    coverage_warning_applies: warnings.some((warning) => warning.includes('spatially limited')),
-    warnings,
+    coverage_warning_applies: topLevelWarnings.some((warning) =>
+      warning.toLowerCase().includes('coverage') ||
+      warning.toLowerCase().includes('distributed') ||
+      warning.toLowerCase().includes('spatially limited'),
+    ),
+    warnings: topLevelWarnings,
     blockers,
   };
 };
 
-const normalizeRunRow = (row: any) => ({
-  ...row,
-  training_feature_count: Number(row.training_feature_count ?? 0),
-  eligible_feature_count: Number(row.eligible_feature_count ?? 0),
-  excluded_feature_count: Number(row.excluded_feature_count ?? 0),
-});
+const runJsonRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
+const AI_GEOMETRY_INSERTION_SAFE_MESSAGE =
+  'AI result insertion failed because some generated polygons were invalid. Please retry after processing cleanup.';
+
+const isAiPredictionGeometryInsertError = (...values: unknown[]): boolean => {
+  const text = values
+    .map((value) => {
+      if (typeof value === 'string') {
+        return value;
+      }
+      if (value instanceof Error) {
+        return value.message;
+      }
+      if (value && typeof value === 'object') {
+        try {
+          return JSON.stringify(value);
+        } catch {
+          return '';
+        }
+      }
+      return '';
+    })
+    .join(' ')
+    .toLowerCase();
+  return (
+    text.includes('chk_ai_prediction_feature_geom_valid') ||
+    (text.includes('ai_prediction_feature') &&
+      text.includes('violates check constraint')) ||
+    (text.includes('ai_prediction_feature') && text.includes('failing row contains'))
+  );
+};
+
+const publicAiRunMessage = (message: unknown, ...context: unknown[]): string | null => {
+  const normalized = normalizeOptionalString(message);
+  if (isAiPredictionGeometryInsertError(normalized, ...context)) {
+    return AI_GEOMETRY_INSERTION_SAFE_MESSAGE;
+  }
+  return normalized;
+};
+
+const storeAiRunErrorRecord = (value: unknown): Record<string, unknown> => {
+  const record = errorRecordFrom(value);
+  const rawMessage =
+    normalizeOptionalString(record.technical_message) ??
+    normalizeOptionalString(record.message) ??
+    normalizeOptionalString(value);
+  if (isAiPredictionGeometryInsertError(record, rawMessage)) {
+    return {
+      ...record,
+      message: AI_GEOMETRY_INSERTION_SAFE_MESSAGE,
+      technical_message: rawMessage,
+      code: 'AI_GEOMETRY_INSERTION_FAILED',
+    };
+  }
+  return record;
+};
+
+const publicAiRunErrorRecord = (value: unknown): Record<string, unknown> => {
+  const record = runJsonRecord(value);
+  if (Object.keys(record).length === 0) {
+    return {};
+  }
+  if (isAiPredictionGeometryInsertError(record)) {
+    return {
+      message: AI_GEOMETRY_INSERTION_SAFE_MESSAGE,
+      code: 'AI_GEOMETRY_INSERTION_FAILED',
+    };
+  }
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(record)) {
+    if (
+      [
+        'technical_message',
+        'raw_message',
+        'raw_error',
+        'stack',
+        'trace',
+        'tail',
+        'failing_row',
+      ].includes(key)
+    ) {
+      continue;
+    }
+    sanitized[key] = item;
+  }
+  const message = publicAiRunMessage(sanitized.message, record);
+  if (message) {
+    sanitized.message = message;
+  }
+  return sanitized;
+};
+
+const boundedProgress = (value: unknown): number => {
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number.parseFloat(value)
+        : Number.NaN;
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+  return Math.min(1, Math.max(0, parsed));
+};
+
+const publicAiRunProgress = (
+  status: unknown,
+  stage: unknown,
+  progress: unknown,
+  ...context: unknown[]
+): number => {
+  const bounded = boundedProgress(progress);
+  const normalizedStatus = normalizeOptionalString(status)?.toLowerCase();
+  const normalizedStage = normalizeOptionalString(stage)?.toLowerCase();
+  if (
+    normalizedStatus === 'failed' &&
+    normalizedStage === 'insertion_failed' &&
+    bounded >= 1 &&
+    isAiPredictionGeometryInsertError(...context)
+  ) {
+    return 0.96;
+  }
+  return bounded;
+};
+
+const normalizeRunRow = (row: any) => {
+  const metadata = runJsonRecord(row.metadata);
+  const aiServer = runJsonRecord(metadata.ai_server);
+  const aiServerCounts = runJsonRecord(aiServer.counts);
+  const artifacts = runJsonRecord(row.artifacts);
+  const counts = runJsonRecord(row.counts);
+  const errorDetails = runJsonRecord(row.error_details);
+  const dryRun =
+    row.is_dry_run === true ||
+    aiServer.dry_run === true ||
+    metadata.dry_run === true ||
+    metadata.execution_mode === 'dry_run' ||
+    metadata.execution_mode === 'mock';
+  const stage =
+    normalizeOptionalString(row.stage) ??
+    normalizeOptionalString(aiServer.stage) ??
+    normalizeOptionalString(metadata.stage);
+  const message =
+    publicAiRunMessage(row.message, row.error_details, row.failure_reason) ??
+    publicAiRunMessage(aiServer.message, aiServer.error) ??
+    publicAiRunMessage(metadata.message, metadata.error);
+  const error =
+    Object.keys(errorDetails).length > 0
+      ? publicAiRunErrorRecord(errorDetails)
+      : publicAiRunErrorRecord(aiServer.error ?? metadata.error);
+  const failureReason = publicAiRunMessage(row.failure_reason, errorDetails) ?? null;
+  const publicMetadata = {
+    ...metadata,
+    ...(Object.keys(aiServer).length > 0
+      ? {
+          ai_server: {
+            ...aiServer,
+            message: publicAiRunMessage(aiServer.message, aiServer.error),
+            error: publicAiRunErrorRecord(aiServer.error),
+          },
+        }
+      : {}),
+  };
+  return {
+    ...row,
+    metadata: publicMetadata,
+    error_details: error,
+    training_feature_count: Number(row.training_feature_count ?? 0),
+    eligible_feature_count: Number(row.eligible_feature_count ?? 0),
+    excluded_feature_count: Number(row.excluded_feature_count ?? 0),
+    prediction_count: Number(
+      row.prediction_count ??
+        counts.predictions_inserted ??
+        aiServerCounts.predictions_inserted ??
+        0,
+    ),
+    is_dry_run: dryRun,
+    display_name:
+      normalizeOptionalString(row.display_name) ??
+      normalizeOptionalString(metadata.display_name) ??
+      null,
+    published_layer_name:
+      normalizeOptionalString(row.published_layer_name) ??
+      normalizeOptionalString(runJsonRecord(metadata.publication).layer_name) ??
+      null,
+    unpublished_reason:
+      normalizeOptionalString(row.unpublished_reason) ??
+      normalizeOptionalString(runJsonRecord(metadata.publication).unpublished_reason) ??
+      null,
+    replaced_by_run_id:
+      normalizeOptionalString(row.replaced_by_run_id) ??
+      normalizeOptionalString(runJsonRecord(metadata.publication).replaced_by_run_id) ??
+      null,
+    stage,
+    progress: publicAiRunProgress(
+      row.status,
+      stage,
+      row.progress ?? aiServer.progress ?? metadata.progress,
+      row.error_details,
+      row.message,
+      row.failure_reason,
+    ),
+    message,
+    failure_reason: failureReason,
+    ai_server_run_id:
+      normalizeOptionalString(row.ai_server_run_id) ??
+      normalizeOptionalString(aiServer.run_id) ??
+      null,
+    artifacts:
+      Object.keys(artifacts).length > 0
+        ? artifacts
+        : runJsonRecord(aiServer.artifacts ?? metadata.artifacts),
+    counts:
+      Object.keys(counts).length > 0
+        ? counts
+        : runJsonRecord(aiServer.counts ?? metadata.counts),
+    error,
+    can_cancel: ['queued', 'created', 'starting', 'running', 'cancelling'].includes(
+      String(row.status),
+    ),
+    can_resume: ['failed', 'cancelled', 'paused'].includes(String(row.status)),
+  };
+};
+
+const aiServerActiveStatuses = new Set([
+  'queued',
+  'created',
+  'starting',
+  'running',
+  'cancelling',
+  'paused',
+  'extracting_features',
+  'training',
+  'evaluating',
+  'classifying',
+]);
+
+const activeAiRunStatusesForProject = [
+  'created',
+  'queued',
+  'starting',
+  'running',
+  'cancelling',
+  'extracting_features',
+  'training',
+  'evaluating',
+  'classifying',
+] as const;
+
+const aiServerRestartMessage = 'AI server restarted before this run completed.';
+
+const isAiServerStateNotFoundError = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes('ai run state not found') ||
+    (normalized.includes('run state') && normalized.includes('not found'))
+  );
+};
+
+const normalizeAiServerRunStatus = (status: unknown): string => {
+  const value = normalizeOptionalString(status)?.toLowerCase() ?? 'running';
+  switch (value) {
+    case 'accepted':
+      return 'starting';
+    case 'done':
+    case 'succeeded':
+    case 'success':
+    case 'finished':
+      return 'completed';
+    case 'canceling':
+      return 'cancelling';
+    case 'extracting_features':
+    case 'training':
+    case 'evaluating':
+    case 'classifying':
+      return 'running';
+    default:
+      return allowedRunStatuses.includes(value) ? value : 'running';
+  }
+};
+
+const markAiRunInterruptedByAiServerRestart = async (run: any): Promise<any> =>
+  updateAiRunFromServerPayload(run.id, {
+    run_id: run.id,
+    project_id: run.project_id,
+    status: 'failed',
+    stage: 'interrupted',
+    progress: boundedProgress(run.progress),
+    message: aiServerRestartMessage,
+    error: {
+      message: aiServerRestartMessage,
+      reason: 'ai_server_restart',
+      recoverable: true,
+    },
+  });
+
+const statusTimestampPatch = (status: string): string => {
+  if (status === 'completed') {
+    return 'completed_at = COALESCE(completed_at, NOW()), failed_at = NULL,';
+  }
+  if (status === 'failed') {
+    return 'failed_at = COALESCE(failed_at, NOW()),';
+  }
+  if (status === 'cancelled') {
+    return 'cancelled_at = COALESCE(cancelled_at, NOW()),';
+  }
+  if (status === 'starting' || status === 'running') {
+    return 'started_at = COALESCE(started_at, NOW()),';
+  }
+  return '';
+};
+
+const errorRecordFrom = (value: unknown): Record<string, unknown> => {
+  if (value instanceof Error) {
+    return { message: value.message };
+  }
+  const record = runJsonRecord(value);
+  if (Object.keys(record).length > 0) {
+    return record;
+  }
+  const text = normalizeOptionalString(value);
+  return text ? { message: text } : {};
+};
+
+const updateAiRunFromServerPayload = async (
+  runId: string,
+  payload: AiServerStatusPayload,
+): Promise<any> => {
+  const status = normalizeAiServerRunStatus(payload.status);
+  const stage = normalizeOptionalString(payload.stage);
+  const payloadErrorRecord = errorRecordFrom(payload.error);
+  const rawErrorInput =
+    Object.keys(payloadErrorRecord).length > 0 ? payload.error : payload.message;
+  const rawErrorDetails = errorRecordFrom(rawErrorInput);
+  const errorDetails = status === 'failed' ? storeAiRunErrorRecord(rawErrorInput) : payloadErrorRecord;
+  const message =
+    publicAiRunMessage(payload.message, rawErrorDetails, errorDetails) ??
+    normalizeOptionalString((errorDetails as { message?: unknown }).message);
+  const progress = publicAiRunProgress(status, stage, payload.progress, rawErrorDetails, message);
+  const artifacts = runJsonRecord(payload.artifacts);
+  const counts = runJsonRecord(payload.counts);
+  const failureReason =
+    status === 'failed'
+      ? publicAiRunMessage((errorDetails as { message?: unknown }).message, rawErrorDetails) ??
+        message
+      : null;
+  const predictionsInserted = Number(counts.predictions_inserted ?? counts.prediction_count ?? 0);
+  const payloadDryRun =
+    payload.dry_run === true ||
+    runJsonRecord(payload.metrics).dry_run === true ||
+    runJsonRecord(payload.settings).dry_run === true;
+  const timestampPatch = statusTimestampPatch(status);
+  const existingResult = await query(`SELECT metadata FROM ai_run WHERE id = $1`, [runId]);
+  const existingMetadata = runJsonRecord(existingResult.rows[0]?.metadata);
+  const aiServerMetadata = runJsonRecord(existingMetadata.ai_server);
+  const metadata = {
+    ...existingMetadata,
+    ai_server: {
+      ...aiServerMetadata,
+      run_id: payload.run_id ?? runId,
+      project_id: payload.project_id ?? aiServerMetadata.project_id ?? null,
+      status,
+      stage,
+      progress,
+      message,
+      dry_run: payloadDryRun,
+      updated_at: payload.updated_at ?? new Date().toISOString(),
+      last_log_at: payload.last_log_at ?? null,
+      last_log_message: payload.last_log_message ?? null,
+      artifacts,
+      counts,
+      error: Object.keys(errorDetails).length > 0 ? errorDetails : null,
+    },
+  };
+  const result = await query(
+    `UPDATE ai_run
+     SET status = $2::ai_run_status,
+         stage = $3,
+         progress = $4,
+         message = $5,
+         ai_server_run_id = COALESCE(ai_server_run_id, $6),
+         ${timestampPatch}
+         failure_reason = CASE
+           WHEN $2::text = 'failed' THEN COALESCE($10, failure_reason, 'AI server reported failure.')
+           WHEN $2::text IN ('starting', 'running', 'cancelling', 'cancelled', 'completed', 'paused') THEN NULL
+           ELSE failure_reason
+         END,
+         artifacts = $7::jsonb,
+         counts = $8::jsonb,
+         error_details = $9::jsonb,
+         metadata = $11::jsonb,
+         callback_received_at = COALESCE(callback_received_at, CASE WHEN $12::boolean THEN NOW() ELSE NULL END),
+         is_dry_run = is_dry_run OR $13::boolean,
+         prediction_count = GREATEST(prediction_count, $14::integer),
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING id,
+               project_id,
+               settings_id,
+               status,
+               label_field,
+               scope_type,
+               ST_AsGeoJSON(scope_geometry)::json AS scope_geometry,
+               region_preset,
+               training_feature_count,
+               eligible_feature_count,
+               excluded_feature_count,
+               selected_model,
+               started_by,
+               started_at,
+               completed_at,
+               failed_at,
+               failure_reason,
+               stage,
+               progress,
+               message,
+               ai_server_run_id,
+               cancelled_at,
+               callback_received_at,
+               published_at,
+               published_by,
+               unpublished_at,
+               unpublished_by,
+               display_name,
+               is_dry_run,
+               published_layer_name,
+               unpublished_reason,
+               replaced_by_run_id,
+               prediction_count,
+               artifacts,
+               counts,
+               error_details,
+               metadata,
+               created_at,
+               updated_at`,
+    [
+      runId,
+      status,
+      stage,
+      progress,
+      message,
+      payload.run_id ?? runId,
+      JSON.stringify(artifacts),
+      JSON.stringify(counts),
+      JSON.stringify(errorDetails),
+      failureReason,
+      JSON.stringify(metadata),
+      true,
+      payloadDryRun,
+      Number.isFinite(predictionsInserted) ? predictionsInserted : 0,
+    ],
+  );
+  return result.rows[0];
+};
+
+const failAiRunFromDispatchError = async (
+  runId: string,
+  error: unknown,
+  message = 'AI server is unavailable. Please start the AI server and refresh readiness.',
+): Promise<any> => {
+  const errorDetails = errorRecordFrom(error);
+  const failureReason =
+    normalizeOptionalString((errorDetails as { message?: unknown }).message) ?? message;
+  const result = await query(
+    `UPDATE ai_run
+     SET status = 'failed',
+         stage = COALESCE(stage, 'dispatch'),
+         progress = 0,
+         message = $2,
+         failed_at = COALESCE(failed_at, NOW()),
+         failure_reason = $3,
+         error_details = $4::jsonb,
+         metadata = metadata || $5::jsonb,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING id,
+               project_id,
+               settings_id,
+               status,
+               label_field,
+               scope_type,
+               ST_AsGeoJSON(scope_geometry)::json AS scope_geometry,
+               region_preset,
+               training_feature_count,
+               eligible_feature_count,
+               excluded_feature_count,
+               selected_model,
+               started_by,
+               started_at,
+               completed_at,
+               failed_at,
+               failure_reason,
+               stage,
+               progress,
+               message,
+               ai_server_run_id,
+               cancelled_at,
+               callback_received_at,
+               artifacts,
+               counts,
+               error_details,
+               metadata,
+               created_at,
+               updated_at`,
+    [
+      runId,
+      message,
+      failureReason,
+      JSON.stringify(errorDetails),
+      JSON.stringify({
+        ai_server: {
+          status: 'unavailable',
+          error: errorDetails,
+          updated_at: new Date().toISOString(),
+        },
+      }),
+    ],
+  );
+  await query(
+    `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
+     VALUES ($1, 'error', $2, $3::jsonb)`,
+    [
+      runId,
+      message,
+      JSON.stringify({
+        phase: 'ai_server_dispatch',
+        ai_server_unavailable: true,
+        error: errorDetails,
+      }),
+    ],
+  );
+  return result.rows[0];
+};
+
+const buildProjectAreaScopePayload = ({
+  scopeType,
+  scopeGeometry,
+  readiness,
+}: {
+  scopeType: string;
+  scopeGeometry: unknown;
+  readiness: Record<string, any>;
+}): Record<string, unknown> => {
+  const geometry = scopeGeometry && typeof scopeGeometry === 'object' ? scopeGeometry : null;
+  const extent = runJsonRecord(readiness.spatial_extent);
+  const bbox =
+    scopeType === 'national'
+      ? [
+          lebanonApproxBounds.min_lon,
+          lebanonApproxBounds.min_lat,
+          lebanonApproxBounds.max_lon,
+          lebanonApproxBounds.max_lat,
+        ]
+      : typeof extent.min_lon === 'number' &&
+    typeof extent.min_lat === 'number' &&
+    typeof extent.max_lon === 'number' &&
+    typeof extent.max_lat === 'number'
+      ? [extent.min_lon, extent.min_lat, extent.max_lon, extent.max_lat]
+      : [];
+  const type =
+    scopeType === 'custom_polygon'
+      ? 'custom_aoi'
+      : scopeType === 'national'
+        ? 'national_lebanon'
+        : 'project_boundary_or_feature_extent';
+  return {
+    type,
+    scope_type: scopeType,
+    geometry,
+    bbox,
+    source:
+      scopeType === 'national'
+        ? 'static_lebanon_boundary'
+        : geometry !== null
+        ? 'explicit_project_ai_scope_geometry'
+        : bbox.length === 4
+          ? 'project_feature_extent'
+          : 'not_configured',
+  };
+};
+
+const buildAiServerRunPayload = ({
+  runId,
+  projectId,
+  settings,
+  modelPreferences,
+  satelliteSources,
+  satelliteTimeframes,
+  scopeType,
+  scopeGeometry,
+  readiness,
+  currentUserId,
+  executionMode,
+  minSamplesPerClass,
+}: {
+  runId: string;
+  projectId: string;
+  settings: any;
+  modelPreferences: Record<string, unknown>;
+  satelliteSources: Array<'sentinel2' | 'landsat'>;
+  satelliteTimeframes: Record<
+    string,
+    { map_year: number; seasons: Array<{ season: string; from_date: string; to_date: string }> }
+  >;
+  scopeType: string;
+  scopeGeometry: unknown;
+  readiness: Record<string, any>;
+  currentUserId: string | null;
+  executionMode: string;
+  minSamplesPerClass: number;
+}): AiServerStartPayload => {
+  const aiServerClient = createAiServerClient();
+  const projectAreaScope = buildProjectAreaScopePayload({
+    scopeType,
+    scopeGeometry,
+    readiness,
+  });
+  const selectedFeatureInputs = Array.isArray(modelPreferences.feature_inputs)
+    ? modelPreferences.feature_inputs
+    : Array.isArray(modelPreferences.selected_feature_inputs)
+      ? modelPreferences.selected_feature_inputs
+      : Array.isArray(modelPreferences.selected_extracted_features)
+        ? modelPreferences.selected_extracted_features
+        : [];
+  const featureGroups = Array.isArray(modelPreferences.feature_groups)
+    ? modelPreferences.feature_groups
+    : [];
+  const preferredModel = normalizeOptionalString(modelPreferences.preferred_model);
+  return {
+    run_id: runId,
+    project_id: projectId,
+    settings: {
+      project_id: projectId,
+      run_id: runId,
+      satellite_sources: satelliteSources,
+      satellite_timeframes: satelliteTimeframes,
+      confidence_threshold: settings.confidence_threshold,
+      min_samples_per_class: minSamplesPerClass,
+      label_field: settings.label_field,
+      scope_type: scopeType,
+      training_samples_area_type: aiAreaTypeFromScope(scopeType),
+      prediction_area_type: aiAreaTypeFromScope(scopeType),
+      feature_groups: featureGroups,
+      selected_feature_inputs: selectedFeatureInputs,
+      selected_extracted_features: selectedFeatureInputs,
+      preferred_model: preferredModel,
+      project_area_scope: projectAreaScope,
+      custom_polygon:
+        scopeType === 'custom_polygon' && projectAreaScope.geometry
+          ? projectAreaScope.geometry
+          : undefined,
+      model_preferences: modelPreferences,
+      execution_mode: executionMode,
+      dry_run: executionMode === 'dry_run' || executionMode === 'mock',
+      safety_flags: {
+        national_scope_enabled: readiness.national_scope_enabled === true,
+        allow_spatial_feature_writes: false,
+        publish_outputs: false,
+      },
+    },
+    callback_url: aiServerClient.callbackUrl(runId),
+    callback_secret: aiServerClient.callbackSecret(),
+    requested_by: currentUserId,
+    metadata: {
+      app_backend_run_id: runId,
+      execution_mode: executionMode,
+      readiness_status: readiness.status,
+      training_samples_area_type: aiAreaTypeFromScope(scopeType),
+      prediction_area_type: aiAreaTypeFromScope(scopeType),
+    },
+  };
+};
+
+const maybeRefreshAiRunFromServer = async (
+  run: any,
+  options: { force?: boolean } = {},
+): Promise<any> => {
+  const isActive = aiServerActiveStatuses.has(String(run.status));
+  if (!options.force && !isActive) {
+    return run;
+  }
+  const aiServerClient = createAiServerClient();
+  if (!aiServerClient.isConfigured()) {
+    return run;
+  }
+  try {
+    const payload = await aiServerClient.getRunStatus(run.id);
+    const updated = await updateAiRunFromServerPayload(run.id, payload);
+    await insertCallbackMetricRows(run.id, payload.metrics);
+    return updated;
+  } catch (error) {
+    if (isAiServerStateNotFoundError(error)) {
+      if (!isActive) {
+        return run;
+      }
+      return markAiRunInterruptedByAiServerRestart(run);
+    }
+    return run;
+  }
+};
+
+const loadProjectAiRunOrFail = async (projectId: string, runId: string): Promise<any> => {
+  const result = await query(
+    `SELECT ar.*,
+            p.name AS project_name,
+            ST_AsGeoJSON(ar.scope_geometry)::json AS scope_geometry
+     FROM ai_run ar
+     JOIN project p ON p.id = ar.project_id
+     WHERE ar.id = $1
+       AND ar.project_id = $2`,
+    [runId, projectId],
+  );
+  if (result.rows.length === 0) {
+    throw new AppError('AI run not found', 404);
+  }
+  return result.rows[0];
+};
 
 const assertRunReadable = async (runId: string, user: Express.UserContext) => {
   const runResult = await query(
@@ -1183,6 +2663,68 @@ const getProjectAiReadiness = async (req: Request, res: Response): Promise<void>
     scopeGeometry: settings.scope_geometry,
     modelPreferences: settings.model_preferences ?? {},
   });
+  const aiServerClient = createAiServerClient();
+  let aiServerHealth: Record<string, unknown> = {
+    configured: aiServerClient.isConfigured(),
+    status: aiServerClient.isConfigured() ? 'unknown' : 'unconfigured',
+    available: false,
+    callback_secret_configured: aiServerClient.callbackSecret().trim().length > 0,
+  };
+  if (aiServerClient.isConfigured()) {
+    try {
+      const health = await aiServerClient.health();
+      const healthStatus =
+        typeof health.status === 'string' && health.status.trim().length > 0
+          ? health.status.trim()
+          : 'unknown';
+      aiServerHealth = {
+        ...health,
+        configured: true,
+        status: healthStatus,
+        available: healthStatus === 'ok',
+        callback_secret_configured: aiServerClient.callbackSecret().trim().length > 0,
+      };
+    } catch (error) {
+      aiServerHealth = {
+        configured: true,
+        status: 'unavailable',
+        available: false,
+        callback_secret_configured: aiServerClient.callbackSecret().trim().length > 0,
+        message: error instanceof Error ? error.message : 'AI server health check failed.',
+      };
+    }
+  }
+  const readinessWithAiServer = { ...readiness };
+  const aiServerWarnings: string[] = [];
+  if (!aiServerClient.isConfigured()) {
+    aiServerWarnings.push('AI server URL is not configured. Set AI_SERVER_URL before starting AI runs.');
+  } else if (aiServerHealth.available !== true) {
+    const healthStatus =
+      typeof aiServerHealth.status === 'string' ? aiServerHealth.status : 'unavailable';
+    const detail =
+      typeof aiServerHealth.message === 'string' && aiServerHealth.message.trim().length > 0
+        ? ` ${aiServerHealth.message.trim()}`
+        : '';
+    aiServerWarnings.push(
+      healthStatus === 'degraded'
+        ? `AI server health is degraded.${detail}`
+        : 'AI server is unavailable. Please start the AI server and refresh readiness.',
+    );
+  }
+  if (aiServerClient.callbackSecret().trim().length === 0) {
+    aiServerWarnings.push('AI_CALLBACK_SECRET is not configured. AI server callbacks cannot be accepted.');
+  }
+  if (aiServerWarnings.length > 0) {
+    readinessWithAiServer.warnings = Array.from(
+      new Set([...(readiness.warnings ?? []), ...aiServerWarnings]),
+    );
+    if (settings.is_enabled) {
+      readinessWithAiServer.blockers = Array.from(
+        new Set([...(readiness.blockers ?? []), ...aiServerWarnings]),
+      );
+      readinessWithAiServer.status = 'not_ready';
+    }
+  }
   const candidateLabelFields = await getCandidateLabelFieldSummary({
     projectId,
     collectionFormSchema: project.collection_form_schema,
@@ -1201,9 +2743,12 @@ const getProjectAiReadiness = async (req: Request, res: Response): Promise<void>
         label_field: labelField,
         scope_type: settings.scope_type,
         min_samples_per_class: settings.min_samples_per_class,
+        confidence_threshold: settings.confidence_threshold,
+        model_preferences: settings.model_preferences,
       },
       readiness: {
-        ...readiness,
+        ...readinessWithAiServer,
+        ai_server: aiServerHealth,
         candidate_label_fields: candidateLabelFields,
       },
     },
@@ -1227,7 +2772,7 @@ const getProjectAiSettings = async (req: Request, res: Response): Promise<void> 
 
 const upsertProjectAiSettings = async (req: Request, res: Response): Promise<void> => {
   const { projectId } = req.params;
-  await getProjectOrFail(projectId);
+  const project = await getProjectOrFail(projectId);
   const existing = await getEffectiveAiSettings(projectId);
   const body = req.body ?? {};
 
@@ -1244,37 +2789,50 @@ const upsertProjectAiSettings = async (req: Request, res: Response): Promise<voi
       body.min_samples_per_class !== undefined
         ? parsePositiveInteger(body.min_samples_per_class, existing.min_samples_per_class)
         : existing.min_samples_per_class,
-    model_preferences:
+    confidence_threshold:
+      body.confidence_threshold !== undefined
+        ? normalizeConfidenceThreshold(body.confidence_threshold, existing.confidence_threshold)
+        : existing.confidence_threshold,
+    model_preferences: normalizeAiModelPreferences(
       body.model_preferences !== undefined
         ? (body.model_preferences ?? {})
         : (existing.model_preferences ?? {}),
+      { strictModel: true },
+    ),
   };
 
-  const nationalReadiness = await getFeatureReadinessSummary({
-    projectId,
-    labelField: nextSettings.label_field,
-    minSamplesPerClass: nextSettings.min_samples_per_class,
-    scopeType: 'national',
-    scopeGeometry: null,
-    modelPreferences: nextSettings.model_preferences ?? {},
-  });
-  const nationalEligibility = nationalReadiness.national_scope_eligibility;
-  const nationalModeRequested =
-    nextSettings.scope_type === 'national' ||
-    nextSettings.model_preferences?.national_scope_enabled === true;
-
-  if (nationalModeRequested && nationalEligibility.eligible !== true) {
-    throw new AppError(
-      'National Lebanon is locked until national readiness requirements are met.',
-      422,
-    );
-  }
-
   if (
-    nextSettings.scope_type === 'national' &&
-    nextSettings.model_preferences?.national_scope_enabled !== true
+    nextSettings.scope_type === 'national' ||
+    boolPreference(nextSettings.model_preferences, 'national_scope_enabled')
   ) {
-    throw new AppError('Enable national mode before selecting National Lebanon.', 422);
+    const labelField =
+      nextSettings.label_field ?? preferredSchemaLabelFieldFrom(project.collection_form_schema);
+    if (!labelField) {
+      throw new AppError('AI label_field is required before national AI can be enabled.', 422);
+    }
+    const nationalReadiness = await getFeatureReadinessSummary({
+      projectId,
+      labelField,
+      minSamplesPerClass: nextSettings.min_samples_per_class,
+      scopeType: 'national',
+      scopeGeometry: nextSettings.scope_geometry,
+      modelPreferences: nextSettings.model_preferences,
+    });
+    if (!nationalReadiness.national_scope_eligibility?.eligible) {
+      throw new AppError(
+        'National Lebanon AI scope is locked until national readiness requirements pass.',
+        422,
+      );
+    }
+    if (
+      nextSettings.scope_type === 'national' &&
+      !boolPreference(nextSettings.model_preferences, 'national_scope_enabled')
+    ) {
+      throw new AppError(
+        'National Lebanon AI scope must be explicitly enabled before it can be saved as the active AI scope.',
+        422,
+      );
+    }
   }
 
   const result = await query(
@@ -1285,6 +2843,7 @@ const upsertProjectAiSettings = async (req: Request, res: Response): Promise<voi
        scope_type,
        scope_geometry,
        min_samples_per_class,
+       confidence_threshold,
        model_preferences,
        created_by,
        updated_by
@@ -1299,9 +2858,10 @@ const upsertProjectAiSettings = async (req: Request, res: Response): Promise<voi
          ELSE ST_SetSRID(ST_GeomFromGeoJSON($5::text), 4326)
        END,
        $6,
-       $7::jsonb,
-       $8,
-       $8
+       $7,
+       $8::jsonb,
+       $9,
+       $9
      )
      ON CONFLICT (project_id)
      DO UPDATE SET
@@ -1310,6 +2870,7 @@ const upsertProjectAiSettings = async (req: Request, res: Response): Promise<voi
        scope_type = EXCLUDED.scope_type,
        scope_geometry = EXCLUDED.scope_geometry,
        min_samples_per_class = EXCLUDED.min_samples_per_class,
+       confidence_threshold = EXCLUDED.confidence_threshold,
        model_preferences = EXCLUDED.model_preferences,
        updated_by = EXCLUDED.updated_by
      RETURNING id,
@@ -1319,6 +2880,7 @@ const upsertProjectAiSettings = async (req: Request, res: Response): Promise<voi
                scope_type,
                ST_AsGeoJSON(scope_geometry)::json AS scope_geometry,
                min_samples_per_class,
+               confidence_threshold,
                model_preferences,
                created_by,
                updated_by,
@@ -1331,6 +2893,7 @@ const upsertProjectAiSettings = async (req: Request, res: Response): Promise<voi
       nextSettings.scope_type,
       serializeGeometry(nextSettings.scope_geometry),
       nextSettings.min_samples_per_class,
+      nextSettings.confidence_threshold,
       JSON.stringify(nextSettings.model_preferences),
       (req.user as Express.UserContext).id,
     ],
@@ -1339,7 +2902,10 @@ const upsertProjectAiSettings = async (req: Request, res: Response): Promise<voi
   res.json({
     success: true,
     message: 'AI project settings saved successfully.',
-    data: result.rows[0],
+    data: {
+      ...result.rows[0],
+      model_preferences: normalizeAiModelPreferences(result.rows[0].model_preferences),
+    },
   });
 };
 
@@ -1348,9 +2914,11 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
   const project = await getProjectOrFail(projectId);
   const settings = await getEffectiveAiSettings(projectId);
   const body = req.body ?? {};
-  const status = body.status === 'queued' ? 'queued' : 'draft';
+  const requestedStatus = normalizeOptionalString(body.status);
+  const shouldStart = requestedStatus !== 'draft';
+  const status = shouldStart ? 'starting' : 'draft';
   const requestedExecutionMode = normalizeOptionalString(body.execution_mode);
-  const executionMode = requestedExecutionMode ?? 'mock';
+  const executionMode = requestedExecutionMode ?? 'regional_full_review_artifacts';
   const labelField =
     normalizeOptionalString(body.label_field) ??
     settings.label_field ??
@@ -1363,41 +2931,12 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
     body.min_samples_per_class !== undefined
       ? parsePositiveInteger(body.min_samples_per_class, settings.min_samples_per_class)
       : settings.min_samples_per_class;
+  const modelPreferences = normalizeAiModelPreferences(settings.model_preferences ?? {}, {
+    strictModel: true,
+  });
 
   if (!labelField) {
     throw new AppError('AI label_field is required to create an AI run.', 400);
-  }
-
-  if (scopeType === 'national' && settings.model_preferences?.national_scope_enabled !== true) {
-    throw new AppError('Enable national mode before selecting National Lebanon.', 422);
-  }
-
-  if (scopeType === 'national') {
-    const nationalReadiness = await getFeatureReadinessSummary({
-      projectId,
-      labelField,
-      minSamplesPerClass,
-      scopeType: 'national',
-      scopeGeometry: null,
-      modelPreferences: settings.model_preferences ?? {},
-    });
-    if (nationalReadiness.national_scope_eligibility?.eligible !== true) {
-      throw new AppError(
-        'National Lebanon is locked until national readiness requirements are met.',
-        422,
-      );
-    }
-  }
-
-  if (scopeType === 'national' && regionalExecutionModes.includes(executionMode)) {
-    throw new AppError('Regional AI execution modes cannot be queued with national scope.', 400);
-  }
-
-  if (scopeType === 'national' && executionMode !== 'mock' && executionMode !== 'dry_run') {
-    throw new AppError(
-      'National AI execution is not available until the national pipeline is connected.',
-      400,
-    );
   }
 
   if (!allowedExecutionModes.includes(executionMode)) {
@@ -1413,42 +2952,136 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
     minSamplesPerClass,
     scopeType,
     scopeGeometry,
-    modelPreferences: settings.model_preferences ?? {},
+    modelPreferences,
   });
+  const isNationalScope = scopeType === 'national' || scopeType === 'national_lebanon';
 
-  if (status === 'queued' && !settings.is_enabled) {
-    throw new AppError('AI must be enabled for this project before queueing a run.', 400);
+  if (isNationalScope && readiness.national_scope_enabled !== true) {
+    throw new AppError(
+      'National Lebanon AI scope is locked until national readiness requirements pass.',
+      422,
+    );
   }
 
-  if (status === 'queued' && readiness.status === 'not_ready') {
-    throw new AppError('AI run cannot be queued until readiness blockers are resolved.', 422);
+  if (shouldStart && !settings.is_enabled) {
+    throw new AppError('AI must be enabled for this project before starting a run.', 400);
+  }
+
+  if (shouldStart && readiness.status === 'not_ready') {
+    throw new AppError('AI run cannot start until readiness blockers are resolved.', 422);
+  }
+
+  if (
+    shouldStart &&
+    isNationalScope &&
+    regionalExecutionModes.includes(executionMode)
+  ) {
+    throw new AppError(
+      'National Lebanon AI runs are not available in the current regional AI pipeline. Choose Project area or Custom AI area.',
+      422,
+    );
   }
 
   const currentUser = req.user as Express.UserContext;
+  const aiServerClient = createAiServerClient();
+  let aiServerHealth: Record<string, unknown> | null = null;
+  let preDispatchFailure: { error: unknown; responseMessage: string } | null = null;
+  const aiServerStartDryRun = executionMode === 'dry_run' || executionMode === 'mock';
+  if (shouldStart) {
+    if (!aiServerClient.isConfigured()) {
+      const message = 'AI server URL is not configured. Set AI_SERVER_URL before starting AI runs.';
+      preDispatchFailure = {
+        error: new AppError(message, 503),
+        responseMessage: message,
+      };
+    } else if (aiServerClient.callbackSecret().trim().length === 0) {
+      const message = 'AI_CALLBACK_SECRET is not configured. AI server callbacks cannot be accepted.';
+      preDispatchFailure = {
+        error: new AppError(message, 503),
+        responseMessage: message,
+      };
+    } else {
+      try {
+        aiServerHealth = await aiServerClient.health();
+        const healthStatus =
+          typeof aiServerHealth.status === 'string' ? aiServerHealth.status : 'unknown';
+        if (healthStatus !== 'ok') {
+          const detail =
+            normalizeOptionalString(aiServerHealth.message) ??
+            `AI server health check did not return ok (status: ${healthStatus}).`;
+          preDispatchFailure = {
+            error: new AppError(detail, 503),
+            responseMessage: detail,
+          };
+        }
+      } catch (error) {
+        preDispatchFailure = {
+          error,
+          responseMessage: 'AI server is unavailable. Please start the AI server and refresh readiness.',
+        };
+      }
+    }
+  }
   const trainingSamplesAreaType = aiAreaTypeFromScope(scopeType);
   const predictionAreaType = trainingSamplesAreaType;
+  const satelliteSources = normalizeSatelliteSources(modelPreferences);
+  const satelliteTimeframes = normalizeSatelliteTimeframes(modelPreferences, satelliteSources);
   const pendingPipelineSettings = [
-    'satellite_source',
+    'satellite_sources',
+    'satellite_timeframes',
+    'confidence_threshold',
     'date_range',
+    'feature_groups',
     'feature_inputs',
     'preferred_model',
     'prediction_area_type',
     ...(scopeType === 'custom_polygon' ? ['custom_area'] : []),
   ];
   const runCreatedLogMessage =
-    status === 'queued'
-      ? 'AI run queued for backend worker processing; worker has not started yet.'
-      : 'AI run draft created; no worker execution started.';
+    shouldStart
+      ? 'AI run record created; dispatching to AI server.'
+      : 'AI run draft created; no AI server execution started.';
   const runCreatedResponseMessage =
-    status === 'queued'
-      ? 'AI run queued. Worker processing has not started yet.'
-      : 'AI run draft created. No AI worker has been started.';
+    shouldStart
+      ? 'AI run created and dispatching to the AI server.'
+      : 'AI run draft created. No AI server execution has started.';
+  const runDisplayName = `AI Classification - ${project.name} - ${new Date()
+    .toISOString()
+    .slice(0, 10)}`;
   const createdRun = await transaction(async (client: PoolClient) => {
+    if (shouldStart) {
+      await client.query('SELECT id FROM project WHERE id = $1 FOR UPDATE', [projectId]);
+      const activeRun = await client.query(
+        `SELECT id, display_name, status, created_at
+         FROM ai_run
+         WHERE project_id = $1
+           AND status IN (
+             'created',
+             'queued',
+             'starting',
+             'running',
+             'cancelling',
+             'extracting_features',
+             'training',
+             'evaluating',
+             'classifying'
+           )
+         ORDER BY created_at DESC
+         LIMIT 1
+         FOR UPDATE`,
+        [projectId],
+      );
+      if (activeRun.rows.length > 0) {
+        throw new AppError('An AI run is already active for this project.', 409);
+      }
+    }
     const runResult = await client.query(
       `INSERT INTO ai_run (
          project_id,
          settings_id,
          status,
+         display_name,
+         is_dry_run,
          label_field,
          scope_type,
          scope_geometry,
@@ -1457,6 +3090,12 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
          eligible_feature_count,
          excluded_feature_count,
          started_by,
+         stage,
+         progress,
+         message,
+         artifacts,
+         counts,
+         error_details,
          metadata
        )
        VALUES (
@@ -1465,21 +3104,35 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
          $3,
          $4,
          $5,
-         CASE
-           WHEN $6::text IS NULL THEN NULL
-           ELSE ST_SetSRID(ST_GeomFromGeoJSON($6::text), 4326)
-         END,
+         $6,
          $7,
-         $8,
+         CASE
+           WHEN $8::text IS NULL THEN NULL
+           ELSE ST_SetSRID(ST_GeomFromGeoJSON($8::text), 4326)
+         END,
          $9,
          $10,
          $11,
-         $12::jsonb
+         $12,
+         $13,
+         $14,
+         $15,
+         $16,
+         '{}'::jsonb,
+         '{}'::jsonb,
+         '{}'::jsonb,
+         $17::jsonb
        )
        RETURNING id,
                  project_id,
                  settings_id,
                  status,
+                 display_name,
+                 is_dry_run,
+                 published_layer_name,
+                 unpublished_reason,
+                 replaced_by_run_id,
+                 prediction_count,
                  label_field,
                  scope_type,
                  ST_AsGeoJSON(scope_geometry)::json AS scope_geometry,
@@ -1493,6 +3146,19 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
                  completed_at,
                  failed_at,
                  failure_reason,
+                 stage,
+                 progress,
+                 message,
+                 ai_server_run_id,
+                 cancelled_at,
+                 callback_received_at,
+                 published_at,
+                 published_by,
+                 unpublished_at,
+                 unpublished_by,
+                 artifacts,
+                 counts,
+                 error_details,
                  metadata,
                  created_at,
                  updated_at`,
@@ -1500,6 +3166,8 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
         projectId,
         settings.id,
         status,
+        runDisplayName,
+        shouldStart && (aiServerHealth?.dry_run === true || aiServerStartDryRun),
         labelField,
         scopeType,
         serializeGeometry(scopeGeometry),
@@ -1508,21 +3176,28 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
         readiness.eligible_feature_count,
         readiness.excluded_feature_count,
         currentUser.id,
+        shouldStart ? 'dispatch' : null,
+        0,
+        shouldStart ? 'Dispatching run to AI server.' : 'Draft AI run record created.',
         JSON.stringify({
           readiness_status: readiness.status,
           training_samples_area_type: trainingSamplesAreaType,
           prediction_area_type: predictionAreaType,
-          national_scope_enabled: false,
+          national_scope_enabled: readiness.national_scope_enabled === true,
           national_scope_eligibility: readiness.national_scope_eligibility,
           project_bounds: readiness.spatial_extent,
           ai_settings: {
-            satellite_source: settings.model_preferences?.satellite_source ?? null,
-            target_year: settings.model_preferences?.target_year ?? null,
-            season: settings.model_preferences?.season ?? null,
-            date_from: settings.model_preferences?.date_from ?? null,
-            date_to: settings.model_preferences?.date_to ?? null,
-            feature_inputs: settings.model_preferences?.feature_inputs ?? [],
-            preferred_model: settings.model_preferences?.preferred_model ?? null,
+            satellite_sources: satelliteSources,
+            satellite_timeframes: satelliteTimeframes,
+            satellite_source: modelPreferences.satellite_source ?? null,
+            target_year: modelPreferences.target_year ?? null,
+            season: modelPreferences.season ?? null,
+            date_from: modelPreferences.date_from ?? null,
+            date_to: modelPreferences.date_to ?? null,
+            feature_groups: modelPreferences.feature_groups ?? [],
+            feature_inputs: modelPreferences.feature_inputs ?? [],
+            preferred_model: modelPreferences.preferred_model ?? null,
+            confidence_threshold: settings.confidence_threshold,
             scope_type: scopeType,
             training_samples_area_type: trainingSamplesAreaType,
             prediction_area_type: predictionAreaType,
@@ -1550,16 +3225,33 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
             pending_pipeline_settings: pendingPipelineSettings,
           },
           min_samples_per_class: minSamplesPerClass,
-          worker_execution: 'not_started',
+          confidence_threshold: settings.confidence_threshold,
+          class_counts: readiness.label_counts.map(
+            (row: { class_label: string; sample_count: number }) => ({
+              class_label: row.class_label,
+              feature_count: row.sample_count,
+              sample_count: row.sample_count,
+            }),
+          ),
+          selected_classes: readiness.label_counts
+            .filter((row: { class_label: string; sample_count: number }) => row.sample_count >= minSamplesPerClass)
+            .map((row: { class_label: string; sample_count: number }) => row.class_label),
+          ai_server: {
+            status: shouldStart ? 'dispatching' : 'not_started',
+            stage: shouldStart ? 'dispatch' : null,
+            progress: 0,
+            dry_run: shouldStart ? aiServerHealth?.dry_run === true : null,
+          },
+          worker_execution: 'replaced_by_ai_server',
           execution_mode: executionMode,
-          real_ai_execution: false,
+          display_name: runDisplayName,
+          dry_run: shouldStart && (aiServerHealth?.dry_run === true || aiServerStartDryRun),
+          real_run: shouldStart && aiServerHealth?.dry_run !== true && !aiServerStartDryRun,
+          real_ai_execution: shouldStart,
           regional_ai_execution_requested: regionalExecutionModes.includes(executionMode),
-          scientific_limitations: [
-            'Regional proof-of-concept only; not a national model.',
-            'AI outputs remain separate from approved spatial_feature data.',
-          ],
+          scientific_limitations: [],
           requested_by: currentUser.id,
-          requested_status: status,
+          requested_status: requestedStatus ?? status,
         }),
       ],
     );
@@ -1574,7 +3266,7 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
           phase: 'backend_run_creation',
           readiness_status: readiness.status,
           execution_mode: executionMode,
-          real_ai_execution: false,
+          real_ai_execution: shouldStart,
         }),
       ],
     );
@@ -1582,11 +3274,95 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
     return runResult.rows[0];
   });
 
-  res.status(201).json({
-    success: true,
-    message: runCreatedResponseMessage,
-    data: normalizeRunRow(createdRun),
-  });
+  if (!shouldStart) {
+    res.status(201).json({
+      success: true,
+      message: runCreatedResponseMessage,
+      data: normalizeRunRow(createdRun),
+    });
+    return;
+  }
+
+  if (preDispatchFailure) {
+    const failedRun = await failAiRunFromDispatchError(
+      createdRun.id,
+      preDispatchFailure.error,
+      preDispatchFailure.responseMessage,
+    );
+    res.status(503).json({
+      success: false,
+      message: preDispatchFailure.responseMessage,
+      data: normalizeRunRow(failedRun),
+    });
+    return;
+  }
+
+  try {
+    logger.info('Dispatching AI run to AI server', {
+      runId: createdRun.id,
+      projectId,
+      executionMode,
+    });
+    const payload = buildAiServerRunPayload({
+      runId: createdRun.id,
+      projectId,
+      settings: { ...settings, label_field: labelField },
+      modelPreferences,
+      satelliteSources,
+      satelliteTimeframes,
+      scopeType,
+      scopeGeometry,
+      readiness,
+      currentUserId: currentUser.id,
+      executionMode,
+      minSamplesPerClass,
+    });
+    const serverResponse = await aiServerClient.startRun(payload);
+    logger.info('AI server start response received', {
+      runId: createdRun.id,
+      aiServerStatus: serverResponse.status ?? 'accepted',
+      stage: serverResponse.stage ?? 'accepted',
+    });
+    const updatedRun = await updateAiRunFromServerPayload(createdRun.id, {
+      ...serverResponse,
+      run_id: serverResponse.run_id ?? createdRun.id,
+      project_id: serverResponse.project_id ?? projectId,
+      status: normalizeAiServerRunStatus(serverResponse.status ?? 'starting'),
+      stage: serverResponse.stage ?? 'accepted',
+      progress: serverResponse.progress ?? 0,
+      message: serverResponse.message ?? 'Pipeline accepted by AI server.',
+    });
+    await query(
+      `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
+       VALUES ($1, 'info', $2, $3::jsonb)`,
+      [
+        createdRun.id,
+        'AI run dispatched to AI server.',
+        JSON.stringify({
+          phase: 'ai_server_dispatch',
+          ai_server_status: serverResponse.status ?? 'accepted',
+          stage: serverResponse.stage ?? 'accepted',
+        }),
+      ],
+    );
+    res.status(201).json({
+      success: true,
+      message: 'AI run started through the AI server.',
+      data: normalizeRunRow(updatedRun),
+    });
+  } catch (error) {
+    logger.error('AI server dispatch failed', {
+      runId: createdRun.id,
+      projectId,
+      error: error instanceof Error ? error.message : 'Unknown dispatch failure',
+    });
+    const failedRun = await failAiRunFromDispatchError(createdRun.id, error);
+    res.status(503).json({
+      success: false,
+      message: 'AI server is unavailable. Please start the AI server and refresh readiness.',
+      data: normalizeRunRow(failedRun),
+    });
+  }
 };
 
 const listProjectAiRuns = async (req: Request, res: Response): Promise<void> => {
@@ -1609,6 +3385,12 @@ const listProjectAiRuns = async (req: Request, res: Response): Promise<void> => 
             project_id,
             settings_id,
             status,
+            display_name,
+            is_dry_run,
+            published_layer_name,
+            unpublished_reason,
+            replaced_by_run_id,
+            prediction_count,
             label_field,
             scope_type,
             ST_AsGeoJSON(scope_geometry)::json AS scope_geometry,
@@ -1622,6 +3404,19 @@ const listProjectAiRuns = async (req: Request, res: Response): Promise<void> => 
             completed_at,
             failed_at,
             failure_reason,
+            stage,
+            progress,
+            message,
+            ai_server_run_id,
+            cancelled_at,
+            callback_received_at,
+            artifacts,
+            counts,
+            error_details,
+            published_at,
+            published_by,
+            unpublished_at,
+            unpublished_by,
             metadata,
             created_at,
             updated_at
@@ -1632,6 +3427,10 @@ const listProjectAiRuns = async (req: Request, res: Response): Promise<void> => 
      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     [...params, limit, offset],
   );
+  const refreshedRows: any[] = [];
+  for (const row of result.rows) {
+    refreshedRows.push(await maybeRefreshAiRunFromServer(row));
+  }
 
   const countResult = await query(
     `SELECT COUNT(*)::int AS total
@@ -1644,7 +3443,7 @@ const listProjectAiRuns = async (req: Request, res: Response): Promise<void> => 
 
   res.json({
     success: true,
-    data: result.rows.map(normalizeRunRow),
+    data: refreshedRows.map(normalizeRunRow),
     pagination: {
       page,
       limit,
@@ -1656,11 +3455,576 @@ const listProjectAiRuns = async (req: Request, res: Response): Promise<void> => 
 };
 
 const getAiRun = async (req: Request, res: Response): Promise<void> => {
-  const run = await assertRunReadable(req.params.runId, req.user as Express.UserContext);
+  const run = await maybeRefreshAiRunFromServer(
+    await assertRunReadable(req.params.runId, req.user as Express.UserContext),
+  );
 
   res.json({
     success: true,
     data: normalizeRunRow(run),
+  });
+};
+
+const getProjectAiRun = async (req: Request, res: Response): Promise<void> => {
+  await getProjectOrFail(req.params.projectId);
+  const run = await maybeRefreshAiRunFromServer(
+    await loadProjectAiRunOrFail(req.params.projectId, req.params.runId),
+  );
+  res.json({
+    success: true,
+    data: normalizeRunRow(run),
+  });
+};
+
+const getProjectAiRunStatus = async (req: Request, res: Response): Promise<void> => {
+  await getProjectOrFail(req.params.projectId);
+  const run = await maybeRefreshAiRunFromServer(
+    await loadProjectAiRunOrFail(req.params.projectId, req.params.runId),
+    { force: true },
+  );
+  res.json({
+    success: true,
+    data: normalizeRunRow(run),
+  });
+};
+
+const cancelProjectAiRun = async (req: Request, res: Response): Promise<void> => {
+  await getProjectOrFail(req.params.projectId);
+  const run = await loadProjectAiRunOrFail(req.params.projectId, req.params.runId);
+  if (!['queued', 'created', 'starting', 'running', 'cancelling'].includes(String(run.status))) {
+    throw new AppError('Only active AI runs can be cancelled.', 409);
+  }
+  const aiServerClient = createAiServerClient();
+  if (!aiServerClient.isConfigured()) {
+    const cancelled = await updateAiRunFromServerPayload(run.id, {
+      run_id: run.id,
+      project_id: run.project_id,
+      status: 'cancelled',
+      stage: 'cancelled',
+      progress: boundedProgress(run.progress),
+      message: 'AI run cancelled locally because the AI server is not configured.',
+    });
+    res.json({
+      success: true,
+      message: 'AI run cancelled locally.',
+      data: normalizeRunRow(cancelled),
+    });
+    return;
+  }
+  let serverResponse: AiServerStatusPayload;
+  try {
+    serverResponse = await aiServerClient.cancelRun(run.id);
+  } catch (error) {
+    if (!isAiServerStateNotFoundError(error)) {
+      throw error;
+    }
+    const interrupted = await markAiRunInterruptedByAiServerRestart(run);
+    res.json({
+      success: true,
+      message: aiServerRestartMessage,
+      data: normalizeRunRow(interrupted),
+    });
+    return;
+  }
+  const updated = await updateAiRunFromServerPayload(run.id, {
+    ...serverResponse,
+    run_id: serverResponse.run_id ?? run.id,
+    project_id: serverResponse.project_id ?? run.project_id,
+    status: serverResponse.status ?? 'cancelled',
+  });
+  await query(
+    `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
+     VALUES ($1, 'info', 'AI run cancellation requested.', $2::jsonb)`,
+    [
+      run.id,
+      JSON.stringify({
+        phase: 'ai_server_cancel',
+        ai_server_status: serverResponse.status ?? 'cancelled',
+      }),
+    ],
+  );
+  res.json({
+    success: true,
+    message: 'AI run cancellation requested.',
+    data: normalizeRunRow(updated),
+  });
+};
+
+const resumeProjectAiRun = async (req: Request, res: Response): Promise<void> => {
+  await getProjectOrFail(req.params.projectId);
+  const run = await loadProjectAiRunOrFail(req.params.projectId, req.params.runId);
+  if (!['failed', 'cancelled', 'paused'].includes(String(run.status))) {
+    throw new AppError('Only failed, cancelled, or paused AI runs can be resumed.', 409);
+  }
+  const activeRun = await query(
+    `SELECT id, display_name, status, created_at
+     FROM ai_run
+     WHERE project_id = $1
+       AND id <> $2
+       AND status = ANY($3::ai_run_status[])
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [run.project_id, run.id, activeAiRunStatusesForProject],
+  );
+  if (activeRun.rows.length > 0) {
+    throw new AppError('Another AI run is already active for this project.', 409);
+  }
+  const aiServerClient = createAiServerClient();
+  if (!aiServerClient.isConfigured()) {
+    throw new AppError('AI server URL is not configured. Set AI_SERVER_URL before resuming runs.', 503);
+  }
+  let serverResponse: AiServerStatusPayload;
+  try {
+    serverResponse = await aiServerClient.resumeRun(run.id);
+  } catch (error) {
+    if (isAiServerStateNotFoundError(error)) {
+      throw new AppError(
+        'Resume is not available because the AI server no longer has this run state. Start a new AI run.',
+        409,
+      );
+    }
+    throw error;
+  }
+  const updated = await updateAiRunFromServerPayload(run.id, {
+    ...serverResponse,
+    run_id: serverResponse.run_id ?? run.id,
+    project_id: serverResponse.project_id ?? run.project_id,
+    status: serverResponse.status ?? 'starting',
+  });
+  await query(
+    `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
+     VALUES ($1, 'info', 'AI run resume requested.', $2::jsonb)`,
+    [
+      run.id,
+      JSON.stringify({
+        phase: 'ai_server_resume',
+        ai_server_status: serverResponse.status ?? 'starting',
+      }),
+    ],
+  );
+  res.json({
+    success: true,
+    message: 'AI run resume requested.',
+    data: normalizeRunRow(updated),
+  });
+};
+
+const insertCallbackMetricRows = async (
+  runId: string,
+  metricsValue: unknown,
+): Promise<number> => {
+  const metrics = runJsonRecord(metricsValue);
+  if (Object.keys(metrics).length === 0) {
+    return 0;
+  }
+
+  const metricNumber = (
+    record: Record<string, unknown>,
+    keys: string[],
+  ): number | null => {
+    for (const key of keys) {
+      const parsed = parseOptionalBodyNumber(record[key]);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+    return null;
+  };
+  const metricModelName = (record: Record<string, unknown>): string | null =>
+    normalizeOptionalString(record.model_name) ??
+    normalizeOptionalString(record.model) ??
+    normalizeOptionalString(record.model_key);
+  const normalizeMetricModelName = (value: string | null): string | null =>
+    value?.trim().toLowerCase().replace(/[-\s]+/g, '_') ?? null;
+  const globalSelection = runJsonRecord(metrics.model_selection);
+  const selectedModel =
+    normalizeOptionalString(metrics.model_used_for_classification_map) ??
+    normalizeOptionalString(metrics.selected_model) ??
+    normalizeOptionalString(metrics.best_model) ??
+    normalizeOptionalString(globalSelection.selected_model) ??
+    normalizeOptionalString(globalSelection.model);
+  const selectedModelKey = normalizeMetricModelName(selectedModel);
+  const holdoutByModel = runJsonRecord(metrics.holdout_results);
+  const modelMap = runJsonRecord(metrics.models);
+  const candidateRows = (() => {
+    if (Object.keys(modelMap).length > 0) {
+      return Object.entries(modelMap).map(([modelName, value]) => ({
+        model: modelName,
+        ...runJsonRecord(value),
+      }));
+    }
+    if (Object.keys(holdoutByModel).length > 0) {
+      return Object.entries(holdoutByModel).map(([modelName, value]) => ({
+        model: modelName,
+        ...runJsonRecord(value),
+      }));
+    }
+    if (Array.isArray(metrics.model_comparison)) {
+      return metrics.model_comparison.map((item) => runJsonRecord(item));
+    }
+    const selectionCandidates = Array.isArray(globalSelection.candidates)
+      ? globalSelection.candidates.map((item) => runJsonRecord(item))
+      : [];
+    if (selectionCandidates.length > 0) {
+      return selectionCandidates;
+    }
+    if (Array.isArray(metrics.cv_results)) {
+      return metrics.cv_results
+        .map((item) => runJsonRecord(item))
+        .filter((item) => metricModelName(item) !== null);
+    }
+    return [
+      {
+        model_name:
+          selectedModel ??
+          normalizeOptionalString(metrics.model_name) ??
+          'AI pipeline',
+        overall_accuracy: metrics.overall_accuracy ?? metrics.accuracy ?? null,
+        macro_f1: metrics.macro_f1 ?? metrics.macroF1 ?? null,
+        weighted_f1: metrics.weighted_f1 ?? metrics.weightedF1 ?? null,
+      },
+    ];
+  })();
+  const rows = candidateRows.map((row) => {
+    const modelName = metricModelName(row);
+    const holdout = modelName ? runJsonRecord(holdoutByModel[modelName]) : {};
+    return {
+      ...holdout,
+      ...row,
+      model_name: modelName ?? normalizeOptionalString(row.model_name) ?? 'AI pipeline',
+    };
+  });
+  const highestAccuracy = rows
+    .map((row) => ({
+      modelName: metricModelName(row),
+      accuracy: metricNumber(row, [
+        'overall_accuracy',
+        'accuracy',
+        'holdout_overall_accuracy',
+        'holdout_oa',
+        'validation_accuracy',
+        'oa_mean',
+      ]),
+    }))
+    .filter((row): row is { modelName: string; accuracy: number } =>
+      row.modelName !== null && row.accuracy !== null,
+    )
+    .sort((left, right) => right.accuracy - left.accuracy)[0];
+  const bestBalanced =
+    selectedModel ??
+    normalizeOptionalString(globalSelection.selected_model) ??
+    normalizeOptionalString(globalSelection.model) ??
+    normalizeOptionalString(metrics.best_balanced_model);
+  const modelMetricsSummary = {
+    run_id: metrics.run_id ?? runId,
+    selected_model: selectedModel ?? bestBalanced ?? null,
+    best_balanced_model: bestBalanced ?? null,
+    highest_accuracy_model: highestAccuracy?.modelName ?? null,
+    model_selection: globalSelection,
+    models: Object.fromEntries(
+      rows
+        .map((row) => [metricModelName(row), row] as const)
+        .filter((entry): entry is [string, Record<string, unknown>] => entry[0] !== null),
+    ),
+    evaluation_method: metrics.evaluation_method ?? 'spatial_holdout_plus_spatial_cv',
+  };
+  const selectedClasses = Array.isArray(metrics.selected_classes)
+    ? metrics.selected_classes.map(String).filter((value) => value.trim().length > 0)
+    : [];
+  const fallbackClassLabels = selectedClasses.length > 0
+    ? selectedClasses
+    : Array.isArray(metrics.classes)
+      ? metrics.classes.map(String).filter((value) => value.trim().length > 0)
+      : rows
+          .flatMap((row) => {
+            const labels = row.confusion_matrix_labels;
+            return Array.isArray(labels) ? labels.map(String) : [];
+          })
+          .filter((value, index, values) =>
+            value.trim().length > 0 && values.indexOf(value) === index,
+          );
+  const hasMetricRows = (value: unknown): boolean => {
+    if (Array.isArray(value)) {
+      return value.length > 0;
+    }
+    const record = runJsonRecord(value);
+    const rowsValue = record.rows;
+    return Array.isArray(rowsValue) && rowsValue.length > 0;
+  };
+  const nonEmptyMetricRows = (value: unknown): unknown | undefined =>
+    hasMetricRows(value) ? value : undefined;
+  const nonEmptyArray = (value: unknown): unknown[] | undefined =>
+    Array.isArray(value) && value.length > 0 ? value : undefined;
+  const confusionMatrixFrom = (value: unknown): unknown => {
+    if (!Array.isArray(value)) {
+      return value;
+    }
+    const rows = value
+      .map((rawRow, index) => {
+        if (!Array.isArray(rawRow)) {
+          return null;
+        }
+        const actual = fallbackClassLabels[index] ?? `Class ${index + 1}`;
+        const row: Record<string, unknown> = { actual };
+        let total = 0;
+        rawRow.forEach((rawCount, predictedIndex) => {
+          const label = fallbackClassLabels[predictedIndex] ?? `Class ${predictedIndex + 1}`;
+          const count = Number.parseInt(String(rawCount ?? 0), 10);
+          const safeCount = Number.isFinite(count) ? count : 0;
+          row[label] = safeCount;
+          total += safeCount;
+        });
+        row.total = total;
+        return row;
+      })
+      .filter((row): row is Record<string, unknown> => row !== null);
+    return { labels: fallbackClassLabels, rows };
+  };
+  await query(`DELETE FROM ai_run_metric WHERE ai_run_id = $1`, [runId]);
+  let inserted = 0;
+  for (const row of rows) {
+    const baseRecord = runJsonRecord(row);
+    const record: Record<string, unknown> = {
+      ...baseRecord,
+      ...(baseRecord.model_selection === undefined && Object.keys(globalSelection).length > 0
+        ? { model_selection: globalSelection }
+        : {}),
+      ...(baseRecord.selection_explanation === undefined &&
+      globalSelection.selection_explanation !== undefined
+        ? { selection_explanation: globalSelection.selection_explanation }
+        : {}),
+    };
+    const modelName =
+      normalizeOptionalString(record.model_name) ??
+      normalizeOptionalString(record.model) ??
+      'AI pipeline';
+    const modelKey = normalizeMetricModelName(modelName);
+    const isSelectedModel = modelKey !== null && modelKey === selectedModelKey;
+    const confusionMatrix =
+      confusionMatrixFrom(
+        (isSelectedModel
+          ? nonEmptyMetricRows(metrics.confusion_matrix) ??
+            nonEmptyMetricRows(metrics.confusionMatrix)
+          : undefined) ??
+          nonEmptyMetricRows(record.confusion_matrix) ??
+          record.holdout_confusion_matrix,
+      ) ?? {};
+    const featureImportance =
+      (isSelectedModel
+        ? nonEmptyArray(metrics.feature_importance) ?? nonEmptyArray(metrics.featureImportance)
+        : undefined) ??
+      nonEmptyArray(record.feature_importance) ??
+      [];
+    await query(
+      `INSERT INTO ai_run_metric (
+         ai_run_id,
+         model_name,
+         overall_accuracy,
+         macro_f1,
+         weighted_f1,
+         metrics,
+         confusion_matrix,
+         feature_importance
+       )
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb)`,
+      [
+        runId,
+        modelName,
+        metricNumber(record, [
+          'overall_accuracy',
+          'accuracy',
+          'holdout_overall_accuracy',
+          'holdout_oa',
+          'validation_accuracy',
+          'oa_mean',
+        ]),
+        metricNumber(record, ['macro_f1', 'macroF1', 'holdout_f1_macro', 'f1_mean']),
+        metricNumber(record, [
+          'weighted_f1',
+          'weightedF1',
+          'holdout_f1_weighted',
+          'f1_weighted',
+          'weighted_f1_score',
+        ]),
+        JSON.stringify({
+          ...record,
+          selected_model: selectedModel ?? null,
+          selected_by_composite: isSelectedModel,
+        }),
+        JSON.stringify(confusionMatrix),
+        JSON.stringify(featureImportance),
+      ],
+    );
+    inserted += 1;
+  }
+  await query(
+    `UPDATE ai_run
+     SET selected_model = COALESCE($2, selected_model),
+         metadata = metadata || $3::jsonb,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [
+      runId,
+      selectedModel ?? null,
+      JSON.stringify({
+        selected_model: selectedModel ?? null,
+        model_metrics_summary: modelMetricsSummary,
+        best_balanced_model: modelMetricsSummary.best_balanced_model,
+        highest_accuracy_model: modelMetricsSummary.highest_accuracy_model,
+        ...(selectedClasses.length > 0 ? { selected_classes: selectedClasses } : {}),
+      }),
+    ],
+  );
+  return inserted;
+};
+
+const handleAiRunCallback = async (req: Request, res: Response): Promise<void> => {
+  const aiServerClient = createAiServerClient();
+  const expectedSecret = aiServerClient.callbackSecret();
+  const providedSecret =
+    normalizeOptionalString(req.header('x-ai-callback-secret')) ??
+    normalizeOptionalString(req.body?.callback_secret);
+  if (!expectedSecret || providedSecret !== expectedSecret) {
+    await query(
+      `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
+       SELECT $1, 'warning', 'Rejected AI server callback with invalid secret.', $2::jsonb
+       WHERE EXISTS (SELECT 1 FROM ai_run WHERE id = $1)`,
+      [
+        req.params.runId,
+        JSON.stringify({
+          phase: 'ai_server_callback',
+          rejected: true,
+          reason: 'invalid_secret',
+        }),
+      ],
+    );
+    throw new AppError('Invalid AI callback secret.', 401);
+  }
+
+  const body = req.body ?? {};
+  const runId = normalizeOptionalString(body.run_id) ?? req.params.runId;
+  if (runId !== req.params.runId) {
+    throw new AppError('AI callback run_id does not match route run id.', 400);
+  }
+  const runResult = await query(
+    `SELECT id, project_id
+     FROM ai_run
+     WHERE id = $1`,
+    [runId],
+  );
+  if (runResult.rows.length === 0) {
+    throw new AppError('AI run not found', 404);
+  }
+  const run = runResult.rows[0];
+  const callbackProjectId = normalizeOptionalString(body.project_id);
+  if (callbackProjectId && callbackProjectId !== run.project_id) {
+    throw new AppError('AI callback project_id does not match the run project.', 400);
+  }
+
+  const payload: AiServerStatusPayload = {
+    run_id: runId,
+    project_id: run.project_id,
+    status: normalizeOptionalString(body.status) ?? 'running',
+    stage: normalizeOptionalString(body.stage),
+    progress: parseOptionalBodyNumber(body.progress),
+    message: normalizeOptionalString(body.message),
+    metrics: body.metrics,
+    artifacts: body.artifacts,
+    counts: body.counts,
+    error: body.error,
+    settings: body.settings,
+    dry_run: body.dry_run === true,
+  };
+  const updated = await updateAiRunFromServerPayload(runId, payload);
+  const metricsRegistered = await insertCallbackMetricRows(runId, body.metrics);
+  const callbackStatus = normalizeAiServerRunStatus(payload.status);
+  const callbackMessage =
+    publicAiRunMessage(payload.message, payload.error) ?? 'AI server callback received.';
+  await query(
+    `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
+     VALUES ($1, $2::ai_run_log_level, $3, $4::jsonb)`,
+    [
+      runId,
+      callbackStatus === 'failed' ? 'error' : 'info',
+      callbackMessage,
+      JSON.stringify({
+        phase: 'ai_server_callback',
+        status: callbackStatus,
+        stage: payload.stage ?? null,
+        progress: payload.progress ?? null,
+        metrics_registered: metricsRegistered,
+      }),
+    ],
+  );
+
+  res.json({
+    success: true,
+    message: 'AI run callback accepted.',
+    data: normalizeRunRow(updated),
+  });
+};
+
+const retrainCheckProjectAiRun = async (req: Request, res: Response): Promise<void> => {
+  const { projectId, runId } = req.params;
+  await getProjectOrFail(projectId);
+  const settings = await getEffectiveAiSettings(projectId);
+  if (runId) {
+    await loadProjectAiRunOrFail(projectId, runId);
+  }
+  const summaryResult = await query(
+    `SELECT
+       COUNT(*) FILTER (
+         WHERE t.status = 'accepted'
+            OR t.review_decision = 'accepted'
+       )::int AS approved_count,
+       COUNT(*) FILTER (
+         WHERE t.status = 'rejected'
+            OR t.review_decision = 'rejected'
+       )::int AS rejected_count,
+       COUNT(*) FILTER (
+         WHERE s.result = 'wrong_class'
+            AND COALESCE(s.corrected_class, '') <> ''
+       )::int AS corrected_count
+     FROM ai_prediction_validation_task t
+     LEFT JOIN ai_prediction_validation_submission s
+       ON s.validation_task_id = t.id
+      AND s.status = 'accepted'
+     WHERE t.project_id = $1
+       AND ($2::uuid IS NULL OR t.ai_run_id = $2)`,
+    [projectId, runId ?? null],
+  );
+  const trainingSamplesResult = await query(
+    `SELECT COUNT(*)::int AS new_training_samples_count
+     FROM spatial_feature
+     WHERE project_id = $1
+       AND source IN ('ai', 'ai_validation')
+       AND attributes->>'useForFutureTraining' = 'true'`,
+    [projectId],
+  );
+  const validationSummary = {
+    ...summaryResult.rows[0],
+    new_training_samples_count:
+      Number(trainingSamplesResult.rows[0]?.new_training_samples_count ?? 0),
+  };
+  const aiServerClient = createAiServerClient();
+  if (!aiServerClient.isConfigured()) {
+    throw new AppError('AI server URL is not configured. Set AI_SERVER_URL before checking retraining.', 503);
+  }
+  const result = await aiServerClient.checkRetrain({
+    project_id: projectId,
+    run_id: runId ?? null,
+    settings: {
+      confidence_threshold: settings.confidence_threshold,
+      model_preferences: settings.model_preferences ?? {},
+    },
+    validation_summary: validationSummary,
+  });
+  res.json({
+    success: true,
+    data: {
+      ...result,
+      validation_summary: validationSummary,
+    },
   });
 };
 
@@ -1710,6 +4074,7 @@ const listAiRunLayers = async (req: Request, res: Response): Promise<void> => {
             updated_at
      FROM ai_output_layer
      WHERE ai_run_id = $1
+       AND layer_type = 'classification'
      ORDER BY created_at DESC`,
     [run.id],
   );
@@ -1732,27 +4097,38 @@ const listProjectPublishedAiLayers = async (req: Request, res: Response): Promis
     return;
   }
   const result = await query(
-    `SELECT id,
-            ai_run_id,
-            project_id,
-            layer_type,
-            status,
-            name,
-            description,
+    `SELECT l.id,
+            l.ai_run_id,
+            l.project_id,
+            l.layer_type,
+            l.status,
+            COALESCE(NULLIF(BTRIM(l.name), ''), ar.published_layer_name, ar.display_name) AS name,
+            l.description,
             NULL::text AS storage_path,
-            asset_id,
-            crs,
-            ST_AsGeoJSON(bounds)::json AS bounds,
-            style,
-            published_at,
-            published_by,
-            created_at,
-            updated_at
-     FROM ai_output_layer
-     WHERE project_id = $1
-       AND status = 'published'
-       AND published_at IS NOT NULL
-     ORDER BY layer_type ASC, published_at DESC`,
+            l.asset_id,
+            l.crs,
+            ST_AsGeoJSON(l.bounds)::json AS bounds,
+            l.style,
+            l.published_at,
+            l.published_by,
+            COUNT(p.id)::int AS prediction_count,
+            ar.display_name AS run_display_name,
+            ar.is_dry_run,
+            ar.prediction_count AS run_prediction_count,
+            l.created_at,
+            l.updated_at
+     FROM ai_output_layer l
+     JOIN ai_run ar ON ar.id = l.ai_run_id
+     LEFT JOIN ai_prediction_feature p ON p.ai_output_layer_id = l.id
+     WHERE l.project_id = $1
+       AND l.status = 'published'
+       AND l.published_at IS NOT NULL
+       AND l.layer_type = 'classification'
+       AND ar.published_at IS NOT NULL
+       AND ar.unpublished_at IS NULL
+     GROUP BY l.id, ar.id
+     ORDER BY l.published_at DESC
+     LIMIT 1`,
     [req.params.projectId],
   );
 
@@ -1784,7 +4160,7 @@ const resolveRegisteredAiLayerGeoJsonPath = ({
   }
 
   if (!posixPath.toLowerCase().endsWith('.geojson')) {
-    throw new AppError('AI output layer does not reference a GeoJSON preview artifact.', 400);
+    throw new AppError('AI output layer does not reference a GeoJSON preview output file.', 400);
   }
 
   const resolvedOutputRoot = path.resolve(outputRoot);
@@ -1845,6 +4221,17 @@ type AiLayerFeatureQueryOptions = {
   confidenceMax: number | null;
   uncertaintyMin: number | null;
   uncertaintyMax: number | null;
+};
+
+type AiPredictionLayerStats = {
+  totalCount: number;
+  visibleCount: number;
+  totalAreaM2: number;
+  totalAreaHectares: number;
+  countByClass: Record<string, number>;
+  areaByClass: Record<string, number>;
+  layerBounds: AiLayerBounds | null;
+  geometryTypes: string[];
 };
 
 const parseAiLayerBounds = (value: unknown): AiLayerBounds | null => {
@@ -2021,7 +4408,9 @@ const aiFeatureClassLabel = (feature: any): string => {
     feature?.properties && typeof feature.properties === 'object' ? feature.properties : {};
   return (
     normalizeOptionalString(properties.predicted_class) ??
+    normalizeOptionalString(properties.predicted_class_label) ??
     normalizeOptionalString(properties.class_label) ??
+    normalizeOptionalString(properties.class_name) ??
     normalizeOptionalString(properties.label) ??
     normalizeOptionalString(properties.L4_descr) ??
     'unknown'
@@ -2058,8 +4447,10 @@ const aiFeatureSearchBlob = (feature: any): string => {
     feature?.properties && typeof feature.properties === 'object' ? feature.properties : {};
   const values = [
     properties.predicted_class,
+    properties.predicted_class_label,
     properties.dominant_class,
     properties.class_label,
+    properties.class_name,
     properties.label,
     properties.model_name,
     properties.model,
@@ -2135,6 +4526,10 @@ const filterAiLayerFeatures = (
         'confidence_score',
         'probability',
         'max_probability',
+        'prediction_confidence',
+        'mean_confidence',
+        'confidence_mean',
+        'mean',
       ]);
       if (confidence === null) {
         return false;
@@ -2362,6 +4757,8 @@ const overviewPropertiesFor = (feature: any): Record<string, unknown> => {
     'feature_id',
     'source_feature_id',
     'predicted_class',
+    'predicted_class_label',
+    'class_name',
     'class_label',
     'label',
     'L4_descr',
@@ -2369,6 +4766,9 @@ const overviewPropertiesFor = (feature: any): Record<string, unknown> => {
     'confidence_score',
     'probability',
     'max_probability',
+    'prediction_confidence',
+    'mean_confidence',
+    'confidence_mean',
     'uncertainty_score',
     'model_name',
     'model',
@@ -2566,6 +4966,11 @@ const predictionFeaturePropertiesFromRow = (row: any): Record<string, unknown> =
     source: row.source ?? 'ai_prediction',
     status: row.status,
     layer_id: row.ai_output_layer_id,
+    source_resolution_m: row.source_resolution_m ?? row.metadata?.properties?.source_resolution_m ?? null,
+    processed_area_m2: row.processed_area_m2 ?? row.metadata?.properties?.processed_area_m2 ?? null,
+    area_change_percent: row.area_change_percent ?? row.metadata?.properties?.area_change_percent ?? null,
+    processing_method: row.processing_method ?? row.metadata?.properties?.processing_method ?? null,
+    geometry_quality: row.geometry_quality ?? row.metadata?.properties?.geometry_quality ?? null,
     not_official_field_data: true,
     no_spatial_feature_writes: true,
   };
@@ -2579,14 +4984,300 @@ const predictionRowsToGeoJsonFeatures = (rows: any[]): Record<string, unknown>[]
     geometry: row.geometry,
   }));
 
-const loadPredictionFeaturesForLayer = async (layerId: string): Promise<any[]> => {
+const appendPredictionFeatureFilters = (
+  conditions: string[],
+  params: unknown[],
+  featureQuery: AiLayerFeatureQueryOptions,
+  options: {
+    includeClassLabel?: boolean;
+    includeSearch?: boolean;
+    includeFeatureId?: boolean;
+    includeBounds?: boolean;
+    includeScores?: boolean;
+  } = {},
+): void => {
+  const {
+    includeClassLabel = true,
+    includeSearch = true,
+    includeFeatureId = true,
+    includeBounds = true,
+    includeScores = true,
+  } = options;
+  if (includeClassLabel && featureQuery.classLabel) {
+    params.push(featureQuery.classLabel.toLowerCase());
+    conditions.push(`LOWER(p.predicted_class) = $${params.length}`);
+  }
+  if (includeFeatureId && featureQuery.featureId) {
+    params.push(featureQuery.featureId.toLowerCase());
+    conditions.push(`LOWER(p.artifact_feature_id) = $${params.length}`);
+  }
+  if (includeSearch && featureQuery.search) {
+    params.push(`%${featureQuery.search.toLowerCase()}%`);
+    conditions.push(
+      `LOWER(CONCAT_WS(' ', p.predicted_class, p.model_name, p.artifact_feature_id, p.status)) LIKE $${params.length}`,
+    );
+  }
+  if (includeScores && featureQuery.confidenceMin !== null) {
+    params.push(featureQuery.confidenceMin);
+    conditions.push(`p.confidence IS NOT NULL AND p.confidence >= $${params.length}`);
+  }
+  if (includeScores && featureQuery.confidenceMax !== null) {
+    params.push(featureQuery.confidenceMax);
+    conditions.push(`p.confidence IS NOT NULL AND p.confidence <= $${params.length}`);
+  }
+  if (includeScores && featureQuery.uncertaintyMin !== null) {
+    params.push(featureQuery.uncertaintyMin);
+    conditions.push(`p.uncertainty_score IS NOT NULL AND p.uncertainty_score >= $${params.length}`);
+  }
+  if (includeScores && featureQuery.uncertaintyMax !== null) {
+    params.push(featureQuery.uncertaintyMax);
+    conditions.push(`p.uncertainty_score IS NOT NULL AND p.uncertainty_score <= $${params.length}`);
+  }
+  if (includeBounds && featureQuery.bounds) {
+    const { west, south, east, north } = featureQuery.bounds;
+    params.push(west, south, east, north);
+    const westIndex = params.length - 3;
+    const southIndex = params.length - 2;
+    const eastIndex = params.length - 1;
+    const northIndex = params.length;
+    conditions.push(
+      `COALESCE(p.processed_geom, p.geom) && ST_MakeEnvelope($${westIndex}, $${southIndex}, $${eastIndex}, $${northIndex}, 4326)`,
+    );
+    conditions.push(
+      `ST_Intersects(COALESCE(p.processed_geom, p.geom), ST_MakeEnvelope($${westIndex}, $${southIndex}, $${eastIndex}, $${northIndex}, 4326))`,
+    );
+  }
+};
+
+const predictionWhereSql = (
+  layerId: string,
+  featureQuery: AiLayerFeatureQueryOptions,
+  options: Parameters<typeof appendPredictionFeatureFilters>[3] = {},
+): { where: string; params: unknown[] } => {
+  const params: unknown[] = [layerId];
+  const conditions = ['p.ai_output_layer_id = $1'];
+  appendPredictionFeatureFilters(conditions, params, featureQuery, options);
+  return {
+    where: conditions.join(' AND '),
+    params,
+  };
+};
+
+const recordFromKeyValueRows = (
+  rows: any[],
+  keyColumn: string,
+  valueColumn: string,
+): Record<string, number> => {
+  const result: Record<string, number> = {};
+  for (const row of rows) {
+    const key = normalizeOptionalString(row[keyColumn]) ?? 'unknown';
+    result[key] = Number(row[valueColumn] ?? 0);
+  }
+  return result;
+};
+
+const loadPredictionLayerStats = async (
+  layerId: string,
+  featureQuery: AiLayerFeatureQueryOptions,
+): Promise<AiPredictionLayerStats> => {
+  const totalWhere = predictionWhereSql(layerId, featureQuery, { includeBounds: false });
+  const visibleWhere = predictionWhereSql(layerId, featureQuery, { includeBounds: true });
+  const classWhere = predictionWhereSql(layerId, featureQuery, {
+    includeClassLabel: false,
+    includeFeatureId: false,
+    includeBounds: false,
+  });
+
+  const [totalResult, visibleResult, classResult, boundsResult] = await Promise.all([
+    query(
+      `SELECT COUNT(*)::int AS total_count,
+              COALESCE(SUM(ST_Area(ST_Transform(COALESCE(p.processed_geom, p.geom), 32636))), 0)::float8 AS total_area_m2
+       FROM ai_prediction_feature p
+       WHERE ${totalWhere.where}`,
+      totalWhere.params,
+    ),
+    query(
+      `SELECT COUNT(*)::int AS visible_count
+       FROM ai_prediction_feature p
+       WHERE ${visibleWhere.where}`,
+      visibleWhere.params,
+    ),
+    query(
+      `SELECT COALESCE(NULLIF(TRIM(p.predicted_class), ''), 'unknown') AS class_label,
+              COUNT(*)::int AS feature_count,
+              COALESCE(SUM(ST_Area(ST_Transform(COALESCE(p.processed_geom, p.geom), 32636))), 0)::float8 AS area_m2
+       FROM ai_prediction_feature p
+       WHERE ${classWhere.where}
+       GROUP BY COALESCE(NULLIF(TRIM(p.predicted_class), ''), 'unknown')
+       ORDER BY class_label ASC`,
+      classWhere.params,
+    ),
+    query(
+      `WITH layer_features AS (
+         SELECT COALESCE(p.processed_geom, p.geom) AS geom
+         FROM ai_prediction_feature p
+         WHERE p.ai_output_layer_id = $1
+       ),
+       extent AS (
+         SELECT ST_Extent(geom)::box3d AS box,
+                ARRAY_AGG(DISTINCT ST_GeometryType(geom)) FILTER (WHERE geom IS NOT NULL) AS geometry_types
+         FROM layer_features
+       )
+       SELECT CASE WHEN box IS NULL THEN NULL ELSE ST_XMin(box)::float8 END AS west,
+              CASE WHEN box IS NULL THEN NULL ELSE ST_YMin(box)::float8 END AS south,
+              CASE WHEN box IS NULL THEN NULL ELSE ST_XMax(box)::float8 END AS east,
+              CASE WHEN box IS NULL THEN NULL ELSE ST_YMax(box)::float8 END AS north,
+              COALESCE(geometry_types, ARRAY[]::text[]) AS geometry_types
+       FROM extent`,
+      [layerId],
+    ),
+  ]);
+
+  const totalCount = Number(totalResult.rows[0]?.total_count ?? 0);
+  const totalAreaM2 = Number(totalResult.rows[0]?.total_area_m2 ?? 0);
+  const boundsRow = boundsResult.rows[0] ?? {};
+  const west = Number(boundsRow.west);
+  const south = Number(boundsRow.south);
+  const east = Number(boundsRow.east);
+  const north = Number(boundsRow.north);
+  const layerBounds =
+    [west, south, east, north].every((value) => Number.isFinite(value)) &&
+    west < east &&
+    south < north
+      ? { west, south, east, north }
+      : null;
+
+  return {
+    totalCount,
+    visibleCount: Number(visibleResult.rows[0]?.visible_count ?? 0),
+    totalAreaM2,
+    totalAreaHectares: totalAreaM2 / 10000,
+    countByClass: recordFromKeyValueRows(classResult.rows, 'class_label', 'feature_count'),
+    areaByClass: recordFromKeyValueRows(classResult.rows, 'class_label', 'area_m2'),
+    layerBounds,
+    geometryTypes: Array.isArray(boundsRow.geometry_types)
+      ? boundsRow.geometry_types
+          .map((value: unknown) => normalizeOptionalString(value))
+          .filter((value: string | null): value is string => Boolean(value))
+          .sort()
+      : [],
+  };
+};
+
+const predictionLayerStatsFromRows = (
+  rows: any[],
+  featureQuery: AiLayerFeatureQueryOptions,
+): AiPredictionLayerStats => {
+  const features = predictionRowsToGeoJsonFeatures(rows);
+  const totalFeatures = filterAiLayerFeatures(features, {
+    search: featureQuery.search,
+    classLabel: featureQuery.classLabel,
+    featureId: featureQuery.featureId,
+    confidenceMin: featureQuery.confidenceMin,
+    confidenceMax: featureQuery.confidenceMax,
+    uncertaintyMin: featureQuery.uncertaintyMin,
+    uncertaintyMax: featureQuery.uncertaintyMax,
+  });
+  const visibleFeatures = featureQuery.bounds
+    ? totalFeatures.filter((feature) => {
+        const bounds = featureBounds(feature);
+        return bounds ? boundsIntersect(bounds, featureQuery.bounds as AiLayerBounds) : false;
+      })
+    : totalFeatures;
+  const classFeatures = filterAiLayerFeatures(features, {
+    search: featureQuery.search,
+    classLabel: null,
+    featureId: null,
+    confidenceMin: featureQuery.confidenceMin,
+    confidenceMax: featureQuery.confidenceMax,
+    uncertaintyMin: featureQuery.uncertaintyMin,
+    uncertaintyMax: featureQuery.uncertaintyMax,
+  });
+  const countByClass: Record<string, number> = {};
+  const areaByClass: Record<string, number> = {};
+  for (const feature of classFeatures) {
+    const classLabel = aiFeatureClassLabel(feature);
+    incrementCount(countByClass, classLabel);
+    areaByClass[classLabel] =
+      (areaByClass[classLabel] ?? 0) +
+      (aiFeatureNumericProperty(feature, ['processed_area_m2', 'area_m2', 'area']) ?? 0);
+  }
+  const totalAreaM2 = totalFeatures.reduce(
+    (sum, feature) =>
+      sum + (aiFeatureNumericProperty(feature, ['processed_area_m2', 'area_m2', 'area']) ?? 0),
+    0,
+  );
+
+  return {
+    totalCount: totalFeatures.length,
+    visibleCount: visibleFeatures.length,
+    totalAreaM2,
+    totalAreaHectares: totalAreaM2 / 10000,
+    countByClass,
+    areaByClass,
+    layerBounds: layerBoundsFromFeatures(features),
+    geometryTypes: geometryTypesForFeatures(features),
+  };
+};
+
+const predictionRowsForResponseFromRows = (
+  rows: any[],
+  featureQuery: AiLayerFeatureQueryOptions,
+): any[] => {
+  const pairs = rows.map((row) => ({
+    row,
+    feature: predictionRowsToGeoJsonFeatures([row])[0],
+  }));
+  const filtered = pairs.filter(({ feature }) => {
+    const matches = filterAiLayerFeatures([feature], {
+      search: featureQuery.search,
+      classLabel: featureQuery.classLabel,
+      featureId: featureQuery.featureId,
+      confidenceMin: featureQuery.confidenceMin,
+      confidenceMax: featureQuery.confidenceMax,
+      uncertaintyMin: featureQuery.uncertaintyMin,
+      uncertaintyMax: featureQuery.uncertaintyMax,
+    });
+    if (matches.length === 0) {
+      return false;
+    }
+    if (!featureQuery.bounds) {
+      return true;
+    }
+    const bounds = featureBounds(feature);
+    return bounds ? boundsIntersect(bounds, featureQuery.bounds) : false;
+  });
+  if (featureQuery.geometry === 'aggregate') {
+    return filtered.map(({ row }) => row);
+  }
+  return filtered
+    .slice(featureQuery.offset, featureQuery.offset + featureQuery.limit)
+    .map(({ row }) => row);
+};
+
+const loadPredictionFeaturesForLayer = async (
+  layerId: string,
+  featureQuery?: AiLayerFeatureQueryOptions,
+): Promise<any[]> => {
+  const params: unknown[] = [layerId];
+  const conditions = ['p.ai_output_layer_id = $1'];
+  if (featureQuery) {
+    appendPredictionFeatureFilters(conditions, params, featureQuery, {
+      includeBounds: true,
+    });
+  }
+  const paginate = Boolean(featureQuery && featureQuery.geometry !== 'aggregate');
+  const limitSql = paginate ? `LIMIT $${params.length + 1} OFFSET $${params.length + 2}` : '';
+  if (paginate && featureQuery) {
+    params.push(featureQuery.limit, featureQuery.offset);
+  }
   const result = await query(
     `SELECT id,
             project_id,
             ai_run_id,
             ai_output_layer_id,
             artifact_feature_id,
-            ST_AsGeoJSON(geom)::json AS geometry,
+            ST_AsGeoJSON(COALESCE(processed_geom, geom))::json AS geometry,
             geometry_type,
             predicted_class,
             confidence,
@@ -2595,12 +5286,18 @@ const loadPredictionFeaturesForLayer = async (layerId: string): Promise<any[]> =
             source,
             status,
             metadata,
+            source_resolution_m,
+            processed_area_m2,
+            area_change_percent,
+            processing_method,
+            geometry_quality,
             created_at,
             updated_at
-     FROM ai_prediction_feature
-     WHERE ai_output_layer_id = $1
-     ORDER BY created_at ASC, artifact_feature_id ASC`,
-    [layerId],
+     FROM ai_prediction_feature p
+     WHERE ${conditions.join(' AND ')}
+     ORDER BY p.created_at ASC, p.artifact_feature_id ASC
+     ${limitSql}`,
+    params,
   );
   return result.rows;
 };
@@ -2610,27 +5307,36 @@ const aiLayerPredictionResponseData = ({
   viewerPublished,
   featureQuery,
   rows,
+  stats,
 }: {
   layer: any;
   viewerPublished: boolean;
   featureQuery: AiLayerFeatureQueryOptions;
   rows: any[];
+  stats: AiPredictionLayerStats;
 }) => {
   const parsed = {
     type: 'FeatureCollection',
     features: predictionRowsToGeoJsonFeatures(rows),
   };
+  const collectionQuery = {
+    ...featureQuery,
+    offset: featureQuery.geometry === 'aggregate' ? featureQuery.offset : 0,
+    search: null,
+    classLabel: null,
+    featureId: null,
+    bounds: null,
+    confidenceMin: null,
+    confidenceMax: null,
+    uncertaintyMin: null,
+    uncertaintyMax: null,
+  };
   const {
     featureCollection,
     returnedFeatureCount,
-    sourceFeatureCount,
-    matchingFeatureCount,
-    capped,
     cap,
-    layerBounds,
-    classCounts,
-    geometryTypes,
-  } = buildAiLayerFeatureCollection(parsed, featureQuery);
+  } = buildAiLayerFeatureCollection(parsed, collectionQuery);
+  const capped = featureQuery.offset + returnedFeatureCount < stats.totalCount;
 
   return {
     layer: {
@@ -2647,10 +5353,13 @@ const aiLayerPredictionResponseData = ({
       source: 'ai_prediction_feature',
     },
     feature_collection: featureCollection,
-    feature_count: sourceFeatureCount,
-    total_count: sourceFeatureCount,
-    matching_feature_count: matchingFeatureCount,
-    visible_count: matchingFeatureCount,
+    feature_count: stats.totalCount,
+    total_count: stats.totalCount,
+    total_area_m2: stats.totalAreaM2,
+    total_area_hectares: stats.totalAreaHectares,
+    matching_feature_count: stats.visibleCount,
+    visible_count: stats.visibleCount,
+    loaded_feature_count: returnedFeatureCount,
     returned_feature_count: returnedFeatureCount,
     returned_count: returnedFeatureCount,
     capped,
@@ -2658,9 +5367,9 @@ const aiLayerPredictionResponseData = ({
     pagination: {
       page: featureQuery.page,
       limit: featureQuery.limit,
-      total: matchingFeatureCount,
-      pages: Math.max(1, Math.ceil(matchingFeatureCount / featureQuery.limit)),
-      has_more: featureQuery.offset + returnedFeatureCount < matchingFeatureCount,
+      total: stats.totalCount,
+      pages: Math.max(1, Math.ceil(stats.totalCount / featureQuery.limit)),
+      has_more: featureQuery.offset + returnedFeatureCount < stats.totalCount,
     },
     detail: featureQuery.detail,
     geometry_mode: featureQuery.geometry,
@@ -2673,12 +5382,20 @@ const aiLayerPredictionResponseData = ({
     confidence_max: featureQuery.confidenceMax,
     uncertainty_min: featureQuery.uncertaintyMin,
     uncertainty_max: featureQuery.uncertaintyMax,
-    layer_bounds: layerBounds,
-    class_counts: classCounts,
-    geometry_types: geometryTypes,
+    layer_bounds: stats.layerBounds,
+    class_counts: stats.countByClass,
+    count_by_class: stats.countByClass,
+    area_by_class: stats.areaByClass,
+    active_class_filter: featureQuery.classLabel,
+    run_id: layer.ai_run_id,
+    project_id: layer.project_id,
+    status_filter: 'all_app_visible_prediction_statuses',
+    geometry_types: stats.geometryTypes,
     bounds: featureQuery.bounds,
     zoom: featureQuery.zoom,
     source: 'ai_prediction_feature',
+    count_semantics: 'authoritative_database_total_excludes_viewport_bounds',
+    loaded_count_semantics: 'returned_feature_count is only the current page or viewport payload',
     not_official_field_data: true,
   };
 };
@@ -2690,7 +5407,10 @@ const getAiLayerPredictions = async (req: Request, res: Response): Promise<void>
     req.params.layerId,
     currentUser,
   );
-  const rows = await loadPredictionFeaturesForLayer(layer.id);
+  const [stats, rows] = await Promise.all([
+    loadPredictionLayerStats(layer.id, featureQuery),
+    loadPredictionFeaturesForLayer(layer.id, featureQuery),
+  ]);
 
   res.json({
     success: true,
@@ -2699,6 +5419,7 @@ const getAiLayerPredictions = async (req: Request, res: Response): Promise<void>
       viewerPublished,
       featureQuery,
       rows,
+      stats,
     }),
   });
 };
@@ -2745,7 +5466,7 @@ const listProjectPublishedAiPredictions = async (req: Request, res: Response): P
             p.ai_run_id,
             p.ai_output_layer_id,
             p.artifact_feature_id,
-            ST_AsGeoJSON(p.geom)::json AS geometry,
+            ST_AsGeoJSON(COALESCE(p.processed_geom, p.geom))::json AS geometry,
             p.geometry_type,
             p.predicted_class,
             p.confidence,
@@ -2754,6 +5475,11 @@ const listProjectPublishedAiPredictions = async (req: Request, res: Response): P
             p.source,
             p.status,
             p.metadata,
+            p.source_resolution_m,
+            p.processed_area_m2,
+            p.area_change_percent,
+            p.processing_method,
+            p.geometry_quality,
             p.created_at,
             p.updated_at,
             l.layer_type,
@@ -2762,34 +5488,49 @@ const listProjectPublishedAiPredictions = async (req: Request, res: Response): P
             l.published_at
      FROM ai_prediction_feature p
      JOIN ai_output_layer l ON l.id = p.ai_output_layer_id
+     JOIN ai_run ar ON ar.id = p.ai_run_id
      WHERE p.project_id = $1
        AND l.status = 'published'
        AND l.published_at IS NOT NULL
-     ORDER BY l.layer_type ASC, p.created_at ASC, p.artifact_feature_id ASC`,
+       AND l.layer_type = 'classification'
+       AND ar.published_at IS NOT NULL
+       AND ar.unpublished_at IS NULL
+     ORDER BY p.created_at ASC, p.artifact_feature_id ASC`,
     [req.params.projectId],
   );
   const layerResult = await query(
-    `SELECT id,
-            ai_run_id,
-            project_id,
-            layer_type,
-            status,
-            name,
-            description,
+    `SELECT l.id,
+            l.ai_run_id,
+            l.project_id,
+            l.layer_type,
+            l.status,
+            COALESCE(NULLIF(BTRIM(l.name), ''), ar.published_layer_name, ar.display_name) AS name,
+            l.description,
             NULL::text AS storage_path,
-            asset_id,
-            crs,
-            ST_AsGeoJSON(bounds)::json AS bounds,
-            style,
-            published_at,
-            published_by,
-            created_at,
-            updated_at
-     FROM ai_output_layer
-     WHERE project_id = $1
-       AND status = 'published'
-       AND published_at IS NOT NULL
-     ORDER BY layer_type ASC, published_at DESC`,
+            l.asset_id,
+            l.crs,
+            ST_AsGeoJSON(l.bounds)::json AS bounds,
+            l.style,
+            l.published_at,
+            l.published_by,
+            COUNT(p.id)::int AS prediction_count,
+            ar.display_name AS run_display_name,
+            ar.is_dry_run,
+            ar.prediction_count AS run_prediction_count,
+            l.created_at,
+            l.updated_at
+     FROM ai_output_layer l
+     JOIN ai_run ar ON ar.id = l.ai_run_id
+     LEFT JOIN ai_prediction_feature p ON p.ai_output_layer_id = l.id
+     WHERE l.project_id = $1
+       AND l.status = 'published'
+       AND l.published_at IS NOT NULL
+       AND l.layer_type = 'classification'
+       AND ar.published_at IS NOT NULL
+       AND ar.unpublished_at IS NULL
+     GROUP BY l.id, ar.id
+     ORDER BY l.published_at DESC
+     LIMIT 1`,
     [req.params.projectId],
   );
   const layerCounts: Record<string, number> = result.rows.reduce(
@@ -2815,11 +5556,13 @@ const listProjectPublishedAiPredictions = async (req: Request, res: Response): P
     crs: 'EPSG:4326',
     published_at: null,
   };
+  const primaryStats = predictionLayerStatsFromRows(primaryRows, featureQuery);
   const data = aiLayerPredictionResponseData({
     layer: aggregateLayer,
     viewerPublished: true,
     featureQuery,
-    rows: primaryRows,
+    rows: predictionRowsForResponseFromRows(primaryRows, featureQuery),
+    stats: primaryStats,
   });
 
   res.json({
@@ -3001,6 +5744,202 @@ const reviewAiPredictionValidationTask = async (req: Request, res: Response): Pr
   });
 };
 
+const getProjectAiPredictionDetails = async (req: Request, res: Response): Promise<void> => {
+  const result = await getPredictionFeatureDetailsForUser({
+    projectId: req.params.projectId,
+    runId: req.params.runId,
+    predictionId: req.params.predictionId,
+    user: req.user as Express.UserContext,
+  });
+
+  res.json({
+    success: true,
+    data: result,
+  });
+};
+
+const uploadProjectAiPredictionValidationPhotos = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const currentUser = req.user as Express.UserContext;
+  const files = ((req.files as any[]) || []) as Array<{
+    filename?: string;
+    originalname?: string;
+    mimetype?: string;
+    size?: number;
+  }>;
+  if (files.length === 0) {
+    throw new AppError('No validation photos uploaded.', 400);
+  }
+
+  const details = await getPredictionFeatureDetailsForUser({
+    projectId: req.params.projectId,
+    predictionId: req.params.predictionId,
+    user: currentUser,
+  });
+  if (currentUser.role === 'contributor' && details.can_validate !== true) {
+    throw new AppError('This AI prediction is not open for your validation.', 409);
+  }
+  if (currentUser.role !== 'contributor' && currentUser.role !== 'admin') {
+    throw new AppError('Only contributors and admins can attach AI validation photos.', 403);
+  }
+
+  const photos = files
+    .filter((file) => typeof file.filename === 'string' && file.filename.trim().length > 0)
+    .map((file) => {
+      const url = `/uploads/photos/${file.filename}`;
+      return {
+        id: url,
+        url,
+        file_name: file.originalname ?? file.filename,
+        mime_type: file.mimetype ?? null,
+        size_bytes: file.size ?? null,
+      };
+    });
+  if (photos.length === 0) {
+    throw new AppError('No usable validation photos were uploaded.', 400);
+  }
+
+  logger.info('AI validation photos uploaded', {
+    projectId: req.params.projectId,
+    predictionId: req.params.predictionId,
+    count: photos.length,
+    userId: currentUser.id,
+  });
+
+  res.status(201).json({
+    success: true,
+    message: `${photos.length} validation photo(s) uploaded.`,
+    data: {
+      photo_media_ids: photos.map((photo) => photo.id),
+      photos,
+    },
+  });
+};
+
+const submitProjectAiPredictionValidation = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const currentUser = req.user as Express.UserContext;
+  const metadata =
+    req.body?.metadata && typeof req.body.metadata === 'object' && !Array.isArray(req.body.metadata)
+      ? req.body.metadata
+      : {};
+  const result = await createPredictionFeatureValidation(
+    {
+      projectId: req.params.projectId,
+      predictionId: req.params.predictionId,
+      submittedBy: currentUser.id,
+      result:
+        (normalizeOptionalString(req.body?.validation_result) ??
+          normalizeOptionalString(req.body?.result)) as any,
+      correctedClass: normalizeOptionalString(req.body?.corrected_class),
+      note: normalizeOptionalString(req.body?.note),
+      photoMediaIds: req.body?.photo_media_ids ?? req.body?.photos,
+      gpsLocation: req.body?.gps_location ?? req.body?.location,
+      gpsAccuracyM: req.body?.gps_accuracy_m ?? req.body?.accuracy_meters,
+      metadata,
+    },
+    currentUser,
+  );
+
+  res.status(201).json({
+    success: true,
+    message: 'AI prediction validation submitted.',
+    data: result,
+  });
+};
+
+const getMyProjectAiPredictionValidation = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const result = await getMyPredictionFeatureValidation({
+    projectId: req.params.projectId,
+    predictionId: req.params.predictionId,
+    user: req.user as Express.UserContext,
+  });
+
+  res.json({
+    success: true,
+    data: result,
+  });
+};
+
+const listProjectAiPredictionValidations = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  const result = await listPredictionFeatureValidations({
+    projectId: req.params.projectId,
+    predictionId: req.params.predictionId,
+  });
+
+  res.json({
+    success: true,
+    data: result,
+  });
+};
+
+const reviewProjectAiPrediction = async (req: Request, res: Response): Promise<void> => {
+  const result = await reviewPredictionFeature(
+    {
+      projectId: req.params.projectId,
+      predictionId: req.params.predictionId,
+      reviewedBy: (req.user as Express.UserContext).id,
+      approvalStatus:
+        (normalizeOptionalString(req.body?.approval_status) ??
+          normalizeOptionalString(req.body?.status)) as any,
+      approvedClass: normalizeOptionalString(req.body?.approved_class),
+      adminNote: normalizeOptionalString(req.body?.admin_note ?? req.body?.note),
+    },
+    req.user as Express.UserContext,
+  );
+
+  res.json({
+    success: true,
+    message: 'AI prediction admin review saved.',
+    data: result,
+  });
+};
+
+const getProjectAiRunValidationSummary = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  await loadProjectAiRunOrFail(req.params.projectId, req.params.runId);
+  const result = await getRunPredictionValidationSummary({
+    projectId: req.params.projectId,
+    runId: req.params.runId,
+  });
+
+  res.json({
+    success: true,
+    data: result,
+  });
+};
+
+const listProjectAiRunValidations = async (req: Request, res: Response): Promise<void> => {
+  await loadProjectAiRunOrFail(req.params.projectId, req.params.runId);
+  const { page, limit } = parsePagination(req);
+  const result = await listRunPredictionValidations({
+    projectId: req.params.projectId,
+    runId: req.params.runId,
+    page,
+    limit,
+  });
+
+  res.json({
+    success: true,
+    data: {
+      predictions: result.predictions,
+    },
+    pagination: result.pagination,
+  });
+};
+
 const getAiLayerFeatures = async (req: Request, res: Response): Promise<void> => {
   const featureQuery = parseAiLayerFeatureQuery(req);
   const layerResult = await query(
@@ -3049,8 +5988,9 @@ const getAiLayerFeatures = async (req: Request, res: Response): Promise<void> =>
     }
     await assertProjectReadableForAiLayer(layer.project_id, currentUser);
   }
-  const predictionRows = await loadPredictionFeaturesForLayer(layer.id);
-  if (predictionRows.length > 0) {
+  const predictionStats = await loadPredictionLayerStats(layer.id, featureQuery);
+  if (predictionStats.totalCount > 0) {
+    const predictionRows = await loadPredictionFeaturesForLayer(layer.id, featureQuery);
     res.json({
       success: true,
       data: aiLayerPredictionResponseData({
@@ -3058,13 +5998,14 @@ const getAiLayerFeatures = async (req: Request, res: Response): Promise<void> =>
         viewerPublished,
         featureQuery,
         rows: predictionRows,
+        stats: predictionStats,
       }),
     });
     return;
   }
   const storagePath = normalizeOptionalString(layer.storage_path);
   if (!storagePath) {
-    throw new AppError('AI output layer has no registered preview artifact.', 404);
+    throw new AppError('AI output layer has no registered preview output file.', 404);
   }
 
   const pipelineConfig = createAiPipelineService().getConfig();
@@ -3077,25 +6018,25 @@ const getAiLayerFeatures = async (req: Request, res: Response): Promise<void> =>
   try {
     stat = await fs.stat(artifactPath);
   } catch {
-    throw new AppError('AI output layer preview artifact was not found.', 404);
+    throw new AppError('AI output layer preview output file was not found.', 404);
   }
   if (!stat.isFile()) {
-    throw new AppError('AI output layer preview artifact is not a file.', 400);
+    throw new AppError('AI output layer preview output is not a file.', 400);
   }
   if (stat.size > MAX_AI_LAYER_GEOJSON_BYTES) {
-    throw new AppError('AI output layer preview artifact is too large to load directly.', 413);
+    throw new AppError('AI output layer preview output is too large to load directly.', 413);
   }
 
   let parsed: any;
   try {
     parsed = JSON.parse(await fs.readFile(artifactPath, 'utf8'));
   } catch {
-    throw new AppError('AI output layer preview artifact is not valid GeoJSON.', 422);
+    throw new AppError('AI output layer preview output is not valid GeoJSON.', 422);
   }
 
   if (!parsed || parsed.type !== 'FeatureCollection' || !Array.isArray(parsed.features)) {
     throw new AppError(
-      'AI output layer preview artifact must be a GeoJSON FeatureCollection.',
+      'AI output layer preview output must be a GeoJSON FeatureCollection.',
       422,
     );
   }
@@ -3392,52 +6333,141 @@ const reviewAiRun = async (req: Request, res: Response): Promise<void> => {
   });
 };
 
-const publishAiLayer = async (req: Request, res: Response): Promise<void> => {
+const publishProjectAiRun = async (req: Request, res: Response): Promise<void> => {
   const currentUser = req.user as Express.UserContext;
   const result = await transaction(async (client: PoolClient) => {
+    const runResult = await client.query(
+      `SELECT ar.id,
+              ar.project_id,
+              ar.status,
+              ar.completed_at,
+              ar.published_at,
+              ar.display_name,
+              ar.is_dry_run,
+              COALESCE(aps.is_enabled, project_aps.is_enabled) AS is_enabled
+       FROM ai_run ar
+       LEFT JOIN ai_project_settings aps ON aps.id = ar.settings_id
+       LEFT JOIN ai_project_settings project_aps ON project_aps.project_id = ar.project_id
+       WHERE ar.id = $1
+         AND ar.project_id = $2
+       FOR UPDATE OF ar`,
+      [req.params.runId, req.params.projectId],
+    );
+    if (runResult.rows.length === 0) {
+      throw new AppError('AI run not found', 404);
+    }
+    const run = runResult.rows[0];
+    if (run.is_enabled !== true) {
+      throw new AppError('AI must be enabled for this project before publishing AI runs.', 409);
+    }
+    if (run.is_dry_run === true && process.env.AI_ALLOW_DRY_RUN_PUBLISH !== 'true') {
+      throw new AppError(
+        'Dry-run AI runs cannot be published because no real prediction features were generated.',
+        409,
+      );
+    }
+    if (
+      !['completed', 'ready_for_review', 'published'].includes(String(run.status)) &&
+      run.completed_at === null
+    ) {
+      throw new AppError('Only completed AI runs with predictions can be published.', 409);
+    }
+
     const layerResult = await client.query(
       `SELECT l.id,
-              l.ai_run_id,
-              l.project_id,
               l.layer_type,
               l.status,
-              l.name,
               l.published_at,
-              ar.project_id AS run_project_id
+              (
+                SELECT COUNT(*)::int
+                FROM ai_prediction_feature p
+                WHERE p.ai_output_layer_id = l.id
+              ) AS prediction_count
        FROM ai_output_layer l
-       JOIN ai_run ar ON ar.id = l.ai_run_id
-       WHERE l.id = $1
+       WHERE l.ai_run_id = $1
+         AND l.project_id = $2
+         AND l.layer_type = 'classification'
+       ORDER BY CASE l.status
+                  WHEN 'published' THEN 0
+                  WHEN 'ready_for_review' THEN 1
+                  WHEN 'approved' THEN 2
+                  ELSE 3
+                END,
+                l.created_at DESC
+       LIMIT 1
        FOR UPDATE`,
-      [req.params.layerId],
+      [run.id, run.project_id],
     );
-
-    if (layerResult.rows.length === 0) {
-      throw new AppError('AI output layer not found', 404);
+    if (layerResult.rows.length === 0 || Number(layerResult.rows[0].prediction_count ?? 0) === 0) {
+      throw new AppError('This AI run has no classification predictions to publish.', 409);
     }
-
     const layer = layerResult.rows[0];
-    if (layer.project_id !== layer.run_project_id) {
-      throw new AppError('AI output layer project mismatch.', 400);
+    if (!['ready_for_review', 'approved', 'published', 'draft'].includes(String(layer.status))) {
+      throw new AppError('This AI run layer is not publishable.', 409);
     }
-    if (layer.status !== 'approved') {
-      throw new AppError('Only approved AI layers can be published.', 409);
-    }
-    if (!previewableLayerTypes.has(layer.layer_type)) {
-      throw new AppError('Only map-preview AI layers can be published.', 400);
-    }
-    const settingsResult = await client.query(
-      `SELECT is_enabled
-       FROM ai_project_settings
-       WHERE project_id = $1`,
-      [layer.project_id],
-    );
-    if (settingsResult.rows[0]?.is_enabled !== true) {
-      throw new AppError('AI must be enabled for this project before publishing layers.', 409);
-    }
+    const publishedLayerName =
+      normalizeOptionalString(layer.name) ??
+      normalizeOptionalString(run.display_name) ??
+      `AI Classification - ${run.id}`;
 
-    const updated = await client.query(
+    await client.query(
+      `UPDATE ai_output_layer
+       SET status = 'approved',
+           published_at = NULL,
+           published_by = NULL,
+           updated_at = NOW()
+       WHERE project_id = $1
+         AND ai_run_id <> $2
+         AND layer_type = 'classification'
+         AND status = 'published'`,
+      [run.project_id, run.id],
+    );
+    await client.query(
+      `UPDATE ai_prediction_feature p
+       SET status = CASE
+             WHEN p.status IN ('approved', 'rejected') THEN p.status
+             ELSE 'ready_for_review'::ai_prediction_feature_status
+           END,
+           updated_at = NOW()
+       FROM ai_output_layer l
+       WHERE p.ai_output_layer_id = l.id
+         AND l.project_id = $1
+         AND l.ai_run_id <> $2
+         AND p.status = 'published'`,
+      [run.project_id, run.id],
+    );
+    await client.query(
+      `UPDATE ai_run
+       SET unpublished_at = COALESCE(unpublished_at, NOW()),
+           unpublished_by = COALESCE(unpublished_by, $2),
+           unpublished_reason = 'replaced_by_new_published_run',
+           replaced_by_run_id = $3,
+           metadata = metadata || $4::jsonb,
+           updated_at = NOW()
+       WHERE project_id = $1
+         AND id <> $3
+         AND published_at IS NOT NULL
+         AND unpublished_at IS NULL`,
+      [
+        run.project_id,
+        currentUser.id,
+        run.id,
+        JSON.stringify({
+          publication: {
+            published: false,
+            unpublished_by: currentUser.id,
+            unpublished_at: new Date().toISOString(),
+            unpublished_reason: 'replaced_by_new_published_run',
+            replaced_by_run_id: run.id,
+          },
+        }),
+      ],
+    );
+
+    const layerUpdate = await client.query(
       `UPDATE ai_output_layer
        SET status = 'published',
+           name = $3,
            published_at = NOW(),
            published_by = $2,
            updated_at = NOW()
@@ -3458,14 +6488,455 @@ const publishAiLayer = async (req: Request, res: Response): Promise<void> => {
                  published_by,
                  created_at,
                  updated_at`,
-      [layer.id, currentUser.id],
+      [layer.id, currentUser.id, publishedLayerName],
     );
     await client.query(
       `UPDATE ai_prediction_feature
-       SET status = 'published',
+       SET status = CASE
+             WHEN status IN ('approved', 'rejected') THEN status
+             ELSE 'published'::ai_prediction_feature_status
+           END,
            updated_at = NOW()
        WHERE ai_output_layer_id = $1`,
       [layer.id],
+    );
+    const runUpdate = await client.query(
+      `UPDATE ai_run
+       SET status = 'published',
+           published_at = NOW(),
+           published_by = $2,
+           unpublished_at = NULL,
+           unpublished_by = NULL,
+           unpublished_reason = NULL,
+           replaced_by_run_id = NULL,
+           published_layer_name = $3,
+           prediction_count = $4,
+           metadata = metadata || $5::jsonb,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id,
+                 project_id,
+                 settings_id,
+                 status,
+                 display_name,
+                 is_dry_run,
+                 published_layer_name,
+                 unpublished_reason,
+                 replaced_by_run_id,
+                 prediction_count,
+                 label_field,
+                 scope_type,
+                 ST_AsGeoJSON(scope_geometry)::json AS scope_geometry,
+                 region_preset,
+                 training_feature_count,
+                 eligible_feature_count,
+                 excluded_feature_count,
+                 selected_model,
+                 started_by,
+                 started_at,
+                 completed_at,
+                 failed_at,
+                 failure_reason,
+                 stage,
+                 progress,
+                 message,
+                 ai_server_run_id,
+                 cancelled_at,
+                 callback_received_at,
+                 artifacts,
+                 counts,
+                 error_details,
+                 published_at,
+                 published_by,
+                 unpublished_at,
+                 unpublished_by,
+                 metadata,
+                 created_at,
+                 updated_at`,
+      [
+        run.id,
+        currentUser.id,
+        publishedLayerName,
+        Number(layer.prediction_count ?? 0),
+        JSON.stringify({
+          publication: {
+            published: true,
+            published_by: currentUser.id,
+            published_at: new Date().toISOString(),
+            layer_id: layer.id,
+            layer_name: publishedLayerName,
+            prediction_count: Number(layer.prediction_count ?? 0),
+            one_classification_layer: true,
+          },
+        }),
+      ],
+    );
+
+    await client.query(
+      `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
+       VALUES ($1, 'info', $2, $3::jsonb)`,
+      [
+        run.id,
+        'AI run classification layer published for project map validation.',
+        JSON.stringify({
+          phase: 'ai_run_publish',
+          layer_id: layer.id,
+          published_by: currentUser.id,
+          confidence_is_attribute: true,
+          standalone_confidence_layer: false,
+          standalone_uncertainty_layer: false,
+        }),
+      ],
+    );
+
+    return {
+      run: normalizeRunRow(runUpdate.rows[0]),
+      layer: layerUpdate.rows[0],
+    };
+  });
+
+  res.json({
+    success: true,
+    message: 'AI run published for project map validation.',
+    data: result,
+  });
+};
+
+const unpublishProjectAiRun = async (req: Request, res: Response): Promise<void> => {
+  const currentUser = req.user as Express.UserContext;
+  const result = await transaction(async (client: PoolClient) => {
+    const runResult = await client.query(
+      `SELECT id, project_id
+       FROM ai_run
+       WHERE id = $1
+         AND project_id = $2
+       FOR UPDATE`,
+      [req.params.runId, req.params.projectId],
+    );
+    if (runResult.rows.length === 0) {
+      throw new AppError('AI run not found', 404);
+    }
+    const run = runResult.rows[0];
+    const layerResult = await client.query(
+      `UPDATE ai_output_layer
+       SET status = 'approved',
+           published_at = NULL,
+           published_by = NULL,
+           updated_at = NOW()
+       WHERE ai_run_id = $1
+         AND project_id = $2
+         AND layer_type = 'classification'
+         AND status = 'published'
+       RETURNING id,
+                 ai_run_id,
+                 project_id,
+                 layer_type,
+                 status,
+                 name,
+                 description,
+                 NULL::text AS storage_path,
+                 asset_id,
+                 crs,
+                 ST_AsGeoJSON(bounds)::json AS bounds,
+                 style,
+                 published_at,
+                 published_by,
+                 created_at,
+                 updated_at`,
+      [run.id, run.project_id],
+    );
+    await client.query(
+      `UPDATE ai_prediction_feature p
+       SET status = 'approved',
+           updated_at = NOW()
+       FROM ai_output_layer l
+       WHERE p.ai_output_layer_id = l.id
+         AND l.ai_run_id = $1
+         AND l.project_id = $2
+         AND p.status = 'published'`,
+      [run.id, run.project_id],
+    );
+    const runUpdate = await client.query(
+      `UPDATE ai_run
+       SET status = CASE WHEN status = 'published' THEN 'completed'::ai_run_status ELSE status END,
+           unpublished_at = NOW(),
+           unpublished_by = $2,
+           unpublished_reason = 'manual_unpublish',
+           metadata = metadata || $3::jsonb,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id,
+                 project_id,
+                 settings_id,
+                 status,
+                 display_name,
+                 is_dry_run,
+                 published_layer_name,
+                 unpublished_reason,
+                 replaced_by_run_id,
+                 prediction_count,
+                 label_field,
+                 scope_type,
+                 ST_AsGeoJSON(scope_geometry)::json AS scope_geometry,
+                 region_preset,
+                 training_feature_count,
+                 eligible_feature_count,
+                 excluded_feature_count,
+                 selected_model,
+                 started_by,
+                 started_at,
+                 completed_at,
+                 failed_at,
+                 failure_reason,
+                 stage,
+                 progress,
+                 message,
+                 ai_server_run_id,
+                 cancelled_at,
+                 callback_received_at,
+                 artifacts,
+                 counts,
+                 error_details,
+                 published_at,
+                 published_by,
+                 unpublished_at,
+                 unpublished_by,
+                 metadata,
+                 created_at,
+                 updated_at`,
+      [
+        run.id,
+        currentUser.id,
+        JSON.stringify({
+          publication: {
+            published: false,
+            unpublished_by: currentUser.id,
+            unpublished_at: new Date().toISOString(),
+            unpublished_reason: 'manual_unpublish',
+          },
+        }),
+      ],
+    );
+    await client.query(
+      `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
+       VALUES ($1, 'info', $2, $3::jsonb)`,
+      [
+        run.id,
+        'AI run classification layer unpublished. Contributor validation access is disabled.',
+        JSON.stringify({
+          phase: 'ai_run_unpublish',
+          unpublished_by: currentUser.id,
+          layers_updated: layerResult.rowCount ?? 0,
+        }),
+      ],
+    );
+    return {
+      run: normalizeRunRow(runUpdate.rows[0]),
+      layers: layerResult.rows,
+    };
+  });
+
+  res.json({
+    success: true,
+    message: 'AI run unpublished.',
+    data: result,
+  });
+};
+
+const publishAiLayer = async (req: Request, res: Response): Promise<void> => {
+  const currentUser = req.user as Express.UserContext;
+  const result = await transaction(async (client: PoolClient) => {
+    const layerResult = await client.query(
+      `SELECT l.id,
+              l.ai_run_id,
+              l.project_id,
+              l.layer_type,
+              l.status,
+              l.name,
+              l.published_at,
+              ar.status AS run_status,
+              ar.completed_at AS run_completed_at,
+              ar.display_name,
+              ar.is_dry_run,
+              ar.project_id AS run_project_id
+       FROM ai_output_layer l
+       JOIN ai_run ar ON ar.id = l.ai_run_id
+       WHERE l.id = $1
+       FOR UPDATE`,
+      [req.params.layerId],
+    );
+
+    if (layerResult.rows.length === 0) {
+      throw new AppError('AI output layer not found', 404);
+    }
+
+    const layer = layerResult.rows[0];
+    if (layer.project_id !== layer.run_project_id) {
+      throw new AppError('AI output layer project mismatch.', 400);
+    }
+    if (!['approved', 'published'].includes(String(layer.status))) {
+      throw new AppError('Only approved AI classification layers can be published.', 409);
+    }
+    if (!previewableLayerTypes.has(layer.layer_type)) {
+      throw new AppError('Only map-preview AI layers can be published.', 400);
+    }
+    if (layer.is_dry_run === true && process.env.AI_ALLOW_DRY_RUN_PUBLISH !== 'true') {
+      throw new AppError(
+        'Dry-run AI layers cannot be published because no real prediction features were generated.',
+        409,
+      );
+    }
+    if (
+      !['completed', 'ready_for_review', 'published'].includes(String(layer.run_status)) &&
+      layer.run_completed_at === null
+    ) {
+      throw new AppError('Only completed AI runs with predictions can be published.', 409);
+    }
+    const settingsResult = await client.query(
+      `SELECT is_enabled
+       FROM ai_project_settings
+       WHERE project_id = $1`,
+      [layer.project_id],
+    );
+    if (settingsResult.rows[0]?.is_enabled !== true) {
+      throw new AppError('AI must be enabled for this project before publishing layers.', 409);
+    }
+    const predictionCountResult = await client.query(
+      `SELECT COUNT(*)::int AS count
+       FROM ai_prediction_feature
+       WHERE ai_output_layer_id = $1`,
+      [layer.id],
+    );
+    const predictionCount = Number(predictionCountResult.rows[0]?.count ?? 0);
+    if (predictionCount === 0) {
+      throw new AppError('This AI layer has no classification predictions to publish.', 409);
+    }
+    const publishedLayerName =
+      normalizeOptionalString(layer.name) ??
+      normalizeOptionalString(layer.display_name) ??
+      `AI Classification - ${layer.ai_run_id}`;
+
+    await client.query(
+      `UPDATE ai_output_layer
+       SET status = 'approved',
+           published_at = NULL,
+           published_by = NULL,
+           updated_at = NOW()
+       WHERE project_id = $1
+         AND id <> $2
+         AND layer_type = 'classification'
+         AND status = 'published'`,
+      [layer.project_id, layer.id],
+    );
+    await client.query(
+      `UPDATE ai_prediction_feature p
+       SET status = CASE
+             WHEN p.status IN ('approved', 'rejected') THEN p.status
+             ELSE 'ready_for_review'::ai_prediction_feature_status
+           END,
+           updated_at = NOW()
+       FROM ai_output_layer l
+       WHERE p.ai_output_layer_id = l.id
+         AND l.project_id = $1
+         AND l.id <> $2
+         AND p.status = 'published'`,
+      [layer.project_id, layer.id],
+    );
+    await client.query(
+      `UPDATE ai_run
+       SET unpublished_at = COALESCE(unpublished_at, NOW()),
+           unpublished_by = COALESCE(unpublished_by, $2),
+           unpublished_reason = 'replaced_by_new_published_run',
+           replaced_by_run_id = $3,
+           metadata = metadata || $4::jsonb,
+           updated_at = NOW()
+       WHERE project_id = $1
+         AND id <> $3
+         AND published_at IS NOT NULL
+         AND unpublished_at IS NULL`,
+      [
+        layer.project_id,
+        currentUser.id,
+        layer.ai_run_id,
+        JSON.stringify({
+          publication: {
+            published: false,
+            unpublished_by: currentUser.id,
+            unpublished_at: new Date().toISOString(),
+            unpublished_reason: 'replaced_by_new_published_run',
+            replaced_by_run_id: layer.ai_run_id,
+          },
+        }),
+      ],
+    );
+
+    const updated = await client.query(
+      `UPDATE ai_output_layer
+       SET status = 'published',
+           name = $3,
+           published_at = NOW(),
+           published_by = $2,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id,
+                 ai_run_id,
+                 project_id,
+                 layer_type,
+                 status,
+                 name,
+                 description,
+                 NULL::text AS storage_path,
+                 asset_id,
+                 crs,
+                 ST_AsGeoJSON(bounds)::json AS bounds,
+                 style,
+                 published_at,
+                 published_by,
+                 created_at,
+                 updated_at`,
+      [layer.id, currentUser.id, publishedLayerName],
+    );
+    await client.query(
+      `UPDATE ai_prediction_feature
+       SET status = CASE
+             WHEN status IN ('approved', 'rejected') THEN status
+             ELSE 'published'::ai_prediction_feature_status
+           END,
+           updated_at = NOW()
+       WHERE ai_output_layer_id = $1`,
+      [layer.id],
+    );
+    await client.query(
+      `UPDATE ai_run
+       SET status = 'published',
+           published_at = NOW(),
+           published_by = $2,
+           unpublished_at = NULL,
+           unpublished_by = NULL,
+           unpublished_reason = NULL,
+           replaced_by_run_id = NULL,
+           published_layer_name = $3,
+           prediction_count = $4,
+           metadata = metadata || $5::jsonb,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [
+        layer.ai_run_id,
+        currentUser.id,
+        publishedLayerName,
+        predictionCount,
+        JSON.stringify({
+          publication: {
+            published: true,
+            published_by: currentUser.id,
+            published_at: new Date().toISOString(),
+            layer_id: layer.id,
+            layer_name: publishedLayerName,
+            prediction_count: predictionCount,
+            one_classification_layer: true,
+          },
+        }),
+      ],
     );
 
     await client.query(
@@ -3560,6 +7031,29 @@ const unpublishAiLayer = async (req: Request, res: Response): Promise<void> => {
          AND status = 'published'`,
       [layer.id],
     );
+    await client.query(
+      `UPDATE ai_run
+       SET status = CASE WHEN status = 'published' THEN 'completed'::ai_run_status ELSE status END,
+           unpublished_at = NOW(),
+           unpublished_by = $2,
+           unpublished_reason = 'manual_unpublish',
+           metadata = metadata || $3::jsonb,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [
+        layer.ai_run_id,
+        currentUser.id,
+        JSON.stringify({
+          publication: {
+            published: false,
+            unpublished_by: currentUser.id,
+            unpublished_at: new Date().toISOString(),
+            unpublished_reason: 'manual_unpublish',
+            layer_id: layer.id,
+          },
+        }),
+      ],
+    );
 
     await client.query(
       `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
@@ -3596,6 +7090,14 @@ module.exports = {
   upsertProjectAiSettings,
   createProjectAiRun,
   listProjectAiRuns,
+  getProjectAiRun,
+  getProjectAiRunStatus,
+  publishProjectAiRun,
+  unpublishProjectAiRun,
+  cancelProjectAiRun,
+  resumeProjectAiRun,
+  retrainCheckProjectAiRun,
+  handleAiRunCallback,
   getAiRun,
   listAiRunMetrics,
   listAiRunLayers,
@@ -3603,6 +7105,14 @@ module.exports = {
   listProjectPublishedAiPredictions,
   listProjectAiPredictionValidationTasks,
   generateProjectAiPredictionValidationTasks,
+  getProjectAiPredictionDetails,
+  uploadProjectAiPredictionValidationPhotos,
+  submitProjectAiPredictionValidation,
+  getMyProjectAiPredictionValidation,
+  listProjectAiPredictionValidations,
+  reviewProjectAiPrediction,
+  getProjectAiRunValidationSummary,
+  listProjectAiRunValidations,
   getAiLayerFeatures,
   getAiLayerPredictions,
   assignAiPredictionValidationTask,

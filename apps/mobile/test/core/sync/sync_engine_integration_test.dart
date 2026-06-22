@@ -50,6 +50,12 @@ class TrackingLocalStore implements LocalStore {
       _inner.getDraftById(draftId);
 
   @override
+  Future<void> discardDraft(String draftId) {
+    transitions.add('discard:$draftId');
+    return _inner.discardDraft(draftId);
+  }
+
+  @override
   Future<void> upsertOfflineMapPackage(OfflineMapPackage package) =>
       _inner.upsertOfflineMapPackage(package);
 
@@ -57,6 +63,51 @@ class TrackingLocalStore implements LocalStore {
   Future<OfflineMapPackage?> getCurrentOfflineMapPackage({
     required String ownerUserId,
   }) => _inner.getCurrentOfflineMapPackage(ownerUserId: ownerUserId);
+
+  @override
+  Future<void> upsertOfflineProjectPackage(OfflineProjectPackage package) =>
+      _inner.upsertOfflineProjectPackage(package);
+
+  @override
+  Future<OfflineProjectPackage?> getOfflineProjectPackage({
+    required String ownerUserId,
+    required String projectId,
+  }) => _inner.getOfflineProjectPackage(
+    ownerUserId: ownerUserId,
+    projectId: projectId,
+  );
+
+  @override
+  Future<List<OfflineProjectPackage>> getOfflineProjectPackages({
+    required String ownerUserId,
+  }) => _inner.getOfflineProjectPackages(ownerUserId: ownerUserId);
+
+  @override
+  Future<void> deleteOfflineProjectPackage({
+    required String ownerUserId,
+    required String projectId,
+  }) => _inner.deleteOfflineProjectPackage(
+    ownerUserId: ownerUserId,
+    projectId: projectId,
+  );
+
+  @override
+  Future<int> countOfflineProjectPackagesUsingBaseMap({
+    required String ownerUserId,
+    required String baseMapVersion,
+  }) => _inner.countOfflineProjectPackagesUsingBaseMap(
+    ownerUserId: ownerUserId,
+    baseMapVersion: baseMapVersion,
+  );
+
+  @override
+  Future<int> countUnsyncedDraftsForProject({
+    required String ownerUserId,
+    required String projectId,
+  }) => _inner.countUnsyncedDraftsForProject(
+    ownerUserId: ownerUserId,
+    projectId: projectId,
+  );
 
   @override
   Future<void> updateDraftStatus(
@@ -241,6 +292,24 @@ void main() {
                       data: <String, dynamic>{
                         'message': 'Simulated version conflict',
                         'version': 3,
+                      },
+                    ),
+                    type: DioExceptionType.badResponse,
+                  ),
+                );
+                return;
+              }
+
+              if (featureId.contains('revoked')) {
+                handler.reject(
+                  DioException(
+                    requestOptions: options,
+                    response: Response<Map<String, dynamic>>(
+                      requestOptions: options,
+                      statusCode: 403,
+                      data: const <String, dynamic>{
+                        'message':
+                            'You are no longer assigned to this project. Offline draft was discarded.',
                       },
                     ),
                     type: DioExceptionType.badResponse,
@@ -452,6 +521,35 @@ void main() {
       final conflictedDraft = drafts.firstWhere((d) => d.id == draftId);
       expect(conflictedDraft.status, 'rejected');
       expect(conflictedDraft.remoteVersion, 3);
+    });
+
+    test('stale assignment rejection discards draft and queue item', () async {
+      const draftId = 'draft-revoked-assignment';
+      const queueId = 'queue-revoked-assignment';
+
+      await store.upsertDraft(
+        _buildDraft(draftId: draftId, localVersion: 3),
+        enqueueSync: false,
+      );
+
+      await store.enqueueSyncItem(
+        _queueItem(queueId: queueId, draftId: draftId, localVersion: 3),
+      );
+
+      final summary = await syncEngine.syncPending();
+
+      expect(summary.processed, 1);
+      expect(summary.succeeded, 0);
+      expect(summary.failed, 0);
+      expect(summary.discarded, 1);
+      expect(summary.conflicts, 0);
+      expect(summary.deadLettered, 0);
+      expect(store.transitions, <String>[
+        'processing:$queueId',
+        'discard:$draftId',
+      ]);
+      expect(await store.getPendingSyncCount(), 0);
+      expect(await store.getDraftById(draftId), isNull);
     });
 
     test('retry scheduling window progresses across attempts', () async {

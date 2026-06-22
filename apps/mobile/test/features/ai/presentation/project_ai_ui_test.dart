@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lebanese_gis_mobile/core/providers/providers.dart';
 import 'package:lebanese_gis_mobile/features/ai/domain/ai_models.dart';
+import 'package:lebanese_gis_mobile/features/ai/presentation/ai_model_labels.dart';
 import 'package:lebanese_gis_mobile/features/ai/presentation/ai_providers.dart';
 import 'package:lebanese_gis_mobile/features/ai/presentation/screens/project_ai_screen.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_models.dart';
@@ -229,34 +230,36 @@ AiRun _phaseFRegionalRun({
       'prediction_area_type': 'project_area',
       'national_scope_enabled': false,
       'national_scope_eligibility': <String, dynamic>{
-        'eligible': false,
+        'eligible': true,
         'requirements': <Map<String, dynamic>>[
           <String, dynamic>{
-            'key': 'national_mode_allowed',
-            'label': 'National mode allowed for this project',
-            'passed': false,
-            'message':
-                'A protected super-admin must allow national AI mode for this project.',
-          },
-          <String, dynamic>{
-            'key': 'regional_coverage_configured',
-            'label': 'Geographic coverage is broad enough',
-            'passed': false,
-            'message': 'Regional coverage check is not configured yet.',
+            'key': 'overall_coverage',
+            'label': 'Overall coverage',
+            'passed': true,
+            'current_value': 74,
+            'message': 'Good for a national run.',
           },
         ],
-        'unmet_requirements': <String>[
-          'A protected super-admin must allow national AI mode for this project.',
-          'Regional coverage check is not configured yet.',
-        ],
+        'unmet_requirements': <String>[],
         'warnings': <String>[],
+        'coverage': <String, dynamic>{'score': 74, 'rating': 'good'},
       },
       'ai_settings': <String, dynamic>{
-        'satellite_source': 'sentinel2',
-        'target_year': 2026,
-        'season': 'growing',
-        'date_from': '2026-03-01',
-        'date_to': '2026-10-31',
+        'satellite_sources': <String>['sentinel2'],
+        'satellite_timeframes': <String, dynamic>{
+          'sentinel2': <String, dynamic>{
+            'map_year': 2026,
+            'seasons': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'season': 'growing',
+                'from_date': '2026-03-01',
+                'to_date': '2026-10-31',
+              },
+            ],
+          },
+        },
+        'confidence_threshold': 0.6,
+        'feature_groups': <String>['vegetation_indices'],
         'feature_inputs': <String>['NDVI', 'EVI', 'NDRE'],
         'preferred_model': 'svm_rbf',
         'scope_type': 'project',
@@ -274,8 +277,8 @@ AiRun _phaseFRegionalRun({
           'training_samples_area_type',
         ],
         'pending_pipeline_settings': <String>[
-          'satellite_source',
-          'date_range',
+          'satellite_sources',
+          'satellite_timeframes',
           'feature_inputs',
           'prediction_area_type',
         ],
@@ -304,10 +307,7 @@ AiRun _phaseFRegionalRun({
       'excluded_classes': <Map<String, dynamic>>[
         <String, dynamic>{'class_label': 'Vineyards', 'sample_count': 12},
       ],
-      'scientific_limitations': <String>[
-        'Regional proof-of-concept only; not a national model.',
-        'AI predictions remain separate from approved field/import features.',
-      ],
+      'scientific_limitations': <String>[],
       'model_metrics_summary': <String, dynamic>{
         'best_model': 'svm_rbf',
         'sample_count': 1394,
@@ -325,7 +325,7 @@ AiRun _phaseFRegionalRun({
             'macro_f1': 0.6167855821573912,
             'weighted_f1': 0.7390514814008126,
           },
-          'xgboost': <String, dynamic>{
+          'gradient_boosting': <String, dynamic>{
             'accuracy': 0.7923875432525952,
             'macro_f1': 0.5765313488008162,
             'weighted_f1': 0.7600163582946212,
@@ -352,10 +352,20 @@ AiRun _phaseQRegionalRun({required String projectId}) {
       'tmp/ai-run-configs/phase-q-settings-driven-run.json';
   metadata['run_config'] = <String, dynamic>{
     'contract_version': 1,
-    'satellite_source': 'sentinel2',
-    'season': 'summer',
-    'from_date': '2025-06-01',
-    'to_date': '2025-08-31',
+    'satellite_sources': <String>['sentinel2'],
+    'satellite_timeframes': <String, dynamic>{
+      'sentinel2': <String, dynamic>{
+        'map_year': 2025,
+        'seasons': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'season': 'summer',
+            'from_date': '2025-06-01',
+            'to_date': '2025-08-31',
+          },
+        ],
+      },
+    },
+    'confidence_threshold': 0.55,
     'selected_extracted_feature_count': 10,
     'preferred_model': 'random_forest',
     'training_samples_area_type': 'project_area',
@@ -366,11 +376,21 @@ AiRun _phaseQRegionalRun({required String projectId}) {
     'publish_outputs': false,
   };
   metadata['ai_settings'] = <String, dynamic>{
-    'satellite_source': 'sentinel2',
-    'target_year': 2025,
-    'season': 'summer',
-    'date_from': '2025-06-01',
-    'date_to': '2025-08-31',
+    'satellite_sources': <String>['sentinel2'],
+    'satellite_timeframes': <String, dynamic>{
+      'sentinel2': <String, dynamic>{
+        'map_year': 2025,
+        'seasons': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'season': 'summer',
+            'from_date': '2025-06-01',
+            'to_date': '2025-08-31',
+          },
+        ],
+      },
+    },
+    'confidence_threshold': 0.55,
+    'feature_groups': <String>['spectral_bands', 'vegetation_indices'],
     'feature_inputs': <String>[
       'B2',
       'B3',
@@ -395,8 +415,9 @@ AiRun _phaseQRegionalRun({required String projectId}) {
     'pipeline_config_payload_ready': true,
     'python_pipeline_config_consumed': true,
     'effective_pipeline_settings': <String>[
-      'satellite_source',
-      'date_range',
+      'satellite_sources',
+      'satellite_timeframes',
+      'confidence_threshold',
       'feature_inputs',
       'preferred_model',
       'label_field',
@@ -490,30 +511,6 @@ List<AiOutputLayer> _phaseNReviewLayers() {
       crs: 'EPSG:4326',
       createdAt: DateTime.utc(2026, 6, 6, 12),
     ),
-    AiOutputLayer(
-      id: 'layer-confidence',
-      aiRunId: '00f4bb0c-66cc-4fec-80c3-f3ecc96175f4',
-      projectId: 'project-1',
-      layerType: 'confidence',
-      status: 'ready_for_review',
-      name: 'Regional confidence review',
-      description: 'Unpublished confidence artifact.',
-      storagePath: 'outputs/runs/phase-m/ai_confidence_review.geojson',
-      crs: 'EPSG:4326',
-      createdAt: DateTime.utc(2026, 6, 6, 12),
-    ),
-    AiOutputLayer(
-      id: 'layer-uncertainty',
-      aiRunId: '00f4bb0c-66cc-4fec-80c3-f3ecc96175f4',
-      projectId: 'project-1',
-      layerType: 'uncertainty',
-      status: 'ready_for_review',
-      name: 'Regional uncertainty review',
-      description: 'Unpublished uncertain validation areas.',
-      storagePath: 'outputs/runs/phase-m/ai_uncertainty_areas.geojson',
-      crs: 'EPSG:4326',
-      createdAt: DateTime.utc(2026, 6, 6, 12),
-    ),
     ..._reviewableLayers(),
   ];
 }
@@ -602,40 +599,6 @@ Map<String, AiLayerFeatureCollection> _phaseNLayerFeatures(
         'Fruit Trees': 66,
       },
     ),
-    'layer-confidence': AiLayerFeatureCollection(
-      layer: layer('layer-confidence'),
-      features: <AiLayerFeature>[
-        feature('confidence-1', const <String, dynamic>{
-          'predicted_class': 'Olives',
-          'confidence': 0.82,
-          'model_name': 'random_forest',
-          'source': 'ai_prediction',
-          'run_id': '00f4bb0c-66cc-4fec-80c3-f3ecc96175f4',
-        }),
-      ],
-      featureCount: 1394,
-      matchingFeatureCount: 1394,
-      returnedFeatureCount: 1,
-      detail: 'overview',
-      geometryMode: 'simplified',
-    ),
-    'layer-uncertainty': AiLayerFeatureCollection(
-      layer: layer('layer-uncertainty'),
-      features: <AiLayerFeature>[
-        feature('uncertainty-1', const <String, dynamic>{
-          'predicted_class': 'Fruit Trees',
-          'confidence': 0.41,
-          'model_name': 'random_forest',
-          'source': 'ai_prediction',
-          'run_id': '00f4bb0c-66cc-4fec-80c3-f3ecc96175f4',
-        }),
-      ],
-      featureCount: 279,
-      matchingFeatureCount: 279,
-      returnedFeatureCount: 1,
-      detail: 'overview',
-      geometryMode: 'simplified',
-    ),
   };
 }
 
@@ -654,6 +617,19 @@ List<AiReviewDecision> _reviewHistory() {
 }
 
 void main() {
+  test('formatModelName expands model abbreviations for UI copy', () {
+    expect(formatModelName('rf'), 'Random Forest');
+    expect(formatModelName('random_forest'), 'Random Forest');
+    expect(formatModelName('svm'), 'Support Vector Machine');
+    expect(formatModelName('support_vector_machine'), 'Support Vector Machine');
+    expect(formatModelName('gb'), 'Gradient Boosting');
+    expect(formatModelName('gradient_boosting'), 'Gradient Boosting');
+    expect(formatModelName('xgb'), 'Extreme Gradient Boosting');
+    expect(formatModelName('xgboost'), 'Extreme Gradient Boosting');
+    expect(formatModelName('nn'), 'Neural Network');
+    expect(formatModelName('neural_network'), 'Neural Network');
+  });
+
   testWidgets('AI controls are visible only for protected super-admins', (
     tester,
   ) async {
@@ -671,7 +647,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('AI'), findsWidgets);
-    expect(find.text('AI settings'), findsOneWidget);
+    expect(find.text('AI Settings'), findsOneWidget);
     expect(find.text('AI Runs'), findsNothing);
     expect(find.text('Check readiness'), findsNothing);
 
@@ -736,6 +712,10 @@ void main() {
 
       expect(find.text('AI Readiness'), findsOneWidget);
       expect(find.text('Ready for regional AI'), findsWidgets);
+      expect(
+        find.textContaining('AI server connected', skipOffstage: false),
+        findsOneWidget,
+      );
       expect(find.textContaining('Olives: 580'), findsOneWidget);
       expect(find.textContaining('Fruit Trees: 480'), findsOneWidget);
       expect(find.textContaining('Citrus Fruit Trees: 334'), findsOneWidget);
@@ -817,6 +797,65 @@ void main() {
     expect(find.text('Not ready for AI yet'), findsOneWidget);
     expect(
       find.text('At least two labeled classes are required.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('readiness card explains AI server configuration states', (
+    tester,
+  ) async {
+    final project = _project();
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: FakeAiRepository(
+        settings: fakeAiSettings(projectId: project.id),
+        readiness: fakeReadiness(
+          projectId: project.id,
+          status: 'not_ready',
+          blockers: const <String>['AI server URL is not configured.'],
+          aiServer: const AiServerReadiness(
+            configured: false,
+            available: false,
+            status: 'unconfigured',
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.text('AI server URL is not configured on the backend.'),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: FakeAiRepository(
+        settings: fakeAiSettings(projectId: project.id),
+        readiness: fakeReadiness(
+          projectId: project.id,
+          status: 'not_ready',
+          blockers: const <String>['AI server unavailable.'],
+          aiServer: const AiServerReadiness(
+            configured: true,
+            available: false,
+            status: 'unavailable',
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.textContaining(
+        'AI server is unavailable. Start the AI server and refresh readiness.',
+        skipOffstage: false,
+      ),
       findsOneWidget,
     );
   });
@@ -905,9 +944,17 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.text(
-        'Project area uses approved samples from this project. National Lebanon requires representative samples across Lebanon.',
+      find.textContaining('Project feature extent (rectangular fallback)'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        'The backend will use the bounding rectangle around approved project features and training samples',
       ),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Draw a Custom AI area to limit the run'),
       findsOneWidget,
     );
 
@@ -917,9 +964,7 @@ void main() {
     );
     await tester.enterText(minField, '40');
     final saveButton = find.widgetWithText(FilledButton, 'Save settings');
-    await tester.ensureVisible(saveButton);
-    await tester.pumpAndSettle();
-    await tester.tap(saveButton);
+    tester.widget<FilledButton>(saveButton).onPressed?.call();
     await tester.pumpAndSettle();
 
     expect(repository.saveCount, 1);
@@ -928,10 +973,122 @@ void main() {
     expect(find.text('AI settings saved successfully.'), findsOneWidget);
   });
 
+  testWidgets('extracted feature selector groups types and toggles all', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1080, 2200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(
+        projectId: project.id,
+        isEnabled: true,
+        modelPreferences: const <String, dynamic>{
+          'satellite_sources': <String>['sentinel2', 'landsat'],
+          'feature_inputs': <String>['B2', 'NDVI'],
+        },
+      ),
+      readiness: fakeReadiness(projectId: project.id),
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'settings',
+    );
+
+    await tester.scrollUntilVisible(
+      find.text('Sentinel-2 bands').last,
+      500,
+      maxScrolls: 8,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sentinel-2 bands'), findsOneWidget);
+    expect(find.text('Landsat bands'), findsOneWidget);
+    expect(find.text('Vegetation indices'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('Sentinel-2 bands')).dy,
+      lessThan(tester.getTopLeft(find.text('Landsat bands')).dy),
+    );
+    expect(
+      tester.getTopLeft(find.text('Landsat bands')).dy,
+      lessThan(tester.getTopLeft(find.text('Vegetation indices')).dy),
+    );
+
+    await tester.tap(find.byTooltip('Feature requirements'));
+    await tester.pumpAndSettle();
+    expect(find.text('Feature requirements'), findsOneWidget);
+    expect(
+      find.textContaining('static_texture_pc1 (orchard texture pattern)'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('B2 (Blue)'), findsOneWidget);
+    await tester.tapAt(const Offset(20, 20));
+    await tester.pumpAndSettle();
+
+    final selectAll = find.widgetWithText(ActionChip, 'Select all');
+    expect(selectAll, findsOneWidget);
+    await tester.tap(selectAll);
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('static_texture_pc1 was not selected'),
+      findsOneWidget,
+    );
+
+    final unselectAll = find.widgetWithText(ActionChip, 'Unselect all');
+    expect(unselectAll, findsOneWidget);
+    await tester.tap(unselectAll);
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(ActionChip, 'Select all'), findsOneWidget);
+    await tester.tap(find.widgetWithText(ActionChip, 'Select all'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('static_texture_pc1 was not selected'),
+      findsOneWidget,
+    );
+
+    await tester.scrollUntilVisible(
+      find.widgetWithText(FilledButton, 'Save settings'),
+      500,
+      maxScrolls: 8,
+      scrollable: find.byType(Scrollable).first,
+    );
+    final saveButton = find.widgetWithText(FilledButton, 'Save settings');
+    tester.widget<FilledButton>(saveButton).onPressed?.call();
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('AI settings saved, but 1 feature was skipped'),
+      findsOneWidget,
+    );
+
+    final preferences = repository.settings.modelPreferences;
+    expect(preferences['feature_inputs'], contains('NDVI'));
+    expect(
+      preferences['feature_inputs'],
+      isNot(contains('static_texture_pc1')),
+    );
+    final timeframes = preferences['satellite_timeframes'] as Map;
+    final sentinel2Frame = timeframes['sentinel2'] as Map;
+    final sentinel2Seasons = sentinel2Frame['seasons'] as List;
+    expect(
+      sentinel2Seasons.any(
+        (season) => season is Map && season['season'] == 'dry',
+      ),
+      isFalse,
+    );
+  });
+
   testWidgets('custom polygon scope is available in settings', (tester) async {
     final project = _project();
     final repository = FakeAiRepository(
-      settings: fakeAiSettings(projectId: project.id),
+      settings: fakeAiSettings(projectId: project.id, isEnabled: true),
       readiness: fakeReadiness(projectId: project.id),
     );
     await _pumpAiScreen(
@@ -947,31 +1104,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Custom AI area'), findsWidgets);
-    expect(find.text('National Lebanon - locked'), findsWidgets);
-    await tester.tap(find.text('National Lebanon - locked').last);
-    await tester.pumpAndSettle();
-
-    expect(find.text('National Lebanon is locked'), findsOneWidget);
-    expect(
-      find.text(
-        'Backend readiness requirements must pass before National Lebanon can be enabled.',
-      ),
-      findsOneWidget,
-    );
-    expect(find.text('National mode allowed for this project'), findsOneWidget);
-    expect(find.text('Lebanon boundary configured'), findsOneWidget);
-    expect(find.text('Pipeline supports national processing'), findsOneWidget);
-    expect(find.text('Geographic coverage is broad enough'), findsOneWidget);
-    expect(
-      find.text('Regional coverage check is not configured yet.'),
-      findsOneWidget,
-    );
-
-    await tester.tap(find.text('OK'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('National Lebanon is locked'), findsNothing);
+    expect(find.text('National Lebanon (not available)'), findsWidgets);
     expect(find.text('Draw AI area'), findsNothing);
+    await tester.tap(find.text('Project area').last);
+    await tester.pumpAndSettle();
 
     final saveButton = find.widgetWithText(FilledButton, 'Save settings');
     await tester.ensureVisible(saveButton);
@@ -994,24 +1130,14 @@ void main() {
 
     expect(find.text('Draw AI area'), findsOneWidget);
 
-    await tester.ensureVisible(
-      find.byKey(const ValueKey<String>('ai-area-dropdown')),
+    final drawAreaButton = find.widgetWithText(FilledButton, 'Draw AI area');
+    await tester.scrollUntilVisible(
+      drawAreaButton,
+      500,
+      scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey<String>('ai-area-dropdown')));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('National Lebanon - locked').last);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('OK'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Draw AI area'), findsOneWidget);
-    expect(find.text('National Lebanon is locked'), findsNothing);
-
-    await tester.ensureVisible(find.text('Draw AI area'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Draw AI area'));
+    await tester.tap(drawAreaButton);
     await tester.pumpAndSettle();
 
     expect(find.text('Draw AI area'), findsWidgets);
@@ -1019,92 +1145,72 @@ void main() {
     expect(find.textContaining('Export'), findsNothing);
   });
 
-  testWidgets(
-    'national scope becomes selectable only after backend-ready enable action',
-    (tester) async {
-      final project = _project();
-      final repository = FakeAiRepository(
-        settings: fakeAiSettings(projectId: project.id),
-        readiness: fakeReadiness(
-          projectId: project.id,
-          nationalScopeEligibility: const AiNationalScopeEligibility(
-            eligible: true,
-            unmetRequirements: <String>[],
-            warnings: <String>[],
-          ),
+  testWidgets('national scope stays disabled while pipeline blocks it', (
+    tester,
+  ) async {
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(
+        projectId: project.id,
+        nationalScopeEligibility: const AiNationalScopeEligibility(
+          eligible: true,
+          unmetRequirements: <String>[],
+          warnings: <String>[],
+          coverage: <String, dynamic>{
+            'governorates_covered': 2,
+            'total_governorates': 8,
+            'governorate_rating': 'weak',
+            'grid_cells_covered': 4,
+            'total_grid_cells': 20,
+            'grid_rating': 'weak',
+            'usable_class_count': 2,
+            'weak_class_count': 2,
+            'class_rating': 'limited',
+            'score': 34,
+            'rating': 'weak',
+          },
         ),
-      );
-      await _pumpAiScreen(
-        tester,
-        session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
-        project: project,
-        aiRepository: repository,
-        section: 'settings',
-      );
+      ),
+    );
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'settings',
+    );
 
-      final areaDropdown = find.byKey(
-        const ValueKey<String>('ai-area-dropdown'),
-      );
-      await tester.tap(areaDropdown);
-      await tester.pumpAndSettle();
+    final areaDropdown = find.byKey(const ValueKey<String>('ai-area-dropdown'));
+    await tester.tap(areaDropdown);
+    await tester.pumpAndSettle();
 
-      expect(find.text('National Lebanon - ready'), findsWidgets);
-      await tester.tap(find.text('National Lebanon - ready').last);
-      await tester.pumpAndSettle();
+    expect(find.text('National Coverage'), findsOneWidget);
+    expect(find.text('National Lebanon (not available)'), findsWidgets);
+    await tester.tap(find.text('National Lebanon (not available)').last);
+    await tester.pumpAndSettle();
 
-      expect(find.text('Enable national mode'), findsWidgets);
-      await tester.tap(find.text('Cancel'));
-      await tester.pumpAndSettle();
+    expect(find.text('Run national classification?'), findsNothing);
+    expect(repository.saveCount, 0);
+    await tester.tap(find.text('Project area').last);
+    await tester.pumpAndSettle();
 
-      expect(repository.saveCount, 0);
+    await tester.ensureVisible(
+      find.widgetWithText(FilledButton, 'Save settings'),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Save settings'));
+    await tester.pumpAndSettle();
 
-      await tester.tap(areaDropdown);
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('National Lebanon - ready').last);
-      await tester.pumpAndSettle();
-      await tester.tap(
-        find.widgetWithText(FilledButton, 'Enable national mode'),
-      );
-      await tester.pumpAndSettle();
-
-      expect(repository.saveCount, 1);
-      expect(repository.settings.scopeType, 'project');
-      expect(
-        repository.settings.modelPreferences['national_scope_enabled'],
-        true,
-      );
-      expect(
-        find.text(
-          'National mode enabled. Select National Lebanon when starting a run.',
-        ),
-        findsOneWidget,
-      );
-
-      await tester.pump(const Duration(seconds: 4));
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(areaDropdown);
-      await tester.pumpAndSettle();
-      await tester.tap(areaDropdown);
-      await tester.pumpAndSettle();
-      expect(find.text('National Lebanon'), findsWidgets);
-      await tester.tap(find.text('National Lebanon').last);
-      await tester.pumpAndSettle();
-
-      await tester.ensureVisible(
-        find.widgetWithText(FilledButton, 'Save settings'),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Save settings'));
-      await tester.pumpAndSettle();
-
-      expect(repository.saveCount, 2);
-      expect(repository.settings.scopeType, 'national');
-      expect(
-        repository.settings.modelPreferences['national_scope_enabled'],
-        true,
-      );
-    },
-  );
+    expect(repository.saveCount, 1);
+    expect(repository.settings.scopeType, 'project');
+    expect(
+      repository
+          .settings
+          .modelPreferences['national_scope_warning_acknowledged'],
+      isNot(true),
+    );
+  });
 
   testWidgets('label field dropdown hides aliases and fields without labels', (
     tester,
@@ -1320,12 +1426,12 @@ void main() {
     },
   );
 
-  testWidgets('runs list displays empty state and queues full regional run', (
+  testWidgets('runs list displays empty state and starts full regional run', (
     tester,
   ) async {
     final project = _project();
     final repository = FakeAiRepository(
-      settings: fakeAiSettings(projectId: project.id),
+      settings: fakeAiSettings(projectId: project.id, isEnabled: true),
       readiness: fakeReadiness(projectId: project.id),
     );
     await _pumpAiScreen(
@@ -1337,15 +1443,11 @@ void main() {
     );
 
     expect(find.text('No AI run records yet'), findsOneWidget);
+    expect(find.text('View AI server run status and results.'), findsOneWidget);
     expect(
-      find.text(
-        'View AI run records, worker logs, and regional proof-of-concept results.',
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.text(
-        'Queues a regional review run from saved settings. Results appear after the backend AI worker processes it.',
+      find.textContaining(
+        'Starts an AI run through the backend AI server.',
+        skipOffstage: false,
       ),
       findsOneWidget,
     );
@@ -1359,31 +1461,63 @@ void main() {
       find.textContaining('Execution mode: Full regional review run'),
       findsWidgets,
     );
-    expect(find.text('Detailed run results'), findsOneWidget);
-    expect(find.text('Run queued. Worker is not running.'), findsOneWidget);
+    expect(find.text('Detailed run results'), findsNothing);
+    expect(find.text('Technical output files'), findsOneWidget);
+    expect(find.text('AI run started.'), findsOneWidget);
 
-    await tester.ensureVisible(find.text('Detailed run results'));
+    expect(find.text('AI run started.'), findsWidgets);
+    await tester.scrollUntilVisible(
+      find.text('Technical output files'),
+      600,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Detailed run results'));
+    await tester.tap(find.text('Technical output files'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Detailed run results'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Run queued. Worker is not running.'), findsWidgets);
     expect(
-      find.text(
-        'Ran the full regional review workflow: approved data export, feature extraction, model evaluation, review predictions, vector artifacts, and database prediction rows.',
+      find.text('No technical output files were reported for this run.'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Prediction features inserted: 0'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('start AI run is disabled when AI server is not configured', (
+    tester,
+  ) async {
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id, isEnabled: true),
+      readiness: fakeReadiness(
+        projectId: project.id,
+        status: 'not_ready',
+        blockers: const <String>['AI server URL is not configured.'],
+        aiServer: const AiServerReadiness(
+          configured: false,
+          available: false,
+          status: 'unconfigured',
+        ),
       ),
-      findsOneWidget,
     );
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
     expect(
-      find.text('No AI output layers are registered yet.'),
+      find.text('AI server URL is not configured on the backend.'),
       findsOneWidget,
     );
-    expect(
-      find.text('Worker processing must finish before review layers appear.'),
-      findsOneWidget,
-    );
+
+    await tester.tap(find.text('Start AI run'), warnIfMissed: false);
+    await tester.pumpAndSettle();
+
+    expect(repository.createCount, 0);
   });
 
   testWidgets('run details use readable summary and hide technical paths', (
@@ -1425,108 +1559,68 @@ void main() {
     expect(find.text('Training samples'), findsOneWidget);
     expect(find.text('Prediction area'), findsOneWidget);
     expect(find.text('Extracted features'), findsOneWidget);
-    expect(find.text('Execution support'), findsOneWidget);
+    expect(find.text('Execution support'), findsNothing);
     expect(find.textContaining('Label field: L4_descr'), findsWidgets);
-    expect(find.textContaining('Satellite source: Sentinel-2'), findsOneWidget);
-    expect(find.textContaining('Year: 2026'), findsOneWidget);
-    expect(find.textContaining('Season: Growing season'), findsOneWidget);
     expect(
-      find.textContaining('Date range: 2026-03-01 to 2026-10-31'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('Area used: Project area'), findsOneWidget);
-    expect(
-      find.textContaining('Prediction area: Project area'),
-      findsOneWidget,
-    );
-    expect(
-      find.textContaining('Pipeline use: Pipeline support pending'),
-      findsWidgets,
-    );
-    expect(
-      find.textContaining('Selected features: 3 selected: NDVI, EVI, NDRE'),
-      findsOneWidget,
-    );
-    expect(
-      find.textContaining('Preferred model requested: SVM RBF'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('Settings: Saved for run'), findsOneWidget);
-    expect(
-      find.textContaining('Training samples area: Effective now'),
+      find.textContaining('Satellite sources: Sentinel-2'),
       findsOneWidget,
     );
     expect(
       find.textContaining(
-        'Pipeline support pending: satellite, date range, selected features, prediction area',
+        'Sentinel-2: Year 2026; Growing season 2026-03-01 to 2026-10-31',
       ),
       findsOneWidget,
     );
     expect(
-      find.textContaining('National Lebanon: Locked / requirements unmet'),
-      findsWidgets,
-    );
-
-    expect(find.text('Detailed run results'), findsOneWidget);
-    expect(find.text('What happened'), findsNothing);
-    expect(find.text('Model result'), findsOneWidget);
-    expect(find.textContaining('Best balanced model: SVM RBF'), findsOneWidget);
-    expect(
-      find.textContaining('Highest accuracy model: XGBoost'),
+      find.textContaining('Area used: Project feature extent'),
       findsOneWidget,
     );
     expect(
-      find.textContaining('Final selected model: SVM RBF'),
+      find.textContaining('Prediction area: Project feature extent'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Pipeline use:'), findsNothing);
+    expect(
+      find.textContaining('Selected features: NDVI, EVI, NDRE'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Feature count: 3'), findsOneWidget);
+    expect(
+      find.textContaining('Preferred model requested: Support Vector Machine'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Confidence threshold: 0.6'), findsOneWidget);
+    expect(find.textContaining('Settings: Saved for run'), findsNothing);
+    expect(
+      find.textContaining('Training samples area: Effective now'),
+      findsNothing,
+    );
+    expect(find.textContaining('Pipeline support pending:'), findsNothing);
+    expect(find.textContaining('National Lebanon: Available'), findsWidgets);
+
+    expect(find.text('Detailed run results'), findsNothing);
+    expect(find.text('What happened'), findsNothing);
+    expect(find.text('Model result'), findsOneWidget);
+    expect(
+      find.textContaining('Best balanced model: Support Vector Machine'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Highest accuracy model: Gradient Boosting'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Final selected model: Support Vector Machine'),
       findsOneWidget,
     );
     expect(find.textContaining('Accuracy: 0.716'), findsOneWidget);
     expect(find.textContaining('Macro-F1: 0.617'), findsOneWidget);
     expect(find.textContaining('Weighted-F1: 0.739'), findsOneWidget);
 
-    await tester.ensureVisible(find.text('Detailed run results'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Detailed run results'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Detailed run results'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('What happened'), findsOneWidget);
-    expect(
-      find.text('Evaluated regional AI models using approved project data.'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('Approved samples: 1406'), findsWidgets);
-    expect(find.textContaining('Eligible samples: 1394'), findsWidgets);
-    expect(find.textContaining('Excluded classes: 1'), findsOneWidget);
-
-    await tester.ensureVisible(find.text('Class counts'));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('Olives: 940 samples'), findsOneWidget);
-    expect(find.textContaining('Fruit Trees: 253 samples'), findsOneWidget);
-    expect(find.text('Excluded classes'), findsOneWidget);
-    expect(find.textContaining('Vineyards: 12 samples'), findsWidgets);
-
-    expect(
-      find.text('This is a regional proof-of-concept, not a national model.'),
-      findsOneWidget,
-    );
-    expect(find.text('South Lebanon only.'), findsOneWidget);
-    expect(
-      find.text(
-        'Vineyards were excluded because only 12 samples are available.',
-      ),
-      findsOneWidget,
-    );
-    expect(find.text('Fruit Trees is a broad class.'), findsOneWidget);
-    expect(
-      find.text('National AI requires wider Lebanon coverage.'),
-      findsOneWidget,
-    );
-
+    expect(find.text('Detailed run results'), findsNothing);
+    expect(find.text('What happened'), findsNothing);
+    expect(find.text('Limitations'), findsNothing);
     expect(find.text('Technical output files'), findsOneWidget);
-    expect(find.textContaining('metrics.json'), findsNothing);
-    expect(find.textContaining('model_metadata.json'), findsNothing);
 
     await tester.ensureVisible(find.text('Technical output files'));
     await tester.pumpAndSettle();
@@ -1537,14 +1631,8 @@ void main() {
     expect(find.textContaining('Metrics file:'), findsOneWidget);
     expect(find.textContaining('metrics.json'), findsWidgets);
     expect(find.textContaining('model_metadata.json'), findsWidgets);
-    expect(
-      find.text('No AI output layers are registered yet.'),
-      findsOneWidget,
-    );
-    expect(
-      find.text('Worker processing must finish before review layers appear.'),
-      findsOneWidget,
-    );
+    expect(find.text('AI server logs'), findsNothing);
+    expect(find.text('Technical metadata'), findsNothing);
   });
 
   testWidgets(
@@ -1580,14 +1668,18 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.textContaining('Satellite source: Sentinel-2'),
+        find.textContaining('Satellite sources: Sentinel-2'),
         findsOneWidget,
       );
-      expect(find.textContaining('Year: 2026'), findsOneWidget);
       expect(
-        find.textContaining('Selected features: 3 selected'),
+        find.textContaining('Sentinel-2: Year 2026; Growing season'),
         findsOneWidget,
       );
+      expect(
+        find.textContaining('Selected features: NDVI, EVI, NDRE'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Feature count: 3'), findsOneWidget);
       expect(find.textContaining('Satellite source: Landsat'), findsNothing);
       expect(find.textContaining('Year: 2023'), findsNothing);
       expect(find.textContaining('SR_B5'), findsNothing);
@@ -1640,7 +1732,7 @@ void main() {
     );
     expect(
       find.textContaining('Settings: Not recorded for this run'),
-      findsOneWidget,
+      findsNothing,
     );
   });
 
@@ -1669,28 +1761,30 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Run configuration'), findsOneWidget);
-    expect(find.textContaining('Satellite source: Sentinel-2'), findsOneWidget);
-    expect(find.textContaining('Year: 2025'), findsOneWidget);
-    expect(find.textContaining('Season: Summer'), findsOneWidget);
     expect(
-      find.textContaining('Date range: 2025-06-01 to 2025-08-31'),
+      find.textContaining('Satellite sources: Sentinel-2'),
       findsOneWidget,
     );
     expect(
-      find.textContaining('Selected features: 10 selected'),
+      find.textContaining(
+        'Sentinel-2: Year 2025; Summer 2025-06-01 to 2025-08-31',
+      ),
       findsOneWidget,
     );
+    expect(
+      find.textContaining(
+        'Selected features: B2, B3, B4, B5, B8, B11, B12, NDVI, EVI, NDRE',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Feature count: 10'), findsOneWidget);
     expect(
       find.textContaining('Preferred model requested: Random Forest'),
       findsOneWidget,
     );
-    expect(find.textContaining('Pipeline use: Effective now'), findsWidgets);
-    expect(
-      find.textContaining(
-        'Effective now: satellite, date range, selected features, preferred model, label field, execution mode, training samples area, prediction area',
-      ),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Pipeline use:'), findsNothing);
+    expect(find.textContaining('Confidence threshold: 0.55'), findsOneWidget);
+    expect(find.textContaining('Effective now:'), findsNothing);
     expect(find.textContaining('Pipeline support pending:'), findsNothing);
   });
 
@@ -1721,8 +1815,8 @@ void main() {
           weightedF1: 0.750,
         ),
         AiRunMetric(
-          id: 'metric-xgb',
-          modelName: 'xgboost',
+          id: 'metric-gb',
+          modelName: 'gradient_boosting',
           overallAccuracy: 0.840,
           macroF1: 0.610,
           weightedF1: 0.780,
@@ -1744,13 +1838,16 @@ void main() {
     await tester.ensureVisible(find.text('Model result'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Best balanced model: SVM RBF'), findsOneWidget);
     expect(
-      find.textContaining('Highest accuracy model: XGBoost'),
+      find.textContaining('Best balanced model: Support Vector Machine'),
       findsOneWidget,
     );
     expect(
-      find.textContaining('Final selected model: SVM RBF'),
+      find.textContaining('Highest accuracy model: Gradient Boosting'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Final selected model: Support Vector Machine'),
       findsOneWidget,
     );
     expect(find.textContaining('Accuracy: 0.720'), findsOneWidget);
@@ -1766,10 +1863,10 @@ void main() {
     );
   });
 
-  testWidgets('AI output layer section shows unpublished statistics safely', (
+  testWidgets('AI output layer section hides statistics artifacts', (
     tester,
   ) async {
-    await tester.binding.setSurfaceSize(const Size(1080, 2200));
+    await tester.binding.setSurfaceSize(const Size(1080, 3200));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     final project = _project();
@@ -1791,61 +1888,17 @@ void main() {
     await tester.tap(find.text('Run 00f4bb0c'));
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Output layers'));
+    await tester.ensureVisible(find.text('Output Layer'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Output layers'), findsOneWidget);
-    expect(find.textContaining('Statistics: Report summary'), findsOneWidget);
+    expect(find.text('Output Layer'), findsOneWidget);
+    expect(
+      find.text('No AI classification layer has been registered yet.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Statistics'), findsNothing);
     expect(find.textContaining('statistics_layer.json'), findsNothing);
-    expect(find.text('Layer details'), findsOneWidget);
-
-    await tester.tap(find.text('Layer details'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Statistics layer'), findsOneWidget);
-    expect(
-      find.textContaining('Layer name: Regional model statistics'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('Status: Ready for review'), findsWidgets);
-    expect(
-      find.textContaining('Usage: Review/report summary only'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('CRS: EPSG:4326'), findsOneWidget);
-    expect(
-      find.textContaining('Bounds: Recorded in layer metadata'),
-      findsOneWidget,
-    );
-    expect(
-      find.text(
-        'Project Map shows published map layers only. Statistics stay as reports.',
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.textContaining('Citrus Fruit Trees: 201 samples'),
-      findsWidgets,
-    );
-    expect(find.textContaining('Fruit Trees: 253 samples'), findsWidgets);
-    expect(find.textContaining('Olives: 940 samples'), findsWidgets);
-    expect(
-      find.textContaining('Vineyards: 12 samples below threshold'),
-      findsOneWidget,
-    );
-    expect(find.text('Area statistics not available yet.'), findsOneWidget);
-    expect(
-      find.text('Confidence statistics not available yet.'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('statistics_layer.json'), findsNothing);
-
-    await tester.tap(find.text('Layer technical details'));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('Related run id:'), findsOneWidget);
-    expect(find.textContaining('Output/storage path:'), findsOneWidget);
-    expect(find.textContaining('statistics_layer.json'), findsOneWidget);
+    expect(find.text('Layer details'), findsNothing);
   });
 
   testWidgets('AI output layer summary wraps on narrow screens', (
@@ -1875,12 +1928,15 @@ void main() {
     await tester.tap(find.text('Run 00f4bb0c'));
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Output layers'));
+    await tester.ensureVisible(find.text('Output Layer'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Output layers'), findsOneWidget);
-    expect(find.textContaining('Statistics: Report summary'), findsOneWidget);
-    expect(find.textContaining('Not a map overlay'), findsOneWidget);
+    expect(find.text('Output Layer'), findsOneWidget);
+    expect(
+      find.text('No AI classification layer has been registered yet.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Statistics'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -1895,7 +1951,7 @@ void main() {
       settings: fakeAiSettings(projectId: project.id),
       readiness: fakeReadiness(projectId: project.id),
       runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
-      layers: _reviewableLayers(),
+      layers: _phaseNReviewLayers(),
       logs: _phaseFLogs(),
       reviews: <AiReviewDecision>[
         ..._reviewHistory(),
@@ -1925,11 +1981,11 @@ void main() {
     await tester.tap(find.text('Run 00f4bb0c'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Output layers'), findsOneWidget);
-    expect(find.text('Review and publishing'), findsOneWidget);
+    expect(find.text('Output Layer'), findsOneWidget);
+    expect(find.text('Review and publishing'), findsNothing);
 
     Future<void> openExpansion(String label) async {
-      final finder = find.text(label);
+      final finder = find.text(label).first;
       await tester.scrollUntilVisible(
         finder,
         600,
@@ -1941,17 +1997,13 @@ void main() {
       expect(tester.takeException(), isNull);
     }
 
-    for (final label in <String>[
-      'Layer details',
-      'Layer technical details',
-      'Review history',
-      'Detailed run results',
-      'Technical output files',
-      'Worker logs',
-      'Technical metadata',
-    ]) {
+    for (final label in <String>['Layer technical details']) {
       await openExpansion(label);
     }
+    expect(find.text('Detailed run results'), findsNothing);
+    expect(find.text('AI server logs'), findsNothing);
+    expect(find.text('Technical metadata'), findsNothing);
+    expect(find.text('Technical output files'), findsOneWidget);
   });
 
   testWidgets('approved AI output layer can be published and unpublished', (
@@ -1991,16 +2043,17 @@ void main() {
     await tester.tap(find.text('Run 00f4bb0c'));
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Layer details'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Layer details'));
-    await tester.pumpAndSettle();
-
     expect(find.text('Publish'), findsOneWidget);
     expect(find.text('Unpublish'), findsNothing);
 
-    await tester.ensureVisible(find.text('Publish'));
-    await tester.tap(find.text('Publish'));
+    final publishButton = find.widgetWithText(FilledButton, 'Publish');
+    await tester.scrollUntilVisible(
+      publishButton,
+      600,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(publishButton);
     await tester.pumpAndSettle();
 
     expect(repository.publishCount, 1);
@@ -2008,23 +2061,19 @@ void main() {
       find.text('AI layer published as a read-only map overlay.'),
       findsOneWidget,
     );
-    if (find.text('Unpublish').evaluate().isEmpty) {
-      await tester.ensureVisible(find.text('Layer details'));
-      await tester.tap(find.text('Layer details'));
-      await tester.pumpAndSettle();
-    }
     expect(find.text('Unpublish'), findsOneWidget);
 
-    await tester.ensureVisible(find.text('Unpublish'));
-    await tester.tap(find.text('Unpublish'));
+    final unpublishButton = find.widgetWithText(OutlinedButton, 'Unpublish');
+    await tester.scrollUntilVisible(
+      unpublishButton,
+      600,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(unpublishButton);
     await tester.pumpAndSettle();
 
     expect(repository.unpublishCount, 1);
-    if (find.text('Publish').evaluate().isEmpty) {
-      await tester.ensureVisible(find.text('Layer details'));
-      await tester.tap(find.text('Layer details'));
-      await tester.pumpAndSettle();
-    }
     expect(find.text('Publish'), findsOneWidget);
   });
 
@@ -2057,15 +2106,10 @@ void main() {
     await tester.ensureVisible(find.text('Preview map'));
     await tester.pumpAndSettle();
 
-    expect(
-      find.textContaining('Classification: Ready for review'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('Confidence: Ready for review'), findsOneWidget);
-    expect(
-      find.textContaining('Uncertainty: Ready for review'),
-      findsOneWidget,
-    );
+    expect(find.text('Classification layer'), findsWidgets);
+    expect(find.text('Confidence layer'), findsNothing);
+    expect(find.text('Uncertainty layer'), findsNothing);
+    expect(find.text('Ready for review'), findsWidgets);
     expect(
       find.text(
         'AI layer preview is protected super-admin review only. These layers are not published to viewers.',
@@ -2098,7 +2142,7 @@ void main() {
 
     expect(find.text('Not published'), findsOneWidget);
     expect(find.text('Review only'), findsOneWidget);
-    expect(find.text('Total AI features: 1394'), findsOneWidget);
+    expect(find.text('AI features: 1394'), findsOneWidget);
     expect(find.textContaining('Showing'), findsNothing);
     expect(find.text('Optimized preview'), findsNothing);
     expect(find.byTooltip('Browse AI features'), findsOneWidget);
@@ -2109,15 +2153,15 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Classification'), findsOneWidget);
-    expect(find.text('Confidence'), findsOneWidget);
-    expect(find.text('Uncertainty'), findsOneWidget);
+    expect(find.widgetWithText(FilterChip, 'Confidence'), findsNothing);
+    expect(find.widgetWithText(FilterChip, 'Uncertainty'), findsNothing);
     expect(find.text('Total: 1394'), findsNothing);
     expect(find.text('Visible: 1394'), findsNothing);
     expect(find.text('Loaded: 2'), findsNothing);
     expect(find.textContaining('visible features in this view'), findsNothing);
     expect(find.text('Olives'), findsOneWidget);
-    expect(find.text('Citrus fruit trees'), findsOneWidget);
-    expect(find.text('Fruit trees'), findsOneWidget);
+    expect(find.text('Citrus Fruit Trees'), findsOneWidget);
+    expect(find.text('Fruit Trees'), findsOneWidget);
     expect(
       find.text('AI predictions remain separate from field data.'),
       findsOneWidget,
@@ -2140,27 +2184,6 @@ void main() {
     expect(classificationQuery.zoom, isNotNull);
     expect(repository.layerFeatureFetchCounts['layer-uncertainty'], isNull);
     expect(repository.layerFeatureFetchCounts['layer-confidence'], isNull);
-
-    await tester.tap(find.widgetWithText(FilterChip, 'Confidence'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Confidence'), findsWidgets);
-    expect(
-      repository.layerFeatureFetchCounts['layer-confidence'],
-      greaterThanOrEqualTo(1),
-    );
-
-    await tester.tap(find.widgetWithText(FilterChip, 'Uncertainty'));
-    await tester.pumpAndSettle();
-
-    expect(
-      find.text('Uncertain areas are candidates for future field validation.'),
-      findsOneWidget,
-    );
-    expect(
-      repository.layerFeatureFetchCounts['layer-uncertainty'],
-      greaterThanOrEqualTo(1),
-    );
 
     await tester.tap(find.byTooltip('Browse AI features'));
     await tester.pumpAndSettle();
@@ -2220,6 +2243,9 @@ void main() {
     await tester.ensureVisible(find.byTooltip('Clear search'));
     await tester.tap(find.byTooltip('Clear search'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Filter'));
+    await tester.tap(find.text('Filter'));
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Fruit Trees'));
     await tester.tap(find.widgetWithText(ChoiceChip, 'Fruit Trees'));
     await tester.pumpAndSettle();
@@ -2228,10 +2254,47 @@ void main() {
       (query) =>
           query.layerId == 'layer-classification' &&
           query.page == 1 &&
+          query.limit == 20 &&
           query.classLabel == 'Fruit Trees',
     );
     expect(classFilterQuery.limit, 20);
     expect(classFilterQuery.bounds, isNull);
+    final filteredSummaryQuery = repository.layerFeatureQueries.lastWhere(
+      (query) =>
+          query.layerId == 'layer-classification' &&
+          query.page == 1 &&
+          query.limit == 1 &&
+          query.classLabel == 'Fruit Trees',
+    );
+    expect(filteredSummaryQuery.bounds, isNull);
+    final filteredMapQuery = repository.layerFeatureQueries.lastWhere(
+      (query) =>
+          query.layerId == 'layer-classification' &&
+          query.page == null &&
+          query.classLabel == 'Fruit Trees',
+    );
+    expect(filteredMapQuery.bounds, isNotNull);
+
+    final queryCountBeforeClear = repository.layerFeatureQueries.length;
+    final allClassChip = find.widgetWithText(ChoiceChip, 'All');
+    await tester.ensureVisible(allClassChip);
+    await tester.pumpAndSettle();
+    await tester.tap(allClassChip.hitTestable());
+    await tester.pumpAndSettle();
+
+    expect(
+      repository.layerFeatureQueries.length,
+      greaterThan(queryCountBeforeClear),
+    );
+    final clearedClassQuery = repository.layerFeatureQueries
+        .skip(queryCountBeforeClear)
+        .lastWhere(
+          (query) =>
+              query.layerId == 'layer-classification' &&
+              query.page == 1 &&
+              query.classLabel == null,
+        );
+    expect(clearedClassQuery.limit, 20);
   });
 
   testWidgets('AI preview feature tap opens review-only details sheet', (
@@ -2284,12 +2347,19 @@ void main() {
       find.text('AI prediction for review, not approved field data.'),
       findsOneWidget,
     );
-    expect(find.textContaining('Predicted class: Olives'), findsOneWidget);
-    expect(find.textContaining('Confidence: 82.0%'), findsOneWidget);
-    expect(find.textContaining('Model: Random Forest'), findsOneWidget);
-    expect(find.textContaining('Source: ai_prediction'), findsOneWidget);
+    expect(find.text('Prediction details'), findsOneWidget);
+    expect(find.text('Attributes'), findsOneWidget);
+    expect(find.text('Predicted Class'), findsOneWidget);
+    expect(find.text('Confidence'), findsOneWidget);
+    expect(find.text('82.0%'), findsWidgets);
+    expect(find.text('Model'), findsOneWidget);
+    expect(find.text('Random Forest'), findsOneWidget);
+    expect(find.text('Review Status'), findsOneWidget);
+    expect(find.text('Ready for review'), findsWidgets);
     expect(
-      find.textContaining('Regional proof-of-concept. Not a national model.'),
+      find.textContaining(
+        'This is one AI classification layer. Confidence is metadata.',
+      ),
       findsOneWidget,
     );
   });
@@ -2324,381 +2394,7 @@ void main() {
     expect(find.byType(FlutterMap), findsNothing);
   });
 
-  testWidgets('AI output layer review decisions stay separate from status', (
-    tester,
-  ) async {
-    await tester.binding.setSurfaceSize(const Size(1080, 2200));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-
-    final project = _project();
-    final repository = FakeAiRepository(
-      settings: fakeAiSettings(projectId: project.id),
-      readiness: fakeReadiness(projectId: project.id),
-      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
-      layers: <AiOutputLayer>[
-        AiOutputLayer(
-          id: 'layer-approved',
-          aiRunId: '00f4bb0c-66cc-4fec-80c3-f3ecc96175f4',
-          layerType: 'statistics',
-          status: 'approved',
-          name: 'Approved regional statistics',
-          description: 'Approved internally, not viewer-facing.',
-          storagePath: 'outputs/runs/phase-j/approved_statistics.json',
-          crs: 'EPSG:4326',
-          createdAt: DateTime.utc(2026, 6, 5, 10, 3),
-        ),
-      ],
-      reviews: _reviewHistory(),
-    );
-
-    await _pumpAiScreen(
-      tester,
-      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
-      project: project,
-      aiRepository: repository,
-      section: 'runs',
-    );
-
-    await tester.tap(find.text('Run 00f4bb0c'));
-    await tester.pumpAndSettle();
-
-    await tester.ensureVisible(find.text('Output layers'));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('Statistics: Report summary'), findsOneWidget);
-    await tester.tap(find.text('Layer details'));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('Status: Approved'), findsOneWidget);
-    expect(
-      find.textContaining('Status: Approved for future publication'),
-      findsNothing,
-    );
-    expect(
-      find.textContaining('Usage: Review/report summary only'),
-      findsOneWidget,
-    );
-    expect(
-      find.textContaining(
-        'Review decision: Approved for future publication by NCRS Administrator',
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.textContaining(
-        'Review reason: Metrics are acceptable for future publication review.',
-      ),
-      findsOneWidget,
-    );
-    expect(find.textContaining('Published:'), findsNothing);
-    expect(find.textContaining('approved_statistics.json'), findsNothing);
-  });
-
-  testWidgets('AI output layer section shows rejected reasons clearly', (
-    tester,
-  ) async {
-    await tester.binding.setSurfaceSize(const Size(1080, 2200));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-
-    final project = _project();
-    final repository = FakeAiRepository(
-      settings: fakeAiSettings(projectId: project.id),
-      readiness: fakeReadiness(projectId: project.id),
-      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
-      layers: const <AiOutputLayer>[
-        AiOutputLayer(
-          id: 'layer-rejected',
-          layerType: 'statistics',
-          status: 'rejected',
-          name: 'Rejected regional statistics',
-        ),
-      ],
-      reviews: <AiReviewDecision>[
-        AiReviewDecision(
-          id: 'review-rejected',
-          aiRunId: '00f4bb0c-66cc-4fec-80c3-f3ecc96175f4',
-          decision: 'rejected',
-          reason: 'Need broader regional validation before publishing.',
-          decidedBy: 'NCRS Administrator',
-          decidedAt: DateTime.utc(2026, 6, 6, 11),
-        ),
-      ],
-    );
-
-    await _pumpAiScreen(
-      tester,
-      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
-      project: project,
-      aiRepository: repository,
-      section: 'runs',
-    );
-
-    await tester.tap(find.text('Run 00f4bb0c'));
-    await tester.pumpAndSettle();
-
-    await tester.ensureVisible(find.text('Output layers'));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('Statistics: Report summary'), findsOneWidget);
-    await tester.tap(find.text('Layer details'));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('Status: Rejected'), findsOneWidget);
-    expect(
-      find.textContaining('Review decision: Rejected by NCRS Administrator'),
-      findsOneWidget,
-    );
-    expect(
-      find.textContaining(
-        'Review reason: Need broader regional validation before publishing.',
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.textContaining('Usage: Review/report summary only'),
-      findsOneWidget,
-    );
-  });
-
-  testWidgets('review section records protected super-admin decisions safely', (
-    tester,
-  ) async {
-    await tester.binding.setSurfaceSize(const Size(1080, 1900));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-
-    final project = _project();
-    final repository = FakeAiRepository(
-      settings: fakeAiSettings(projectId: project.id),
-      readiness: fakeReadiness(projectId: project.id),
-      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
-      layers: _reviewableLayers(),
-    );
-
-    await _pumpAiScreen(
-      tester,
-      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
-      project: project,
-      aiRepository: repository,
-      section: 'runs',
-    );
-
-    await tester.tap(find.text('Run 00f4bb0c'));
-    await tester.pumpAndSettle();
-
-    await tester.ensureVisible(find.text('Review result'));
-    await tester.pumpAndSettle();
-
-    expect(
-      find.text('No review decision has been recorded yet.'),
-      findsOneWidget,
-    );
-    expect(find.text('Approve'), findsOneWidget);
-    expect(find.text('Reject'), findsOneWidget);
-    expect(find.text('Request data'), findsOneWidget);
-    expect(find.text('Publish now'), findsNothing);
-    expect(
-      find.text(
-        'Review decisions prepare AI results for a separate publishing step. They do not publish map layers by themselves.',
-      ),
-      findsOneWidget,
-    );
-    expect(find.textContaining('Approve accepts the result'), findsOneWidget);
-
-    await tester.tap(find.text('Reject'));
-    await tester.pumpAndSettle();
-
-    expect(repository.reviewCount, 0);
-    expect(find.text('Please add a reason before rejecting.'), findsOneWidget);
-
-    await tester.tap(find.text('Request data'));
-    await tester.pumpAndSettle();
-
-    expect(repository.reviewCount, 0);
-    expect(find.text('Please explain what data is needed.'), findsOneWidget);
-
-    await tester.enterText(
-      find.widgetWithText(TextField, 'Review reason or comment'),
-      'Metrics need more review before publication.',
-    );
-    await tester.tap(find.text('Reject'));
-    await tester.pumpAndSettle();
-
-    expect(repository.reviewCount, 1);
-    expect(
-      find.text('AI review saved. No viewer-facing layer was published.'),
-      findsOneWidget,
-    );
-    expect(find.text('Latest decision'), findsOneWidget);
-    expect(find.textContaining('Decision: Rejected'), findsOneWidget);
-    expect(
-      find.textContaining(
-        'Reason: Metrics need more review before publication.',
-      ),
-      findsOneWidget,
-    );
-  });
-
-  testWidgets('review actions keep mobile layout aligned', (tester) async {
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-
-    await tester.binding.setSurfaceSize(const Size(390, 1500));
-    final project = _project();
-    final repository = FakeAiRepository(
-      settings: fakeAiSettings(projectId: project.id),
-      readiness: fakeReadiness(projectId: project.id),
-      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
-      layers: _reviewableLayers(),
-    );
-
-    await _pumpAiScreen(
-      tester,
-      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
-      project: project,
-      aiRepository: repository,
-      section: 'runs',
-    );
-
-    await tester.ensureVisible(find.text('Run 00f4bb0c'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Run 00f4bb0c'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Approve'));
-    await tester.pumpAndSettle();
-
-    final mobileApprove = tester.getRect(
-      find.widgetWithText(FilledButton, 'Approve'),
-    );
-    final mobileReason = tester.getRect(
-      find.widgetWithText(TextField, 'Review reason or comment'),
-    );
-    final mobileReject = tester.getRect(
-      find.widgetWithText(OutlinedButton, 'Reject'),
-    );
-    final mobileRequest = tester.getRect(
-      find.widgetWithText(OutlinedButton, 'Request data'),
-    );
-    final mobileKeep = tester.getRect(
-      find.widgetWithText(OutlinedButton, 'Keep draft'),
-    );
-
-    expect(mobileReason.left, closeTo(mobileApprove.left, 1));
-    expect(mobileReason.width, closeTo(mobileApprove.width, 1));
-    final secondaryActionsShareRow =
-        (mobileReject.top - mobileRequest.top).abs() < 1;
-    if (secondaryActionsShareRow) {
-      expect(mobileApprove.width, greaterThan(mobileReject.width));
-    } else {
-      expect(mobileReject.width, closeTo(mobileApprove.width, 1));
-      expect(mobileRequest.width, closeTo(mobileApprove.width, 1));
-      expect(mobileRequest.top, greaterThan(mobileReject.top));
-    }
-    expect(mobileKeep.left, closeTo(mobileApprove.left, 1));
-    expect(mobileKeep.width, closeTo(mobileApprove.width, 1));
-  });
-
-  testWidgets('review actions keep wide layout aligned', (tester) async {
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-
-    await tester.binding.setSurfaceSize(const Size(1080, 1500));
-    final project = _project();
-    final repository = FakeAiRepository(
-      settings: fakeAiSettings(projectId: project.id),
-      readiness: fakeReadiness(projectId: project.id),
-      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
-      layers: _reviewableLayers(),
-    );
-
-    await _pumpAiScreen(
-      tester,
-      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
-      project: project,
-      aiRepository: repository,
-      section: 'runs',
-    );
-
-    await tester.ensureVisible(find.text('Run 00f4bb0c'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Run 00f4bb0c'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Approve'));
-    await tester.pumpAndSettle();
-
-    final wideReject = tester.getRect(
-      find.widgetWithText(OutlinedButton, 'Reject'),
-    );
-    final wideReason = tester.getRect(
-      find.widgetWithText(TextField, 'Review reason or comment'),
-    );
-    final wideRequest = tester.getRect(
-      find.widgetWithText(OutlinedButton, 'Request data'),
-    );
-    final wideKeep = tester.getRect(
-      find.widgetWithText(OutlinedButton, 'Keep draft'),
-    );
-
-    expect(wideReason.left, closeTo(wideReject.left, 1));
-    expect(wideReason.width, closeTo(wideReject.width * 3 + 24, 2));
-    expect((wideReject.top - wideRequest.top).abs(), lessThan(1));
-    expect((wideReject.top - wideKeep.top).abs(), lessThan(1));
-    expect(wideReject.width, closeTo(wideRequest.width, 1));
-    expect(wideRequest.width, closeTo(wideKeep.width, 1));
-  });
-
-  testWidgets('approve and keep draft can be saved without a reason', (
-    tester,
-  ) async {
-    await tester.binding.setSurfaceSize(const Size(1080, 1900));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-
-    final project = _project();
-    final repository = FakeAiRepository(
-      settings: fakeAiSettings(projectId: project.id),
-      readiness: fakeReadiness(projectId: project.id),
-      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
-      layers: _reviewableLayers(),
-    );
-
-    await _pumpAiScreen(
-      tester,
-      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
-      project: project,
-      aiRepository: repository,
-      section: 'runs',
-    );
-
-    await tester.tap(find.text('Run 00f4bb0c'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Approve'));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Approve'));
-    await tester.pumpAndSettle();
-
-    expect(repository.reviewCount, 1);
-    expect(repository.reviews.first.decision, 'approved_for_publish');
-    expect(
-      repository.reviews.first.metadata['viewer_publication_enabled'],
-      false,
-    );
-    expect(
-      find.text('AI review saved. No viewer-facing layer was published.'),
-      findsOneWidget,
-    );
-
-    await tester.tap(find.text('Keep draft'));
-    await tester.pumpAndSettle();
-
-    expect(repository.reviewCount, 2);
-    expect(repository.reviews.first.decision, 'keep_draft');
-    expect(
-      repository.reviews.first.metadata['viewer_publication_enabled'],
-      false,
-    );
-  });
-
-  testWidgets('review history and unpublished layer state display cleanly', (
-    tester,
-  ) async {
+  testWidgets('statistics layers stay hidden from run details', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1080, 1900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -2713,6 +2409,7 @@ void main() {
           layerType: 'statistics',
           status: 'approved',
           name: 'Regional model statistics',
+          storagePath: 'outputs/runs/phase-j/statistics_layer.json',
         ),
       ],
       reviews: _reviewHistory(),
@@ -2729,38 +2426,63 @@ void main() {
     await tester.tap(find.text('Run 00f4bb0c'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Statistics: Report summary'), findsOneWidget);
-    expect(find.text('Not a map overlay'), findsOneWidget);
+    await tester.ensureVisible(find.text('Output Layer'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('No AI classification layer has been registered yet.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Statistics'), findsNothing);
+    expect(find.textContaining('statistics_layer.json'), findsNothing);
+    expect(find.text('Layer details'), findsNothing);
     expect(
       find.text('No viewer-facing AI layer is published yet.'),
       findsNothing,
     );
 
-    await tester.ensureVisible(find.text('Detailed run results'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Detailed run results'));
-    await tester.pumpAndSettle();
-
     expect(
       find.text('No viewer-facing AI layer is published yet.'),
-      findsOneWidget,
+      findsNothing,
+    );
+    expect(find.text('Detailed run results'), findsNothing);
+  });
+
+  testWidgets('review and publishing card is removed from run details', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1080, 1900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[_phaseFRegionalRun(projectId: project.id)],
+      layers: _phaseNReviewLayers(),
+      reviews: _reviewHistory(),
     );
 
-    await tester.ensureVisible(find.text('Review result'));
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    await tester.tap(find.text('Run 00f4bb0c'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Latest decision'), findsOneWidget);
-    expect(
-      find.textContaining('Decision: Approved for future publication'),
-      findsOneWidget,
-    );
-    expect(
-      find.textContaining(
-        'Reason: Metrics are acceptable for future publication review.',
-      ),
-      findsOneWidget,
-    );
-    expect(find.text('Publish now'), findsNothing);
+    expect(find.text('Output Layer'), findsOneWidget);
+    expect(find.text('Classification layer'), findsWidgets);
+    expect(find.text('Review and publishing'), findsNothing);
+    expect(find.text('Review result'), findsNothing);
+    expect(find.text('Approve'), findsNothing);
+    expect(find.text('Reject'), findsNothing);
+    expect(find.text('Request data'), findsNothing);
+    expect(find.text('Keep draft'), findsNothing);
+    expect(repository.reviewCount, 0);
   });
 
   testWidgets('model result is hidden when no metrics or summary exist', (
@@ -2807,17 +2529,11 @@ void main() {
 
     expect(find.text('Model result'), findsNothing);
     expect(find.textContaining('Accuracy:'), findsNothing);
-    await tester.ensureVisible(find.text('Detailed run results'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Detailed run results'));
-    await tester.pumpAndSettle();
-    expect(
-      find.text('This is a regional proof-of-concept, not a national model.'),
-      findsOneWidget,
-    );
+    expect(find.text('Detailed run results'), findsNothing);
+    expect(find.text('Technical output files'), findsOneWidget);
   });
 
-  testWidgets('worker logs are hidden by default, expandable, and redacted', (
+  testWidgets('worker logs section is removed from run details', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(1080, 1800));
@@ -2842,27 +2558,13 @@ void main() {
     await tester.tap(find.text('Run 00f4bb0c'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Worker logs'), findsOneWidget);
+    expect(find.text('AI server logs'), findsNothing);
     expect(
       find.text('Worker started regional model evaluation.'),
       findsNothing,
     );
     expect(find.textContaining('secret-value'), findsNothing);
-
-    await tester.ensureVisible(find.text('Worker logs'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Worker logs'));
-    await tester.pumpAndSettle();
-
-    expect(
-      find.text('Worker started regional model evaluation.'),
-      findsOneWidget,
-    );
-    expect(find.text('Feature extraction completed.'), findsOneWidget);
-    expect(find.textContaining('Step extracting_features'), findsWidgets);
-    expect(find.textContaining('2m 23s'), findsOneWidget);
-    expect(find.textContaining('secret-value'), findsNothing);
-    expect(find.textContaining('[redacted]'), findsOneWidget);
+    expect(find.textContaining('[redacted]'), findsNothing);
   });
 
   testWidgets('friendly labels describe safe non-model execution modes', (
@@ -2901,18 +2603,7 @@ void main() {
       find.textContaining('Execution mode: Regional feature extraction'),
       findsWidgets,
     );
-    await tester.ensureVisible(find.text('Detailed run results'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Detailed run results'));
-    await tester.pumpAndSettle();
-    expect(
-      find.text('Extracted satellite features for approved project samples.'),
-      findsOneWidget,
-    );
-    expect(
-      find.textContaining('Satellite collection: Sentinel-2'),
-      findsOneWidget,
-    );
+    expect(find.text('Detailed run results'), findsNothing);
 
     await tester.ensureVisible(find.text('Run ground-r'));
     await tester.pumpAndSettle();
@@ -2923,14 +2614,7 @@ void main() {
       find.textContaining('Execution mode: Ground truth export'),
       findsWidgets,
     );
-    await tester.ensureVisible(find.text('Detailed run results'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Detailed run results'));
-    await tester.pumpAndSettle();
-    expect(
-      find.text('Prepared approved project data for AI training.'),
-      findsOneWidget,
-    );
+    expect(find.text('Detailed run results'), findsNothing);
   });
 
   testWidgets('failed run details show failure reason and clean empty states', (
@@ -2965,25 +2649,13 @@ void main() {
 
     expect(find.text('Failure reason'), findsOneWidget);
     expect(find.textContaining('AI pipeline timed out'), findsWidgets);
-    expect(find.text('Worker logs'), findsOneWidget);
-    expect(
-      find.text('Worker logs will appear after processing starts.'),
-      findsNothing,
-    );
-    await tester.ensureVisible(find.text('Worker logs'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Worker logs'));
+    expect(find.text('AI server logs'), findsNothing);
+    expect(find.text('Technical output files'), findsOneWidget);
+    expect(find.text('Detailed run results'), findsNothing);
+    await tester.ensureVisible(find.text('Output Layer'));
     await tester.pumpAndSettle();
     expect(
-      find.text('Worker logs will appear after processing starts.'),
-      findsOneWidget,
-    );
-    await tester.ensureVisible(find.text('Detailed run results'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Detailed run results'));
-    await tester.pumpAndSettle();
-    expect(
-      find.text('No AI output layers are registered yet.'),
+      find.text('No AI classification layer has been registered yet.'),
       findsOneWidget,
     );
   });
@@ -3025,6 +2697,8 @@ void main() {
       section: 'runs',
     );
 
+    await tester.ensureVisible(find.text('Run run-seco'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Run run-seco'));
     await tester.pumpAndSettle();
 
@@ -3046,6 +2720,187 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Run summary'), findsNothing);
+  });
+
+  testWidgets('runs history loads beyond the first backend page latest first', (
+    tester,
+  ) async {
+    final project = _project();
+    final runs = List<AiRun>.generate(
+      105,
+      (index) => AiRun(
+        id: 'run-${index.toString().padLeft(3, '0')}',
+        projectId: project.id,
+        status: 'draft',
+        labelField: 'L4_descr',
+        scopeType: 'project',
+        trainingFeatureCount: 10,
+        eligibleFeatureCount: 10,
+        excludedFeatureCount: 0,
+        createdAt: DateTime.utc(2026, 1, 1).add(Duration(days: index)),
+      ),
+    );
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: runs,
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    expect(repository.runPageFetchCount, greaterThanOrEqualTo(2));
+    expect(find.text('Run run-104'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.text('Run run-000'),
+      900,
+      scrollable: find.byType(Scrollable).first,
+      maxScrolls: 30,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Run run-000'), findsOneWidget);
+  });
+
+  testWidgets('published AI layer panel stays concise', (tester) async {
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      runs: <AiRun>[
+        AiRun(
+          id: 'newer-active-run',
+          projectId: project.id,
+          status: 'running',
+          labelField: 'L4_descr',
+          scopeType: 'project',
+          trainingFeatureCount: 10,
+          eligibleFeatureCount: 10,
+          excludedFeatureCount: 0,
+          createdAt: DateTime.utc(2026, 6, 17),
+        ),
+        AiRun(
+          id: 'published-run-id',
+          projectId: project.id,
+          status: 'completed',
+          labelField: 'L4_descr',
+          scopeType: 'project',
+          trainingFeatureCount: 10,
+          eligibleFeatureCount: 10,
+          excludedFeatureCount: 0,
+          createdAt: DateTime.utc(2026, 6, 16),
+        ),
+      ],
+      layers: <AiOutputLayer>[
+        AiOutputLayer(
+          id: 'published-layer',
+          aiRunId: 'published-run-id',
+          projectId: project.id,
+          layerType: 'classification',
+          status: 'published',
+          name: 'Published classification',
+          predictionCount: 12,
+          publishedAt: DateTime.utc(2026, 6, 17),
+        ),
+      ],
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    expect(find.text('Open Active Run'), findsNothing);
+    expect(find.text('Open Published Run'), findsNothing);
+    expect(find.text('View on map'), findsNothing);
+    expect(find.text('Current Published AI Layer'), findsOneWidget);
+    expect(find.textContaining('Published Run: Run publishe'), findsOneWidget);
+    expect(find.textContaining('Prediction Count: 12'), findsOneWidget);
+    expect(find.textContaining('Published At:'), findsOneWidget);
+    expect(find.textContaining('Published layer:'), findsNothing);
+    expect(find.textContaining('Run ID:'), findsNothing);
+    expect(find.textContaining('Published by:'), findsNothing);
+  });
+
+  testWidgets('check status keeps the selected run details open', (
+    tester,
+  ) async {
+    final project = _project();
+    final repository = FakeAiRepository(
+      settings: fakeAiSettings(projectId: project.id),
+      readiness: fakeReadiness(projectId: project.id),
+      onFetchRunStatus: (current) => AiRun(
+        id: current.id,
+        projectId: current.projectId,
+        status: 'completed',
+        labelField: current.labelField,
+        scopeType: current.scopeType,
+        trainingFeatureCount: current.trainingFeatureCount,
+        eligibleFeatureCount: current.eligibleFeatureCount,
+        excludedFeatureCount: current.excludedFeatureCount,
+        progress: 1,
+        completedAt: DateTime.utc(2026, 6, 17, 8),
+        updatedAt: DateTime.utc(2026, 6, 17, 8),
+      ),
+      runs: <AiRun>[
+        AiRun(
+          id: 'check-status-run',
+          projectId: project.id,
+          status: 'running',
+          labelField: 'L4_descr',
+          scopeType: 'project',
+          trainingFeatureCount: 1406,
+          eligibleFeatureCount: 1394,
+          excludedFeatureCount: 12,
+          stage: 'training',
+          progress: 0.44,
+          canCancel: true,
+        ),
+      ],
+    );
+
+    await _pumpAiScreen(
+      tester,
+      session: _session(role: UserRole.admin, isProtectedSuperAdmin: true),
+      project: project,
+      aiRepository: repository,
+      section: 'runs',
+    );
+
+    await tester.tap(find.text('Run check-st'));
+    await tester.pumpAndSettle();
+    expect(find.text('Run summary'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Check status'));
+    await tester.tap(find.text('Check status'));
+    await tester.pumpAndSettle();
+
+    expect(repository.statusFetchCount, 1);
+    expect(find.text('Run summary'), findsOneWidget);
+    expect(find.textContaining('Status: Completed'), findsWidgets);
+    expect(find.text('Check status'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Run check-st'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Run check-st'));
+    await tester.pumpAndSettle();
+    expect(find.text('Run summary'), findsNothing);
+
+    await tester.ensureVisible(find.text('Run check-st'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Run check-st'));
+    await tester.pumpAndSettle();
+    expect(find.text('Run summary'), findsOneWidget);
+    expect(find.textContaining('Status: Completed'), findsWidgets);
   });
 
   testWidgets('backend readiness errors show clean UI copy', (tester) async {

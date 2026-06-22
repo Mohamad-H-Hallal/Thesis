@@ -6,9 +6,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:lebanese_gis_mobile/core/network/api_client.dart';
+import 'package:lebanese_gis_mobile/core/network/network_availability_base.dart';
 import 'package:lebanese_gis_mobile/core/offline/local_models.dart';
 import 'package:lebanese_gis_mobile/core/offline/local_store.dart';
 import 'package:lebanese_gis_mobile/core/providers/providers.dart';
+import 'package:lebanese_gis_mobile/core/router/route_paths.dart';
 import 'package:lebanese_gis_mobile/core/sync/sync_controller.dart';
 import 'package:lebanese_gis_mobile/core/sync/sync_engine.dart';
 import 'package:lebanese_gis_mobile/features/ai/domain/ai_models.dart';
@@ -112,6 +114,16 @@ class _AuthenticatedAuthController extends AuthController {
   }
 }
 
+class _AlwaysOnlineNetworkAvailability implements NetworkAvailabilityService {
+  const _AlwaysOnlineNetworkAvailability();
+
+  @override
+  Stream<bool> get onOnlineStatusChanged => const Stream<bool>.empty();
+
+  @override
+  Future<bool> isOnline() async => true;
+}
+
 class _FakeLocalStore implements LocalStore {
   @override
   Future<void> cacheProjects(List<ProjectSummary> projects) async {}
@@ -130,6 +142,9 @@ class _FakeLocalStore implements LocalStore {
   Future<LocalDraftFeature?> getDraftById(String draftId) async => null;
 
   @override
+  Future<void> discardDraft(String draftId) async {}
+
+  @override
   Future<List<LocalDraftFeature>> getDrafts() async =>
       const <LocalDraftFeature>[];
 
@@ -143,6 +158,40 @@ class _FakeLocalStore implements LocalStore {
   Future<OfflineMapPackage?> getCurrentOfflineMapPackage({
     required String ownerUserId,
   }) async => null;
+
+  @override
+  Future<void> upsertOfflineProjectPackage(
+    OfflineProjectPackage package,
+  ) async {}
+
+  @override
+  Future<OfflineProjectPackage?> getOfflineProjectPackage({
+    required String ownerUserId,
+    required String projectId,
+  }) async => null;
+
+  @override
+  Future<List<OfflineProjectPackage>> getOfflineProjectPackages({
+    required String ownerUserId,
+  }) async => const <OfflineProjectPackage>[];
+
+  @override
+  Future<void> deleteOfflineProjectPackage({
+    required String ownerUserId,
+    required String projectId,
+  }) async {}
+
+  @override
+  Future<int> countOfflineProjectPackagesUsingBaseMap({
+    required String ownerUserId,
+    required String baseMapVersion,
+  }) async => 0;
+
+  @override
+  Future<int> countUnsyncedDraftsForProject({
+    required String ownerUserId,
+    required String projectId,
+  }) async => 0;
 
   @override
   Future<int> getPendingSyncCount() async => 0;
@@ -219,6 +268,7 @@ SyncController _buildSyncController() {
       apiClient: ApiClient(dio: Dio()),
     ),
     localStore: localStore,
+    networkAvailability: const _AlwaysOnlineNetworkAvailability(),
   );
 }
 
@@ -412,6 +462,9 @@ Widget _wrapWithScope({
     overrides: <Override>[
       aiRepositoryProvider.overrideWithValue(
         aiRepository ?? FakeAiRepository(layers: const <AiOutputLayer>[]),
+      ),
+      networkAvailabilityServiceProvider.overrideWithValue(
+        const _AlwaysOnlineNetworkAvailability(),
       ),
       projectMapViewportFeaturesProvider.overrideWith((ref, query) async {
         final features = await ref.watch(
@@ -618,7 +671,7 @@ void main() {
       expect(find.text('Search visible features'), findsNothing);
       expect(find.text('Karim'), findsOneWidget);
 
-      await tester.tap(find.byTooltip('Show quick filters'));
+      await tester.tap(find.byTooltip('Filter'));
       await tester.pumpAndSettle();
 
       expect(find.widgetWithText(FilterChip, 'All pins'), findsOneWidget);
@@ -631,7 +684,7 @@ void main() {
 
       expect(locationService.callCount, 1);
 
-      await tester.tap(find.byTooltip('Hide quick filters'));
+      await tester.tap(find.byTooltip('Hide'));
       await tester.pumpAndSettle();
 
       expect(find.text('Search visible features'), findsNothing);
@@ -656,7 +709,7 @@ void main() {
         findsOneWidget,
       );
 
-      await tester.tap(find.byTooltip('Show quick filters'));
+      await tester.tap(find.byTooltip('Filter'));
       await tester.pumpAndSettle();
       await tester.ensureVisible(
         find.widgetWithText(FilterChip, 'Pending review'),
@@ -761,36 +814,30 @@ void main() {
       await tester.tap(find.byTooltip('Offline map'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Offline map'), findsOneWidget);
+      expect(find.text('Offline contribution'), findsOneWidget);
+      expect(find.text('Offline contribution resources'), findsOneWidget);
       expect(find.byTooltip('Close offline map'), findsNothing);
       expect(find.byTooltip('Current location'), findsNothing);
       expect(
-        find.textContaining('stays readable without signal'),
-        findsOneWidget,
-      );
-      expect(
         find.textContaining(
-          'Saved imagery is stored on this device for the signed-in user',
+          'Download this project and the shared Lebanon Satellite base map',
         ),
         findsOneWidget,
       );
       expect(
-        find.textContaining('refreshing it online replaces older cached tiles'),
+        find.textContaining(
+          'Project features, AI predictions, and validation pins are not downloaded',
+        ),
         findsOneWidget,
       );
-      expect(find.text('Save Lebanon overview'), findsOneWidget);
-      expect(find.text('Save this view'), findsOneWidget);
-      expect(find.text('Refresh saved imagery'), findsOneWidget);
-      expect(find.text('Delete saved imagery'), findsOneWidget);
-      expect(
-        find.textContaining('currently visible on screen in the current style'),
-        findsOneWidget,
-      );
+      expect(find.text('Download'), findsWidgets);
+      expect(find.text('Refresh'), findsWidgets);
+      expect(find.text('Delete'), findsWidgets);
 
       await tester.tapAt(const Offset(20, 20));
       await tester.pumpAndSettle();
 
-      expect(find.text('Offline map'), findsNothing);
+      expect(find.text('Offline contribution'), findsNothing);
     },
   );
 
@@ -841,7 +888,7 @@ void main() {
       expect(find.text('1 feature'), findsWidgets);
       expect(find.text('Viewer-visible'), findsNothing);
 
-      await tester.tap(find.byTooltip('Show quick filters'));
+      await tester.tap(find.byTooltip('Filter'));
       await tester.pumpAndSettle();
 
       expect(find.widgetWithText(FilterChip, 'All pins'), findsNothing);
@@ -1317,21 +1364,10 @@ void main() {
         name: 'South Lebanon Fruit Trees Training Dataset',
       );
       final layer = _publishedAiLayer();
-      final confidenceLayer = AiOutputLayer(
-        id: 'ai-layer-confidence',
-        aiRunId: 'ai-run-1',
-        projectId: 'project-1',
-        layerType: 'confidence',
-        status: 'published',
-        name: 'Published AI confidence',
-        publishedAt: DateTime.utc(2026, 6, 9),
-        publishedBy: 'admin-1',
-      );
       final fakeAiRepository = FakeAiRepository(
-        layers: <AiOutputLayer>[layer, confidenceLayer],
+        layers: <AiOutputLayer>[layer],
         layerFeatures: <String, AiLayerFeatureCollection>{
           layer.id: _publishedAiFeatureCollection(layer),
-          confidenceLayer.id: _publishedAiFeatureCollection(confidenceLayer),
         },
       );
 
@@ -1364,7 +1400,7 @@ void main() {
 
       expect(fakeAiRepository.layerFeatureFetchCounts[layer.id], isNull);
 
-      await tester.tap(find.byTooltip('Show quick filters'));
+      await tester.tap(find.byTooltip('Filter'));
       await tester.pumpAndSettle();
 
       expect(
@@ -1378,51 +1414,223 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(fakeAiRepository.layerFeatureFetchCounts[layer.id], 1);
-      expect(fakeAiRepository.layerFeatureFetchCounts[confidenceLayer.id], 1);
       expect(find.text('Hide published AI layer'), findsOneWidget);
       expect(
         fakeAiRepository.layerFeatureQueries
             .where((query) => query.classLabel == null)
             .length,
-        greaterThanOrEqualTo(2),
+        greaterThanOrEqualTo(1),
       );
-      expect(find.textContaining('Classification 1394'), findsOneWidget);
-      expect(find.textContaining('Confidence 1394'), findsOneWidget);
+      expect(find.textContaining('Confidence 1394'), findsNothing);
       expect(find.text('Olives'), findsOneWidget);
 
-      await tester.drag(find.text('Almonds'), const Offset(-280, 0));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Citrus Fruit Trees'));
-      await tester.pumpAndSettle();
-
-      expect(
-        fakeAiRepository.layerFeatureQueries.last.classLabel,
-        'citrus fruit trees',
-      );
-      expect(find.textContaining('Classification 181'), findsOneWidget);
-      expect(find.textContaining('Confidence 181'), findsOneWidget);
-      expect(find.textContaining('AI: Citrus'), findsNothing);
-
-      await tester.drag(find.text('Citrus Fruit Trees'), const Offset(280, 0));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Almonds'));
-      await tester.pumpAndSettle();
-
-      expect(fakeAiRepository.layerFeatureQueries.last.classLabel, 'almonds');
-      expect(find.textContaining('Classification 0'), findsOneWidget);
-      expect(find.textContaining('Confidence 0'), findsOneWidget);
-      expect(find.text('No AI predictions match this class.'), findsOneWidget);
-
-      await tester.drag(find.text('Almonds'), const Offset(360, 0));
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(ChoiceChip, 'All classes'));
-      await tester.pumpAndSettle();
-
-      expect(find.textContaining('Classification 1394'), findsOneWidget);
-      expect(find.text('No AI predictions match this class.'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('project map opens focused AI validation task from route', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(430, 932));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final repository = FakeAiRepository(
+      validationTasks: <AiPredictionValidationTask>[
+        fakeAiValidationTask(status: 'open', assignedTo: null),
+      ],
+    );
+
+    await tester.pumpWidget(
+      _wrapWithScope(
+        aiRepository: repository,
+        overrides: <Override>[
+          authControllerProvider.overrideWith(
+            (ref) =>
+                _AuthenticatedAuthController(_session(UserRole.contributor)),
+          ),
+          syncControllerProvider.overrideWith((ref) => _buildSyncController()),
+          mapProjectsProvider.overrideWith(
+            (ref) async => <ProjectSummary>[_projectSummary()],
+          ),
+          projectMapFeaturesProvider.overrideWith(
+            (ref, projectId) async => _projectFeatures(),
+          ),
+          offlineMapPackageProvider.overrideWith((ref) async => null),
+        ],
+        child: const MapScreen(
+          initialProjectId: 'project-1',
+          initialFeatureId: 'validation-task-1',
+          initialFeatureSource: AppRoutes.focusSourceAiValidationTask,
+          lockProjectSelection: true,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+
+    expect(find.text('AI validation task'), findsOneWidget);
+    expect(
+      find.text('AI validation task, not official field data.'),
+      findsOneWidget,
+    );
+    await tester.scrollUntilVisible(
+      find.text('Submit validation'),
+      180,
+      scrollable: find.byType(Scrollable).last,
+    );
+    expect(find.text('Submit validation'), findsOneWidget);
+    expect(find.text('Edit Draft'), findsNothing);
+    expect(find.text('Delete Draft'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('project map validation layer is separate and submits evidence', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(430, 932));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final repository = FakeAiRepository(
+      runs: <AiRun>[
+        AiRun(
+          id: 'run-1',
+          projectId: 'project-1',
+          status: 'ready_for_review',
+          labelField: 'L4_descr',
+          scopeType: 'project',
+          trainingFeatureCount: 1394,
+          eligibleFeatureCount: 1394,
+          excludedFeatureCount: 0,
+          selectedModel: 'random_forest',
+          metadata: const <String, dynamic>{
+            'trained_classes': <String>[
+              'Olives',
+              'Fruit Trees',
+              'Citrus Fruit Trees',
+            ],
+          },
+        ),
+      ],
+      validationTasks: <AiPredictionValidationTask>[
+        fakeAiValidationTask(status: 'open', assignedTo: null),
+      ],
+    );
+
+    await tester.pumpWidget(
+      _wrapWithScope(
+        aiRepository: repository,
+        overrides: <Override>[
+          authControllerProvider.overrideWith(
+            (ref) =>
+                _AuthenticatedAuthController(_session(UserRole.contributor)),
+          ),
+          syncControllerProvider.overrideWith((ref) => _buildSyncController()),
+          mapProjectsProvider.overrideWith(
+            (ref) async => <ProjectSummary>[_projectSummary()],
+          ),
+          projectMapFeaturesProvider.overrideWith(
+            (ref, projectId) async => _projectFeatures(),
+          ),
+          offlineMapPackageProvider.overrideWith((ref) async => null),
+        ],
+        child: const MapScreen(
+          initialProjectId: 'project-1',
+          lockProjectSelection: true,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.tap(find.byTooltip('Filter'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.widgetWithText(FilterChip, 'Show AI validation tasks (1)'),
+      findsOneWidget,
+    );
+    expect(find.text('Show published AI layer'), findsNothing);
+
+    await tester.tap(
+      find.widgetWithText(FilterChip, 'Show AI validation tasks (1)'),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Hide AI validation tasks'), findsOneWidget);
+    expect(find.textContaining('1 validation task'), findsWidgets);
+
+    await tester.tap(find.bySemanticsLabel('AI validation task marker'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('AI validation task'), findsOneWidget);
+    expect(
+      find.text('AI validation task, not official field data.'),
+      findsOneWidget,
+    );
+    expect(find.text('Edit Draft'), findsNothing);
+    expect(find.text('Delete Draft'), findsNothing);
+
+    await tester.scrollUntilVisible(
+      find.text('Submit validation'),
+      180,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.text('Submit validation'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Note / evidence'),
+      'Checked the AI prediction from the map workflow.',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Submit'));
+    await tester.pumpAndSettle();
+
+    expect(repository.validationSubmitCount, 1);
+    expect(repository.validationTasks.single.status, 'submitted');
+    expect(repository.validationTasks.single.noSpatialFeatureWrites, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('viewer cannot see validation task map layer', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(430, 932));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      _wrapWithScope(
+        aiRepository: FakeAiRepository(
+          validationTasks: <AiPredictionValidationTask>[
+            fakeAiValidationTask(status: 'open', assignedTo: null),
+          ],
+        ),
+        overrides: <Override>[
+          authControllerProvider.overrideWith(
+            (ref) => _AuthenticatedAuthController(_session(UserRole.viewer)),
+          ),
+          syncControllerProvider.overrideWith((ref) => _buildSyncController()),
+          mapProjectsProvider.overrideWith(
+            (ref) async => <ProjectSummary>[_projectSummary()],
+          ),
+          projectMapFeaturesProvider.overrideWith(
+            (ref, projectId) async => _projectFeatures(),
+          ),
+          offlineMapPackageProvider.overrideWith((ref) async => null),
+        ],
+        child: const MapScreen(
+          initialProjectId: 'project-1',
+          lockProjectSelection: true,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.tap(find.byTooltip('Filter'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('AI validation tasks'), findsNothing);
+    expect(find.bySemanticsLabel('AI validation task marker'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'project map hides AI overlay toggle when no layer is published',
@@ -1456,7 +1664,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
-      await tester.tap(find.byTooltip('Show quick filters'));
+      await tester.tap(find.byTooltip('Filter'));
       await tester.pumpAndSettle();
 
       expect(find.text('Show published AI layer'), findsNothing);
@@ -1562,6 +1770,9 @@ void main() {
             authControllerProvider.overrideWith(
               (ref) =>
                   _AuthenticatedAuthController(_session(UserRole.contributor)),
+            ),
+            networkAvailabilityServiceProvider.overrideWithValue(
+              const _AlwaysOnlineNetworkAvailability(),
             ),
             projectListProvider.overrideWith(
               (ref, scope) async => <ProjectSummary>[project],

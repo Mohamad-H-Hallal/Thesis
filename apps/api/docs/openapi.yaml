@@ -372,7 +372,7 @@ paths:
       security:
         - bearerAuth: []
       summary: List published AI prediction features for a project
-      description: Viewer-safe endpoint backed by ai_prediction_feature. Returns the primary published AI prediction collection, preferring classification rows so the main total_count is not a combined confidence/uncertainty row total. Separate layer_counts and total_prediction_row_count metadata describe confidence and uncertainty rows when those layer types are also published. AI predictions remain separate from spatial_feature and are read-only, not official field data.
+      description: Viewer-safe endpoint backed by ai_prediction_feature. Returns the one published AI classification collection for the project map. Confidence is an attribute on each classification feature, not a separate map layer, and does not filter validation eligibility. AI predictions remain separate from spatial_feature until an admin approves/promotes a prediction.
       parameters:
         - $ref: '#/components/parameters/projectId'
         - in: query
@@ -443,7 +443,7 @@ paths:
             maximum: 1
       responses:
         '200':
-          description: Published primary AI prediction FeatureCollection payload from the database, with separate per-layer count metadata.
+          description: Published AI classification FeatureCollection payload from the database.
         '401':
           description: Unauthorized
         '403':
@@ -505,7 +505,7 @@ paths:
       security:
         - bearerAuth: []
       summary: Generate AI prediction validation tasks
-      description: Admin-only endpoint. Creates open validation tasks from ai_prediction_feature rows, preferring uncertainty-layer predictions when available and otherwise low-confidence classification predictions. Generation is idempotent for active tasks and does not write to spatial_feature.
+      description: Legacy admin-only task endpoint. Creates open validation tasks from classification ai_prediction_feature rows. Confidence is metadata, generation is idempotent for active tasks, and the task workflow does not write to spatial_feature.
       parameters:
         - $ref: '#/components/parameters/projectId'
       requestBody:
@@ -665,6 +665,248 @@ paths:
           description: Forbidden
         '422':
           description: Readiness blockers prevent queueing
+  /api/v1/projects/{projectId}/ai/runs/{runId}/publish:
+    post:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Publish a completed AI run classification layer
+      description: Admin endpoint. Publishes the run's classification ai_output_layer for project-map visibility and contributor validation. Publishing does not promote predictions into spatial_feature; promotion happens only after admin review approval.
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - $ref: '#/components/parameters/runId'
+      responses:
+        '200':
+          description: AI run classification layer published
+        '400':
+          description: Run is not publishable
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: Project, run, or layer not found
+        '409':
+          description: Project AI is disabled or predictions are unavailable
+  /api/v1/projects/{projectId}/ai/runs/{runId}/unpublish:
+    post:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Unpublish a project AI run classification layer
+      description: Admin endpoint. Removes contributor validation visibility for the published classification layer without deleting predictions or promoted spatial features.
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - $ref: '#/components/parameters/runId'
+      responses:
+        '200':
+          description: AI run classification layer unpublished
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: Project, run, or layer not found
+        '409':
+          description: Run is not published
+  /api/v1/projects/{projectId}/ai/runs/{runId}/validation-summary:
+    get:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Get run-level AI prediction validation summary
+      description: Counts all classification prediction features for the run regardless of confidence, plus contributor-validation and admin-review totals.
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - $ref: '#/components/parameters/runId'
+      responses:
+        '200':
+          description: AI run validation summary
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: Project or run not found
+  /api/v1/projects/{projectId}/ai/runs/{runId}/validations:
+    get:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: List contributor validations for an AI run
+      description: Admin endpoint. Lists contributor validation submissions for classification predictions in the run.
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - $ref: '#/components/parameters/runId'
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        '200':
+          description: AI run contributor validation list
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: Project or run not found
+  /api/v1/projects/{projectId}/ai/runs/{runId}/predictions/{predictionId}:
+    get:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Get one AI prediction feature with validation state
+      description: Returns the classification prediction, confidence attribute, contributor validation summary, the current user's validation if any, and admin-review state.
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - $ref: '#/components/parameters/runId'
+        - $ref: '#/components/parameters/predictionId'
+      responses:
+        '200':
+          description: AI prediction feature details
+        '401':
+          description: Unauthorized
+        '403':
+          description: Prediction is unpublished or user lacks access
+        '404':
+          description: Prediction not found
+  /api/v1/projects/{projectId}/ai/predictions/{predictionId}/validations:
+    post:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Submit contributor validation for an AI prediction feature
+      description: Assigned contributors only. Each contributor can validate a published AI prediction once; many contributors can validate the same prediction.
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - $ref: '#/components/parameters/predictionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [validation_result]
+              properties:
+                validation_result:
+                  type: string
+                  enum: [correct, incorrect, unsure, cannot_verify]
+                corrected_class:
+                  type: string
+                  nullable: true
+                note:
+                  type: string
+                  nullable: true
+                photo_media_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                gps_location:
+                  type: object
+                  nullable: true
+                gps_accuracy_m:
+                  type: number
+                  nullable: true
+      responses:
+        '201':
+          description: Contributor validation saved
+        '400':
+          description: Invalid validation payload
+        '401':
+          description: Unauthorized
+        '403':
+          description: User is not an assigned contributor or layer is unpublished
+        '404':
+          description: Prediction not found
+        '409':
+          description: Contributor already validated this feature or validation is closed
+    get:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: List contributor validations for one AI prediction feature
+      description: Admin endpoint. Returns all contributor submissions for the prediction.
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - $ref: '#/components/parameters/predictionId'
+      responses:
+        '200':
+          description: AI prediction contributor validation list
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: Prediction not found
+  /api/v1/projects/{projectId}/ai/predictions/{predictionId}/my-validation:
+    get:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Get the current contributor's AI prediction validation
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - $ref: '#/components/parameters/predictionId'
+      responses:
+        '200':
+          description: Current user's validation or null
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: Prediction not found
+  /api/v1/projects/{projectId}/ai/predictions/{predictionId}/admin-review:
+    post:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Admin-review an AI prediction feature
+      description: Admin endpoint. Approving a prediction promotes it idempotently into spatial_feature with AI provenance and use_for_future_training=true; rejecting keeps the prediction for audit without promotion.
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - $ref: '#/components/parameters/predictionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approval_status]
+              properties:
+                approval_status:
+                  type: string
+                  enum: [approved, rejected, needs_more_validation]
+                approved_class:
+                  type: string
+                  nullable: true
+                admin_note:
+                  type: string
+                  nullable: true
+      responses:
+        '200':
+          description: Admin review saved
+        '400':
+          description: Invalid review payload
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: Prediction not found
+        '409':
+          description: Layer is unpublished or prediction cannot be reviewed
   /api/v1/ai/runs/{runId}:
     get:
       tags: [AI]
@@ -1978,6 +2220,13 @@ components:
     layerId:
       in: path
       name: layerId
+      required: true
+      schema:
+        type: string
+        format: uuid
+    predictionId:
+      in: path
+      name: predictionId
       required: true
       schema:
         type: string

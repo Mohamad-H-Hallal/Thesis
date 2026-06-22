@@ -39,10 +39,17 @@ class AppRoutes {
   static String projectAssignments(String id) =>
       '/app/projects/$id/assignments';
   static String projectDetails(String id) => '/app/projects/$id';
-  static String projectAi(String id, {String section = 'readiness'}) {
+  static String projectAi(
+    String id, {
+    String section = 'readiness',
+    String? runId,
+  }) {
     final uri = Uri(
       path: '/app/projects/$id/ai',
-      queryParameters: {'section': section},
+      queryParameters: {
+        'section': section,
+        if (runId != null && runId.trim().isNotEmpty) 'runId': runId,
+      },
     );
     return uri.toString();
   }

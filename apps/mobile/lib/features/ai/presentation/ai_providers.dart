@@ -51,10 +51,53 @@ final aiRunsProvider =
           );
     });
 
+final aiProjectRunsProvider = FutureProvider.family<List<AiRun>, String>((
+  ref,
+  projectId,
+) async {
+  ref.watch(workflowRefreshTickProvider);
+  const pageSize = 100;
+  var page = 1;
+  final runs = <AiRun>[];
+  final seen = <String>{};
+  while (true) {
+    final result = await ref
+        .read(aiRepositoryProvider)
+        .fetchRunsPage(projectId: projectId, page: page, limit: pageSize);
+    for (final run in result.items) {
+      if (seen.add(run.id)) {
+        runs.add(run);
+      }
+    }
+    if (!result.hasMore || result.items.isEmpty) {
+      break;
+    }
+    page += 1;
+  }
+  runs.sort(_compareAiRunsNewestFirst);
+  return runs;
+});
+
 final aiRunProvider = FutureProvider.family<AiRun, String>((ref, runId) async {
   ref.watch(workflowRefreshTickProvider);
   return ref.read(aiRepositoryProvider).fetchRun(runId: runId);
 });
+
+int _compareAiRunsNewestFirst(AiRun left, AiRun right) {
+  final leftDate = left.createdAt ?? left.startedAt ?? left.updatedAt;
+  final rightDate = right.createdAt ?? right.startedAt ?? right.updatedAt;
+  if (leftDate != null && rightDate != null) {
+    final dateCompare = rightDate.compareTo(leftDate);
+    if (dateCompare != 0) {
+      return dateCompare;
+    }
+  } else if (leftDate != null) {
+    return -1;
+  } else if (rightDate != null) {
+    return 1;
+  }
+  return left.id.compareTo(right.id);
+}
 
 final aiRunMetricsProvider = FutureProvider.family<List<AiRunMetric>, String>((
   ref,
@@ -71,6 +114,20 @@ final aiRunLayersProvider = FutureProvider.family<List<AiOutputLayer>, String>((
   ref.watch(workflowRefreshTickProvider);
   return ref.read(aiRepositoryProvider).fetchRunLayers(runId: runId);
 });
+
+final aiRunValidationSummaryProvider =
+    FutureProvider.family<
+      AiRunPredictionValidationSummary,
+      ({String projectId, String runId})
+    >((ref, query) async {
+      ref.watch(workflowRefreshTickProvider);
+      return ref
+          .read(aiRepositoryProvider)
+          .fetchRunValidationSummary(
+            projectId: query.projectId,
+            runId: query.runId,
+          );
+    });
 
 final publishedAiLayersProvider =
     FutureProvider.family<List<AiOutputLayer>, String>((ref, projectId) async {
@@ -104,6 +161,35 @@ final aiLayerFeaturesProvider =
           );
     });
 
+final aiPredictionFeatureDetailsProvider =
+    FutureProvider.family<
+      AiPredictionFeatureDetails,
+      ({String projectId, String runId, String predictionId})
+    >((ref, query) async {
+      ref.watch(workflowRefreshTickProvider);
+      return ref
+          .read(aiRepositoryProvider)
+          .fetchPredictionDetails(
+            projectId: query.projectId,
+            runId: query.runId,
+            predictionId: query.predictionId,
+          );
+    });
+
+final aiPredictionFeatureValidationsProvider =
+    FutureProvider.family<
+      List<AiPredictionFeatureValidation>,
+      ({String projectId, String predictionId})
+    >((ref, query) async {
+      ref.watch(workflowRefreshTickProvider);
+      return ref
+          .read(aiRepositoryProvider)
+          .fetchPredictionValidations(
+            projectId: query.projectId,
+            predictionId: query.predictionId,
+          );
+    });
+
 final paginatedAiLayerFeatureBrowserProvider = StateNotifierProvider.autoDispose
     .family<
       PaginatedListController<AiLayerFeature>,
@@ -128,8 +214,8 @@ final paginatedAiLayerFeatureBrowserProvider = StateNotifierProvider.autoDispose
             items: collection.features,
             page: page,
             limit: limit,
-            total: collection.matchingFeatureCount,
-            hasMore: page * limit < collection.matchingFeatureCount,
+            total: collection.featureCount,
+            hasMore: page * limit < collection.featureCount,
           );
         },
       );

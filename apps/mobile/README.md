@@ -1,6 +1,6 @@
-# AI-Enhanced Geospatial Mobile GIS Collector (Phase 4 UI)
+# TerraLeb Mobile App
 
-Professional Flutter UI foundation for the Lebanese ministry GIS collector.
+Professional Flutter app for field GIS collection, offline contribution, AI land intelligence, and validation workflows.
 
 ![Mobile Coverage Gate](https://img.shields.io/badge/Mobile%20coverage%20gate-enforced-brightgreen)
 ![Mobile Coverage Threshold](https://img.shields.io/badge/coverage%20threshold-lines%20%E2%89%A5%2019%25-blue)
@@ -79,11 +79,12 @@ dart format lib test
   - Projects, Notifications, Profile
 
 ## Branding assets
-- App name in UI: `Lebanon GIS Collector`
-- Thesis title branding used in app metadata: `AI-Enhanced Geospatial Mobile GIS Collector`
-- Placeholder logo asset: `assets/branding/logo_placeholder.svg`
-- App icon placeholder note:
-  - Use this logo as temporary source and generate icons later with tooling (e.g. `flutter_launcher_icons`) when final identity is approved.
+- App name in UI and platform labels: `TerraLeb`
+- Tagline: `Field GIS and AI land intelligence`
+- Primary light logo: `assets/branding/terraleb_mark_light.svg`
+- Primary dark logo: `assets/branding/terraleb_mark_dark.svg`
+- Icon-only logo: `assets/branding/terraleb_icon.svg`
+- Horizontal logos: `assets/branding/terraleb_horizontal_light.svg`, `assets/branding/terraleb_horizontal_dark.svg`
 
 ## Notes
 - Auth flow is wired to real backend endpoints by default (`/api/v1/auth/*`).
@@ -92,15 +93,25 @@ dart format lib test
 
 ## Phase 5 (offline-first core) added
 - Local offline store with SQLite on mobile/desktop and memory fallback on web.
+- The project map offline sheet downloads a selected-project offline package:
+  - project id/title/category/status
+  - collection form schema, classes/lookups, validation rules, photo policy, and cached contribution permissions
+  - no project feature layers, approved features, AI predictions, or validation pins
+- The Lebanon base/satellite map is a shared offline resource across downloaded projects. The app checks the backend manifest/version while online and reuses the cached base map when it is current. The Download action saves the Lebanon contribution basemap zoom range used for offline field orientation.
+  - Current offline contribution basemap range: zoom `7-13` over the configured Lebanon bounds.
+  - Expected storage depends on provider tile compression. The current bounds request about `2,279` tiles; typical satellite imagery is roughly `55-135 MB`, but dense imagery can be larger.
+- When a downloaded project is opened offline, project map resources and contribution saves use local storage only. If the project package is missing, the app shows: `This project is not downloaded for offline use. Connect to the internet and download it first.`
 - Draft feature save now writes locally and enqueues sync jobs.
 - Sync queue supports:
   - idempotency keys
+  - client-generated offline ids for retry-safe contribution sync
   - retry with exponential backoff
   - max retry cutoff with dead-letter state
   - explicit conflict state (not auto-retried)
   - queue status metrics (actionable vs blocked)
   - conflict handling using local vs remote version
-- Background sync timer runs every 25s and can be triggered manually from shell app bar sync action.
+- Sync runs only when network connectivity is available; the controller listens for connectivity changes and triggers sync immediately when the device moves from offline to online. It also checks on app start/resume. The offline sheet exposes manual `Sync now`, and reconnect/periodic sync keeps unsynced items on-device until each item succeeds.
+- Background sync timer runs every 25s and can be triggered manually from shell app bar sync action or the project map offline sheet.
 
 ## Phase 6 (field collection UX) added
 - Assignment-aware project access in collection flow.

@@ -54,6 +54,7 @@ class AppTheme {
         labelTextStyle: WidgetStateProperty.resolveWith((states) {
           final selected = states.contains(WidgetState.selected);
           return TextStyle(
+            fontSize: 11.5,
             fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
           );
         }),
@@ -61,6 +62,46 @@ class AppTheme {
       navigationDrawerTheme: NavigationDrawerThemeData(
         backgroundColor: scheme.surface,
         surfaceTintColor: Colors.transparent,
+        indicatorColor: scheme.primaryContainer,
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return IconThemeData(
+            color: selected
+                ? scheme.onPrimaryContainer
+                : scheme.onSurfaceVariant,
+          );
+        }),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return TextStyle(
+            fontSize: 13,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            color: selected ? scheme.onPrimaryContainer : scheme.onSurface,
+          );
+        }),
+      ),
+      menuTheme: MenuThemeData(
+        style: MenuStyle(
+          backgroundColor: WidgetStatePropertyAll(scheme.surfaceContainerHigh),
+          surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+          shape: WidgetStatePropertyAll(
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+      ),
+      popupMenuTheme: PopupMenuThemeData(
+        color: scheme.surfaceContainerHigh,
+        surfaceTintColor: Colors.transparent,
+        textStyle: TextStyle(color: scheme.onSurface),
+        iconColor: scheme.onSurfaceVariant,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+      dropdownMenuTheme: DropdownMenuThemeData(
+        textStyle: TextStyle(color: scheme.onSurface),
+        menuStyle: MenuStyle(
+          backgroundColor: WidgetStatePropertyAll(scheme.surfaceContainerHigh),
+          surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+        ),
       ),
       drawerTheme: DrawerThemeData(
         backgroundColor: scheme.surface,
@@ -96,6 +137,29 @@ class AppTheme {
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 14,
           vertical: 14,
+        ),
+      ),
+      searchBarTheme: SearchBarThemeData(
+        constraints: const BoxConstraints(minHeight: 48, maxHeight: 48),
+        elevation: const WidgetStatePropertyAll<double>(0),
+        shadowColor: const WidgetStatePropertyAll<Color>(Colors.transparent),
+        surfaceTintColor: const WidgetStatePropertyAll<Color>(
+          Colors.transparent,
+        ),
+        backgroundColor: WidgetStatePropertyAll<Color>(
+          scheme.surfaceContainerHighest,
+        ),
+        shape: WidgetStatePropertyAll<OutlinedBorder>(
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
+        padding: const WidgetStatePropertyAll<EdgeInsetsGeometry>(
+          EdgeInsets.symmetric(horizontal: 12),
+        ),
+        textStyle: WidgetStatePropertyAll<TextStyle?>(
+          base.textTheme.bodyMedium,
+        ),
+        hintStyle: WidgetStatePropertyAll<TextStyle?>(
+          base.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(

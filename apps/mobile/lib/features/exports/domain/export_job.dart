@@ -1,6 +1,6 @@
 enum ExportFormat { shapefile, geojson }
 
-enum ExportJobStatus { pending, processing, completed, failed }
+enum ExportJobStatus { pending, processing, completed, failed, expired }
 
 class ExportJobsQuery {
   const ExportJobsQuery({
@@ -42,6 +42,11 @@ class ExportJob {
     this.fileSizeBytes,
     this.recordCount,
     this.errorMessage,
+    this.displayMessage,
+    this.fileStatus,
+    this.retentionExpiresAt,
+    this.retentionExpiredAt,
+    this.canRegenerate,
     this.completedAt,
     this.downloadedAt,
     this.localFilePath,
@@ -59,12 +64,22 @@ class ExportJob {
   final int? fileSizeBytes;
   final int? recordCount;
   final String? errorMessage;
+  final String? displayMessage;
+  final String? fileStatus;
+  final DateTime? retentionExpiresAt;
+  final DateTime? retentionExpiredAt;
+  final bool? canRegenerate;
   final DateTime? completedAt;
   final DateTime? downloadedAt;
   final String? localFilePath;
 
   bool get canDownload =>
       status == ExportJobStatus.completed && filePath != null;
+
+  bool get canRetryOrRegenerate =>
+      status == ExportJobStatus.failed ||
+      status == ExportJobStatus.expired ||
+      canRegenerate == true;
 
   ExportJob copyWith({
     ExportJobStatus? status,
@@ -73,6 +88,11 @@ class ExportJob {
     int? fileSizeBytes,
     int? recordCount,
     String? errorMessage,
+    String? displayMessage,
+    String? fileStatus,
+    DateTime? retentionExpiresAt,
+    DateTime? retentionExpiredAt,
+    bool? canRegenerate,
     DateTime? completedAt,
     DateTime? downloadedAt,
     String? localFilePath,
@@ -90,6 +110,11 @@ class ExportJob {
       fileSizeBytes: fileSizeBytes ?? this.fileSizeBytes,
       recordCount: recordCount ?? this.recordCount,
       errorMessage: errorMessage ?? this.errorMessage,
+      displayMessage: displayMessage ?? this.displayMessage,
+      fileStatus: fileStatus ?? this.fileStatus,
+      retentionExpiresAt: retentionExpiresAt ?? this.retentionExpiresAt,
+      retentionExpiredAt: retentionExpiredAt ?? this.retentionExpiredAt,
+      canRegenerate: canRegenerate ?? this.canRegenerate,
       completedAt: completedAt ?? this.completedAt,
       downloadedAt: downloadedAt ?? this.downloadedAt,
       localFilePath: localFilePath ?? this.localFilePath,
@@ -131,6 +156,9 @@ class ExportDashboardMetrics {
           break;
         case ExportJobStatus.failed:
           failed += 1;
+          break;
+        case ExportJobStatus.expired:
+          completed += 1;
           break;
       }
     }

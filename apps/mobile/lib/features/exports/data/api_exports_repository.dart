@@ -231,7 +231,7 @@ class ApiExportsRepository implements ExportsRepository {
       }
     }
 
-    if (failedJob == null || failedJob.status != ExportJobStatus.failed) {
+    if (failedJob == null || !failedJob.canRetryOrRegenerate) {
       return null;
     }
 
@@ -240,7 +240,10 @@ class ApiExportsRepository implements ExportsRepository {
       projectId: failedJob.projectId,
       projectName: failedJob.projectName,
       format: failedJob.format,
-      exportParameters: failedJob.exportParameters,
+      exportParameters: <String, dynamic>{
+        ...failedJob.exportParameters,
+        'regenerated_from_export_id': failedJob.id,
+      },
     );
   }
 
@@ -264,13 +267,17 @@ class ApiExportsRepository implements ExportsRepository {
   }
 
   ExportJob _mapExportJob(Map<String, dynamic> row) {
-    final status = _toStatus(row['status'] as String?);
+    final status = _toStatus(
+      (row['display_status'] as String?) ?? (row['status'] as String?),
+    );
     final formatRaw = _toMap(row['export_parameters'])['format'] as String?;
     final format = formatRaw == 'shapefile'
         ? ExportFormat.shapefile
         : ExportFormat.geojson;
     final requestedAtRaw = row['requested_at'] as String?;
     final completedAtRaw = row['completed_at'] as String?;
+    final retentionExpiresAtRaw = row['retention_expires_at'] as String?;
+    final retentionExpiredAtRaw = row['retention_expired_at'] as String?;
 
     return ExportJob(
       id: (row['id'] as String?) ?? '',
@@ -285,6 +292,11 @@ class ApiExportsRepository implements ExportsRepository {
       fileSizeBytes: _toInt(row['file_size_bytes']),
       recordCount: _toInt(row['feature_count']),
       errorMessage: row['error_message'] as String?,
+      displayMessage: row['display_message'] as String?,
+      fileStatus: row['file_status'] as String?,
+      retentionExpiresAt: DateTime.tryParse(retentionExpiresAtRaw ?? ''),
+      retentionExpiredAt: DateTime.tryParse(retentionExpiredAtRaw ?? ''),
+      canRegenerate: row['can_regenerate'] == true,
       completedAt: DateTime.tryParse(completedAtRaw ?? ''),
       downloadedAt: null,
       localFilePath: null,
@@ -299,6 +311,8 @@ class ApiExportsRepository implements ExportsRepository {
         return ExportJobStatus.completed;
       case 'failed':
         return ExportJobStatus.failed;
+      case 'expired':
+        return ExportJobStatus.expired;
       default:
         return ExportJobStatus.pending;
     }

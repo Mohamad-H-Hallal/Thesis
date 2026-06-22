@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:lebanese_gis_mobile/core/providers/providers.dart';
+import 'package:lebanese_gis_mobile/core/router/route_paths.dart';
 import 'package:lebanese_gis_mobile/features/ai/domain/ai_models.dart';
 import 'package:lebanese_gis_mobile/features/ai/presentation/ai_providers.dart';
 import 'package:lebanese_gis_mobile/features/ai/presentation/screens/ai_validation_tasks_screen.dart';
@@ -139,6 +141,24 @@ Widget _wrap({
   );
 }
 
+Widget _wrapWithRouter({
+  required AuthSession session,
+  required FakeAiRepository repository,
+  required GoRouter router,
+}) {
+  final project = _project();
+  return ProviderScope(
+    overrides: [
+      authControllerProvider.overrideWith(
+        (_) => _AuthenticatedAuthController(session),
+      ),
+      aiRepositoryProvider.overrideWithValue(repository),
+      projectByIdProvider.overrideWith((ref, id) async => project),
+    ],
+    child: MaterialApp.router(routerConfig: router),
+  );
+}
+
 void main() {
   group('AiValidationTasksScreen', () {
     testWidgets('contributor sees available project AI validation tasks', (
@@ -158,11 +178,65 @@ void main() {
       expect(find.text('AI Validation'), findsOneWidget);
       expect(find.text('Olives'), findsOneWidget);
       expect(
-        find.text('AI validation task, not official field data.'),
+        find.text(
+          'AI validation task. Confidence is metadata and does not block review.',
+        ),
         findsOneWidget,
       );
       expect(find.text('Open to project contributors'), findsOneWidget);
       expect(find.text('Submit validation'), findsOneWidget);
+    });
+
+    testWidgets('open on map routes with validation task id', (tester) async {
+      final repository = FakeAiRepository(
+        validationTasks: <AiPredictionValidationTask>[
+          fakeAiValidationTask(
+            id: 'validation-task-1',
+            aiPredictionFeatureId: 'prediction-1',
+            status: 'open',
+            assignedTo: null,
+          ),
+        ],
+      );
+      late final GoRouter router;
+      router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (context, state) =>
+                const Scaffold(body: AiValidationTasksScreen()),
+          ),
+          GoRoute(
+            path: '/app/projects/:projectId/map',
+            builder: (context, state) => Scaffold(
+              body: Text(state.uri.toString(), key: const Key('map-location')),
+            ),
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        _wrapWithRouter(
+          session: _session(UserRole.contributor),
+          repository: repository,
+          router: router,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Open on map'));
+      await tester.pumpAndSettle();
+
+      final location = tester.widget<Text>(
+        find.byKey(const Key('map-location')),
+      );
+      expect(location.data, contains('featureId=validation-task-1'));
+      expect(
+        location.data,
+        contains('focusSource=${AppRoutes.focusSourceAiValidationTask}'),
+      );
+      expect(location.data, isNot(contains('featureId=prediction-1')));
     });
 
     testWidgets('contributor empty state is clear', (tester) async {

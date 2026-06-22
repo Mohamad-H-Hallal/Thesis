@@ -430,14 +430,7 @@ const importValidation = {
   ] as ValidationChain[],
 };
 
-const aiScopeTypes = [
-  'project',
-  'governorate',
-  'district',
-  'city',
-  'custom_polygon',
-  'national',
-];
+const aiScopeTypes = ['project', 'governorate', 'district', 'city', 'custom_polygon', 'national'];
 const aiPredictionValidationTaskStatuses = [
   'open',
   'assigned',
@@ -447,11 +440,18 @@ const aiPredictionValidationTaskStatuses = [
   'rejected',
   'cancelled',
 ];
-const aiPredictionValidationResults = [
-  'correct',
-  'wrong_class',
-  'not_target_class',
-  'unsure',
+const aiPredictionValidationResults = ['correct', 'wrong_class', 'not_target_class', 'unsure'];
+const aiPredictionFeatureValidationResults = ['correct', 'incorrect', 'unsure', 'cannot_verify'];
+const aiPreferredModels = [
+  'auto',
+  'random_forest',
+  'rf',
+  'svm',
+  'svm_rbf',
+  'gradient_boosting',
+  'gradient_boost',
+  'gradient_tree_boost',
+  'gb',
 ];
 
 const aiValidation = {
@@ -461,10 +461,7 @@ const aiValidation = {
       .trim()
       .isLength({ min: 1, max: 120 })
       .withMessage('label_field must be between 1 and 120 characters'),
-    queryParam('scope_type')
-      .optional()
-      .isIn(aiScopeTypes)
-      .withMessage('scope_type is invalid'),
+    queryParam('scope_type').optional().isIn(aiScopeTypes).withMessage('scope_type is invalid'),
     queryParam('min_samples_per_class')
       .optional()
       .isInt({ min: 1, max: 10000 })
@@ -477,10 +474,7 @@ const aiValidation = {
       .trim()
       .isLength({ min: 1, max: 120 })
       .withMessage('label_field must be between 1 and 120 characters'),
-    body('scope_type')
-      .optional()
-      .isIn(aiScopeTypes)
-      .withMessage('scope_type is invalid'),
+    body('scope_type').optional().isIn(aiScopeTypes).withMessage('scope_type is invalid'),
     body('scope_geometry')
       .optional({ nullable: true })
       .custom((value) => {
@@ -503,21 +497,28 @@ const aiValidation = {
       .optional()
       .isObject()
       .withMessage('model_preferences must be an object'),
+    body('model_preferences.preferred_model')
+      .optional()
+      .custom((value) => {
+        const model = String(value ?? '')
+          .trim()
+          .toLowerCase()
+          .replace(/[-\s]+/g, '_');
+        return model.length === 0 || aiPreferredModels.includes(model);
+      })
+      .withMessage('preferred_model must be Auto, Random Forest, SVM, or Gradient Boosting'),
   ] as ValidationChain[],
   createRun: [
     body('status')
       .optional()
-      .isIn(['draft', 'queued'])
-      .withMessage('status must be draft or queued'),
+      .isIn(['draft', 'queued', 'created', 'starting', 'running'])
+      .withMessage('status must be draft, queued, created, starting, or running'),
     body('label_field')
       .optional()
       .trim()
       .isLength({ min: 1, max: 120 })
       .withMessage('label_field must be between 1 and 120 characters'),
-    body('scope_type')
-      .optional()
-      .isIn(aiScopeTypes)
-      .withMessage('scope_type is invalid'),
+    body('scope_type').optional().isIn(aiScopeTypes).withMessage('scope_type is invalid'),
     body('scope_geometry')
       .optional({ nullable: true })
       .custom((value) => {
@@ -560,12 +561,18 @@ const aiValidation = {
       .optional()
       .isIn([
         'draft',
+        'created',
         'queued',
+        'starting',
+        'running',
         'extracting_features',
         'training',
         'evaluating',
         'classifying',
         'ready_for_review',
+        'completed',
+        'cancelling',
+        'paused',
         'published',
         'failed',
         'cancelled',
@@ -575,7 +582,9 @@ const aiValidation = {
   reviewRun: [
     body('action')
       .isIn(['approve_for_publication', 'reject', 'request_more_data', 'keep_draft'])
-      .withMessage('action must be approve_for_publication, reject, request_more_data, or keep_draft'),
+      .withMessage(
+        'action must be approve_for_publication, reject, request_more_data, or keep_draft',
+      ),
     body()
       .custom((value) => {
         const action = value?.action;
@@ -597,14 +606,8 @@ const aiValidation = {
       .optional()
       .isIn(aiPredictionValidationTaskStatuses)
       .withMessage('status is invalid'),
-    queryParam('assigned_to')
-      .optional()
-      .isUUID()
-      .withMessage('assigned_to must be a valid UUID'),
-    queryParam('ai_run_id')
-      .optional()
-      .isUUID()
-      .withMessage('ai_run_id must be a valid UUID'),
+    queryParam('assigned_to').optional().isUUID().withMessage('assigned_to must be a valid UUID'),
+    queryParam('ai_run_id').optional().isUUID().withMessage('ai_run_id must be a valid UUID'),
   ] as ValidationChain[],
   generatePredictionValidationTasks: [
     body('ai_run_id')
@@ -643,9 +646,7 @@ const aiValidation = {
     body('assigned_to').isUUID().withMessage('assigned_to must be a valid UUID'),
   ] as ValidationChain[],
   updatePredictionValidationTaskStatus: [
-    body('status')
-      .isIn(aiPredictionValidationTaskStatuses)
-      .withMessage('status is invalid'),
+    body('status').isIn(aiPredictionValidationTaskStatuses).withMessage('status is invalid'),
   ] as ValidationChain[],
   submitPredictionValidation: [
     body('result')
@@ -665,7 +666,9 @@ const aiValidation = {
     body()
       .custom((value) => {
         if (value?.result === 'wrong_class') {
-          return typeof value?.corrected_class === 'string' && value.corrected_class.trim().length > 0;
+          return (
+            typeof value?.corrected_class === 'string' && value.corrected_class.trim().length > 0
+          );
         }
         return true;
       })
@@ -673,7 +676,11 @@ const aiValidation = {
     body()
       .custom((value) => {
         if (value?.result === 'not_target_class') {
-          return value?.corrected_class === undefined || value?.corrected_class === null || String(value.corrected_class).trim().length === 0;
+          return (
+            value?.corrected_class === undefined ||
+            value?.corrected_class === null ||
+            String(value.corrected_class).trim().length === 0
+          );
         }
         return true;
       })
@@ -709,6 +716,101 @@ const aiValidation = {
       })
       .withMessage('reason is required when decision is rejected'),
   ] as ValidationChain[],
+  submitPredictionFeatureValidation: [
+    body('validation_result')
+      .optional({ nullable: true })
+      .isIn(aiPredictionFeatureValidationResults)
+      .withMessage('validation_result must be correct, incorrect, unsure, or cannot_verify'),
+    body('result')
+      .optional({ nullable: true })
+      .isIn(aiPredictionFeatureValidationResults)
+      .withMessage('result must be correct, incorrect, unsure, or cannot_verify'),
+    body()
+      .custom((value) => Boolean(value?.validation_result || value?.result))
+      .withMessage('validation_result is required'),
+    body('note')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 4000 })
+      .withMessage('note must be 4000 characters or fewer'),
+    body('corrected_class')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ min: 1, max: 200 })
+      .withMessage('corrected_class must be between 1 and 200 characters'),
+    body()
+      .custom((value) => {
+        const result = value?.validation_result ?? value?.result;
+        if (result === 'incorrect') {
+          return (
+            typeof value?.corrected_class === 'string' && value.corrected_class.trim().length > 0
+          );
+        }
+        return true;
+      })
+      .withMessage('corrected_class is required when validation_result is incorrect'),
+    body()
+      .custom((value) => {
+        const result = value?.validation_result ?? value?.result;
+        if (result !== 'incorrect') {
+          return (
+            value?.corrected_class === undefined ||
+            value?.corrected_class === null ||
+            String(value.corrected_class).trim().length === 0
+          );
+        }
+        return true;
+      })
+      .withMessage('corrected_class is only allowed when validation_result is incorrect'),
+    body('photo_media_ids')
+      .optional({ nullable: true })
+      .isArray()
+      .withMessage('photo_media_ids must be an array'),
+    body('photo_media_ids.*')
+      .optional()
+      .isString()
+      .withMessage('photo_media_ids entries must be strings'),
+    body('gps_location')
+      .optional({ nullable: true })
+      .isObject()
+      .withMessage('gps_location must be an object'),
+    body('gps_accuracy_m')
+      .optional({ nullable: true })
+      .isFloat({ min: 0 })
+      .withMessage('gps_accuracy_m must be zero or greater'),
+    body('metadata')
+      .optional({ nullable: true })
+      .isObject()
+      .withMessage('metadata must be an object'),
+  ] as ValidationChain[],
+  reviewPredictionFeature: [
+    body('approval_status')
+      .optional({ nullable: true })
+      .isIn(['approved', 'rejected', 'needs_more_validation'])
+      .withMessage('approval_status must be approved, rejected, or needs_more_validation'),
+    body('status')
+      .optional({ nullable: true })
+      .isIn(['approved', 'rejected', 'needs_more_validation'])
+      .withMessage('status must be approved, rejected, or needs_more_validation'),
+    body()
+      .custom((value) => Boolean(value?.approval_status || value?.status))
+      .withMessage('approval_status is required'),
+    body('admin_note')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 4000 })
+      .withMessage('admin_note must be 4000 characters or fewer'),
+    body('note')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ max: 4000 })
+      .withMessage('note must be 4000 characters or fewer'),
+    body('approved_class')
+      .optional({ nullable: true })
+      .trim()
+      .isLength({ min: 1, max: 200 })
+      .withMessage('approved_class must be between 1 and 200 characters'),
+  ] as ValidationChain[],
 };
 
 // Export validation rules
@@ -733,6 +835,8 @@ const exportValidation = {
       .isIn(['Point', 'LineString', 'Polygon'])
       .withMessage('geometry_types contains invalid geometry type'),
     body('include_photos').optional().isBoolean(),
+    body('export_ai_predictions').optional().isBoolean(),
+    body('category_id').optional({ values: 'falsy' }).isUUID(),
     body('feature_type')
       .optional({ values: 'falsy' })
       .trim()

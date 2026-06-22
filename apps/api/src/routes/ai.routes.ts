@@ -11,6 +11,13 @@ const { asyncHandler } = require('../middleware/error');
 
 const router = express.Router();
 
+router.post(
+  '/runs/:runId/callback',
+  uuidValidation('runId'),
+  validate,
+  asyncHandler(aiController.handleAiRunCallback),
+);
+
 router.use(authenticate);
 
 router.get(

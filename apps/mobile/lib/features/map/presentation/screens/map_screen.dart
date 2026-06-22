@@ -6,8 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../../../core/config/app_env.dart';
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/offline/local_models.dart';
@@ -27,8 +29,14 @@ import '../../../../core/widgets/status_chip.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../../ai/domain/ai_models.dart';
+import '../../../ai/domain/ai_repository.dart';
+import '../../../ai/presentation/ai_model_labels.dart';
 import '../../../ai/presentation/ai_providers.dart';
+import '../../../ai/presentation/widgets/ai_validation_widgets.dart';
 import '../../../projects/domain/project.dart';
+import '../../data/offline_download_foreground_service.dart';
+import '../../data/offline_project_download_service.dart';
+import '../../data/offline_tile_cache_manager.dart';
 import '../../domain/app_tile_provider.dart';
 import '../../domain/current_location_service.dart';
 import '../../domain/lebanon_map.dart';
@@ -37,12 +45,7 @@ import '../../domain/map_geometry.dart';
 import 'add_feature_screen.dart';
 import '../widgets/feature_photo_gallery.dart';
 
-enum _OfflineMapAction {
-  saveOverview,
-  saveVisibleArea,
-  refreshSavedImagery,
-  deleteSavedImagery,
-}
+enum _OfflineMapAction { downloadProject, refreshResources, deleteProject }
 
 class _OfflineSheetUiState {
   const _OfflineSheetUiState({
@@ -102,6 +105,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   _publishedAiPolygonHitNotifier = ValueNotifier(null);
   final LayerHitNotifier<_PublishedAiMapFeature>
   _publishedAiPolylineHitNotifier = ValueNotifier(null);
+  final LayerHitNotifier<AiPredictionValidationTask>
+  _validationTaskPolygonHitNotifier = ValueNotifier(null);
+  final LayerHitNotifier<AiPredictionValidationTask>
+  _validationTaskPolylineHitNotifier = ValueNotifier(null);
   final Set<String> _visibleStatuses = Set<String>.from(_projectMapStatusOrder);
   final List<LatLng> _captureVertices = <LatLng>[];
   final Map<String, Future<_OfflineTileAssets?>> _offlineTileAssetsFutureCache =
@@ -117,6 +124,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   String? _offlineDownloadResultLabel;
   double? _offlineDownloadProgressValue;
   _OfflineMapAction? _activeOfflineMapAction;
+  OfflineDownloadCancelToken? _offlineDownloadCancelToken;
   LatLng? _currentLocation;
   double? _currentLocationAccuracyMeters;
   bool _isDownloadingOffline = false;
@@ -132,11 +140,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool _isProjectMapGeometryChooserOpen = false;
   bool _isProjectMapModalSheetOpen = false;
   bool _showPublishedAiLayers = false;
-  Set<String> _visiblePublishedAiLayerTypes = const <String>{
-    'classification',
-    'confidence',
-    'uncertainty',
-  };
+  bool _showAiValidationTasks = false;
+  Set<String> _visiblePublishedAiLayerTypes = const <String>{'classification'};
   String? _selectedPublishedAiClass;
   List<String> _stablePublishedAiClassOptions = const <String>[];
   Map<String, int> _stablePublishedAiLayerCounts = const <String, int>{};
@@ -144,6 +149,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       const <String, Map<String, int>>{};
   String? _focusedPublishedAiFeatureKey;
   _PublishedAiMapFeature? _focusedPublishedAiFeatureOverride;
+  String? _focusedAiValidationTaskId;
+  String? _autoOpenedAiValidationTaskId;
+  AiPredictionValidationTask? _focusedAiValidationTaskOverride;
   bool _hasHandledStartCaptureOnOpen = false;
   LebanonBasemapStyle _basemapStyle = LebanonBasemapStyle.street;
   MapCamera? _latestMapCamera;
@@ -178,6 +186,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   @override
   void initState() {
     super.initState();
+    OfflineDownloadForegroundService.addTaskDataCallback(
+      _handleOfflineForegroundTaskData,
+    );
+    if (_initialTargetIsAiValidationTask) {
+      _showAiValidationTasks = true;
+      _focusedAiValidationTaskId = _initialFeatureId;
+    }
     _publishOfflineSheetState();
     _mainMapOptions = MapOptions(
       initialCenter: _defaultMapCenter,
@@ -204,7 +219,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     if (previousTarget != nextTarget ||
         oldWidget.initialFeatureSource != widget.initialFeatureSource) {
       _autoOpenedFeatureId = null;
-      _focusedFeatureId = (nextTarget?.isEmpty ?? true) ? null : nextTarget;
+      _autoOpenedAiValidationTaskId = null;
+      if (_initialTargetIsAiValidationTask) {
+        _focusedFeatureId = null;
+        _focusedAiValidationTaskId = (nextTarget?.isEmpty ?? true)
+            ? null
+            : nextTarget;
+        _focusedAiValidationTaskOverride = null;
+        _showAiValidationTasks = true;
+      } else {
+        _focusedFeatureId = (nextTarget?.isEmpty ?? true) ? null : nextTarget;
+        _focusedAiValidationTaskId = null;
+        _focusedAiValidationTaskOverride = null;
+      }
       _lastAutoFrameKey = null;
     }
   }
@@ -273,7 +300,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _projectMapTileFailureBurstKey = null;
     });
     _basemapTransitionTimer = Timer(_basemapTransitionDuration(style), () {
-      if (!mounted) {
+      if (!mounted || !context.mounted) {
         return;
       }
       setState(() {
@@ -396,15 +423,17 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   Future<_OfflineTileAssets?> _offlineTileAssetsFuture(
-    OfflineMapPackage? package,
-  ) {
+    OfflineMapPackage? package, {
+    LebanonBasemapStyle? basemapStyle,
+  }) {
     if (package == null) {
       return Future<_OfflineTileAssets?>.value(null);
     }
-    final key = '${package.version}:${_basemapStyle.name}';
+    final style = basemapStyle ?? _basemapStyle;
+    final key = '${package.version}:${style.name}';
     return _offlineTileAssetsFutureCache.putIfAbsent(
       key,
-      () => _loadOfflineTileAssets(package, _basemapStyle),
+      () => _loadOfflineTileAssets(package, style),
     );
   }
 
@@ -427,11 +456,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     _tileNoticeTimer?.cancel();
     _basemapTransitionTimer?.cancel();
     _viewportRefreshTimer?.cancel();
+    OfflineDownloadForegroundService.removeTaskDataCallback(
+      _handleOfflineForegroundTaskData,
+    );
     _offlineSheetUiState.dispose();
     _projectPolygonHitNotifier.dispose();
     _projectPolylineHitNotifier.dispose();
     _publishedAiPolygonHitNotifier.dispose();
     _publishedAiPolylineHitNotifier.dispose();
+    _validationTaskPolygonHitNotifier.dispose();
+    _validationTaskPolylineHitNotifier.dispose();
     _searchController.dispose();
     _projectMapSearchFocusNode.dispose();
     super.dispose();
@@ -530,6 +564,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     _lastPrimedProjectMapKey = primeKey;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
+        final isOnline = await ref
+            .read(networkAvailabilityServiceProvider)
+            .isOnline();
+        if (!isOnline) {
+          return;
+        }
         final manager = ref.read(offlineTileCacheManagerProvider);
         final summary = await manager.cacheLebanonOverview(
           package: offlinePackage,
@@ -586,6 +626,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
+        final isOnline = await ref
+            .read(networkAvailabilityServiceProvider)
+            .isOnline();
+        if (!isOnline) {
+          return;
+        }
         final manager = ref.read(offlineTileCacheManagerProvider);
         await manager.cacheVisibleRegion(
           package: offlinePackage,
@@ -628,6 +674,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
+        final isOnline = await ref
+            .read(networkAvailabilityServiceProvider)
+            .isOnline();
+        if (!isOnline) {
+          return;
+        }
         final manager = ref.read(offlineTileCacheManagerProvider);
         final summary = await manager.cacheVisibleRegion(
           package: offlinePackage,
@@ -732,6 +784,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   bool get _hasInitialFeatureTarget =>
       _initialFeatureId?.trim().isNotEmpty == true;
+
+  bool get _initialTargetIsAiValidationTask =>
+      widget.initialFeatureSource == AppRoutes.focusSourceAiValidationTask;
 
   String? get _initialFeatureId {
     final featureId = widget.initialFeatureId?.trim();
@@ -1134,9 +1189,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           availableProjects,
           requestedProjectId: widget.initialProjectId,
         );
-        final publishedAiLayersAsync = ref.watch(
-          publishedAiLayersProvider(project.id),
-        );
+        final isOnline = ref.watch(networkOnlineProvider).valueOrNull ?? false;
+        final publishedAiLayersAsync = isOnline
+            ? ref.watch(publishedAiLayersProvider(project.id))
+            : const AsyncValue<List<AiOutputLayer>>.data(<AiOutputLayer>[]);
         _selectedProjectId ??= project.id;
         final viewportQuery =
             _projectViewportQuery ?? _buildProjectViewportQuery(project.id);
@@ -1147,6 +1203,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           _lastViewportFeatures = featuresAsync.valueOrNull;
         }
         final offlineMapPackageAsync = ref.watch(offlineMapPackageProvider);
+        final offlineProjectPackageAsync = ref.watch(
+          offlineProjectPackageProvider(project.id),
+        );
         final hasContributorAssignment =
             role == UserRole.contributor &&
             project.hasApprovedCurrentUserAssignment;
@@ -1154,6 +1213,23 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             hasContributorAssignment && project.status == 'active';
         final canUseOfflineMap = hasContributorAssignment;
         final canReview = role == UserRole.admin;
+        final canUseAiValidationTasks = hasContributorAssignment || canReview;
+        final validationTasksAsync = isOnline && canUseAiValidationTasks
+            ? canReview
+                  ? ref.watch(
+                      projectAiValidationTasksProvider(
+                        AiPredictionValidationTasksQuery(
+                          projectId: project.id,
+                          limit: 500,
+                        ),
+                      ),
+                    )
+                  : ref.watch(
+                      myAiValidationTasksProvider(
+                        const AiPredictionValidationTasksQuery(limit: 500),
+                      ),
+                    )
+            : null;
         _maybeStartProjectMapCaptureOnOpen(
           project: project,
           canCollectOnMap: canCollectOnMap,
@@ -1305,28 +1381,34 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       ),
                     ),
                     data: (offlinePackage) => _OfflineMapStatusCard(
+                      project: project,
+                      projectPackage: offlineProjectPackageAsync.valueOrNull,
                       package: offlinePackage,
-                      basemapStyle: _basemapStyle,
+                      basemapStyle: LebanonBasemapStyle.satellite,
                       isDownloading: _isDownloadingOffline,
                       activeAction: _activeOfflineMapAction,
                       progressLabel: _offlineDownloadProgressLabel,
                       progressValue: _offlineDownloadProgressValue,
                       statusLabel: _offlineDownloadResultLabel,
-                      onDownloadOverview: offlinePackage == null
+                      pendingSyncCount: syncState.pendingCount,
+                      onDownloadResources: offlinePackage == null
                           ? null
-                          : () => _downloadLebanonOverview(offlinePackage),
-                      onDownloadVisible:
-                          offlinePackage == null || !_isMainMapReady
-                          ? null
-                          : () => _downloadVisibleRegion(offlinePackage),
-                      onRefreshSavedImagery: offlinePackage == null
-                          ? null
-                          : () => _refreshSavedOfflineImagery(offlinePackage),
-                      onDeleteSavedImagery: offlinePackage == null
-                          ? null
-                          : () => _confirmDeleteSavedOfflineImagery(
+                          : () => _downloadOfflineResources(
+                              project,
                               offlinePackage,
                             ),
+                      onRefreshResources: offlinePackage == null
+                          ? null
+                          : () => _downloadOfflineResources(
+                              project,
+                              offlinePackage,
+                              refreshOnly: true,
+                            ),
+                      onCancelDownload: _cancelOfflineDownload,
+                      onDeleteResources: () => _confirmDeleteOfflineResources(
+                        project,
+                        offlinePackage,
+                      ),
                     ),
                   ),
                 ],
@@ -1387,10 +1469,27 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             if (loadedPublishedAiLayerCounts.isNotEmpty) {
               _stablePublishedAiLayerCounts = loadedPublishedAiLayerCounts;
             }
-            final publishedAiClassOptions =
-                publishedAiLayerTypes.contains('classification')
-                ? _stablePublishedAiClassOptions
-                : const <String>[];
+            final validationTaskList = validationTasksAsync?.valueOrNull;
+            final accessibleValidationTasks = _mapVisibleValidationTasks(
+              validationTaskList?.tasks ?? const <AiPredictionValidationTask>[],
+              project.id,
+            );
+            final validationTasksForMap = _showAiValidationTasks
+                ? _validationTasksWithFocusedOverride(
+                    accessibleValidationTasks,
+                    focusedOverride: _focusedAiValidationTaskOverride,
+                    projectId: project.id,
+                  )
+                : const <AiPredictionValidationTask>[];
+            final validationTaskCount = accessibleValidationTasks.length;
+            final hasAiValidationTasks =
+                canUseAiValidationTasks &&
+                (validationTaskCount > 0 ||
+                    _focusedAiValidationTaskOverride != null ||
+                    (validationTasksAsync?.isLoading ?? false));
+            final publishedAiClassOptions = publishedAiLayers.isEmpty
+                ? const <String>[]
+                : _stablePublishedAiClassOptions;
             final publishedAiLayerCounts = Map<String, int>.from(
               _stablePublishedAiLayerCounts,
             );
@@ -1412,7 +1511,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     )
                     .every((entry) => entry.value == 0);
             final hideOfficialFeatures =
-                _showPublishedAiLayers &&
+                (_showPublishedAiLayers || _showAiValidationTasks) &&
                 _selectedFeatureChip == _noOfficialFeatureFilter;
             final scopedFeatures = hideOfficialFeatures
                 ? const <MapFeatureSummary>[]
@@ -1466,12 +1565,21 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             final totalFeatureCount = hideOfficialFeatures
                 ? 0
                 : featureCountAsync?.valueOrNull ?? fallbackFeatureCount;
-            _maybeOpenInitialFeatureDetails(
-              project: project,
-              features: filteredFeatures,
-              canCollectOnMap: canCollectOnMap,
-              canReview: canReview,
-            );
+            if (_initialTargetIsAiValidationTask) {
+              _maybeOpenInitialAiValidationTaskDetails(
+                project: project,
+                tasks: accessibleValidationTasks,
+                canSubmit: hasContributorAssignment,
+                canReview: canReview,
+              );
+            } else {
+              _maybeOpenInitialFeatureDetails(
+                project: project,
+                features: filteredFeatures,
+                canCollectOnMap: canCollectOnMap,
+                canReview: canReview,
+              );
+            }
 
             return _buildMapWorkspace(
               context,
@@ -1491,6 +1599,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               publishedAiClassOptions: publishedAiClassOptions,
               publishedAiLayerCounts: publishedAiLayerCounts,
               hasNoPublishedAiClassMatches: hasNoPublishedAiClassMatches,
+              validationTasks: validationTasksForMap,
+              validationTaskCount: validationTaskCount,
+              canUseAiValidationTasks: canUseAiValidationTasks,
+              hasAiValidationTasks: hasAiValidationTasks,
+              canSubmitAiValidation: hasContributorAssignment,
+              canReviewAiValidation: canReview,
               embeddedControls: embeddedControls,
             );
           }
@@ -1575,6 +1689,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required List<String> publishedAiClassOptions,
     required Map<String, int> publishedAiLayerCounts,
     required bool hasNoPublishedAiClassMatches,
+    required List<AiPredictionValidationTask> validationTasks,
+    required int validationTaskCount,
+    required bool canUseAiValidationTasks,
+    required bool hasAiValidationTasks,
+    required bool canSubmitAiValidation,
+    required bool canReviewAiValidation,
     Widget? embeddedControls,
   }) {
     return LayoutBuilder(
@@ -1591,6 +1711,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           publishedAiLayers: publishedAiLayers,
           publishedAiLayerCollections: publishedAiLayerCollections,
           publishedAiLayerTypes: publishedAiLayerTypes,
+          validationTasks: validationTasks,
+          validationTaskCount: validationTaskCount,
+          canUseAiValidationTasks: canUseAiValidationTasks,
+          hasAiValidationTasks: hasAiValidationTasks,
+          canSubmitAiValidation: canSubmitAiValidation,
+          canReviewAiValidation: canReviewAiValidation,
         );
         final featureListContent = features.isEmpty
             ? AppEmptyState(
@@ -1753,6 +1879,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               publishedAiClassOptions: publishedAiClassOptions,
               publishedAiLayerCounts: publishedAiLayerCounts,
               hasNoPublishedAiClassMatches: hasNoPublishedAiClassMatches,
+              validationTasks: validationTasks,
+              validationTaskCount: validationTaskCount,
+              canUseAiValidationTasks: canUseAiValidationTasks,
+              hasAiValidationTasks: hasAiValidationTasks,
+              canSubmitAiValidation: canSubmitAiValidation,
+              canReviewAiValidation: canReviewAiValidation,
             );
           }
           return Stack(
@@ -1880,6 +2012,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required List<String> publishedAiClassOptions,
     required Map<String, int> publishedAiLayerCounts,
     required bool hasNoPublishedAiClassMatches,
+    required List<AiPredictionValidationTask> validationTasks,
+    required int validationTaskCount,
+    required bool canUseAiValidationTasks,
+    required bool hasAiValidationTasks,
+    required bool canSubmitAiValidation,
+    required bool canReviewAiValidation,
   }) {
     _scheduleProjectAutoFrame(project: project);
     _scheduleProjectMapTilePrime(offlinePackage);
@@ -1928,6 +2066,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 canCollectOnMap: canCollectOnMap,
                 canReview: canReview,
                 publishedAiLayerCollections: publishedAiLayerCollections,
+                validationTasks: validationTasks,
+                canSubmitAiValidation: canSubmitAiValidation,
+                canReviewAiValidation: canReviewAiValidation,
               ),
             ),
           ),
@@ -2058,7 +2199,35 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                     hasNoPublishedAiClassMatches:
                                         hasNoPublishedAiClassMatches,
                                     allowNoOfficialFeatureFilter:
-                                        _showPublishedAiLayers,
+                                        _showPublishedAiLayers ||
+                                        _showAiValidationTasks,
+                                    validationTaskCount: validationTaskCount,
+                                    showAiValidationTasks:
+                                        _showAiValidationTasks,
+                                    onToggleAiValidationTasks:
+                                        !canUseAiValidationTasks ||
+                                            !hasAiValidationTasks
+                                        ? null
+                                        : (selected) {
+                                            setState(() {
+                                              _showAiValidationTasks = selected;
+                                              if (!selected) {
+                                                _focusedAiValidationTaskId =
+                                                    null;
+                                                _focusedAiValidationTaskOverride =
+                                                    null;
+                                                if (_selectedFeatureChip ==
+                                                    _noOfficialFeatureFilter) {
+                                                  _selectedFeatureChip = null;
+                                                  _lastViewportFeatures = null;
+                                                  _projectViewportQuery =
+                                                      _buildProjectViewportQuery(
+                                                        project.id,
+                                                      );
+                                                }
+                                              }
+                                            });
+                                          },
                                     visiblePublishedAiLayerTypes:
                                         _visiblePublishedAiLayerTypes,
                                     onPublishedAiClassSelected: (className) {
@@ -2082,11 +2251,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                             }
                                             _visiblePublishedAiLayerTypes =
                                                 next;
-                                            if (!next.contains(
-                                              'classification',
-                                            )) {
-                                              _selectedPublishedAiClass = null;
-                                            }
                                             _focusedPublishedAiFeatureKey =
                                                 null;
                                             _focusedPublishedAiFeatureOverride =
@@ -2129,6 +2293,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                           },
                                     onOpenOfflineTools: canUseOfflineMap
                                         ? () => _openOfflineToolsSheet(
+                                            project: project,
                                             offlinePackage: offlinePackage,
                                             hasCollectionAccess:
                                                 hasCollectionAccess,
@@ -2288,24 +2453,35 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required bool canCollectOnMap,
     required bool canReview,
     required List<AiLayerFeatureCollection> publishedAiLayerCollections,
+    required List<AiPredictionValidationTask> validationTasks,
+    required bool canSubmitAiValidation,
+    required bool canReviewAiValidation,
   }) {
+    final isOnline = ref.watch(networkOnlineProvider).valueOrNull ?? false;
+    final effectiveBasemapStyle = isOnline
+        ? _basemapStyle
+        : LebanonBasemapStyle.satellite;
     return FutureBuilder<_OfflineTileAssets?>(
-      future: _offlineTileAssetsFuture(offlinePackage),
+      future: _offlineTileAssetsFuture(
+        offlinePackage,
+        basemapStyle: effectiveBasemapStyle,
+      ),
       builder: (context, snapshot) {
         final liveBasemapUrl = LebanonMapConfig.basemapUrlTemplate(
-          _basemapStyle,
+          effectiveBasemapStyle,
         );
         final labelOverlayUrl = LebanonMapConfig.referenceLabelUrlTemplate(
-          _basemapStyle,
+          effectiveBasemapStyle,
         );
         final shouldRenderTileLayers = LebanonMapConfig.shouldRenderTileLayers;
         final hasSavedOfflineImagery = snapshot.data?.hasCachedTiles ?? false;
         final canUseSavedOfflineImagery =
             snapshot.data != null && hasSavedOfflineImagery;
         final preferSavedImagery =
-            _tileFailureUsesSavedImagery && canUseSavedOfflineImagery;
+            canUseSavedOfflineImagery &&
+            (!isOnline || _tileFailureUsesSavedImagery);
         final showReferenceLabels =
-            labelOverlayUrl != null && !_isBasemapTransitioning;
+            isOnline && labelOverlayUrl != null && !_isBasemapTransitioning;
         final theme = Theme.of(context);
         return FlutterMap(
           key: ValueKey<String>('project_map_${project.id}'),
@@ -2317,17 +2493,17 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 canUseSavedOfflineImagery)
               TileLayer(
                 key: ValueKey<String>(
-                  'project_map_offline_tiles_${_basemapStyle.name}_${snapshot.data!.templatePath}',
+                  'project_map_offline_tiles_${effectiveBasemapStyle.name}_${snapshot.data!.templatePath}',
                 ),
                 urlTemplate: snapshot.data!.templatePath,
                 tileProvider: FileTileProvider(),
                 fallbackUrl: snapshot.data!.fallbackPath,
                 userAgentPackageName: 'lb.gov.gis_collector',
               ),
-            if (shouldRenderTileLayers && !preferSavedImagery)
+            if (shouldRenderTileLayers && isOnline && !preferSavedImagery)
               TileLayer(
                 key: ValueKey<String>(
-                  'project_map_live_basemap_${_basemapStyle.name}',
+                  'project_map_live_basemap_${effectiveBasemapStyle.name}',
                 ),
                 urlTemplate: liveBasemapUrl,
                 tileProvider: appNetworkTileProvider(),
@@ -2350,7 +2526,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             if (shouldRenderTileLayers && showReferenceLabels)
               TileLayer(
                 key: ValueKey<String>(
-                  'project_map_label_overlay_${_basemapStyle.name}',
+                  'project_map_label_overlay_${effectiveBasemapStyle.name}',
                 ),
                 urlTemplate: labelOverlayUrl,
                 tileProvider: appNetworkTileProvider(),
@@ -2385,6 +2561,18 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 markers: _publishedAiMarkerOverlays(
                   publishedAiLayerCollections,
                 ),
+              ),
+            ],
+            if (_showAiValidationTasks && validationTasks.isNotEmpty) ...[
+              _validationTaskPolygonLayer(
+                tasks: validationTasks,
+                canSubmit: canSubmitAiValidation,
+                canReview: canReviewAiValidation,
+              ),
+              _validationTaskPolylineLayer(
+                tasks: validationTasks,
+                canSubmit: canSubmitAiValidation,
+                canReview: canReviewAiValidation,
               ),
             ],
             if (_currentLocation != null)
@@ -2500,6 +2688,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 interactive: !_isProjectMapCaptureMode,
               ),
             ),
+            if (_showAiValidationTasks && validationTasks.isNotEmpty)
+              MarkerLayer(
+                markers: _validationTaskMarkerOverlays(
+                  validationTasks,
+                  canSubmit: canSubmitAiValidation,
+                  canReview: canReviewAiValidation,
+                ),
+              ),
           ],
         );
       },
@@ -2518,7 +2714,17 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     required List<AiOutputLayer> publishedAiLayers,
     required List<AiLayerFeatureCollection> publishedAiLayerCollections,
     required List<String> publishedAiLayerTypes,
+    required List<AiPredictionValidationTask> validationTasks,
+    required int validationTaskCount,
+    required bool canUseAiValidationTasks,
+    required bool hasAiValidationTasks,
+    required bool canSubmitAiValidation,
+    required bool canReviewAiValidation,
   }) {
+    final isOnline = ref.watch(networkOnlineProvider).valueOrNull ?? false;
+    final effectiveBasemapStyle = isOnline
+        ? _basemapStyle
+        : LebanonBasemapStyle.satellite;
     final currentCenter = _latestMapCamera?.center ?? LebanonMapConfig.center;
     final currentZoom =
         _latestMapCamera?.zoom ?? LebanonMapConfig.fullscreenInitialZoom;
@@ -2528,10 +2734,15 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       child: Stack(
         children: [
           FutureBuilder<_OfflineTileAssets?>(
-            future: _offlineTileAssetsFuture(offlinePackage),
+            future: _offlineTileAssetsFuture(
+              offlinePackage,
+              basemapStyle: effectiveBasemapStyle,
+            ),
             builder: (context, snapshot) {
               final labelOverlayUrl =
-                  LebanonMapConfig.referenceLabelUrlTemplate(_basemapStyle);
+                  LebanonMapConfig.referenceLabelUrlTemplate(
+                    effectiveBasemapStyle,
+                  );
               final shouldRenderTileLayers =
                   LebanonMapConfig.shouldRenderTileLayers;
               final hasSavedOfflineImagery =
@@ -2539,9 +2750,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               final canUseSavedOfflineImagery =
                   snapshot.data != null && hasSavedOfflineImagery;
               final preferSavedImagery =
-                  _tileFailureUsesSavedImagery && canUseSavedOfflineImagery;
+                  canUseSavedOfflineImagery &&
+                  (!isOnline || _tileFailureUsesSavedImagery);
               final showReferenceLabels =
-                  labelOverlayUrl != null && !_isBasemapTransitioning;
+                  isOnline &&
+                  labelOverlayUrl != null &&
+                  !_isBasemapTransitioning;
               return ClipRRect(
                 borderRadius: AppRadii.lg,
                 child: FlutterMap(
@@ -2553,20 +2767,22 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         canUseSavedOfflineImagery)
                       TileLayer(
                         key: ValueKey<String>(
-                          'preview_offline_tiles_${_basemapStyle.name}_${snapshot.data!.templatePath}',
+                          'preview_offline_tiles_${effectiveBasemapStyle.name}_${snapshot.data!.templatePath}',
                         ),
                         urlTemplate: snapshot.data!.templatePath,
                         tileProvider: FileTileProvider(),
                         fallbackUrl: snapshot.data!.fallbackPath,
                         userAgentPackageName: 'lb.gov.gis_collector',
                       ),
-                    if (shouldRenderTileLayers && !preferSavedImagery)
+                    if (shouldRenderTileLayers &&
+                        isOnline &&
+                        !preferSavedImagery)
                       TileLayer(
                         key: ValueKey<String>(
-                          'preview_live_basemap_${_basemapStyle.name}',
+                          'preview_live_basemap_${effectiveBasemapStyle.name}',
                         ),
                         urlTemplate: LebanonMapConfig.basemapUrlTemplate(
-                          _basemapStyle,
+                          effectiveBasemapStyle,
                         ),
                         tileProvider: appNetworkTileProvider(),
                         tileDisplay: const TileDisplay.fadeIn(
@@ -2588,7 +2804,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     if (shouldRenderTileLayers && showReferenceLabels)
                       TileLayer(
                         key: ValueKey<String>(
-                          'preview_label_overlay_${_basemapStyle.name}',
+                          'preview_label_overlay_${effectiveBasemapStyle.name}',
                         ),
                         urlTemplate: labelOverlayUrl,
                         tileProvider: appNetworkTileProvider(),
@@ -2623,6 +2839,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         ),
                       ),
                     ],
+                    if (_showAiValidationTasks &&
+                        validationTasks.isNotEmpty) ...[
+                      _validationTaskPolygonLayer(
+                        tasks: validationTasks,
+                        canSubmit: canSubmitAiValidation,
+                        canReview: canReviewAiValidation,
+                      ),
+                      _validationTaskPolylineLayer(
+                        tasks: validationTasks,
+                        canSubmit: canSubmitAiValidation,
+                        canReview: canReviewAiValidation,
+                      ),
+                    ],
                     if (_currentLocation != null)
                       MarkerLayer(
                         markers: [
@@ -2646,6 +2875,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         canReview,
                       ),
                     ),
+                    if (_showAiValidationTasks && validationTasks.isNotEmpty)
+                      MarkerLayer(
+                        markers: _validationTaskMarkerOverlays(
+                          validationTasks,
+                          canSubmit: canSubmitAiValidation,
+                          canReview: canReviewAiValidation,
+                        ),
+                      ),
                   ],
                 ),
               );
@@ -2738,6 +2975,28 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                             onSelected: (selected) {
                               setState(() {
                                 _showPublishedAiLayers = selected;
+                              });
+                            },
+                          ),
+                        if (canUseAiValidationTasks && hasAiValidationTasks)
+                          FilterChip(
+                            avatar: const Icon(
+                              Icons.fact_check_outlined,
+                              size: 18,
+                            ),
+                            label: Text(
+                              _showAiValidationTasks
+                                  ? 'Hide validation tasks'
+                                  : 'Show validation tasks ($validationTaskCount)',
+                            ),
+                            selected: _showAiValidationTasks,
+                            onSelected: (selected) {
+                              setState(() {
+                                _showAiValidationTasks = selected;
+                                if (!selected) {
+                                  _focusedAiValidationTaskId = null;
+                                  _focusedAiValidationTaskOverride = null;
+                                }
                               });
                             },
                           ),
@@ -3050,6 +3309,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   Future<void> _openOfflineToolsSheet({
+    required ProjectSummary project,
     required OfflineMapPackage? offlinePackage,
     required bool hasCollectionAccess,
   }) async {
@@ -3065,15 +3325,23 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         backgroundColor: Colors.transparent,
         constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width),
         builder: (context) => _OfflineMapSheet(
-          basemapStyle: _basemapStyle,
+          project: project,
           initialOfflinePackage: offlinePackage,
           hasCollectionAccess: hasCollectionAccess,
           uiStateListenable: _offlineSheetUiState,
-          canDownloadVisible: offlinePackage != null && _isMainMapReady,
-          onDownloadOverview: _downloadLebanonOverview,
-          onDownloadVisible: _downloadVisibleRegion,
-          onRefreshSavedImagery: _refreshSavedOfflineImagery,
-          onDeleteSavedImagery: _confirmDeleteSavedOfflineImagery,
+          onDownloadResources: offlinePackage == null
+              ? null
+              : () => _downloadOfflineResources(project, offlinePackage),
+          onRefreshResources: offlinePackage == null
+              ? null
+              : () => _downloadOfflineResources(
+                  project,
+                  offlinePackage,
+                  refreshOnly: true,
+                ),
+          onCancelDownload: _cancelOfflineDownload,
+          onDeleteResources: () =>
+              _confirmDeleteOfflineResources(project, offlinePackage),
         ),
       );
     } finally {
@@ -3155,6 +3423,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   void _finishOfflineAction() {
+    _offlineDownloadCancelToken = null;
     if (!mounted) {
       return;
     }
@@ -3165,6 +3434,39 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _offlineDownloadProgressValue = null;
     });
     _publishOfflineSheetState();
+  }
+
+  void _cancelOfflineDownload() {
+    final cancelToken = _offlineDownloadCancelToken;
+    if (!_isDownloadingOffline ||
+        cancelToken == null ||
+        cancelToken.isCanceled) {
+      return;
+    }
+    cancelToken.cancel();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _offlineDownloadProgressLabel = 'Canceling offline download...';
+      _offlineDownloadProgressValue = null;
+    });
+    unawaited(
+      OfflineDownloadForegroundService.updateProgress(
+        'Canceling offline download...',
+      ),
+    );
+    _publishOfflineSheetState();
+  }
+
+  void _handleOfflineForegroundTaskData(Object data) {
+    if (data is! Map) {
+      return;
+    }
+    if (data['type'] != OfflineDownloadForegroundService.cancelRequestedEvent) {
+      return;
+    }
+    _cancelOfflineDownload();
   }
 
   String? _featureAttributeValue(
@@ -3321,180 +3623,106 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     );
   }
 
-  Future<void> _downloadLebanonOverview(OfflineMapPackage package) async {
+  Future<void> _downloadOfflineResources(
+    ProjectSummary project,
+    OfflineMapPackage package, {
+    bool refreshOnly = false,
+  }) async {
     if (_isDownloadingOffline) {
       return;
     }
-    _startOfflineAction(
-      _OfflineMapAction.saveOverview,
-      progressLabel: 'Preparing the Lebanon overview for offline browsing...',
-    );
-    try {
-      final manager = ref.read(offlineTileCacheManagerProvider);
-      final summary = await ref
-          .read(offlineTileCacheManagerProvider)
-          .cacheLebanonOverview(
-            package: package,
-            basemapStyle: _basemapStyle,
-            onProgress: (progress) {
-              _updateOfflineProgress(
-                label:
-                    'Saving the Lebanon overview ${progress.completedTiles}/${progress.requestedTiles} • ${progress.downloadedTiles} new • ${progress.skippedTiles} already on this device${progress.failedTiles > 0 ? ' • ${progress.failedTiles} failed' : ''}',
-                completedTiles: progress.completedTiles,
-                requestedTiles: progress.requestedTiles,
-              );
-            },
-          );
-      _invalidateOfflineTileAssetsCache(
-        package: package,
-        basemapStyle: _basemapStyle,
-      );
-      await manager.refreshStats(package, basemapStyle: _basemapStyle);
-      final _ = await ref.refresh(offlineMapPackageProvider.future);
-      if (mounted) {
-        final hasUsableTiles =
-            summary.downloadedTiles > 0 || summary.skippedTiles > 0;
-        final message =
-            'Lebanon overview saved on this device. ${summary.downloadedTiles} new map image(s), ${summary.skippedTiles} already available${summary.failedTiles > 0 ? ', ${summary.failedTiles} failed' : ''}.';
-        if (!hasUsableTiles) {
-          _completeOfflineAction(
-            message:
-                'Unable to save the Lebanon overview right now. Please try again later.',
-            success: false,
-          );
-          return;
-        }
-        _completeOfflineAction(message: message, success: true);
-      }
-    } catch (error) {
-      if (mounted) {
-        _completeOfflineAction(
-          message: userFacingErrorMessage(
-            error,
-            fallback: 'Unable to save the Lebanon overview right now.',
-          ),
-          success: false,
-        );
-      }
-    } finally {
-      _finishOfflineAction();
-    }
-  }
-
-  Future<void> _downloadVisibleRegion(OfflineMapPackage package) async {
-    if (_isDownloadingOffline) {
+    final isOnline = await ref
+        .read(networkAvailabilityServiceProvider)
+        .isOnline();
+    if (!mounted) {
       return;
     }
-    if (!_isMainMapReady) {
+    if (!isOnline) {
       AppSnackbar.showError(
         context,
-        'Map is still preparing. Wait for the map to finish loading before downloading the visible area.',
+        'Connect to the internet to download or refresh offline resources.',
       );
       return;
     }
-    final camera = _latestMapCamera;
-    if (camera == null) {
-      AppSnackbar.showError(
-        context,
-        'Map extent is not ready yet. Try again in a moment.',
-      );
-      return;
-    }
-    _startOfflineAction(
-      _OfflineMapAction.saveVisibleArea,
-      progressLabel: 'Preparing the visible map area for offline browsing...',
-    );
-    try {
-      final manager = ref.read(offlineTileCacheManagerProvider);
-      final summary = await manager.cacheVisibleRegion(
-        package: package,
-        basemapStyle: _basemapStyle,
-        bounds: camera.visibleBounds,
-        currentZoom: camera.zoom,
-        onProgress: (progress) {
-          _updateOfflineProgress(
-            label:
-                'Saving this visible area ${progress.completedTiles}/${progress.requestedTiles} • ${progress.downloadedTiles} new • ${progress.skippedTiles} already on this device${progress.failedTiles > 0 ? ' • ${progress.failedTiles} failed' : ''}',
-            completedTiles: progress.completedTiles,
-            requestedTiles: progress.requestedTiles,
-          );
-        },
-      );
-      _invalidateOfflineTileAssetsCache(
-        package: package,
-        basemapStyle: _basemapStyle,
-      );
-      await manager.refreshStats(package, basemapStyle: _basemapStyle);
-      final _ = await ref.refresh(offlineMapPackageProvider.future);
-      if (mounted) {
-        final hasUsableTiles =
-            summary.downloadedTiles > 0 || summary.skippedTiles > 0;
-        final message =
-            'This visible area is saved on this device. ${summary.downloadedTiles} new map image(s), ${summary.skippedTiles} already available${summary.failedTiles > 0 ? ', ${summary.failedTiles} failed' : ''}.';
-        if (!hasUsableTiles) {
-          _completeOfflineAction(
-            message:
-                'Unable to save this visible area right now. Please try again later.',
-            success: false,
-          );
-          return;
-        }
-        _completeOfflineAction(message: message, success: true);
-      }
-    } catch (error) {
-      if (mounted) {
-        _completeOfflineAction(
-          message: userFacingErrorMessage(
-            error,
-            fallback: 'Unable to save this visible map area right now.',
-          ),
-          success: false,
-        );
-      }
-    } finally {
-      _finishOfflineAction();
-    }
-  }
 
-  Future<void> _refreshSavedOfflineImagery(OfflineMapPackage package) async {
-    if (_isDownloadingOffline) {
-      return;
-    }
+    final cancelToken = OfflineDownloadCancelToken();
+    _offlineDownloadCancelToken = cancelToken;
     _startOfflineAction(
-      _OfflineMapAction.refreshSavedImagery,
-      progressLabel:
-          'Refreshing saved map imagery for the current view style...',
+      refreshOnly
+          ? _OfflineMapAction.refreshResources
+          : _OfflineMapAction.downloadProject,
+      progressLabel: refreshOnly
+          ? 'Checking offline resources for updates...'
+          : 'Downloading project resources for offline contribution...',
     );
+
     try {
-      final manager = ref.read(offlineTileCacheManagerProvider);
-      final summary = await manager.refreshCachedTiles(
-        package: package,
-        basemapStyle: _basemapStyle,
-        onProgress: (progress) {
-          _updateOfflineProgress(
-            label:
-                'Refreshing saved imagery ${progress.completedTiles}/${progress.requestedTiles}${progress.failedTiles > 0 ? ' • ${progress.failedTiles} failed' : ''}',
-            completedTiles: progress.completedTiles,
-            requestedTiles: progress.requestedTiles,
+      await OfflineDownloadForegroundService.start(
+        projectName: project.name,
+        refreshOnly: refreshOnly,
+      );
+
+      final session = ref.read(authControllerProvider).session;
+      if (session == null) {
+        throw StateError('Sign in before downloading offline resources.');
+      }
+
+      final result = await ref
+          .read(offlineProjectDownloadServiceProvider)
+          .downloadProject(
+            project: project,
+            mapPackage: package,
+            ownerUserId: session.user.id,
+            cancelToken: cancelToken,
+            onProgress: _updateOfflineDownloadProgress,
           );
-        },
-      );
+
+      if (!mounted) {
+        return;
+      }
       _invalidateOfflineTileAssetsCache(
-        package: package,
-        basemapStyle: _basemapStyle,
+        package: result.mapPackage,
+        basemapStyle: LebanonBasemapStyle.satellite,
       );
-      await manager.refreshStats(package, basemapStyle: _basemapStyle);
+      ref
+        ..invalidate(offlineProjectPackageProvider(project.id))
+        ..invalidate(offlineProjectPackagesProvider)
+        ..invalidate(offlineMapPackageProvider);
+      await ref.read(syncControllerProvider.notifier).refreshStatus();
       final _ = await ref.refresh(offlineMapPackageProvider.future);
       if (!mounted) {
         return;
       }
-      final message = summary.requestedTiles == 0
-          ? 'No saved offline imagery is available yet for the ${LebanonMapConfig.basemapLabel(_basemapStyle).toLowerCase()} view.'
-          : 'Saved imagery refreshed. ${summary.downloadedTiles} map image(s) updated${summary.failedTiles > 0 ? ', ${summary.failedTiles} failed' : ''}.';
-      if (summary.downloadedTiles > 0) {
-        _clearTileNotice();
+      final summary = result.tileSummary;
+      final tileMessage = summary == null
+          ? 'Shared Satellite base map is already up to date.'
+          : '${summary.downloadedTiles} new satellite map image(s), ${summary.skippedTiles} already available${summary.failedTiles > 0 ? ', ${summary.failedTiles} failed' : ''}.';
+      final projectMessage = result.projectPackageChanged
+          ? 'Project package updated.'
+          : 'Project package already up to date.';
+      _completeOfflineAction(
+        message: refreshOnly
+            ? 'Offline resources checked. $projectMessage $tileMessage'
+            : 'Offline resources downloaded for ${project.name}. $projectMessage $tileMessage',
+        success: true,
+      );
+    } on OfflineDownloadCanceledException {
+      if (!mounted) {
+        return;
       }
-      _completeOfflineAction(message: message, success: true);
+      _invalidateOfflineTileAssetsCache(
+        package: package,
+        basemapStyle: LebanonBasemapStyle.satellite,
+      );
+      ref
+        ..invalidate(offlineProjectPackageProvider(project.id))
+        ..invalidate(offlineProjectPackagesProvider)
+        ..invalidate(offlineMapPackageProvider);
+      _completeOfflineAction(
+        message:
+            'Offline download canceled. Saved resources remain on this phone.',
+        success: true,
+      );
     } catch (error) {
       if (!mounted) {
         return;
@@ -3502,27 +3730,55 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _completeOfflineAction(
         message: userFacingErrorMessage(
           error,
-          fallback: 'Unable to refresh saved offline imagery right now.',
+          fallback: refreshOnly
+              ? 'Unable to refresh offline resources right now.'
+              : 'Unable to download offline resources right now.',
         ),
         success: false,
       );
     } finally {
+      await OfflineDownloadForegroundService.stop();
       _finishOfflineAction();
     }
   }
 
-  Future<void> _confirmDeleteSavedOfflineImagery(
-    OfflineMapPackage package,
+  void _updateOfflineDownloadProgress(OfflineProjectDownloadProgress progress) {
+    unawaited(OfflineDownloadForegroundService.updateProgress(progress.label));
+    _updateOfflineProgress(
+      label: progress.label,
+      completedTiles: progress.completedUnits ?? 0,
+      requestedTiles: progress.totalUnits ?? 0,
+    );
+  }
+
+  Future<void> _confirmDeleteOfflineResources(
+    ProjectSummary project,
+    OfflineMapPackage? package,
   ) async {
     if (_isDownloadingOffline || !mounted) {
+      return;
+    }
+    final session = ref.read(authControllerProvider).session;
+    if (session == null) {
+      return;
+    }
+    final pendingCount = await ref
+        .read(localStoreProvider)
+        .countUnsyncedDraftsForProject(
+          ownerUserId: session.user.id,
+          projectId: project.id,
+        );
+    if (!mounted) {
       return;
     }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete saved imagery?'),
+        title: const Text('Delete offline resources?'),
         content: Text(
-          'This removes the saved ${LebanonMapConfig.basemapLabel(_basemapStyle).toLowerCase()} imagery from this device for the signed-in user.',
+          pendingCount > 0
+              ? 'This project has $pendingCount unsynced offline contribution${pendingCount == 1 ? '' : 's'}. Delete the downloaded project package anyway? Your unsynced contribution data will stay on this phone and remain in the sync queue.'
+              : 'This removes the downloaded project package from this phone. The shared Satellite base map is kept if another downloaded project still uses it.',
         ),
         actions: [
           AppDialogActions(
@@ -3541,36 +3797,66 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     if (confirmed != true) {
       return;
     }
-    await _deleteSavedOfflineImagery(package);
+    if (!mounted) {
+      return;
+    }
+    await _deleteOfflineResources(project, package);
   }
 
-  Future<void> _deleteSavedOfflineImagery(OfflineMapPackage package) async {
+  Future<void> _deleteOfflineResources(
+    ProjectSummary project,
+    OfflineMapPackage? package,
+  ) async {
     if (_isDownloadingOffline) {
       return;
     }
     _startOfflineAction(
-      _OfflineMapAction.deleteSavedImagery,
-      progressLabel: 'Removing saved offline imagery from this device...',
+      _OfflineMapAction.deleteProject,
+      progressLabel: 'Removing downloaded project resources from this phone...',
     );
     try {
-      final manager = ref.read(offlineTileCacheManagerProvider);
-      await manager.clearCachedTiles(
-        package: package,
-        basemapStyle: _basemapStyle,
+      final session = ref.read(authControllerProvider).session;
+      if (session == null) {
+        throw StateError('Sign in before deleting offline resources.');
+      }
+      final localStore = ref.read(localStoreProvider);
+      await localStore.deleteOfflineProjectPackage(
+        ownerUserId: session.user.id,
+        projectId: project.id,
       );
-      _invalidateOfflineTileAssetsCache(
-        package: package,
-        basemapStyle: _basemapStyle,
-      );
-      await manager.refreshStats(package, basemapStyle: _basemapStyle);
-      final _ = await ref.refresh(offlineMapPackageProvider.future);
+
+      var deletedBaseMap = false;
+      if (package != null) {
+        final remainingUsers = await localStore
+            .countOfflineProjectPackagesUsingBaseMap(
+              ownerUserId: session.user.id,
+              baseMapVersion: package.version,
+            );
+        if (remainingUsers == 0) {
+          final manager = ref.read(offlineTileCacheManagerProvider);
+          await manager.clearCachedTiles(
+            package: package,
+            basemapStyle: _basemapStyle,
+          );
+          deletedBaseMap = true;
+          _invalidateOfflineTileAssetsCache(
+            package: package,
+            basemapStyle: _basemapStyle,
+          );
+        }
+      }
+
+      ref
+        ..invalidate(offlineProjectPackageProvider(project.id))
+        ..invalidate(offlineProjectPackagesProvider)
+        ..invalidate(offlineMapPackageProvider);
       if (!mounted) {
         return;
       }
-      _clearTileNotice();
       _completeOfflineAction(
-        message:
-            'Saved ${LebanonMapConfig.basemapLabel(_basemapStyle).toLowerCase()} imagery removed from this device.',
+        message: deletedBaseMap
+            ? 'Offline project resources and unused shared Satellite base map were removed.'
+            : 'Offline project resources were removed. Shared Satellite base map is still used by another downloaded project.',
         success: true,
       );
     } catch (error) {
@@ -3580,7 +3866,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _completeOfflineAction(
         message: userFacingErrorMessage(
           error,
-          fallback: 'Unable to remove saved offline imagery right now.',
+          fallback: 'Unable to delete offline resources right now.',
         ),
         success: false,
       );
@@ -3649,7 +3935,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         AppSnackbar.showError(context, error.message);
       }
     } catch (error) {
-      if (mounted) {
+      if (mounted && context.mounted) {
         AppSnackbar.showError(
           context,
           userFacingErrorMessage(
@@ -3693,7 +3979,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
     _hasHandledStartCaptureOnOpen = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
+      if (!mounted || !context.mounted) {
         return;
       }
       if (canCollectOnMap) {
@@ -3737,7 +4023,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         );
       }
     } catch (error) {
-      if (mounted) {
+      if (mounted && context.mounted) {
         AppSnackbar.showError(
           context,
           userFacingErrorMessage(
@@ -3790,7 +4076,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         );
       }
     } catch (error) {
-      if (mounted) {
+      if (mounted && context.mounted) {
         AppSnackbar.showError(
           context,
           userFacingErrorMessage(
@@ -4209,6 +4495,99 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     });
   }
 
+  void _maybeOpenInitialAiValidationTaskDetails({
+    required ProjectSummary project,
+    required List<AiPredictionValidationTask> tasks,
+    required bool canSubmit,
+    required bool canReview,
+  }) {
+    final targetTaskId = _initialFeatureId;
+    if (targetTaskId == null ||
+        targetTaskId.isEmpty ||
+        _autoOpenedAiValidationTaskId == targetTaskId) {
+      return;
+    }
+
+    AiPredictionValidationTask? fallbackTask;
+    for (final item in tasks) {
+      if (item.id == targetTaskId) {
+        fallbackTask = item;
+        break;
+      }
+    }
+
+    _autoOpenedAiValidationTaskId = targetTaskId;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      unawaited(
+        ref
+            .read(aiValidationTaskProvider(targetTaskId).future)
+            .then((target) {
+              if (!mounted || target.projectId != project.id) {
+                return;
+              }
+              _openAiValidationTaskMapDetails(
+                target,
+                canSubmit: canSubmit,
+                canReview: canReview,
+              );
+            })
+            .catchError((_) {
+              if (!mounted) {
+                return;
+              }
+              if (fallbackTask != null) {
+                _openAiValidationTaskMapDetails(
+                  fallbackTask,
+                  canSubmit: canSubmit,
+                  canReview: canReview,
+                );
+                return;
+              }
+              _autoOpenedAiValidationTaskId = null;
+            }),
+      );
+    });
+  }
+
+  List<AiPredictionValidationTask> _mapVisibleValidationTasks(
+    List<AiPredictionValidationTask> tasks,
+    String projectId,
+  ) {
+    const visibleStatuses = <String>{
+      'open',
+      'assigned',
+      'in_progress',
+      'submitted',
+      'accepted',
+      'rejected',
+    };
+    return tasks
+        .where(
+          (task) =>
+              task.projectId == projectId &&
+              visibleStatuses.contains(task.status) &&
+              geometryPoints(task.prediction.geometry).isNotEmpty,
+        )
+        .toList(growable: false);
+  }
+
+  List<AiPredictionValidationTask> _validationTasksWithFocusedOverride(
+    List<AiPredictionValidationTask> tasks, {
+    required AiPredictionValidationTask? focusedOverride,
+    required String projectId,
+  }) {
+    if (focusedOverride == null ||
+        focusedOverride.projectId != projectId ||
+        geometryPoints(focusedOverride.prediction.geometry).isEmpty ||
+        tasks.any((task) => task.id == focusedOverride.id)) {
+      return tasks;
+    }
+    return <AiPredictionValidationTask>[...tasks, focusedOverride];
+  }
+
   void _focusFeature(
     MapFeatureSummary feature, {
     bool detailsSheetAware = false,
@@ -4407,6 +4786,74 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     _openPublishedAiFeatureDetails(selected);
   }
 
+  Widget _validationTaskPolygonLayer({
+    required List<AiPredictionValidationTask> tasks,
+    required bool canSubmit,
+    required bool canReview,
+  }) {
+    final layer = PolygonLayer<AiPredictionValidationTask>(
+      polygons: _validationTaskPolygonOverlays(tasks),
+      hitNotifier: _validationTaskPolygonHitNotifier,
+    );
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      hitTestBehavior: HitTestBehavior.deferToChild,
+      child: GestureDetector(
+        behavior: HitTestBehavior.deferToChild,
+        onTap: () => _handleValidationTaskLayerHit(
+          _validationTaskPolygonHitNotifier,
+          canSubmit: canSubmit,
+          canReview: canReview,
+        ),
+        child: layer,
+      ),
+    );
+  }
+
+  Widget _validationTaskPolylineLayer({
+    required List<AiPredictionValidationTask> tasks,
+    required bool canSubmit,
+    required bool canReview,
+  }) {
+    final layer = PolylineLayer<AiPredictionValidationTask>(
+      polylines: _validationTaskPolylineOverlays(tasks),
+      hitNotifier: _validationTaskPolylineHitNotifier,
+      minimumHitbox: 14,
+    );
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      hitTestBehavior: HitTestBehavior.deferToChild,
+      child: GestureDetector(
+        behavior: HitTestBehavior.deferToChild,
+        onTap: () => _handleValidationTaskLayerHit(
+          _validationTaskPolylineHitNotifier,
+          canSubmit: canSubmit,
+          canReview: canReview,
+        ),
+        child: layer,
+      ),
+    );
+  }
+
+  void _handleValidationTaskLayerHit(
+    LayerHitNotifier<AiPredictionValidationTask> notifier, {
+    required bool canSubmit,
+    required bool canReview,
+  }) {
+    if (_isProjectMapCaptureMode) {
+      return;
+    }
+    final hits = notifier.value?.hitValues;
+    if (hits == null || hits.isEmpty) {
+      return;
+    }
+    _openAiValidationTaskMapDetails(
+      hits.first,
+      canSubmit: canSubmit,
+      canReview: canReview,
+    );
+  }
+
   List<Polygon<_PublishedAiMapFeature>> _publishedAiPolygonOverlays(
     List<AiLayerFeatureCollection> collections,
   ) {
@@ -4523,6 +4970,127 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     return markers;
   }
 
+  List<Polygon<AiPredictionValidationTask>> _validationTaskPolygonOverlays(
+    List<AiPredictionValidationTask> tasks,
+  ) {
+    final polygons = <Polygon<AiPredictionValidationTask>>[];
+    for (final task in tasks) {
+      final geometry = task.prediction.geometry;
+      if (!isPolygonGeometry(geometry)) {
+        continue;
+      }
+      final focused = _focusedAiValidationTaskId == task.id;
+      final style = _validationTaskMapStyle(task, focused: focused);
+      for (final points in polygonGeometrySegments(geometry)) {
+        if (!isValidPolygonRing(points)) {
+          continue;
+        }
+        polygons.add(
+          Polygon<AiPredictionValidationTask>(
+            points: points,
+            color: style.fillColor,
+            borderColor: style.borderColor,
+            borderStrokeWidth: style.borderWidth,
+            hitValue: task,
+          ),
+        );
+      }
+    }
+    return polygons;
+  }
+
+  List<Polyline<AiPredictionValidationTask>> _validationTaskPolylineOverlays(
+    List<AiPredictionValidationTask> tasks,
+  ) {
+    final polylines = <Polyline<AiPredictionValidationTask>>[];
+    for (final task in tasks) {
+      final geometry = task.prediction.geometry;
+      if (!isLineGeometry(geometry)) {
+        continue;
+      }
+      final focused = _focusedAiValidationTaskId == task.id;
+      final style = _validationTaskMapStyle(task, focused: focused);
+      for (final points in lineGeometrySegments(geometry)) {
+        if (points.length < 2) {
+          continue;
+        }
+        polylines.add(
+          Polyline<AiPredictionValidationTask>(
+            points: points,
+            color: style.borderColor,
+            strokeWidth: math.max(3.2, style.borderWidth),
+            hitValue: task,
+          ),
+        );
+      }
+    }
+    return polylines;
+  }
+
+  List<Marker> _validationTaskMarkerOverlays(
+    List<AiPredictionValidationTask> tasks, {
+    required bool canSubmit,
+    required bool canReview,
+  }) {
+    final markers = <Marker>[];
+    for (final task in tasks) {
+      final geometry = task.prediction.geometry;
+      if (!isPointGeometry(geometry)) {
+        continue;
+      }
+      final focused = _focusedAiValidationTaskId == task.id;
+      final style = _validationTaskMapStyle(task, focused: focused);
+      for (final point in pointGeometryPoints(geometry)) {
+        markers.add(
+          Marker(
+            point: point,
+            width: focused ? 50 : 42,
+            height: focused ? 50 : 42,
+            child: Semantics(
+              button: true,
+              label: 'AI validation task marker',
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: () => _openAiValidationTaskMapDetails(
+                  task,
+                  canSubmit: canSubmit,
+                  canReview: canReview,
+                ),
+                child: Center(
+                  child: Container(
+                    width: focused ? 36 : 30,
+                    height: focused ? 36 : 30,
+                    decoration: BoxDecoration(
+                      color: style.borderColor,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: focused ? Colors.black87 : Colors.white,
+                        width: focused ? 2.8 : 2,
+                      ),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x33000000),
+                          blurRadius: 8,
+                          offset: Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.fact_check_outlined,
+                      color: Colors.white,
+                      size: 16,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+    }
+    return markers;
+  }
+
   void _focusPublishedAiAggregate(_PublishedAiMapFeature item) {
     final point = geometryFocusPoint(item.feature.geometry);
     if (point == null) {
@@ -4569,6 +5137,122 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       final center = geometryPointsCenter(points);
       if (center != null) {
         _mapController.move(center, 16);
+      }
+    }, queueUntilReady: true);
+  }
+
+  void _openAiValidationTaskMapDetails(
+    AiPredictionValidationTask task, {
+    required bool canSubmit,
+    required bool canReview,
+  }) {
+    _focusAiValidationTask(task, detailsSheetAware: true);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => _AiValidationTaskMapDetailsSheet(
+        task: task,
+        onSubmit: canSubmit && task.canSubmit
+            ? () {
+                Navigator.of(sheetContext).pop();
+                unawaited(_openAiValidationSubmissionDialog(task));
+              }
+            : null,
+        onAccept: canReview && task.canReview
+            ? () {
+                Navigator.of(sheetContext).pop();
+                unawaited(
+                  _openAiValidationReviewDialog(task, decision: 'accepted'),
+                );
+              }
+            : null,
+        onReject: canReview && task.canReview
+            ? () {
+                Navigator.of(sheetContext).pop();
+                unawaited(
+                  _openAiValidationReviewDialog(task, decision: 'rejected'),
+                );
+              }
+            : null,
+      ),
+    );
+  }
+
+  Future<void> _openAiValidationSubmissionDialog(
+    AiPredictionValidationTask task,
+  ) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AiValidationSubmissionDialog(task: task),
+    );
+    if (!mounted) {
+      return;
+    }
+    _refreshFocusedAiValidationTask(task.id);
+  }
+
+  Future<void> _openAiValidationReviewDialog(
+    AiPredictionValidationTask task, {
+    required String decision,
+  }) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) =>
+          AiValidationReviewDialog(task: task, decision: decision),
+    );
+    if (!mounted) {
+      return;
+    }
+    _refreshFocusedAiValidationTask(task.id);
+  }
+
+  void _refreshFocusedAiValidationTask(String taskId) {
+    unawaited(
+      ref
+          .read(aiValidationTaskProvider(taskId).future)
+          .then((task) {
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _focusedAiValidationTaskId = task.id;
+              _focusedAiValidationTaskOverride = task;
+            });
+          })
+          .catchError((_) {}),
+    );
+  }
+
+  void _focusAiValidationTask(
+    AiPredictionValidationTask task, {
+    bool detailsSheetAware = false,
+  }) {
+    final points = geometryPoints(task.prediction.geometry);
+    setState(() {
+      _showAiValidationTasks = true;
+      _focusedAiValidationTaskId = task.id;
+      _focusedAiValidationTaskOverride = task;
+    });
+    if (points.isEmpty) {
+      return;
+    }
+    _runMainMapAction(() {
+      if (points.length > 1 &&
+          !geometryPointsCollapseToSingleLocation(points)) {
+        _mapController.fitCamera(
+          CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints(points),
+            padding: detailsSheetAware
+                ? const EdgeInsets.fromLTRB(72, 72, 72, 300)
+                : const EdgeInsets.all(72),
+            maxZoom: 17,
+          ),
+        );
+        return;
+      }
+      final center = geometryPointsCenter(points);
+      if (center != null) {
+        _mapController.move(center, 17);
       }
     }, queueUntilReady: true);
   }
@@ -4834,10 +5518,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 }
 
 List<AiOutputLayer> _publishedAiMapLayers(List<AiOutputLayer> layers) {
-  const types = {'classification', 'confidence', 'uncertainty'};
   final latestByType = <String, AiOutputLayer>{};
   for (final layer in layers.where(
-    (layer) => layer.status == 'published' && types.contains(layer.layerType),
+    (layer) =>
+        layer.status == 'published' && layer.layerType == 'classification',
   )) {
     final existing = latestByType[layer.layerType];
     if (existing == null || _isNewerPublishedLayer(layer, existing)) {
@@ -4845,7 +5529,7 @@ List<AiOutputLayer> _publishedAiMapLayers(List<AiOutputLayer> layers) {
     }
   }
   return [
-    for (final type in const ['classification', 'confidence', 'uncertainty'])
+    for (final type in const ['classification'])
       if (latestByType[type] != null) latestByType[type]!,
   ];
 }
@@ -4866,7 +5550,7 @@ bool _isNewerPublishedLayer(AiOutputLayer candidate, AiOutputLayer current) {
 
 List<String> _publishedAiLayerTypes(List<AiOutputLayer> layers) {
   return [
-    for (final type in const ['classification', 'confidence', 'uncertainty'])
+    for (final type in const ['classification'])
       if (layers.any((layer) => layer.layerType == type)) type,
   ];
 }
@@ -4889,7 +5573,7 @@ AiLayerFeaturesQuery _publishedAiLayerViewportQuery(
     bounds:
         '${viewport.minLon},${viewport.minLat},${viewport.maxLon},${viewport.maxLat}',
     zoom: viewport.zoom,
-    limit: 900,
+    limit: 2500,
     classLabel: classLabel,
   );
 }
@@ -4899,9 +5583,6 @@ List<String> _publishedAiClassOptions(
 ) {
   final values = <String>{};
   for (final collection in collections) {
-    if (collection.layer.layerType != 'classification') {
-      continue;
-    }
     values.addAll(
       collection.classCounts.keys.where((value) => value.trim().isNotEmpty),
     );
@@ -4992,37 +5673,63 @@ class _PublishedAiStyle {
   final double borderWidth;
 }
 
+class _ValidationTaskMapStyle {
+  const _ValidationTaskMapStyle({
+    required this.fillColor,
+    required this.borderColor,
+    required this.borderWidth,
+  });
+
+  final Color fillColor;
+  final Color borderColor;
+  final double borderWidth;
+}
+
 _PublishedAiStyle _publishedAiFeatureStyle(
   _PublishedAiMapFeature item, {
   bool focused = false,
 }) {
   switch (item.layer.layerType) {
-    case 'confidence':
-      final confidence = _publishedAiFeatureConfidence(item.feature);
-      final alpha = confidence == null
-          ? 0.20
-          : (0.10 + confidence.clamp(0, 1).toDouble() * 0.28);
-      return _PublishedAiStyle(
-        fillColor: const Color(0xFF0288D1).withValues(alpha: alpha),
-        borderColor: focused ? Colors.black87 : const Color(0xFF01579B),
-        borderWidth: focused ? 3.2 : 2,
-      );
-    case 'uncertainty':
-      return _PublishedAiStyle(
-        fillColor: const Color(0xFFE65100).withValues(alpha: 0.22),
-        borderColor: focused ? Colors.black87 : const Color(0xFFBF360C),
-        borderWidth: focused ? 3.4 : 2.2,
-      );
     case 'classification':
     default:
       final color = _publishedAiClassColor(
         _publishedAiFeatureClass(item.feature),
       );
       return _PublishedAiStyle(
-        fillColor: color.withValues(alpha: 0.18),
-        borderColor: focused ? Colors.black87 : color,
-        borderWidth: focused ? 3.2 : 2,
+        fillColor: color.withValues(alpha: focused ? 0.18 : 0.10),
+        borderColor: focused ? Colors.black87 : color.withValues(alpha: 0.48),
+        borderWidth: focused ? 1.8 : 0.8,
       );
+  }
+}
+
+_ValidationTaskMapStyle _validationTaskMapStyle(
+  AiPredictionValidationTask task, {
+  bool focused = false,
+}) {
+  final color = _validationTaskStatusColor(task.status);
+  return _ValidationTaskMapStyle(
+    fillColor: color.withValues(alpha: focused ? 0.30 : 0.18),
+    borderColor: focused ? Colors.black87 : color,
+    borderWidth: focused ? 4.0 : 2.8,
+  );
+}
+
+Color _validationTaskStatusColor(String status) {
+  switch (status) {
+    case 'accepted':
+      return const Color(0xFF1E7A46);
+    case 'rejected':
+      return const Color(0xFFB3261E);
+    case 'submitted':
+      return const Color(0xFF6A1B9A);
+    case 'cancelled':
+      return const Color(0xFF6D6D6D);
+    case 'assigned':
+    case 'in_progress':
+    case 'open':
+    default:
+      return const Color(0xFFE65100);
   }
 }
 
@@ -5042,10 +5749,6 @@ Color _publishedAiClassColor(String? className) {
 
 Color _publishedAiLayerTypeColor(String layerType) {
   switch (layerType) {
-    case 'confidence':
-      return const Color(0xFF0288D1);
-    case 'uncertainty':
-      return const Color(0xFFE65100);
     case 'classification':
     default:
       return const Color(0xFF2E7D32);
@@ -5055,8 +5758,10 @@ Color _publishedAiLayerTypeColor(String layerType) {
 String? _publishedAiFeatureClass(AiLayerFeature feature) {
   for (final key in const [
     'predicted_class',
+    'predicted_class_label',
     'dominant_class',
     'class_label',
+    'class_name',
     'label',
     'L4_descr',
   ]) {
@@ -5069,12 +5774,34 @@ String? _publishedAiFeatureClass(AiLayerFeature feature) {
 }
 
 double? _publishedAiFeatureConfidence(AiLayerFeature feature) {
-  final raw = feature.properties['confidence'];
-  if (raw is num) {
-    return raw.toDouble();
-  }
-  if (raw is String) {
-    return double.tryParse(raw);
+  for (final key in const [
+    'confidence',
+    'confidence_score',
+    'probability',
+    'max_probability',
+    'prediction_confidence',
+    'mean_confidence',
+    'confidence_mean',
+    'mean',
+  ]) {
+    final raw = feature.properties[key];
+    if (raw is num) {
+      final value = raw.toDouble();
+      if (value > 1 && value <= 100) {
+        return value / 100;
+      }
+      return value;
+    }
+    if (raw is String) {
+      final value = double.tryParse(raw);
+      if (value == null) {
+        continue;
+      }
+      if (value > 1 && value <= 100) {
+        return value / 100;
+      }
+      return value;
+    }
   }
   return null;
 }
@@ -5096,10 +5823,6 @@ String? _publishedAiFeatureText(AiLayerFeature feature, List<String> keys) {
 
 String _publishedAiFriendlyLayerType(String type) {
   switch (type) {
-    case 'confidence':
-      return 'Confidence';
-    case 'uncertainty':
-      return 'Uncertainty';
     case 'classification':
       return 'Classification';
     default:
@@ -5119,13 +5842,48 @@ String _publishedAiFriendlyClass(String value) {
 String _publishedAiFormatConfidence(double value) =>
     '${(value * 100).clamp(0, 100).toStringAsFixed(1)}%';
 
-class _PublishedAiFeatureDetailsSheet extends StatelessWidget {
+String _validationTaskStatusLabel(String status) {
+  switch (status) {
+    case 'in_progress':
+      return 'In progress';
+    default:
+      final words = status.replaceAll('_', ' ').split(RegExp(r'\s+'));
+      return words
+          .where((word) => word.isNotEmpty)
+          .map(
+            (word) => word.length == 1
+                ? word.toUpperCase()
+                : '${word.substring(0, 1).toUpperCase()}${word.substring(1)}',
+          )
+          .join(' ');
+  }
+}
+
+String _validationTaskScoreLabel(double? score) {
+  if (score == null) {
+    return 'Not recorded';
+  }
+  return '${(score * 100).clamp(0, 100).toStringAsFixed(1)}%';
+}
+
+class _PublishedAiFeatureDetailsSheet extends ConsumerStatefulWidget {
   const _PublishedAiFeatureDetailsSheet({required this.item});
 
   final _PublishedAiMapFeature item;
 
   @override
+  ConsumerState<_PublishedAiFeatureDetailsSheet> createState() =>
+      _PublishedAiFeatureDetailsSheetState();
+}
+
+class _PublishedAiFeatureDetailsSheetState
+    extends ConsumerState<_PublishedAiFeatureDetailsSheet> {
+  bool _openingValidationDialog = false;
+  bool _openingAdminReviewDialog = false;
+
+  @override
   Widget build(BuildContext context) {
+    final item = widget.item;
     final feature = item.feature;
     final className = _publishedAiFeatureClass(feature);
     final confidence = _publishedAiFeatureConfidence(feature);
@@ -5150,14 +5908,29 @@ class _PublishedAiFeatureDetailsSheet extends StatelessWidget {
       attributes['confidence'] = _publishedAiFormatConfidence(confidence);
     }
     if (model != null) {
-      attributes['model'] = model;
+      attributes['model'] = formatModelName(model);
     }
     if (area != null) {
       attributes['area'] = area;
     }
-    if (runId != null) {
-      attributes['run_id'] = runId;
-    }
+    final projectId = item.layer.projectId;
+    final resolvedRunId = item.layer.aiRunId ?? runId;
+    final predictionId = _publishedAiFeatureText(feature, const [
+      'prediction_feature_id',
+      'ai_prediction_feature_id',
+      'feature_id',
+      'id',
+    ]);
+    final detailsAsync =
+        projectId == null || resolvedRunId == null || predictionId == null
+        ? null
+        : ref.watch(
+            aiPredictionFeatureDetailsProvider((
+              projectId: projectId,
+              runId: resolvedRunId,
+              predictionId: predictionId,
+            )),
+          );
 
     return DraggableScrollableSheet(
       expand: false,
@@ -5257,12 +6030,1046 @@ class _PublishedAiFeatureDetailsSheet extends StatelessWidget {
                 SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Text(
-                    'Read-only AI prediction. Not approved field data and not editable.',
+                    'Published AI classification prediction. Confidence is an attribute, not a separate layer.',
                   ),
                 ),
               ],
             ),
           ),
+          if (detailsAsync == null)
+            const _DetailSection(
+              title: 'Validation',
+              child: _MapNoticeRow(
+                icon: Icons.info_outline,
+                text:
+                    'Validation details are unavailable because this feature is missing a prediction id.',
+              ),
+            )
+          else
+            detailsAsync.when(
+              loading: () => const Padding(
+                padding: EdgeInsets.only(top: AppSpacing.sm),
+                child: LinearProgressIndicator(),
+              ),
+              error: (error, _) => _DetailSection(
+                title: 'Validation',
+                child: _MapNoticeRow(
+                  icon: Icons.error_outline,
+                  text: userFacingErrorMessage(
+                    error,
+                    fallback: 'Unable to load AI validation status.',
+                  ),
+                ),
+              ),
+              data: (details) => _DetailSection(
+                title: 'Validation',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _FeatureAttributesGrid(
+                      attributes: <String, dynamic>{
+                        'submitted_validations':
+                            details.validationSummary.total,
+                        'correct': details.validationSummary.correct,
+                        'incorrect': details.validationSummary.incorrect,
+                        'unsure': details.validationSummary.unsure,
+                        'cannot_verify': details.validationSummary.cannotVerify,
+                        if (details.adminReview['status'] != null)
+                          'admin_status': details.adminReview['status'],
+                        if (details.adminReview['approved_class'] != null)
+                          'approved_class':
+                              details.adminReview['approved_class'],
+                      },
+                    ),
+                    if (details.myValidation != null) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      const _MapNoticeRow(
+                        icon: Icons.check_circle_outline,
+                        text: 'You already validated this feature.',
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      _FeatureAttributesGrid(
+                        attributes: <String, dynamic>{
+                          'result': details.myValidation!.validationResult,
+                          if (details.myValidation!.correctedClass != null)
+                            'corrected_class':
+                                details.myValidation!.correctedClass,
+                          if (details.myValidation!.note != null)
+                            'note': details.myValidation!.note,
+                        },
+                      ),
+                      if (details.myValidation!.photoMediaIds.isNotEmpty) ...[
+                        const SizedBox(height: AppSpacing.sm),
+                        _ValidationPhotoPreviewGrid(
+                          mediaIds: details.myValidation!.photoMediaIds,
+                        ),
+                      ],
+                    ],
+                    if (details.validationClosed) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      const _MapNoticeRow(
+                        icon: Icons.lock_outline,
+                        text:
+                            'Admin review has closed contributor validation for this feature.',
+                      ),
+                    ],
+                    if (details.canValidate || details.canAdminReview) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      AppActionButtons(
+                        maxColumns: 2,
+                        compactBreakpoint: 420,
+                        fillRows: true,
+                        children: [
+                          if (details.canValidate)
+                            FilledButton.icon(
+                              onPressed: _openingValidationDialog
+                                  ? null
+                                  : () => _openPredictionValidationDialog(
+                                      context,
+                                      details,
+                                    ),
+                              icon: const Icon(Icons.fact_check_outlined),
+                              label: Text(
+                                _openingValidationDialog
+                                    ? 'Opening...'
+                                    : 'Validate',
+                              ),
+                            ),
+                          if (details.canAdminReview)
+                            OutlinedButton.icon(
+                              onPressed: _openingAdminReviewDialog
+                                  ? null
+                                  : () => _openPredictionAdminReviewDialog(
+                                      context,
+                                      details,
+                                    ),
+                              icon: const Icon(
+                                Icons.admin_panel_settings_outlined,
+                              ),
+                              label: const Text('Admin review'),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openPredictionValidationDialog(
+    BuildContext context,
+    AiPredictionFeatureDetails details,
+  ) async {
+    if (_openingValidationDialog) {
+      return;
+    }
+    setState(() => _openingValidationDialog = true);
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => _AiPredictionValidationDialog(details: details),
+      );
+      if (!mounted || !context.mounted) {
+        return;
+      }
+      ref.invalidate(
+        aiPredictionFeatureDetailsProvider((
+          projectId: details.prediction.projectId ?? '',
+          runId: details.prediction.aiRunId ?? '',
+          predictionId: details.prediction.id,
+        )),
+      );
+    } catch (error) {
+      if (mounted && context.mounted) {
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to open validation right now.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _openingValidationDialog = false);
+      }
+    }
+  }
+
+  Future<void> _openPredictionAdminReviewDialog(
+    BuildContext context,
+    AiPredictionFeatureDetails details,
+  ) async {
+    if (_openingAdminReviewDialog) {
+      return;
+    }
+    setState(() => _openingAdminReviewDialog = true);
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => _AiPredictionAdminReviewDialog(details: details),
+      );
+      if (!mounted || !context.mounted) {
+        return;
+      }
+      ref.invalidate(
+        aiPredictionFeatureDetailsProvider((
+          projectId: details.prediction.projectId ?? '',
+          runId: details.prediction.aiRunId ?? '',
+          predictionId: details.prediction.id,
+        )),
+      );
+    } catch (error) {
+      if (mounted && context.mounted) {
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to open admin review right now.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _openingAdminReviewDialog = false);
+      }
+    }
+  }
+}
+
+class _MapNoticeRow extends StatelessWidget {
+  const _MapNoticeRow({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 20),
+        const SizedBox(width: AppSpacing.sm),
+        Expanded(child: Text(text)),
+      ],
+    );
+  }
+}
+
+class _AiPredictionValidationDialog extends ConsumerStatefulWidget {
+  const _AiPredictionValidationDialog({required this.details});
+
+  final AiPredictionFeatureDetails details;
+
+  @override
+  ConsumerState<_AiPredictionValidationDialog> createState() =>
+      _AiPredictionValidationDialogState();
+}
+
+class _AiPredictionValidationDialogState
+    extends ConsumerState<_AiPredictionValidationDialog> {
+  final TextEditingController _noteController = TextEditingController();
+  final ImagePicker _imagePicker = ImagePicker();
+  final List<AiValidationPhotoUpload> _photos = <AiValidationPhotoUpload>[];
+  String _result = 'correct';
+  String? _correctedClass;
+  bool _submitting = false;
+
+  @override
+  void dispose() {
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final requiresCorrection = _result == 'incorrect';
+    final eligibleClasses = eligibleAiPredictionFeatureClasses(widget.details);
+    if (_correctedClass != null && !eligibleClasses.contains(_correctedClass)) {
+      _correctedClass = null;
+    }
+    final screenSize = MediaQuery.sizeOf(context);
+    return Dialog(
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: 520,
+          maxHeight: screenSize.height * 0.85,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                AppSpacing.lg,
+                AppSpacing.lg,
+                AppSpacing.sm,
+              ),
+              child: Text(
+                'Validate AI prediction',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  0,
+                  AppSpacing.lg,
+                  AppSpacing.md,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      initialValue: _result,
+                      decoration: const InputDecoration(labelText: 'Result'),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'correct',
+                          child: Text('Correct'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'incorrect',
+                          child: Text('Incorrect'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'unsure',
+                          child: Text('Unsure'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'cannot_verify',
+                          child: Text('Cannot verify'),
+                        ),
+                      ],
+                      onChanged: _submitting
+                          ? null
+                          : (value) {
+                              if (value == null) {
+                                return;
+                              }
+                              setState(() {
+                                _result = value;
+                                if (_result != 'incorrect') {
+                                  _correctedClass = null;
+                                }
+                              });
+                            },
+                    ),
+                    if (requiresCorrection) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      DropdownButtonFormField<String>(
+                        initialValue: _correctedClass,
+                        decoration: const InputDecoration(
+                          labelText: 'Corrected class',
+                        ),
+                        items: eligibleClasses
+                            .map(
+                              (label) => DropdownMenuItem<String>(
+                                value: label,
+                                child: Text(label),
+                              ),
+                            )
+                            .toList(growable: false),
+                        onChanged: _submitting
+                            ? null
+                            : (value) =>
+                                  setState(() => _correctedClass = value),
+                      ),
+                    ],
+                    const SizedBox(height: AppSpacing.sm),
+                    TextField(
+                      controller: _noteController,
+                      enabled: !_submitting,
+                      minLines: 2,
+                      maxLines: 5,
+                      decoration: const InputDecoration(labelText: 'Note'),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    Text(
+                      'Validation photos (optional)',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    AppActionButtons(
+                      fillRows: true,
+                      compactBreakpoint: 420,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: _submitting
+                              ? null
+                              : () => _pickPhoto(ImageSource.gallery),
+                          icon: const Icon(Icons.photo_library_outlined),
+                          label: const Text('Add photo'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: _submitting
+                              ? null
+                              : () => _pickPhoto(ImageSource.camera),
+                          icon: const Icon(Icons.photo_camera_outlined),
+                          label: const Text('Take photo'),
+                        ),
+                      ],
+                    ),
+                    if (_photos.isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.xs),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final photo in _photos)
+                            InputChip(
+                              label: Text(photo.fileName),
+                              avatar: const Icon(
+                                Icons.image_outlined,
+                                size: 18,
+                              ),
+                              onDeleted: _submitting
+                                  ? null
+                                  : () => setState(() => _photos.remove(photo)),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: AppDialogActions(
+                  cancel: TextButton(
+                    onPressed: _submitting
+                        ? null
+                        : () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  confirm: FilledButton(
+                    onPressed: _submitting ? null : _submit,
+                    child: _submitting
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Submit'),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _submit() async {
+    final correctedClass = _correctedClass?.trim();
+    if (_result == 'incorrect' &&
+        (correctedClass == null || correctedClass.isEmpty)) {
+      AppSnackbar.showError(
+        context,
+        'Corrected class is required for incorrect predictions.',
+      );
+      return;
+    }
+    setState(() => _submitting = true);
+    try {
+      final prediction = widget.details.prediction;
+      final repository = ref.read(aiRepositoryProvider);
+      final photoMediaIds = _photos.isEmpty
+          ? const <String>[]
+          : await repository.uploadPredictionValidationPhotos(
+              projectId:
+                  prediction.projectId ?? widget.details.layer.projectId ?? '',
+              predictionId: prediction.id,
+              photos: _photos,
+            );
+      await ref
+          .read(aiRepositoryProvider)
+          .submitPredictionValidation(
+            projectId:
+                prediction.projectId ?? widget.details.layer.projectId ?? '',
+            predictionId: prediction.id,
+            validationResult: _result,
+            correctedClass: _result == 'incorrect' ? correctedClass : null,
+            note: _noteController.text.trim(),
+            photoMediaIds: photoMediaIds,
+          );
+      bumpWorkflowRefresh(ref);
+      if (mounted) {
+        AppSnackbar.showSuccess(context, 'AI validation submitted.');
+        Navigator.of(context).pop();
+      }
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to submit this AI validation.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _submitting = false);
+      }
+    }
+  }
+
+  Future<void> _pickPhoto(ImageSource source) async {
+    try {
+      final image = await _imagePicker.pickImage(
+        source: source,
+        maxWidth: 2200,
+        imageQuality: 86,
+      );
+      if (image == null) {
+        return;
+      }
+      final bytes = await image.readAsBytes();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _photos.add(
+          AiValidationPhotoUpload(
+            fileName: image.name.isEmpty ? 'validation-photo.jpg' : image.name,
+            bytes: bytes,
+          ),
+        );
+      });
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to attach this photo.',
+          ),
+        );
+      }
+    }
+  }
+}
+
+class _AiPredictionAdminReviewDialog extends ConsumerStatefulWidget {
+  const _AiPredictionAdminReviewDialog({required this.details});
+
+  final AiPredictionFeatureDetails details;
+
+  @override
+  ConsumerState<_AiPredictionAdminReviewDialog> createState() =>
+      _AiPredictionAdminReviewDialogState();
+}
+
+class _AiPredictionAdminReviewDialogState
+    extends ConsumerState<_AiPredictionAdminReviewDialog> {
+  late final TextEditingController _approvedClassController;
+  final TextEditingController _noteController = TextEditingController();
+  String _status = 'approved';
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _approvedClassController = TextEditingController(
+      text: widget.details.prediction.predictedClass ?? '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _approvedClassController.dispose();
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final prediction = widget.details.prediction;
+    final projectId = prediction.projectId ?? widget.details.layer.projectId;
+    final validationsAsync = projectId == null || projectId.trim().isEmpty
+        ? const AsyncValue<List<AiPredictionFeatureValidation>>.data(
+            <AiPredictionFeatureValidation>[],
+          )
+        : ref.watch(
+            aiPredictionFeatureValidationsProvider((
+              projectId: projectId,
+              predictionId: prediction.id,
+            )),
+          );
+    return AlertDialog(
+      title: const Text('Admin review'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _FeatureAttributesGrid(
+              attributes: <String, dynamic>{
+                'validations': widget.details.validationSummary.total,
+                'correct': widget.details.validationSummary.correct,
+                'incorrect': widget.details.validationSummary.incorrect,
+                'unsure': widget.details.validationSummary.unsure,
+                'cannot_verify': widget.details.validationSummary.cannotVerify,
+              },
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            validationsAsync.when(
+              loading: () => const LinearProgressIndicator(),
+              error: (error, _) => _MapNoticeRow(
+                icon: Icons.error_outline,
+                text: userFacingErrorMessage(
+                  error,
+                  fallback: 'Unable to load contributor validation evidence.',
+                ),
+              ),
+              data: (validations) =>
+                  _ValidationSubmissionsList(validations: validations),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            DropdownButtonFormField<String>(
+              initialValue: _status,
+              decoration: const InputDecoration(labelText: 'Decision'),
+              items: const [
+                DropdownMenuItem(value: 'approved', child: Text('Approve')),
+                DropdownMenuItem(value: 'rejected', child: Text('Reject')),
+                DropdownMenuItem(
+                  value: 'needs_more_validation',
+                  child: Text('Needs more validation'),
+                ),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _status = value);
+                      }
+                    },
+            ),
+            if (_status == 'approved') ...[
+              const SizedBox(height: AppSpacing.sm),
+              TextField(
+                controller: _approvedClassController,
+                enabled: !_saving,
+                decoration: const InputDecoration(labelText: 'Approved class'),
+              ),
+            ],
+            const SizedBox(height: AppSpacing.sm),
+            TextField(
+              controller: _noteController,
+              enabled: !_saving,
+              minLines: 2,
+              maxLines: 5,
+              decoration: const InputDecoration(labelText: 'Admin note'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        AppDialogActions(
+          cancel: TextButton(
+            onPressed: _saving ? null : () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          confirm: FilledButton(
+            onPressed: _saving ? null : _save,
+            child: _saving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Save'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _save() async {
+    final approvedClass = _approvedClassController.text.trim();
+    if (_status == 'approved' && approvedClass.isEmpty) {
+      AppSnackbar.showError(context, 'Approved class is required.');
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      final prediction = widget.details.prediction;
+      await ref
+          .read(aiRepositoryProvider)
+          .reviewPredictionFeature(
+            projectId:
+                prediction.projectId ?? widget.details.layer.projectId ?? '',
+            predictionId: prediction.id,
+            approvalStatus: _status,
+            approvedClass: _status == 'approved' ? approvedClass : null,
+            adminNote: _noteController.text.trim(),
+          );
+      bumpWorkflowRefresh(ref);
+      if (mounted) {
+        AppSnackbar.showSuccess(context, 'AI prediction review saved.');
+        Navigator.of(context).pop();
+      }
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to save this AI prediction review.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+}
+
+class _ValidationSubmissionsList extends StatelessWidget {
+  const _ValidationSubmissionsList({required this.validations});
+
+  final List<AiPredictionFeatureValidation> validations;
+
+  @override
+  Widget build(BuildContext context) {
+    if (validations.isEmpty) {
+      return const _MapNoticeRow(
+        icon: Icons.info_outline,
+        text: 'No contributor validation evidence has been submitted yet.',
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Contributor evidence',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        for (final validation in validations) ...[
+          DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: Theme.of(context).colorScheme.outlineVariant,
+              ),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(AppSpacing.sm),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _FeatureAttributesGrid(
+                    attributes: <String, dynamic>{
+                      'result': validation.validationResult,
+                      if (validation.correctedClass != null)
+                        'corrected_class': validation.correctedClass,
+                      if (validation.note != null) 'note': validation.note,
+                    },
+                  ),
+                  if (validation.photoMediaIds.isNotEmpty) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    _ValidationPhotoPreviewGrid(
+                      mediaIds: validation.photoMediaIds,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          if (validation != validations.last)
+            const SizedBox(height: AppSpacing.sm),
+        ],
+      ],
+    );
+  }
+}
+
+class _ValidationPhotoPreviewGrid extends StatelessWidget {
+  const _ValidationPhotoPreviewGrid({required this.mediaIds});
+
+  final List<String> mediaIds;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final mediaId in mediaIds)
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: SizedBox(
+              width: 76,
+              height: 76,
+              child: Image.network(
+                _validationPhotoUrl(mediaId),
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHigh,
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                    ),
+                  ),
+                  child: const Icon(Icons.image_not_supported_outlined),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+String _validationPhotoUrl(String mediaId) {
+  final trimmed = mediaId.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  final baseUri = Uri.parse(AppEnv.apiBaseUrl);
+  final origin = baseUri.replace(path: '', query: null, fragment: null);
+  final relative = trimmed.startsWith('/') ? trimmed : '/$trimmed';
+  return '${origin.toString().replaceAll(RegExp(r'/$'), '')}$relative';
+}
+
+class _AiValidationTaskMapDetailsSheet extends StatelessWidget {
+  const _AiValidationTaskMapDetailsSheet({
+    required this.task,
+    this.onSubmit,
+    this.onAccept,
+    this.onReject,
+  });
+
+  final AiPredictionValidationTask task;
+  final VoidCallback? onSubmit;
+  final VoidCallback? onAccept;
+  final VoidCallback? onReject;
+
+  @override
+  Widget build(BuildContext context) {
+    final prediction = task.prediction;
+    final submission = task.latestSubmission;
+    final submissionPhotos = submission == null
+        ? const <String>[]
+        : aiEvidencePhotoMediaIds(submission.evidence);
+    final bottomInset =
+        MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
+    final predictedClass = prediction.predictedClass?.trim();
+    final predictionAttributes = <String, dynamic>{
+      'predicted_class': predictedClass?.isEmpty ?? true
+          ? 'Not recorded'
+          : _publishedAiFriendlyClass(predictedClass!),
+      'confidence': _validationTaskScoreLabel(prediction.confidence),
+      'uncertainty': _validationTaskScoreLabel(prediction.uncertaintyScore),
+      'model': formatModelName(prediction.modelName),
+      'source': prediction.source,
+    };
+    final taskAttributes = <String, dynamic>{
+      'status': _validationTaskStatusLabel(task.status),
+      'assigned_user':
+          task.assignedUser?.displayName ?? 'Open to project contributors',
+      'submission_state': submission == null
+          ? 'No evidence submitted'
+          : _validationTaskStatusLabel(submission.status),
+    };
+    if (task.createdAt != null) {
+      taskAttributes['created'] = formatLebanonDate(task.createdAt!);
+    }
+    if (task.reviewDecision != null) {
+      taskAttributes['review_decision'] = _validationTaskStatusLabel(
+        task.reviewDecision!,
+      );
+    }
+    if (task.reviewReason != null) {
+      taskAttributes['review_reason'] = task.reviewReason!;
+    }
+
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.78,
+      minChildSize: 0.46,
+      maxChildSize: 0.94,
+      builder: (context, controller) => ListView(
+        controller: controller,
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.md,
+          AppSpacing.sm,
+          AppSpacing.md,
+          bottomInset,
+        ),
+        children: [
+          Center(
+            child: Container(
+              width: 44,
+              height: 5,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.outlineVariant,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'AI validation task',
+                      style: Theme.of(context).textTheme.titleLarge,
+                      softWrap: true,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      predictedClass?.isEmpty ?? true
+                          ? 'AI prediction review'
+                          : _publishedAiFriendlyClass(predictedClass!),
+                      style: Theme.of(context).textTheme.bodySmall,
+                      softWrap: true,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              StatusChip(status: task.status),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          const _DetailSection(
+            title: 'Data status',
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.warning_amber_outlined, size: 20),
+                SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text('AI validation task, not official field data.'),
+                ),
+              ],
+            ),
+          ),
+          const _DetailSection(
+            title: 'Review path',
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.fact_check_outlined, size: 20),
+                SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text(
+                    'This validation will be reviewed before it becomes trusted training evidence.',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _DetailSection(
+            title: 'Prediction',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _MapInfoPill(
+                      icon: Icons.category_outlined,
+                      label: predictionAttributes['predicted_class']!
+                          .toString(),
+                    ),
+                    _MapInfoPill(
+                      icon: Icons.speed_outlined,
+                      label: 'Confidence ${predictionAttributes['confidence']}',
+                    ),
+                    _MapInfoPill(
+                      icon: Icons.warning_amber_outlined,
+                      label:
+                          'Uncertainty ${predictionAttributes['uncertainty']}',
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                _FeatureAttributesGrid(attributes: predictionAttributes),
+              ],
+            ),
+          ),
+          _DetailSection(
+            title: 'Task',
+            child: _FeatureAttributesGrid(attributes: taskAttributes),
+          ),
+          if (submission != null)
+            _DetailSection(
+              title: 'Submitted evidence',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _FeatureAttributesGrid(
+                    attributes: <String, dynamic>{
+                      'result': aiValidationResultLabel(submission.result),
+                      if (submission.correctedClass != null)
+                        'corrected_class': submission.correctedClass!,
+                      if (submission.note != null) 'note': submission.note!,
+                      if (submission.linkedFeatureId != null)
+                        'linked_feature': submission.linkedFeatureId!,
+                      if (submission.createdAt != null)
+                        'submitted': formatLebanonDate(submission.createdAt!),
+                    },
+                  ),
+                  if (submissionPhotos.isNotEmpty) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    _ValidationPhotoPreviewGrid(mediaIds: submissionPhotos),
+                  ],
+                ],
+              ),
+            ),
+          if (onSubmit != null || onAccept != null || onReject != null)
+            Padding(
+              padding: const EdgeInsets.only(top: AppSpacing.sm),
+              child: AppActionButtons(
+                maxColumns: 2,
+                compactBreakpoint: 420,
+                fillRows: true,
+                children: [
+                  if (onSubmit != null)
+                    FilledButton.icon(
+                      onPressed: onSubmit,
+                      icon: const Icon(Icons.fact_check_outlined),
+                      label: const Text('Submit validation'),
+                    ),
+                  if (onAccept != null)
+                    FilledButton.icon(
+                      onPressed: onAccept,
+                      icon: const Icon(Icons.check_circle_outline),
+                      label: const Text('Accept validation'),
+                    ),
+                  if (onReject != null)
+                    OutlinedButton.icon(
+                      onPressed: onReject,
+                      icon: const Icon(Icons.cancel_outlined),
+                      label: const Text('Reject validation'),
+                    ),
+                ],
+              ),
+            ),
         ],
       ),
     );
@@ -5296,6 +7103,9 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
     required this.selectedPublishedAiClass,
     required this.hasNoPublishedAiClassMatches,
     required this.allowNoOfficialFeatureFilter,
+    required this.validationTaskCount,
+    required this.showAiValidationTasks,
+    required this.onToggleAiValidationTasks,
     required this.visiblePublishedAiLayerTypes,
     required this.onPublishedAiClassSelected,
     required this.onPublishedAiLayerTypeSelected,
@@ -5332,6 +7142,9 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
   final String? selectedPublishedAiClass;
   final bool hasNoPublishedAiClassMatches;
   final bool allowNoOfficialFeatureFilter;
+  final int validationTaskCount;
+  final bool showAiValidationTasks;
+  final ValueChanged<bool>? onToggleAiValidationTasks;
   final Set<String> visiblePublishedAiLayerTypes;
   final ValueChanged<String?> onPublishedAiClassSelected;
   final void Function(String layerType, bool selected)
@@ -5355,6 +7168,9 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
     final visibleCountLabel = featureCount == 1
         ? '1 feature'
         : '$featureCount features';
+    final validationCountLabel = validationTaskCount == 1
+        ? '1 validation task'
+        : '$validationTaskCount validation tasks';
     final categoryLabel = project.category.trim().isEmpty
         ? 'Project'
         : project.category.trim();
@@ -5425,10 +7241,14 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                                         ),
                                   ),
                                   _CompactMapMetaPill(
-                                    icon: showPublishedAiLayers
+                                    icon: showAiValidationTasks
+                                        ? Icons.fact_check_outlined
+                                        : showPublishedAiLayers
                                         ? Icons.auto_awesome_outlined
                                         : Icons.place_outlined,
-                                    label: visibleCountLabel,
+                                    label: showAiValidationTasks
+                                        ? validationCountLabel
+                                        : visibleCountLabel,
                                     maxWidth: metaMaxWidth - 12,
                                     textStyle: theme.textTheme.labelSmall
                                         ?.copyWith(
@@ -5472,9 +7292,7 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                                 onPressed: onSearchPressed,
                               ),
                               _MapPanelIconButton(
-                                tooltip: isExpanded
-                                    ? 'Hide quick filters'
-                                    : 'Show quick filters',
+                                tooltip: isExpanded ? 'Hide' : 'Filter',
                                 icon: isExpanded
                                     ? Icons.keyboard_arrow_up_rounded
                                     : Icons.tune_rounded,
@@ -5514,7 +7332,8 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                     if (searchSummaryLabel != null ||
                         !_isDefaultStatusSummary(visibleStatusSummaryLabel) ||
                         selectedFeatureChip != null ||
-                        showPublishedAiLayers) ...[
+                        showPublishedAiLayers ||
+                        showAiValidationTasks) ...[
                       const SizedBox(height: 10),
                       Wrap(
                         spacing: 8,
@@ -5538,6 +7357,11 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                               icon: Icons.layers_outlined,
                               label: officialFeatureFilterLabel,
                             ),
+                          if (showAiValidationTasks)
+                            _MapInfoPill(
+                              icon: Icons.fact_check_outlined,
+                              label: validationCountLabel,
+                            ),
                         ],
                       ),
                     ],
@@ -5557,6 +7381,19 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                         ),
                         selected: showPublishedAiLayers,
                         onSelected: onTogglePublishedAiLayers,
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    if (onToggleAiValidationTasks != null) ...[
+                      FilterChip(
+                        avatar: const Icon(Icons.fact_check_outlined, size: 18),
+                        label: Text(
+                          showAiValidationTasks
+                              ? 'Hide AI validation tasks'
+                              : 'Show AI validation tasks ($validationTaskCount)',
+                        ),
+                        selected: showAiValidationTasks,
+                        onSelected: onToggleAiValidationTasks,
                       ),
                       const SizedBox(height: 10),
                     ],
@@ -5610,9 +7447,7 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 10),
-                      if (visiblePublishedAiLayerTypes.contains(
-                            'classification',
-                          ) &&
+                      if (visiblePublishedAiLayerTypes.isNotEmpty &&
                           publishedAiClassOptions.isNotEmpty) ...[
                         SingleChildScrollView(
                           scrollDirection: Axis.horizontal,
@@ -5657,6 +7492,18 @@ class _ProjectMapFloatingPanel extends StatelessWidget {
                           ),
                           const SizedBox(height: 10),
                         ],
+                      ],
+                      if (visiblePublishedAiLayerTypes.isNotEmpty &&
+                          publishedAiClassOptions.isEmpty) ...[
+                        const Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.filter_alt_off_outlined, size: 18),
+                            SizedBox(width: 8),
+                            Expanded(child: Text('No classes available.')),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
                       ],
                     ],
                     if (canFilterStatuses) ...[
@@ -6977,30 +8824,31 @@ class _ProjectFeatureBrowserSheetState
 
 class _OfflineMapSheet extends ConsumerWidget {
   const _OfflineMapSheet({
-    required this.basemapStyle,
+    required this.project,
     required this.initialOfflinePackage,
     required this.hasCollectionAccess,
     required this.uiStateListenable,
-    required this.canDownloadVisible,
-    required this.onDownloadOverview,
-    required this.onDownloadVisible,
-    required this.onRefreshSavedImagery,
-    required this.onDeleteSavedImagery,
+    required this.onDownloadResources,
+    required this.onRefreshResources,
+    required this.onCancelDownload,
+    required this.onDeleteResources,
   });
 
-  final LebanonBasemapStyle basemapStyle;
+  final ProjectSummary project;
   final OfflineMapPackage? initialOfflinePackage;
   final bool hasCollectionAccess;
   final ValueListenable<_OfflineSheetUiState> uiStateListenable;
-  final bool canDownloadVisible;
-  final Future<void> Function(OfflineMapPackage package)? onDownloadOverview;
-  final Future<void> Function(OfflineMapPackage package)? onDownloadVisible;
-  final Future<void> Function(OfflineMapPackage package)? onRefreshSavedImagery;
-  final Future<void> Function(OfflineMapPackage package)? onDeleteSavedImagery;
+  final VoidCallback? onDownloadResources;
+  final VoidCallback? onRefreshResources;
+  final VoidCallback? onCancelDownload;
+  final VoidCallback? onDeleteResources;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final syncState = ref.watch(syncControllerProvider);
+    final projectPackage = ref
+        .watch(offlineProjectPackageProvider(project.id))
+        .valueOrNull;
     final livePackage =
         ref.watch(offlineMapPackageProvider).valueOrNull ??
         initialOfflinePackage;
@@ -7057,14 +8905,14 @@ class _OfflineMapSheet extends ConsumerWidget {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    'Offline map',
+                                    'Offline contribution',
                                     style: Theme.of(
                                       context,
                                     ).textTheme.titleLarge,
                                   ),
                                   const SizedBox(height: AppSpacing.xs),
                                   Text(
-                                    'Save map imagery on this device so this project area stays readable without signal.',
+                                    'Download this project and the shared Lebanon Satellite base map so you can add contributions without signal.',
                                     style: Theme.of(
                                       context,
                                     ).textTheme.bodyMedium,
@@ -7076,37 +8924,57 @@ class _OfflineMapSheet extends ConsumerWidget {
                         ),
                         const SizedBox(height: AppSpacing.md),
                         _OfflineMapStatusCard(
+                          project: project,
+                          projectPackage: projectPackage,
                           package: livePackage,
-                          basemapStyle: basemapStyle,
+                          basemapStyle: LebanonBasemapStyle.satellite,
                           isDownloading: uiState.isDownloading,
                           activeAction: uiState.activeAction,
                           progressLabel: uiState.progressLabel,
                           progressValue: uiState.progressValue,
                           statusLabel: uiState.statusLabel,
-                          onDownloadOverview:
-                              livePackage == null || onDownloadOverview == null
+                          pendingSyncCount: syncState.pendingCount,
+                          onDownloadResources: livePackage == null
                               ? null
-                              : () => onDownloadOverview!(livePackage),
-                          onDownloadVisible:
-                              livePackage == null ||
-                                  !canDownloadVisible ||
-                                  onDownloadVisible == null
+                              : onDownloadResources,
+                          onRefreshResources: livePackage == null
                               ? null
-                              : () => onDownloadVisible!(livePackage),
-                          onRefreshSavedImagery:
-                              livePackage == null ||
-                                  onRefreshSavedImagery == null
-                              ? null
-                              : () => onRefreshSavedImagery!(livePackage),
-                          onDeleteSavedImagery:
-                              livePackage == null ||
-                                  onDeleteSavedImagery == null
-                              ? null
-                              : () => onDeleteSavedImagery!(livePackage),
+                              : onRefreshResources,
+                          onCancelDownload: onCancelDownload,
+                          onDeleteResources: onDeleteResources,
                         ),
                         if (hasCollectionAccess) ...[
                           const SizedBox(height: AppSpacing.md),
-                          AppCard(child: _SyncStatusLine(state: syncState)),
+                          AppCard(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _SyncStatusLine(state: syncState),
+                                if (syncState.pendingCount > 0) ...[
+                                  const SizedBox(height: AppSpacing.sm),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: OutlinedButton.icon(
+                                      onPressed: syncState.isSyncing
+                                          ? null
+                                          : () => ref
+                                                .read(
+                                                  syncControllerProvider
+                                                      .notifier,
+                                                )
+                                                .syncNow(),
+                                      icon: const Icon(Icons.sync_rounded),
+                                      label: Text(
+                                        syncState.isSyncing
+                                            ? 'Syncing...'
+                                            : 'Sync now',
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
                         ],
                       ],
                     ),
@@ -7123,6 +8991,8 @@ class _OfflineMapSheet extends ConsumerWidget {
 
 class _OfflineMapStatusCard extends StatelessWidget {
   const _OfflineMapStatusCard({
+    required this.project,
+    required this.projectPackage,
     required this.package,
     required this.basemapStyle,
     required this.isDownloading,
@@ -7130,12 +9000,15 @@ class _OfflineMapStatusCard extends StatelessWidget {
     required this.progressLabel,
     required this.progressValue,
     required this.statusLabel,
-    required this.onDownloadOverview,
-    required this.onDownloadVisible,
-    required this.onRefreshSavedImagery,
-    required this.onDeleteSavedImagery,
+    required this.pendingSyncCount,
+    required this.onDownloadResources,
+    required this.onRefreshResources,
+    required this.onCancelDownload,
+    required this.onDeleteResources,
   });
 
+  final ProjectSummary project;
+  final OfflineProjectPackage? projectPackage;
   final OfflineMapPackage? package;
   final LebanonBasemapStyle basemapStyle;
   final bool isDownloading;
@@ -7143,10 +9016,11 @@ class _OfflineMapStatusCard extends StatelessWidget {
   final String? progressLabel;
   final double? progressValue;
   final String? statusLabel;
-  final VoidCallback? onDownloadOverview;
-  final VoidCallback? onDownloadVisible;
-  final VoidCallback? onRefreshSavedImagery;
-  final VoidCallback? onDeleteSavedImagery;
+  final int pendingSyncCount;
+  final VoidCallback? onDownloadResources;
+  final VoidCallback? onRefreshResources;
+  final VoidCallback? onCancelDownload;
+  final VoidCallback? onDeleteResources;
 
   @override
   Widget build(BuildContext context) {
@@ -7155,23 +9029,29 @@ class _OfflineMapStatusCard extends StatelessWidget {
     }
 
     final downloadedAt = package!.downloadedAt;
+    final projectDownloadedAt = projectPackage?.downloadedAt;
     final downloadedSummary = downloadedAt == null
         ? 'No saved offline areas for this account on this device yet'
         : 'Last refreshed on ${formatLebanonDate(downloadedAt)}';
     final savedImageCount = package!.tileCount ?? 0;
     final hasSavedImagery = savedImageCount > 0;
+    final hasProjectPackage = projectPackage != null;
+    final isCancelableDownload =
+        isDownloading &&
+        (activeAction == _OfflineMapAction.downloadProject ||
+            activeAction == _OfflineMapAction.refreshResources);
 
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Saved offline imagery',
+            'Offline contribution resources',
             style: Theme.of(context).textTheme.titleSmall,
           ),
           const SizedBox(height: AppSpacing.xs),
           Text(
-            'Saved imagery is stored on this device for the signed-in user. It is used when live tiles are unavailable, and refreshing it online replaces older cached tiles.',
+            'Download stores only ${project.name} form resources and the shared Lebanon Satellite base map. Project features, AI predictions, and validation pins are not downloaded.',
             softWrap: true,
           ),
           const SizedBox(height: AppSpacing.xs),
@@ -7180,17 +9060,40 @@ class _OfflineMapStatusCard extends StatelessWidget {
             runSpacing: 8,
             children: [
               _MapInfoPill(
+                icon: hasProjectPackage
+                    ? Icons.check_circle_outline
+                    : Icons.cloud_download_outlined,
+                label: hasProjectPackage
+                    ? 'Project package downloaded'
+                    : 'Project package not downloaded',
+              ),
+              _MapInfoPill(
                 icon: _basemapStyleIcon(basemapStyle),
-                label: '${LebanonMapConfig.basemapLabel(basemapStyle)} view',
+                label: hasSavedImagery
+                    ? 'Shared Satellite base map saved'
+                    : 'Satellite base map not saved',
               ),
               _MapInfoPill(
                 icon: Icons.storage_rounded,
                 label:
                     '$savedImageCount saved map image${savedImageCount == 1 ? '' : 's'}',
               ),
+              _MapInfoPill(
+                icon: Icons.cloud_upload_outlined,
+                label:
+                    '$pendingSyncCount pending sync item${pendingSyncCount == 1 ? '' : 's'}',
+              ),
             ],
           ),
           const SizedBox(height: AppSpacing.xs),
+          Text(
+            projectDownloadedAt == null
+                ? 'Project resources: not downloaded'
+                : 'Project resources saved on ${formatLebanonDate(projectDownloadedAt)}',
+            softWrap: true,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 4),
           Text(
             '${_formatBytes(package!.sizeBytes ?? 0)} • $downloadedSummary',
             softWrap: true,
@@ -7221,57 +9124,56 @@ class _OfflineMapStatusCard extends StatelessWidget {
           Column(
             children: [
               _OfflineActionCard(
-                icon: Icons.public_rounded,
-                title: 'Save Lebanon overview',
+                icon: Icons.download_for_offline_outlined,
+                title: 'Download',
                 description:
-                    'Saves a lightweight Lebanon-wide reference layer in the current style for offline orientation and country-level browsing.',
+                    'Prepare this phone for offline contribution in this project.',
                 actionLabel:
                     isDownloading &&
-                        activeAction == _OfflineMapAction.saveOverview
-                    ? 'Saving...'
-                    : 'Save overview',
-                onPressed: isDownloading ? null : onDownloadOverview,
+                        activeAction == _OfflineMapAction.downloadProject
+                    ? 'Downloading...'
+                    : 'Download',
+                onPressed: isDownloading ? null : onDownloadResources,
                 filled: true,
               ),
-              const SizedBox(height: AppSpacing.sm),
-              _OfflineActionCard(
-                icon: Icons.crop_free_outlined,
-                title: 'Save this view',
-                description:
-                    'Saves the detailed map area currently visible on screen in the current style for this signed-in user.',
-                actionLabel:
-                    isDownloading &&
-                        activeAction == _OfflineMapAction.saveVisibleArea
-                    ? 'Saving...'
-                    : 'Save visible area',
-                onPressed: isDownloading ? null : onDownloadVisible,
-              ),
-              if (hasSavedImagery) ...[
+              if (isCancelableDownload) ...[
+                const SizedBox(height: AppSpacing.sm),
+                _OfflineActionCard(
+                  icon: Icons.cancel_outlined,
+                  title: 'Cancel',
+                  description:
+                      'Stop the running offline download. Already saved resources stay on this phone.',
+                  actionLabel: 'Cancel',
+                  onPressed: onCancelDownload,
+                  filled: true,
+                ),
+              ],
+              if (hasProjectPackage || hasSavedImagery) ...[
                 const SizedBox(height: AppSpacing.sm),
                 _OfflineActionCard(
                   icon: Icons.refresh_rounded,
-                  title: 'Refresh saved imagery',
+                  title: 'Refresh',
                   description:
-                      'Re-downloads the saved map images for this style on this device so older cached tiles are replaced.',
+                      'Check app resources, this project package, and the shared Satellite base map for updates.',
                   actionLabel:
                       isDownloading &&
-                          activeAction == _OfflineMapAction.refreshSavedImagery
+                          activeAction == _OfflineMapAction.refreshResources
                       ? 'Refreshing...'
-                      : 'Refresh saved',
-                  onPressed: isDownloading ? null : onRefreshSavedImagery,
+                      : 'Refresh',
+                  onPressed: isDownloading ? null : onRefreshResources,
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 _OfflineActionCard(
                   icon: Icons.delete_outline_rounded,
-                  title: 'Delete saved imagery',
+                  title: 'Delete',
                   description:
-                      'Removes the saved map images for this style from this device for the signed-in user.',
+                      'Remove this project package from the phone. The shared Satellite base map is removed only when no other downloaded project uses it.',
                   actionLabel:
                       isDownloading &&
-                          activeAction == _OfflineMapAction.deleteSavedImagery
+                          activeAction == _OfflineMapAction.deleteProject
                       ? 'Deleting...'
-                      : 'Delete saved',
-                  onPressed: isDownloading ? null : onDeleteSavedImagery,
+                      : 'Delete',
+                  onPressed: isDownloading ? null : onDeleteResources,
                 ),
               ],
             ],
@@ -7356,13 +9258,13 @@ class _OfflineActionCard extends StatelessWidget {
                 if (filled)
                   FilledButton.tonalIcon(
                     onPressed: onPressed,
-                    icon: const Icon(Icons.download_outlined),
+                    icon: Icon(icon),
                     label: Text(actionLabel),
                   )
                 else
                   OutlinedButton.icon(
                     onPressed: onPressed,
-                    icon: const Icon(Icons.download_outlined),
+                    icon: Icon(icon),
                     label: Text(actionLabel),
                   ),
               ],

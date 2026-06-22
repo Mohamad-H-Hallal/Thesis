@@ -15,7 +15,9 @@ const projectAccessScopes = ['public', 'assigned', 'all'] as const;
 type ProjectAccessScope = (typeof projectAccessScopes)[number];
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-const publicVisibilityColumnForRole = (role: string): 'visible_to_viewers' | 'visible_to_contributors' =>
+const publicVisibilityColumnForRole = (
+  role: string,
+): 'visible_to_viewers' | 'visible_to_contributors' =>
   role === 'viewer' ? 'visible_to_viewers' : 'visible_to_contributors';
 
 const ensureCategoryExists = async (categoryId: string): Promise<void> => {
@@ -23,6 +25,37 @@ const ensureCategoryExists = async (categoryId: string): Promise<void> => {
   if (categoryCheck.rows.length === 0) {
     throw new AppError('Project category not found', 404);
   }
+};
+
+const getCurrentOfflineMapManifest = async () => {
+  const currentResult = await query(
+    `SELECT id, version, zoom_level_min, zoom_level_max, downloaded_at,
+            last_updated_at, tile_count, size_bytes, tile_source, is_current
+     FROM lebanon_offline_map
+     WHERE is_current = TRUE
+     ORDER BY last_updated_at DESC
+     LIMIT 1`,
+  );
+
+  if (currentResult.rows.length > 0) {
+    return currentResult.rows[0];
+  }
+
+  const inserted = await query(
+    `INSERT INTO lebanon_offline_map (
+       version,
+       zoom_level_min,
+       zoom_level_max,
+       tile_source,
+       is_current
+     )
+     VALUES ($1, $2, $3, $4, TRUE)
+     RETURNING id, version, zoom_level_min, zoom_level_max, downloaded_at,
+               last_updated_at, tile_count, size_bytes, tile_source, is_current`,
+    ['lebanon-satellite-v1', 7, 18, 'esri_world_imagery'],
+  );
+
+  return inserted.rows[0];
 };
 
 // Get all projects (filtered by user access)
@@ -85,12 +118,62 @@ const getAllProjects = async (req, res) => {
               AND pac.status = 'rejected') as rejected_assignment_requests,
            (SELECT COUNT(*)
             FROM ai_output_layer aol
+            JOIN ai_run ar
+              ON ar.id = aol.ai_run_id
+             AND ar.published_at IS NOT NULL
+             AND ar.unpublished_at IS NULL
             JOIN ai_project_settings aps
               ON aps.project_id = aol.project_id
              AND aps.is_enabled = true
             WHERE aol.project_id = p.id
+              AND aol.layer_type = 'classification'
               AND aol.status = 'published'
               AND aol.published_at IS NOT NULL) as published_ai_layer_count,
+           (SELECT aol.ai_run_id
+            FROM ai_output_layer aol
+            JOIN ai_run ar
+              ON ar.id = aol.ai_run_id
+             AND ar.published_at IS NOT NULL
+             AND ar.unpublished_at IS NULL
+            JOIN ai_project_settings aps
+              ON aps.project_id = aol.project_id
+             AND aps.is_enabled = true
+            WHERE aol.project_id = p.id
+              AND aol.layer_type = 'classification'
+              AND aol.status = 'published'
+              AND aol.published_at IS NOT NULL
+            ORDER BY aol.published_at DESC, aol.created_at DESC
+            LIMIT 1) as published_ai_run_id,
+           (SELECT COALESCE(NULLIF(BTRIM(aol.name), ''), ar.published_layer_name, ar.display_name)
+            FROM ai_output_layer aol
+            JOIN ai_run ar
+              ON ar.id = aol.ai_run_id
+             AND ar.published_at IS NOT NULL
+             AND ar.unpublished_at IS NULL
+            JOIN ai_project_settings aps
+              ON aps.project_id = aol.project_id
+             AND aps.is_enabled = true
+            WHERE aol.project_id = p.id
+              AND aol.layer_type = 'classification'
+              AND aol.status = 'published'
+              AND aol.published_at IS NOT NULL
+            ORDER BY aol.published_at DESC, aol.created_at DESC
+            LIMIT 1) as published_ai_layer_name,
+           (SELECT aol.published_at
+            FROM ai_output_layer aol
+            JOIN ai_run ar
+              ON ar.id = aol.ai_run_id
+             AND ar.published_at IS NOT NULL
+             AND ar.unpublished_at IS NULL
+            JOIN ai_project_settings aps
+              ON aps.project_id = aol.project_id
+             AND aps.is_enabled = true
+            WHERE aol.project_id = p.id
+              AND aol.layer_type = 'classification'
+              AND aol.status = 'published'
+              AND aol.published_at IS NOT NULL
+            ORDER BY aol.published_at DESC, aol.created_at DESC
+            LIMIT 1) as published_ai_layer_published_at,
            pa_user.role as current_user_assignment_role,
            pa_user.status as current_user_assignment_status
     FROM project p
@@ -243,12 +326,62 @@ const getProject = async (req, res) => {
             (SELECT COUNT(*) FROM project_assignment WHERE project_id = p.id AND role = 'contributor' AND status = 'rejected') as rejected_assignment_requests,
             (SELECT COUNT(*)
              FROM ai_output_layer aol
+             JOIN ai_run ar
+               ON ar.id = aol.ai_run_id
+              AND ar.published_at IS NOT NULL
+              AND ar.unpublished_at IS NULL
              JOIN ai_project_settings aps
                ON aps.project_id = aol.project_id
               AND aps.is_enabled = true
              WHERE aol.project_id = p.id
+               AND aol.layer_type = 'classification'
                AND aol.status = 'published'
                AND aol.published_at IS NOT NULL) as published_ai_layer_count,
+            (SELECT aol.ai_run_id
+             FROM ai_output_layer aol
+             JOIN ai_run ar
+               ON ar.id = aol.ai_run_id
+              AND ar.published_at IS NOT NULL
+              AND ar.unpublished_at IS NULL
+             JOIN ai_project_settings aps
+               ON aps.project_id = aol.project_id
+              AND aps.is_enabled = true
+             WHERE aol.project_id = p.id
+               AND aol.layer_type = 'classification'
+               AND aol.status = 'published'
+               AND aol.published_at IS NOT NULL
+             ORDER BY aol.published_at DESC, aol.created_at DESC
+             LIMIT 1) as published_ai_run_id,
+            (SELECT COALESCE(NULLIF(BTRIM(aol.name), ''), ar.published_layer_name, ar.display_name)
+             FROM ai_output_layer aol
+             JOIN ai_run ar
+               ON ar.id = aol.ai_run_id
+              AND ar.published_at IS NOT NULL
+              AND ar.unpublished_at IS NULL
+             JOIN ai_project_settings aps
+               ON aps.project_id = aol.project_id
+              AND aps.is_enabled = true
+             WHERE aol.project_id = p.id
+               AND aol.layer_type = 'classification'
+               AND aol.status = 'published'
+               AND aol.published_at IS NOT NULL
+             ORDER BY aol.published_at DESC, aol.created_at DESC
+             LIMIT 1) as published_ai_layer_name,
+            (SELECT aol.published_at
+             FROM ai_output_layer aol
+             JOIN ai_run ar
+               ON ar.id = aol.ai_run_id
+              AND ar.published_at IS NOT NULL
+              AND ar.unpublished_at IS NULL
+             JOIN ai_project_settings aps
+               ON aps.project_id = aol.project_id
+              AND aps.is_enabled = true
+             WHERE aol.project_id = p.id
+               AND aol.layer_type = 'classification'
+               AND aol.status = 'published'
+               AND aol.published_at IS NOT NULL
+             ORDER BY aol.published_at DESC, aol.created_at DESC
+             LIMIT 1) as published_ai_layer_published_at,
             pa_user.role as current_user_assignment_role,
             pa_user.status as current_user_assignment_status
      FROM project p
@@ -268,6 +401,98 @@ const getProject = async (req, res) => {
   res.json({
     success: true,
     data: result.rows[0],
+  });
+};
+
+const getProjectOfflinePackage = async (req, res) => {
+  const { projectId } = req.params;
+  await synchronizeProjectStatuses(projectId);
+
+  if (req.user.role !== 'contributor' || req.projectRole !== 'contributor') {
+    throw new AppError(
+      'Offline project downloads are available only to assigned contributors.',
+      403,
+    );
+  }
+
+  const projectResult = await query(
+    `SELECT p.id,
+            p.name,
+            p.category_id,
+            pc.name as category_name,
+            p.status,
+            p.description,
+            p.objectives,
+            p.start_date,
+            p.end_date,
+            p.collection_form_schema,
+            p.requires_photos,
+            p.min_photos,
+            p.max_photos,
+            p.visible_to_viewers,
+            p.visible_to_contributors,
+            (SELECT COUNT(*)
+             FROM spatial_feature sf
+             WHERE sf.project_id = p.id
+               AND sf.status = 'approved') as approved_features,
+            (SELECT COUNT(*)
+             FROM spatial_feature sf
+             WHERE sf.project_id = p.id
+               AND sf.status = 'pending_review') as pending_features,
+            (SELECT COUNT(*)
+             FROM spatial_feature sf
+             WHERE sf.project_id = p.id
+               AND sf.status = 'rejected') as rejected_features,
+            (SELECT COUNT(*)
+             FROM spatial_feature sf
+             WHERE sf.project_id = p.id
+               AND sf.status = 'draft') as draft_features,
+            (SELECT COUNT(*)
+             FROM project_assignment pac
+             WHERE pac.project_id = p.id
+               AND pac.role = 'contributor'
+               AND pac.status = 'approved') as contributor_count,
+            pa_user.role as current_user_assignment_role,
+            pa_user.status as current_user_assignment_status
+     FROM project p
+     LEFT JOIN project_category pc ON p.category_id = pc.id
+     LEFT JOIN project_assignment pa_user
+       ON p.id = pa_user.project_id
+      AND pa_user.user_id = $2
+     WHERE p.id = $1`,
+    [projectId, req.user.id],
+  );
+
+  if (projectResult.rows.length === 0) {
+    throw new AppError('Project not found', 404);
+  }
+
+  const baseMap = await getCurrentOfflineMapManifest();
+  const project = projectResult.rows[0];
+  const schemaVersion =
+    project.collection_form_schema?.version ??
+    project.collection_form_schema?.schemaVersion ??
+    'v0.0';
+  const packageVersion = [
+    project.id,
+    project.status,
+    schemaVersion,
+    project.requires_photos ? 'photos-required' : 'photos-optional',
+    project.min_photos ?? 0,
+    project.max_photos ?? 0,
+    baseMap.version,
+  ].join(':');
+
+  res.json({
+    success: true,
+    data: {
+      package_version: packageVersion,
+      app_resources_version: 'mobile-offline-v1',
+      downloaded_at: new Date().toISOString(),
+      project,
+      base_map: baseMap,
+      included_feature_layers: [],
+    },
   });
 };
 
@@ -292,8 +517,7 @@ const createProject = async (req, res) => {
   if (status !== 'draft') {
     throw new AppError('Project status must start as draft', 400);
   }
-  const normalizedCollectionFormSchema =
-    normalizeCollectionFormSchema(collection_form_schema);
+  const normalizedCollectionFormSchema = normalizeCollectionFormSchema(collection_form_schema);
   await ensureCategoryExists(category_id);
   const normalizedSchedule = resolveProjectScheduleForMutation({
     currentStatus: 'draft',
@@ -307,36 +531,34 @@ const createProject = async (req, res) => {
   });
 
   const createdProjectResult = await query(
-      `INSERT INTO project (
+    `INSERT INTO project (
         created_by_user_id, category_id, name, description, objectives,
         status, start_date, end_date, collection_form_schema,
         requires_photos, min_photos, max_photos, visible_to_viewers, visible_to_contributors
       ) VALUES ($1, $2, $3, $4, $5, 'draft', $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *`,
-      [
-        req.user.id,
-        category_id,
-        name,
-        description,
-        objectives,
-        normalizedSchedule.startDate,
-        normalizedSchedule.endDate,
-        JSON.stringify(normalizedCollectionFormSchema),
-        requires_photos,
-        min_photos,
-        max_photos,
-        visible_to_viewers,
-        visible_to_contributors,
-      ],
-    );
+    [
+      req.user.id,
+      category_id,
+      name,
+      description,
+      objectives,
+      normalizedSchedule.startDate,
+      normalizedSchedule.endDate,
+      JSON.stringify(normalizedCollectionFormSchema),
+      requires_photos,
+      min_photos,
+      max_photos,
+      visible_to_viewers,
+      visible_to_contributors,
+    ],
+  );
   const createdProject = createdProjectResult.rows[0];
   await synchronizeProjectStatuses(createdProject.id);
-  const synchronizedProjectResult = await query(
-    'SELECT * FROM project WHERE id = $1',
-    [createdProject.id],
-  );
-  const synchronizedProject =
-    synchronizedProjectResult.rows[0] ?? createdProject;
+  const synchronizedProjectResult = await query('SELECT * FROM project WHERE id = $1', [
+    createdProject.id,
+  ]);
+  const synchronizedProject = synchronizedProjectResult.rows[0] ?? createdProject;
 
   logger.info('Project created:', {
     projectId: synchronizedProject.id,
@@ -446,8 +668,7 @@ const updateProject = async (req, res) => {
     paramIndex++;
   }
   if (collection_form_schema !== undefined) {
-    const normalizedCollectionFormSchema =
-      normalizeCollectionFormSchema(collection_form_schema);
+    const normalizedCollectionFormSchema = normalizeCollectionFormSchema(collection_form_schema);
     updates.push(`collection_form_schema = $${paramIndex}`);
     params.push(JSON.stringify(normalizedCollectionFormSchema));
     paramIndex++;
@@ -492,12 +713,8 @@ const updateProject = async (req, res) => {
 
   const result = await query(queryText, params);
   await synchronizeProjectStatuses(projectId);
-  const synchronizedProjectResult = await query(
-    'SELECT * FROM project WHERE id = $1',
-    [projectId],
-  );
-  const synchronizedProject =
-    synchronizedProjectResult.rows[0] ?? result.rows[0];
+  const synchronizedProjectResult = await query('SELECT * FROM project WHERE id = $1', [projectId]);
+  const synchronizedProject = synchronizedProjectResult.rows[0] ?? result.rows[0];
 
   logger.info('Project updated:', { projectId, userId: req.user.id });
 
@@ -586,17 +803,11 @@ const getProjectFeatures = async (req, res) => {
   const status = typeof req.query.status === 'string' ? req.query.status.trim() : '';
   const searchQuery = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   const geometryType =
-    typeof req.query.geometry_type === 'string'
-      ? req.query.geometry_type.trim()
-      : '';
+    typeof req.query.geometry_type === 'string' ? req.query.geometry_type.trim() : '';
   const featureType =
-    typeof req.query.feature_type === 'string'
-      ? req.query.feature_type.trim()
-      : '';
+    typeof req.query.feature_type === 'string' ? req.query.feature_type.trim() : '';
   const excludeImportId =
-    typeof req.query.exclude_import_id === 'string'
-      ? req.query.exclude_import_id.trim()
-      : '';
+    typeof req.query.exclude_import_id === 'string' ? req.query.exclude_import_id.trim() : '';
   if (excludeImportId && !uuidPattern.test(excludeImportId)) {
     throw new AppError('exclude_import_id must be a valid UUID', 400);
   }
@@ -854,6 +1065,7 @@ const getProjectFeatures = async (req, res) => {
 module.exports = {
   getAllProjects,
   getProject,
+  getProjectOfflinePackage,
   createProject,
   updateProject,
   deleteProject,

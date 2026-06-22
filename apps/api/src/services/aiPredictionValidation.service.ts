@@ -70,6 +70,7 @@ const ALL_TASK_STATUSES = [
   'rejected',
   'cancelled',
 ];
+const unclassifiedLabel = 'Unclassified';
 
 const isProtectedSuperAdminUser = (user: Express.UserContext | undefined): boolean =>
   user?.role === 'admin' && isProtectedSuperAdminEmail(user.email);
@@ -106,6 +107,9 @@ const normalizeOptionalString = (value: unknown): string | null => {
 };
 
 const normalizeClassLabel = (value: string): string => value.trim().toLowerCase();
+
+const isUnclassifiedLabel = (value: string): boolean =>
+  normalizeClassLabel(value) === normalizeClassLabel(unclassifiedLabel);
 
 const toJsonRecord = (value: unknown): JsonRecord =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : {};
@@ -271,17 +275,17 @@ const preferredCandidateLayerType = async ({
     return layerResult.rows[0].layer_type;
   }
 
-  const uncertaintyResult = await query(
+  const classificationResult = await query(
     `SELECT 1
      FROM ai_prediction_feature p
      JOIN ai_output_layer l ON l.id = p.ai_output_layer_id
      WHERE p.project_id = $1
        AND ($2::uuid IS NULL OR p.ai_run_id = $2)
-       AND l.layer_type = 'uncertainty'
+       AND l.layer_type = 'classification'
      LIMIT 1`,
     [projectId, aiRunId ?? null],
   );
-  return uncertaintyResult.rows.length > 0 ? 'uncertainty' : 'classification';
+  return classificationResult.rows.length > 0 ? 'classification' : 'uncertainty';
 };
 
 const pushTaskFilters = ({
@@ -334,7 +338,7 @@ const taskSelectSql = `
          t.created_at,
          t.updated_at,
          p.artifact_feature_id,
-         ST_AsGeoJSON(p.geom)::json AS prediction_geometry,
+         ST_AsGeoJSON(COALESCE(p.processed_geom, p.geom))::json AS prediction_geometry,
          p.geometry_type,
          p.predicted_class,
          p.confidence,
@@ -473,14 +477,12 @@ const candidateConditionsFor = ({
   aiOutputLayerId,
   aiPredictionFeatureId,
   candidateLayerType,
-  threshold,
 }: {
   projectId: string;
   aiRunId?: string | null;
   aiOutputLayerId?: string | null;
   aiPredictionFeatureId?: string | null;
   candidateLayerType: 'classification' | 'confidence' | 'uncertainty';
-  threshold: number;
 }) => {
   const params: unknown[] = [projectId];
   const conditions = ['p.project_id = $1'];
@@ -515,21 +517,10 @@ const candidateConditionsFor = ({
     };
   }
 
-  params.push(threshold);
-  const thresholdParam = `$${params.length}`;
-  conditions.push(
-    `(
-      (p.confidence IS NOT NULL AND p.confidence < ${thresholdParam})
-      OR (p.confidence IS NULL
-        AND p.uncertainty_score IS NOT NULL
-        AND p.uncertainty_score > (1 - ${thresholdParam}::double precision))
-    )`,
-  );
-
   return {
     params,
     whereSql: conditions.join(' AND '),
-    criterion: 'low_confidence',
+    criterion: 'all_predictions',
   };
 };
 
@@ -574,7 +565,6 @@ const generatePredictionValidationTasks = async (input: GenerateTasksInput) => {
     aiOutputLayerId: input.aiOutputLayerId,
     aiPredictionFeatureId: input.aiPredictionFeatureId,
     candidateLayerType,
-    threshold: threshold.value,
   });
   const limit = parseGenerationLimit(input.limit);
   const priority = parsePriority(input.priority);
@@ -585,6 +575,7 @@ const generatePredictionValidationTasks = async (input: GenerateTasksInput) => {
     criterion,
     threshold: threshold.value,
     threshold_source: threshold.source,
+    confidence_used_for_priority_only: true,
     candidate_layer_type: candidateLayerType,
     ai_run_id: input.aiRunId ?? null,
     ai_output_layer_id: input.aiOutputLayerId ?? null,
@@ -632,7 +623,7 @@ const generatePredictionValidationTasks = async (input: GenerateTasksInput) => {
          WHERE existing.ai_prediction_feature_id = p.id
            AND existing.status = ANY($${params.length + 4}::ai_prediction_validation_task_status[])
        )
-     ORDER BY COALESCE(p.confidence, 1) ASC,
+     ORDER BY COALESCE(p.confidence, 0) ASC,
               COALESCE(p.uncertainty_score, 0) DESC,
               p.created_at ASC,
               p.artifact_feature_id ASC
@@ -1050,6 +1041,9 @@ const assertCorrectedClassEligible = async ({
   aiRunId: string;
   correctedClass: string;
 }) => {
+  if (isUnclassifiedLabel(correctedClass)) {
+    return;
+  }
   const labels = await eligibleClassLabelsForRun(aiRunId);
   if (labels.length === 0) {
     throw new AppError('No eligible AI class list is available for this run.', 409);
@@ -1210,6 +1204,212 @@ const createPredictionValidationSubmission = async (input: SubmitValidationInput
   });
 };
 
+const promoteAcceptedValidationToSpatialFeature = async ({
+  client,
+  taskId,
+  submissionId,
+  reviewedBy,
+}: {
+  client: PoolClient;
+  taskId: string;
+  submissionId: string;
+  reviewedBy: string;
+}): Promise<string | null> => {
+  const result = await client.query(
+    `SELECT t.id AS task_id,
+            t.project_id,
+            t.ai_run_id,
+            t.ai_prediction_feature_id,
+            p.predicted_class,
+            p.confidence,
+            p.model_name,
+            p.metadata AS prediction_metadata,
+            ST_AsGeoJSON(COALESCE(p.processed_geom, p.geom))::json AS prediction_geometry,
+            ar.label_field,
+            s.result,
+            s.corrected_class,
+            s.note,
+            s.submitted_by,
+            s.linked_feature_id
+     FROM ai_prediction_validation_task t
+     JOIN ai_prediction_feature p ON p.id = t.ai_prediction_feature_id
+     JOIN ai_run ar ON ar.id = t.ai_run_id
+     JOIN ai_prediction_validation_submission s ON s.id = $2
+       AND s.validation_task_id = t.id
+     WHERE t.id = $1
+     FOR UPDATE OF t, p, s`,
+    [taskId, submissionId],
+  );
+  if (result.rows.length === 0) {
+    throw new AppError('Submitted AI validation evidence was not found.', 409);
+  }
+
+  const row = result.rows[0];
+  const resultValue = normalizeOptionalString(row.result);
+  const correctedClass = normalizeOptionalString(row.corrected_class);
+  const predictedClass = normalizeOptionalString(row.predicted_class);
+  const finalClass =
+    resultValue === 'correct'
+      ? predictedClass
+      : resultValue === 'wrong_class'
+        ? correctedClass
+        : null;
+  if (!finalClass) {
+    await client.query(
+      `UPDATE ai_prediction_feature
+       SET status = 'rejected',
+           metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [
+        row.ai_prediction_feature_id,
+        JSON.stringify({
+          ai_validated: true,
+          ai_validation_status: resultValue === 'unsure' ? 'unsure' : 'rejected',
+          validation_task_id: taskId,
+          validation_submission_id: submissionId,
+          validated_by: reviewedBy,
+          validated_at: new Date().toISOString(),
+          use_for_future_training: false,
+        }),
+      ],
+    );
+    return null;
+  }
+
+  const labelField = normalizeOptionalString(row.label_field) ?? 'ai_class';
+  const nowIso = new Date().toISOString();
+  const attributes = {
+    [labelField]: finalClass,
+    source: 'ai',
+    aiRunId: row.ai_run_id,
+    aiPredictionId: row.ai_prediction_feature_id,
+    aiPredictedClass: predictedClass,
+    aiCorrectedClass: resultValue === 'wrong_class' ? finalClass : null,
+    aiConfidence: row.confidence,
+    aiModelName: row.model_name,
+    aiValidated: true,
+    aiValidationStatus: resultValue === 'wrong_class' ? 'corrected' : 'approved',
+    aiValidationTaskId: taskId,
+    aiValidationSubmissionId: submissionId,
+    validatedBy: reviewedBy,
+    validatedAt: nowIso,
+    useForFutureTraining: true,
+  };
+  const existingLinkedFeatureId = normalizeOptionalString(row.linked_feature_id);
+  if (existingLinkedFeatureId) {
+    const linkedFeatureResult = await client.query(
+      `UPDATE spatial_feature
+       SET attributes = COALESCE(attributes, '{}'::jsonb) || $2::jsonb,
+           status = 'approved',
+           reviewed_at = NOW(),
+           reviewed_by_user_id = $3,
+           review_notes = $4,
+           source = 'ai'
+       WHERE id = $1
+         AND project_id = $5
+       RETURNING id`,
+      [
+        existingLinkedFeatureId,
+        JSON.stringify(attributes),
+        reviewedBy,
+        normalizeOptionalString(row.note) ?? 'AI prediction validation accepted.',
+        row.project_id,
+      ],
+    );
+    if (linkedFeatureResult.rows.length === 0) {
+      throw new AppError('linked_feature_id was not found for this project.', 404);
+    }
+    await client.query(
+      `UPDATE ai_prediction_feature
+       SET status = 'approved',
+           metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [
+        row.ai_prediction_feature_id,
+        JSON.stringify({
+          ai_validated: true,
+          ai_validation_status: resultValue === 'wrong_class' ? 'corrected' : 'approved',
+          validation_task_id: taskId,
+          validation_submission_id: submissionId,
+          linked_spatial_feature_id: existingLinkedFeatureId,
+          validated_by: reviewedBy,
+          validated_at: nowIso,
+          use_for_future_training: true,
+        }),
+      ],
+    );
+    return existingLinkedFeatureId;
+  }
+
+  const insertResult = await client.query(
+    `INSERT INTO spatial_feature (
+       project_id,
+       collected_by_user_id,
+       geom,
+       attributes,
+       status,
+       submitted_at,
+       reviewed_at,
+       reviewed_by_user_id,
+       review_notes,
+       source
+     )
+     VALUES (
+       $1,
+       $2,
+       ST_SetSRID(ST_GeomFromGeoJSON($3::text), 4326),
+       $4::jsonb,
+       'approved',
+       NOW(),
+       NOW(),
+       $5,
+       $6,
+       'ai'
+     )
+     RETURNING id`,
+    [
+      row.project_id,
+      reviewedBy,
+      JSON.stringify(row.prediction_geometry),
+      JSON.stringify(attributes),
+      reviewedBy,
+      normalizeOptionalString(row.note) ?? 'AI prediction validation accepted.',
+    ],
+  );
+  const featureId = insertResult.rows[0].id;
+
+  await client.query(
+    `UPDATE ai_prediction_validation_submission
+     SET linked_feature_id = $2
+     WHERE id = $1`,
+    [submissionId, featureId],
+  );
+  await client.query(
+    `UPDATE ai_prediction_feature
+     SET status = 'approved',
+         metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [
+      row.ai_prediction_feature_id,
+      JSON.stringify({
+        ai_validated: true,
+        ai_validation_status: resultValue === 'wrong_class' ? 'corrected' : 'approved',
+        validation_task_id: taskId,
+        validation_submission_id: submissionId,
+        linked_spatial_feature_id: featureId,
+        validated_by: reviewedBy,
+        validated_at: nowIso,
+        use_for_future_training: true,
+      }),
+    ],
+  );
+
+  return featureId;
+};
+
 const reviewPredictionValidationTask = async (input: ReviewValidationInput) => {
   const reason = normalizeOptionalString(input.reason);
   if (!['accepted', 'rejected'].includes(input.decision)) {
@@ -1273,12 +1473,45 @@ const reviewPredictionValidationTask = async (input: ReviewValidationInput) => {
        WHERE id = $1`,
       [input.taskId, input.decision, input.reviewedBy, reason],
     );
+    const linkedSpatialFeatureId =
+      input.decision === 'accepted'
+        ? await promoteAcceptedValidationToSpatialFeature({
+            client,
+            taskId: input.taskId,
+            submissionId: reviewedSubmissionId,
+            reviewedBy: input.reviewedBy,
+          })
+        : null;
+    if (input.decision === 'rejected') {
+      await client.query(
+        `UPDATE ai_prediction_feature p
+         SET status = 'rejected',
+             metadata = COALESCE(p.metadata, '{}'::jsonb) || $2::jsonb,
+             updated_at = NOW()
+         FROM ai_prediction_validation_task t
+         WHERE t.ai_prediction_feature_id = p.id
+           AND t.id = $1`,
+        [
+          input.taskId,
+          JSON.stringify({
+            ai_validated: true,
+            ai_validation_status: 'rejected',
+            validation_task_id: input.taskId,
+            validation_submission_id: reviewedSubmissionId,
+            validated_by: input.reviewedBy,
+            validated_at: new Date().toISOString(),
+            use_for_future_training: false,
+          }),
+        ],
+      );
+    }
 
     return {
       submission_id: reviewedSubmissionId,
       task: await getTaskById(input.taskId, client),
-      no_spatial_feature_writes: true,
-      no_auto_approval: true,
+      linked_spatial_feature_id: linkedSpatialFeatureId,
+      no_spatial_feature_writes: linkedSpatialFeatureId === null,
+      no_auto_approval: input.decision !== 'accepted',
     };
   });
 };

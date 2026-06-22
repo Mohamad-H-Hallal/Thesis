@@ -12,6 +12,11 @@ secrets/*.json
 secrets/**/*.json
 !secrets/README.md
 backups/
+device_offline_*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
 
 # Node
 **/node_modules/

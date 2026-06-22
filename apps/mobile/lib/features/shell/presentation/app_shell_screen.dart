@@ -18,7 +18,6 @@ import '../../admin/presentation/screens/categories_screen.dart';
 import '../../admin/presentation/screens/contributor_requests_screen.dart';
 import '../../admin/presentation/screens/projects_management_screen.dart';
 import '../../admin/presentation/screens/users_management_screen.dart';
-import '../../ai/presentation/screens/ai_validation_tasks_screen.dart';
 import '../../auth/domain/auth_models.dart';
 import '../../drafts/presentation/screens/drafts_screen.dart';
 import '../../exports/presentation/screens/exports_dashboard_screen.dart';
@@ -69,7 +68,7 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
               (item) => NavigationDrawerDestination(
                 icon: Icon(item.icon),
                 selectedIcon: Icon(item.selectedIcon ?? item.icon),
-                label: Text(item.label),
+                label: Text(item.label, style: const TextStyle(fontSize: 13)),
               ),
             )
             .toList(growable: false);
@@ -110,7 +109,7 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
                         const SizedBox(height: 8),
                         Text(
                           AppBranding.shortName,
-                          style: Theme.of(context).textTheme.titleMedium,
+                          style: Theme.of(context).textTheme.titleSmall,
                         ),
                         Text(
                           '${session.user.fullName} • ${session.user.roleLabel}',
@@ -181,7 +180,10 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
                 ...items.map(
                   (item) => ListTile(
                     leading: Icon(item.icon),
-                    title: Text(item.label),
+                    title: Text(
+                      item.label,
+                      style: const TextStyle(fontSize: 14),
+                    ),
                     selected: item.path == selectedItem.path,
                     onTap: () {
                       Navigator.pop(context);
@@ -288,7 +290,6 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
     }
     return path == AppRoutes.projects ||
         path == AppRoutes.assignedProjects ||
-        path == AppRoutes.aiValidation ||
         path == AppRoutes.notifications;
   }
 
@@ -299,8 +300,7 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
     return path == AppRoutes.projects ||
         path == AppRoutes.assignedProjects ||
         path == AppRoutes.drafts ||
-        path == AppRoutes.submissions ||
-        path == AppRoutes.aiValidation;
+        path == AppRoutes.submissions;
   }
 
   List<_ShellItem> _mobilePrimaryItems(AppUser user, List<_ShellItem> items) {
@@ -331,7 +331,16 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
     }
 
     if (user.role == UserRole.contributor) {
-      return items;
+      return items
+          .where(
+            (item) =>
+                item.path == AppRoutes.projects ||
+                item.path == AppRoutes.assignedProjects ||
+                item.path == AppRoutes.imports ||
+                item.path == AppRoutes.notifications ||
+                item.path == AppRoutes.profile,
+          )
+          .toList(growable: false);
     }
 
     return items;
@@ -384,9 +393,6 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
     }
     if (path == AppRoutes.submissions && user.role == UserRole.contributor) {
       return const DraftsScreen(showSubmittedOnly: true);
-    }
-    if (path == AppRoutes.aiValidation && user.role == UserRole.contributor) {
-      return const AiValidationTasksScreen();
     }
     if (path == AppRoutes.reviewQueue && user.role == UserRole.admin) {
       return const ReviewQueueScreen();
@@ -621,13 +627,6 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
         path: AppRoutes.assignedProjects,
         icon: Icons.assignment_outlined,
         selectedIcon: Icons.assignment,
-      ),
-      const _ShellItem(
-        label: 'AI Validation',
-        mobileLabel: 'Validate',
-        path: AppRoutes.aiValidation,
-        icon: Icons.rule_folder_outlined,
-        selectedIcon: Icons.rule_folder,
       ),
       const _ShellItem(
         label: 'Imports',

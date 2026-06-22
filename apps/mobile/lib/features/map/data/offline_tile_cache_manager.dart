@@ -44,6 +44,63 @@ class OfflineTileDownloadProgress {
   final int failedTiles;
 }
 
+class OfflineDownloadCanceledException implements Exception {
+  const OfflineDownloadCanceledException();
+
+  @override
+  String toString() => 'Offline download canceled.';
+}
+
+class OfflineTileDownloadInterruptedException implements Exception {
+  const OfflineTileDownloadInterruptedException();
+
+  @override
+  String toString() =>
+      'Offline map download paused because the network connection was interrupted. Saved map images remain on this phone. Try again to resume.';
+}
+
+class OfflineDownloadCancelToken {
+  static const String _cancelMessage = 'Offline download canceled.';
+
+  final Set<CancelToken> _dioTokens = <CancelToken>{};
+  bool _isCanceled = false;
+
+  bool get isCanceled => _isCanceled;
+
+  void cancel() {
+    if (_isCanceled) {
+      return;
+    }
+    _isCanceled = true;
+    for (final token in List<CancelToken>.of(_dioTokens)) {
+      if (!token.isCancelled) {
+        token.cancel(_cancelMessage);
+      }
+    }
+    _dioTokens.clear();
+  }
+
+  void throwIfCanceled() {
+    if (_isCanceled) {
+      throw const OfflineDownloadCanceledException();
+    }
+  }
+
+  CancelToken attachDioToken() {
+    final token = CancelToken();
+    if (_isCanceled) {
+      token.cancel(_cancelMessage);
+    } else {
+      _dioTokens.add(token);
+    }
+    return token;
+  }
+
+  void detachDioToken(CancelToken token) {
+    _dioTokens.remove(token);
+  }
+}
+
 class OfflineTileCacheManager {
   OfflineTileCacheManager({required LocalStore localStore})
     : _localStore = localStore,
@@ -58,6 +115,10 @@ class OfflineTileCacheManager {
 
   final LocalStore _localStore;
   final Dio _dio;
+  static const int _tileDownloadConcurrency = 8;
+  static const int _tileNetworkFailureAbortThreshold =
+      _tileDownloadConcurrency * 3;
+  static const Duration _progressMinInterval = Duration(milliseconds: 250);
 
   Directory? _rootDir;
   File? _transparentTile;
@@ -119,6 +180,34 @@ class OfflineTileCacheManager {
     return false;
   }
 
+  int expectedLebanonContributionTileCount({
+    required OfflineMapPackage package,
+  }) {
+    final minZoom = _contributionMinZoom(package);
+    final maxZoom = _contributionMaxZoom(package);
+    return _countTilesForBounds(
+      bounds: LebanonMapConfig.bounds,
+      minZoom: minZoom,
+      maxZoom: maxZoom,
+    );
+  }
+
+  Future<bool> hasCompleteLebanonContributionBaseMap({
+    required OfflineMapPackage package,
+    LebanonBasemapStyle basemapStyle = LebanonBasemapStyle.satellite,
+  }) async {
+    await initialize();
+    final expected = expectedLebanonContributionTileCount(package: package);
+    if (expected == 0) {
+      return false;
+    }
+    final actual = await _countCachedTiles(
+      package: package,
+      basemapStyle: basemapStyle,
+    );
+    return actual >= expected;
+  }
+
   Future<OfflineTileDownloadSummary> cacheLebanonOverview({
     required OfflineMapPackage package,
     LebanonBasemapStyle basemapStyle = LebanonBasemapStyle.satellite,
@@ -134,6 +223,71 @@ class OfflineTileCacheManager {
       maxZoom: maxZoom,
       onProgress: onProgress,
     );
+  }
+
+  Future<OfflineTileDownloadSummary> cacheLebanonContributionBaseMap({
+    required OfflineMapPackage package,
+    LebanonBasemapStyle basemapStyle = LebanonBasemapStyle.satellite,
+    void Function(OfflineTileDownloadProgress progress)? onProgress,
+    OfflineDownloadCancelToken? cancelToken,
+  }) async {
+    final minZoom = _contributionMinZoom(package);
+    final maxZoom = _contributionMaxZoom(package);
+    return cacheRegion(
+      package: package,
+      basemapStyle: basemapStyle,
+      bounds: LebanonMapConfig.bounds,
+      minZoom: minZoom,
+      maxZoom: math.max(minZoom, maxZoom),
+      onProgress: onProgress,
+      cancelToken: cancelToken,
+    );
+  }
+
+  int _contributionMinZoom(OfflineMapPackage package) {
+    return math.max(package.zoomLevelMin, 7);
+  }
+
+  int _contributionMaxZoom(OfflineMapPackage package) {
+    final minZoom = _contributionMinZoom(package);
+    final maxZoom = math.min(package.zoomLevelMax, 15);
+    return math.max(minZoom, maxZoom);
+  }
+
+  int _countTilesForBounds({
+    required LatLngBounds bounds,
+    required int minZoom,
+    required int maxZoom,
+  }) {
+    var count = 0;
+    for (var zoom = minZoom; zoom <= maxZoom; zoom += 1) {
+      final xRange = _tileRangeX(bounds, zoom);
+      final yRange = _tileRangeY(bounds, zoom);
+      count += (xRange.$2 - xRange.$1 + 1) * (yRange.$2 - yRange.$1 + 1);
+    }
+    return count;
+  }
+
+  Future<int> _countCachedTiles({
+    required OfflineMapPackage package,
+    required LebanonBasemapStyle basemapStyle,
+  }) async {
+    final dir = await _resolveStyleRootDirectory(
+      package: package,
+      basemapStyle: basemapStyle,
+      migrateLegacyTiles: true,
+    );
+    if (!await dir.exists()) {
+      return 0;
+    }
+
+    var tileCount = 0;
+    await for (final entity in dir.list(recursive: true, followLinks: false)) {
+      if (entity is File && entity.path.endsWith('.tile')) {
+        tileCount += 1;
+      }
+    }
+    return tileCount;
   }
 
   Future<OfflineTileDownloadSummary> cacheVisibleRegion({
@@ -165,59 +319,39 @@ class OfflineTileCacheManager {
     required int minZoom,
     required int maxZoom,
     void Function(OfflineTileDownloadProgress progress)? onProgress,
+    OfflineDownloadCancelToken? cancelToken,
   }) async {
     await initialize();
-
-    final tiles = <({int z, int x, int y})>[];
-    for (var zoom = minZoom; zoom <= maxZoom; zoom += 1) {
-      final xRange = _tileRangeX(bounds, zoom);
-      final yRange = _tileRangeY(bounds, zoom);
-      for (var x = xRange.$1; x <= xRange.$2; x += 1) {
-        for (var y = yRange.$1; y <= yRange.$2; y += 1) {
-          tiles.add((z: zoom, x: x, y: y));
-        }
-      }
-    }
+    cancelToken?.throwIfCanceled();
 
     var requested = 0;
     var downloaded = 0;
     var skipped = 0;
     var failed = 0;
     var sizeBytes = 0;
-    final totalRequested = tiles.length;
+    final effectiveMinZoom = math.max(0, minZoom);
+    final effectiveMaxZoom = math.max(effectiveMinZoom, maxZoom);
+    final totalRequested = _countTilesForBounds(
+      bounds: bounds,
+      minZoom: effectiveMinZoom,
+      maxZoom: effectiveMaxZoom,
+    );
+    var lastProgressAt = DateTime.fromMillisecondsSinceEpoch(0);
+    var networkFailureBurst = 0;
 
-    for (final tile in tiles) {
-      requested += 1;
-      final path = await _tilePath(
-        package: package,
-        basemapStyle: basemapStyle,
-        z: tile.z,
-        x: tile.x,
-        y: tile.y,
-      );
-      final file = File(path);
-      if (await file.exists()) {
-        skipped += 1;
-      } else {
-        try {
-          final created = await _downloadTile(
-            basemapStyle: basemapStyle,
-            z: tile.z,
-            x: tile.x,
-            y: tile.y,
-            destination: file,
-          );
-          if (created != null) {
-            downloaded += 1;
-            sizeBytes += created;
-          } else {
-            failed += 1;
-          }
-        } catch (_) {
-          failed += 1;
-        }
+    void reportProgress({bool force = false}) {
+      final progressCallback = onProgress;
+      if (progressCallback == null) {
+        return;
       }
-      onProgress?.call(
+      final now = DateTime.now();
+      if (!force &&
+          requested < totalRequested &&
+          now.difference(lastProgressAt) < _progressMinInterval) {
+        return;
+      }
+      lastProgressAt = now;
+      progressCallback(
         OfflineTileDownloadProgress(
           requestedTiles: totalRequested,
           completedTiles: requested,
@@ -226,6 +360,104 @@ class OfflineTileCacheManager {
           failedTiles: failed,
         ),
       );
+    }
+
+    Future<void> processTile(({int z, int x, int y}) tile) async {
+      try {
+        cancelToken?.throwIfCanceled();
+        final path = await _tilePath(
+          package: package,
+          basemapStyle: basemapStyle,
+          z: tile.z,
+          x: tile.x,
+          y: tile.y,
+        );
+        final file = File(path);
+        if (await file.exists()) {
+          skipped += 1;
+          networkFailureBurst = 0;
+        } else {
+          final created = await _downloadTile(
+            basemapStyle: basemapStyle,
+            z: tile.z,
+            x: tile.x,
+            y: tile.y,
+            destination: file,
+            cancelToken: cancelToken,
+          );
+          if (created != null) {
+            downloaded += 1;
+            sizeBytes += created;
+            networkFailureBurst = 0;
+          } else {
+            failed += 1;
+          }
+        }
+      } on OfflineDownloadCanceledException {
+        rethrow;
+      } on DioException catch (error) {
+        if (error.type == DioExceptionType.cancel) {
+          throw const OfflineDownloadCanceledException();
+        }
+        if (_isNetworkInterruption(error)) {
+          failed += 1;
+          networkFailureBurst += 1;
+          if (networkFailureBurst >= _tileNetworkFailureAbortThreshold) {
+            throw const OfflineTileDownloadInterruptedException();
+          }
+          return;
+        }
+        failed += 1;
+      } on OfflineTileDownloadInterruptedException {
+        rethrow;
+      } catch (_) {
+        failed += 1;
+      } finally {
+        if (cancelToken?.isCanceled != true) {
+          requested += 1;
+          reportProgress();
+        }
+      }
+    }
+
+    final batch = <Future<void>>[];
+    Future<void> flushBatch() async {
+      if (batch.isEmpty) {
+        return;
+      }
+      await Future.wait(batch);
+      batch.clear();
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    try {
+      for (var zoom = effectiveMinZoom; zoom <= effectiveMaxZoom; zoom += 1) {
+        final xRange = _tileRangeX(bounds, zoom);
+        final yRange = _tileRangeY(bounds, zoom);
+        for (var x = xRange.$1; x <= xRange.$2; x += 1) {
+          for (var y = yRange.$1; y <= yRange.$2; y += 1) {
+            cancelToken?.throwIfCanceled();
+            batch.add(processTile((z: zoom, x: x, y: y)));
+            if (batch.length >= _tileDownloadConcurrency) {
+              await flushBatch();
+            }
+          }
+        }
+      }
+      await flushBatch();
+      reportProgress(force: true);
+    } on OfflineDownloadCanceledException {
+      await refreshStats(
+        package.copyWith(downloadedAt: DateTime.now()),
+        basemapStyle: basemapStyle,
+      );
+      rethrow;
+    } on OfflineTileDownloadInterruptedException {
+      await refreshStats(
+        package.copyWith(downloadedAt: DateTime.now()),
+        basemapStyle: basemapStyle,
+      );
+      rethrow;
     }
 
     final updatedPackage = await refreshStats(
@@ -401,19 +633,46 @@ class OfflineTileCacheManager {
     required int x,
     required int y,
     required File destination,
+    OfflineDownloadCancelToken? cancelToken,
   }) async {
+    cancelToken?.throwIfCanceled();
     await destination.parent.create(recursive: true);
     final url = LebanonMapConfig.basemapUrlTemplate(
       basemapStyle,
     ).replaceAll('{z}', '$z').replaceAll('{x}', '$x').replaceAll('{y}', '$y');
 
-    final response = await _dio.get<List<int>>(url);
-    final bytes = Uint8List.fromList(response.data ?? const <int>[]);
-    if (bytes.isEmpty) {
-      return null;
+    final dioCancelToken = cancelToken?.attachDioToken();
+    try {
+      final response = await _dio.get<List<int>>(
+        url,
+        cancelToken: dioCancelToken,
+      );
+      cancelToken?.throwIfCanceled();
+      final bytes = Uint8List.fromList(response.data ?? const <int>[]);
+      if (bytes.isEmpty) {
+        return null;
+      }
+      await destination.writeAsBytes(bytes, flush: true);
+      cancelToken?.throwIfCanceled();
+      return bytes.length;
+    } on DioException catch (error) {
+      if (error.type == DioExceptionType.cancel) {
+        throw const OfflineDownloadCanceledException();
+      }
+      rethrow;
+    } finally {
+      if (dioCancelToken != null) {
+        cancelToken?.detachDioToken(dioCancelToken);
+      }
     }
-    await destination.writeAsBytes(bytes, flush: true);
-    return bytes.length;
+  }
+
+  bool _isNetworkInterruption(DioException error) {
+    return error.type == DioExceptionType.connectionTimeout ||
+        error.type == DioExceptionType.sendTimeout ||
+        error.type == DioExceptionType.receiveTimeout ||
+        error.type == DioExceptionType.connectionError ||
+        error.type == DioExceptionType.unknown;
   }
 
   Future<String> _tilePath({

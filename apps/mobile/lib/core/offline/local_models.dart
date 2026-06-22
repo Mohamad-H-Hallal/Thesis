@@ -138,6 +138,75 @@ class OfflineMapPackage {
   }
 }
 
+class OfflineProjectPackage {
+  const OfflineProjectPackage({
+    required this.ownerUserId,
+    required this.project,
+    required this.packageVersion,
+    required this.appResourcesVersion,
+    required this.baseMapVersion,
+    required this.downloadedAt,
+    required this.refreshedAt,
+  });
+
+  final String ownerUserId;
+  final ProjectSummary project;
+  final String packageVersion;
+  final String appResourcesVersion;
+  final String baseMapVersion;
+  final DateTime downloadedAt;
+  final DateTime refreshedAt;
+
+  String get projectId => project.id;
+
+  OfflineProjectPackage copyWith({
+    ProjectSummary? project,
+    String? packageVersion,
+    String? appResourcesVersion,
+    String? baseMapVersion,
+    DateTime? downloadedAt,
+    DateTime? refreshedAt,
+  }) {
+    return OfflineProjectPackage(
+      ownerUserId: ownerUserId,
+      project: project ?? this.project,
+      packageVersion: packageVersion ?? this.packageVersion,
+      appResourcesVersion: appResourcesVersion ?? this.appResourcesVersion,
+      baseMapVersion: baseMapVersion ?? this.baseMapVersion,
+      downloadedAt: downloadedAt ?? this.downloadedAt,
+      refreshedAt: refreshedAt ?? this.refreshedAt,
+    );
+  }
+
+  Map<String, dynamic> toRowMap() {
+    return {
+      'owner_user_id': ownerUserId,
+      'project_id': project.id,
+      'payload_json': jsonEncode(project.toLocalPayload()),
+      'package_version': packageVersion,
+      'app_resources_version': appResourcesVersion,
+      'base_map_version': baseMapVersion,
+      'downloaded_at': downloadedAt.toIso8601String(),
+      'refreshed_at': refreshedAt.toIso8601String(),
+    };
+  }
+
+  factory OfflineProjectPackage.fromRowMap(Map<String, dynamic> row) {
+    return OfflineProjectPackage(
+      ownerUserId: row['owner_user_id'] as String? ?? '',
+      project: projectSummaryFromPayload(
+        jsonDecode(row['payload_json'] as String) as Map<String, dynamic>,
+      ),
+      packageVersion: row['package_version'] as String? ?? 'project-v1',
+      appResourcesVersion:
+          row['app_resources_version'] as String? ?? 'app-resources-v1',
+      baseMapVersion: row['base_map_version'] as String? ?? '',
+      downloadedAt: DateTime.parse(row['downloaded_at'] as String),
+      refreshedAt: DateTime.parse(row['refreshed_at'] as String),
+    );
+  }
+}
+
 class LocalDraftFeature {
   const LocalDraftFeature({
     required this.id,
@@ -369,12 +438,24 @@ extension ProjectSummaryLocalMapper on ProjectSummary {
       'id': id,
       'name': name,
       'category': category,
+      'categoryId': categoryId,
       'status': status,
       'approvedFeatures': approvedFeatures,
+      'rejectedFeatures': rejectedFeatures,
+      'draftFeatures': draftFeatures,
       'assignedCollectors': assignedCollectors,
       'pendingReviews': pendingReviews,
+      'pendingAssignmentRequests': pendingAssignmentRequests,
+      'rejectedAssignmentRequests': rejectedAssignmentRequests,
       'publishedAiLayerCount': publishedAiLayerCount,
+      'publishedAiRunId': publishedAiRunId,
+      'publishedAiLayerName': publishedAiLayerName,
+      'publishedAiLayerPublishedAt': publishedAiLayerPublishedAt
+          ?.toIso8601String(),
       'description': description,
+      'objectives': objectives,
+      'startDate': startDate?.toIso8601String(),
+      'endDate': endDate?.toIso8601String(),
       'assignments': assignments
           .map((assignment) => assignment.toMap())
           .toList(growable: false),
@@ -398,13 +479,28 @@ ProjectSummary projectSummaryFromPayload(Map<String, dynamic> payload) {
     id: payload['id'] as String,
     name: payload['name'] as String,
     category: payload['category'] as String,
+    categoryId: payload['categoryId'] as String?,
     status: payload['status'] as String,
     approvedFeatures: ((payload['approvedFeatures'] as num?) ?? 0).toInt(),
+    rejectedFeatures: ((payload['rejectedFeatures'] as num?) ?? 0).toInt(),
+    draftFeatures: ((payload['draftFeatures'] as num?) ?? 0).toInt(),
     assignedCollectors: ((payload['assignedCollectors'] as num?) ?? 0).toInt(),
     pendingReviews: ((payload['pendingReviews'] as num?) ?? 0).toInt(),
+    pendingAssignmentRequests:
+        ((payload['pendingAssignmentRequests'] as num?) ?? 0).toInt(),
+    rejectedAssignmentRequests:
+        ((payload['rejectedAssignmentRequests'] as num?) ?? 0).toInt(),
     publishedAiLayerCount: ((payload['publishedAiLayerCount'] as num?) ?? 0)
         .toInt(),
+    publishedAiRunId: payload['publishedAiRunId'] as String?,
+    publishedAiLayerName: payload['publishedAiLayerName'] as String?,
+    publishedAiLayerPublishedAt: _dateTimeFromPayload(
+      payload['publishedAiLayerPublishedAt'],
+    ),
     description: payload['description'] as String,
+    objectives: payload['objectives'] as String?,
+    startDate: _dateTimeFromPayload(payload['startDate']),
+    endDate: _dateTimeFromPayload(payload['endDate']),
     assignments: rawAssignments
         .map(
           (assignment) => ProjectAssignment.fromMap(
@@ -420,7 +516,10 @@ ProjectSummary projectSummaryFromPayload(Map<String, dynamic> payload) {
     requiresPhotos: (payload['requiresPhotos'] as bool?) ?? false,
     minPhotos: ((payload['minPhotos'] as num?) ?? 0).toInt(),
     maxPhotos: ((payload['maxPhotos'] as num?) ?? 5).toInt(),
-    allowedGeometryTypes: defaultProjectGeometryTypes,
+    allowedGeometryTypes: _stringListOrDefault(
+      payload['allowedGeometryTypes'],
+      defaultProjectGeometryTypes,
+    ),
     maxGpsAccuracyMeters: ((payload['maxGpsAccuracyMeters'] as num?) ?? 25)
         .toDouble(),
     visibleToViewers: (payload['visibleToViewers'] as bool?) ?? false,
@@ -432,6 +531,24 @@ ProjectSummary projectSummaryFromPayload(Map<String, dynamic> payload) {
           ProjectAssignmentStatus.values.byName,
         ),
   );
+}
+
+DateTime? _dateTimeFromPayload(dynamic value) {
+  if (value is DateTime) {
+    return value;
+  }
+  if (value is String && value.trim().isNotEmpty) {
+    return DateTime.tryParse(value);
+  }
+  return null;
+}
+
+List<String> _stringListOrDefault(dynamic value, List<String> fallback) {
+  final items = ((value as List?) ?? const <dynamic>[])
+      .map((item) => item.toString().trim())
+      .where((item) => item.isNotEmpty)
+      .toList(growable: false);
+  return items.isEmpty ? fallback : items;
 }
 
 extension _NullableEnumMapper on String? {

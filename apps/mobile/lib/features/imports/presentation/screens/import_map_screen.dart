@@ -2628,9 +2628,7 @@ class _ImportMapFloatingPanel extends StatelessWidget {
                                 onPressed: onSearchPressed,
                               ),
                               _MapPanelIconButton(
-                                tooltip: isExpanded
-                                    ? 'Hide quick filters'
-                                    : 'Show quick filters',
+                                tooltip: isExpanded ? 'Hide' : 'Filter',
                                 icon: isExpanded
                                     ? Icons.keyboard_arrow_up_rounded
                                     : Icons.tune_rounded,

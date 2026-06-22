@@ -88,7 +88,19 @@ class WorkflowRealtimeService {
         onDone: _scheduleReconnect,
         cancelOnError: true,
       );
-      _reconnectAttempt = 0;
+      unawaited(
+        channel.ready
+            .then<void>((_) {
+              if (_channel == channel && !_stopped) {
+                _reconnectAttempt = 0;
+              }
+            })
+            .catchError((_) {
+              if (_channel == channel && !_stopped) {
+                _scheduleReconnect();
+              }
+            }),
+      );
     } catch (_) {
       _scheduleReconnect();
     }

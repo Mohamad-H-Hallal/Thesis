@@ -14,6 +14,7 @@ class MemoryLocalStore implements LocalStore {
   final Map<String, LocalDraftFeature> _drafts = {};
   final Map<String, SyncQueueItem> _syncQueue = {};
   final Map<String, OfflineMapPackage> _offlinePackages = {};
+  final Map<String, OfflineProjectPackage> _offlineProjectPackages = {};
 
   @override
   Future<void> initialize() async {
@@ -27,6 +28,7 @@ class MemoryLocalStore implements LocalStore {
     _drafts.clear();
     _syncQueue.clear();
     _offlinePackages.clear();
+    _offlineProjectPackages.clear();
   }
 
   Future<void> _ensureInitialized() async {
@@ -135,6 +137,16 @@ class MemoryLocalStore implements LocalStore {
   }
 
   @override
+  Future<void> discardDraft(String draftId) async {
+    await _ensureInitialized();
+    _drafts.remove(draftId);
+    _syncQueue.removeWhere(
+      (_, item) =>
+          item.entityType == 'draft_feature' && item.entityId == draftId,
+    );
+  }
+
+  @override
   Future<void> updateDraftStatus(
     String draftId, {
     required String status,
@@ -189,6 +201,88 @@ class MemoryLocalStore implements LocalStore {
       }
     }
     return null;
+  }
+
+  @override
+  Future<void> upsertOfflineProjectPackage(
+    OfflineProjectPackage package,
+  ) async {
+    await _ensureInitialized();
+    _offlineProjectPackages['${package.ownerUserId}:${package.projectId}'] =
+        package;
+    _projects[package.project.id] = package.project;
+  }
+
+  @override
+  Future<OfflineProjectPackage?> getOfflineProjectPackage({
+    required String ownerUserId,
+    required String projectId,
+  }) async {
+    await _ensureInitialized();
+    return _offlineProjectPackages['$ownerUserId:$projectId'];
+  }
+
+  @override
+  Future<List<OfflineProjectPackage>> getOfflineProjectPackages({
+    required String ownerUserId,
+  }) async {
+    await _ensureInitialized();
+    final packages = _offlineProjectPackages.values
+        .where((package) => package.ownerUserId == ownerUserId)
+        .toList(growable: false);
+    packages.sort((a, b) => b.refreshedAt.compareTo(a.refreshedAt));
+    return packages;
+  }
+
+  @override
+  Future<void> deleteOfflineProjectPackage({
+    required String ownerUserId,
+    required String projectId,
+  }) async {
+    await _ensureInitialized();
+    _offlineProjectPackages.remove('$ownerUserId:$projectId');
+  }
+
+  @override
+  Future<int> countOfflineProjectPackagesUsingBaseMap({
+    required String ownerUserId,
+    required String baseMapVersion,
+  }) async {
+    await _ensureInitialized();
+    return _offlineProjectPackages.values
+        .where(
+          (package) =>
+              package.ownerUserId == ownerUserId &&
+              package.baseMapVersion == baseMapVersion,
+        )
+        .length;
+  }
+
+  @override
+  Future<int> countUnsyncedDraftsForProject({
+    required String ownerUserId,
+    required String projectId,
+  }) async {
+    await _ensureInitialized();
+    final draftIds = _drafts.values
+        .where(
+          (draft) =>
+              draft.ownerUserId == ownerUserId && draft.projectId == projectId,
+        )
+        .map((draft) => draft.id)
+        .toSet();
+    return _syncQueue.values
+        .where(
+          (item) =>
+              item.entityType == 'draft_feature' &&
+              draftIds.contains(item.entityId) &&
+              (item.status == SyncQueueStatus.pending ||
+                  item.status == SyncQueueStatus.processing ||
+                  item.status == SyncQueueStatus.failed ||
+                  item.status == SyncQueueStatus.conflict ||
+                  item.status == SyncQueueStatus.deadLetter),
+        )
+        .length;
   }
 
   @override

@@ -72,7 +72,7 @@ type ClassStatisticRow = {
   statistics: JsonRecord;
 };
 
-type ReviewLayerType = 'classification' | 'confidence' | 'uncertainty' | 'statistics';
+type ReviewLayerType = 'classification';
 
 type InsertedOutputLayer = {
   id: string;
@@ -95,6 +95,149 @@ type PredictionFeatureRow = {
   modelName: string | null;
   metadata: JsonRecord;
 };
+
+const AI_PREDICTION_GEOMETRY_DIAGNOSTIC_SQL = `
+WITH raw AS (
+  SELECT ST_SetSRID(ST_GeomFromGeoJSON($1), 4326) AS raw_geom
+),
+cleaned AS (
+  SELECT
+    ST_Multi(
+      ST_CollectionExtract(
+        ST_MakeValid(
+          ST_RemoveRepeatedPoints(
+            ST_SnapToGrid(raw_geom, 0.0000001)
+          )
+        ),
+        3
+      )
+    ) AS geom
+  FROM raw
+)
+SELECT
+  CASE
+    WHEN geom IS NULL THEN 'No geometry after repair.'
+    WHEN ST_IsEmpty(geom) THEN 'Geometry is empty after repair.'
+    ELSE ST_IsValidReason(geom)
+  END AS reason
+FROM cleaned`;
+
+const INSERT_AI_PREDICTION_FEATURE_SQL = `
+WITH raw AS (
+  SELECT ST_SetSRID(ST_GeomFromGeoJSON($1), 4326) AS raw_geom
+),
+cleaned AS (
+  SELECT
+    raw_geom,
+    ST_Multi(
+      ST_CollectionExtract(
+        ST_MakeValid(
+          ST_RemoveRepeatedPoints(
+            ST_SnapToGrid(raw_geom, 0.0000001)
+          )
+        ),
+        3
+      )
+    ) AS geom
+  FROM raw
+),
+valid AS (
+  SELECT
+    geom,
+    (
+      NOT ST_IsValid(raw_geom)
+      OR REPLACE(ST_GeometryType(raw_geom), 'ST_', '') <> REPLACE(ST_GeometryType(geom), 'ST_', '')
+    ) AS repaired,
+    REPLACE(ST_GeometryType(geom), 'ST_', '') AS geometry_type
+  FROM cleaned
+  WHERE geom IS NOT NULL
+    AND NOT ST_IsEmpty(geom)
+    AND ST_IsValid(geom)
+),
+upserted AS (
+  INSERT INTO ai_prediction_feature (
+    project_id,
+    ai_run_id,
+    ai_output_layer_id,
+    artifact_feature_id,
+    geom,
+    raw_geom,
+    processed_geom,
+    geometry_type,
+    predicted_class,
+    confidence,
+    uncertainty_score,
+    model_name,
+    source,
+    status,
+    metadata,
+    source_resolution_m,
+    raw_area_m2,
+    processed_area_m2,
+    area_change_percent,
+    processing_method,
+    minimum_mapping_unit_m2,
+    simplification_tolerance_m,
+    smoothing_iterations,
+    geometry_quality
+  )
+  SELECT
+    $2,
+    $3,
+    $4,
+    $5,
+    geom,
+    geom,
+    geom,
+    geometry_type,
+    $6,
+    $7,
+    $8,
+    $9,
+    'ai_prediction',
+    'ready_for_review',
+    $10::jsonb,
+    NULLIF($10::jsonb #>> '{properties,source_resolution_m}', '')::double precision,
+    NULLIF($10::jsonb #>> '{properties,raw_area_m2}', '')::double precision,
+    NULLIF($10::jsonb #>> '{properties,processed_area_m2}', '')::double precision,
+    NULLIF($10::jsonb #>> '{properties,area_change_percent}', '')::double precision,
+    NULLIF($10::jsonb #>> '{properties,processing_method}', ''),
+    NULLIF($10::jsonb #>> '{properties,minimum_mapping_unit_m2}', '')::double precision,
+    NULLIF($10::jsonb #>> '{properties,simplification_tolerance_m}', '')::double precision,
+    NULLIF($10::jsonb #>> '{properties,smoothing_iterations}', '')::integer,
+    NULLIF($10::jsonb #>> '{properties,geometry_quality}', '')
+  FROM valid
+  ON CONFLICT (ai_output_layer_id, artifact_feature_id)
+  DO UPDATE SET
+    geom = EXCLUDED.geom,
+    raw_geom = EXCLUDED.raw_geom,
+    processed_geom = EXCLUDED.processed_geom,
+    geometry_type = EXCLUDED.geometry_type,
+    predicted_class = EXCLUDED.predicted_class,
+    confidence = EXCLUDED.confidence,
+    uncertainty_score = EXCLUDED.uncertainty_score,
+    model_name = EXCLUDED.model_name,
+    source = 'ai_prediction',
+    status = CASE
+      WHEN ai_prediction_feature.status = 'published' THEN ai_prediction_feature.status
+      ELSE EXCLUDED.status
+    END,
+    metadata = EXCLUDED.metadata,
+    source_resolution_m = EXCLUDED.source_resolution_m,
+    raw_area_m2 = EXCLUDED.raw_area_m2,
+    processed_area_m2 = EXCLUDED.processed_area_m2,
+    area_change_percent = EXCLUDED.area_change_percent,
+    processing_method = EXCLUDED.processing_method,
+    minimum_mapping_unit_m2 = EXCLUDED.minimum_mapping_unit_m2,
+    simplification_tolerance_m = EXCLUDED.simplification_tolerance_m,
+    smoothing_iterations = EXCLUDED.smoothing_iterations,
+    geometry_quality = EXCLUDED.geometry_quality,
+    updated_at = NOW()
+  RETURNING id
+)
+SELECT
+  (SELECT id FROM upserted) AS id,
+  COALESCE((SELECT repaired FROM valid LIMIT 1), false) AS repaired`;
 
 const KNOWN_ARTIFACT_FILENAMES: Record<KnownArtifactKey, string> = {
   metrics: 'metrics.json',
@@ -120,6 +263,12 @@ const KNOWN_ARTIFACT_FILENAMES: Record<KnownArtifactKey, string> = {
 const KNOWN_ARTIFACT_KEYS = Object.keys(KNOWN_ARTIFACT_FILENAMES) as KnownArtifactKey[];
 const KNOWN_ARTIFACT_BASENAMES = new Set(Object.values(KNOWN_ARTIFACT_FILENAMES));
 const REGISTRATION_PHASE = 'phase_h_artifact_registration';
+const LEGACY_REVIEW_LAYER_ARTIFACT_KEYS = new Set<KnownArtifactKey>([
+  'ai_confidence_review',
+  'ai_uncertainty_areas',
+  'confidence_polygons',
+  'uncertainty_areas',
+]);
 
 const toRecord = (value: unknown): JsonRecord =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : {};
@@ -167,8 +316,12 @@ const friendlyModelName = (value: string): string => {
       return 'Random Forest';
     case 'svm_rbf':
       return 'SVM RBF';
+    case 'gradient_boosting':
+    case 'gb':
+      return 'Gradient Boosting';
     case 'xgboost':
-      return 'XGBoost';
+    case 'xgb':
+      return 'XGBoost (historical, unsupported)';
     default:
       return value
         .split(/[_\s-]+/)
@@ -207,9 +360,7 @@ const ensureOutputPath = (
     throw new Error('AI artifact path traversal is not allowed.');
   }
 
-  const candidate = path.isAbsolute(rawPath)
-    ? path.resolve(rawPath)
-    : path.resolve(root, rawPath);
+  const candidate = path.isAbsolute(rawPath) ? path.resolve(rawPath) : path.resolve(root, rawPath);
   const relativeToOutputRoot = path.relative(outputRoot, candidate);
   if (
     relativeToOutputRoot.startsWith('..') ||
@@ -232,15 +383,8 @@ const ensureOutputPath = (
   };
 };
 
-const outputPathEndingWith = (
-  metadata: JsonRecord,
-  filename: string,
-): string | null => {
-  const pathCollections = [
-    metadata.output_paths,
-    metadata.review_artifacts,
-    metadata.outputs,
-  ];
+const outputPathEndingWith = (metadata: JsonRecord, filename: string): string | null => {
+  const pathCollections = [metadata.output_paths, metadata.review_artifacts, metadata.outputs];
   const outputPaths = pathCollections.flatMap((collection) => {
     if (Array.isArray(collection)) {
       return collection;
@@ -311,10 +455,8 @@ const collectArtifactCandidates = (
         runOutputDir ? `${runOutputDir}/model_metadata.json` : null,
       ]) ?? undefined,
     metadata:
-      firstString([
-        metadata.metadata_path,
-        outputPathEndingWith(metadata, 'metadata.json'),
-      ]) ?? undefined,
+      firstString([metadata.metadata_path, outputPathEndingWith(metadata, 'metadata.json')]) ??
+      undefined,
     feature_extraction_summary:
       firstString([
         metadata.feature_extraction_summary_path,
@@ -593,7 +735,9 @@ const predictionArtifactFeatureId = (
 const predictionClassFrom = (properties: JsonRecord): string | null =>
   firstString([
     properties.predicted_class,
+    properties.predicted_class_label,
     properties.class_label,
+    properties.class_name,
     properties.dominant_class,
     properties.suggested_class,
     properties.label,
@@ -602,10 +746,7 @@ const predictionClassFrom = (properties: JsonRecord): string | null =>
     properties.prediction,
   ]);
 
-const predictionModelFrom = (
-  properties: JsonRecord,
-  selectedModel: string | null,
-): string | null =>
+const predictionModelFrom = (properties: JsonRecord, selectedModel: string | null): string | null =>
   firstString([
     properties.model_name,
     properties.model,
@@ -621,6 +762,8 @@ const predictionConfidenceFrom = (properties: JsonRecord): number | null =>
     properties.max_probability,
     properties.prediction_confidence,
     properties.mean_confidence,
+    properties.confidence_mean,
+    properties.mean,
   ]);
 
 const predictionUncertaintyFrom = (properties: JsonRecord): number | null =>
@@ -639,7 +782,7 @@ const predictionRowsFromGeoJson = ({
 }: {
   collection: JsonRecord;
   artifactKey: KnownArtifactKey;
-  layerType: 'classification' | 'confidence' | 'uncertainty';
+  layerType: 'classification';
   selectedModel: string | null;
   limitations: string[];
 }): PredictionFeatureRow[] => {
@@ -671,12 +814,38 @@ const predictionRowsFromGeoJson = ({
           not_official_field_data: true,
           no_spatial_feature_writes: true,
           not_national_classification: true,
+          confidence_is_attribute: true,
+          standalone_confidence_layer: false,
+          standalone_uncertainty_layer: false,
           limitations,
         },
       };
     })
     .filter((row): row is PredictionFeatureRow => row !== null);
 };
+
+const confidenceThresholdFromArtifacts = ({
+  inputMetadata,
+  collection,
+  artifactMetadata,
+  regionalClassificationSummary,
+  aiClassStatistics,
+}: {
+  inputMetadata: JsonRecord;
+  collection: JsonRecord;
+  artifactMetadata: JsonRecord;
+  regionalClassificationSummary: JsonRecord;
+  aiClassStatistics: JsonRecord;
+}): number | null =>
+  firstNumber([
+    inputMetadata.confidence_threshold,
+    toRecord(inputMetadata.ai_settings).confidence_threshold,
+    toRecord(inputMetadata.settings).confidence_threshold,
+    toRecord(collection.metadata).confidence_threshold,
+    artifactMetadata.confidence_threshold,
+    regionalClassificationSummary.confidence_threshold,
+    toRecord(aiClassStatistics.confidence_summary).threshold,
+  ]);
 
 const featureImportanceForModel = (
   featureImportanceRows: JsonRecord[],
@@ -701,19 +870,101 @@ const metricRowsFromArtifacts = ({
 }): MetricRow[] => {
   const models = toRecord(metricsPayload.models);
   const bestModel = toStringValue(metricsPayload.best_model);
-  return Object.entries(models)
-    .map(([modelName, metricValue]) => {
-      const metrics = toRecord(metricValue);
+  const modelSelection = toRecord(metricsPayload.model_selection);
+  const selectedModel =
+    firstString([
+      metricsPayload.model_used_for_classification_map,
+      metricsPayload.selected_model,
+      metricsPayload.best_model,
+      modelSelection.selected_model,
+      modelSelection.model,
+    ]) ?? bestModel;
+  const holdoutResults = toRecord(metricsPayload.holdout_results);
+  const classLabels = toArray(metricsPayload.selected_classes ?? metricsPayload.classes)
+    .map(String)
+    .filter((value) => value.trim().length > 0);
+  const confusionMatrixFrom = (value: unknown): unknown => {
+    if (!Array.isArray(value)) {
+      return value;
+    }
+    const rows = value
+      .map((rawRow, index) => {
+        if (!Array.isArray(rawRow)) {
+          return null;
+        }
+        const actual = classLabels[index] ?? `Class ${index + 1}`;
+        const row: JsonRecord = { actual };
+        let total = 0;
+        rawRow.forEach((rawCount, predictedIndex) => {
+          const label = classLabels[predictedIndex] ?? `Class ${predictedIndex + 1}`;
+          const count = toIntValue(rawCount) ?? 0;
+          row[label] = count;
+          total += count;
+        });
+        row.total = total;
+        return row;
+      })
+      .filter((row): row is JsonRecord => row !== null);
+    return { labels: classLabels, rows };
+  };
+  const candidates = (() => {
+    if (Object.keys(models).length > 0) {
+      return Object.entries(models).map(([modelName, metricValue]) => ({
+        model: modelName,
+        ...toRecord(metricValue),
+      }));
+    }
+    const selectionCandidates = toArray(modelSelection.candidates).map(toRecord);
+    if (selectionCandidates.length > 0) {
+      return selectionCandidates;
+    }
+    const cvResults = toArray(metricsPayload.cv_results).map(toRecord);
+    if (cvResults.length > 0) {
+      return cvResults;
+    }
+    return [];
+  })();
+  return candidates
+    .map((candidateValue) => {
+      const candidate = toRecord(candidateValue);
+      const candidateModelName = firstString([
+        candidate.model_name,
+        candidate.model,
+        candidate.model_key,
+      ]);
+      const modelKey = candidateModelName ?? 'AI pipeline';
+      const holdout = toRecord(holdoutResults[modelKey]);
+      const metrics = { ...holdout, ...candidate };
+      const isSelected =
+        selectedModel !== null &&
+        normalizeModelName(selectedModel) === normalizeModelName(modelKey);
       return {
-        modelName,
-        overallAccuracy: toNumberValue(metrics.accuracy ?? metrics.overall_accuracy),
-        macroF1: toNumberValue(metrics.macro_f1 ?? metrics.macroF1),
-        weightedF1: toNumberValue(metrics.weighted_f1 ?? metrics.weightedF1),
+        modelName: modelKey,
+        overallAccuracy: toNumberValue(
+          metrics.accuracy ??
+            metrics.overall_accuracy ??
+            metrics.holdout_overall_accuracy ??
+            metrics.holdout_oa ??
+            metrics.validation_accuracy ??
+            metrics.oa_mean,
+        ),
+        macroF1: toNumberValue(
+          metrics.macro_f1 ?? metrics.macroF1 ?? metrics.holdout_f1_macro ?? metrics.f1_mean,
+        ),
+        weightedF1: toNumberValue(
+          metrics.weighted_f1 ??
+            metrics.weightedF1 ??
+            metrics.holdout_f1_weighted ??
+            metrics.f1_weighted ??
+            metrics.weighted_f1_score,
+        ),
         metrics: {
-          model_key: modelName,
-          model_display_name: friendlyModelName(modelName),
+          model_key: modelKey,
+          model_display_name: friendlyModelName(modelKey),
           model_metrics: metrics,
-          selected_by_macro_f1: bestModel === modelName,
+          selected_by_macro_f1: bestModel === modelKey,
+          selected_by_composite: isSelected,
+          model_selection: Object.keys(modelSelection).length > 0 ? modelSelection : undefined,
           regional_only: metricsPayload.regional_only === true,
           not_national_accuracy: metricsPayload.not_national_accuracy === true,
           evaluation_method: metricsPayload.evaluation_method,
@@ -724,16 +975,21 @@ const metricRowsFromArtifacts = ({
           classes: metricsPayload.classes,
           warnings: metricsPayload.warnings,
         },
-        confusionMatrix: {
-          applies_to_model: bestModel,
-          rows: confusionMatrixRows,
-        },
-        featureImportance: featureImportanceForModel(featureImportanceRows, modelName),
+        confusionMatrix:
+          (isSelected && metricsPayload.confusion_matrix) ||
+          metrics.confusion_matrix ||
+          confusionMatrixFrom(metrics.holdout_confusion_matrix) || {
+            applies_to_model: selectedModel ?? bestModel,
+            rows: confusionMatrixRows,
+          },
+        featureImportance:
+          (isSelected && toArray(metricsPayload.feature_importance).length > 0
+            ? toArray(metricsPayload.feature_importance)
+            : featureImportanceForModel(featureImportanceRows, modelKey)),
       };
     })
     .filter(
-      (row) =>
-        row.overallAccuracy !== null || row.macroF1 !== null || row.weightedF1 !== null,
+      (row) => row.overallAccuracy !== null || row.macroF1 !== null || row.weightedF1 !== null,
     );
 };
 
@@ -772,9 +1028,7 @@ const mergeClassCountSource = (
       ...existing.statistics,
       eligible,
       [`${source}_feature_count`]: featureCount,
-      sources: Array.from(
-        new Set([...toArray(existing.statistics.sources).map(String), source]),
-      ),
+      sources: Array.from(new Set([...toArray(existing.statistics.sources).map(String), source])),
     };
     rowsByLabel.set(normalized, existing);
   }
@@ -851,8 +1105,7 @@ const mergePhaseMClassStatistics = (
 
     existing.featureCount = predictedCount;
     existing.areaHa = toNumberValue(row.area_ha) ?? existing.areaHa;
-    existing.confidenceMean =
-      toNumberValue(row.confidence_mean) ?? existing.confidenceMean;
+    existing.confidenceMean = toNumberValue(row.confidence_mean) ?? existing.confidenceMean;
     existing.statistics = {
       ...existing.statistics,
       eligible: true,
@@ -960,7 +1213,12 @@ const classStatisticRowsFromArtifacts = ({
 }): ClassStatisticRow[] => {
   const rowsByLabel = new Map<string, ClassStatisticRow>();
   mergeClassCountSource(rowsByLabel, groundTruthSummary.class_counts, 'ground_truth', true);
-  mergeClassCountSource(rowsByLabel, featureExtractionSummary.class_counts, 'feature_extraction', true);
+  mergeClassCountSource(
+    rowsByLabel,
+    featureExtractionSummary.class_counts,
+    'feature_extraction',
+    true,
+  );
   mergeClassCountSource(rowsByLabel, metricsPayload.class_counts, 'metrics', true);
   mergeClassCountSource(
     rowsByLabel,
@@ -988,13 +1246,54 @@ const classStatisticRowsFromArtifacts = ({
 };
 
 const modelMetricsSummaryFrom = (metricsPayload: JsonRecord): JsonRecord => {
-  const models = toRecord(metricsPayload.models);
-  const modelEntries = Object.entries(models);
+  const modelSelection = toRecord(metricsPayload.model_selection);
+  const selectedModel = firstString([
+    metricsPayload.model_used_for_classification_map,
+    metricsPayload.selected_model,
+    metricsPayload.best_model,
+    modelSelection.selected_model,
+    modelSelection.model,
+  ]);
+  const holdoutResults = toRecord(metricsPayload.holdout_results);
+  const modelCandidates = (() => {
+    const models = toRecord(metricsPayload.models);
+    if (Object.keys(models).length > 0) {
+      return Object.entries(models).map(([modelName, metrics]) => ({
+        modelName,
+        metrics: toRecord(metrics),
+      }));
+    }
+    const candidates = toArray(modelSelection.candidates).map(toRecord);
+    if (candidates.length > 0) {
+      return candidates.map((metrics) => {
+        const modelName = firstString([metrics.model_name, metrics.model, metrics.model_key]);
+        return { modelName: modelName ?? 'AI pipeline', metrics };
+      });
+    }
+    return toArray(metricsPayload.cv_results).map(toRecord).map((metrics) => {
+      const modelName = firstString([metrics.model_name, metrics.model, metrics.model_key]);
+      return { modelName: modelName ?? 'AI pipeline', metrics };
+    });
+  })();
+  const modelEntries = modelCandidates.map(({ modelName, metrics }) => {
+    const holdout = toRecord(holdoutResults[modelName]);
+    return [modelName, { ...holdout, ...metrics }] as const;
+  });
+  const models = Object.fromEntries(modelEntries);
   const bestBalanced = modelEntries
     .map(([modelName, metrics]) => ({
       modelName,
-      macroF1: toNumberValue(toRecord(metrics).macro_f1),
-      accuracy: toNumberValue(toRecord(metrics).accuracy),
+      macroF1: toNumberValue(
+        toRecord(metrics).macro_f1 ??
+          toRecord(metrics).holdout_f1_macro ??
+          toRecord(metrics).f1_mean,
+      ),
+      accuracy: toNumberValue(
+        toRecord(metrics).accuracy ??
+          toRecord(metrics).holdout_overall_accuracy ??
+          toRecord(metrics).holdout_oa ??
+          toRecord(metrics).oa_mean,
+      ),
     }))
     .filter((row) => row.macroF1 !== null)
     .sort((left, right) => {
@@ -1004,17 +1303,23 @@ const modelMetricsSummaryFrom = (metricsPayload: JsonRecord): JsonRecord => {
   const highestAccuracy = modelEntries
     .map(([modelName, metrics]) => ({
       modelName,
-      accuracy: toNumberValue(toRecord(metrics).accuracy),
+      accuracy: toNumberValue(
+        toRecord(metrics).accuracy ??
+          toRecord(metrics).holdout_overall_accuracy ??
+          toRecord(metrics).holdout_oa ??
+          toRecord(metrics).oa_mean,
+      ),
     }))
     .filter((row) => row.accuracy !== null)
     .sort((left, right) => (right.accuracy ?? 0) - (left.accuracy ?? 0))[0];
 
   return {
     run_id: metricsPayload.run_id,
-    best_model: metricsPayload.best_model,
-    best_balanced_model: bestBalanced?.modelName ?? metricsPayload.best_model,
+    best_model: selectedModel ?? metricsPayload.best_model,
+    best_balanced_model: selectedModel ?? bestBalanced?.modelName ?? metricsPayload.best_model,
     highest_accuracy_model: highestAccuracy?.modelName ?? null,
-    selected_model: metricsPayload.best_model,
+    selected_model: selectedModel ?? metricsPayload.best_model,
+    model_selection: modelSelection,
     models,
     sample_count: metricsPayload.sample_count,
     class_counts: metricsPayload.class_counts,
@@ -1107,7 +1412,7 @@ const insertOutputLayer = async ({
   client: PoolClient;
   runId: string;
   projectId: string;
-  layerType: 'classification' | 'confidence' | 'uncertainty' | 'statistics';
+  layerType: 'classification';
   name: string;
   description: string;
   storagePath: string | null;
@@ -1152,18 +1457,12 @@ const insertReviewOutputLayers = async ({
   client,
   runId,
   projectId,
-  metricsPath,
   classificationPath,
-  confidencePath,
-  uncertaintyPath,
 }: {
   client: PoolClient;
   runId: string;
   projectId: string;
-  metricsPath: string | null;
   classificationPath: string | null;
-  confidencePath: string | null;
-  uncertaintyPath: string | null;
 }): Promise<ReviewOutputLayerInsertResult> => {
   const layers: Partial<Record<ReviewLayerType, InsertedOutputLayer>> = {};
   const track = (layer: InsertedOutputLayer | null): void => {
@@ -1172,58 +1471,31 @@ const insertReviewOutputLayers = async ({
     }
   };
 
-  track(await insertOutputLayer({
-    client,
-    runId,
-    projectId,
-    layerType: 'statistics',
-    name: 'Regional AI statistics',
-    description: 'Unpublished regional AI metrics and class statistics for admin review.',
-    storagePath: metricsPath,
-  }));
-  track(await insertOutputLayer({
-    client,
-    runId,
-    projectId,
-    layerType: 'classification',
-    name: 'Regional AI classification review layer',
-    description: 'Unpublished regional classification polygons for super-admin review only.',
-    storagePath: classificationPath,
-  }));
-  track(await insertOutputLayer({
-    client,
-    runId,
-    projectId,
-    layerType: 'confidence',
-    name: 'Regional AI confidence review layer',
-    description: 'Unpublished regional confidence artifact for super-admin review only.',
-    storagePath: confidencePath,
-  }));
-  track(await insertOutputLayer({
-    client,
-    runId,
-    projectId,
-    layerType: 'uncertainty',
-    name: 'Regional AI uncertainty review layer',
-    description: 'Unpublished regional uncertainty artifact for contributor validation planning.',
-    storagePath: uncertaintyPath,
-  }));
+  track(
+    await insertOutputLayer({
+      client,
+      runId,
+      projectId,
+      layerType: 'classification',
+      name: 'Regional AI classification review layer',
+      description:
+        'Unpublished regional classification polygons with confidence attributes for review.',
+      storagePath: classificationPath,
+    }),
+  );
   return {
     inserted: Object.keys(layers).length,
     layers,
   };
 };
 
-const updateOutputLayerBounds = async (
-  client: PoolClient,
-  layerId: string,
-): Promise<void> => {
+const updateOutputLayerBounds = async (client: PoolClient, layerId: string): Promise<void> => {
   await client.query(
     `UPDATE ai_output_layer l
      SET bounds = bounds_summary.bounds,
          updated_at = NOW()
      FROM (
-       SELECT ST_SetSRID(ST_Envelope(ST_Extent(geom)::geometry), 4326) AS bounds
+       SELECT ST_SetSRID(ST_Envelope(ST_Extent(COALESCE(processed_geom, geom))::geometry), 4326) AS bounds
        FROM ai_prediction_feature
        WHERE ai_output_layer_id = $1
      ) AS bounds_summary
@@ -1233,89 +1505,122 @@ const updateOutputLayerBounds = async (
   );
 };
 
+const aiPredictionGeometrySkipReason = async (
+  client: PoolClient,
+  geometryJson: string,
+): Promise<string> => {
+  await client.query('SAVEPOINT ai_prediction_feature_diag');
+  try {
+    const result = await client.query<{ reason: string | null }>(
+      AI_PREDICTION_GEOMETRY_DIAGNOSTIC_SQL,
+      [geometryJson],
+    );
+    await client.query('RELEASE SAVEPOINT ai_prediction_feature_diag');
+    return result.rows[0]?.reason ?? 'Geometry is invalid after repair.';
+  } catch (error) {
+    await client.query('ROLLBACK TO SAVEPOINT ai_prediction_feature_diag');
+    await client.query('RELEASE SAVEPOINT ai_prediction_feature_diag');
+    const message = error instanceof Error ? error.message : 'Unknown diagnostic error.';
+    return `Geometry diagnostic failed: ${message}`;
+  }
+};
+
+const pushAiRegistrationWarning = (warnings: string[], message: string): void => {
+  if (warnings.length < 50) {
+    warnings.push(message);
+  }
+};
+
 const insertPredictionFeatureRows = async ({
   client,
   runId,
   projectId,
   layer,
   rows,
+  warnings,
 }: {
   client: PoolClient;
   runId: string;
   projectId: string;
   layer: InsertedOutputLayer | undefined;
   rows: PredictionFeatureRow[];
+  warnings: string[];
 }): Promise<number> => {
   if (!layer || rows.length === 0) {
     return 0;
   }
 
   let registered = 0;
+  let repaired = 0;
+  let skipped = 0;
+  let failed = 0;
   for (const row of rows) {
-    await client.query(
-      `INSERT INTO ai_prediction_feature (
-         project_id,
-         ai_run_id,
-         ai_output_layer_id,
-         artifact_feature_id,
-         geom,
-         geometry_type,
-         predicted_class,
-         confidence,
-         uncertainty_score,
-         model_name,
-         source,
-         status,
-         metadata
-       )
-       VALUES (
-         $1,
-         $2,
-         $3,
-         $4,
-         ST_SetSRID(ST_GeomFromGeoJSON($5), 4326),
-         $6,
-         $7,
-         $8,
-         $9,
-         $10,
-         'ai_prediction',
-         'ready_for_review',
-         $11::jsonb
-       )
-       ON CONFLICT (ai_output_layer_id, artifact_feature_id)
-       DO UPDATE SET
-         geom = EXCLUDED.geom,
-         geometry_type = EXCLUDED.geometry_type,
-         predicted_class = EXCLUDED.predicted_class,
-         confidence = EXCLUDED.confidence,
-         uncertainty_score = EXCLUDED.uncertainty_score,
-         model_name = EXCLUDED.model_name,
-         source = 'ai_prediction',
-         status = CASE
-           WHEN ai_prediction_feature.status = 'published' THEN ai_prediction_feature.status
-           ELSE EXCLUDED.status
-         END,
-         metadata = EXCLUDED.metadata,
-         updated_at = NOW()`,
-      [
-        projectId,
-        runId,
-        layer.id,
-        row.artifactFeatureId,
-        JSON.stringify(row.geometry),
-        row.geometryType,
-        row.predictedClass,
-        row.confidence,
-        row.uncertaintyScore,
-        row.modelName,
-        JSON.stringify(row.metadata),
-      ],
-    );
-    registered += 1;
+    const geometryJson = JSON.stringify(row.geometry);
+    await client.query('SAVEPOINT ai_prediction_feature_row');
+    try {
+      const result = await client.query<{ id: string | null; repaired: boolean }>(
+        INSERT_AI_PREDICTION_FEATURE_SQL,
+        [
+          geometryJson,
+          projectId,
+          runId,
+          layer.id,
+          row.artifactFeatureId,
+          row.predictedClass,
+          row.confidence,
+          row.uncertaintyScore,
+          row.modelName,
+          JSON.stringify({
+            ...row.metadata,
+            source_geometry_type: row.geometryType,
+          }),
+        ],
+      );
+      const inserted = result.rows[0];
+      if (!inserted?.id) {
+        const reason = await aiPredictionGeometrySkipReason(client, geometryJson);
+        skipped += 1;
+        pushAiRegistrationWarning(
+          warnings,
+          `Skipped invalid AI prediction geometry ${row.artifactFeatureId} (${row.predictedClass ?? 'unknown'}): ${reason}`,
+        );
+        await client.query('RELEASE SAVEPOINT ai_prediction_feature_row');
+        continue;
+      }
+      if (inserted.repaired) {
+        repaired += 1;
+      }
+      await client.query('RELEASE SAVEPOINT ai_prediction_feature_row');
+      registered += 1;
+    } catch (error) {
+      await client.query('ROLLBACK TO SAVEPOINT ai_prediction_feature_row');
+      await client.query('RELEASE SAVEPOINT ai_prediction_feature_row');
+      failed += 1;
+      const message = error instanceof Error ? error.message : 'Unknown geometry insert error.';
+      pushAiRegistrationWarning(
+        warnings,
+        `Failed to insert AI prediction geometry ${row.artifactFeatureId} (${row.predictedClass ?? 'unknown'}): ${message}`,
+      );
+      continue;
+    }
   }
 
-  await updateOutputLayerBounds(client, layer.id);
+  if (repaired > 0 || skipped > 0 || failed > 0) {
+    pushAiRegistrationWarning(
+      warnings,
+      `AI prediction geometry cleanup summary: inserted=${registered}, repaired=${repaired}, skipped=${skipped}, failed=${failed}.`,
+    );
+  }
+
+  if (rows.length > 0 && registered === 0 && (skipped > 0 || failed > 0)) {
+    throw new Error(
+      `AI prediction output did not contain any insertable geometries after repair. skipped=${skipped}, failed=${failed}.`,
+    );
+  }
+
+  if (registered > 0) {
+    await updateOutputLayerBounds(client, layer.id);
+  }
   return registered;
 };
 
@@ -1325,16 +1630,14 @@ const insertPredictionFeaturesForReviewLayers = async ({
   projectId,
   layers,
   classificationRows,
-  confidenceRows,
-  uncertaintyRows,
+  warnings,
 }: {
   client: PoolClient;
   runId: string;
   projectId: string;
   layers: Partial<Record<ReviewLayerType, InsertedOutputLayer>>;
   classificationRows: PredictionFeatureRow[];
-  confidenceRows: PredictionFeatureRow[];
-  uncertaintyRows: PredictionFeatureRow[];
+  warnings: string[];
 }): Promise<number> => {
   const classificationCount = await insertPredictionFeatureRows({
     client,
@@ -1342,23 +1645,10 @@ const insertPredictionFeaturesForReviewLayers = async ({
     projectId,
     layer: layers.classification,
     rows: classificationRows,
-  });
-  const confidenceCount = await insertPredictionFeatureRows({
-    client,
-    runId,
-    projectId,
-    layer: layers.confidence,
-    rows: confidenceRows,
-  });
-  const uncertaintyCount = await insertPredictionFeatureRows({
-    client,
-    runId,
-    projectId,
-    layer: layers.uncertainty,
-    rows: uncertaintyRows,
+    warnings,
   });
 
-  return classificationCount + confidenceCount + uncertaintyCount;
+  return classificationCount;
 };
 
 const classCountMetadataFromRows = (
@@ -1414,7 +1704,9 @@ const registerAiRunArtifactsForReview = async (
   const warnings: string[] = [];
   const artifacts = resolveKnownArtifacts(input);
   const artifactPaths = Object.fromEntries(
-    Object.entries(artifacts).map(([key, artifact]) => [key, artifact?.relativePath]),
+    Object.entries(artifacts)
+      .filter(([key]) => !LEGACY_REVIEW_LAYER_ARTIFACT_KEYS.has(key as KnownArtifactKey))
+      .map(([key, artifact]) => [key, artifact?.relativePath]),
   ) as RegisteredArtifactPaths;
 
   const [
@@ -1426,7 +1718,6 @@ const registerAiRunArtifactsForReview = async (
     regionalClassificationSummary,
     vectorizationSummary,
     aiClassStatistics,
-    aiClassStatisticsCsvRows,
     confusionMatrixRows,
     classificationReportRows,
     featureImportanceRows,
@@ -1439,7 +1730,6 @@ const registerAiRunArtifactsForReview = async (
     readJsonArtifact(artifacts.regional_classification_summary, warnings),
     readJsonArtifact(artifacts.vectorization_summary, warnings),
     readJsonArtifact(artifacts.ai_class_statistics_json, warnings),
-    readCsvArtifact(artifacts.ai_class_statistics_csv, warnings),
     readCsvArtifact(artifacts.confusion_matrix, warnings),
     readCsvArtifact(artifacts.classification_report, warnings),
     readCsvArtifact(artifacts.feature_importance, warnings),
@@ -1468,35 +1758,9 @@ const registerAiRunArtifactsForReview = async (
     warnings.push('No class statistics were available to register.');
   }
 
-  const metricsPath =
-    artifacts.metrics && Object.keys(metricsPayload).length > 0
-      ? artifacts.metrics.relativePath
-      : null;
-  const statisticsPath =
-    metricsPath ??
-    (artifacts.ai_class_statistics_json && Object.keys(aiClassStatistics).length > 0
-      ? artifacts.ai_class_statistics_json.relativePath
-      : null) ??
-    (artifacts.ai_class_statistics_csv && aiClassStatisticsCsvRows.length > 0
-      ? artifacts.ai_class_statistics_csv.relativePath
-      : null) ??
-    (artifacts.regional_classification_summary &&
-    Object.keys(regionalClassificationSummary).length > 0
-      ? artifacts.regional_classification_summary.relativePath
-      : null) ??
-    (artifacts.vectorization_summary && Object.keys(vectorizationSummary).length > 0
-      ? artifacts.vectorization_summary.relativePath
-      : null);
   const classificationArtifact =
     artifacts.ai_classification_review ?? artifacts.classification_polygons;
-  const confidenceArtifact = artifacts.ai_confidence_review ?? artifacts.confidence_polygons;
-  const uncertaintyArtifact =
-    artifacts.ai_uncertainty_areas ?? artifacts.uncertainty_areas;
-  const [classificationPath, confidencePath, uncertaintyPath] = await Promise.all([
-    existingArtifactPath(classificationArtifact, warnings),
-    existingArtifactPath(confidenceArtifact, warnings),
-    existingArtifactPath(uncertaintyArtifact, warnings),
-  ]);
+  const classificationPath = await existingArtifactPath(classificationArtifact, warnings);
   const limitations = [
     ...toArray(regionalClassificationSummary.limitations),
     ...toArray(vectorizationSummary.limitations),
@@ -1513,36 +1777,37 @@ const registerAiRunArtifactsForReview = async (
     toStringValue(vectorizationSummary.classification_output_model);
   const modelMetricsSummary =
     Object.keys(metricsPayload).length > 0 ? modelMetricsSummaryFrom(metricsPayload) : {};
-  const [
-    classificationCollection,
-    confidenceCollection,
-    uncertaintyCollection,
-  ] = await Promise.all([
-    readGeoJsonFeatureCollection(classificationArtifact, warnings),
-    readGeoJsonFeatureCollection(confidenceArtifact, warnings),
-    readGeoJsonFeatureCollection(uncertaintyArtifact, warnings),
-  ]);
-  const classificationPredictionRows = predictionRowsFromGeoJson({
+  const classificationCollection = await readGeoJsonFeatureCollection(
+    classificationArtifact,
+    warnings,
+  );
+  const confidenceThreshold = confidenceThresholdFromArtifacts({
+    inputMetadata: metadata,
+    collection: classificationCollection,
+    artifactMetadata,
+    regionalClassificationSummary,
+    aiClassStatistics,
+  });
+  const rawClassificationPredictionRows = predictionRowsFromGeoJson({
     collection: classificationCollection,
     artifactKey: classificationArtifact?.key ?? 'ai_classification_review',
     layerType: 'classification',
     selectedModel,
     limitations,
   });
-  const confidencePredictionRows = predictionRowsFromGeoJson({
-    collection: confidenceCollection,
-    artifactKey: confidenceArtifact?.key ?? 'ai_confidence_review',
-    layerType: 'confidence',
-    selectedModel,
-    limitations,
-  });
-  const uncertaintyPredictionRows = predictionRowsFromGeoJson({
-    collection: uncertaintyCollection,
-    artifactKey: uncertaintyArtifact?.key ?? 'ai_uncertainty_areas',
-    layerType: 'uncertainty',
-    selectedModel,
-    limitations,
-  });
+  const classificationPredictionRows =
+    confidenceThreshold === null
+      ? rawClassificationPredictionRows
+      : rawClassificationPredictionRows.filter(
+          (row) => row.confidence === null || row.confidence >= confidenceThreshold,
+        );
+  const belowThresholdRows =
+    rawClassificationPredictionRows.length - classificationPredictionRows.length;
+  if (belowThresholdRows > 0) {
+    warnings.push(
+      `${belowThresholdRows} AI prediction feature(s) below CONFIDENCE_THRESHOLD were not registered in the visible classification layer.`,
+    );
+  }
 
   const result = await transaction(async (client: PoolClient) => {
     await client.query(`DELETE FROM ai_run_metric WHERE ai_run_id = $1`, [input.runId]);
@@ -1552,10 +1817,7 @@ const registerAiRunArtifactsForReview = async (
        WHERE ai_run_id = $1
          AND status <> 'published'
          AND layer_type = ANY($2::ai_output_layer_type[])`,
-      [
-        input.runId,
-        ['statistics', 'classification', 'confidence', 'uncertainty'],
-      ],
+      [input.runId, ['statistics', 'classification', 'confidence', 'uncertainty']],
     );
 
     const metricsRegistered = await insertMetricRows(client, input.runId, metricRows);
@@ -1564,16 +1826,11 @@ const registerAiRunArtifactsForReview = async (
       input.runId,
       classStatisticRows,
     );
-    const hasReviewableStructuredResults =
-      metricRows.length > 0 || classStatisticRows.length > 0;
     const outputLayerResult = await insertReviewOutputLayers({
       client,
       runId: input.runId,
       projectId: input.projectId,
-      metricsPath: hasReviewableStructuredResults ? statisticsPath : null,
       classificationPath,
-      confidencePath,
-      uncertaintyPath,
     });
     const predictionFeaturesRegistered = await insertPredictionFeaturesForReviewLayers({
       client,
@@ -1581,8 +1838,7 @@ const registerAiRunArtifactsForReview = async (
       projectId: input.projectId,
       layers: outputLayerResult.layers,
       classificationRows: classificationPredictionRows,
-      confidenceRows: confidencePredictionRows,
-      uncertaintyRows: uncertaintyPredictionRows,
+      warnings,
     });
     if (selectedModel) {
       await client.query(`UPDATE ai_run SET selected_model = $2 WHERE id = $1`, [
@@ -1614,6 +1870,8 @@ const registerAiRunArtifactsForReview = async (
       review_only: true,
       no_spatial_feature_writes: true,
       prediction_feature_store: true,
+      confidence_threshold: confidenceThreshold,
+      below_threshold_excluded: belowThresholdRows,
     },
     registered_artifact_paths: artifactPaths,
   };
@@ -1624,8 +1882,7 @@ const registerAiRunArtifactsForReview = async (
   if (Object.keys(modelMetricsSummary).length > 0) {
     metadataPatch.model_metrics_summary = modelMetricsSummary;
   }
-  const { classCounts, excludedClasses } =
-    classCountMetadataFromRows(classStatisticRows);
+  const { classCounts, excludedClasses } = classCountMetadataFromRows(classStatisticRows);
   if (classCounts.length > 0) {
     metadataPatch.class_counts = classCounts;
   }
@@ -1657,8 +1914,10 @@ const registerAiRunArtifactsForReview = async (
     Object.keys(toRecord(aiClassStatistics.confidence_summary)).length > 0
       ? toRecord(aiClassStatistics.confidence_summary)
       : toRecord(regionalClassificationSummary.confidence_summary);
-  const uncertaintyCount =
+  const belowThresholdFeatureCount =
+    toIntValue(regionalClassificationSummary.below_threshold_feature_count) ??
     toIntValue(regionalClassificationSummary.uncertainty_feature_count) ??
+    toIntValue(confidenceSummary.below_threshold_feature_count) ??
     toIntValue(confidenceSummary.uncertain_feature_count);
   const regionalScope = toRecord(regionalClassificationSummary.scope);
 
@@ -1677,8 +1936,8 @@ const registerAiRunArtifactsForReview = async (
   if (Object.keys(confidenceSummary).length > 0) {
     metadataPatch.confidence_summary = confidenceSummary;
   }
-  if (uncertaintyCount !== null) {
-    metadataPatch.uncertainty_feature_count = uncertaintyCount;
+  if (belowThresholdFeatureCount !== null) {
+    metadataPatch.below_threshold_feature_count = belowThresholdFeatureCount;
   }
   if (Object.keys(regionalScope).length > 0) {
     metadataPatch.regional_scope = regionalScope;

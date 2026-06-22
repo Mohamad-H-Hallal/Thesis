@@ -20,7 +20,90 @@ const path = require('node:path');
 const SUPER_ADMIN_EMAIL = 'ai-superadmin@gov.lb';
 const ORIGINAL_AI_PIPELINE_ROOT = process.env.AI_PIPELINE_ROOT;
 const ORIGINAL_AI_PIPELINE_OUTPUT_ROOT = process.env.AI_PIPELINE_OUTPUT_ROOT;
+const ORIGINAL_AI_SERVER_URL = process.env.AI_SERVER_URL;
+const ORIGINAL_APP_PUBLIC_API_URL = process.env.APP_PUBLIC_API_URL;
+const ORIGINAL_AI_CALLBACK_BASE_URL = process.env.AI_CALLBACK_BASE_URL;
+const ORIGINAL_AI_CALLBACK_SECRET = process.env.AI_CALLBACK_SECRET;
+const ORIGINAL_AI_SERVER_TIMEOUT_MS = process.env.AI_SERVER_TIMEOUT_MS;
 let tempAiPipelineRoot;
+
+const jsonFetchResponse = (payload, status = 200) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  text: async () => JSON.stringify(payload),
+});
+
+const mockAiServerFetch = () => {
+  if (!global.fetch) {
+    global.fetch = async () => jsonFetchResponse({});
+  }
+  return jest.spyOn(global, 'fetch').mockImplementation(async (url, options = {}) => {
+    const urlString = typeof url === 'string' ? url : url.url;
+    const body = options.body ? JSON.parse(String(options.body)) : {};
+    if (urlString === 'http://ai-server.test/health') {
+      return jsonFetchResponse({
+        status: 'ok',
+        service: 'ai-pipeline',
+        dry_run: true,
+        checks: {
+          server: true,
+          outputs_dir: true,
+          database: null,
+          gee: null,
+        },
+        message: 'AI server is healthy in dry-run mode.',
+      });
+    }
+    if (urlString === 'http://ai-server.test/api/runs/start') {
+      return jsonFetchResponse({
+        run_id: body.run_id,
+        project_id: body.project_id,
+        status: 'accepted',
+        stage: 'accepted',
+        progress: 0,
+        message: 'Pipeline accepted by AI server.',
+        counts: { accepted: true },
+      });
+    }
+    if (urlString.endsWith('/status')) {
+      const runId = urlString.split('/').at(-2);
+      return jsonFetchResponse({
+        run_id: runId,
+        status: 'running',
+        stage: 'training',
+        progress: 0.42,
+        message: 'Training model.',
+      });
+    }
+    if (urlString.endsWith('/cancel')) {
+      const runId = urlString.split('/').at(-2);
+      return jsonFetchResponse({
+        run_id: runId,
+        status: 'cancelled',
+        stage: 'cancelled',
+        progress: 0.42,
+        message: 'Run cancelled.',
+      });
+    }
+    if (urlString.endsWith('/resume')) {
+      const runId = urlString.split('/').at(-2);
+      return jsonFetchResponse({
+        run_id: runId,
+        status: 'running',
+        stage: 'resumed',
+        progress: 0.42,
+        message: 'Run resumed.',
+      });
+    }
+    if (urlString.endsWith('/api/retrain/check')) {
+      return jsonFetchResponse({
+        recommended: false,
+        reason: 'Validation feedback is below the retraining threshold.',
+      });
+    }
+    return jsonFetchResponse({ message: `Unhandled AI server test URL: ${urlString}` }, 404);
+  });
+};
 
 const activateProject = async ({ token, projectId }) => {
   const response = await request(app)
@@ -160,11 +243,11 @@ const createReviewableAiRun = async ({ projectId, userId, layerStatus = 'ready_f
      VALUES (
        $1,
        $2,
-       'statistics',
+       'classification',
        $3,
-       'Regional model statistics',
-       'Unpublished regional statistics layer',
-       'outputs/runs/phase-i-test/metrics.json',
+       'Regional AI classification review',
+       'Unpublished regional classification review layer',
+       'outputs/runs/phase-i-test/ai_classification_review.geojson',
        'EPSG:4326',
        '{}'::jsonb
      )
@@ -206,6 +289,7 @@ const createPreviewableAiLayer = async ({
   layerType = 'classification',
   status = 'ready_for_review',
   storagePath = 'outputs/runs/phase-o-test/ai_classification_review.geojson',
+  withPrediction = false,
 }) => {
   const runResult = await pool.query(
     `INSERT INTO ai_run (
@@ -261,6 +345,16 @@ const createPreviewableAiLayer = async ({
      RETURNING id`,
     [runResult.rows[0].id, projectId, layerType, status, storagePath],
   );
+
+  if (withPrediction) {
+    await insertAiPredictionFeature({
+      projectId,
+      runId: runResult.rows[0].id,
+      layerId: layerResult.rows[0].id,
+      artifactFeatureId: `${layerResult.rows[0].id}-prediction-1`,
+      status: status === 'published' ? 'published' : 'ready_for_review',
+    });
+  }
 
   return {
     runId: runResult.rows[0].id,
@@ -349,42 +443,6 @@ const insertAiPredictionFeature = async ({
         no_spatial_feature_writes: true,
       }),
     ],
-  );
-  return result.rows[0].id;
-};
-
-const insertAiOutputLayerForRun = async ({
-  projectId,
-  runId,
-  layerType = 'uncertainty',
-  status = 'ready_for_review',
-  storagePath = 'outputs/runs/phase-s1-test/ai_uncertainty_areas.geojson',
-}) => {
-  const result = await pool.query(
-    `INSERT INTO ai_output_layer (
-       ai_run_id,
-       project_id,
-       layer_type,
-       status,
-       name,
-       description,
-       storage_path,
-       crs,
-       style
-     )
-     VALUES (
-       $1,
-       $2,
-       $3,
-       $4,
-       'Regional AI validation candidate layer',
-       'Unpublished AI validation candidate layer.',
-       $5,
-       'EPSG:4326',
-       '{}'::jsonb
-     )
-     RETURNING id`,
-    [runId, projectId, layerType, status, storagePath],
   );
   return result.rows[0].id;
 };
@@ -528,15 +586,50 @@ const createViewerToken = async () => {
   };
 };
 
+const createStartableAiProjectFixture = async (name = 'AI Server Config Project') => {
+  const fixture = await createProjectFixture(name);
+  await request(app)
+    .put(`${API_PREFIX}/projects/${fixture.project.id}/ai/settings`)
+    .set(authHeader(fixture.admin.token))
+    .send({
+      is_enabled: true,
+      label_field: 'feature_type',
+      scope_type: 'project',
+      min_samples_per_class: 1,
+      model_preferences: {},
+    })
+    .expect(200);
+  await insertApprovedFeature({
+    projectId: fixture.project.id,
+    userId: fixture.admin.user.id,
+    attributes: { feature_type: 'Olives' },
+  });
+  await insertApprovedFeature({
+    projectId: fixture.project.id,
+    userId: fixture.admin.user.id,
+    attributes: { feature_type: 'Citrus' },
+    lon: 35.51,
+    lat: 33.91,
+  });
+  return fixture;
+};
+
 beforeEach(async () => {
   await resetDb();
   process.env.SUPER_ADMIN_EMAIL = SUPER_ADMIN_EMAIL;
   tempAiPipelineRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'gis-ai-phase-o-'));
   process.env.AI_PIPELINE_ROOT = tempAiPipelineRoot;
   delete process.env.AI_PIPELINE_OUTPUT_ROOT;
+  process.env.AI_SERVER_URL = 'http://ai-server.test';
+  process.env.APP_PUBLIC_API_URL = 'http://app-api.test';
+  process.env.AI_CALLBACK_BASE_URL = 'http://callback-api.test';
+  process.env.AI_CALLBACK_SECRET = 'test-ai-callback-secret';
+  process.env.AI_SERVER_TIMEOUT_MS = '5000';
+  mockAiServerFetch();
 });
 
 afterEach(async () => {
+  jest.restoreAllMocks();
   await resetDb();
   if (tempAiPipelineRoot) {
     await fs.rm(tempAiPipelineRoot, { recursive: true, force: true });
@@ -551,6 +644,31 @@ afterEach(async () => {
     delete process.env.AI_PIPELINE_OUTPUT_ROOT;
   } else {
     process.env.AI_PIPELINE_OUTPUT_ROOT = ORIGINAL_AI_PIPELINE_OUTPUT_ROOT;
+  }
+  if (ORIGINAL_AI_SERVER_URL === undefined) {
+    delete process.env.AI_SERVER_URL;
+  } else {
+    process.env.AI_SERVER_URL = ORIGINAL_AI_SERVER_URL;
+  }
+  if (ORIGINAL_APP_PUBLIC_API_URL === undefined) {
+    delete process.env.APP_PUBLIC_API_URL;
+  } else {
+    process.env.APP_PUBLIC_API_URL = ORIGINAL_APP_PUBLIC_API_URL;
+  }
+  if (ORIGINAL_AI_CALLBACK_BASE_URL === undefined) {
+    delete process.env.AI_CALLBACK_BASE_URL;
+  } else {
+    process.env.AI_CALLBACK_BASE_URL = ORIGINAL_AI_CALLBACK_BASE_URL;
+  }
+  if (ORIGINAL_AI_CALLBACK_SECRET === undefined) {
+    delete process.env.AI_CALLBACK_SECRET;
+  } else {
+    process.env.AI_CALLBACK_SECRET = ORIGINAL_AI_CALLBACK_SECRET;
+  }
+  if (ORIGINAL_AI_SERVER_TIMEOUT_MS === undefined) {
+    delete process.env.AI_SERVER_TIMEOUT_MS;
+  } else {
+    process.env.AI_SERVER_TIMEOUT_MS = ORIGINAL_AI_SERVER_TIMEOUT_MS;
   }
 });
 
@@ -572,6 +690,111 @@ describe('AI backend endpoints phase B', () => {
     expect(response.body.data.readiness.approved_feature_count).toBe(0);
     expect(response.body.data.readiness.blockers).toEqual(
       expect.arrayContaining(['Project has no approved field/import features available for AI.']),
+    );
+    expect(response.body.data.readiness.ai_server).toEqual(
+      expect.objectContaining({
+        configured: true,
+        available: true,
+        status: 'ok',
+        callback_secret_configured: true,
+      }),
+    );
+  });
+
+  test('AI_SERVER_URL missing is reported by readiness and fails start without a queued run', async () => {
+    const { admin, project } = await createStartableAiProjectFixture('AI Missing Server URL');
+    delete process.env.AI_SERVER_URL;
+
+    const readinessResponse = await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/ai/readiness?label_field=feature_type`)
+      .set(authHeader(admin.token))
+      .expect(200);
+
+    expect(readinessResponse.body.data.readiness.status).toBe('not_ready');
+    expect(readinessResponse.body.data.readiness.ai_server).toEqual(
+      expect.objectContaining({
+        configured: false,
+        available: false,
+        status: 'unconfigured',
+      }),
+    );
+    expect(readinessResponse.body.data.readiness.blockers).toEqual(
+      expect.arrayContaining([
+        'AI server URL is not configured. Set AI_SERVER_URL before starting AI runs.',
+      ]),
+    );
+
+    const startResponse = await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'queued',
+        execution_mode: 'regional_feature_extraction',
+      })
+      .expect(503);
+
+    expect(startResponse.body.message).toContain('AI_SERVER_URL');
+    expect(startResponse.body.data).toEqual(
+      expect.objectContaining({
+        status: 'failed',
+        failure_reason: expect.stringContaining('AI_SERVER_URL'),
+      }),
+    );
+    const queuedCount = await pool.query(
+      `SELECT COUNT(*)::int AS count
+       FROM ai_run
+       WHERE project_id = $1 AND status = 'queued'`,
+      [project.id],
+    );
+    expect(queuedCount.rows[0].count).toBe(0);
+  });
+
+  test('unreachable AI server is reported by readiness and fails start clearly', async () => {
+    const { admin, project } = await createStartableAiProjectFixture('AI Server Unreachable');
+    global.fetch.mockImplementation(async (url) => {
+      const urlString = typeof url === 'string' ? url : url.url;
+      if (urlString === 'http://ai-server.test/health') {
+        throw new Error('connect ECONNREFUSED 127.0.0.1:8000');
+      }
+      return jsonFetchResponse({ message: `Unhandled AI server test URL: ${urlString}` }, 404);
+    });
+
+    const readinessResponse = await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/ai/readiness?label_field=feature_type`)
+      .set(authHeader(admin.token))
+      .expect(200);
+
+    expect(readinessResponse.body.data.readiness.status).toBe('not_ready');
+    expect(readinessResponse.body.data.readiness.ai_server).toEqual(
+      expect.objectContaining({
+        configured: true,
+        available: false,
+        status: 'unavailable',
+      }),
+    );
+    expect(readinessResponse.body.data.readiness.blockers).toEqual(
+      expect.arrayContaining([
+        'AI server is unavailable. Please start the AI server and refresh readiness.',
+      ]),
+    );
+
+    const startResponse = await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'queued',
+        execution_mode: 'regional_feature_extraction',
+      })
+      .expect(503);
+
+    expect(startResponse.body.message).toBe(
+      'AI server is unavailable. Please start the AI server and refresh readiness.',
+    );
+    expect(startResponse.body.data).toEqual(
+      expect.objectContaining({
+        status: 'failed',
+        failure_reason: expect.stringContaining('connect ECONNREFUSED'),
+      }),
     );
   });
 
@@ -928,6 +1151,95 @@ describe('AI backend endpoints phase B', () => {
     expect(updateResponse.body.data.model_preferences.models).toEqual(['random_forest']);
   });
 
+  test('rejects MLP model preference for new AI settings', async () => {
+    const { admin, project } = await createProjectFixture('AI Settings MLP Reject');
+
+    const response = await request(app)
+      .patch(`${API_PREFIX}/projects/${project.id}/ai/settings`)
+      .set(authHeader(admin.token))
+      .send({
+        is_enabled: true,
+        label_field: 'feature_type',
+        scope_type: 'project',
+        min_samples_per_class: 2,
+        model_preferences: {
+          preferred_model: 'mlp',
+        },
+      })
+      .expect(400);
+
+    expect(response.body.message).toBe('Validation failed');
+    expect(response.body.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          msg: 'preferred_model must be Auto, Random Forest, SVM, or Gradient Boosting',
+        }),
+      ]),
+    );
+  });
+
+  test('rejects XGBoost model preference for new AI settings', async () => {
+    const { admin, project } = await createProjectFixture('AI Settings XGBoost Reject');
+
+    const response = await request(app)
+      .patch(`${API_PREFIX}/projects/${project.id}/ai/settings`)
+      .set(authHeader(admin.token))
+      .send({
+        is_enabled: true,
+        label_field: 'feature_type',
+        scope_type: 'project',
+        min_samples_per_class: 2,
+        model_preferences: {
+          preferred_model: 'xgboost',
+        },
+      })
+      .expect(400);
+
+    expect(response.body.message).toBe('Validation failed');
+    expect(response.body.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          msg: 'preferred_model must be Auto, Random Forest, SVM, or Gradient Boosting',
+        }),
+      ]),
+    );
+  });
+
+  test('rejects texture features without Sentinel-2 dry season', async () => {
+    const { admin, project } = await createProjectFixture('AI Settings Texture Reject');
+
+    const response = await request(app)
+      .patch(`${API_PREFIX}/projects/${project.id}/ai/settings`)
+      .set(authHeader(admin.token))
+      .send({
+        is_enabled: true,
+        label_field: 'feature_type',
+        scope_type: 'project',
+        min_samples_per_class: 2,
+        model_preferences: {
+          satellite_sources: ['sentinel2'],
+          satellite_timeframes: {
+            sentinel2: {
+              map_year: 2025,
+              seasons: [
+                {
+                  season: 'growing',
+                  from_date: '2025-03-01',
+                  to_date: '2025-06-30',
+                },
+              ],
+            },
+          },
+          feature_inputs: ['NDVI', 'static_texture_pc1'],
+        },
+      })
+      .expect(400);
+
+    expect(response.body.message).toContain(
+      'Texture features require Sentinel-2 NDVI from the dry season',
+    );
+  });
+
   test('custom polygon scope is saved for AI only and affects readiness and run metadata', async () => {
     const { admin, project } = await createProjectFixture('AI Custom Scope');
     const customScope = {
@@ -1031,9 +1343,24 @@ describe('AI backend endpoints phase B', () => {
     );
     expect(runResponse.body.data.metadata.ai_settings).toEqual(
       expect.objectContaining({
+        satellite_sources: ['sentinel2'],
+        satellite_timeframes: {
+          sentinel2: {
+            map_year: 2026,
+            seasons: [
+              {
+                season: 'growing',
+                from_date: '2026-03-01',
+                to_date: '2026-10-31',
+              },
+            ],
+          },
+        },
         satellite_source: 'sentinel2',
         season: 'growing',
+        feature_groups: ['vegetation_indices'],
         feature_inputs: ['NDVI', 'EVI'],
+        confidence_threshold: 0.6,
         training_samples_area_type: 'custom_ai_area',
         prediction_area_type: 'custom_ai_area',
         custom_scope_applied: true,
@@ -1049,8 +1376,11 @@ describe('AI backend endpoints phase B', () => {
         backend_scope_applied: true,
         effective_pipeline_settings: expect.arrayContaining(['training_samples_area_type']),
         pending_pipeline_settings: expect.arrayContaining([
-          'satellite_source',
+          'satellite_sources',
+          'satellite_timeframes',
+          'confidence_threshold',
           'date_range',
+          'feature_groups',
           'feature_inputs',
           'prediction_area_type',
           'custom_area',
@@ -1304,8 +1634,9 @@ describe('AI backend endpoints phase B', () => {
     expect(createResponse.body.data.eligible_feature_count).toBe(2);
     expect(createResponse.body.data.metadata).toEqual(
       expect.objectContaining({
-        execution_mode: 'mock',
+        execution_mode: 'regional_full_review_artifacts',
         real_ai_execution: false,
+        worker_execution: 'replaced_by_ai_server',
       }),
     );
 
@@ -1348,7 +1679,7 @@ describe('AI backend endpoints phase B', () => {
         expect.objectContaining({
           level: 'info',
           metadata: expect.objectContaining({
-            execution_mode: 'mock',
+            execution_mode: 'regional_full_review_artifacts',
             real_ai_execution: false,
           }),
         }),
@@ -1373,12 +1704,106 @@ describe('AI backend endpoints phase B', () => {
         execution_mode: 'regional_feature_extraction',
       })
       .expect(201);
-    expect(regionalResponse.body.data.status).toBe('queued');
+    expect(regionalResponse.body.data.status).toBe('starting');
+    expect(regionalResponse.body.data.stage).toBe('accepted');
+    expect(regionalResponse.body.data.progress).toBe(0);
+    expect(regionalResponse.body.data.message).toBe('Pipeline accepted by AI server.');
     expect(regionalResponse.body.data.metadata).toEqual(
       expect.objectContaining({
         execution_mode: 'regional_feature_extraction',
         regional_ai_execution_requested: true,
-        real_ai_execution: false,
+        real_ai_execution: true,
+        worker_execution: 'replaced_by_ai_server',
+      }),
+    );
+    const startedRunId = regionalResponse.body.data.id;
+    const startCall = global.fetch.mock.calls.find(
+      ([url]) => String(url) === 'http://ai-server.test/api/runs/start',
+    );
+    expect(startCall).toBeTruthy();
+    const startPayload = JSON.parse(String(startCall[1].body));
+    expect(startPayload.callback_url).toBe(
+      `http://callback-api.test/api/v1/ai/runs/${startedRunId}/callback`,
+    );
+    expect(startPayload.callback_secret).toBe('test-ai-callback-secret');
+
+    const statusResponse = await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/ai/runs/${startedRunId}/status`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(statusResponse.body.data).toEqual(
+      expect.objectContaining({
+        status: 'running',
+        stage: 'training',
+        progress: 0.42,
+        message: 'Training model.',
+      }),
+    );
+
+    const cancelResponse = await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/runs/${startedRunId}/cancel`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(cancelResponse.body.data).toEqual(
+      expect.objectContaining({
+        status: 'cancelled',
+        stage: 'cancelled',
+        can_resume: true,
+      }),
+    );
+
+    const resumeResponse = await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/runs/${startedRunId}/resume`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(resumeResponse.body.data).toEqual(
+      expect.objectContaining({
+        status: 'running',
+        stage: 'resumed',
+        can_cancel: true,
+      }),
+    );
+
+    await request(app)
+      .post(`${API_PREFIX}/ai/runs/${startedRunId}/callback`)
+      .send({
+        run_id: startedRunId,
+        project_id: project.id,
+        status: 'completed',
+      })
+      .expect(401);
+
+    const callbackResponse = await request(app)
+      .post(`${API_PREFIX}/ai/runs/${startedRunId}/callback`)
+      .set('X-AI-Callback-Secret', 'test-ai-callback-secret')
+      .send({
+        run_id: startedRunId,
+        project_id: project.id,
+        status: 'completed',
+        stage: 'finished',
+        progress: 1,
+        message: 'AI run completed.',
+        counts: { prediction_count: 2 },
+        artifacts: { classification: 'outputs/runs/test/ai_classification_review.geojson' },
+        metrics: {
+          model_name: 'random_forest',
+          overall_accuracy: 0.8,
+          macro_f1: 0.75,
+          feature_importance: [{ feature: 'sentinel2_growing_ndvi_mean', importance: 0.42 }],
+        },
+      })
+      .expect(200);
+    expect(callbackResponse.body.data).toEqual(
+      expect.objectContaining({
+        status: 'completed',
+        stage: 'finished',
+        progress: 1,
+        message: 'AI run completed.',
+        callback_received_at: expect.any(String),
+        counts: expect.objectContaining({ prediction_count: 2 }),
+        artifacts: expect.objectContaining({
+          classification: 'outputs/runs/test/ai_classification_review.geojson',
+        }),
       }),
     );
 
@@ -1394,9 +1819,13 @@ describe('AI backend endpoints phase B', () => {
       expect.objectContaining({
         execution_mode: 'regional_classification',
         regional_ai_execution_requested: true,
-        real_ai_execution: false,
+        real_ai_execution: true,
+        worker_execution: 'replaced_by_ai_server',
       }),
     );
+    await pool.query(`UPDATE ai_run SET status = 'completed' WHERE id = $1`, [
+      regionalClassificationResponse.body.data.id,
+    ]);
 
     const vectorArtifactResponse = await request(app)
       .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
@@ -1410,9 +1839,13 @@ describe('AI backend endpoints phase B', () => {
       expect.objectContaining({
         execution_mode: 'regional_vectorization_artifacts',
         regional_ai_execution_requested: true,
-        real_ai_execution: false,
+        real_ai_execution: true,
+        worker_execution: 'replaced_by_ai_server',
       }),
     );
+    await pool.query(`UPDATE ai_run SET status = 'completed' WHERE id = $1`, [
+      vectorArtifactResponse.body.data.id,
+    ]);
 
     const fullRegionalResponse = await request(app)
       .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
@@ -1422,12 +1855,13 @@ describe('AI backend endpoints phase B', () => {
         execution_mode: 'regional_full_review_artifacts',
       })
       .expect(201);
-    expect(fullRegionalResponse.body.data.status).toBe('queued');
+    expect(fullRegionalResponse.body.data.status).toBe('starting');
     expect(fullRegionalResponse.body.data.metadata).toEqual(
       expect.objectContaining({
         execution_mode: 'regional_full_review_artifacts',
         regional_ai_execution_requested: true,
-        real_ai_execution: false,
+        real_ai_execution: true,
+        worker_execution: 'replaced_by_ai_server',
       }),
     );
 
@@ -1449,6 +1883,120 @@ describe('AI backend endpoints phase B', () => {
         execution_mode: 'full_training',
       })
       .expect(400);
+  });
+
+  test('AI callbacks sanitize raw prediction geometry insertion failures', async () => {
+    const { admin, project } = await createProjectFixture('AI Geometry Failure Sanitizing');
+    const rawGeometryFailure =
+      'new row for relation "ai_prediction_feature" violates check constraint ' +
+      '"chk_ai_prediction_feature_geom_valid" DETAIL: Failing row contains (... MultiPolygon ...).';
+    const runResult = await pool.query(
+      `INSERT INTO ai_run (
+         project_id,
+         status,
+         label_field,
+         scope_type,
+         training_feature_count,
+         eligible_feature_count,
+         excluded_feature_count,
+         selected_model,
+         started_by,
+         metadata
+       )
+       VALUES (
+         $1,
+         'running',
+         'L4_descr',
+         'project',
+         12,
+         12,
+         0,
+         'gradient_boosting',
+         $2,
+         '{}'::jsonb
+       )
+       RETURNING id`,
+      [project.id, admin.user.id],
+    );
+    const runId = runResult.rows[0].id;
+
+    const response = await request(app)
+      .post(`${API_PREFIX}/ai/runs/${runId}/callback`)
+      .set('X-AI-Callback-Secret', 'test-ai-callback-secret')
+      .send({
+        run_id: runId,
+        project_id: project.id,
+        status: 'failed',
+        stage: 'insertion_failed',
+        progress: 1,
+        message: rawGeometryFailure,
+        error: {
+          message: rawGeometryFailure,
+          tail: [rawGeometryFailure],
+        },
+      })
+      .expect(200);
+
+    const safeMessage =
+      'AI result insertion failed because some generated polygons were invalid. Please retry after processing cleanup.';
+    expect(response.body.data).toEqual(
+      expect.objectContaining({
+        status: 'failed',
+        stage: 'insertion_failed',
+        progress: 0.96,
+        message: safeMessage,
+        failure_reason: safeMessage,
+        error: expect.objectContaining({
+          code: 'AI_GEOMETRY_INSERTION_FAILED',
+          message: safeMessage,
+        }),
+      }),
+    );
+    expect(JSON.stringify(response.body.data)).not.toContain('Failing row contains');
+
+    const storedFailure = await pool.query(
+      `SELECT message,
+              failure_reason,
+              error_details->>'message' AS public_message,
+              error_details->>'technical_message' AS technical_message
+       FROM ai_run
+       WHERE id = $1`,
+      [runId],
+    );
+    expect(storedFailure.rows[0]).toEqual(
+      expect.objectContaining({
+        message: safeMessage,
+        failure_reason: safeMessage,
+        public_message: safeMessage,
+      }),
+    );
+    expect(storedFailure.rows[0].technical_message).toContain(
+      'chk_ai_prediction_feature_geom_valid',
+    );
+  });
+
+  test('callback URL falls back to APP_PUBLIC_API_URL when AI_CALLBACK_BASE_URL is missing', async () => {
+    const { admin, project } = await createStartableAiProjectFixture('AI Callback Fallback');
+    delete process.env.AI_CALLBACK_BASE_URL;
+    process.env.APP_PUBLIC_API_URL = 'http://public-api.test';
+
+    const response = await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'queued',
+        execution_mode: 'regional_feature_extraction',
+      })
+      .expect(201);
+
+    const startCall = global.fetch.mock.calls.find(
+      ([url]) => String(url) === 'http://ai-server.test/api/runs/start',
+    );
+    expect(startCall).toBeTruthy();
+    const startPayload = JSON.parse(String(startCall[1].body));
+    expect(startPayload.callback_url).toBe(
+      `http://public-api.test/api/v1/ai/runs/${response.body.data.id}/callback`,
+    );
   });
 
   test('protected super-admin can preview registered AI GeoJSON layer features only', async () => {
@@ -1795,14 +2343,15 @@ describe('AI backend endpoints phase B', () => {
       }),
     );
     expect(filteredResponse.body.data.layer.storage_path).toBeUndefined();
-    expect(filteredResponse.body.data.total_count).toBe(3);
+    expect(filteredResponse.body.data.total_count).toBe(1);
     expect(filteredResponse.body.data.visible_count).toBe(1);
     expect(filteredResponse.body.data.returned_count).toBe(1);
     expect(filteredResponse.body.data.class_counts).toEqual({
-      olives: 1,
-      'citrus fruit trees': 1,
       'fruit trees': 1,
     });
+    expect(filteredResponse.body.data.count_semantics).toBe(
+      'authoritative_database_total_excludes_viewport_bounds',
+    );
     expect(filteredResponse.body.data.feature_collection.features[0]).toEqual(
       expect.objectContaining({
         id: 'prediction-fruit-mid',
@@ -1823,7 +2372,7 @@ describe('AI backend endpoints phase B', () => {
       .get(`${API_PREFIX}/ai/layers/${layerId}/predictions?uncertainty_min=0.4`)
       .set(authHeader(admin.token))
       .expect(200);
-    expect(uncertaintyResponse.body.data.total_count).toBe(3);
+    expect(uncertaintyResponse.body.data.total_count).toBe(1);
     expect(uncertaintyResponse.body.data.visible_count).toBe(1);
     expect(
       uncertaintyResponse.body.data.feature_collection.features[0].properties.predicted_class,
@@ -1834,7 +2383,22 @@ describe('AI backend endpoints phase B', () => {
       .set(authHeader(admin.token))
       .expect(200);
     expect(compatibilityResponse.body.data.source).toBe('ai_prediction_feature');
+    expect(compatibilityResponse.body.data.total_count).toBe(1);
     expect(compatibilityResponse.body.data.visible_count).toBe(1);
+
+    const boundedResponse = await request(app)
+      .get(
+        `${API_PREFIX}/ai/layers/${layerId}/predictions?bounds=35.19,33.19,35.22,33.22&detail=full&geometry=full`,
+      )
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(boundedResponse.body.data.total_count).toBe(3);
+    expect(boundedResponse.body.data.visible_count).toBe(1);
+    expect(boundedResponse.body.data.returned_count).toBe(1);
+    expect(boundedResponse.body.data.loaded_feature_count).toBe(1);
+    expect(
+      boundedResponse.body.data.feature_collection.features[0].properties.predicted_class,
+    ).toBe('olives');
 
     const spatialFeatureCountAfter = await pool.query(
       'SELECT COUNT(*)::int AS count FROM spatial_feature',
@@ -1851,22 +2415,6 @@ describe('AI backend endpoints phase B', () => {
       status: 'approved',
       storagePath: 'outputs/runs/phase-r-test/missing-file.geojson',
     });
-    const { runId: confidenceRunId, layerId: confidenceLayerId } = await createPreviewableAiLayer({
-      projectId: project.id,
-      userId: admin.user.id,
-      layerType: 'confidence',
-      status: 'approved',
-      storagePath: 'outputs/runs/phase-r-test/confidence.geojson',
-    });
-    const { runId: uncertaintyRunId, layerId: uncertaintyLayerId } = await createPreviewableAiLayer(
-      {
-        projectId: project.id,
-        userId: admin.user.id,
-        layerType: 'uncertainty',
-        status: 'approved',
-        storagePath: 'outputs/runs/phase-r-test/uncertainty.geojson',
-      },
-    );
     await insertAiPredictionFeature({
       projectId: project.id,
       runId,
@@ -1874,25 +2422,6 @@ describe('AI backend endpoints phase B', () => {
       artifactFeatureId: 'published-db-prediction',
       status: 'approved',
       confidence: 0.88,
-    });
-    await insertAiPredictionFeature({
-      projectId: project.id,
-      runId: confidenceRunId,
-      layerId: confidenceLayerId,
-      artifactFeatureId: 'published-db-confidence',
-      predictedClass: 'confidence',
-      status: 'approved',
-      confidence: 0.88,
-    });
-    await insertAiPredictionFeature({
-      projectId: project.id,
-      runId: uncertaintyRunId,
-      layerId: uncertaintyLayerId,
-      artifactFeatureId: 'published-db-uncertainty',
-      predictedClass: 'uncertainty',
-      status: 'approved',
-      confidence: 0.54,
-      uncertaintyScore: 0.46,
     });
     const viewer = await createViewerToken();
     const normalAdmin = await createAdminUser({
@@ -1916,14 +2445,6 @@ describe('AI backend endpoints phase B', () => {
       .post(`${API_PREFIX}/ai/layers/${layerId}/publish`)
       .set(authHeader(admin.token))
       .expect(200);
-    await request(app)
-      .post(`${API_PREFIX}/ai/layers/${confidenceLayerId}/publish`)
-      .set(authHeader(admin.token))
-      .expect(200);
-    await request(app)
-      .post(`${API_PREFIX}/ai/layers/${uncertaintyLayerId}/publish`)
-      .set(authHeader(admin.token))
-      .expect(200);
 
     const viewerResponse = await request(app)
       .get(`${API_PREFIX}/ai/layers/${layerId}/predictions?detail=full&geometry=full`)
@@ -1941,7 +2462,7 @@ describe('AI backend endpoints phase B', () => {
     expect(viewerResponse.body.data.feature_collection.features[0].properties).toEqual(
       expect.objectContaining({
         source: 'ai_prediction',
-        status: 'published',
+        status: 'approved',
         not_official_field_data: true,
       }),
     );
@@ -1950,19 +2471,17 @@ describe('AI backend endpoints phase B', () => {
       .get(`${API_PREFIX}/projects/${project.id}/ai/published-predictions`)
       .set(authHeader(viewer.token))
       .expect(200);
-    expect(projectResponse.body.data.layers).toHaveLength(3);
+    expect(projectResponse.body.data.layers).toHaveLength(1);
     expect(
       projectResponse.body.data.layers.every((layer) => layer.storage_path === undefined),
     ).toBe(true);
     expect(projectResponse.body.data.total_count).toBe(1);
     expect(projectResponse.body.data.primary_layer_type).toBe('classification');
     expect(projectResponse.body.data.primary_prediction_count).toBe(1);
-    expect(projectResponse.body.data.total_prediction_row_count).toBe(3);
+    expect(projectResponse.body.data.total_prediction_row_count).toBe(1);
     expect(projectResponse.body.data.layer_counts).toEqual(
       expect.objectContaining({
         classification: 1,
-        confidence: 1,
-        uncertainty: 1,
       }),
     );
     expect(projectResponse.body.data.layer.layer_type).toBe('classification');
@@ -1993,7 +2512,193 @@ describe('AI backend endpoints phase B', () => {
     expect(afterFeatureCount.rows[0].count).toBe(beforeFeatureCount.rows[0].count);
   });
 
-  test('AI prediction validation generation creates low-confidence tasks idempotently without spatial_feature writes', async () => {
+  test('published AI predictions support direct contributor validation and admin promotion', async () => {
+    const { admin, project } = await createProjectFixture('AI Direct Prediction Validation');
+    await enableProjectAiSettings({ projectId: project.id, userId: admin.user.id });
+    const { runId, layerId } = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+      status: 'ready_for_review',
+    });
+    await insertAiClassStatistic({ runId, classLabel: 'olives' });
+    await insertAiClassStatistic({ runId, classLabel: 'citrus fruit trees' });
+    const predictionId = await insertAiPredictionFeature({
+      projectId: project.id,
+      runId,
+      layerId,
+      artifactFeatureId: 'direct-validation-prediction',
+      predictedClass: 'olives',
+      confidence: 0.37,
+    });
+    const contributor = await createContributorToken({
+      adminToken: admin.token,
+      emailPrefix: 'ai-direct-validation-contributor',
+    });
+    const secondContributor = await createContributorToken({
+      adminToken: admin.token,
+      emailPrefix: 'ai-direct-validation-second',
+    });
+    const unassignedContributor = await createContributorToken({
+      adminToken: admin.token,
+      emailPrefix: 'ai-direct-validation-unassigned',
+    });
+    const viewer = await createViewerToken();
+    await assignContributorToProject({
+      projectId: project.id,
+      userId: contributor.user.id,
+      approvedBy: admin.user.id,
+    });
+    await assignContributorToProject({
+      projectId: project.id,
+      userId: secondContributor.user.id,
+      approvedBy: admin.user.id,
+    });
+
+    await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/predictions/${predictionId}/validations`)
+      .set(authHeader(contributor.token))
+      .send({ validation_result: 'correct' })
+      .expect(403);
+
+    await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/runs/${runId}/publish`)
+      .set(authHeader(admin.token))
+      .expect(200);
+
+    const detailsResponse = await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/ai/runs/${runId}/predictions/${predictionId}`)
+      .set(authHeader(contributor.token))
+      .expect(200);
+    expect(detailsResponse.body.data).toEqual(
+      expect.objectContaining({
+        published: true,
+        can_validate: true,
+        confidence_is_attribute: true,
+        standalone_confidence_layer: false,
+        standalone_uncertainty_layer: false,
+        prediction: expect.objectContaining({
+          id: predictionId,
+          confidence: 0.37,
+        }),
+      }),
+    );
+
+    await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/predictions/${predictionId}/validations`)
+      .set(authHeader(viewer.token))
+      .send({ validation_result: 'correct' })
+      .expect(403);
+    await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/predictions/${predictionId}/validations`)
+      .set(authHeader(admin.token))
+      .send({ validation_result: 'correct' })
+      .expect(403);
+    await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/predictions/${predictionId}/validations`)
+      .set(authHeader(unassignedContributor.token))
+      .send({ validation_result: 'correct' })
+      .expect(403);
+
+    await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/predictions/${predictionId}/validations`)
+      .set(authHeader(contributor.token))
+      .send({ validation_result: 'correct' })
+      .expect(201);
+    await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/predictions/${predictionId}/validations`)
+      .set(authHeader(contributor.token))
+      .send({ validation_result: 'correct' })
+      .expect(409);
+    await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/predictions/${predictionId}/validations`)
+      .set(authHeader(secondContributor.token))
+      .send({
+        validation_result: 'incorrect',
+        corrected_class: 'citrus fruit trees',
+        note: 'Boundary includes citrus trees.',
+      })
+      .expect(201);
+
+    const summaryResponse = await request(app)
+      .get(`${API_PREFIX}/projects/${project.id}/ai/runs/${runId}/validation-summary`)
+      .set(authHeader(admin.token))
+      .expect(200);
+    expect(summaryResponse.body.data).toEqual(
+      expect.objectContaining({
+        total_ai_features: 1,
+        published_features: 1,
+        contributor_validations_submitted: 2,
+        features_validated_by_contributor: 1,
+        confidence_threshold_filters_validation: false,
+      }),
+    );
+
+    const reviewResponse = await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/predictions/${predictionId}/admin-review`)
+      .set(authHeader(admin.token))
+      .send({
+        approval_status: 'approved',
+        approved_class: 'citrus fruit trees',
+        admin_note: 'Admin field review accepted contributor correction.',
+      })
+      .expect(200);
+    const promotedFeatureId =
+      reviewResponse.body.data.admin_review.promoted_spatial_feature_id;
+    expect(promotedFeatureId).toEqual(expect.any(String));
+
+    await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/predictions/${predictionId}/admin-review`)
+      .set(authHeader(admin.token))
+      .send({
+        approval_status: 'approved',
+        approved_class: 'citrus fruit trees',
+      })
+      .expect(200);
+
+    const promotedResult = await pool.query(
+      `SELECT id,
+              source,
+              ai_prediction_feature_id,
+              ai_run_id,
+              ai_predicted_class,
+              ai_confidence,
+              ai_validated,
+              ai_validation_status,
+              use_for_future_training,
+              promoted_from_ai,
+              attributes
+       FROM spatial_feature
+       WHERE project_id = $1
+         AND ai_prediction_feature_id = $2`,
+      [project.id, predictionId],
+    );
+    expect(promotedResult.rows).toHaveLength(1);
+    expect(promotedResult.rows[0]).toEqual(
+      expect.objectContaining({
+        id: promotedFeatureId,
+        source: 'ai',
+        ai_prediction_feature_id: predictionId,
+        ai_run_id: runId,
+        ai_predicted_class: 'olives',
+        ai_confidence: 0.37,
+        ai_validated: true,
+        ai_validation_status: 'admin_approved',
+        use_for_future_training: true,
+        promoted_from_ai: true,
+        attributes: expect.objectContaining({
+          L4_descr: 'citrus fruit trees',
+          source: 'ai',
+          aiPredictionId: predictionId,
+          aiPredictedClass: 'olives',
+          aiApprovedClass: 'citrus fruit trees',
+          useForFutureTraining: true,
+          promotedFromAi: true,
+        }),
+      }),
+    );
+  });
+
+  test('AI prediction validation generation creates all-prediction tasks idempotently without spatial_feature writes', async () => {
     const { admin, project } = await createProjectFixture('AI Prediction Validation Generate');
     const tableCheck = await pool.query(
       `SELECT to_regclass('public.ai_prediction_validation_task') AS task_table,
@@ -2010,11 +2715,6 @@ describe('AI backend endpoints phase B', () => {
       projectId: project.id,
       userId: admin.user.id,
     });
-    const uncertaintyLayerId = await insertAiOutputLayerForRun({
-      projectId: project.id,
-      runId,
-      layerType: 'uncertainty',
-    });
     await insertAiPredictionFeature({
       projectId: project.id,
       runId,
@@ -2030,24 +2730,6 @@ describe('AI backend endpoints phase B', () => {
       artifactFeatureId: 'classification-low-confidence',
       confidence: 0.52,
       uncertaintyScore: 0.48,
-    });
-    await insertAiPredictionFeature({
-      projectId: project.id,
-      runId,
-      layerId: uncertaintyLayerId,
-      artifactFeatureId: 'uncertainty-candidate-1',
-      confidence: 0.52,
-      uncertaintyScore: 0.48,
-    });
-    await insertAiPredictionFeature({
-      projectId: project.id,
-      runId,
-      layerId: uncertaintyLayerId,
-      artifactFeatureId: 'uncertainty-candidate-2',
-      predictedClass: 'citrus fruit trees',
-      confidence: 0.47,
-      uncertaintyScore: 0.53,
-      lon: 35.26,
     });
     const beforeSpatialFeatureCount = await pool.query(
       'SELECT COUNT(*)::int AS count FROM spatial_feature',
@@ -2067,8 +2749,8 @@ describe('AI backend endpoints phase B', () => {
         candidate_count: 2,
         created_count: 2,
         existing_active_count: 0,
-        candidate_layer_type: 'uncertainty',
-        criterion: 'uncertainty_layer',
+        candidate_layer_type: 'classification',
+        criterion: 'all_predictions',
         no_spatial_feature_writes: true,
       }),
     );
@@ -2101,7 +2783,7 @@ describe('AI backend endpoints phase B', () => {
         prediction: expect.objectContaining({
           source: 'ai_prediction',
           layer: expect.objectContaining({
-            layer_type: 'uncertainty',
+            layer_type: 'classification',
           }),
         }),
       }),
@@ -2407,6 +3089,12 @@ describe('AI backend endpoints phase B', () => {
         note: 'Second project contributor confirmed the same correction.',
       })
       .expect(201);
+    expect(secondSubmitResponse.body.data.task.latest_submission).toEqual(
+      expect.objectContaining({
+        result: 'wrong_class',
+        corrected_class: 'citrus fruit trees',
+      }),
+    );
 
     const reviewResponse = await request(app)
       .post(`${API_PREFIX}/ai/prediction-validation-tasks/${reviewedTaskId}/review`)
@@ -2414,7 +3102,7 @@ describe('AI backend endpoints phase B', () => {
       .send({
         decision: 'accepted',
         reason: 'Contributor evidence is clear.',
-        submission_id: secondSubmitResponse.body.data.submission_id,
+        submission_id: submitResponse.body.data.submission_id,
       })
       .expect(200);
     expect(reviewResponse.body.data.task).toEqual(
@@ -2422,6 +3110,13 @@ describe('AI backend endpoints phase B', () => {
         status: 'accepted',
         review_decision: 'accepted',
         review_reason: 'Contributor evidence is clear.',
+      }),
+    );
+    expect(reviewResponse.body.data).toEqual(
+      expect.objectContaining({
+        linked_spatial_feature_id: pendingFeatureId,
+        no_spatial_feature_writes: false,
+        no_auto_approval: false,
       }),
     );
 
@@ -2436,10 +3131,16 @@ describe('AI backend endpoints phase B', () => {
       .expect(201);
 
     const pendingFeatureStatus = await pool.query(
-      `SELECT status
+      `SELECT status, source, attributes
        FROM spatial_feature
        WHERE id = $1`,
       [pendingFeatureId],
+    );
+    const predictionStatus = await pool.query(
+      `SELECT status, metadata
+       FROM ai_prediction_feature
+       WHERE id = $1`,
+      [firstPredictionId],
     );
     const afterSpatialFeatureCount = await pool.query(
       'SELECT COUNT(*)::int AS count FROM spatial_feature',
@@ -2447,7 +3148,33 @@ describe('AI backend endpoints phase B', () => {
     const afterPredictionFeatureCount = await pool.query(
       'SELECT COUNT(*)::int AS count FROM ai_prediction_feature',
     );
-    expect(pendingFeatureStatus.rows[0].status).toBe('pending_review');
+    expect(pendingFeatureStatus.rows[0]).toEqual(
+      expect.objectContaining({
+        status: 'approved',
+        source: 'ai',
+        attributes: expect.objectContaining({
+          L4_descr: 'citrus fruit trees',
+          source: 'ai',
+          aiPredictionId: firstPredictionId,
+          aiPredictedClass: 'olives',
+          aiCorrectedClass: 'citrus fruit trees',
+          aiValidated: true,
+          aiValidationStatus: 'corrected',
+          useForFutureTraining: true,
+        }),
+      }),
+    );
+    expect(predictionStatus.rows[0]).toEqual(
+      expect.objectContaining({
+        status: 'approved',
+        metadata: expect.objectContaining({
+          ai_validated: true,
+          ai_validation_status: 'corrected',
+          linked_spatial_feature_id: pendingFeatureId,
+          use_for_future_training: true,
+        }),
+      }),
+    );
     expect(afterSpatialFeatureCount.rows[0].count).toBe(beforeSpatialFeatureCount.rows[0].count);
     expect(afterPredictionFeatureCount.rows[0].count).toBe(
       beforePredictionFeatureCount.rows[0].count,
@@ -2510,6 +3237,7 @@ describe('AI backend endpoints phase B', () => {
       userId: admin.user.id,
       status: 'approved',
       storagePath,
+      withPrediction: true,
     });
     const viewer = await createViewerToken();
     const beforeFeatureCount = await pool.query(
@@ -2642,6 +3370,7 @@ describe('AI backend endpoints phase B', () => {
       storagePath: await writePreviewGeoJson(
         'outputs/runs/phase-p-test/rbac_classification.geojson',
       ),
+      withPrediction: true,
     });
     const statistics = await createPreviewableAiLayer({
       projectId: project.id,
@@ -2685,6 +3414,7 @@ describe('AI backend endpoints phase B', () => {
       userId: admin.user.id,
       status: 'approved',
       storagePath: await writePreviewGeoJson('outputs/runs/phase-p-test/disabled_gate.geojson'),
+      withPrediction: true,
     });
     const viewer = await createViewerToken();
 
@@ -2767,6 +3497,7 @@ describe('AI backend endpoints phase B', () => {
       .post(`${API_PREFIX}/projects/${first.project.id}/ai/runs`)
       .set(authHeader(first.admin.token))
       .send({
+        status: 'draft',
         label_field: 'feature_type',
       })
       .expect(201);
@@ -2993,6 +3724,7 @@ describe('AI result review phase I', () => {
       userId: admin.user.id,
       status: 'approved',
       storagePath: await writePreviewGeoJson('outputs/runs/phase-p-test/review_unpublish.geojson'),
+      withPrediction: true,
     });
     const viewer = await createViewerToken();
 

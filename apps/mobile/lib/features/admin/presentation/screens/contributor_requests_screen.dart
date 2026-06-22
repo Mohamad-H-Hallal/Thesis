@@ -9,6 +9,7 @@ import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_empty_state.dart';
+import '../../../../core/widgets/app_search_action_bar.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/utils/lebanese_phone.dart';
@@ -199,99 +200,82 @@ class _ContributorRequestsScreenState
     return ListView(
       children: [
         AppCard(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final searchBar = SearchBar(
-                controller: _searchController,
-                hintText: _selectedGroup == _RequestGroup.contributor
-                    ? 'Search contributor name, email, or phone'
-                    : 'Search project, contributor, or email',
-                leading: const Icon(Icons.search),
-                onChanged: (_) => setState(() {}),
-              );
-              final filterButton = OutlinedButton.icon(
-                onPressed: () => setState(() => _showFilters = !_showFilters),
-                icon: Icon(
-                  _showFilters
-                      ? Icons.filter_alt_off_outlined
-                      : Icons.filter_alt_outlined,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AppSearchActionBar(
+                searchBar: SearchBar(
+                  controller: _searchController,
+                  hintText: _selectedGroup == _RequestGroup.contributor
+                      ? 'Search contributor name, email, or phone'
+                      : 'Search project, contributor, or email',
+                  leading: const Icon(Icons.search),
+                  onChanged: (_) => setState(() {}),
                 ),
-                label: Text(_showFilters ? 'Hide filters' : 'Filter'),
-              );
-              final searchAndAction = constraints.maxWidth < 720
-                  ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        searchBar,
-                        const SizedBox(height: AppSpacing.sm),
-                        filterButton,
-                      ],
-                    )
-                  : Row(
-                      children: [
-                        Expanded(child: searchBar),
-                        const SizedBox(width: AppSpacing.sm),
-                        SizedBox(width: 180, child: filterButton),
-                      ],
-                    );
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  searchAndAction,
-                  if (_showFilters) ...[
-                    const SizedBox(height: AppSpacing.sm),
-                    Text(
-                      'Request type',
-                      style: Theme.of(context).textTheme.titleSmall,
+                actions: [
+                  OutlinedButton.icon(
+                    onPressed: () =>
+                        setState(() => _showFilters = !_showFilters),
+                    icon: Icon(
+                      _showFilters
+                          ? Icons.filter_alt_off_outlined
+                          : Icons.filter_alt_outlined,
                     ),
-                    const SizedBox(height: AppSpacing.xs),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: _RequestGroup.values
-                          .map(
-                            (group) => ChoiceChip(
-                              label: Text(
-                                group == _RequestGroup.contributor
-                                    ? 'Contributor'
-                                    : 'Projects',
-                              ),
-                              selected: _selectedGroup == group,
-                              onSelected: (_) =>
-                                  setState(() => _selectedGroup = group),
-                            ),
-                          )
-                          .toList(growable: false),
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    Text(
-                      'Workflow state',
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    const SizedBox(height: AppSpacing.xs),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: _RequestStateTab.values
-                          .map(
-                            (tab) => ChoiceChip(
-                              label: Text(
-                                tab == _RequestStateTab.pending
-                                    ? 'Pending'
-                                    : 'Rejected',
-                              ),
-                              selected: _selectedState == tab,
-                              onSelected: (_) =>
-                                  setState(() => _selectedState = tab),
-                            ),
-                          )
-                          .toList(growable: false),
-                    ),
-                  ],
+                    label: Text(_showFilters ? 'Hide' : 'Filter'),
+                  ),
                 ],
-              );
-            },
+              ),
+              if (_showFilters) ...[
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  'Request type',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _RequestGroup.values
+                      .map(
+                        (group) => ChoiceChip(
+                          label: Text(
+                            group == _RequestGroup.contributor
+                                ? 'Contributor'
+                                : 'Projects',
+                          ),
+                          selected: _selectedGroup == group,
+                          onSelected: (_) =>
+                              setState(() => _selectedGroup = group),
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  'Workflow state',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _RequestStateTab.values
+                      .map(
+                        (tab) => ChoiceChip(
+                          label: Text(
+                            tab == _RequestStateTab.pending
+                                ? 'Pending'
+                                : 'Rejected',
+                          ),
+                          selected: _selectedState == tab,
+                          onSelected: (_) =>
+                              setState(() => _selectedState = tab),
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+              ],
+            ],
           ),
         ),
         const SizedBox(height: AppSpacing.md),

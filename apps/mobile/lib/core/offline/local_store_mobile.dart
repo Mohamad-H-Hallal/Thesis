@@ -13,7 +13,7 @@ class SqliteLocalStore implements LocalStore {
   Database? _db;
   Future<void>? _initialization;
   final Uuid _uuid = const Uuid();
-  static const _dbVersion = 4;
+  static const _dbVersion = 5;
 
   @override
   Future<void> initialize() async {
@@ -80,6 +80,27 @@ class SqliteLocalStore implements LocalStore {
           );
           await db.execute(
             'CREATE INDEX IF NOT EXISTS idx_offline_map_packages_current_owner ON offline_map_packages(owner_user_id, is_current);',
+          );
+        }
+        if (oldVersion < 5) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS offline_project_packages (
+              owner_user_id TEXT NOT NULL,
+              project_id TEXT NOT NULL,
+              payload_json TEXT NOT NULL,
+              package_version TEXT NOT NULL,
+              app_resources_version TEXT NOT NULL,
+              base_map_version TEXT NOT NULL,
+              downloaded_at TEXT NOT NULL,
+              refreshed_at TEXT NOT NULL,
+              PRIMARY KEY (owner_user_id, project_id)
+            );
+          ''');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_offline_project_packages_owner ON offline_project_packages(owner_user_id);',
+          );
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_offline_project_packages_base_map ON offline_project_packages(owner_user_id, base_map_version);',
           );
         }
       },
@@ -155,11 +176,31 @@ class SqliteLocalStore implements LocalStore {
       );
     ''');
 
+    await db.execute('''
+      CREATE TABLE offline_project_packages (
+        owner_user_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        package_version TEXT NOT NULL,
+        app_resources_version TEXT NOT NULL,
+        base_map_version TEXT NOT NULL,
+        downloaded_at TEXT NOT NULL,
+        refreshed_at TEXT NOT NULL,
+        PRIMARY KEY (owner_user_id, project_id)
+      );
+    ''');
+
     await db.execute(
       'CREATE INDEX idx_sync_queue_due ON sync_queue(status, next_retry_at);',
     );
     await db.execute(
       'CREATE INDEX idx_offline_map_packages_current_owner ON offline_map_packages(owner_user_id, is_current);',
+    );
+    await db.execute(
+      'CREATE INDEX idx_offline_project_packages_owner ON offline_project_packages(owner_user_id);',
+    );
+    await db.execute(
+      'CREATE INDEX idx_offline_project_packages_base_map ON offline_project_packages(owner_user_id, base_map_version);',
     );
   }
 
@@ -381,6 +422,24 @@ class SqliteLocalStore implements LocalStore {
   }
 
   @override
+  Future<void> discardDraft(String draftId) async {
+    final db = await _database;
+    await db.transaction((txn) async {
+      await txn.delete(
+        'sync_queue',
+        where: 'entity_type = ? AND entity_id = ?',
+        whereArgs: ['draft_feature', draftId],
+      );
+      await txn.delete(
+        'draft_photos',
+        where: 'draft_id = ?',
+        whereArgs: [draftId],
+      );
+      await txn.delete('draft_features', where: 'id = ?', whereArgs: [draftId]);
+    });
+  }
+
+  @override
   Future<void> updateDraftStatus(
     String draftId, {
     required String status,
@@ -465,6 +524,125 @@ class SqliteLocalStore implements LocalStore {
       whereArgs: ['', legacyPackage.version],
     );
     return migratedPackage;
+  }
+
+  @override
+  Future<void> upsertOfflineProjectPackage(
+    OfflineProjectPackage package,
+  ) async {
+    final db = await _database;
+    await db.insert(
+      'offline_project_packages',
+      package.toRowMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    await _mergeCachedProject(package.project);
+  }
+
+  Future<void> _mergeCachedProject(ProjectSummary project) async {
+    final cached = await getCachedProjects();
+    final merged = <String, ProjectSummary>{
+      for (final item in cached) item.id: item,
+      project.id: project,
+    };
+    await cacheProjects(merged.values.toList(growable: false));
+  }
+
+  @override
+  Future<OfflineProjectPackage?> getOfflineProjectPackage({
+    required String ownerUserId,
+    required String projectId,
+  }) async {
+    final db = await _database;
+    final rows = await db.query(
+      'offline_project_packages',
+      where: 'owner_user_id = ? AND project_id = ?',
+      whereArgs: [ownerUserId, projectId],
+      limit: 1,
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+    return OfflineProjectPackage.fromRowMap(
+      Map<String, dynamic>.from(rows.first),
+    );
+  }
+
+  @override
+  Future<List<OfflineProjectPackage>> getOfflineProjectPackages({
+    required String ownerUserId,
+  }) async {
+    final db = await _database;
+    final rows = await db.query(
+      'offline_project_packages',
+      where: 'owner_user_id = ?',
+      whereArgs: [ownerUserId],
+      orderBy: 'refreshed_at DESC',
+    );
+    return rows
+        .map(
+          (row) =>
+              OfflineProjectPackage.fromRowMap(Map<String, dynamic>.from(row)),
+        )
+        .toList(growable: false);
+  }
+
+  @override
+  Future<void> deleteOfflineProjectPackage({
+    required String ownerUserId,
+    required String projectId,
+  }) async {
+    final db = await _database;
+    await db.delete(
+      'offline_project_packages',
+      where: 'owner_user_id = ? AND project_id = ?',
+      whereArgs: [ownerUserId, projectId],
+    );
+  }
+
+  @override
+  Future<int> countOfflineProjectPackagesUsingBaseMap({
+    required String ownerUserId,
+    required String baseMapVersion,
+  }) async {
+    final db = await _database;
+    return Sqflite.firstIntValue(
+          await db.rawQuery(
+            '''
+            SELECT COUNT(*) FROM offline_project_packages
+            WHERE owner_user_id = ? AND base_map_version = ?
+            ''',
+            [ownerUserId, baseMapVersion],
+          ),
+        ) ??
+        0;
+  }
+
+  @override
+  Future<int> countUnsyncedDraftsForProject({
+    required String ownerUserId,
+    required String projectId,
+  }) async {
+    final db = await _database;
+    return Sqflite.firstIntValue(
+          await db.rawQuery(
+            '''
+            SELECT COUNT(*)
+            FROM draft_features df
+            WHERE df.owner_user_id = ?
+              AND df.project_id = ?
+              AND EXISTS (
+                SELECT 1
+                FROM sync_queue sq
+                WHERE sq.entity_type = 'draft_feature'
+                  AND sq.entity_id = df.id
+                  AND sq.status IN ('pending', 'processing', 'failed', 'conflict', 'deadLetter')
+              )
+            ''',
+            [ownerUserId, projectId],
+          ),
+        ) ??
+        0;
   }
 
   @override

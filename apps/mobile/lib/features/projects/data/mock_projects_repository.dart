@@ -1,4 +1,5 @@
 import '../../auth/domain/auth_models.dart';
+import '../../../core/offline/local_models.dart';
 import '../../../core/pagination/paginated_result.dart';
 import '../domain/project.dart';
 import '../domain/projects_repository.dart';
@@ -39,8 +40,12 @@ class MockProjectsRepository implements ProjectsRepository {
       filtered = all;
     } else if (scope == ProjectViewScope.public || role == UserRole.viewer) {
       filtered = all.where((project) {
-        final isPublished = const <String>['draft', 'active', 'paused', 'completed']
-            .contains(project.status);
+        final isPublished = const <String>[
+          'draft',
+          'active',
+          'paused',
+          'completed',
+        ].contains(project.status);
         if (!isPublished) {
           return false;
         }
@@ -104,6 +109,31 @@ class MockProjectsRepository implements ProjectsRepository {
       }
     }
     return null;
+  }
+
+  @override
+  Future<OfflineProjectPackage> fetchOfflinePackage({
+    required String projectId,
+    required String ownerUserId,
+  }) async {
+    final project = await byId(
+      id: projectId,
+      userId: ownerUserId,
+      role: UserRole.contributor,
+    );
+    if (project == null) {
+      throw Exception('Project not found');
+    }
+    final now = DateTime.now();
+    return OfflineProjectPackage(
+      ownerUserId: ownerUserId,
+      project: project,
+      packageVersion: '${project.id}:${project.collectionFormSchema.version}',
+      appResourcesVersion: 'mock-mobile-offline-v1',
+      baseMapVersion: 'lebanon-satellite-v1',
+      downloadedAt: now,
+      refreshedAt: now,
+    );
   }
 
   List<ProjectViewScope> _allowedScopesForRole(UserRole role) {

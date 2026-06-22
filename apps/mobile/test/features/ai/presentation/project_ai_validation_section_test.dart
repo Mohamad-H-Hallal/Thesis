@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lebanese_gis_mobile/core/providers/providers.dart';
-import 'package:lebanese_gis_mobile/features/ai/domain/ai_models.dart';
 import 'package:lebanese_gis_mobile/features/ai/presentation/ai_providers.dart';
 import 'package:lebanese_gis_mobile/features/ai/presentation/screens/project_ai_screen.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_models.dart';
@@ -149,53 +148,8 @@ Widget _wrap({required FakeAiRepository repository}) {
 }
 
 void main() {
-  group('Project AI validation section', () {
-    testWidgets('super-admin sees validation tab counts and task actions', (
-      tester,
-    ) async {
-      final submittedTask = fakeAiValidationTask(
-        id: 'submitted-task',
-        aiPredictionFeatureId: 'prediction-submitted',
-        status: 'submitted',
-        latestSubmission: const AiPredictionValidationSubmission(
-          id: 'submission-1',
-          result: 'correct',
-          note: 'Checked in field.',
-          evidence: <String, dynamic>{'text': 'Checked in field.'},
-          status: 'submitted',
-        ),
-      );
-      final repository = FakeAiRepository(
-        validationTasks: <AiPredictionValidationTask>[
-          fakeAiValidationTask(status: 'open', assignedTo: null),
-          submittedTask,
-        ],
-      );
-
-      await tester.pumpWidget(_wrap(repository: repository));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Ready'), findsOneWidget);
-      expect(find.text('Settings'), findsOneWidget);
-      expect(find.text('Runs'), findsOneWidget);
-      expect(find.text('Validate'), findsOneWidget);
-      expect(find.text('AI Prediction Validation'), findsOneWidget);
-      expect(
-        find.textContaining('AI predictions stay separate'),
-        findsOneWidget,
-      );
-      expect(find.text('Open 1'), findsOneWidget);
-      expect(find.text('Submitted 1'), findsOneWidget);
-      expect(find.text('Assign'), findsWidgets);
-      expect(find.text('Accept'), findsOneWidget);
-      expect(find.text('Reject'), findsOneWidget);
-      expect(
-        find.text('AI validation task, not official field data.'),
-        findsNWidgets(2),
-      );
-    });
-
-    testWidgets('generate creates low-confidence validation tasks', (
+  group('Project AI validation tab removal', () {
+    testWidgets('super-admin no longer sees Validate tab in AI Settings', (
       tester,
     ) async {
       final repository = FakeAiRepository();
@@ -203,65 +157,14 @@ void main() {
       await tester.pumpWidget(_wrap(repository: repository));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Generate low-confidence tasks'));
-      await tester.pumpAndSettle();
-
-      expect(repository.validationGenerateCount, 1);
-      expect(repository.validationTasks, isNotEmpty);
-      expect(
-        repository.validationTasks.every((task) => task.status == 'open'),
-        isTrue,
-      );
-      expect(
-        repository.validationTasks.every((task) => task.noSpatialFeatureWrites),
-        isTrue,
-      );
-    });
-
-    testWidgets('reject review requires reason and stores decision', (
-      tester,
-    ) async {
-      final repository = FakeAiRepository(
-        validationTasks: <AiPredictionValidationTask>[
-          fakeAiValidationTask(
-            status: 'submitted',
-            latestSubmission: const AiPredictionValidationSubmission(
-              id: 'submission-1',
-              result: 'correct',
-              note: 'Checked in field.',
-              evidence: <String, dynamic>{'text': 'Checked in field.'},
-              status: 'submitted',
-            ),
-          ),
-        ],
-      );
-
-      await tester.pumpWidget(_wrap(repository: repository));
-      await tester.pumpAndSettle();
-
-      final rejectButton = find.widgetWithText(OutlinedButton, 'Reject').first;
-      await tester.ensureVisible(rejectButton);
-      await tester.pumpAndSettle();
-      await tester.tap(rejectButton);
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Save review'));
-      await tester.pumpAndSettle();
-      expect(find.text('Reject reason is required.'), findsOneWidget);
-
-      await tester.enterText(
-        find.byType(TextField).last,
-        'Evidence was too ambiguous.',
-      );
-      await tester.tap(find.widgetWithText(FilledButton, 'Save review'));
-      await tester.pumpAndSettle();
-
-      expect(repository.validationReviewCount, 1);
-      expect(repository.validationTasks.single.status, 'rejected');
-      expect(
-        repository.validationTasks.single.reviewReason,
-        'Evidence was too ambiguous.',
-      );
-      expect(repository.validationTasks.single.noSpatialFeatureWrites, isTrue);
+      expect(find.text('Ready'), findsOneWidget);
+      expect(find.text('Settings'), findsOneWidget);
+      expect(find.text('Runs'), findsOneWidget);
+      expect(find.text('Validate'), findsNothing);
+      expect(find.text('AI Prediction Validation'), findsNothing);
+      expect(find.text('Generate validation tasks'), findsNothing);
+      expect(find.text('Assign'), findsNothing);
+      expect(find.text('Accept'), findsNothing);
     });
   });
 }

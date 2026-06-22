@@ -9,11 +9,12 @@ import 'package:latlong2/latlong.dart';
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/pagination/paginated_list_controller.dart';
-import '../../../../core/pagination/paginated_result.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/utils/lebanon_time.dart';
 import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_button.dart';
+import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
@@ -25,20 +26,21 @@ import '../../../map/domain/map_geometry.dart';
 import '../../../exports/presentation/screens/exports_dashboard_screen.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/ai_models.dart';
+import '../ai_model_labels.dart';
 import '../ai_permissions.dart';
 import '../ai_providers.dart';
-import '../widgets/ai_validation_widgets.dart';
-import 'project_ai_validation_section.dart';
 
 class ProjectAiScreen extends ConsumerStatefulWidget {
   const ProjectAiScreen({
     required this.projectId,
     this.initialSection = 'readiness',
+    this.initialRunId,
     super.key,
   });
 
   final String projectId;
   final String initialSection;
+  final String? initialRunId;
 
   @override
   ConsumerState<ProjectAiScreen> createState() => _ProjectAiScreenState();
@@ -98,7 +100,7 @@ class _ProjectAiScreenState extends ConsumerState<ProjectAiScreen> {
                   ),
                   const SizedBox(height: AppSpacing.xs),
                   const Text(
-                    'AI uses approved project data. Regional worker results appear here after review.',
+                    'AI uses approved project data. AI server runs appear here with live status and review results.',
                   ),
                   const SizedBox(height: AppSpacing.md),
                   LayoutBuilder(
@@ -127,11 +129,6 @@ class _ProjectAiScreenState extends ConsumerState<ProjectAiScreen> {
                                 icon: Icon(Icons.manage_history_outlined),
                                 label: Text('Runs', maxLines: 1),
                               ),
-                              ButtonSegment(
-                                value: 'validation',
-                                icon: Icon(Icons.rule_folder_outlined),
-                                label: Text('Validate', maxLines: 1),
-                              ),
                             ],
                             selected: {_section},
                             onSelectionChanged: (selection) {
@@ -151,9 +148,10 @@ class _ProjectAiScreenState extends ConsumerState<ProjectAiScreen> {
             else if (_section == 'settings')
               ProjectAiSettingsSection(project: project)
             else if (_section == 'runs')
-              ProjectAiRunsSection(project: project),
-            if (_section == 'validation')
-              ProjectAiValidationSection(project: project),
+              ProjectAiRunsSection(
+                project: project,
+                initialRunId: widget.initialRunId,
+              ),
           ],
         );
       },
@@ -277,7 +275,7 @@ class _ReadinessCard extends StatelessWidget {
     };
     final message = switch (readiness.status) {
       'ready' => 'Approved project data is enough for an AI run.',
-      'warning' => 'A regional run can be queued, but review the limits.',
+      'warning' => 'A regional run can be started, but review the limits.',
       _ => 'Resolve blockers before starting an AI run.',
     };
 
@@ -315,6 +313,13 @@ class _ReadinessCard extends StatelessWidget {
           Text(title, style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: AppSpacing.sm),
           Text(message),
+          const SizedBox(height: AppSpacing.sm),
+          _NoticeRow(
+            icon: readiness.aiServer.isConnected
+                ? Icons.cloud_done_outlined
+                : Icons.cloud_off_outlined,
+            text: _aiServerReadinessMessage(readiness.aiServer),
+          ),
           const SizedBox(height: AppSpacing.md),
           Wrap(
             spacing: 8,
@@ -402,16 +407,11 @@ class _ReadinessCard extends StatelessWidget {
             _MessageList(title: 'Blockers', messages: readiness.blockers),
           ],
           const SizedBox(height: AppSpacing.md),
-          FilledButton.tonalIcon(
+          AppButton(
+            label: refreshing ? 'Refreshing...' : 'Refresh readiness',
+            icon: Icons.refresh,
+            isLoading: refreshing,
             onPressed: refreshing ? null : onRefresh,
-            icon: refreshing
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.refresh),
-            label: Text(refreshing ? 'Refreshing...' : 'Refresh readiness'),
           ),
           if (lastCheckedAt != null) ...[
             const SizedBox(height: AppSpacing.xs),
@@ -426,6 +426,46 @@ class _ReadinessCard extends StatelessWidget {
   }
 }
 
+String _aiServerReadinessMessage(AiServerReadiness aiServer) {
+  if (!aiServer.configured) {
+    return 'AI server URL is not configured on the backend.';
+  }
+  if (aiServer.isConnected) {
+    return 'AI server connected.';
+  }
+  if (aiServer.status == 'degraded') {
+    final detail = aiServer.message?.trim();
+    return detail == null || detail.isEmpty
+        ? 'AI server health is degraded. Refresh readiness after fixing the AI server.'
+        : 'AI server health is degraded. $detail';
+  }
+  return 'AI server is unavailable. Start the AI server and refresh readiness.';
+}
+
+class _SeasonDateRange {
+  const _SeasonDateRange({this.from, this.to});
+
+  final DateTime? from;
+  final DateTime? to;
+
+  _SeasonDateRange copyWith({DateTime? from, DateTime? to}) {
+    return _SeasonDateRange(from: from ?? this.from, to: to ?? this.to);
+  }
+}
+
+class _SatelliteTimeframeState {
+  _SatelliteTimeframeState({
+    required this.mapYear,
+    Set<String>? seasons,
+    Map<String, _SeasonDateRange>? ranges,
+  }) : seasons = seasons ?? <String>{'growing'},
+       ranges = ranges ?? <String, _SeasonDateRange>{};
+
+  int mapYear;
+  final Set<String> seasons;
+  final Map<String, _SeasonDateRange> ranges;
+}
+
 class ProjectAiSettingsSection extends ConsumerStatefulWidget {
   const ProjectAiSettingsSection({required this.project, super.key});
 
@@ -438,6 +478,26 @@ class ProjectAiSettingsSection extends ConsumerStatefulWidget {
 
 class _ProjectAiSettingsSectionState
     extends ConsumerState<ProjectAiSettingsSection> {
+  static const List<String> _satelliteOptions = <String>[
+    'sentinel2',
+    'landsat',
+  ];
+  static const Map<String, String> _satelliteLabels = <String, String>{
+    'sentinel2': 'Sentinel-2',
+    'landsat': 'Landsat',
+  };
+  static const List<String> _seasonOptions = <String>[
+    'growing',
+    'dry',
+    'harvest',
+    'winter',
+  ];
+  static const Map<String, String> _seasonLabels = <String, String>{
+    'growing': 'Growing',
+    'dry': 'Dry',
+    'harvest': 'Harvest',
+    'winter': 'Winter',
+  };
   static const List<String> _sentinel2Features = <String>[
     'B2',
     'B3',
@@ -458,14 +518,26 @@ class _ProjectAiSettingsSectionState
     'SR_B6',
     'SR_B7',
   ];
-  static const List<String> _indexFeatures = <String>[
+  static const List<String> _sentinel2IndexFeatures = <String>[
     'NDVI',
     'EVI',
     'NDRE',
     'SAVI',
     'NDWI',
   ];
-  static const Set<String> _recommendedFeatures = <String>{
+  static const List<String> _landsatIndexFeatures = <String>[
+    'NDVI',
+    'EVI',
+    'SAVI',
+    'NDWI',
+  ];
+  static const List<String> _staticFeatureInputs = <String>[
+    'static_srtm_elevation',
+    'static_srtm_slope',
+    'static_srtm_aspect',
+    'static_texture_pc1',
+  ];
+  static const List<String> _defaultSentinel2FeatureInputs = <String>[
     'B2',
     'B3',
     'B4',
@@ -476,36 +548,53 @@ class _ProjectAiSettingsSectionState
     'NDVI',
     'EVI',
     'NDRE',
-  };
+  ];
+  static const List<String> _defaultLandsatFeatureInputs = <String>[
+    'SR_B2',
+    'SR_B3',
+    'SR_B4',
+    'SR_B5',
+    'SR_B6',
+    'SR_B7',
+    'NDVI',
+    'EVI',
+    'SAVI',
+    'NDWI',
+  ];
   static const Map<String, List<String>> _seasonRanges = <String, List<String>>{
-    'growing': <String>['03-01', '05-31'],
+    'growing': <String>['03-01', '06-30'],
     'dry': <String>['06-01', '08-31'],
-    'harvest': <String>['09-01', '11-30'],
+    'harvest': <String>['08-01', '10-31'],
     'winter': <String>['12-01', '02-28'],
   };
+  static const String _textureDependencyMessage =
+      'Texture feature static_texture_pc1 requires Sentinel-2 dry season and NDVI. Add a Sentinel-2 dry season/timeframe and select NDVI, or remove static_texture_pc1.';
 
   bool _isEnabled = false;
   String? _labelField;
   String _scopeType = 'project';
   int _aiAreaDropdownVersion = 0;
-  bool _nationalModeEnabled = false;
+  bool _nationalScopeWarningAcknowledged = false;
   String _preferredModel = 'auto';
-  String _satelliteSource = 'sentinel2';
-  String _targetYear = '2025';
-  String _season = 'growing';
-  Set<String> _selectedFeatureInputs = Set<String>.from(_recommendedFeatures);
+  Set<String> _selectedSatelliteSources = <String>{'sentinel2'};
+  final Map<String, _SatelliteTimeframeState> _satelliteTimeframes =
+      <String, _SatelliteTimeframeState>{};
+  Set<String> _selectedFeatureInputs = Set<String>.from(
+    _defaultSentinel2FeatureInputs,
+  );
+  Set<String> _skippedFeatureInputs = <String>{};
   Map<String, dynamic>? _customScopeGeometry;
   final TextEditingController _minSamplesController = TextEditingController();
-  final TextEditingController _dateFromController = TextEditingController();
-  final TextEditingController _dateToController = TextEditingController();
+  final TextEditingController _confidenceThresholdController =
+      TextEditingController();
+  final GlobalKey _featureInputsKey = GlobalKey();
   String? _initializedFor;
   bool _saving = false;
 
   @override
   void dispose() {
     _minSamplesController.dispose();
-    _dateFromController.dispose();
-    _dateToController.dispose();
+    _confidenceThresholdController.dispose();
     super.dispose();
   }
 
@@ -527,10 +616,13 @@ class _ProjectAiSettingsSectionState
       ),
       data: (settings) {
         _initializeFromSettings(settings);
+        final minSamples =
+            int.tryParse(_minSamplesController.text.trim()) ?? 50;
         final labelProbeQuery = AiReadinessQuery(
           projectId: widget.project.id,
           labelField: _labelField ?? _schemaPreferredLabelField(widget.project),
-          scopeType: 'project',
+          minSamplesPerClass: minSamples,
+          scopeType: _scopeType,
         );
         final labelProbeAsync = ref.watch(aiReadinessProvider(labelProbeQuery));
         final labelCandidates =
@@ -552,30 +644,10 @@ class _ProjectAiSettingsSectionState
         final hasMappedEquivalentFields = labelCandidates.any(
           (candidate) => candidate.aliasOf?.trim().isNotEmpty == true,
         );
-        final nationalReadiness = labelProbeAsync.asData?.value;
-        final nationalScopeEligible =
-            nationalReadiness?.nationalScopeEligibility.eligible ?? false;
-        final nationalScopeEnabled =
-            nationalScopeEligible &&
-            (_nationalModeEnabled ||
-                (nationalReadiness?.nationalScopeEnabled ?? false));
-        if (_scopeType == 'national' && !nationalScopeEnabled) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted || _scopeType != 'national') {
-              return;
-            }
-            setState(() {
-              _scopeType = 'project';
-              _nationalModeEnabled = false;
-              _aiAreaDropdownVersion++;
-            });
-          });
-        }
-        final nationalOptionLabel = nationalScopeEnabled
-            ? 'National Lebanon'
-            : nationalScopeEligible
-            ? 'National Lebanon - ready'
-            : 'National Lebanon - locked';
+        final readiness = labelProbeAsync.asData?.value;
+        final nationalScopeEligibility = readiness?.nationalScopeEligibility;
+        final validationMessage = _settingsValidationMessage();
+        final selectedSources = _orderedSelectedSatelliteSources();
 
         return AppCard(
           child: Column(
@@ -591,7 +663,7 @@ class _ProjectAiSettingsSectionState
                     : (value) => setState(() => _isEnabled = value),
                 title: const Text('Enable AI for this project'),
                 subtitle: const Text(
-                  'Settings are saved for worker runs but do not start one.',
+                  'Settings are saved for AI server runs but do not start one.',
                 ),
               ),
               const SizedBox(height: AppSpacing.sm),
@@ -659,40 +731,44 @@ class _ProjectAiSettingsSectionState
                     ),
                     DropdownMenuItem(
                       value: 'national',
-                      child: Text(nationalOptionLabel),
+                      enabled: false,
+                      child: Text('National Lebanon (not available)'),
                     ),
                   ],
                   onChanged: _saving
                       ? null
                       : (value) => _handleAiAreaChanged(
                           value,
-                          nationalScopeEligible: nationalScopeEligible,
-                          nationalScopeEnabled: nationalScopeEnabled,
-                          nationalScopeEligibility:
-                              nationalReadiness?.nationalScopeEligibility,
-                          settings: settings,
+                          nationalScopeEligibility: nationalScopeEligibility,
                         ),
                 ),
               ),
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                _scopeType == 'custom_polygon'
-                    ? 'Custom AI area uses approved project samples inside the polygon you draw.'
-                    : 'Project area uses approved samples from this project. National Lebanon requires representative samples across Lebanon.',
+              const SizedBox(height: AppSpacing.sm),
+              _ProjectAreaScopeSummary(
+                scopeType: _scopeType,
+                readiness: readiness,
+                hasCustomGeometry: _customScopeGeometry != null,
               ),
+              if (nationalScopeEligibility != null) ...[
+                const SizedBox(height: AppSpacing.sm),
+                _NationalCoverageCard(
+                  eligibility: nationalScopeEligibility,
+                  weakClasses:
+                      readiness?.classesBelowMinimum ?? const <AiLabelCount>[],
+                  minSamplesPerClass:
+                      readiness?.minSamplesPerClass ??
+                      int.tryParse(_minSamplesController.text.trim()) ??
+                      50,
+                ),
+              ],
               if (_scopeType == 'custom_polygon') ...[
                 const SizedBox(height: AppSpacing.sm),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: _saving ? null : _drawCustomScope,
-                    icon: const Icon(Icons.polyline_outlined),
-                    label: Text(
-                      _customScopeGeometry == null
-                          ? 'Draw AI area'
-                          : 'Edit AI area',
-                    ),
-                  ),
+                AppButton(
+                  label: _customScopeGeometry == null
+                      ? 'Draw AI area'
+                      : 'Edit AI area',
+                  icon: Icons.polyline_outlined,
+                  onPressed: _saving ? null : _drawCustomScope,
                 ),
                 if (_customScopeGeometry != null) ...[
                   const SizedBox(height: AppSpacing.xs),
@@ -713,6 +789,20 @@ class _ProjectAiSettingsSectionState
                 ),
               ),
               const SizedBox(height: AppSpacing.md),
+              TextFormField(
+                controller: _confidenceThresholdController,
+                enabled: !_saving,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'Confidence threshold',
+                  helperText:
+                      'Probability scale from 0 to 1. Used as metadata/priority, not a validation filter.',
+                  hintText: '0.60',
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
               DropdownButtonFormField<String>(
                 initialValue: _preferredModel,
                 decoration: const InputDecoration(
@@ -724,8 +814,14 @@ class _ProjectAiSettingsSectionState
                     value: 'random_forest',
                     child: Text('Random Forest'),
                   ),
-                  DropdownMenuItem(value: 'svm', child: Text('SVM')),
-                  DropdownMenuItem(value: 'xgboost', child: Text('XGBoost')),
+                  DropdownMenuItem(
+                    value: 'svm',
+                    child: Text('Support Vector Machine'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'gradient_boosting',
+                    child: Text('Gradient Boosting'),
+                  ),
                 ],
                 onChanged: _saving
                     ? null
@@ -735,172 +831,79 @@ class _ProjectAiSettingsSectionState
                         }
                       },
               ),
-              const SizedBox(height: AppSpacing.md),
-              DropdownButtonFormField<String>(
-                initialValue: _satelliteSource,
-                decoration: const InputDecoration(
-                  labelText: 'Satellite source',
+              if (_preferredModel == 'auto') ...[
+                const SizedBox(height: AppSpacing.xs),
+                const _NoticeRow(
+                  icon: Icons.auto_awesome_outlined,
+                  text: 'Auto selects the best model using validation metrics.',
                 ),
-                items: const [
-                  DropdownMenuItem(
-                    value: 'sentinel2',
-                    child: Text('Sentinel-2'),
-                  ),
-                  DropdownMenuItem(value: 'landsat', child: Text('Landsat')),
-                ],
-                onChanged: _saving
-                    ? null
-                    : (value) {
-                        if (value != null) {
-                          setState(() {
-                            _satelliteSource = value;
-                            final years = _yearOptionsFor(value);
-                            if (!years.contains(_targetYear)) {
-                              _targetYear = years.first;
-                            }
-                            _applySeasonDates();
-                            _selectedFeatureInputs = _selectedFeatureInputs
-                                .where(
-                                  _availableFeaturesForSatellite(
-                                    value,
-                                  ).contains,
-                                )
-                                .toSet();
-                            if (_selectedFeatureInputs.isEmpty) {
-                              _selectedFeatureInputs = Set<String>.from(
-                                _recommendedFeaturesForSatellite(value),
-                              );
-                            }
-                          });
-                        }
-                      },
+              ],
+              const SizedBox(height: AppSpacing.md),
+              Text(
+                'Satellite sources',
+                style: Theme.of(context).textTheme.titleSmall,
               ),
               const SizedBox(height: AppSpacing.xs),
-              Text(
-                _satelliteSource == 'sentinel2'
-                    ? 'Sentinel-2 imagery is available from 2015 onward.'
-                    : 'Landsat 8/9 imagery is available from 2013 onward.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: AppSpacing.md),
-              Row(
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
                 children: [
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      initialValue: _targetYear,
-                      decoration: const InputDecoration(labelText: 'Map year'),
-                      items: _yearOptions()
-                          .map(
-                            (year) => DropdownMenuItem(
-                              value: year,
-                              child: Text(year),
+                  for (final source in _satelliteOptions)
+                    FilterChip(
+                      label: Text(_satelliteLabels[source]!),
+                      selected: _selectedSatelliteSources.contains(source),
+                      onSelected: _saving
+                          ? null
+                          : (selected) => _setSatelliteSelected(
+                              source,
+                              selected: selected,
                             ),
-                          )
-                          .toList(growable: false),
-                      onChanged: _saving
-                          ? null
-                          : (value) {
-                              if (value != null) {
-                                setState(() {
-                                  _targetYear = value;
-                                  _applySeasonDates();
-                                });
-                              }
-                            },
                     ),
-                  ),
-                  const SizedBox(width: AppSpacing.sm),
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      initialValue: _season,
-                      decoration: const InputDecoration(labelText: 'Season'),
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'growing',
-                          child: Text('Growing'),
-                        ),
-                        DropdownMenuItem(value: 'dry', child: Text('Dry')),
-                        DropdownMenuItem(
-                          value: 'harvest',
-                          child: Text('Harvest'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'winter',
-                          child: Text('Winter'),
-                        ),
-                      ],
-                      onChanged: _saving
-                          ? null
-                          : (value) {
-                              if (value != null) {
-                                setState(() {
-                                  _season = value;
-                                  _applySeasonDates();
-                                });
-                              }
-                            },
-                    ),
-                  ),
                 ],
-              ),
-              const SizedBox(height: AppSpacing.md),
-              TextFormField(
-                controller: _dateFromController,
-                enabled: !_saving,
-                readOnly: true,
-                onTap: _saving ? null : () => _pickDate(_dateFromController),
-                decoration: const InputDecoration(
-                  labelText: 'From date',
-                  hintText: 'Season start',
-                  suffixIcon: Icon(Icons.calendar_month_outlined),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              TextFormField(
-                controller: _dateToController,
-                enabled: !_saving,
-                readOnly: true,
-                onTap: _saving ? null : () => _pickDate(_dateToController),
-                decoration: const InputDecoration(
-                  labelText: 'To date',
-                  hintText: 'Season end',
-                  suffixIcon: Icon(Icons.calendar_month_outlined),
-                ),
               ),
               const SizedBox(height: AppSpacing.xs),
               Text(
-                'Dates are limited to the selected season window.',
+                'Each selected satellite can use different seasons and dates.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
+              for (final source in selectedSources) ...[
+                const SizedBox(height: AppSpacing.md),
+                _buildSatelliteTimeframeEditor(context, source),
+              ],
               const SizedBox(height: AppSpacing.md),
-              _FeatureInputSelector(
-                selected: _selectedFeatureInputs,
-                availableFeatures: _availableFeaturesForSatellite(
-                  _satelliteSource,
+              KeyedSubtree(
+                key: _featureInputsKey,
+                child: _FeatureInputSelector(
+                  selected: _selectedFeatureInputs,
+                  satelliteSources: selectedSources,
+                  seasonCount: _selectedSeasonCount(),
+                  options: _featureInputOptions(),
+                  selectAllKeys: _selectAllFeatureInputs(),
+                  dependencyNotice: _featureDependencyNotice(),
+                  onSelectAll: _saving ? null : _handleSelectAllFeatureInputs,
+                  onChanged: _saving ? null : _setSelectedFeatureInputs,
                 ),
-                recommended: _recommendedFeaturesForSatellite(_satelliteSource),
-                recommendationNote: _featureRecommendationNote(widget.project),
-                onChanged: _saving
-                    ? null
-                    : (next) => setState(() => _selectedFeatureInputs = next),
               ),
               const SizedBox(height: AppSpacing.md),
               const _NoticeRow(
                 icon: Icons.info_outline,
-                text:
-                    'Saving settings does not run AI. Vegetation indices are recommended for agricultural projects.',
+                text: 'Saving settings does not run AI.',
               ),
+              if (validationMessage != null) ...[
+                const SizedBox(height: AppSpacing.sm),
+                _NoticeRow(
+                  icon: Icons.warning_amber_outlined,
+                  text: validationMessage,
+                ),
+              ],
               const SizedBox(height: AppSpacing.md),
-              FilledButton.icon(
-                onPressed: _saving ? null : _saveSettings,
-                icon: _saving
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.save_outlined),
-                label: Text(_saving ? 'Saving...' : 'Save settings'),
+              AppButton(
+                label: _saving ? 'Saving...' : 'Save settings',
+                icon: Icons.save_outlined,
+                isLoading: _saving,
+                onPressed: validationMessage == null && !_saving
+                    ? _saveSettings
+                    : null,
               ),
             ],
           ),
@@ -911,7 +914,7 @@ class _ProjectAiSettingsSectionState
 
   void _initializeFromSettings(AiProjectSettings settings) {
     final key =
-        '${settings.projectId}:${settings.updatedKey}:${settings.labelField}:${settings.minSamplesPerClass}:${settings.scopeType}';
+        '${settings.projectId}:${settings.updatedKey}:${settings.labelField}:${settings.minSamplesPerClass}:${settings.scopeType}:${settings.confidenceThreshold}';
     if (_initializedFor == key) {
       return;
     }
@@ -919,59 +922,299 @@ class _ProjectAiSettingsSectionState
     _isEnabled = settings.isEnabled;
     _labelField = settings.labelField ?? _preferredLabelField(widget.project);
     _scopeType = 'project';
-    _nationalModeEnabled =
-        settings.modelPreferences['national_scope_enabled'] == true;
+    _nationalScopeWarningAcknowledged =
+        settings.modelPreferences['national_scope_warning_acknowledged'] ==
+        true;
     final storedScope = settings.scopeType.trim();
     if (storedScope == 'custom_polygon') {
       _scopeType = 'custom_polygon';
-    } else if (storedScope == 'national' && _nationalModeEnabled) {
+    } else if (storedScope == 'national') {
       _scopeType = 'national';
     }
     _aiAreaDropdownVersion++;
     _customScopeGeometry = settings.scopeGeometry == null
         ? null
         : Map<String, dynamic>.from(settings.scopeGeometry!);
-    _preferredModel =
-        settings.modelPreferences['preferred_model'] as String? ?? 'auto';
-    final satellite =
-        settings.modelPreferences['satellite_source'] as String? ?? 'sentinel2';
-    _satelliteSource = satellite == 'landsat' ? 'landsat' : 'sentinel2';
-    final storedYear =
-        '${settings.modelPreferences['target_year'] ?? DateTime.now().year - 1}';
-    final years = _yearOptions();
-    _targetYear = years.contains(storedYear) ? storedYear : years.first;
-    final storedSeason =
-        settings.modelPreferences['season'] as String? ?? 'growing';
-    _season = _seasonRanges.containsKey(storedSeason)
-        ? storedSeason
-        : 'growing';
-    _selectedFeatureInputs = _stringSet(
-      settings.modelPreferences['feature_inputs'],
+    _preferredModel = _normalModelPreferenceForSettings(
+      settings.modelPreferences['preferred_model'] as String?,
     );
-    if (_selectedFeatureInputs.isEmpty) {
-      _selectedFeatureInputs = Set<String>.from(
-        _recommendedFeaturesForSatellite(_satelliteSource),
+    _selectedSatelliteSources = _readSatelliteSources(
+      settings.modelPreferences,
+    );
+    _satelliteTimeframes
+      ..clear()
+      ..addEntries(
+        _selectedSatelliteSources.map(
+          (source) => MapEntry(
+            source,
+            _readSatelliteTimeframe(settings.modelPreferences, source),
+          ),
+        ),
       );
-    } else {
-      final available = _availableFeaturesForSatellite(_satelliteSource);
-      _selectedFeatureInputs = _selectedFeatureInputs
-          .where(available.contains)
-          .toSet();
+    _selectedFeatureInputs = _readFeatureInputs(settings.modelPreferences);
+    if (_selectedFeatureInputs.isEmpty) {
+      _selectedFeatureInputs = _expandedFeatureInputsForGroups(
+        _stringSet(settings.modelPreferences['feature_groups']),
+      );
     }
+    if (_selectedFeatureInputs.isEmpty) {
+      _selectedFeatureInputs = _defaultFeatureInputsForSelectedSatellites();
+    }
+    _syncFeatureInputsWithSelectedSatellites();
+    _skippedFeatureInputs.clear();
     _minSamplesController.text = settings.minSamplesPerClass.toString();
-    _dateFromController.text =
-        settings.modelPreferences['date_from'] as String? ?? '';
-    _dateToController.text =
-        settings.modelPreferences['date_to'] as String? ?? '';
-    if (_dateFromController.text.trim().isEmpty ||
-        _dateToController.text.trim().isEmpty ||
-        !_datesWithinSeason()) {
-      _applySeasonDates();
+    _confidenceThresholdController.text = _formatThreshold(
+      settings.confidenceThreshold,
+    );
+  }
+
+  Widget _buildSatelliteTimeframeEditor(BuildContext context, String source) {
+    final state = _ensureSatelliteState(source);
+    final yearOptions = _yearOptionsFor(source);
+    if (!yearOptions.contains(state.mapYear.toString())) {
+      state.mapYear = int.parse(yearOptions.first);
+    }
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _satelliteLabels[source]!,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            DropdownButtonFormField<String>(
+              initialValue: state.mapYear.toString(),
+              decoration: const InputDecoration(labelText: 'Map year'),
+              items: yearOptions
+                  .map(
+                    (year) => DropdownMenuItem(value: year, child: Text(year)),
+                  )
+                  .toList(growable: false),
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      setState(() {
+                        state.mapYear = int.parse(value);
+                        _resetMissingSeasonRanges(state);
+                      });
+                    },
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Text('Seasons', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: AppSpacing.xs),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final season in _seasonOptions)
+                  FilterChip(
+                    label: Text(_seasonLabels[season]!),
+                    selected: state.seasons.contains(season),
+                    onSelected: _saving
+                        ? null
+                        : (selected) => _setSeasonSelected(
+                            source,
+                            season,
+                            selected: selected,
+                          ),
+                  ),
+              ],
+            ),
+            for (final season in _seasonOptions.where(state.seasons.contains))
+              Padding(
+                padding: const EdgeInsets.only(top: AppSpacing.sm),
+                child: _buildSeasonDateFields(source, season, state),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSeasonDateFields(
+    String source,
+    String season,
+    _SatelliteTimeframeState state,
+  ) {
+    final range =
+        state.ranges[season] ?? _defaultRangeFor(state.mapYear, season);
+    state.ranges[season] = range;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          _seasonLabels[season]!,
+          style: Theme.of(context).textTheme.labelLarge,
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final stack = constraints.maxWidth < 560;
+            final fields = [
+              _DateValueField(
+                label: 'From date',
+                value: range.from == null ? '' : _formatAiDate(range.from!),
+                onTap: _saving
+                    ? null
+                    : () => _pickSeasonDate(
+                        source: source,
+                        season: season,
+                        pickFromDate: true,
+                      ),
+              ),
+              _DateValueField(
+                label: 'To date',
+                value: range.to == null ? '' : _formatAiDate(range.to!),
+                onTap: _saving
+                    ? null
+                    : () => _pickSeasonDate(
+                        source: source,
+                        season: season,
+                        pickFromDate: false,
+                      ),
+              ),
+            ];
+            if (stack) {
+              return Column(
+                children: [
+                  fields[0],
+                  const SizedBox(height: AppSpacing.sm),
+                  fields[1],
+                ],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: fields[0]),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(child: fields[1]),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  _SatelliteTimeframeState _ensureSatelliteState(String source) {
+    return _satelliteTimeframes.putIfAbsent(source, () {
+      final year = int.parse(_yearOptionsFor(source).first);
+      return _SatelliteTimeframeState(
+        mapYear: year,
+        ranges: <String, _SeasonDateRange>{
+          'growing': _defaultRangeFor(year, 'growing'),
+        },
+      );
+    });
+  }
+
+  void _setSatelliteSelected(String source, {required bool selected}) {
+    setState(() {
+      if (selected) {
+        _selectedSatelliteSources.add(source);
+        _ensureSatelliteState(source);
+      } else {
+        _selectedSatelliteSources.remove(source);
+      }
+      _syncFeatureInputsWithSelectedSatellites();
+      _skippedFeatureInputs.clear();
+    });
+  }
+
+  void _setSeasonSelected(
+    String source,
+    String season, {
+    required bool selected,
+  }) {
+    setState(() {
+      final state = _ensureSatelliteState(source);
+      if (selected) {
+        state.seasons.add(season);
+        state.ranges.putIfAbsent(
+          season,
+          () => _defaultRangeFor(state.mapYear, season),
+        );
+      } else {
+        state.seasons.remove(season);
+      }
+      _skippedFeatureInputs.clear();
+    });
+  }
+
+  void _setSelectedFeatureInputs(Set<String> next) {
+    setState(() {
+      _selectedFeatureInputs = Set<String>.from(next);
+      _skippedFeatureInputs.clear();
+    });
+  }
+
+  void _handleSelectAllFeatureInputs() {
+    final selected = _selectAllFeatureInputs();
+    final available = _availableFeatureInputsForSelectedSatellites();
+    setState(() {
+      _selectedFeatureInputs = selected;
+      _skippedFeatureInputs = available.difference(selected);
+    });
+  }
+
+  void _resetMissingSeasonRanges(_SatelliteTimeframeState state) {
+    for (final season in state.seasons) {
+      state.ranges[season] = _defaultRangeFor(state.mapYear, season);
     }
   }
 
-  List<String> _yearOptions() {
-    return _yearOptionsFor(_satelliteSource);
+  Future<void> _pickSeasonDate({
+    required String source,
+    required String season,
+    required bool pickFromDate,
+  }) async {
+    final state = _ensureSatelliteState(source);
+    final current =
+        state.ranges[season] ?? _defaultRangeFor(state.mapYear, season);
+    final firstDate = DateTime(state.mapYear, 1, 1);
+    final lastDate = DateTime(state.mapYear + 1, 12, 31);
+    final currentValue = pickFromDate ? current.from : current.to;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: currentValue ?? firstDate,
+      firstDate: firstDate,
+      lastDate: lastDate,
+    );
+    if (picked == null || !mounted) {
+      return;
+    }
+    setState(() {
+      var next = pickFromDate
+          ? current.copyWith(from: picked)
+          : current.copyWith(to: picked);
+      if (next.from != null &&
+          next.to != null &&
+          next.from!.isAfter(next.to!)) {
+        next = pickFromDate
+            ? next.copyWith(to: picked)
+            : next.copyWith(from: picked);
+      }
+      state.ranges[season] = next;
+    });
+  }
+
+  _SeasonDateRange _defaultRangeFor(int year, String season) {
+    final range = _seasonRanges[season] ?? _seasonRanges['growing']!;
+    final endYear = season == 'winter' ? year + 1 : year;
+    return _SeasonDateRange(
+      from: DateTime.parse('$year-${range[0]}'),
+      to: DateTime.parse('$endYear-${range[1]}'),
+    );
   }
 
   List<String> _yearOptionsFor(String satelliteSource) {
@@ -980,76 +1223,227 @@ class _ProjectAiSettingsSectionState
     return [for (var year = current; year >= firstYear; year -= 1) '$year'];
   }
 
-  List<String> _availableFeaturesForSatellite(String satelliteSource) {
-    return <String>[
-      if (satelliteSource == 'landsat')
-        ..._landsatFeatures
-      else
-        ..._sentinel2Features,
-      ..._indexFeatures,
-    ];
-  }
-
-  Set<String> _recommendedFeaturesForSatellite(String satelliteSource) {
-    if (satelliteSource == 'landsat') {
-      return const <String>{
-        'SR_B2',
-        'SR_B3',
-        'SR_B4',
-        'SR_B5',
-        'SR_B6',
-        'SR_B7',
-        'NDVI',
-        'EVI',
-        'SAVI',
-        'NDWI',
-      };
+  Set<String> _expandedFeatureInputsForGroups(Set<String> groups) {
+    final features = <String>{};
+    if (groups.contains('spectral_bands')) {
+      for (final source in _orderedSelectedSatelliteSources()) {
+        features.addAll(
+          source == 'landsat' ? _landsatFeatures : _sentinel2Features,
+        );
+      }
     }
-    return _recommendedFeatures;
-  }
-
-  String _featureRecommendationNote(ProjectSummary project) {
-    final text = [
-      project.category,
-      project.name,
-      project.description,
-      project.objectives ?? '',
-    ].join(' ').toLowerCase();
-    if (text.contains('agric') ||
-        text.contains('tree') ||
-        text.contains('crop') ||
-        text.contains('fruit') ||
-        text.contains('olive') ||
-        text.contains('vegetation')) {
-      return 'Recommended for agricultural classification: visible/red-edge/NIR/SWIR bands plus NDVI, EVI, and NDRE/SAVI to separate crop vigor and tree canopy differences.';
+    if (groups.contains('vegetation_indices')) {
+      for (final source in _orderedSelectedSatelliteSources()) {
+        features.addAll(
+          source == 'landsat' ? _landsatIndexFeatures : _sentinel2IndexFeatures,
+        );
+      }
     }
-    return 'Recommended features are based on the selected satellite source and common land-cover signals. Adjust them if the project objective needs fewer or different inputs.';
-  }
-
-  void _applySeasonDates() {
-    final range = _seasonDateRange();
-    _dateFromController.text = _formatAiDate(range.start);
-    _dateToController.text = _formatAiDate(range.end);
-  }
-
-  bool _datesWithinSeason() {
-    final from = DateTime.tryParse(_dateFromController.text.trim());
-    final to = DateTime.tryParse(_dateToController.text.trim());
-    if (from == null || to == null || from.isAfter(to)) {
-      return false;
+    if (groups.contains('topography')) {
+      features.addAll(<String>[
+        'static_srtm_elevation',
+        'static_srtm_slope',
+        'static_srtm_aspect',
+      ]);
     }
-    final range = _seasonDateRange();
-    return !from.isBefore(range.start) && !to.isAfter(range.end);
+    if (groups.contains('texture')) {
+      features.add('static_texture_pc1');
+    }
+    return features;
   }
 
-  DateTimeRange _seasonDateRange() {
-    final range = _seasonRanges[_season] ?? _seasonRanges['growing']!;
-    final startYear = int.tryParse(_targetYear) ?? DateTime.now().year;
-    final endYear = _season == 'winter' ? startYear + 1 : startYear;
-    return DateTimeRange(
-      start: DateTime.parse('$startYear-${range[0]}'),
-      end: DateTime.parse('$endYear-${range[1]}'),
+  Set<String> _featureGroupsForInputs(Set<String> rawInputs) {
+    final groups = <String>{};
+    if (rawInputs.any(
+      (item) =>
+          _sentinel2Features.contains(item) || _landsatFeatures.contains(item),
+    )) {
+      groups.add('spectral_bands');
+    }
+    if (rawInputs.any(
+      (item) =>
+          _sentinel2IndexFeatures.contains(item) ||
+          _landsatIndexFeatures.contains(item),
+    )) {
+      groups.add('vegetation_indices');
+    }
+    if (rawInputs.any((item) => item.startsWith('static_srtm_'))) {
+      groups.add('topography');
+    }
+    if (rawInputs.contains('static_texture_pc1')) {
+      groups.add('texture');
+    }
+    return groups;
+  }
+
+  Set<String> _availableFeatureInputsForSelectedSatellites() {
+    final features = <String>{};
+    for (final source in _orderedSelectedSatelliteSources()) {
+      if (source == 'landsat') {
+        features
+          ..addAll(_landsatFeatures)
+          ..addAll(_landsatIndexFeatures);
+      } else {
+        features
+          ..addAll(_sentinel2Features)
+          ..addAll(_sentinel2IndexFeatures);
+      }
+    }
+    features.addAll(
+      _staticFeatureInputs.where(
+        (feature) =>
+            feature != 'static_texture_pc1' ||
+            _selectedSatelliteSources.contains('sentinel2'),
+      ),
     );
+    return features;
+  }
+
+  Set<String> _defaultFeatureInputsForSelectedSatellites() {
+    final features = <String>{};
+    if (_selectedSatelliteSources.contains('sentinel2')) {
+      features.addAll(_defaultSentinel2FeatureInputs);
+    }
+    if (_selectedSatelliteSources.contains('landsat')) {
+      features.addAll(_defaultLandsatFeatureInputs);
+    }
+    return features;
+  }
+
+  void _syncFeatureInputsWithSelectedSatellites() {
+    final available = _availableFeatureInputsForSelectedSatellites();
+    _selectedFeatureInputs = _selectedFeatureInputs
+        .where(available.contains)
+        .toSet();
+    if (_selectedFeatureInputs.isEmpty) {
+      _selectedFeatureInputs = _defaultFeatureInputsForSelectedSatellites()
+          .where(available.contains)
+          .toSet();
+    }
+  }
+
+  bool _textureRequirementsSatisfied(Set<String> inputs) {
+    return _selectedSatelliteSources.contains('sentinel2') &&
+        inputs.contains('NDVI') &&
+        _ensureSatelliteState('sentinel2').seasons.contains('dry');
+  }
+
+  Set<String> _selectAllFeatureInputs() {
+    final available = _availableFeatureInputsForSelectedSatellites();
+    if (!available.contains('static_texture_pc1')) {
+      return available;
+    }
+    if (!_textureRequirementsSatisfied(available)) {
+      return Set<String>.from(available)..remove('static_texture_pc1');
+    }
+    return available;
+  }
+
+  String? _featureDependencyNotice() {
+    if (_skippedFeatureInputs.isNotEmpty) {
+      return _skippedFeatureInlineMessage(_skippedFeatureInputs);
+    }
+    if (_selectedFeatureInputs.contains('static_texture_pc1')) {
+      final missing = <String>[];
+      if (!_selectedSatelliteSources.contains('sentinel2')) {
+        missing.add('Sentinel-2');
+      }
+      if (!_selectedFeatureInputs.contains('NDVI')) {
+        missing.add('NDVI');
+      }
+      if (!_ensureSatelliteState('sentinel2').seasons.contains('dry')) {
+        missing.add('Sentinel-2 dry season');
+      }
+      if (missing.isNotEmpty) {
+        return 'static_texture_pc1 needs ${missing.join(', ')}. Add the missing setting or remove static_texture_pc1.';
+      }
+    }
+    if (_selectedSatelliteSources.contains('sentinel2') &&
+        !_ensureSatelliteState('sentinel2').seasons.contains('dry')) {
+      return 'Select all skips static_texture_pc1 until you add a Sentinel-2 dry season/timeframe.';
+    }
+    return null;
+  }
+
+  String _skippedFeatureInlineMessage(Set<String> skipped) {
+    if (skipped.contains('static_texture_pc1')) {
+      return 'static_texture_pc1 was not selected because it requires Sentinel-2 dry season and NDVI.';
+    }
+    final names = skipped.toList(growable: false)..sort();
+    return '${names.join(', ')} ${names.length == 1 ? 'was' : 'were'} not selected because required settings are missing.';
+  }
+
+  String _skippedFeatureSaveMessage(Set<String> skipped) {
+    if (skipped.contains('static_texture_pc1')) {
+      return 'AI settings saved, but 1 feature was skipped: static_texture_pc1. It requires Sentinel-2 dry season and NDVI. Add a Sentinel-2 dry season/timeframe to enable it.';
+    }
+    final names = skipped.toList(growable: false)..sort();
+    return 'AI settings saved, but ${names.length} features were skipped: ${names.join(', ')}. Add the required settings to enable them.';
+  }
+
+  void _scrollToFeatureWarnings() {
+    final context = _featureInputsKey.currentContext;
+    if (context == null) {
+      return;
+    }
+    Scrollable.ensureVisible(
+      context,
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOutCubic,
+      alignment: 0.08,
+    );
+  }
+
+  List<_FeatureInputOption> _featureInputOptions() {
+    final available = _availableFeatureInputsForSelectedSatellites();
+    final recommended = _defaultFeatureInputsForSelectedSatellites();
+    final options = <_FeatureInputOption>[
+      if (_selectedSatelliteSources.contains('sentinel2'))
+        for (final feature in _sentinel2Features)
+          _FeatureInputOption(
+            key: feature,
+            label: feature,
+            group: 'Sentinel-2 bands',
+            recommended: recommended.contains(feature),
+          ),
+      if (_selectedSatelliteSources.contains('landsat'))
+        for (final feature in _landsatFeatures)
+          _FeatureInputOption(
+            key: feature,
+            label: feature,
+            group: 'Landsat bands',
+            recommended: recommended.contains(feature),
+          ),
+      for (final feature in <String>[
+        ..._sentinel2IndexFeatures,
+        for (final feature in _landsatIndexFeatures)
+          if (!_sentinel2IndexFeatures.contains(feature)) feature,
+      ])
+        if (available.contains(feature))
+          _FeatureInputOption(
+            key: feature,
+            label: feature,
+            group: 'Vegetation indices',
+            recommended: recommended.contains(feature),
+          ),
+      for (final feature in _staticFeatureInputs)
+        _FeatureInputOption(
+          key: feature,
+          label: _friendlyStaticFeatureLabel(feature),
+          group: feature == 'static_texture_pc1' ? 'Texture' : 'Topography',
+          recommended: recommended.contains(feature),
+        ),
+    ];
+    options.sort(_compareFeatureInputOptions);
+    return options;
+  }
+
+  int _selectedSeasonCount() {
+    var count = 0;
+    for (final source in _orderedSelectedSatelliteSources()) {
+      count += _ensureSatelliteState(source).seasons.length;
+    }
+    return count;
   }
 
   String _formatAiDate(DateTime value) {
@@ -1058,192 +1452,143 @@ class _ProjectAiSettingsSectionState
     return '${value.year}-$month-$day';
   }
 
-  Future<void> _pickDate(TextEditingController controller) async {
-    final range = _seasonDateRange();
-    final firstDate = range.start;
-    final lastDate = range.end;
-    final parsed = DateTime.tryParse(controller.text.trim());
-    final initialDate =
-        parsed != null &&
-            !parsed.isBefore(firstDate) &&
-            !parsed.isAfter(lastDate)
-        ? parsed
-        : firstDate;
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: initialDate,
-      firstDate: firstDate,
-      lastDate: lastDate,
-    );
-    if (picked == null) {
-      return;
+  String _formatThreshold(double value) {
+    final text = value.toStringAsFixed(2);
+    return text
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
+  }
+
+  String? _settingsValidationMessage() {
+    if (_selectedSatelliteSources.isEmpty) {
+      return 'Select at least one satellite source.';
     }
-    setState(() {
-      controller.text = _formatAiDate(picked);
-      final from = DateTime.tryParse(_dateFromController.text.trim());
-      final to = DateTime.tryParse(_dateToController.text.trim());
-      if (from != null && to != null && from.isAfter(to)) {
-        if (identical(controller, _dateFromController)) {
-          _dateToController.text = _formatAiDate(picked);
-        } else {
-          _dateFromController.text = _formatAiDate(picked);
+    final threshold = double.tryParse(
+      _confidenceThresholdController.text.trim(),
+    );
+    if (threshold == null || threshold < 0 || threshold > 1) {
+      return 'Confidence threshold must be a number from 0 to 1.';
+    }
+    if (_scopeType == 'custom_polygon' && _customScopeGeometry == null) {
+      return 'Draw a custom AI area before saving custom scope settings.';
+    }
+    if (_selectedFeatureInputs.isEmpty) {
+      return 'Select at least one extracted feature.';
+    }
+    final dependencyMessage = _featureDependencyValidationMessage();
+    if (dependencyMessage != null) {
+      return dependencyMessage;
+    }
+    for (final source in _orderedSelectedSatelliteSources()) {
+      final state = _ensureSatelliteState(source);
+      if (state.seasons.isEmpty) {
+        return '${_satelliteLabels[source]} needs at least one season.';
+      }
+      for (final season in state.seasons) {
+        final range = state.ranges[season];
+        if (range?.from == null || range?.to == null) {
+          return '${_satelliteLabels[source]} ${_seasonLabels[season]} needs from and to dates.';
+        }
+        if (range!.from!.isAfter(range.to!)) {
+          return '${_satelliteLabels[source]} ${_seasonLabels[season]} from date must be before to date.';
         }
       }
-    });
+    }
+    return null;
+  }
+
+  String? _featureDependencyValidationMessage() {
+    if (_selectedFeatureInputs.contains('static_texture_pc1')) {
+      if (!_selectedSatelliteSources.contains('sentinel2') ||
+          !_selectedFeatureInputs.contains('NDVI') ||
+          !_ensureSatelliteState('sentinel2').seasons.contains('dry')) {
+        return _textureDependencyMessage;
+      }
+    }
+    if (_selectedFeatureInputs.contains('NDRE') &&
+        !_selectedSatelliteSources.contains('sentinel2')) {
+      return 'NDRE requires Sentinel-2 because it uses Sentinel-2 red-edge bands.';
+    }
+    final hasSentinel2OnlyFeature = _selectedFeatureInputs.any(
+      (feature) => _sentinel2Features.contains(feature) || feature == 'NDRE',
+    );
+    if (hasSentinel2OnlyFeature &&
+        !_selectedSatelliteSources.contains('sentinel2')) {
+      return 'Sentinel-2 bands and red-edge indices require Sentinel-2.';
+    }
+    final hasLandsatOnlyFeature = _selectedFeatureInputs.any(
+      _landsatFeatures.contains,
+    );
+    if (hasLandsatOnlyFeature &&
+        !_selectedSatelliteSources.contains('landsat')) {
+      return 'Landsat bands require Landsat.';
+    }
+    return null;
   }
 
   void _handleAiAreaChanged(
     String? value, {
-    required bool nationalScopeEligible,
-    required bool nationalScopeEnabled,
     required AiNationalScopeEligibility? nationalScopeEligibility,
-    required AiProjectSettings settings,
   }) {
     if (value == null) {
       return;
     }
     if (value == 'national') {
-      if (nationalScopeEnabled) {
-        setState(() {
-          _scopeType = 'national';
-          _aiAreaDropdownVersion++;
-        });
-        return;
-      }
-      setState(() {
-        if (_scopeType == 'national') {
-          _scopeType = 'project';
-        }
-        _aiAreaDropdownVersion++;
-      });
-      if (nationalScopeEligible) {
-        _showEnableNationalModeDialog(settings);
-      } else {
-        _showNationalScopeLockedDialog(nationalScopeEligibility);
-      }
+      _confirmNationalScopeIfNeeded(nationalScopeEligibility);
       return;
     }
     setState(() {
       _scopeType = value;
+      if (value != 'national') {
+        _nationalScopeWarningAcknowledged = false;
+      }
       _aiAreaDropdownVersion++;
     });
   }
 
-  Future<void> _showNationalScopeLockedDialog(
+  Future<void> _confirmNationalScopeIfNeeded(
     AiNationalScopeEligibility? eligibility,
   ) async {
-    final requirements =
-        eligibility?.requirements ?? const <AiNationalScopeRequirement>[];
-    final unmetRequirements =
-        eligibility?.unmetRequirements ?? const <String>[];
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('National Lebanon is locked'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Backend readiness requirements must pass before National Lebanon can be enabled.',
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              if (requirements.isNotEmpty)
-                for (final requirement in requirements)
-                  _NationalRequirementRow(requirement: requirement)
-              else
-                for (final requirement in unmetRequirements)
-                  _NoticeRow(icon: Icons.cancel_outlined, text: requirement),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _showEnableNationalModeDialog(AiProjectSettings settings) async {
+    final score = eligibility?.coverageScore ?? 0;
+    if (score >= 70 || _nationalScopeWarningAcknowledged) {
+      setState(() {
+        _scopeType = 'national';
+        _aiAreaDropdownVersion++;
+      });
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Enable national mode'),
+        title: const Text('Run national classification?'),
         content: const Text(
-          'National readiness requirements are met. Enable National Lebanon as an AI area option for future runs?',
+          'Samples are not well distributed across Lebanon. You can continue, but results may be less reliable.',
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Enable national mode'),
+          AppDialogActions(
+            cancel: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            confirm: FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Continue'),
+            ),
           ),
         ],
       ),
     );
-    if (confirmed == true) {
-      await _enableNationalMode(settings);
+    if (!mounted) {
+      return;
     }
-  }
-
-  Future<void> _enableNationalMode(AiProjectSettings settings) async {
-    setState(() => _saving = true);
-    try {
-      await ref
-          .read(aiRepositoryProvider)
-          .saveSettings(
-            projectId: widget.project.id,
-            settings: AiProjectSettings(
-              id: settings.id,
-              projectId: widget.project.id,
-              isEnabled: settings.isEnabled,
-              labelField: settings.labelField,
-              scopeType: _scopeType == 'national' ? 'project' : _scopeType,
-              scopeGeometry: _scopeType == 'custom_polygon'
-                  ? _customScopeGeometry
-                  : null,
-              minSamplesPerClass: settings.minSamplesPerClass,
-              modelPreferences: <String, dynamic>{
-                ...settings.modelPreferences,
-                'national_scope_enabled': true,
-              },
-              persisted: settings.persisted,
-            ),
-          );
-      ref
-        ..invalidate(aiSettingsProvider(widget.project.id))
-        ..invalidate(aiReadinessProvider);
-      if (mounted) {
-        setState(() {
-          _nationalModeEnabled = true;
-          _aiAreaDropdownVersion++;
-        });
-        AppSnackbar.showSuccess(
-          context,
-          'National mode enabled. Select National Lebanon when starting a run.',
-        );
-      }
-    } catch (error) {
-      if (mounted) {
-        AppSnackbar.showError(
-          context,
-          userFacingErrorMessage(
-            error,
-            fallback: 'Unable to enable national mode right now.',
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _saving = false);
-      }
+    if (confirmed == true) {
+      setState(() {
+        _scopeType = 'national';
+        _nationalScopeWarningAcknowledged = true;
+        _aiAreaDropdownVersion++;
+      });
+    } else {
+      setState(() => _aiAreaDropdownVersion++);
     }
   }
 
@@ -1260,6 +1605,7 @@ class _ProjectAiSettingsSectionState
     setState(() {
       _scopeType = 'custom_polygon';
       _customScopeGeometry = polygon;
+      _aiAreaDropdownVersion++;
     });
   }
 
@@ -1273,20 +1619,216 @@ class _ProjectAiSettingsSectionState
     return <String>{};
   }
 
-  Future<void> _saveSettings() async {
-    final minSamples =
-        int.tryParse(_minSamplesController.text.trim())?.clamp(1, 10000) ?? 50;
-    if (_scopeType == 'custom_polygon' && _customScopeGeometry == null) {
-      AppSnackbar.showError(context, 'Draw a custom AI area before saving.');
-      return;
+  Set<String> _readFeatureInputs(Map<String, dynamic> preferences) {
+    for (final key in <String>[
+      'feature_inputs',
+      'selected_feature_inputs',
+      'selected_extracted_features',
+    ]) {
+      final values = _stringSet(preferences[key]);
+      if (values.isNotEmpty) {
+        return values;
+      }
     }
-    if (_scopeType == 'national' && !_nationalModeEnabled) {
-      AppSnackbar.showError(
-        context,
-        'Enable national mode before selecting National Lebanon.',
+    return <String>{};
+  }
+
+  Set<String> _readSatelliteSources(Map<String, dynamic> preferences) {
+    final rawSources =
+        preferences['satellite_sources'] ?? preferences['satelliteSources'];
+    final sources = <String>{};
+    if (rawSources is List) {
+      for (final raw in rawSources) {
+        final source = _normalizeSatelliteSource(raw);
+        if (source != null) {
+          sources.add(source);
+        }
+      }
+    }
+    if (sources.isEmpty) {
+      final source = _normalizeSatelliteSource(
+        preferences['satellite_source'] ?? preferences['satelliteSource'],
       );
+      if (source != null) {
+        sources.add(source);
+      }
+    }
+    return sources.isEmpty ? <String>{'sentinel2'} : sources;
+  }
+
+  _SatelliteTimeframeState _readSatelliteTimeframe(
+    Map<String, dynamic> preferences,
+    String source,
+  ) {
+    final rawTimeframes =
+        _asMap(preferences['satellite_timeframes']) ??
+        _asMap(preferences['satelliteTimeframes']) ??
+        const <String, dynamic>{};
+    final rawForSource =
+        _asMap(rawTimeframes[source]) ??
+        _asMap(rawTimeframes[source == 'sentinel2' ? 'sentinel-2' : source]) ??
+        const <String, dynamic>{};
+    final legacyYear =
+        _readYear(preferences['target_year'] ?? preferences['year']) ??
+        DateTime.now().year - 1;
+    final mapYear =
+        _readYear(rawForSource['map_year'] ?? rawForSource['mapYear']) ??
+        legacyYear;
+    final legacySeason = _normalizeSeason(preferences['season']) ?? 'growing';
+    final legacyRange = _defaultRangeFor(mapYear, legacySeason);
+    final legacyFrom =
+        _parseDate(preferences['date_from'] ?? preferences['from_date']) ??
+        legacyRange.from;
+    final legacyTo =
+        _parseDate(preferences['date_to'] ?? preferences['to_date']) ??
+        legacyRange.to;
+    final state = _SatelliteTimeframeState(mapYear: mapYear);
+    state.seasons.clear();
+    final rawSeasons = rawForSource['seasons'] is List
+        ? rawForSource['seasons'] as List
+        : const <dynamic>[];
+    final seasonsToRead = rawSeasons.isEmpty
+        ? <dynamic>[
+            <String, dynamic>{
+              'season': legacySeason,
+              'from_date': legacyFrom == null
+                  ? null
+                  : _formatAiDate(legacyFrom),
+              'to_date': legacyTo == null ? null : _formatAiDate(legacyTo),
+            },
+          ]
+        : rawSeasons;
+    for (final rawSeason in seasonsToRead) {
+      final record =
+          _asMap(rawSeason) ?? <String, dynamic>{'season': rawSeason};
+      final season = _normalizeSeason(record['season']) ?? legacySeason;
+      final fallback = _defaultRangeFor(mapYear, season);
+      final from =
+          _parseDate(record['from_date'] ?? record['fromDate']) ??
+          (season == legacySeason ? legacyFrom : null) ??
+          fallback.from;
+      final to =
+          _parseDate(record['to_date'] ?? record['toDate']) ??
+          (season == legacySeason ? legacyTo : null) ??
+          fallback.to;
+      state.seasons.add(season);
+      state.ranges[season] = _SeasonDateRange(from: from, to: to);
+    }
+    if (state.seasons.isEmpty) {
+      state.seasons.add('growing');
+      state.ranges['growing'] = _defaultRangeFor(mapYear, 'growing');
+    }
+    return state;
+  }
+
+  Map<String, dynamic>? _asMap(dynamic raw) {
+    if (raw is Map<String, dynamic>) {
+      return raw;
+    }
+    if (raw is Map) {
+      return Map<String, dynamic>.from(raw);
+    }
+    return null;
+  }
+
+  String? _normalizeSatelliteSource(dynamic raw) {
+    final value = raw?.toString().trim().toLowerCase();
+    return switch (value) {
+      'sentinel2' || 'sentinel-2' || 'sentinel_2' || 's2' => 'sentinel2',
+      'landsat' ||
+      'landsat8' ||
+      'landsat-8' ||
+      'landsat9' ||
+      'landsat-9' => 'landsat',
+      _ => null,
+    };
+  }
+
+  String? _normalizeSeason(dynamic raw) {
+    final value = raw?.toString().trim().toLowerCase();
+    return switch (value) {
+      'spring' => 'growing',
+      'summer' => 'dry',
+      'autumn' || 'fall' => 'harvest',
+      'growing' || 'dry' || 'harvest' || 'winter' => value,
+      _ => null,
+    };
+  }
+
+  int? _readYear(dynamic raw) {
+    if (raw is int) {
+      return raw;
+    }
+    if (raw is num) {
+      return raw.toInt();
+    }
+    return int.tryParse(raw?.toString() ?? '');
+  }
+
+  DateTime? _parseDate(dynamic raw) {
+    if (raw is DateTime) {
+      return raw;
+    }
+    final value = raw?.toString().trim();
+    if (value == null || value.isEmpty) {
+      return null;
+    }
+    return DateTime.tryParse(value);
+  }
+
+  List<String> _orderedSelectedSatelliteSources() {
+    return [
+      for (final source in _satelliteOptions)
+        if (_selectedSatelliteSources.contains(source)) source,
+    ];
+  }
+
+  Map<String, dynamic> _satelliteTimeframesPayload() {
+    return <String, dynamic>{
+      for (final source in _orderedSelectedSatelliteSources())
+        source: <String, dynamic>{
+          'map_year': _ensureSatelliteState(source).mapYear,
+          'seasons': [
+            for (final season in _seasonOptions.where(
+              _ensureSatelliteState(source).seasons.contains,
+            ))
+              <String, dynamic>{
+                'season': season,
+                'from_date': _formatAiDate(
+                  _ensureSatelliteState(source).ranges[season]!.from!,
+                ),
+                'to_date': _formatAiDate(
+                  _ensureSatelliteState(source).ranges[season]!.to!,
+                ),
+              },
+          ],
+        },
+    };
+  }
+
+  Future<void> _saveSettings() async {
+    final validationMessage = _settingsValidationMessage();
+    if (validationMessage != null) {
+      AppSnackbar.showError(context, validationMessage);
       return;
     }
+    final parsedMinSamples = int.tryParse(_minSamplesController.text.trim());
+    final minSamples = (parsedMinSamples ?? 50).clamp(1, 10000).toInt();
+    final confidenceThreshold =
+        double.tryParse(_confidenceThresholdController.text.trim()) ?? 0.6;
+    final sources = _orderedSelectedSatelliteSources();
+    final timeframes = _satelliteTimeframesPayload();
+    _syncFeatureInputsWithSelectedSatellites();
+    final skippedFeatureInputs = Set<String>.from(_skippedFeatureInputs);
+    final selectedFeatureInputs = _selectedFeatureInputs.toList(growable: false)
+      ..sort();
+    final featureGroups = _featureGroupsForInputs(
+      _selectedFeatureInputs,
+    ).toList(growable: false)..sort();
+    final primarySource = sources.first;
+    final primaryFrame = timeframes[primarySource] as Map<String, dynamic>;
+    final primarySeasons = primaryFrame['seasons'] as List<dynamic>;
+    final primarySeason = primarySeasons.first as Map<String, dynamic>;
     setState(() => _saving = true);
     try {
       await ref
@@ -1302,26 +1844,43 @@ class _ProjectAiSettingsSectionState
                   ? _customScopeGeometry
                   : null,
               minSamplesPerClass: minSamples,
+              confidenceThreshold: confidenceThreshold,
               modelPreferences: <String, dynamic>{
                 'preferred_model': _preferredModel,
-                'satellite_source': _satelliteSource,
-                'target_year': int.tryParse(_targetYear) ?? DateTime.now().year,
-                'season': _season,
-                'date_from': _dateFromController.text.trim(),
-                'date_to': _dateToController.text.trim(),
-                'feature_inputs': (_selectedFeatureInputs.toList(
-                  growable: false,
-                )..sort()),
-                'recommended_feature_inputs': (_recommendedFeaturesForSatellite(
-                  _satelliteSource,
-                ).toList(growable: false)..sort()),
-                'national_scope_enabled': _nationalModeEnabled,
+                'satellite_sources': sources,
+                'satellite_timeframes': timeframes,
+                'satellite_source': primarySource,
+                'target_year': primaryFrame['map_year'],
+                'season': primarySeason['season'],
+                'date_from': primarySeason['from_date'],
+                'date_to': primarySeason['to_date'],
+                'feature_groups': featureGroups,
+                'feature_inputs': selectedFeatureInputs,
+                'selected_feature_inputs': selectedFeatureInputs,
+                'selected_extracted_features': selectedFeatureInputs,
+                if (_scopeType == 'national')
+                  'national_scope_warning_acknowledged':
+                      _nationalScopeWarningAcknowledged,
               },
             ),
           );
       bumpWorkflowRefresh(ref);
       if (mounted) {
-        AppSnackbar.showSuccess(context, 'AI settings saved successfully.');
+        if (skippedFeatureInputs.isNotEmpty) {
+          AppSnackbar.showWarning(
+            context,
+            _skippedFeatureSaveMessage(skippedFeatureInputs),
+            actionLabel: 'View warning',
+            onAction: _scrollToFeatureWarnings,
+          );
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              _scrollToFeatureWarnings();
+            }
+          });
+        } else {
+          AppSnackbar.showSuccess(context, 'AI settings saved successfully.');
+        }
       }
     } catch (error) {
       if (mounted) {
@@ -1341,27 +1900,137 @@ class _ProjectAiSettingsSectionState
   }
 }
 
+class _DateValueField extends StatelessWidget {
+  const _DateValueField({
+    required this.label,
+    required this.value,
+    required this.onTap,
+  });
+
+  final String label;
+  final String value;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: label,
+          suffixIcon: const Icon(Icons.calendar_month_outlined),
+          enabled: onTap != null,
+        ),
+        child: Text(value.isEmpty ? 'Select date' : value),
+      ),
+    );
+  }
+}
+
+class _ProjectAreaScopeSummary extends StatelessWidget {
+  const _ProjectAreaScopeSummary({
+    required this.scopeType,
+    required this.readiness,
+    required this.hasCustomGeometry,
+  });
+
+  final String scopeType;
+  final AiReadinessResult? readiness;
+  final bool hasCustomGeometry;
+
+  @override
+  Widget build(BuildContext context) {
+    final extent = readiness?.spatialExtent;
+    final title = switch (scopeType) {
+      'custom_polygon' =>
+        hasCustomGeometry ? 'Custom AI area' : 'Custom AI area not configured',
+      'national' => 'National Lebanon',
+      _ =>
+        extent == null
+            ? 'Project area scope not configured'
+            : 'Project feature extent (rectangular fallback)',
+    };
+    final text = switch (scopeType) {
+      'custom_polygon' =>
+        hasCustomGeometry
+            ? 'AI runs will clip imagery, training samples, and predictions to the saved custom polygon.'
+            : 'Project area scope is not configured. AI runs need an AOI to clip imagery and generate predictions.',
+      'national' =>
+        'National Lebanon is not available in the current AI pipeline.',
+      _ =>
+        extent == null
+            ? 'Project area scope is not configured. AI runs need an AOI to clip imagery and generate predictions.'
+            : 'The backend will use the bounding rectangle around approved project features and training samples: ${_formatExtent(extent)}. This is not a drawn project boundary; if samples are spread out, the AI may classify a larger area. Draw a Custom AI area to limit the run.',
+    };
+    final isFallbackExtent =
+        scopeType != 'custom_polygon' &&
+        scopeType != 'national' &&
+        extent != null;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.sm),
+        child: _NoticeRow(
+          icon: (extent == null && scopeType != 'national') || isFallbackExtent
+              ? Icons.warning_amber_outlined
+              : Icons.travel_explore_outlined,
+          text: '$title. $text',
+        ),
+      ),
+    );
+  }
+}
+
 class _FeatureInputSelector extends StatelessWidget {
   const _FeatureInputSelector({
     required this.selected,
-    required this.availableFeatures,
-    required this.recommended,
-    required this.recommendationNote,
+    required this.satelliteSources,
+    required this.seasonCount,
+    required this.options,
+    required this.selectAllKeys,
+    required this.dependencyNotice,
+    required this.onSelectAll,
     required this.onChanged,
   });
 
   final Set<String> selected;
-  final List<String> availableFeatures;
-  final Set<String> recommended;
-  final String recommendationNote;
+  final List<String> satelliteSources;
+  final int seasonCount;
+  final List<_FeatureInputOption> options;
+  final Set<String> selectAllKeys;
+  final String? dependencyNotice;
+  final VoidCallback? onSelectAll;
   final ValueChanged<Set<String>>? onChanged;
 
   @override
   Widget build(BuildContext context) {
-    final allFeatures = availableFeatures;
+    final recommendedKeys = options
+        .where((option) => option.recommended)
+        .map((option) => option.key)
+        .toSet();
+    final optionKeys = options.map((option) => option.key).toSet();
+    final selectableKeys = selectAllKeys.where(optionKeys.contains).toSet();
     final allSelected =
-        allFeatures.isNotEmpty &&
-        allFeatures.every((feature) => selected.contains(feature));
+        selectableKeys.isNotEmpty && selectableKeys.every(selected.contains);
+    final groupedOptions = <String, List<_FeatureInputOption>>{};
+    for (final option in options) {
+      groupedOptions.putIfAbsent(option.group, () => <_FeatureInputOption>[]);
+      groupedOptions[option.group]!.add(option);
+    }
+    final groups = groupedOptions.keys.toList(growable: false)
+      ..sort((left, right) {
+        final rankCompare = _featureInputGroupRank(
+          left,
+        ).compareTo(_featureInputGroupRank(right));
+        if (rankCompare != 0) {
+          return rankCompare;
+        }
+        return left.compareTo(right);
+      });
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1373,61 +2042,309 @@ class _FeatureInputSelector extends StatelessWidget {
                 style: Theme.of(context).textTheme.titleSmall,
               ),
             ),
-            TextButton.icon(
-              onPressed: onChanged == null
-                  ? null
-                  : () => onChanged!(
-                      allSelected
-                          ? Set<String>.from(recommended)
-                          : allFeatures.toSet(),
-                    ),
-              icon: Icon(
-                allSelected
-                    ? Icons.recommend_outlined
-                    : Icons.select_all_outlined,
-              ),
-              label: Text(allSelected ? 'Use recommended' : 'Select all'),
+            IconButton(
+              tooltip: 'Feature requirements',
+              icon: const Icon(Icons.info_outline),
+              onPressed: () => _showFeatureRequirementsSheet(context),
             ),
           ],
         ),
         const SizedBox(height: AppSpacing.xs),
-        _NoticeRow(icon: Icons.eco_outlined, text: recommendationNote),
-        const SizedBox(height: AppSpacing.sm),
+        _NoticeRow(
+          icon: Icons.satellite_alt_outlined,
+          text:
+              'Choose the exact feature inputs used for training and prediction. Satellite features come from ${satelliteSources.map(_friendlySatelliteLabel).join(', ')} and selected seasons.',
+        ),
+        if (seasonCount > 1) ...[
+          const SizedBox(height: AppSpacing.xs),
+          const _NoticeRow(
+            icon: Icons.timeline_outlined,
+            text: 'Seasonal composites capture crop phenology.',
+          ),
+        ],
+        if (dependencyNotice != null) ...[
+          const SizedBox(height: AppSpacing.xs),
+          _NoticeRow(
+            icon: Icons.warning_amber_outlined,
+            text: dependencyNotice!,
+          ),
+        ],
+        const SizedBox(height: AppSpacing.xs),
         Wrap(
-          spacing: 8,
-          runSpacing: 8,
+          spacing: AppSpacing.xs,
+          runSpacing: AppSpacing.xs,
           children: [
-            for (final feature in allFeatures)
-              FilterChip(
-                label: Text(
-                  recommended.contains(feature) ? '$feature *' : feature,
-                ),
-                selected: selected.contains(feature),
-                onSelected: onChanged == null
-                    ? null
-                    : (value) {
-                        final next = Set<String>.from(selected);
-                        if (value) {
-                          next.add(feature);
-                        } else {
-                          next.remove(feature);
-                        }
-                        onChanged!(next);
-                      },
+            ActionChip(
+              avatar: const Icon(Icons.auto_awesome_outlined, size: 18),
+              label: const Text('Select recommended'),
+              onPressed: onChanged == null
+                  ? null
+                  : () => onChanged!(
+                      recommendedKeys.isEmpty
+                          ? selected
+                          : Set<String>.from(recommendedKeys),
+                    ),
+            ),
+            ActionChip(
+              avatar: Icon(
+                allSelected
+                    ? Icons.deselect_outlined
+                    : Icons.select_all_outlined,
+                size: 18,
               ),
+              label: Text(allSelected ? 'Unselect all' : 'Select all'),
+              onPressed: onChanged == null || selectableKeys.isEmpty
+                  ? null
+                  : allSelected
+                  ? () => onChanged!(<String>{})
+                  : onSelectAll,
+            ),
           ],
         ),
-        const SizedBox(height: AppSpacing.xs),
-        Text('* recommended', style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: AppSpacing.sm),
+        for (var groupIndex = 0; groupIndex < groups.length; groupIndex += 1)
+          _FeatureInputGroup(
+            group: groups[groupIndex],
+            options: groupedOptions[groups[groupIndex]]!,
+            selected: selected,
+            onChanged: onChanged,
+            topSpacing: groupIndex == 0 ? 0 : AppSpacing.md,
+          ),
       ],
     );
   }
 }
 
+void _showFeatureRequirementsSheet(BuildContext context) {
+  showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (context) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.lg,
+          0,
+          AppSpacing.lg,
+          AppSpacing.lg,
+        ),
+        child: ListView(
+          shrinkWrap: true,
+          children: const [
+            Text(
+              'Feature requirements',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            ),
+            SizedBox(height: AppSpacing.sm),
+            _FeatureRequirementRow(
+              title: 'Spectral bands',
+              text:
+                  'Sentinel-2: B2 (Blue), B3 (Green), B4 (Red), B5/B6/B7 (Red-edge), B8/B8A (Near Infrared), B11/B12 (Shortwave Infrared). Landsat: SR_B2 (Blue), SR_B3 (Green), SR_B4 (Red), SR_B5 (Near Infrared), SR_B6/SR_B7 (Shortwave Infrared).',
+            ),
+            _FeatureRequirementRow(
+              title: 'Vegetation indices',
+              text:
+                  'NDVI (vegetation greenness), EVI (dense canopy greenness), SAVI (soil-adjusted greenness), and NDWI (water/moisture signal) require a valid Sentinel-2 or Landsat season.',
+            ),
+            _FeatureRequirementRow(
+              title: 'Red-edge indices',
+              text:
+                  'NDRE (chlorophyll/red-edge signal) requires Sentinel-2 because Landsat does not provide Sentinel-2 red-edge bands.',
+            ),
+            _FeatureRequirementRow(
+              title: 'Texture features',
+              text:
+                  'static_texture_pc1 (orchard texture pattern) requires Sentinel-2, NDVI, and a Sentinel-2 dry season/timeframe.',
+            ),
+            _FeatureRequirementRow(
+              title: 'Topography',
+              text:
+                  'static_srtm_elevation (elevation), static_srtm_slope (slope), and static_srtm_aspect (aspect) come from terrain data and can be used with any satellite source.',
+            ),
+            _FeatureRequirementRow(
+              title: 'Seasonal features',
+              text:
+                  'Seasonal composites use the selected source and timeframe keys: growing, dry, harvest, and winter. Each selected season needs a from date and to date.',
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _FeatureRequirementRow extends StatelessWidget {
+  const _FeatureRequirementRow({required this.title, required this.text});
+
+  final String title;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 2),
+          Text(text),
+        ],
+      ),
+    );
+  }
+}
+
+class _FeatureInputGroup extends StatelessWidget {
+  const _FeatureInputGroup({
+    required this.group,
+    required this.options,
+    required this.selected,
+    required this.onChanged,
+    required this.topSpacing,
+  });
+
+  final String group;
+  final List<_FeatureInputOption> options;
+  final Set<String> selected;
+  final ValueChanged<Set<String>>? onChanged;
+  final double topSpacing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(top: topSpacing),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            group,
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final columnCount = constraints.maxWidth >= 900
+                  ? 3
+                  : constraints.maxWidth >= 620
+                  ? 2
+                  : 1;
+              final totalSpacing = AppSpacing.sm * (columnCount - 1);
+              final itemWidth =
+                  (constraints.maxWidth - totalSpacing) / columnCount;
+              return Wrap(
+                spacing: AppSpacing.sm,
+                runSpacing: AppSpacing.sm,
+                children: [
+                  for (final option in options)
+                    SizedBox(
+                      width: itemWidth,
+                      child: CheckboxListTile(
+                        value: selected.contains(option.key),
+                        onChanged: onChanged == null
+                            ? null
+                            : (value) {
+                                final next = Set<String>.from(selected);
+                                if (value == true) {
+                                  next.add(option.key);
+                                } else {
+                                  next.remove(option.key);
+                                }
+                                onChanged!(next);
+                              },
+                        secondary: Icon(option.icon),
+                        title: Text(option.title),
+                        subtitle: option.recommended
+                            ? const Text('Recommended')
+                            : null,
+                        controlAffinity: ListTileControlAffinity.trailing,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.sm,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          side: BorderSide(
+                            color: Theme.of(context).colorScheme.outlineVariant,
+                          ),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FeatureInputOption {
+  const _FeatureInputOption({
+    required this.key,
+    required this.label,
+    required this.group,
+    required this.recommended,
+  });
+
+  final String key;
+  final String label;
+  final String group;
+  final bool recommended;
+
+  String get title => label;
+
+  IconData get icon {
+    if (group.contains('Landsat') || group.contains('Sentinel')) {
+      return Icons.blur_on_outlined;
+    }
+    if (group == 'Vegetation indices') {
+      return Icons.eco_outlined;
+    }
+    if (group == 'Topography') {
+      return Icons.terrain_outlined;
+    }
+    return Icons.grain_outlined;
+  }
+}
+
+int _featureInputGroupRank(String group) {
+  return switch (group) {
+    'Sentinel-2 bands' => 0,
+    'Landsat bands' => 1,
+    'Vegetation indices' => 2,
+    'Topography' => 3,
+    'Texture' => 4,
+    _ => 100,
+  };
+}
+
+int _compareFeatureInputOptions(
+  _FeatureInputOption left,
+  _FeatureInputOption right,
+) {
+  final groupCompare = _featureInputGroupRank(
+    left.group,
+  ).compareTo(_featureInputGroupRank(right.group));
+  if (groupCompare != 0) {
+    return groupCompare;
+  }
+  if (left.recommended != right.recommended) {
+    return left.recommended ? -1 : 1;
+  }
+  return left.key.compareTo(right.key);
+}
+
 class ProjectAiRunsSection extends ConsumerStatefulWidget {
-  const ProjectAiRunsSection({required this.project, super.key});
+  const ProjectAiRunsSection({
+    required this.project,
+    this.initialRunId,
+    super.key,
+  });
 
   final ProjectSummary project;
+  final String? initialRunId;
 
   @override
   ConsumerState<ProjectAiRunsSection> createState() =>
@@ -1436,14 +2353,35 @@ class ProjectAiRunsSection extends ConsumerStatefulWidget {
 
 class _ProjectAiRunsSectionState extends ConsumerState<ProjectAiRunsSection> {
   String? _selectedRunId;
+  String? _lastAutoScrolledRunId;
   bool _startingRun = false;
+  final Map<String, GlobalKey> _runKeys = <String, GlobalKey>{};
+  final Map<String, AiRun> _runOverrides = <String, AiRun>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedRunId = _cleanRunId(widget.initialRunId);
+  }
+
+  @override
+  void didUpdateWidget(covariant ProjectAiRunsSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final nextRunId = _cleanRunId(widget.initialRunId);
+    if (nextRunId != _cleanRunId(oldWidget.initialRunId)) {
+      _selectedRunId = nextRunId;
+      _scrollToRun(nextRunId);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final settingsAsync = ref.watch(aiSettingsProvider(widget.project.id));
-    final runsAsync = ref.watch(
-      aiRunsProvider(AiRunsQuery(projectId: widget.project.id)),
+    final runsAsync = ref.watch(aiProjectRunsProvider(widget.project.id));
+    final publishedLayersAsync = ref.watch(
+      publishedAiLayersProvider(widget.project.id),
     );
+    final visibleRuns = _runsWithOverrides(runsAsync.asData?.value);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1454,9 +2392,7 @@ class _ProjectAiRunsSectionState extends ConsumerState<ProjectAiRunsSection> {
             children: [
               const SectionHeader(title: 'AI Runs'),
               const SizedBox(height: AppSpacing.sm),
-              const Text(
-                'View AI run records, worker logs, and regional proof-of-concept results.',
-              ),
+              const Text('View AI server run status and results.'),
               const SizedBox(height: AppSpacing.md),
               settingsAsync.when(
                 loading: () => const LinearProgressIndicator(),
@@ -1467,40 +2403,86 @@ class _ProjectAiRunsSectionState extends ConsumerState<ProjectAiRunsSection> {
                   ),
                 ),
                 data: (settings) {
+                  final readinessQuery = AiReadinessQuery(
+                    projectId: widget.project.id,
+                    labelField: settings.labelField,
+                    minSamplesPerClass: settings.minSamplesPerClass,
+                    scopeType: settings.scopeType,
+                  );
+                  final readinessAsync = ref.watch(
+                    aiReadinessProvider(readinessQuery),
+                  );
+                  final readiness = readinessAsync.asData?.value;
+                  final runItems = runsAsync.asData?.value;
+                  final runListReady =
+                      runItems != null || _runOverrides.isNotEmpty;
+                  final activeRun = runListReady
+                      ? _activeRunFrom(visibleRuns)
+                      : null;
                   final canStartRun =
                       !_startingRun &&
-                      (settings.labelField?.trim().isNotEmpty ?? false);
-                  return SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.tonalIcon(
-                      onPressed: canStartRun
-                          ? () => _startAiRun(settings)
-                          : null,
-                      icon: _startingRun
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.play_arrow_outlined),
-                      label: Text(
-                        _startingRun ? 'Starting...' : 'Start AI run',
+                      runListReady &&
+                      activeRun == null &&
+                      settings.isEnabled &&
+                      (settings.labelField?.trim().isNotEmpty ?? false) &&
+                      readiness != null &&
+                      !readiness.isNotReady &&
+                      readiness.aiServer.isConnected;
+                  final startHelp = !runListReady
+                      ? 'Checking active AI runs before starting.'
+                      : activeRun != null
+                      ? 'An AI run is already active for this project.'
+                      : readinessAsync.when(
+                          loading: () => 'Checking readiness before starting.',
+                          error: (error, _) => userFacingErrorMessage(
+                            error,
+                            fallback:
+                                'Unable to check readiness before starting.',
+                          ),
+                          data: (value) => value.aiServer.isConnected
+                              ? 'Starts an AI run through the backend AI server.'
+                              : _aiServerReadinessMessage(value.aiServer),
+                        );
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AppButton(
+                        label: _startingRun ? 'Starting...' : 'Start AI run',
+                        icon: Icons.play_arrow_outlined,
+                        isLoading: _startingRun,
+                        onPressed: canStartRun
+                            ? () => _startAiRun(settings)
+                            : null,
                       ),
-                    ),
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(startHelp),
+                      const SizedBox(height: AppSpacing.md),
+                      publishedLayersAsync.when(
+                        loading: () => const LinearProgressIndicator(),
+                        error: (error, _) => _NoticeRow(
+                          icon: Icons.error_outline,
+                          text: userFacingErrorMessage(
+                            error,
+                            fallback:
+                                'Unable to load the current published AI layer.',
+                          ),
+                        ),
+                        data: (layers) => _PublishedRunTopSummary(
+                          layer: _firstClassificationLayer(layers),
+                        ),
+                      ),
+                    ],
                   );
                 },
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              const Text(
-                'Queues a regional review run from saved settings. Results appear after the backend AI worker processes it.',
               ),
             ],
           ),
         ),
         const SizedBox(height: AppSpacing.md),
         runsAsync.when(
-          loading: () =>
-              const AppCard(child: Center(child: CircularProgressIndicator())),
+          loading: () => visibleRuns.isEmpty
+              ? const AppCard(child: Center(child: CircularProgressIndicator()))
+              : _buildRunsList(visibleRuns),
           error: (error, _) => AppEmptyState(
             icon: Icons.error_outline,
             title: 'AI runs unavailable',
@@ -1509,63 +2491,113 @@ class _ProjectAiRunsSectionState extends ConsumerState<ProjectAiRunsSection> {
               fallback: 'Unable to load AI runs right now.',
             ),
             actionLabel: 'Retry',
-            onAction: () => ref.invalidate(
-              aiRunsProvider(AiRunsQuery(projectId: widget.project.id)),
-            ),
+            onAction: () =>
+                ref.invalidate(aiProjectRunsProvider(widget.project.id)),
           ),
-          data: (page) {
-            if (page.items.isEmpty) {
+          data: (_) {
+            if (visibleRuns.isEmpty) {
               return const AppCard(
                 child: ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: Icon(Icons.history_outlined),
                   title: Text('No AI run records yet'),
                   subtitle: Text(
-                    'Start a regional run when settings and readiness are ready.',
+                    'Start a run when settings and readiness are ready.',
                   ),
                 ),
               );
             }
-            return AppCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (final run in page.items) ...[
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.manage_history_outlined),
-                      title: Text(
-                        'Run ${run.id.substring(0, run.id.length.clamp(0, 8))}',
-                      ),
-                      subtitle: Text(
-                        '${_friendlyStatusLabel(run.status)} - ${run.labelField ?? 'No label'} - ${run.eligibleFeatureCount} eligible',
-                      ),
-                      trailing: StatusChip(status: run.status),
-                      onTap: () => setState(
-                        () => _selectedRunId = _selectedRunId == run.id
-                            ? null
-                            : run.id,
-                      ),
-                    ),
-                    if (run.failureReason?.trim().isNotEmpty ?? false)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                        child: Text('Failure: ${run.failureReason}'),
-                      ),
-                    if (_selectedRunId == run.id) ...[
-                      const SizedBox(height: AppSpacing.sm),
-                      _AiRunDetailCard(runId: run.id),
-                      const SizedBox(height: AppSpacing.sm),
-                    ],
-                    if (run != page.items.last) const Divider(height: 1),
-                  ],
-                ],
-              ),
-            );
+            return _buildRunsList(visibleRuns);
           },
         ),
       ],
     );
+  }
+
+  Widget _buildRunsList(List<AiRun> runs) {
+    _scrollToRun(_selectedRunId);
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final run in runs) ...[
+            KeyedSubtree(
+              key: _runKey(run.id),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.manage_history_outlined),
+                    title: Text(_runDisplayTitle(run)),
+                    subtitle: Text(
+                      [
+                        _friendlyStatusLabel(run.status),
+                        '${_runPredictionCount(run)} predictions',
+                        run.labelField ?? 'No label',
+                      ].join(' - '),
+                    ),
+                    trailing: StatusChip(status: run.status),
+                    onTap: () => _toggleRun(run.id),
+                  ),
+                  if (run.failureReason?.trim().isNotEmpty ?? false)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                      child: Text('Failure: ${run.failureReason}'),
+                    ),
+                  if (_selectedRunId == run.id) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    _AiRunDetailCard(
+                      runId: run.id,
+                      initialRun: run,
+                      onRunUpdated: _upsertLocalRun,
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                  ],
+                ],
+              ),
+            ),
+            if (run != runs.last) const Divider(height: 1),
+          ],
+        ],
+      ),
+    );
+  }
+
+  GlobalKey _runKey(String runId) {
+    return _runKeys.putIfAbsent(runId, GlobalKey.new);
+  }
+
+  void _toggleRun(String runId) {
+    final willOpen = _selectedRunId != runId;
+    setState(() => _selectedRunId = willOpen ? runId : null);
+    if (willOpen) {
+      _scrollToRun(runId, force: true);
+    }
+  }
+
+  void _scrollToRun(String? runId, {bool force = false}) {
+    if (runId == null) {
+      return;
+    }
+    if (!force && _lastAutoScrolledRunId == runId) {
+      return;
+    }
+    if (!force) {
+      _lastAutoScrolledRunId = runId;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final context = _runKeys[runId]?.currentContext;
+      if (context == null || !mounted) {
+        return;
+      }
+      Scrollable.ensureVisible(
+        context,
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+        alignment: 0.05,
+      );
+    });
   }
 
   Future<void> _startAiRun(AiProjectSettings settings) async {
@@ -1575,16 +2607,16 @@ class _ProjectAiRunsSectionState extends ConsumerState<ProjectAiRunsSection> {
           .read(aiRepositoryProvider)
           .createRun(
             projectId: widget.project.id,
-            status: 'queued',
+            status: 'starting',
             labelField: settings.labelField,
             scopeType: settings.scopeType,
             minSamplesPerClass: settings.minSamplesPerClass,
             executionMode: 'regional_full_review_artifacts',
           );
       _selectedRunId = run.id;
-      bumpWorkflowRefresh(ref);
+      _upsertLocalRun(run);
       if (mounted) {
-        AppSnackbar.showSuccess(context, 'Run queued. Worker is not running.');
+        AppSnackbar.showSuccess(context, 'AI run started.');
       }
     } catch (error) {
       if (mounted) {
@@ -1602,24 +2634,196 @@ class _ProjectAiRunsSectionState extends ConsumerState<ProjectAiRunsSection> {
       }
     }
   }
+
+  List<AiRun> _runsWithOverrides(List<AiRun>? baseRuns) {
+    final byId = <String, AiRun>{};
+    for (final run in baseRuns ?? const <AiRun>[]) {
+      byId[run.id] = run;
+    }
+    for (final run in _runOverrides.values) {
+      final existing = byId[run.id];
+      byId[run.id] = existing == null ? run : _preferNewestRun(existing, run);
+    }
+    final runs = byId.values.toList(growable: false);
+    runs.sort(_compareRunsNewestFirst);
+    return runs;
+  }
+
+  void _upsertLocalRun(AiRun run) {
+    setState(() {
+      _runOverrides[run.id] = run;
+    });
+    ref.invalidate(aiProjectRunsProvider(run.projectId));
+    ref.invalidate(aiRunsProvider);
+  }
 }
 
-class _AiRunDetailCard extends ConsumerWidget {
-  const _AiRunDetailCard({required this.runId});
+String? _cleanRunId(String? value) {
+  final trimmed = value?.trim();
+  return trimmed == null || trimmed.isEmpty ? null : trimmed;
+}
 
-  final String runId;
+int _compareRunsNewestFirst(AiRun left, AiRun right) {
+  final leftDate = left.createdAt ?? left.startedAt ?? left.updatedAt;
+  final rightDate = right.createdAt ?? right.startedAt ?? right.updatedAt;
+  if (leftDate != null && rightDate != null) {
+    final dateCompare = rightDate.compareTo(leftDate);
+    if (dateCompare != 0) {
+      return dateCompare;
+    }
+  } else if (leftDate != null) {
+    return -1;
+  } else if (rightDate != null) {
+    return 1;
+  }
+  return left.id.compareTo(right.id);
+}
+
+AiRun _preferNewestRun(AiRun preferred, AiRun fallback) {
+  if (preferred.id != fallback.id) {
+    return fallback;
+  }
+  final preferredDate =
+      preferred.updatedAt ??
+      preferred.callbackReceivedAt ??
+      preferred.completedAt ??
+      preferred.startedAt ??
+      preferred.createdAt;
+  final fallbackDate =
+      fallback.updatedAt ??
+      fallback.callbackReceivedAt ??
+      fallback.completedAt ??
+      fallback.startedAt ??
+      fallback.createdAt;
+  if (preferredDate != null && fallbackDate != null) {
+    return preferredDate.isBefore(fallbackDate) ? fallback : preferred;
+  }
+  if (fallbackDate != null && preferredDate == null) {
+    return fallback;
+  }
+  return preferred;
+}
+
+class _PublishedRunTopSummary extends StatelessWidget {
+  const _PublishedRunTopSummary({required this.layer});
+
+  final AiOutputLayer? layer;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final runAsync = ref.watch(aiRunProvider(runId));
-    final metricsAsync = ref.watch(aiRunMetricsProvider(runId));
-    final layersAsync = ref.watch(aiRunLayersProvider(runId));
-    final logsAsync = ref.watch(aiRunLogsProvider(runId));
-    final reviewsAsync = ref.watch(aiRunReviewsProvider(runId));
+  Widget build(BuildContext context) {
+    final publishedLayer = layer;
+    final runId = publishedLayer?.aiRunId?.trim() ?? '';
+    if (publishedLayer == null || runId.isEmpty) {
+      return const _NoticeRow(
+        icon: Icons.layers_clear_outlined,
+        text: 'No AI layer is currently published.',
+      );
+    }
+
+    final predictionCount = publishedLayer.predictionCount > 0
+        ? publishedLayer.predictionCount
+        : publishedLayer.runPredictionCount;
+    final runLabel = _publishedRunDisplayLabel(publishedLayer);
+    final rows = <MapEntry<String, String>>[
+      MapEntry('Published Run', runLabel),
+      MapEntry('Prediction Count', '$predictionCount'),
+      MapEntry(
+        'Published At',
+        publishedLayer.publishedAt == null
+            ? 'Not recorded'
+            : formatLebanonDate(publishedLayer.publishedAt!),
+      ),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Current Published AI Layer',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        for (final row in rows)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 3),
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(text: row.key),
+                  const TextSpan(text: ': '),
+                  TextSpan(
+                    text: row.value,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+              softWrap: true,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+String _publishedRunDisplayLabel(AiOutputLayer layer) {
+  final runId = layer.aiRunId?.trim() ?? '';
+  final displayName = layer.runDisplayName?.trim();
+  if (displayName != null && displayName.isNotEmpty) {
+    final lower = displayName.toLowerCase();
+    if (lower.startsWith('run ')) {
+      return displayName;
+    }
+    if (displayName == runId || _looksLikeUuid(displayName)) {
+      return 'Run ${_shortId(displayName)}';
+    }
+  }
+  return 'Run ${_shortId(runId)}';
+}
+
+bool _looksLikeUuid(String value) {
+  return RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  ).hasMatch(value.trim());
+}
+
+class _AiRunDetailCard extends ConsumerStatefulWidget {
+  const _AiRunDetailCard({
+    required this.runId,
+    required this.initialRun,
+    required this.onRunUpdated,
+  });
+
+  final String runId;
+  final AiRun initialRun;
+  final ValueChanged<AiRun> onRunUpdated;
+
+  @override
+  ConsumerState<_AiRunDetailCard> createState() => _AiRunDetailCardState();
+}
+
+class _AiRunDetailCardState extends ConsumerState<_AiRunDetailCard> {
+  AiRun? _localRun;
+
+  @override
+  void didUpdateWidget(covariant _AiRunDetailCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.runId != widget.runId) {
+      _localRun = null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final runAsync = ref.watch(aiRunProvider(widget.runId));
+    final metricsAsync = ref.watch(aiRunMetricsProvider(widget.runId));
+    final layersAsync = ref.watch(aiRunLayersProvider(widget.runId));
 
     return runAsync.when(
-      loading: () =>
-          const AppCard(child: Center(child: CircularProgressIndicator())),
+      loading: () => _buildDetails(
+        run: _localRun ?? widget.initialRun,
+        metricsAsync: metricsAsync,
+        layersAsync: layersAsync,
+      ),
       error: (error, _) => AppEmptyState(
         icon: Icons.error_outline,
         title: 'AI run unavailable',
@@ -1628,81 +2832,84 @@ class _AiRunDetailCard extends ConsumerWidget {
           fallback: 'Unable to load this AI run right now.',
         ),
       ),
-      data: (run) => Padding(
-        padding: const EdgeInsets.only(
-          left: AppSpacing.md,
-          right: AppSpacing.xs,
-          bottom: AppSpacing.sm,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _RunDetailSectionCard(
-              title: 'Run summary',
-              trailing: StatusChip(status: run.status),
-              child: _RunStatusSection(run: run),
-            ),
-            if (run.failureReason?.trim().isNotEmpty ?? false) ...[
-              const SizedBox(height: AppSpacing.md),
-              _RunDetailSectionCard(
-                title: 'Failure reason',
-                child: _NoticeRow(
-                  icon: Icons.error_outline,
-                  text: _safeText(run.failureReason!),
-                ),
-              ),
-            ],
+      data: (run) {
+        return _buildDetails(
+          run: _localRun ?? _preferNewestRun(widget.initialRun, run),
+          metricsAsync: metricsAsync,
+          layersAsync: layersAsync,
+        );
+      },
+    );
+  }
+
+  Widget _buildDetails({
+    required AiRun run,
+    required AsyncValue<List<AiRunMetric>> metricsAsync,
+    required AsyncValue<List<AiOutputLayer>> layersAsync,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(
+        left: AppSpacing.md,
+        right: AppSpacing.md,
+        bottom: AppSpacing.sm,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _RunDetailSectionCard(
+            title: 'Run summary',
+            trailing: StatusChip(status: run.status),
+            child: _RunStatusSection(run: run),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          _RunActionBar(
+            run: run,
+            onRunUpdated: (updated) {
+              setState(() => _localRun = updated);
+              widget.onRunUpdated(updated);
+            },
+          ),
+          if (run.failureReason?.trim().isNotEmpty ?? false) ...[
             const SizedBox(height: AppSpacing.md),
             _RunDetailSectionCard(
-              title: 'Model summary',
-              child: _ModelResultSection(run: run, metricsAsync: metricsAsync),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            _RunDetailSectionCard(
-              title: 'Run configuration',
-              child: _AiRunSettingsSection(run: run),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            _RunDetailSectionCard(
-              title: 'Output layers',
-              child: _AiOutputLayersSection(
-                run: run,
-                layersAsync: layersAsync,
-                reviewsAsync: reviewsAsync,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            _RunDetailSectionCard(
-              title: 'Review and publishing',
-              child: _ReviewSection(run: run, reviewsAsync: reviewsAsync),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            _RunDetailSectionCard(
-              title: 'Validation summary',
-              child: _RunValidationSummary(run: run),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            _RunDetailSectionCard(
-              title: 'Technical details',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _DetailedRunResultsSection(
-                    run: run,
-                    metricsAsync: metricsAsync,
-                    layersAsync: layersAsync,
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  _OutputPathsSection(paths: _outputPaths(run.metadata)),
-                  const SizedBox(height: AppSpacing.sm),
-                  _LogsSection(asyncValue: logsAsync),
-                  const SizedBox(height: AppSpacing.sm),
-                  _TechnicalDetailsSection(run: run),
-                ],
+              title: 'Failure reason',
+              child: _NoticeRow(
+                icon: Icons.error_outline,
+                text: _safeText(run.failureReason!),
               ),
             ),
           ],
-        ),
+          const SizedBox(height: AppSpacing.md),
+          _RunDetailSectionCard(
+            title: 'Model summary',
+            child: _ModelResultSection(run: run, metricsAsync: metricsAsync),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          _RunDetailSectionCard(
+            title: 'Run configuration',
+            child: _AiRunSettingsSection(run: run),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          _RunDetailSectionCard(
+            title: 'Output Layer',
+            child: _AiOutputLayersSection(run: run, layersAsync: layersAsync),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          _RunDetailSectionCard(
+            title: 'Validation summary',
+            child: _RunValidationSummary(run: run),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          _RunDetailSectionCard(
+            title: 'Retraining recommendation',
+            child: _RetrainRecommendationSection(run: run),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          _RunDetailSectionCard(
+            title: 'AI output files',
+            child: _OutputPathsSection(run: run),
+          ),
+        ],
       ),
     );
   }
@@ -1756,6 +2963,160 @@ class _RunDetailSectionCard extends StatelessWidget {
   }
 }
 
+class _RunActionBar extends ConsumerStatefulWidget {
+  const _RunActionBar({required this.run, required this.onRunUpdated});
+
+  final AiRun run;
+  final ValueChanged<AiRun> onRunUpdated;
+
+  @override
+  ConsumerState<_RunActionBar> createState() => _RunActionBarState();
+}
+
+class _RunActionBarState extends ConsumerState<_RunActionBar> {
+  bool _refreshing = false;
+  bool _cancelling = false;
+  bool _resuming = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final actions = <Widget>[
+      AppButton(
+        label: _refreshing ? 'Checking...' : 'Check status',
+        icon: Icons.refresh_outlined,
+        isLoading: _refreshing,
+        variant: AppButtonVariant.outlined,
+        onPressed: _cancelling || _resuming ? null : _refreshRunStatus,
+      ),
+      if (widget.run.canCancel)
+        AppButton(
+          label: _cancelling ? 'Cancelling...' : 'Cancel run',
+          icon: Icons.cancel_outlined,
+          isLoading: _cancelling,
+          variant: AppButtonVariant.outlined,
+          onPressed: _refreshing || _resuming ? null : _cancelRun,
+        ),
+      if (widget.run.canResume)
+        AppButton(
+          label: _resuming ? 'Resuming...' : 'Resume run',
+          icon: Icons.replay_outlined,
+          isLoading: _resuming,
+          onPressed: _refreshing || _cancelling ? null : _resumeRun,
+        ),
+    ];
+    return AppButtonRow(stackBelowWidth: 640, children: actions);
+  }
+
+  Future<void> _refreshRunStatus() async {
+    setState(() => _refreshing = true);
+    try {
+      final updated = await ref
+          .read(aiRepositoryProvider)
+          .fetchRunStatus(
+            projectId: widget.run.projectId,
+            runId: widget.run.id,
+          );
+      widget.onRunUpdated(updated);
+      _refreshRunDetailProviders(updated);
+      if (mounted) {
+        AppSnackbar.showSuccess(context, 'AI run status refreshed.');
+      }
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to refresh this AI run right now.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _refreshing = false);
+      }
+    }
+  }
+
+  Future<void> _cancelRun() async {
+    if (!widget.run.canCancel) {
+      AppSnackbar.showInfo(context, 'This AI run is not active.');
+      return;
+    }
+    setState(() => _cancelling = true);
+    try {
+      final updated = await ref
+          .read(aiRepositoryProvider)
+          .cancelRun(projectId: widget.run.projectId, runId: widget.run.id);
+      widget.onRunUpdated(updated);
+      _refreshRunDetailProviders(updated);
+      if (mounted) {
+        AppSnackbar.showSuccess(context, 'Cancellation requested.');
+      }
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to cancel this AI run right now.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _cancelling = false);
+      }
+    }
+  }
+
+  Future<void> _resumeRun() async {
+    if (!widget.run.canResume) {
+      AppSnackbar.showInfo(context, 'This AI run cannot be resumed.');
+      return;
+    }
+    setState(() => _resuming = true);
+    try {
+      final updated = await ref
+          .read(aiRepositoryProvider)
+          .resumeRun(projectId: widget.run.projectId, runId: widget.run.id);
+      widget.onRunUpdated(updated);
+      _refreshRunDetailProviders(updated);
+      if (mounted) {
+        AppSnackbar.showSuccess(context, 'Resume requested.');
+      }
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to resume this AI run right now.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _resuming = false);
+      }
+    }
+  }
+
+  void _refreshRunDetailProviders(AiRun run) {
+    ref.invalidate(aiRunProvider(run.id));
+    ref.invalidate(aiProjectRunsProvider(run.projectId));
+    ref.invalidate(aiRunsProvider);
+    ref.invalidate(aiRunMetricsProvider(run.id));
+    ref.invalidate(aiRunLayersProvider(run.id));
+    ref.invalidate(
+      aiRunValidationSummaryProvider((projectId: run.projectId, runId: run.id)),
+    );
+    ref.invalidate(aiRunLogsProvider(run.id));
+    ref.invalidate(aiRunReviewsProvider(run.id));
+    ref.invalidate(publishedAiLayersProvider(run.projectId));
+  }
+}
+
 class _RunStatusSection extends StatelessWidget {
   const _RunStatusSection({required this.run});
 
@@ -1764,6 +3125,57 @@ class _RunStatusSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _KeyValueList(title: 'Run status', rows: _runStatusRows(run));
+  }
+}
+
+class _RetrainRecommendationSection extends ConsumerWidget {
+  const _RetrainRecommendationSection({required this.run});
+
+  final AiRun run;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return FutureBuilder<AiRetrainRecommendation>(
+      future: ref
+          .read(aiRepositoryProvider)
+          .fetchRetrainRecommendation(projectId: run.projectId, runId: run.id),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const LinearProgressIndicator();
+        }
+        if (snapshot.hasError) {
+          return Text(
+            userFacingErrorMessage(
+              snapshot.error ?? 'Retraining recommendation unavailable.',
+              fallback: 'Unable to check retraining recommendation right now.',
+            ),
+          );
+        }
+        final recommendation = snapshot.data;
+        if (recommendation == null) {
+          return const Text('No retraining recommendation returned.');
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            StatusChip(
+              status: recommendation.shouldRetrain ? 'ready' : 'not_ready',
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(_safeText(recommendation.reason)),
+            if (recommendation.signals.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.sm),
+              _KeyValueList(
+                title: 'Signals',
+                rows: recommendation.signals.entries
+                    .map((entry) => MapEntry(entry.key, '${entry.value}'))
+                    .toList(growable: false),
+              ),
+            ],
+          ],
+        );
+      },
+    );
   }
 }
 
@@ -1795,106 +3207,63 @@ class _AiRunSettingsSection extends StatelessWidget {
         ),
         const SizedBox(height: AppSpacing.sm),
         _KeyValueList(title: 'Model', rows: _runModelConfigRows(run)),
-        const SizedBox(height: AppSpacing.sm),
-        _KeyValueList(
-          title: 'Execution support',
-          rows: _runExecutionSupportRows(run),
-        ),
-      ],
-    );
-  }
-}
-
-class _DetailedRunResultsSection extends StatelessWidget {
-  const _DetailedRunResultsSection({
-    required this.run,
-    required this.metricsAsync,
-    required this.layersAsync,
-  });
-
-  final AiRun run;
-  final AsyncValue<List<AiRunMetric>> metricsAsync;
-  final AsyncValue<List<AiOutputLayer>> layersAsync;
-
-  @override
-  Widget build(BuildContext context) {
-    return ExpansionTile(
-      tilePadding: EdgeInsets.zero,
-      childrenPadding: EdgeInsets.zero,
-      expandedAlignment: Alignment.centerLeft,
-      expandedCrossAxisAlignment: CrossAxisAlignment.start,
-      title: const Text('Detailed run results'),
-      children: [
-        _WhatHappenedSection(run: run, metricsAsync: metricsAsync),
-        const SizedBox(height: AppSpacing.md),
-        _LimitationSection(run: run),
-        const SizedBox(height: AppSpacing.md),
-        _NextStepSection(run: run, layersAsync: layersAsync),
-      ],
-    );
-  }
-}
-
-class _WhatHappenedSection extends StatelessWidget {
-  const _WhatHappenedSection({required this.run, required this.metricsAsync});
-
-  final AiRun run;
-  final AsyncValue<List<AiRunMetric>> metricsAsync;
-
-  @override
-  Widget build(BuildContext context) {
-    final rows = _whatHappenedRows(run);
-    final mode = _executionMode(run);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('What happened', style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: AppSpacing.xs),
-        _NoticeRow(
-          icon: Icons.auto_awesome_outlined,
-          text: _whatHappenedMessage(mode),
-        ),
-        if (rows.isNotEmpty) ...[
-          const SizedBox(height: AppSpacing.xs),
-          _KeyValueList(title: 'Result summary', rows: rows),
-        ],
-        if (mode == 'regional_model_eval') ...[
-          const SizedBox(height: AppSpacing.sm),
-          _ModelResultSection(run: run, metricsAsync: metricsAsync),
-        ],
-        const SizedBox(height: AppSpacing.sm),
-        _ClassCountsSection(run: run),
       ],
     );
   }
 }
 
 class _OutputPathsSection extends StatelessWidget {
-  const _OutputPathsSection({required this.paths});
+  const _OutputPathsSection({required this.run});
 
-  final List<String> paths;
+  final AiRun run;
 
   @override
   Widget build(BuildContext context) {
+    final paths = _outputPathsForRun(run);
+    final rows = paths
+        .map(
+          (path) => MapEntry(_friendlyOutputPathLabel(path), _safeText(path)),
+        )
+        .toList(growable: false);
+
     return ExpansionTile(
+      key: PageStorageKey<String>('technical-output-files-${run.id}'),
+      maintainState: true,
       tilePadding: EdgeInsets.zero,
       childrenPadding: EdgeInsets.zero,
       expandedAlignment: Alignment.centerLeft,
       expandedCrossAxisAlignment: CrossAxisAlignment.start,
       title: const Text('Technical output files'),
       children: [
-        SizedBox(
-          width: double.infinity,
-          child: _KeyValueList(
-            title: 'Output files',
-            emptyText: 'No technical output files recorded yet.',
-            rows: paths
-                .map(
-                  (path) =>
-                      MapEntry(_friendlyOutputPathLabel(path), _safeText(path)),
-                )
-                .toList(growable: false),
-          ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _NoticeRow(
+              icon: Icons.folder_copy_outlined,
+              text: paths.isEmpty
+                  ? 'No technical output files were reported for this run.'
+                  : 'AI server output files reported for this run.',
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            _KeyValueList(
+              title: 'Output files',
+              emptyText:
+                  'No prediction GeoJSON, raster, metrics, feature table, or run log paths were reported.',
+              rows: rows,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            _KeyValueList(
+              title: 'Prediction registration',
+              rows: [
+                MapEntry(
+                  'Prediction features inserted',
+                  '${_runPredictionCount(run)}',
+                ),
+                if (run.counts.isNotEmpty)
+                  MapEntry('Count fields', run.counts.keys.join(', ')),
+              ],
+            ),
+          ],
         ),
       ],
     );
@@ -1921,7 +3290,10 @@ class _ModelResultSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _KeyValueList(title: 'Model result', rows: rows),
-        _ModelArtifactAvailability(run: run),
+        const SizedBox(height: AppSpacing.sm),
+        _ConfusionMatrixSection(metrics: metrics),
+        const SizedBox(height: AppSpacing.sm),
+        _FeatureImportanceSection(metrics: metrics),
         if (metrics.length > 1) ...[
           const SizedBox(height: AppSpacing.sm),
           _KeyValueList(
@@ -1941,38 +3313,363 @@ class _ModelResultSection extends StatelessWidget {
   }
 }
 
-class _ModelArtifactAvailability extends StatelessWidget {
-  const _ModelArtifactAvailability({required this.run});
+class _ConfusionMatrixSection extends StatefulWidget {
+  const _ConfusionMatrixSection({required this.metrics});
 
-  final AiRun run;
+  final List<AiRunMetric> metrics;
+
+  @override
+  State<_ConfusionMatrixSection> createState() =>
+      _ConfusionMatrixSectionState();
+}
+
+class _ConfusionMatrixSectionState extends State<_ConfusionMatrixSection> {
+  late final ScrollController _horizontalController;
+
+  @override
+  void initState() {
+    super.initState();
+    _horizontalController = ScrollController();
+  }
+
+  @override
+  void dispose() {
+    _horizontalController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final chips = <Widget>[
-      if (_firstOutputPath(run.metadata, 'confusion_matrix') != null)
-        const Chip(
-          avatar: Icon(Icons.grid_on_outlined, size: 18),
-          label: Text('Confusion matrix available'),
-        ),
-      if (_firstOutputPath(run.metadata, 'feature_importance') != null)
-        const Chip(
-          avatar: Icon(Icons.bar_chart_outlined, size: 18),
-          label: Text('Feature importance available'),
-        ),
-    ];
-    if (chips.isEmpty) {
-      return const SizedBox.shrink();
+    final matrix = _firstConfusionMatrix(widget.metrics);
+    if (matrix.rows.isEmpty || matrix.predictedLabels.isEmpty) {
+      return const _NoticeRow(
+        icon: Icons.grid_off_outlined,
+        text: 'No confusion matrix was generated for this run.',
+      );
     }
-    return Padding(
-      padding: const EdgeInsets.only(top: AppSpacing.sm),
-      child: Wrap(
-        spacing: AppSpacing.xs,
-        runSpacing: AppSpacing.xs,
-        children: chips,
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Confusion matrix', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: AppSpacing.xs),
+        Scrollbar(
+          controller: _horizontalController,
+          thumbVisibility: true,
+          child: SingleChildScrollView(
+            controller: _horizontalController,
+            scrollDirection: Axis.horizontal,
+            primary: false,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+              child: DataTable(
+                columnSpacing: 18,
+                columns: [
+                  const DataColumn(label: Text('Actual \\ Predicted')),
+                  for (final label in matrix.predictedLabels)
+                    DataColumn(label: Text(label)),
+                  const DataColumn(label: Text('Total')),
+                ],
+                rows: [
+                  for (final row in matrix.rows)
+                    DataRow(
+                      cells: [
+                        DataCell(Text(row.actualLabel)),
+                        for (final label in matrix.predictedLabels)
+                          DataCell(Text((row.values[label] ?? 0).toString())),
+                        DataCell(Text(row.total.toString())),
+                      ],
+                    ),
+                  if (matrix.columnTotals.isNotEmpty)
+                    DataRow(
+                      cells: [
+                        const DataCell(Text('Total')),
+                        for (final label in matrix.predictedLabels)
+                          DataCell(
+                            Text((matrix.columnTotals[label] ?? 0).toString()),
+                          ),
+                        DataCell(Text(matrix.grandTotal.toString())),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
+
+class _FeatureImportanceSection extends StatelessWidget {
+  const _FeatureImportanceSection({required this.metrics});
+
+  final List<AiRunMetric> metrics;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = _firstFeatureImportance(metrics);
+    if (rows.isEmpty) {
+      return const _NoticeRow(
+        icon: Icons.bar_chart_outlined,
+        text: 'No feature importance data was generated for this run.',
+      );
+    }
+    final maxImportance = rows
+        .map((row) => row.importance)
+        .fold<double>(0, (max, value) => value > max ? value : max);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Feature importance',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        for (final row in rows.take(20))
+          Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final progress = maxImportance <= 0
+                    ? 0.0
+                    : (row.importance / maxImportance).clamp(0, 1).toDouble();
+                final valueText = Text(
+                  row.importance.toStringAsFixed(4),
+                  textAlign: TextAlign.end,
+                  style: Theme.of(context).textTheme.bodySmall,
+                );
+                if (constraints.maxWidth < 520) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        row.feature,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: LinearProgressIndicator(value: progress),
+                          ),
+                          const SizedBox(width: AppSpacing.sm),
+                          SizedBox(width: 64, child: valueText),
+                        ],
+                      ),
+                    ],
+                  );
+                }
+                final contentWidth = constraints.maxWidth
+                    .clamp(340.0, 560.0)
+                    .toDouble();
+                final labelWidth = constraints.maxWidth < 680 ? 136.0 : 156.0;
+                return ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: contentWidth),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: labelWidth,
+                        child: Text(
+                          row.feature,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 2,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.md),
+                      Expanded(child: LinearProgressIndicator(value: progress)),
+                      const SizedBox(width: AppSpacing.sm),
+                      SizedBox(width: 68, child: valueText),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _ConfusionMatrixData {
+  const _ConfusionMatrixData({
+    required this.predictedLabels,
+    required this.rows,
+    required this.columnTotals,
+    required this.grandTotal,
+  });
+
+  final List<String> predictedLabels;
+  final List<_ConfusionMatrixRow> rows;
+  final Map<String, int> columnTotals;
+  final int grandTotal;
+}
+
+class _ConfusionMatrixRow {
+  const _ConfusionMatrixRow({
+    required this.actualLabel,
+    required this.values,
+    required this.total,
+  });
+
+  final String actualLabel;
+  final Map<String, int> values;
+  final int total;
+}
+
+class _FeatureImportanceRow {
+  const _FeatureImportanceRow({
+    required this.feature,
+    required this.importance,
+  });
+
+  final String feature;
+  final double importance;
+}
+
+_ConfusionMatrixData _firstConfusionMatrix(List<AiRunMetric> metrics) {
+  for (final metric in metrics) {
+    final parsed = _parseConfusionMatrix(metric.confusionMatrix);
+    if (parsed.rows.isNotEmpty) {
+      return parsed;
+    }
+  }
+  return const _ConfusionMatrixData(
+    predictedLabels: <String>[],
+    rows: <_ConfusionMatrixRow>[],
+    columnTotals: <String, int>{},
+    grandTotal: 0,
+  );
+}
+
+_ConfusionMatrixData _parseConfusionMatrix(Object? raw) {
+  final rowsSource = raw is Map
+      ? (raw['rows'] ?? raw['matrix'] ?? raw['data'])
+      : raw;
+  if (rowsSource is! List) {
+    return const _ConfusionMatrixData(
+      predictedLabels: <String>[],
+      rows: <_ConfusionMatrixRow>[],
+      columnTotals: <String, int>{},
+      grandTotal: 0,
+    );
+  }
+  final predictedLabels = <String>{};
+  final rows = <_ConfusionMatrixRow>[];
+  for (final rawRow in rowsSource) {
+    if (rawRow is! Map) {
+      continue;
+    }
+    final row = Map<String, dynamic>.from(rawRow);
+    final actual =
+        row['actual']?.toString() ??
+        row['actual_class']?.toString() ??
+        row['label']?.toString() ??
+        '';
+    if (actual.trim().isEmpty) {
+      continue;
+    }
+    final values = <String, int>{};
+    for (final entry in row.entries) {
+      final key = entry.key;
+      if (const {'actual', 'actual_class', 'label', 'total'}.contains(key)) {
+        continue;
+      }
+      final count = _intFrom(entry.value);
+      if (count == null) {
+        continue;
+      }
+      predictedLabels.add(key);
+      values[key] = count;
+    }
+    rows.add(
+      _ConfusionMatrixRow(
+        actualLabel: actual,
+        values: values,
+        total:
+            _intFrom(row['total']) ??
+            values.values.fold<int>(0, (sum, value) => sum + value),
+      ),
+    );
+  }
+  final sortedLabels = predictedLabels.toList()..sort();
+  final totals = <String, int>{
+    for (final label in sortedLabels)
+      label: rows.fold<int>(0, (sum, row) => sum + (row.values[label] ?? 0)),
+  };
+  return _ConfusionMatrixData(
+    predictedLabels: sortedLabels,
+    rows: rows,
+    columnTotals: totals,
+    grandTotal: totals.values.fold<int>(0, (sum, value) => sum + value),
+  );
+}
+
+List<_FeatureImportanceRow> _firstFeatureImportance(List<AiRunMetric> metrics) {
+  for (final metric in metrics) {
+    final rows = _parseFeatureImportance(metric.featureImportance);
+    if (rows.isNotEmpty) {
+      return rows;
+    }
+  }
+  return const <_FeatureImportanceRow>[];
+}
+
+List<_FeatureImportanceRow> _parseFeatureImportance(Object? raw) {
+  final rowsSource = raw is Map
+      ? (raw['rows'] ?? raw['features'] ?? raw['data'])
+      : raw;
+  if (rowsSource is! List) {
+    return const <_FeatureImportanceRow>[];
+  }
+  final rows = <_FeatureImportanceRow>[];
+  for (final rawRow in rowsSource) {
+    if (rawRow is! Map) {
+      continue;
+    }
+    final row = Map<String, dynamic>.from(rawRow);
+    final feature =
+        row['feature']?.toString() ??
+        row['feature_name']?.toString() ??
+        row['name']?.toString() ??
+        '';
+    final importance = _doubleFrom(
+      row['importance'] ?? row['score'] ?? row['value'],
+    );
+    if (feature.trim().isEmpty || importance == null) {
+      continue;
+    }
+    rows.add(_FeatureImportanceRow(feature: feature, importance: importance));
+  }
+  rows.sort((a, b) => b.importance.compareTo(a.importance));
+  return rows;
+}
+
+int? _intFrom(Object? value) {
+  if (value is int) {
+    return value;
+  }
+  if (value is num) {
+    return value.round();
+  }
+  return int.tryParse(value?.toString() ?? '');
+}
+
+double? _doubleFrom(Object? value) {
+  if (value is double) {
+    return value;
+  }
+  if (value is num) {
+    return value.toDouble();
+  }
+  return double.tryParse(value?.toString() ?? '');
+}
+
+String _friendlyMetadataKey(String key) => key
+    .split(RegExp(r'[_\s-]+'))
+    .where((part) => part.isNotEmpty)
+    .map((part) => part[0].toUpperCase() + part.substring(1))
+    .join(' ');
 
 class _RunValidationSummary extends ConsumerWidget {
   const _RunValidationSummary({required this.run});
@@ -1981,39 +3678,69 @@ class _RunValidationSummary extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final query = AiPredictionValidationTasksQuery(
-      projectId: run.projectId,
-      aiRunId: run.id,
-      limit: 1,
+    final summaryAsync = ref.watch(
+      aiRunValidationSummaryProvider((projectId: run.projectId, runId: run.id)),
     );
-    final tasksAsync = ref.watch(projectAiValidationTasksProvider(query));
 
-    return tasksAsync.when(
+    return summaryAsync.when(
       loading: () => const LinearProgressIndicator(),
       error: (error, _) => Text(
         userFacingErrorMessage(
           error,
-          fallback: 'Unable to load validation task summary.',
+          fallback: 'Unable to load AI validation summary.',
         ),
       ),
-      data: (tasks) {
-        if (tasks.total == 0) {
+      data: (summary) {
+        if (summary.totalAiFeatures == 0) {
           return const _NoticeRow(
             icon: Icons.rule_folder_outlined,
-            text:
-                'No AI prediction validation tasks are linked to this run yet.',
+            text: 'No AI prediction features are linked to this run yet.',
           );
         }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            AiValidationStatusCounts(counts: tasks.statusCounts),
+            _KeyValueList(
+              title: 'AI prediction validation',
+              rows: <MapEntry<String, String>>[
+                MapEntry('Total AI features', '${summary.totalAiFeatures}'),
+                MapEntry('Published features', '${summary.publishedFeatures}'),
+                MapEntry(
+                  'Contributor validations',
+                  '${summary.contributorValidationsSubmitted}',
+                ),
+                MapEntry(
+                  'Features with contributor validation',
+                  '${summary.featuresValidatedByContributor}',
+                ),
+                MapEntry(
+                  'Admin approved/promoted',
+                  '${summary.adminApprovedPromoted}',
+                ),
+                MapEntry('Rejected', '${summary.rejected}'),
+                MapEntry('Pending', '${summary.pending}'),
+              ],
+            ),
             const SizedBox(height: AppSpacing.xs),
             const _NoticeRow(
               icon: Icons.info_outline,
               text:
-                  'Accepted validation is training evidence only; it does not approve official field data.',
+                  'This is one AI classification layer. Confidence is an attribute and does not block validation.',
             ),
+            if (summary.confidenceDistribution.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.xs),
+              _KeyValueList(
+                title: 'Confidence distribution',
+                rows: summary.confidenceDistribution.entries
+                    .map(
+                      (entry) => MapEntry(
+                        _friendlyMetadataKey(entry.key),
+                        '${entry.value}',
+                      ),
+                    )
+                    .toList(growable: false),
+              ),
+            ],
           ],
         );
       },
@@ -2021,96 +3748,11 @@ class _RunValidationSummary extends ConsumerWidget {
   }
 }
 
-class _ClassCountsSection extends StatelessWidget {
-  const _ClassCountsSection({required this.run});
-
-  final AiRun run;
-
-  @override
-  Widget build(BuildContext context) {
-    final classRows = _countRows(run.metadata['class_counts']);
-    final excludedRows = _countRows(run.metadata['excluded_classes']);
-    if (classRows.isEmpty && excludedRows.isEmpty) {
-      return const _KeyValueList(
-        title: 'Class counts',
-        emptyText: 'No class count summary recorded yet.',
-        rows: [],
-      );
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _KeyValueList(title: 'Class counts', rows: classRows),
-        if (excludedRows.isNotEmpty) ...[
-          const SizedBox(height: AppSpacing.sm),
-          _KeyValueList(title: 'Excluded classes', rows: excludedRows),
-        ],
-      ],
-    );
-  }
-}
-
-class _NextStepSection extends StatelessWidget {
-  const _NextStepSection({required this.run, required this.layersAsync});
-
-  final AiRun run;
-  final AsyncValue<List<AiOutputLayer>> layersAsync;
-
-  @override
-  Widget build(BuildContext context) {
-    return layersAsync.when(
-      loading: () => const LinearProgressIndicator(),
-      error: (error, _) => Text(
-        userFacingErrorMessage(error, fallback: 'Unable to load AI layers.'),
-      ),
-      data: (layers) {
-        final messages = <String>[
-          _statusExplanation(run),
-          if (!_runIncludesModelEvaluation(run))
-            'Model metrics will appear after a regional model evaluation run.',
-        ];
-        if (layers.isEmpty) {
-          messages.add('No AI output layers are registered yet.');
-          messages.add(
-            'Worker processing must finish before review layers appear.',
-          );
-        } else {
-          for (final layer in layers) {
-            if (layer.layerType == 'statistics') {
-              messages.add('Statistics summary is available for review.');
-            } else {
-              messages.add(
-                '${_friendlyLayerTypeLabel(layer.layerType)} layer: ${_friendlyLayerStatusLabel(layer.status)}.',
-              );
-            }
-          }
-          if (layers.any((layer) => layer.status == 'published')) {
-            messages.add(
-              'Published AI layers are visible as read-only Project Map overlays.',
-            );
-          } else {
-            messages.add('No viewer-facing AI layer is published yet.');
-          }
-        }
-        return _MessageList(
-          title: 'Next step',
-          messages: messages.map(_safeText).toList(growable: false),
-        );
-      },
-    );
-  }
-}
-
 class _AiOutputLayersSection extends ConsumerWidget {
-  const _AiOutputLayersSection({
-    required this.run,
-    required this.layersAsync,
-    required this.reviewsAsync,
-  });
+  const _AiOutputLayersSection({required this.run, required this.layersAsync});
 
   final AiRun run;
   final AsyncValue<List<AiOutputLayer>> layersAsync;
-  final AsyncValue<List<AiReviewDecision>> reviewsAsync;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -2123,12 +3765,10 @@ class _AiOutputLayersSection extends ConsumerWidget {
         ),
       ),
       data: (layers) {
-        final reviews = reviewsAsync.maybeWhen(
-          data: (items) => items,
-          orElse: () => const <AiReviewDecision>[],
-        );
-        final latestReview = reviews.isEmpty ? null : reviews.first;
-        final previewLayers = layers
+        final visibleLayers = layers
+            .where((layer) => layer.layerType == 'classification')
+            .toList(growable: false);
+        final previewLayers = visibleLayers
             .where(_isPreviewableAiLayer)
             .toList(growable: false);
         return Column(
@@ -2136,17 +3776,16 @@ class _AiOutputLayersSection extends ConsumerWidget {
           children: [
             const _NoticeRow(
               icon: Icons.visibility_off_outlined,
-              text:
-                  'Project Map shows published map layers only. Statistics stay as reports.',
+              text: 'Project Map shows published AI map layers only.',
             ),
             const SizedBox(height: AppSpacing.xs),
-            if (layers.isEmpty)
+            if (visibleLayers.isEmpty)
               const _NoticeRow(
                 icon: Icons.layers_clear_outlined,
-                text: 'No AI output layers have been registered yet.',
+                text: 'No AI classification layer has been registered yet.',
               )
             else
-              _LayerStatusSummary(layers: layers),
+              _LayerStatusSummary(layers: visibleLayers),
             if (previewLayers.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.md),
               const _NoticeRow(
@@ -2165,31 +3804,19 @@ class _AiOutputLayersSection extends ConsumerWidget {
                 ),
               ),
             ],
-            if (layers.isNotEmpty) ...[
+            if (visibleLayers.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.sm),
-              ExpansionTile(
-                key: PageStorageKey<String>('ai-layer-details-${run.id}'),
-                maintainState: true,
-                tilePadding: EdgeInsets.zero,
-                childrenPadding: EdgeInsets.zero,
-                expandedAlignment: Alignment.centerLeft,
-                expandedCrossAxisAlignment: CrossAxisAlignment.start,
-                title: const Text('Layer details'),
-                children: [
-                  for (final layer in layers)
-                    _AiOutputLayerTile(
-                      run: run,
-                      layer: layer,
-                      latestReview: latestReview,
-                      onPublish: _canPublishAiLayer(layer)
-                          ? () => _publishLayer(context, ref, run, layer)
-                          : null,
-                      onUnpublish: _canUnpublishAiLayer(layer)
-                          ? () => _unpublishLayer(context, ref, run, layer)
-                          : null,
-                    ),
-                ],
-              ),
+              for (final layer in visibleLayers)
+                _AiOutputLayerTile(
+                  run: run,
+                  layer: layer,
+                  onPublish: _canPublishAiLayer(layer)
+                      ? () => _publishLayer(context, ref, run, layer)
+                      : null,
+                  onUnpublish: _canUnpublishAiLayer(layer)
+                      ? () => _unpublishLayer(context, ref, run, layer)
+                      : null,
+                ),
             ],
           ],
         );
@@ -2260,8 +3887,6 @@ class _AiOutputLayersSection extends ConsumerWidget {
     bool refreshRun = true,
   }) {
     ref.invalidate(aiRunLayersProvider(run.id));
-    ref.invalidate(aiRunLogsProvider(run.id));
-    ref.invalidate(aiRunReviewsProvider(run.id));
     if (refreshRun) {
       ref.invalidate(aiRunProvider(run.id));
     }
@@ -2270,14 +3895,13 @@ class _AiOutputLayersSection extends ConsumerWidget {
 }
 
 bool _isPreviewableAiLayer(AiOutputLayer layer) {
-  const types = {'classification', 'confidence', 'uncertainty'};
   const statuses = {'draft', 'ready_for_review', 'approved', 'published'};
-  return types.contains(layer.layerType) && statuses.contains(layer.status);
+  return layer.layerType == 'classification' && statuses.contains(layer.status);
 }
 
 bool _canPublishAiLayer(AiOutputLayer layer) {
-  const types = {'classification', 'confidence', 'uncertainty'};
-  return types.contains(layer.layerType) && layer.status == 'approved';
+  return layer.layerType == 'classification' &&
+      (layer.status == 'approved' || layer.status == 'ready_for_review');
 }
 
 bool _canUnpublishAiLayer(AiOutputLayer layer) =>
@@ -2310,16 +3934,9 @@ class _LayerStatusSummary extends StatelessWidget {
               runSpacing: 2,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
+                Text('${_friendlyLayerTypeLabel(layer.layerType)} layer'),
                 Text(
-                  layer.layerType == 'statistics'
-                      ? 'Statistics: Report summary'
-                      : '${_friendlyLayerTypeLabel(layer.layerType)}: '
-                            '${_friendlyLayerStatusTitle(layer.status)}',
-                ),
-                Text(
-                  layer.layerType == 'statistics'
-                      ? 'Not a map overlay'
-                      : _layerVisibilityText(layer),
+                  _friendlyLayerStatusTitle(layer.status),
                   style: Theme.of(context).textTheme.bodySmall,
                   softWrap: true,
                 ),
@@ -2335,20 +3952,18 @@ class _AiOutputLayerTile extends StatelessWidget {
   const _AiOutputLayerTile({
     required this.run,
     required this.layer,
-    required this.latestReview,
     this.onPublish,
     this.onUnpublish,
   });
 
   final AiRun run;
   final AiOutputLayer layer;
-  final AiReviewDecision? latestReview;
   final VoidCallback? onPublish;
   final VoidCallback? onUnpublish;
 
   @override
   Widget build(BuildContext context) {
-    final summaryRows = _layerSummaryRows(layer, latestReview, run);
+    final summaryRows = _layerSummaryRows(layer, run);
     final technicalRows = _layerTechnicalRows(layer);
     return Padding(
       padding: const EdgeInsets.only(top: AppSpacing.sm),
@@ -2362,8 +3977,13 @@ class _AiOutputLayerTile extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Align(
+                alignment: AlignmentDirectional.centerEnd,
+                child: StatusChip(status: layer.status),
+              ),
+              const SizedBox(height: AppSpacing.sm),
               Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Icon(
                     Icons.layers_outlined,
@@ -2371,35 +3991,16 @@ class _AiOutputLayerTile extends StatelessWidget {
                   ),
                   const SizedBox(width: AppSpacing.sm),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${_friendlyLayerTypeLabel(layer.layerType)} layer',
-                          style: Theme.of(context).textTheme.titleSmall,
-                        ),
-                        Text(
-                          _safeText(layer.name),
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ],
+                    child: Text(
+                      '${_friendlyLayerTypeLabel(layer.layerType)} layer',
+                      style: Theme.of(context).textTheme.titleSmall,
+                      softWrap: true,
                     ),
                   ),
-                  StatusChip(status: layer.status),
                 ],
               ),
               const SizedBox(height: AppSpacing.sm),
               _KeyValueList(title: 'Layer details', rows: summaryRows),
-              if (layer.layerType == 'statistics') ...[
-                const SizedBox(height: AppSpacing.sm),
-                _StatisticsLayerSummary(run: run),
-                const SizedBox(height: AppSpacing.sm),
-                const _NoticeRow(
-                  icon: Icons.summarize_outlined,
-                  text:
-                      'Statistics are review/report summaries. They are not published as map overlays.',
-                ),
-              ],
               if (onPublish != null || onUnpublish != null) ...[
                 const SizedBox(height: AppSpacing.sm),
                 const _NoticeRow(
@@ -2453,41 +4054,6 @@ class _AiOutputLayerTile extends StatelessWidget {
   }
 }
 
-class _StatisticsLayerSummary extends StatelessWidget {
-  const _StatisticsLayerSummary({required this.run});
-
-  final AiRun run;
-
-  @override
-  Widget build(BuildContext context) {
-    final includedRows = _includedClassCountRows(run);
-    final excludedRows = _excludedClassCountRows(run);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _KeyValueList(
-          title: 'Statistics summary',
-          emptyText: 'No class statistics are registered yet.',
-          rows: includedRows,
-        ),
-        if (excludedRows.isNotEmpty) ...[
-          const SizedBox(height: AppSpacing.sm),
-          _KeyValueList(title: 'Excluded classes', rows: excludedRows),
-        ],
-        const SizedBox(height: AppSpacing.sm),
-        const _NoticeRow(
-          icon: Icons.info_outline,
-          text: 'Area statistics not available yet.',
-        ),
-        const _NoticeRow(
-          icon: Icons.info_outline,
-          text: 'Confidence statistics not available yet.',
-        ),
-      ],
-    );
-  }
-}
-
 class ProjectAiPreviewMapScreen extends ConsumerStatefulWidget {
   const ProjectAiPreviewMapScreen({
     required this.projectId,
@@ -2515,9 +4081,8 @@ class _ProjectAiPreviewMapScreenState
   Timer? _viewportFeatureRefreshTimer;
   LebanonBasemapStyle _basemapStyle = LebanonBasemapStyle.street;
   bool _showClassification = true;
-  bool _showConfidence = false;
-  bool _showUncertainty = false;
   bool _panelExpanded = false;
+  String? _selectedClassFilter;
   String? _selectedFeatureKey;
   _AiPreviewFeature? _selectedFeatureOverride;
   String? _featureViewportBounds;
@@ -2525,6 +4090,7 @@ class _ProjectAiPreviewMapScreenState
   DateTime? _suppressProgrammaticViewportRefreshUntil;
   final Map<String, AiLayerFeatureCollection> _lastLayerCollections =
       <String, AiLayerFeatureCollection>{};
+  final Set<String> _knownPreviewClasses = <String>{};
 
   @override
   void initState() {
@@ -2590,18 +4156,43 @@ class _ProjectAiPreviewMapScreenState
     final previewLayers = layers.where(_isPreviewableAiLayer).toList();
     final activeLayerTypes = <String>{
       if (_showClassification) 'classification',
-      if (_showConfidence) 'confidence',
-      if (_showUncertainty) 'uncertainty',
     };
     final activeLayers = previewLayers
         .where((layer) => activeLayerTypes.contains(layer.layerType))
         .toList(growable: false);
 
     final collections = <AiLayerFeatureCollection>[];
+    final summaryCollections = <AiLayerFeatureCollection>[];
     final errors = <String>[];
     var loading = false;
     for (final layer in activeLayers) {
-      final cachedCollection = _lastLayerCollections[layer.id];
+      final cacheKey = _previewCollectionCacheKey(layer.id);
+      final summaryCacheKey = _previewSummaryCacheKey(layer.id);
+      final cachedCollection = _lastLayerCollections[cacheKey];
+      final cachedSummaryCollection = _lastLayerCollections[summaryCacheKey];
+      ref
+          .watch(aiLayerFeaturesProvider(_summaryQuery(layer.id)))
+          .when<void>(
+            loading: () {
+              loading = true;
+              if (cachedSummaryCollection != null) {
+                summaryCollections.add(cachedSummaryCollection);
+              }
+            },
+            error: (error, _) {
+              errors.add(
+                '${_friendlyLayerTypeLabel(layer.layerType)} summary: '
+                '${userFacingErrorMessage(error, fallback: 'Unable to load layer summary.')}',
+              );
+              if (cachedSummaryCollection != null) {
+                summaryCollections.add(cachedSummaryCollection);
+              }
+            },
+            data: (collection) {
+              _lastLayerCollections[summaryCacheKey] = collection;
+              summaryCollections.add(collection);
+            },
+          );
       ref
           .watch(aiLayerFeaturesProvider(_featureQuery(layer.id)))
           .when<void>(
@@ -2621,7 +4212,7 @@ class _ProjectAiPreviewMapScreenState
               }
             },
             data: (collection) {
-              _lastLayerCollections[layer.id] = collection;
+              _lastLayerCollections[cacheKey] = collection;
               collections.add(collection);
             },
           );
@@ -2638,11 +4229,14 @@ class _ProjectAiPreviewMapScreenState
         !features.any((item) => item.key == selectedOverride.key)) {
       features.add(selectedOverride);
     }
-    final loadSummary = _AiPreviewLoadSummary.fromCollections(collections);
-    final hasStatisticsLayer = layers.any(
-      (layer) => layer.layerType == 'statistics',
+    final loadSummary = _AiPreviewLoadSummary.fromCollections(
+      summaryCollections,
     );
     final featureListLayer = _primaryPreviewFeatureListLayer(previewLayers);
+    final classOptions = _previewClassOptions(<AiLayerFeatureCollection>[
+      ...summaryCollections,
+      ...collections,
+    ], features);
 
     return ClipRRect(
       borderRadius: AppRadii.lg,
@@ -2658,8 +4252,6 @@ class _ProjectAiPreviewMapScreenState
               polygonHitNotifier: _previewPolygonHitNotifier,
               polylineHitNotifier: _previewPolylineHitNotifier,
               showClassification: _showClassification,
-              showConfidence: _showConfidence,
-              showUncertainty: _showUncertainty,
               selectedFeatureKey: _selectedFeatureKey,
               onFeatureSelected: (feature) =>
                   _handlePreviewFeatureSelected(run, feature),
@@ -2678,23 +4270,28 @@ class _ProjectAiPreviewMapScreenState
                     layers: previewLayers,
                     loadSummary: loadSummary,
                     showClassification: _showClassification,
-                    showConfidence: _showConfidence,
-                    showUncertainty: _showUncertainty,
                     expanded: _panelExpanded,
                     loading: loading,
                     errors: errors,
-                    hasStatisticsLayer: hasStatisticsLayer,
+                    classOptions: classOptions,
+                    selectedClass: _selectedClassFilter,
                     onExpandedChanged: (value) {
                       setState(() => _panelExpanded = value);
                     },
                     onClassificationChanged: (value) {
-                      setState(() => _showClassification = value);
+                      setState(() {
+                        _showClassification = value;
+                        if (!value) {
+                          _selectedClassFilter = null;
+                        }
+                      });
                     },
-                    onConfidenceChanged: (value) {
-                      setState(() => _showConfidence = value);
-                    },
-                    onUncertaintyChanged: (value) {
-                      setState(() => _showUncertainty = value);
+                    onClassFilterChanged: (value) {
+                      setState(() {
+                        _selectedClassFilter = value;
+                        _selectedFeatureKey = null;
+                        _selectedFeatureOverride = null;
+                      });
                     },
                   ),
                 ),
@@ -2736,7 +4333,58 @@ class _ProjectAiPreviewMapScreenState
       geometry: geometry,
       bounds: _featureViewportBounds,
       zoom: zoom,
+      classLabel: _selectedClassFilter,
     );
+  }
+
+  AiLayerFeaturesQuery _summaryQuery(String layerId) {
+    return AiLayerFeaturesQuery(
+      layerId: layerId,
+      detail: 'overview',
+      geometry: 'aggregate',
+      limit: 1,
+      page: 1,
+      classLabel: _selectedClassFilter,
+    );
+  }
+
+  String _previewCollectionCacheKey(String layerId) {
+    return [
+      layerId,
+      _selectedClassFilter ?? 'all',
+      _featureViewportBounds ?? 'global',
+      _featureViewportZoom?.toStringAsFixed(2) ?? 'zoom',
+    ].join('|');
+  }
+
+  String _previewSummaryCacheKey(String layerId) {
+    return [layerId, _selectedClassFilter ?? 'all', 'summary'].join('|');
+  }
+
+  List<String> _previewClassOptions(
+    List<AiLayerFeatureCollection> collections,
+    List<_AiPreviewFeature> features,
+  ) {
+    final discovered = <String>{
+      for (final collection in collections)
+        ...collection.classCounts.keys.where(
+          (value) => value.trim().isNotEmpty,
+        ),
+      for (final item in features)
+        if (_aiFeatureClass(item.feature)?.trim().isNotEmpty ?? false)
+          _aiFeatureClass(item.feature)!.trim(),
+    };
+    if (discovered.any((value) => !_knownPreviewClasses.contains(value))) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _knownPreviewClasses.addAll(discovered));
+      });
+    }
+    final classes = <String>{..._knownPreviewClasses, ...discovered}.toList();
+    classes.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return classes;
   }
 
   void _handleMapPositionChanged(MapCamera camera, bool hasGesture) {
@@ -2937,6 +4585,17 @@ class _ProjectAiPreviewMapScreenState
       isScrollControlled: true,
       builder: (context) => _AiFeatureListSheet(
         layer: layer,
+        selectedClass: _selectedClassFilter,
+        onClassFilterChanged: (value) {
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _selectedClassFilter = value;
+            _selectedFeatureKey = null;
+            _selectedFeatureOverride = null;
+          });
+        },
         onFeatureSelected: (feature) {
           Navigator.of(context).pop();
           unawaited(_selectFullPreviewFeatureFromList(run, feature));
@@ -3104,6 +4763,7 @@ class _AiPreviewLoadSummary {
     required this.optimizedPreview,
     required this.geometryMode,
     this.cap,
+    this.totalAreaHectares,
   });
 
   final int totalFeatureCount;
@@ -3113,6 +4773,7 @@ class _AiPreviewLoadSummary {
   final bool optimizedPreview;
   final String geometryMode;
   final int? cap;
+  final double? totalAreaHectares;
 
   static _AiPreviewLoadSummary? fromCollections(
     List<AiLayerFeatureCollection> collections,
@@ -3132,6 +4793,7 @@ class _AiPreviewLoadSummary {
       cap: primary.cap,
       optimizedPreview: primary.optimizedPreview,
       geometryMode: primary.geometryMode,
+      totalAreaHectares: primary.totalAreaHectares,
     );
   }
 }
@@ -3140,31 +4802,17 @@ class _AiPreviewLayerToggles extends StatelessWidget {
   const _AiPreviewLayerToggles({
     required this.layers,
     required this.showClassification,
-    required this.showConfidence,
-    required this.showUncertainty,
     required this.onClassificationChanged,
-    required this.onConfidenceChanged,
-    required this.onUncertaintyChanged,
   });
 
   final List<AiOutputLayer> layers;
   final bool showClassification;
-  final bool showConfidence;
-  final bool showUncertainty;
   final ValueChanged<bool> onClassificationChanged;
-  final ValueChanged<bool> onConfidenceChanged;
-  final ValueChanged<bool> onUncertaintyChanged;
 
   @override
   Widget build(BuildContext context) {
     final hasClassification = layers.any(
       (layer) => layer.layerType == 'classification',
-    );
-    final hasConfidence = layers.any(
-      (layer) => layer.layerType == 'confidence',
-    );
-    final hasUncertainty = layers.any(
-      (layer) => layer.layerType == 'uncertainty',
     );
     return Wrap(
       spacing: AppSpacing.sm,
@@ -3176,127 +4824,68 @@ class _AiPreviewLayerToggles extends StatelessWidget {
           label: const Text('Classification'),
           onSelected: hasClassification ? onClassificationChanged : null,
         ),
-        FilterChip(
-          selected: showConfidence && hasConfidence,
-          avatar: const _LegendSwatch(color: Color(0xFF0288D1)),
-          label: const Text('Confidence'),
-          onSelected: hasConfidence ? onConfidenceChanged : null,
-        ),
-        FilterChip(
-          selected: showUncertainty && hasUncertainty,
-          avatar: const _LegendSwatch(color: Color(0xFFE65100)),
-          label: const Text('Uncertainty'),
-          onSelected: hasUncertainty ? onUncertaintyChanged : null,
-        ),
       ],
     );
   }
 }
 
-class _AiPreviewLegend extends StatelessWidget {
-  const _AiPreviewLegend({
+class _AiPreviewClassFilter extends StatelessWidget {
+  const _AiPreviewClassFilter({
     required this.showClassification,
-    required this.showConfidence,
-    required this.showUncertainty,
+    required this.classOptions,
+    required this.selectedClass,
+    required this.onSelectedClassChanged,
   });
 
   final bool showClassification;
-  final bool showConfidence;
-  final bool showUncertainty;
+  final List<String> classOptions;
+  final String? selectedClass;
+  final ValueChanged<String?> onSelectedClassChanged;
 
   @override
   Widget build(BuildContext context) {
-    final entries = <(Color, String)>[
-      if (showClassification) ...[
-        (const Color(0xFF2E7D32), 'Olives'),
-        (const Color(0xFFF9A825), 'Citrus fruit trees'),
-        (const Color(0xFF7B1FA2), 'Fruit trees'),
-      ],
-      if (showConfidence) (const Color(0xFF0288D1), 'Confidence'),
-      if (showUncertainty) (const Color(0xFFE65100), 'Uncertainty'),
-    ];
-    if (entries.isEmpty) {
+    if (!showClassification) {
       return const SizedBox.shrink();
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Legend', style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: AppSpacing.xs),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final maxItemWidth = constraints.maxWidth < 360
-                ? constraints.maxWidth
-                : 190.0;
-            return Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final entry in entries)
-                  _AiPreviewLegendItem(
-                    color: entry.$1,
-                    label: entry.$2,
-                    maxWidth: maxItemWidth,
-                  ),
-              ],
-            );
-          },
+        Text(
+          'Legend and class filter',
+          style: Theme.of(context).textTheme.titleSmall,
         ),
-        if (showUncertainty) ...[
+        const SizedBox(height: AppSpacing.xs),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilterChip(
+              selected: selectedClass == null,
+              avatar: const Icon(Icons.layers_outlined, size: 18),
+              label: const Text('All'),
+              onSelected: (_) => onSelectedClassChanged(null),
+            ),
+            for (final className in classOptions)
+              FilterChip(
+                selected: selectedClass == className,
+                avatar: _LegendSwatch(color: _classificationColor(className)),
+                label: Text(
+                  _friendlyClassLabel(className),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onSelected: (selected) =>
+                    onSelectedClassChanged(selected ? className : null),
+              ),
+          ],
+        ),
+        if (classOptions.isEmpty) ...[
           const SizedBox(height: AppSpacing.xs),
           const _NoticeRow(
             icon: Icons.info_outline,
-            text: 'Uncertain areas are candidates for future field validation.',
+            text: 'Class filters appear after AI predictions load.',
           ),
         ],
       ],
-    );
-  }
-}
-
-class _AiPreviewLegendItem extends StatelessWidget {
-  const _AiPreviewLegendItem({
-    required this.color,
-    required this.label,
-    required this.maxWidth,
-  });
-
-  final Color color;
-  final String label;
-  final double maxWidth;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return ConstrainedBox(
-      constraints: BoxConstraints(maxWidth: maxWidth),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainerHighest.withValues(alpha: 0.62),
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _LegendSwatch(color: color),
-              const SizedBox(width: 7),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    height: 1.1,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }
@@ -3307,32 +4896,28 @@ class _AiPreviewControlPanel extends StatelessWidget {
     required this.layers,
     required this.loadSummary,
     required this.showClassification,
-    required this.showConfidence,
-    required this.showUncertainty,
     required this.expanded,
     required this.loading,
     required this.errors,
-    required this.hasStatisticsLayer,
+    required this.classOptions,
+    required this.selectedClass,
     required this.onExpandedChanged,
     required this.onClassificationChanged,
-    required this.onConfidenceChanged,
-    required this.onUncertaintyChanged,
+    required this.onClassFilterChanged,
   });
 
   final String title;
   final List<AiOutputLayer> layers;
   final _AiPreviewLoadSummary? loadSummary;
   final bool showClassification;
-  final bool showConfidence;
-  final bool showUncertainty;
   final bool expanded;
   final bool loading;
   final List<String> errors;
-  final bool hasStatisticsLayer;
+  final List<String> classOptions;
+  final String? selectedClass;
   final ValueChanged<bool> onExpandedChanged;
   final ValueChanged<bool> onClassificationChanged;
-  final ValueChanged<bool> onConfidenceChanged;
-  final ValueChanged<bool> onUncertaintyChanged;
+  final ValueChanged<String?> onClassFilterChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -3394,8 +4979,9 @@ class _AiPreviewControlPanel extends StatelessWidget {
                                   if (loadSummary != null)
                                     _MapInfoPill(
                                       icon: Icons.layers_outlined,
-                                      label:
-                                          'Total AI features: ${loadSummary!.totalFeatureCount}',
+                                      label: selectedClass == null
+                                          ? 'AI features: ${loadSummary!.totalFeatureCount}'
+                                          : '${_friendlyClassLabel(selectedClass!)}: ${loadSummary!.totalFeatureCount}',
                                     ),
                                 ],
                               ),
@@ -3433,17 +5019,14 @@ class _AiPreviewControlPanel extends StatelessWidget {
                     _AiPreviewLayerToggles(
                       layers: layers,
                       showClassification: showClassification,
-                      showConfidence: showConfidence,
-                      showUncertainty: showUncertainty,
                       onClassificationChanged: onClassificationChanged,
-                      onConfidenceChanged: onConfidenceChanged,
-                      onUncertaintyChanged: onUncertaintyChanged,
                     ),
                     const SizedBox(height: AppSpacing.sm),
-                    _AiPreviewLegend(
+                    _AiPreviewClassFilter(
                       showClassification: showClassification,
-                      showConfidence: showConfidence,
-                      showUncertainty: showUncertainty,
+                      classOptions: classOptions,
+                      selectedClass: selectedClass,
+                      onSelectedClassChanged: onClassFilterChanged,
                     ),
                     if (loading) ...[
                       const SizedBox(height: AppSpacing.sm),
@@ -3462,13 +5045,6 @@ class _AiPreviewControlPanel extends StatelessWidget {
                       const _NoticeRow(
                         icon: Icons.layers_clear_outlined,
                         text: 'No preview layers are registered for this run.',
-                      ),
-                    ],
-                    if (hasStatisticsLayer) ...[
-                      const SizedBox(height: AppSpacing.xs),
-                      const _NoticeRow(
-                        icon: Icons.query_stats_outlined,
-                        text: 'Statistics are summarized in Run Details.',
                       ),
                     ],
                     const SizedBox(height: AppSpacing.xs),
@@ -3735,8 +5311,6 @@ class _AiPreviewMap extends StatelessWidget {
     required this.polygonHitNotifier,
     required this.polylineHitNotifier,
     required this.showClassification,
-    required this.showConfidence,
-    required this.showUncertainty,
     required this.selectedFeatureKey,
     required this.onFeatureSelected,
     required this.onPositionChanged,
@@ -3749,8 +5323,6 @@ class _AiPreviewMap extends StatelessWidget {
   final LayerHitNotifier<_AiPreviewFeature> polygonHitNotifier;
   final LayerHitNotifier<_AiPreviewFeature> polylineHitNotifier;
   final bool showClassification;
-  final bool showConfidence;
-  final bool showUncertainty;
   final String? selectedFeatureKey;
   final ValueChanged<_AiPreviewFeature> onFeatureSelected;
   final void Function(MapCamera camera, bool hasGesture) onPositionChanged;
@@ -3981,9 +5553,7 @@ class _AiPreviewMap extends StatelessWidget {
   }
 
   bool _isVisible(_AiPreviewFeature item) {
-    return (item.layer.layerType == 'classification' && showClassification) ||
-        (item.layer.layerType == 'confidence' && showConfidence) ||
-        (item.layer.layerType == 'uncertainty' && showUncertainty);
+    return item.layer.layerType == 'classification' && showClassification;
   }
 }
 
@@ -4003,36 +5573,67 @@ class _AiFeatureDetailsSheet extends StatelessWidget {
     final className = _aiFeatureClass(feature);
     final confidence = _aiFeatureConfidence(feature);
     final model = _aiFeatureText(feature, const ['model_name', 'model']);
-    final source = _aiFeatureText(feature, const ['source']);
-    final area = _aiFeatureText(feature, const ['area_ha', 'area']);
+    final areaHa = _aiFeatureText(feature, const ['area_ha']);
+    final areaM2 = _aiFeatureText(feature, const [
+      'processed_area_m2',
+      'area_m2',
+      'area',
+    ]);
+    final geometryQuality = _aiFeatureText(feature, const ['geometry_quality']);
+    final processingMethod = _aiFeatureText(feature, const [
+      'processing_method',
+    ]);
+    final sourceResolution = _aiFeatureText(feature, const [
+      'source_resolution_m',
+    ]);
+    final threshold = _aiFeatureText(feature, const ['confidence_threshold']);
+    final reviewStatus =
+        _aiFeatureText(feature, const [
+          'admin_validation_status',
+          'validation_status',
+          'ai_validation_status',
+          'status',
+          'review_status',
+        ]) ??
+        'ready_for_review';
+    final correctedClass = _aiFeatureText(feature, const [
+      'corrected_class',
+      'approved_class',
+      'validated_class',
+    ]);
     final layerLabel = _friendlyLayerTypeLabel(previewFeature.layer.layerType);
     final title = isAggregate
         ? 'AI overview group'
         : className == null
         ? 'AI prediction'
         : _friendlyClassLabel(className);
-    final rows = <MapEntry<String, String>>[
+    final attributes = <String, Object?>{
       if (isAggregate)
-        MapEntry(
-          'Group size',
-          '${_aggregateAiFeatureCount(feature) ?? 1} AI features',
-        ),
-      if (className != null)
-        MapEntry(
-          isAggregate ? 'Dominant class' : 'Predicted class',
-          _friendlyClassLabel(className),
-        ),
-      if (confidence != null)
-        MapEntry('Confidence', _formatConfidence(confidence)),
-      if (model != null) MapEntry('Model', _friendlyModelLabel(model)),
-      MapEntry('Layer', layerLabel),
-      MapEntry(
-        'Run id',
-        _safeText(_aiFeatureText(feature, const ['run_id']) ?? run.id),
-      ),
-      if (source != null) MapEntry('Source', _safeText(source)),
-      if (area != null) MapEntry('Area', _safeText(area)),
-    ];
+        'group_size': '${_aggregateAiFeatureCount(feature) ?? 1} AI features',
+      isAggregate ? 'dominant_class' : 'predicted_class': className == null
+          ? 'Not available'
+          : _friendlyClassLabel(className),
+      'confidence': confidence == null
+          ? 'Not available'
+          : _formatConfidence(confidence),
+      'review_status': _friendlyStatusLabel(reviewStatus),
+      if (correctedClass != null)
+        'corrected_class': _friendlyClassLabel(correctedClass),
+      if (model != null) 'model': _friendlyModelLabel(model),
+      if (areaHa != null) 'area': '${_safeText(areaHa)} ha',
+      if (areaM2 != null) 'area_m2': '${_safeText(areaM2)} m2',
+      'geometry_type': feature.geometry['type']?.toString() ?? 'Not available',
+      if (geometryQuality != null)
+        'geometry_quality': _friendlyStatusLabel(geometryQuality),
+      'layer': layerLabel,
+      if (sourceResolution != null)
+        'source_resolution': '${_safeText(sourceResolution)} m',
+      if (processingMethod != null)
+        'processing': _friendlyProcessingMethod(processingMethod),
+      if (threshold != null) 'confidence_threshold': _safeText(threshold),
+      'output_note':
+          'AI-derived polygon, post-processed from satellite classification.',
+    };
     final bottomInset =
         MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
 
@@ -4078,7 +5679,7 @@ class _AiFeatureDetailsSheet extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: AppSpacing.sm),
-              StatusChip(status: 'ready_for_review'),
+              StatusChip(status: reviewStatus),
             ],
           ),
           const SizedBox(height: AppSpacing.md),
@@ -4094,29 +5695,37 @@ class _AiFeatureDetailsSheet extends StatelessWidget {
             ),
           ],
           const SizedBox(height: AppSpacing.md),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              if (className != null)
-                _MapInfoPill(
-                  icon: Icons.category_outlined,
-                  label: _friendlyClassLabel(className),
-                ),
-              if (confidence != null)
-                _MapInfoPill(
-                  icon: Icons.speed_outlined,
-                  label: 'Confidence ${_formatConfidence(confidence)}',
-                ),
-              _MapInfoPill(icon: Icons.layers_outlined, label: layerLabel),
-            ],
+          _DetailSection(
+            title: 'Prediction details',
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (className != null)
+                  _MapInfoPill(
+                    icon: Icons.category_outlined,
+                    label: _friendlyClassLabel(className),
+                  ),
+                if (confidence != null)
+                  _MapInfoPill(
+                    icon: Icons.speed_outlined,
+                    label: 'Confidence ${_formatConfidence(confidence)}',
+                  ),
+                _MapInfoPill(icon: Icons.layers_outlined, label: layerLabel),
+              ],
+            ),
           ),
-          const SizedBox(height: AppSpacing.md),
-          _KeyValueList(title: 'Details', rows: rows),
-          const SizedBox(height: AppSpacing.sm),
-          const _NoticeRow(
-            icon: Icons.info_outline,
-            text: 'Regional proof-of-concept. Not a national model.',
+          _DetailSection(
+            title: 'Attributes',
+            child: _FeatureAttributesGrid(attributes: attributes),
+          ),
+          const _DetailSection(
+            title: 'Data status',
+            child: _NoticeRow(
+              icon: Icons.info_outline,
+              text:
+                  'This is one AI classification layer. Confidence is metadata.',
+            ),
           ),
         ],
       ),
@@ -4127,10 +5736,14 @@ class _AiFeatureDetailsSheet extends StatelessWidget {
 class _AiFeatureListSheet extends ConsumerStatefulWidget {
   const _AiFeatureListSheet({
     required this.layer,
+    required this.selectedClass,
+    required this.onClassFilterChanged,
     required this.onFeatureSelected,
   });
 
   final AiOutputLayer layer;
+  final String? selectedClass;
+  final ValueChanged<String?> onClassFilterChanged;
   final ValueChanged<_AiPreviewFeature> onFeatureSelected;
 
   @override
@@ -4142,6 +5755,22 @@ class _AiFeatureListSheetState extends ConsumerState<_AiFeatureListSheet> {
   final TextEditingController _searchController = TextEditingController();
   String _query = '';
   String? _selectedClass;
+  bool _showFilters = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedClass = widget.selectedClass;
+  }
+
+  @override
+  void didUpdateWidget(covariant _AiFeatureListSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.selectedClass != oldWidget.selectedClass &&
+        widget.selectedClass != _selectedClass) {
+      _selectedClass = widget.selectedClass;
+    }
+  }
 
   @override
   void dispose() {
@@ -4186,6 +5815,7 @@ class _AiFeatureListSheetState extends ConsumerState<_AiFeatureListSheet> {
         : (browserQuery.search == null && browserQuery.classLabel == null
               ? summary?.featureCount ?? 0
               : 0);
+    final classLocked = widget.selectedClass != null;
 
     final bottomInset =
         MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
@@ -4251,6 +5881,14 @@ class _AiFeatureListSheetState extends ConsumerState<_AiFeatureListSheet> {
                       'These are AI predictions for review, not approved field data.',
                       style: theme.textTheme.bodySmall,
                     ),
+                    if (classLocked) ...[
+                      const SizedBox(height: AppSpacing.xs),
+                      _NoticeRow(
+                        icon: Icons.lock_outline,
+                        text:
+                            'Class filter locked to ${_friendlyClassLabel(widget.selectedClass!)}.',
+                      ),
+                    ],
                     const SizedBox(height: AppSpacing.sm),
                     TextField(
                       controller: _searchController,
@@ -4274,33 +5912,58 @@ class _AiFeatureListSheetState extends ConsumerState<_AiFeatureListSheet> {
                       ),
                       onChanged: (value) => setState(() => _query = value),
                     ),
-                    if (classes.isNotEmpty) ...[
+                    const SizedBox(height: AppSpacing.xs),
+                    TextButton.icon(
+                      onPressed: () =>
+                          setState(() => _showFilters = !_showFilters),
+                      icon: Icon(
+                        _showFilters
+                            ? Icons.filter_alt_off_outlined
+                            : Icons.filter_alt_outlined,
+                      ),
+                      label: Text(_showFilters ? 'Hide' : 'Filter'),
+                    ),
+                    if (_showFilters) ...[
                       const SizedBox(height: AppSpacing.sm),
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          children: [
-                            ChoiceChip(
-                              label: const Text('All'),
-                              selected: _selectedClass == null,
-                              onSelected: (_) {
-                                setState(() => _selectedClass = null);
-                              },
-                            ),
-                            const SizedBox(width: AppSpacing.xs),
-                            for (final className in classes) ...[
+                      if (classLocked)
+                        _NoticeRow(
+                          icon: Icons.lock_outline,
+                          text:
+                              'Locked to ${_friendlyClassLabel(widget.selectedClass!)} from the map filter. Clear the map class filter to browse all classes.',
+                        )
+                      else if (classes.isEmpty)
+                        const _NoticeRow(
+                          icon: Icons.filter_alt_off_outlined,
+                          text: 'No classes available.',
+                        )
+                      else
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: [
                               ChoiceChip(
-                                label: Text(_friendlyClassLabel(className)),
-                                selected: _selectedClass == className,
+                                label: const Text('All'),
+                                selected: _selectedClass == null,
                                 onSelected: (_) {
-                                  setState(() => _selectedClass = className);
+                                  setState(() => _selectedClass = null);
+                                  widget.onClassFilterChanged(null);
                                 },
                               ),
                               const SizedBox(width: AppSpacing.xs),
+                              for (final className in classes) ...[
+                                ChoiceChip(
+                                  label: Text(_friendlyClassLabel(className)),
+                                  selected: _selectedClass == className,
+                                  onSelected: (_) {
+                                    setState(() => _selectedClass = className);
+                                    widget.onClassFilterChanged(className);
+                                  },
+                                ),
+                                const SizedBox(width: AppSpacing.xs),
+                              ],
                             ],
-                          ],
+                          ),
                         ),
-                      ),
                     ],
                   ],
                 ),
@@ -4374,7 +6037,7 @@ class _AiFeatureListCard extends StatelessWidget {
     final model = _aiFeatureText(feature, const ['model_name', 'model']);
     final layerLabel = _friendlyLayerTypeLabel(item.layer.layerType);
     final title = className == null
-        ? '$layerLabel artifact'
+        ? '$layerLabel output'
         : _friendlyClassLabel(className);
     final subtitle = [
       layerLabel,
@@ -4481,22 +6144,6 @@ class _LegendSwatch extends StatelessWidget {
 
 _AiFeatureStyle _aiFeatureStyle(_AiPreviewFeature item) {
   switch (item.layer.layerType) {
-    case 'confidence':
-      final confidence = _aiFeatureConfidence(item.feature);
-      final alpha = confidence == null
-          ? 0.22
-          : (0.12 + confidence.clamp(0, 1).toDouble() * 0.32);
-      return _AiFeatureStyle(
-        fillColor: const Color(0xFF0288D1).withValues(alpha: alpha),
-        borderColor: const Color(0xFF01579B),
-        borderWidth: 2,
-      );
-    case 'uncertainty':
-      return _AiFeatureStyle(
-        fillColor: const Color(0xFFE65100).withValues(alpha: 0.24),
-        borderColor: const Color(0xFFBF360C),
-        borderWidth: 2.4,
-      );
     case 'classification':
     default:
       final color = _classificationColor(_aiFeatureClass(item.feature));
@@ -4634,542 +6281,8 @@ String _formatConfidence(double value) {
   return value.toStringAsFixed(2);
 }
 
-class _ReviewSection extends ConsumerStatefulWidget {
-  const _ReviewSection({required this.run, required this.reviewsAsync});
-
-  final AiRun run;
-  final AsyncValue<List<AiReviewDecision>> reviewsAsync;
-
-  @override
-  ConsumerState<_ReviewSection> createState() => _ReviewSectionState();
-}
-
-class _ReviewSectionState extends ConsumerState<_ReviewSection> {
-  final TextEditingController _reasonController = TextEditingController();
-  String? _submittingAction;
-  String? _errorText;
-
-  @override
-  void dispose() {
-    _reasonController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return widget.reviewsAsync.when(
-      loading: () => const LinearProgressIndicator(),
-      error: (error, _) => Text(
-        userFacingErrorMessage(
-          error,
-          fallback: 'Unable to load AI review decisions.',
-        ),
-      ),
-      data: (reviews) {
-        final latest = reviews.isEmpty ? null : reviews.first;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Review result',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            const SizedBox(height: AppSpacing.xs),
-            if (latest == null)
-              const _NoticeRow(
-                icon: Icons.rate_review_outlined,
-                text: 'No review decision has been recorded yet.',
-              )
-            else
-              _KeyValueList(
-                title: 'Latest decision',
-                rows: <MapEntry<String, String>>[
-                  MapEntry(
-                    'Decision',
-                    _friendlyReviewDecisionLabel(latest.decision),
-                  ),
-                  if (latest.reason?.trim().isNotEmpty ?? false)
-                    MapEntry('Reason', _safeText(latest.reason!)),
-                  if (latest.decidedAt != null)
-                    MapEntry('Decided', formatLebanonDate(latest.decidedAt)),
-                ],
-              ),
-            if (widget.run.status == 'ready_for_review') ...[
-              const SizedBox(height: AppSpacing.sm),
-              const _NoticeRow(
-                icon: Icons.visibility_off_outlined,
-                text:
-                    'Review decisions prepare AI results for a separate publishing step. They do not publish map layers by themselves.',
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              const _ReviewActionGuide(),
-              const SizedBox(height: AppSpacing.sm),
-              _ReviewFormArea(
-                reasonController: _reasonController,
-                errorText: _errorText,
-                actions: _ReviewActionButtons(
-                  submittingAction: _submittingAction,
-                  onApprove: _isSubmitting
-                      ? null
-                      : () => _submitReview('approve_for_publication'),
-                  onReject: _isSubmitting
-                      ? null
-                      : () => _submitReview('reject'),
-                  onRequestMoreData: _isSubmitting
-                      ? null
-                      : () => _submitReview('request_more_data'),
-                  onKeepDraft: _isSubmitting
-                      ? null
-                      : () => _submitReview('keep_draft'),
-                ),
-              ),
-            ],
-            if (reviews.length > 1) ...[
-              const SizedBox(height: AppSpacing.sm),
-              ExpansionTile(
-                tilePadding: EdgeInsets.zero,
-                childrenPadding: EdgeInsets.zero,
-                expandedAlignment: Alignment.centerLeft,
-                expandedCrossAxisAlignment: CrossAxisAlignment.start,
-                title: const Text('Review history'),
-                children: [
-                  for (final review in reviews)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Text(
-                        '${_friendlyReviewDecisionLabel(review.decision)}'
-                        '${review.reason?.trim().isNotEmpty ?? false ? ': ${_safeText(review.reason!)}' : ''}',
-                      ),
-                    ),
-                ],
-              ),
-            ],
-          ],
-        );
-      },
-    );
-  }
-
-  bool get _isSubmitting => _submittingAction != null;
-
-  Future<void> _submitReview(String action) async {
-    final reason = _reasonController.text.trim();
-    if (action == 'reject' && reason.isEmpty) {
-      setState(() => _errorText = 'Please add a reason before rejecting.');
-      return;
-    }
-    if (action == 'request_more_data' && reason.isEmpty) {
-      setState(() => _errorText = 'Please explain what data is needed.');
-      return;
-    }
-
-    setState(() {
-      _submittingAction = action;
-      _errorText = null;
-    });
-    try {
-      final result = await ref
-          .read(aiRepositoryProvider)
-          .reviewRun(runId: widget.run.id, action: action, reason: reason);
-      ref.invalidate(aiRunProvider(widget.run.id));
-      ref.invalidate(aiRunMetricsProvider(widget.run.id));
-      ref.invalidate(aiRunLayersProvider(widget.run.id));
-      ref.invalidate(aiRunLogsProvider(widget.run.id));
-      ref.invalidate(aiRunReviewsProvider(widget.run.id));
-      ref.invalidate(
-        aiRunsProvider(AiRunsQuery(projectId: widget.run.projectId)),
-      );
-      if (mounted) {
-        _reasonController.clear();
-        AppSnackbar.showSuccess(
-          context,
-          result.viewerPublished
-              ? 'AI review decision saved.'
-              : 'AI review saved. No viewer-facing layer was published.',
-        );
-      }
-    } catch (error) {
-      if (mounted) {
-        AppSnackbar.showError(
-          context,
-          userFacingErrorMessage(
-            error,
-            fallback: 'Unable to save AI review decision right now.',
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _submittingAction = null);
-      }
-    }
-  }
-}
-
-class _ReviewFormArea extends StatelessWidget {
-  const _ReviewFormArea({
-    required this.reasonController,
-    required this.actions,
-    required this.errorText,
-  });
-
-  final TextEditingController reasonController;
-  final Widget actions;
-  final String? errorText;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth.isFinite
-            ? constraints.maxWidth
-            : 420.0;
-        final formWidth = _reviewActionWidth(width);
-        return SizedBox(
-          width: formWidth,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextField(
-                controller: reasonController,
-                minLines: 2,
-                maxLines: 4,
-                decoration: InputDecoration(
-                  labelText: 'Review reason or comment',
-                  hintText:
-                      'Required for reject or request more data. Optional for approval.',
-                  errorText: errorText,
-                ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              actions,
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _ReviewActionGuide extends StatelessWidget {
-  const _ReviewActionGuide();
-
-  @override
-  Widget build(BuildContext context) {
-    final textStyle = Theme.of(context).textTheme.bodySmall;
-    final mutedColor = Theme.of(context).colorScheme.onSurfaceVariant;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Action guide', style: Theme.of(context).textTheme.labelLarge),
-        const SizedBox(height: 4),
-        Text(
-          'Approve accepts the result for publishing review. Reject or request more data require a reason. Keep draft leaves it internal for now.',
-          style: textStyle?.copyWith(color: mutedColor),
-        ),
-      ],
-    );
-  }
-}
-
-class _ReviewActionButtons extends StatelessWidget {
-  const _ReviewActionButtons({
-    required this.submittingAction,
-    required this.onApprove,
-    required this.onReject,
-    required this.onRequestMoreData,
-    required this.onKeepDraft,
-  });
-
-  final String? submittingAction;
-  final VoidCallback? onApprove;
-  final VoidCallback? onReject;
-  final VoidCallback? onRequestMoreData;
-  final VoidCallback? onKeepDraft;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth.isFinite
-            ? constraints.maxWidth
-            : 420.0;
-        final actionWidth = _reviewActionWidth(width);
-        final showSecondaryRow = actionWidth >= 760;
-
-        return SizedBox(
-          width: actionWidth,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Tooltip(
-                message:
-                    'Accept this AI result for the separate publish step. Viewers will not see it from this decision alone.',
-                child: SizedBox(
-                  height: 48,
-                  child: FilledButton(
-                    onPressed: onApprove,
-                    child: _buttonLabel(
-                      action: 'approve_for_publication',
-                      label: 'Approve',
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              if (showSecondaryRow)
-                Row(
-                  children: [
-                    Expanded(
-                      child: _reviewButton(
-                        action: 'reject',
-                        label: 'Reject',
-                        tooltip: 'Reject this AI result. A reason is required.',
-                        onPressed: onReject,
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    Expanded(
-                      child: _reviewButton(
-                        action: 'request_more_data',
-                        label: 'Request data',
-                        tooltip:
-                            'Ask for more field or training data. A reason is required.',
-                        onPressed: onRequestMoreData,
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    Expanded(
-                      child: _reviewButton(
-                        action: 'keep_draft',
-                        label: 'Keep draft',
-                        tooltip:
-                            'Keep this result internal for now. Nothing is published.',
-                        onPressed: onKeepDraft,
-                      ),
-                    ),
-                  ],
-                )
-              else
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _reviewButton(
-                      action: 'reject',
-                      label: 'Reject',
-                      tooltip: 'Reject this AI result. A reason is required.',
-                      onPressed: onReject,
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    _reviewButton(
-                      action: 'request_more_data',
-                      label: 'Request data',
-                      tooltip:
-                          'Ask for more field or training data. A reason is required.',
-                      onPressed: onRequestMoreData,
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    _reviewButton(
-                      action: 'keep_draft',
-                      label: 'Keep draft',
-                      tooltip:
-                          'Keep this result internal for now. Nothing is published.',
-                      onPressed: onKeepDraft,
-                    ),
-                  ],
-                ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _reviewButton({
-    required String action,
-    required String label,
-    required String tooltip,
-    required VoidCallback? onPressed,
-  }) {
-    return Tooltip(
-      message: tooltip,
-      child: SizedBox(
-        height: 48,
-        child: OutlinedButton(
-          onPressed: onPressed,
-          child: _buttonLabel(action: action, label: label),
-        ),
-      ),
-    );
-  }
-
-  Widget _buttonLabel({required String action, required String label}) {
-    if (submittingAction == action) {
-      return const SizedBox(
-        width: 18,
-        height: 18,
-        child: CircularProgressIndicator(strokeWidth: 2),
-      );
-    }
-    return Text(
-      label,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      textAlign: TextAlign.center,
-    );
-  }
-}
-
-double _reviewActionWidth(double availableWidth) {
-  return availableWidth < 840 ? availableWidth : 840.0;
-}
-
-class _LimitationSection extends StatelessWidget {
-  const _LimitationSection({required this.run});
-
-  final AiRun run;
-
-  @override
-  Widget build(BuildContext context) {
-    final messages = _limitationMessages(run);
-    if (messages.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    return _MessageList(title: 'Limitations', messages: messages);
-  }
-}
-
-class _LogsSection extends StatelessWidget {
-  const _LogsSection({required this.asyncValue});
-
-  final AsyncValue<PaginatedResult<AiRunLog>> asyncValue;
-
-  @override
-  Widget build(BuildContext context) {
-    return ExpansionTile(
-      tilePadding: EdgeInsets.zero,
-      childrenPadding: EdgeInsets.zero,
-      expandedAlignment: Alignment.centerLeft,
-      expandedCrossAxisAlignment: CrossAxisAlignment.start,
-      title: const Text('Worker logs'),
-      children: [
-        asyncValue.when(
-          loading: () => const LinearProgressIndicator(),
-          error: (error, _) => Text(
-            userFacingErrorMessage(error, fallback: 'Unable to load run logs.'),
-          ),
-          data: (page) {
-            if (page.items.isEmpty) {
-              return const _KeyValueList(
-                title: 'Logs',
-                emptyText: 'Worker logs will appear after processing starts.',
-                rows: [],
-              );
-            }
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Logs', style: Theme.of(context).textTheme.titleSmall),
-                const SizedBox(height: AppSpacing.xs),
-                for (final log in page.items) _LogRow(log: log),
-              ],
-            );
-          },
-        ),
-      ],
-    );
-  }
-}
-
-class _LogRow extends StatelessWidget {
-  const _LogRow({required this.log});
-
-  final AiRunLog log;
-
-  @override
-  Widget build(BuildContext context) {
-    final details = <String>[
-      if (log.createdAt != null) formatLebanonDate(log.createdAt),
-      if (_metadataText(log.metadata, 'step') != null)
-        'Step ${_metadataText(log.metadata, 'step')}',
-      if (_metadataText(log.metadata, 'duration_ms') != null)
-        _formatDurationMs(_toIntValue(log.metadata['duration_ms'])),
-    ].where((value) => value.trim().isNotEmpty).join(' - ');
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          StatusChip(status: log.level),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(_safeText(log.message)),
-                if (details.isNotEmpty)
-                  Text(details, style: Theme.of(context).textTheme.bodySmall),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _TechnicalDetailsSection extends StatelessWidget {
-  const _TechnicalDetailsSection({required this.run});
-
-  final AiRun run;
-
-  @override
-  Widget build(BuildContext context) {
-    final rows = <MapEntry<String, String>>[
-      if (_metadataText(run.metadata, 'ai_pipeline_run_id') != null)
-        MapEntry(
-          'AI pipeline run',
-          _metadataText(run.metadata, 'ai_pipeline_run_id')!,
-        ),
-      if (_metadataText(run.metadata, 'output_directory') != null)
-        MapEntry(
-          'Output directory',
-          _metadataText(run.metadata, 'output_directory')!,
-        ),
-      if (_metadataText(run.metadata, 'pipeline_bridge_phase') != null)
-        MapEntry(
-          'Pipeline bridge phase',
-          _metadataText(run.metadata, 'pipeline_bridge_phase')!,
-        ),
-      if (_metadataText(run.metadata, 'worker_phase') != null)
-        MapEntry('Worker phase', _metadataText(run.metadata, 'worker_phase')!),
-      if (run.metadata.isNotEmpty)
-        MapEntry('Metadata keys', run.metadata.keys.toList().join(', ')),
-    ];
-
-    return ExpansionTile(
-      tilePadding: EdgeInsets.zero,
-      childrenPadding: EdgeInsets.zero,
-      expandedAlignment: Alignment.centerLeft,
-      expandedCrossAxisAlignment: CrossAxisAlignment.start,
-      title: const Text('Technical metadata'),
-      children: [
-        _KeyValueList(
-          title: 'Run metadata',
-          emptyText: 'No technical metadata recorded.',
-          rows: rows
-              .map((row) => MapEntry(row.key, _safeText(row.value)))
-              .toList(growable: false),
-        ),
-      ],
-    );
-  }
-}
-
 List<MapEntry<String, String>> _layerSummaryRows(
   AiOutputLayer layer,
-  AiReviewDecision? latestReview,
   AiRun run,
 ) {
   final modelName = _firstString([
@@ -5179,16 +6292,12 @@ List<MapEntry<String, String>> _layerSummaryRows(
     _metadataText(run.metadata, 'model_name'),
   ]);
   final rows = <MapEntry<String, String>>[
-    MapEntry('Layer name', layer.name),
     MapEntry('Layer type', _friendlyLayerTypeLabel(layer.layerType)),
     MapEntry('Status', _friendlyLayerStatusTitle(layer.status)),
     MapEntry('Run', _shortId(run.id)),
     if (run.createdAt != null) MapEntry('Run date', _formatDate(run.createdAt)),
     if (modelName != null) MapEntry('Model', _friendlyModelLabel(modelName)),
-    MapEntry(
-      layer.layerType == 'statistics' ? 'Usage' : 'Viewer visibility',
-      _layerVisibilityText(layer),
-    ),
+    MapEntry('Viewer visibility', _layerVisibilityText(layer)),
     if (layer.description?.trim().isNotEmpty ?? false)
       MapEntry('Description', layer.description!),
     if (layer.crs?.trim().isNotEmpty ?? false) MapEntry('CRS', layer.crs!),
@@ -5201,13 +6310,6 @@ List<MapEntry<String, String>> _layerSummaryRows(
     if (layer.publishedBy?.trim().isNotEmpty ?? false)
       MapEntry('Published by', layer.publishedBy!),
   ];
-
-  if (latestReview != null) {
-    rows.add(MapEntry('Review decision', _reviewDecisionSummary(latestReview)));
-    if (latestReview.reason?.trim().isNotEmpty ?? false) {
-      rows.add(MapEntry('Review reason', latestReview.reason!));
-    }
-  }
 
   return rows
       .map((row) => MapEntry(row.key, _safeText(row.value)))
@@ -5233,71 +6335,73 @@ List<MapEntry<String, String>> _layerTechnicalRows(AiOutputLayer layer) {
 }
 
 String _layerVisibilityText(AiOutputLayer layer) {
-  if (layer.layerType == 'statistics') {
-    return 'Review/report summary only';
-  }
   if (layer.publishedAt != null || layer.status == 'published') {
     return 'Published';
   }
   return 'Not published';
 }
 
-String _reviewDecisionSummary(AiReviewDecision review) {
-  final label = _friendlyReviewDecisionLabel(review.decision);
-  final actor = _stringValue(review.decidedBy);
-  if (actor != null) {
-    return '$label by $actor';
-  }
-  return label;
-}
-
-List<MapEntry<String, String>> _includedClassCountRows(AiRun run) {
-  final excludedLabels = _excludedClassLabels(run);
-  final rows = _countRows(run.metadata['class_counts'])
-      .where((row) => !excludedLabels.contains(row.key.toLowerCase()))
-      .map((row) => MapEntry(row.key, row.value))
-      .toList(growable: false);
-  rows.sort(
-    (left, right) => left.key.toLowerCase().compareTo(right.key.toLowerCase()),
-  );
-  return rows;
-}
-
-List<MapEntry<String, String>> _excludedClassCountRows(AiRun run) {
-  return _countRows(run.metadata['excluded_classes'])
-      .map((row) => MapEntry(row.key, '${row.value} below threshold'))
-      .toList(growable: false);
-}
-
-Set<String> _excludedClassLabels(AiRun run) {
-  return _countRows(
-    run.metadata['excluded_classes'],
-  ).map((row) => row.key.toLowerCase()).toSet();
-}
-
 String _executionMode(AiRun run) =>
     _metadataText(run.metadata, 'execution_mode') ?? 'not set';
 
-bool _runIncludesModelEvaluation(AiRun run) {
-  final mode = _executionMode(run);
-  return mode == 'regional_model_eval' ||
-      mode == 'regional_full_review_artifacts';
+AiRun? _activeRunFrom(List<AiRun> runs) {
+  for (final run in runs) {
+    if (run.isActive) {
+      return run;
+    }
+  }
+  return null;
+}
+
+AiOutputLayer? _firstClassificationLayer(List<AiOutputLayer> layers) {
+  for (final layer in layers) {
+    if (layer.layerType == 'classification') {
+      return layer;
+    }
+  }
+  return null;
+}
+
+String _runDisplayTitle(AiRun run) {
+  return 'Run ${_shortId(run.id)}';
+}
+
+int _runPredictionCount(AiRun run) {
+  return run.predictionCount > 0
+      ? run.predictionCount
+      : _toIntValue(
+              run.counts['predictions_inserted'] ??
+                  run.counts['prediction_count'] ??
+                  run.counts['features_inserted'] ??
+                  run.metadata['prediction_count'],
+            ) ??
+            0;
 }
 
 List<MapEntry<String, String>> _runStatusRows(AiRun run) {
   final rows = <MapEntry<String, String>>[
+    MapEntry('Run name', _runDisplayTitle(run)),
     MapEntry('Status', _friendlyStatusLabel(run.status)),
+    if (run.stage?.trim().isNotEmpty ?? false)
+      MapEntry('Stage', _friendlyStatusLabel(run.stage!)),
+    if (run.progress > 0) MapEntry('Progress', _formatMetric(run.progress)),
+    if (run.message?.trim().isNotEmpty ?? false)
+      MapEntry('Message', run.message!),
     MapEntry(
       'Execution mode',
       _friendlyExecutionModeLabel(_executionMode(run)),
     ),
     MapEntry('Label field', run.labelField ?? 'Not set'),
+    MapEntry('Prediction features', '${_runPredictionCount(run)}'),
     MapEntry('Created', _formatDate(run.createdAt)),
     MapEntry('AI area', _friendlyScopeLabel(run.scopeType)),
     MapEntry('Duration', _runDuration(run)),
   ];
   if (run.regionPreset?.trim().isNotEmpty ?? false) {
     rows.add(MapEntry('Region', run.regionPreset!));
+  }
+  if (run.callbackReceivedAt != null) {
+    rows.add(MapEntry('Last callback', _formatDate(run.callbackReceivedAt)));
   }
   return rows.map((row) => MapEntry(row.key, _safeText(row.value))).toList();
 }
@@ -5306,9 +6410,6 @@ const String _notRecordedForRun = 'Not recorded for this run';
 
 Map<String, dynamic> _runSettingsSnapshot(AiRun run) =>
     _mapValue(run.metadata['ai_settings']);
-
-Map<String, dynamic> _pipelineSupportSnapshot(AiRun run) =>
-    _mapValue(run.metadata['pipeline_execution_support']);
 
 String _recordedOrMissing(String? value) {
   final trimmed = value?.trim();
@@ -5345,28 +6446,25 @@ String? _areaTypeFromLegacyScope(String? value) {
   }
 }
 
-String _runSupportState(
-  AiRun run,
-  String setting, {
-  String fallback = 'Saved for run',
-}) {
-  final support = _pipelineSupportSnapshot(run);
-  final effective = _stringList(support['effective_pipeline_settings']);
-  final pending = _stringList(support['pending_pipeline_settings']);
-  if (effective.contains(setting)) {
-    return 'Effective now';
-  }
-  if (pending.contains(setting)) {
-    return 'Pipeline support pending';
-  }
-  if (support.isEmpty) {
-    return _notRecordedForRun;
-  }
-  return fallback;
-}
-
 List<MapEntry<String, String>> _runImageryRows(AiRun run) {
   final settings = _runSettingsSnapshot(run);
+  final sources = _stringList(settings['satellite_sources']);
+  final timeframes = _mapValue(settings['satellite_timeframes']);
+  if (sources.isNotEmpty && timeframes.isNotEmpty) {
+    return <MapEntry<String, String>>[
+          MapEntry(
+            'Satellite sources',
+            sources.map((source) => _friendlySatelliteLabel(source)).join(', '),
+          ),
+          for (final source in sources)
+            MapEntry(
+              _friendlySatelliteLabel(source),
+              _satelliteTimeframeSummary(_mapValue(timeframes[source])),
+            ),
+        ]
+        .map((row) => MapEntry(row.key, _safeText(row.value)))
+        .toList(growable: false);
+  }
   final dateFrom = _stringValue(settings['date_from']);
   final dateTo = _stringValue(settings['date_to']);
   return <MapEntry<String, String>>[
@@ -5392,9 +6490,38 @@ List<MapEntry<String, String>> _runImageryRows(AiRun run) {
   ].map((row) => MapEntry(row.key, _safeText(row.value))).toList(growable: false);
 }
 
+String _satelliteTimeframeSummary(Map<String, dynamic> timeframe) {
+  if (timeframe.isEmpty) {
+    return _notRecordedForRun;
+  }
+  final year = _stringValue(timeframe['map_year'] ?? timeframe['mapYear']);
+  final seasons = timeframe['seasons'];
+  if (seasons is! List || seasons.isEmpty) {
+    return year == null ? _notRecordedForRun : 'Year $year';
+  }
+  final parts = <String>[
+    if (year != null) 'Year $year',
+    for (final rawSeason in seasons)
+      if (rawSeason is Map)
+        _seasonTimeframeSummary(Map<String, dynamic>.from(rawSeason)),
+  ].where((part) => part.trim().isNotEmpty).toList(growable: false);
+  return parts.isEmpty ? _notRecordedForRun : parts.join('; ');
+}
+
+String _seasonTimeframeSummary(Map<String, dynamic> season) {
+  final label = _friendlySeasonLabel(_stringValue(season['season']) ?? '');
+  final from = _stringValue(season['from_date'] ?? season['fromDate']);
+  final to = _stringValue(season['to_date'] ?? season['toDate']);
+  if (from == null && to == null) {
+    return label;
+  }
+  return '$label $from to $to';
+}
+
 List<MapEntry<String, String>> _runTrainingSampleRows(AiRun run) {
   final areaType = _runAreaTypeValue(run, 'training_samples_area_type');
   final classRows = _countRows(run.metadata['class_counts']);
+  final selectedClasses = _stringList(run.metadata['selected_classes']);
   return <MapEntry<String, String>>[
         MapEntry('Label field', run.labelField ?? _notRecordedForRun),
         MapEntry('Area used', _friendlyScopeLabel(areaType ?? '')),
@@ -5412,9 +6539,11 @@ List<MapEntry<String, String>> _runTrainingSampleRows(AiRun run) {
         ),
         MapEntry(
           'Selected classes',
-          classRows.isEmpty
+          classRows.isNotEmpty
+              ? classRows.map((row) => row.key).join(', ')
+              : selectedClasses.isEmpty
               ? _notRecordedForRun
-              : classRows.map((row) => row.key).join(', '),
+              : selectedClasses.join(', '),
         ),
       ]
       .map((row) => MapEntry(row.key, _safeText(row.value)))
@@ -5432,7 +6561,6 @@ List<MapEntry<String, String>> _runPredictionAreaRows(AiRun run) {
   final isNational = areaType == 'national_lebanon';
   return <MapEntry<String, String>>[
         MapEntry('Prediction area', _friendlyScopeLabel(areaType ?? '')),
-        MapEntry('Pipeline use', _runSupportState(run, 'prediction_area_type')),
         if (customSummary.isNotEmpty)
           MapEntry(
             'Custom AI area',
@@ -5449,15 +6577,24 @@ List<MapEntry<String, String>> _runPredictionAreaRows(AiRun run) {
 
 List<MapEntry<String, String>> _runExtractedFeatureRows(AiRun run) {
   final settings = _runSettingsSnapshot(run);
-  final featureInputs = _stringList(settings['feature_inputs']);
+  final featureInputs = _firstStringList([
+    settings['feature_inputs'],
+    settings['selected_feature_inputs'],
+    settings['selected_extracted_features'],
+  ]);
+  final featureGroups = _stringList(settings['feature_groups']);
   return <MapEntry<String, String>>[
         MapEntry(
           'Selected features',
-          featureInputs.isEmpty
-              ? _notRecordedForRun
-              : '${featureInputs.length} selected: ${featureInputs.join(', ')}',
+          featureInputs.isEmpty ? _notRecordedForRun : featureInputs.join(', '),
         ),
-        MapEntry('Pipeline use', _runSupportState(run, 'feature_inputs')),
+        if (featureInputs.isNotEmpty)
+          MapEntry('Feature count', featureInputs.length.toString())
+        else if (featureGroups.isNotEmpty)
+          MapEntry(
+            'Legacy groups',
+            featureGroups.map(_friendlyFeatureGroupLabel).join(', '),
+          ),
       ]
       .map((row) => MapEntry(row.key, _safeText(row.value)))
       .toList(growable: false);
@@ -5487,6 +6624,12 @@ List<MapEntry<String, String>> _runModelConfigRows(AiRun run) {
               : _friendlyModelLabel(actualModel),
         ),
         MapEntry(
+          'Confidence threshold',
+          _stringValue(settings['confidence_threshold']) ??
+              _stringValue(run.metadata['confidence_threshold']) ??
+              _notRecordedForRun,
+        ),
+        MapEntry(
           'Best balanced model',
           _friendlyModelOrMissing(
             _firstString([
@@ -5510,129 +6653,6 @@ List<MapEntry<String, String>> _runModelConfigRows(AiRun run) {
       .toList(growable: false);
 }
 
-List<MapEntry<String, String>> _runExecutionSupportRows(AiRun run) {
-  final support = _pipelineSupportSnapshot(run);
-  final pending = _stringList(support['pending_pipeline_settings']);
-  final effective = _stringList(support['effective_pipeline_settings']);
-  return <MapEntry<String, String>>[
-        MapEntry(
-          'Settings',
-          support['settings_saved_for_run'] == true
-              ? 'Saved for run'
-              : _notRecordedForRun,
-        ),
-        MapEntry(
-          'Training samples area',
-          effective.contains('training_samples_area_type') ||
-                  effective.contains('scope_type')
-              ? 'Effective now'
-              : _runSupportState(run, 'training_samples_area_type'),
-        ),
-        MapEntry(
-          'Prediction area',
-          pending.contains('prediction_area_type') ||
-                  pending.contains('scope_type')
-              ? 'Pipeline support pending'
-              : _runSupportState(run, 'prediction_area_type'),
-        ),
-        if (pending.isNotEmpty)
-          MapEntry(
-            'Pipeline support pending',
-            pending.map(_friendlyPendingPipelineSetting).join(', '),
-          ),
-        if (effective.isNotEmpty)
-          MapEntry(
-            'Effective now',
-            effective.map(_friendlyPendingPipelineSetting).join(', '),
-          ),
-        if (_mapValue(run.metadata['national_scope_eligibility']).isNotEmpty)
-          MapEntry('National Lebanon', _nationalLebanonStatusForRun(run)),
-      ]
-      .map((row) => MapEntry(row.key, _safeText(row.value)))
-      .toList(growable: false);
-}
-
-String _whatHappenedMessage(String executionMode) {
-  switch (executionMode) {
-    case 'local_ground_truth_export':
-      return 'Prepared approved project data for AI training.';
-    case 'regional_feature_extraction':
-      return 'Extracted satellite features for approved project samples.';
-    case 'regional_model_eval':
-      return 'Evaluated regional AI models using approved project data.';
-    case 'regional_classification':
-      return 'Generated regional AI review predictions from extracted sample features.';
-    case 'regional_vectorization_artifacts':
-      return 'Generated regional vector review artifacts and stored AI predictions in the app database for review.';
-    case 'regional_full_review_artifacts':
-      return 'Ran the full regional review workflow: approved data export, feature extraction, model evaluation, review predictions, vector artifacts, and database prediction rows.';
-    case 'dry_run':
-      return 'Checked the AI pipeline without running model processing.';
-    case 'mock':
-      return 'Simulated worker processing for a safe app-side check.';
-    default:
-      return 'Recorded AI run progress for this project.';
-  }
-}
-
-List<MapEntry<String, String>> _whatHappenedRows(AiRun run) {
-  final mode = _executionMode(run);
-  final classRows = _countRows(run.metadata['class_counts']);
-  final excludedRows = _countRows(run.metadata['excluded_classes']);
-  final rows = <MapEntry<String, String>>[];
-
-  switch (mode) {
-    case 'local_ground_truth_export':
-      rows.addAll([
-        MapEntry('Approved samples', '${run.trainingFeatureCount}'),
-        MapEntry('Eligible samples', '${run.eligibleFeatureCount}'),
-        if (classRows.isNotEmpty) MapEntry('Classes', '${classRows.length}'),
-        MapEntry('Excluded samples', '${run.excludedFeatureCount}'),
-      ]);
-      break;
-    case 'regional_feature_extraction':
-      rows.addAll([
-        MapEntry('Sample count', '${run.eligibleFeatureCount}'),
-        MapEntry(
-          'Satellite collection',
-          _metadataText(run.metadata, 'satellite_collection') ?? 'Sentinel-2',
-        ),
-        MapEntry('Date range', _featureDateRange(run.metadata)),
-        MapEntry('Extracted features', _featureCountText(run.metadata)),
-        MapEntry('Missing/null values', _nullValueText(run.metadata)),
-      ]);
-      break;
-    case 'regional_model_eval':
-    case 'regional_full_review_artifacts':
-      final summary = _mapValue(run.metadata['model_metrics_summary']);
-      rows.addAll([
-        MapEntry('Approved samples', '${run.trainingFeatureCount}'),
-        MapEntry('Eligible samples', '${run.eligibleFeatureCount}'),
-        if (classRows.isNotEmpty) MapEntry('Classes', '${classRows.length}'),
-        if (excludedRows.isNotEmpty)
-          MapEntry('Excluded classes', '${excludedRows.length}'),
-        if (_toIntValue(summary['sample_count']) != null)
-          MapEntry(
-            'Samples evaluated',
-            '${_toIntValue(summary['sample_count'])}',
-          ),
-      ]);
-      break;
-    default:
-      rows.addAll([
-        MapEntry('Approved samples', '${run.trainingFeatureCount}'),
-        MapEntry('Eligible samples', '${run.eligibleFeatureCount}'),
-        MapEntry('Excluded samples', '${run.excludedFeatureCount}'),
-      ]);
-      break;
-  }
-
-  return rows
-      .where((row) => row.value.trim().isNotEmpty)
-      .map((row) => MapEntry(row.key, _safeText(row.value)))
-      .toList(growable: false);
-}
-
 List<MapEntry<String, String>> _modelResultRows(
   AiRun run,
   List<AiRunMetric> metrics,
@@ -5640,8 +6660,13 @@ List<MapEntry<String, String>> _modelResultRows(
   final rows = metrics.isNotEmpty
       ? _modelRowsFromMetricRecords(run, metrics)
       : _modelRowsFromMetadata(run);
-  if (rows.isNotEmpty) {
-    return rows
+  final explanation = _modelSelectionExplanation(run, metrics);
+  final enrichedRows = <MapEntry<String, String>>[
+    ...rows,
+    if (explanation != null) MapEntry('Selection rationale', explanation),
+  ];
+  if (enrichedRows.isNotEmpty) {
+    return enrichedRows
         .map((row) => MapEntry(row.key, _safeText(row.value)))
         .toList(growable: false);
   }
@@ -5651,6 +6676,37 @@ List<MapEntry<String, String>> _modelResultRows(
     ];
   }
   return const <MapEntry<String, String>>[];
+}
+
+String? _modelSelectionExplanation(AiRun run, List<AiRunMetric> metrics) {
+  final metadataSelection = _mapValue(run.metadata['model_selection']);
+  final summary = _mapValue(run.metadata['model_metrics_summary']);
+  final summarySelection = _mapValue(summary['model_selection']);
+  final fromRun = _firstString([
+    _stringValue(metadataSelection['selection_explanation']),
+    _stringValue(metadataSelection['explanation']),
+    _stringValue(run.metadata['selection_explanation']),
+    _stringValue(summarySelection['selection_explanation']),
+    _stringValue(summarySelection['explanation']),
+    _stringValue(summary['selection_explanation']),
+  ]);
+  if (fromRun != null) {
+    return fromRun;
+  }
+  for (final metric in metrics) {
+    final metricSelection = _mapValue(
+      metric.metrics['model_selection'] ?? metric.metrics['selection'],
+    );
+    final explanation = _firstString([
+      _stringValue(metricSelection['selection_explanation']),
+      _stringValue(metricSelection['explanation']),
+      _stringValue(metric.metrics['selection_explanation']),
+    ]);
+    if (explanation != null) {
+      return explanation;
+    }
+  }
+  return null;
 }
 
 List<MapEntry<String, String>> _modelRowsFromMetricRecords(
@@ -5757,47 +6813,6 @@ List<MapEntry<String, String>> _compactModelRows({
   ];
 }
 
-String _featureDateRange(Map<String, dynamic> metadata) {
-  final direct =
-      _metadataText(metadata, 'date_range') ??
-      _metadataText(metadata, 'satellite_date_range');
-  if (direct != null) {
-    return direct;
-  }
-  final start =
-      _metadataText(metadata, 'start_date') ??
-      _metadataText(metadata, 'date_start');
-  final end =
-      _metadataText(metadata, 'end_date') ??
-      _metadataText(metadata, 'date_end');
-  if (start != null || end != null) {
-    return '${start ?? 'start unknown'} to ${end ?? 'end unknown'}';
-  }
-  return 'Configured in AI pipeline';
-}
-
-String _featureCountText(Map<String, dynamic> metadata) {
-  final count =
-      _toIntValue(metadata['extracted_feature_count']) ??
-      _toIntValue(metadata['feature_count']) ??
-      _toIntValue(metadata['column_count']);
-  if (count != null) {
-    return count.toString();
-  }
-  return 'See feature table';
-}
-
-String _nullValueText(Map<String, dynamic> metadata) {
-  final count =
-      _toIntValue(metadata['missing_feature_values']) ??
-      _toIntValue(metadata['null_feature_values']) ??
-      _toIntValue(metadata['null_value_count']);
-  if (count != null) {
-    return count.toString();
-  }
-  return 'See feature extraction summary';
-}
-
 String _friendlyExecutionModeLabel(String mode) {
   switch (mode) {
     case 'local_ground_truth_export':
@@ -5813,9 +6828,9 @@ String _friendlyExecutionModeLabel(String mode) {
     case 'regional_full_review_artifacts':
       return 'Full regional review run';
     case 'dry_run':
-      return 'Dry run';
+      return 'Pipeline test run';
     case 'mock':
-      return 'Mock worker check';
+      return 'Mock AI server check';
     case 'not set':
       return 'Not set';
     default:
@@ -5829,46 +6844,6 @@ String _friendlyStatusLabel(String status) {
       return 'Ready for review';
     case 'extracting_features':
       return 'Extracting features';
-    default:
-      return _titleCase(status.replaceAll('_', ' '));
-  }
-}
-
-String _friendlyReviewDecisionLabel(String decision) {
-  switch (decision) {
-    case 'approved_for_publish':
-      return 'Approved for future publication';
-    case 'rejected':
-      return 'Rejected';
-    case 'needs_more_data':
-      return 'More data requested';
-    case 'keep_draft':
-      return 'Kept as draft';
-    case 'needs_rerun':
-      return 'Rerun requested';
-    case 'unpublished':
-      return 'Unpublished';
-    default:
-      return _titleCase(decision.replaceAll('_', ' '));
-  }
-}
-
-String _friendlyLayerStatusLabel(String status) {
-  switch (status) {
-    case 'ready_for_review':
-      return 'Ready for review';
-    case 'approved':
-      return 'Approved';
-    case 'rejected':
-      return 'Rejected';
-    case 'published':
-      return 'Published';
-    case 'unpublished':
-      return 'Draft';
-    case 'draft':
-      return 'Draft';
-    case 'failed':
-      return 'Failed';
     default:
       return _titleCase(status.replaceAll('_', ' '));
   }
@@ -5899,14 +6874,19 @@ String _friendlyLayerTypeLabel(String layerType) {
   switch (layerType) {
     case 'classification':
       return 'Classification';
-    case 'confidence':
-      return 'Confidence';
-    case 'uncertainty':
-      return 'Uncertainty';
-    case 'statistics':
-      return 'Statistics';
     default:
       return _titleCase(layerType.replaceAll('_', ' '));
+  }
+}
+
+String _friendlyProcessingMethod(String value) {
+  switch (value) {
+    case 'confidence_mask_dissolve_makevalid_simplify_preserve_topology':
+      return 'Confidence mask, dissolve, geometry repair, and simplification';
+    case 'confidence_mask_dissolve_makevalid_simplify_preserve_topology_chaikin':
+      return 'Confidence mask, dissolve, geometry repair, simplification, and smoothing';
+    default:
+      return _titleCase(value.replaceAll('_', ' '));
   }
 }
 
@@ -5914,7 +6894,7 @@ String _friendlyScopeLabel(String scope) {
   switch (scope) {
     case 'project':
     case 'project_area':
-      return 'Project area';
+      return 'Project feature extent';
     case 'custom_polygon':
     case 'custom_ai_area':
       return 'Custom AI area';
@@ -5930,15 +6910,14 @@ String _friendlyScopeLabel(String scope) {
 
 String _nationalLebanonStatusForRun(AiRun run) {
   final eligibility = _mapValue(run.metadata['national_scope_eligibility']);
-  final eligible = eligibility['eligible'] == true;
-  final enabled = run.metadata['national_scope_enabled'] == true && eligible;
-  if (enabled) {
-    return 'Enabled';
+  final coverage = _mapValue(eligibility['coverage']);
+  final score = _toIntValue(coverage['score']);
+  if (run.scopeType == 'national') {
+    return score == null
+        ? 'Static Lebanon boundary'
+        : 'Coverage score $score / 100';
   }
-  if (eligible) {
-    return 'Ready';
-  }
-  return 'Locked / requirements unmet';
+  return score == null ? 'Not selected' : 'Available, score $score / 100';
 }
 
 String _friendlySatelliteLabel(String? value) {
@@ -5949,6 +6928,38 @@ String _friendlySatelliteLabel(String? value) {
       return 'Landsat';
     case null:
       return 'Not set';
+    default:
+      return _titleCase(value.replaceAll('_', ' '));
+  }
+}
+
+String _friendlyFeatureGroupLabel(String value) {
+  switch (value) {
+    case 'spectral_bands':
+      return 'Spectral bands';
+    case 'vegetation_indices':
+      return 'Vegetation indices';
+    case 'topography':
+      return 'Topography';
+    case 'texture':
+      return 'Texture';
+    case 'seasonal_phenology':
+      return 'Seasonal composites';
+    default:
+      return _titleCase(value.replaceAll('_', ' '));
+  }
+}
+
+String _friendlyStaticFeatureLabel(String value) {
+  switch (value) {
+    case 'static_srtm_elevation':
+      return 'SRTM elevation';
+    case 'static_srtm_slope':
+      return 'SRTM slope';
+    case 'static_srtm_aspect':
+      return 'SRTM aspect';
+    case 'static_texture_pc1':
+      return 'Texture PC1';
     default:
       return _titleCase(value.replaceAll('_', ' '));
   }
@@ -5973,49 +6984,31 @@ String _friendlySeasonLabel(String value) {
   }
 }
 
-String _friendlyPendingPipelineSetting(String value) {
-  switch (value) {
-    case 'satellite_source':
-      return 'satellite';
-    case 'date_range':
-      return 'date range';
-    case 'feature_inputs':
-      return 'selected features';
-    case 'preferred_model':
-      return 'preferred model';
-    case 'custom_area':
-      return 'custom AI area';
-    case 'training_samples_area_type':
-      return 'training samples area';
-    case 'prediction_area_type':
-      return 'prediction area';
-    case 'project_bounds':
-      return 'project bounds';
-    case 'label_field':
-      return 'label field';
-    case 'execution_mode':
-      return 'execution mode';
-    case 'scope_type':
-      return 'AI area';
-    default:
-      return value.replaceAll('_', ' ');
-  }
-}
-
 String _friendlyModelOrMissing(String? model) =>
     model == null ? _notRecordedForRun : _friendlyModelLabel(model);
 
 String _friendlyModelLabel(String model) {
-  final normalized = model.trim().toLowerCase();
-  switch (normalized) {
-    case 'svm_rbf':
-      return 'SVM RBF';
+  return formatModelName(model);
+}
+
+String _normalModelPreferenceForSettings(String? value) {
+  switch (value?.trim().toLowerCase()) {
     case 'random_forest':
-      return 'Random Forest';
+    case 'rf':
+      return 'random_forest';
+    case 'svm':
+    case 'svm_rbf':
+      return 'svm';
+    case 'gradient_boosting':
+    case 'gb':
+      return 'gradient_boosting';
     case 'xgboost':
-      return 'XGBoost';
+    case 'xgb':
+      return 'auto';
+    case 'auto':
+      return 'auto';
     default:
-      return _titleCase(model.replaceAll('_', ' '));
+      return 'auto';
   }
 }
 
@@ -6124,31 +7117,6 @@ String? _normalizedModelName(String? value) {
   return text.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_').trim();
 }
 
-String _statusExplanation(AiRun run) {
-  switch (run.status) {
-    case 'ready_for_review':
-      return 'Ready for review.';
-    case 'failed':
-      return 'This run failed. Review the failure reason and worker logs.';
-    case 'draft':
-      return 'AI run prepared. No worker processing has started.';
-    case 'queued':
-      return 'Run queued. Worker is not running.';
-    case 'extracting_features':
-      return 'The worker is extracting satellite features.';
-    case 'training':
-      return 'The worker is training regional models.';
-    case 'evaluating':
-      return 'The worker is evaluating model results.';
-    case 'published':
-      return 'Published for app users.';
-    case 'cancelled':
-      return 'This run was cancelled.';
-    default:
-      return '${_friendlyStatusLabel(run.status)}.';
-  }
-}
-
 List<MapEntry<String, String>> _countRows(dynamic value) {
   final rows = <MapEntry<String, String>>[];
   final items = value is List ? value : const <dynamic>[];
@@ -6167,41 +7135,6 @@ List<MapEntry<String, String>> _countRows(dynamic value) {
   return rows;
 }
 
-List<String> _limitationMessages(AiRun run) {
-  final messages = <String>{};
-  if (_isRegionalRun(run)) {
-    messages.add('This is a regional proof-of-concept, not a national model.');
-    messages.add('South Lebanon only.');
-    messages.add('National AI requires wider Lebanon coverage.');
-  }
-  for (final value in _stringList(run.metadata['scientific_limitations'])) {
-    final lower = value.toLowerCase();
-    if (lower.contains('national')) {
-      messages.add('National AI requires wider Lebanon coverage.');
-    } else if (lower.contains('regional')) {
-      messages.add(
-        'This is a regional proof-of-concept, not a national model.',
-      );
-    }
-  }
-  final summary = _mapValue(run.metadata['model_metrics_summary']);
-  for (final value in _stringList(summary['warnings'])) {
-    final lower = value.toLowerCase();
-    if (lower.contains('vineyard')) {
-      messages.add(
-        'Vineyards were excluded because only 12 samples are available.',
-      );
-    } else if (lower.contains('fruit trees') || lower.contains('broad')) {
-      messages.add('Fruit Trees is a broad class.');
-    } else if (lower.contains('national') || lower.contains('south')) {
-      messages.add('National AI requires wider Lebanon coverage.');
-    } else {
-      messages.add(value);
-    }
-  }
-  return messages.map(_safeText).toList(growable: false);
-}
-
 List<String> _outputPaths(Map<String, dynamic> metadata) {
   final paths = <String>{};
   void collect(dynamic value, [String key = '']) {
@@ -6210,7 +7143,18 @@ List<String> _outputPaths(Map<String, dynamic> metadata) {
     }
     if (value is String) {
       final normalized = value.replaceAll('\\', '/').trim();
-      if (normalized.contains('outputs/')) {
+      final lower = normalized.toLowerCase();
+      final keyLower = key.toLowerCase();
+      final looksLikeArtifact =
+          keyLower.contains('path') ||
+          keyLower.contains('file') ||
+          lower.endsWith('.geojson') ||
+          lower.endsWith('.json') ||
+          lower.endsWith('.csv') ||
+          lower.endsWith('.tif') ||
+          lower.endsWith('.tiff') ||
+          lower.endsWith('.log');
+      if (normalized.contains('outputs/') || looksLikeArtifact) {
         paths.add(normalized);
       }
       return;
@@ -6232,6 +7176,26 @@ List<String> _outputPaths(Map<String, dynamic> metadata) {
   return paths.toList()..sort();
 }
 
+List<String> _outputPathsForRun(AiRun run) {
+  final paths = <String>{
+    ..._outputPaths(run.metadata),
+    ..._outputPaths(run.artifacts),
+  };
+  return paths.where((path) {
+    final lower = path.toLowerCase();
+    return lower.endsWith('.geojson') ||
+        lower.endsWith('.json') ||
+        lower.endsWith('.csv') ||
+        lower.endsWith('.tif') ||
+        lower.endsWith('.tiff') ||
+        lower.endsWith('.log') ||
+        lower.contains('classification') ||
+        lower.contains('training_features') ||
+        lower.contains('feature_importance') ||
+        lower.contains('confusion_matrix');
+  }).toList()..sort();
+}
+
 String? _firstOutputPath(Map<String, dynamic> metadata, String contains) {
   final needle = contains.toLowerCase();
   for (final path in _outputPaths(metadata)) {
@@ -6249,6 +7213,16 @@ String _friendlyOutputPathLabel(String path) {
   }
   final file = parts.last;
   if (file == 'feature_table.csv') return 'Feature table';
+  if (file.startsWith('training_features')) return 'Training features';
+  if (file == 'ai_classification_review.geojson') {
+    return 'Prediction GeoJSON';
+  }
+  if (file.endsWith('.geojson')) return 'Vector output';
+  if (file.endsWith('.tif') || file.endsWith('.tiff')) {
+    return 'Classification raster';
+  }
+  if (file == 'run.log') return 'Run log file';
+  if (file == 'run_config.json') return 'Run configuration file';
   if (file == 'metrics.json') return 'Metrics file';
   if (file == 'confusion_matrix.csv') return 'Confusion matrix';
   if (file == 'model_metadata.json') return 'Model metadata';
@@ -6259,14 +7233,6 @@ String _friendlyOutputPathLabel(String path) {
   }
   if (file == 'ground_truth.geojson') return 'Ground truth';
   return file;
-}
-
-bool _isRegionalRun(AiRun run) {
-  final executionMode = _metadataText(run.metadata, 'execution_mode') ?? '';
-  return executionMode.startsWith('regional_') ||
-      _stringList(
-        run.metadata['scientific_limitations'],
-      ).any((message) => message.toLowerCase().contains('regional'));
 }
 
 String _runDuration(AiRun run) {
@@ -6374,6 +7340,16 @@ List<String> _stringList(dynamic value) {
   return const <String>[];
 }
 
+List<String> _firstStringList(List<dynamic> values) {
+  for (final value in values) {
+    final items = _stringList(value);
+    if (items.isNotEmpty) {
+      return items;
+    }
+  }
+  return const <String>[];
+}
+
 String _safeText(String value) {
   var text = value;
   final replacements = <RegExp>[
@@ -6392,6 +7368,31 @@ String _safeText(String value) {
     text = text.replaceAll(pattern, '[redacted]');
   }
   return text;
+}
+
+String _labelizeAttributeKey(String key) {
+  return key
+      .replaceAll('_', ' ')
+      .split(' ')
+      .where((part) => part.isNotEmpty)
+      .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
+      .join(' ');
+}
+
+String _formatAttributeValue(Object? value) {
+  if (value == null) {
+    return 'Not available';
+  }
+  if (value is List) {
+    return value.map(_formatAttributeValue).join(', ');
+  }
+  if (value is Map) {
+    return value.entries
+        .map((entry) => '${entry.key}: ${_formatAttributeValue(entry.value)}')
+        .join(', ');
+  }
+  final text = value.toString().trim();
+  return text.isEmpty ? 'Not available' : _safeText(text);
 }
 
 class _KeyValueList extends StatelessWidget {
@@ -6438,6 +7439,100 @@ class _KeyValueList extends StatelessWidget {
   }
 }
 
+class _DetailSection extends StatelessWidget {
+  const _DetailSection({required this.title, required this.child});
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.md),
+      child: AppCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FeatureAttributesGrid extends StatelessWidget {
+  const _FeatureAttributesGrid({required this.attributes});
+
+  final Map<String, Object?> attributes;
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = attributes.entries
+        .where((entry) => entry.value != null)
+        .toList(growable: false);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 520 ? 2 : 1;
+        final itemWidth = columns == 1
+            ? constraints.maxWidth
+            : (constraints.maxWidth - 12) / 2;
+        return Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            for (final entry in entries)
+              SizedBox(
+                width: itemWidth,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.outlineVariant.withValues(alpha: 0.36),
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _labelizeAttributeKey(entry.key),
+                          style: Theme.of(context).textTheme.labelMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                          softWrap: true,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _formatAttributeValue(entry.value),
+                          style: Theme.of(context).textTheme.bodyMedium,
+                          softWrap: true,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _MessageList extends StatelessWidget {
   const _MessageList({required this.title, required this.messages});
 
@@ -6480,51 +7575,155 @@ class _NoticeRow extends StatelessWidget {
   }
 }
 
-class _NationalRequirementRow extends StatelessWidget {
-  const _NationalRequirementRow({required this.requirement});
+class _NationalCoverageCard extends StatelessWidget {
+  const _NationalCoverageCard({
+    required this.eligibility,
+    required this.weakClasses,
+    required this.minSamplesPerClass,
+  });
 
-  final AiNationalScopeRequirement requirement;
+  final AiNationalScopeEligibility eligibility;
+  final List<AiLabelCount> weakClasses;
+  final int minSamplesPerClass;
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final iconColor = requirement.passed
-        ? Colors.green.shade700
-        : colorScheme.error;
-    final current = _readableRequirementValue(requirement.currentValue);
-    final required = _readableRequirementValue(requirement.requiredValue);
+    final coverage = eligibility.coverage;
+    final score = _toIntValue(coverage['score']) ?? eligibility.coverageScore;
+    final rating = _coverageRatingLabel(
+      coverage['rating']?.toString() ?? eligibility.coverageRating,
+    );
+    final governoratesCovered =
+        _toIntValue(coverage['governorates_covered']) ?? 0;
+    final totalGovernorates = _toIntValue(coverage['total_governorates']) ?? 8;
+    final gridCellsCovered = _toIntValue(coverage['grid_cells_covered']) ?? 0;
+    final totalGridCells = _toIntValue(coverage['total_grid_cells']) ?? 20;
+    final usableClasses = _toIntValue(coverage['usable_class_count']) ?? 0;
+    final weakClassCount =
+        _toIntValue(coverage['weak_class_count']) ?? weakClasses.length;
+    final elevationMeasured = coverage['elevation_measured'] == true;
+    final elevationBands = coverage['elevation_bands'] is List
+        ? (coverage['elevation_bands'] as List)
+              .map((value) => value.toString())
+              .where((value) => value.trim().isNotEmpty)
+              .join(', ')
+        : '';
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.sm),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'National Coverage',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              'Checks how well approved samples are spread across Lebanon.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            _NationalCoverageRow(
+              icon: Icons.map_outlined,
+              label: 'Governorates covered',
+              value: '$governoratesCovered / $totalGovernorates',
+              rating: coverage['governorate_rating']?.toString(),
+            ),
+            _NationalCoverageRow(
+              icon: Icons.grid_view_outlined,
+              label: 'Spatial spread',
+              value: '$gridCellsCovered / $totalGridCells grid cells',
+              rating: coverage['grid_rating']?.toString(),
+            ),
+            _NationalCoverageRow(
+              icon: Icons.category_outlined,
+              label: 'Class coverage',
+              value: '$usableClasses usable classes, $weakClassCount weak',
+              rating: coverage['class_rating']?.toString(),
+            ),
+            if (elevationMeasured)
+              _NationalCoverageRow(
+                icon: Icons.terrain_outlined,
+                label: 'Topography',
+                value: elevationBands.isEmpty ? 'Measured' : elevationBands,
+                rating: 'good',
+              ),
+            const SizedBox(height: AppSpacing.xs),
+            _NationalCoverageRow(
+              icon: Icons.speed_outlined,
+              label: 'Overall coverage',
+              value: '$rating ($score / 100)',
+              rating: coverage['rating']?.toString(),
+            ),
+            if (weakClasses.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.xs),
+              _NoticeRow(
+                icon: Icons.info_outline,
+                text:
+                    'Classes with fewer than $minSamplesPerClass samples will be skipped.',
+              ),
+            ],
+            if (score < 70) ...[
+              const SizedBox(height: AppSpacing.xs),
+              const _NoticeRow(
+                icon: Icons.warning_amber_outlined,
+                text: 'Run allowed, but national results may be unreliable.',
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NationalCoverageRow extends StatelessWidget {
+  const _NationalCoverageRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.rating,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final String? rating;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalized = rating?.trim().toLowerCase();
+    final color = switch (normalized) {
+      'good' => Colors.green.shade700,
+      'limited' => Colors.orange.shade700,
+      'weak' => Theme.of(context).colorScheme.error,
+      _ => Theme.of(context).colorScheme.primary,
+    };
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            requirement.passed
-                ? Icons.check_circle_outline
-                : Icons.cancel_outlined,
-            size: 18,
-            color: iconColor,
-          ),
+          Icon(icon, size: 18, color: color),
           const SizedBox(width: AppSpacing.xs),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  requirement.label,
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-                if (requirement.message.trim().isNotEmpty)
-                  Text(requirement.message),
-                if (current != null || required != null)
-                  Text(
-                    [
-                      if (current != null) 'Current: $current',
-                      if (required != null) 'Required: $required',
-                    ].join(' | '),
-                    style: Theme.of(context).textTheme.bodySmall,
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(
+                    text: '$label: ',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
-              ],
+                  TextSpan(text: value),
+                ],
+              ),
+              softWrap: true,
             ),
           ),
         ],
@@ -6533,21 +7732,25 @@ class _NationalRequirementRow extends StatelessWidget {
   }
 }
 
-String? _readableRequirementValue(Object? value) {
-  if (value == null) {
-    return null;
+String _coverageRatingLabel(String rating) {
+  switch (rating.trim().toLowerCase()) {
+    case 'good':
+      return 'Good';
+    case 'limited':
+      return 'Limited';
+    case 'weak':
+    default:
+      return 'Weak';
   }
-  final text = value.toString().trim();
-  return text.isEmpty ? null : text;
 }
 
 extension on AiProjectSettings {
   String get updatedKey =>
-      '${isEnabled ? 1 : 0}:$scopeType:$minSamplesPerClass:${modelPreferences.hashCode}';
+      '${isEnabled ? 1 : 0}:$scopeType:$minSamplesPerClass:$confidenceThreshold:${modelPreferences.hashCode}';
 }
 
 String _normalizedSection(String value) {
-  if (value == 'settings' || value == 'runs' || value == 'validation') {
+  if (value == 'settings' || value == 'runs') {
     return value;
   }
   return 'readiness';

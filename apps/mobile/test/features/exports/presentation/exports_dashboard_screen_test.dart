@@ -241,6 +241,109 @@ class _FailingExportsRepository implements ExportsRepository {
   }
 }
 
+class _StaticExportsRepository implements ExportsRepository {
+  const _StaticExportsRepository(this.jobs);
+
+  final List<ExportJob> jobs;
+
+  @override
+  Future<List<ExportJob>> fetchJobs({required String requestedByUserId}) async =>
+      jobs;
+
+  @override
+  Future<PaginatedResult<ExportJob>> fetchJobsPage({
+    required String requestedByUserId,
+    String? categoryId,
+    String? projectId,
+    ExportJobStatus? status,
+    ExportFormat? format,
+    int page = 1,
+    int limit = 20,
+  }) async {
+    final filtered = jobs
+        .where((job) => job.requestedByUserId == requestedByUserId)
+        .where((job) => projectId == null || job.projectId == projectId)
+        .where((job) => format == null || job.format == format)
+        .where((job) => status == null || job.status == status)
+        .toList(growable: false)
+      ..sort((a, b) => b.requestedAt.compareTo(a.requestedAt));
+    final start = (page - 1) * limit;
+    final end = (start + limit).clamp(0, filtered.length);
+    return PaginatedResult<ExportJob>(
+      items: start >= filtered.length
+          ? const <ExportJob>[]
+          : filtered.sublist(start, end),
+      page: page,
+      limit: limit,
+      total: filtered.length,
+      hasMore: end < filtered.length,
+    );
+  }
+
+  @override
+  Future<ExportDashboardMetrics> fetchSummary({
+    required String requestedByUserId,
+    String? categoryId,
+    String? projectId,
+    ExportJobStatus? status,
+    ExportFormat? format,
+  }) async {
+    final page = await fetchJobsPage(
+      requestedByUserId: requestedByUserId,
+      categoryId: categoryId,
+      projectId: projectId,
+      status: status,
+      format: format,
+      page: 1,
+      limit: 1000,
+    );
+    return ExportDashboardMetrics.fromJobs(page.items);
+  }
+
+  @override
+  Future<ExportJob> requestExport({
+    required String requestedByUserId,
+    required String projectId,
+    required String projectName,
+    required ExportFormat format,
+    required Map<String, dynamic> exportParameters,
+  }) async {
+    return ExportJob(
+      id: 'regenerated-export',
+      projectId: projectId,
+      projectName: projectName,
+      format: format,
+      status: ExportJobStatus.pending,
+      requestedByUserId: requestedByUserId,
+      requestedAt: DateTime.utc(2026, 6, 20),
+      exportParameters: exportParameters,
+    );
+  }
+
+  @override
+  Future<List<ExportJob>> processQueueTick({
+    required String requestedByUserId,
+  }) async => jobs;
+
+  @override
+  Future<ExportJob?> markDownloaded({
+    required String requestedByUserId,
+    required String exportId,
+  }) async => null;
+
+  @override
+  Future<ExportJob?> retryFailed({
+    required String requestedByUserId,
+    required String exportId,
+  }) async => requestExport(
+        requestedByUserId: requestedByUserId,
+        projectId: jobs.first.projectId,
+        projectName: jobs.first.projectName,
+        format: jobs.first.format,
+        exportParameters: jobs.first.exportParameters,
+      );
+}
+
 void main() {
   const project = ProjectSummary(
     id: 'project-1',
@@ -614,6 +717,44 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Polygon area selected'), findsOneWidget);
+  });
+
+  testWidgets('expired export shows expired state and regenerate action', (
+    tester,
+  ) async {
+    final expiredJob = ExportJob(
+      id: 'expired-export-1',
+      projectId: 'project-1',
+      projectName: 'Export Project',
+      format: ExportFormat.geojson,
+      status: ExportJobStatus.expired,
+      requestedByUserId: 'admin-1',
+      requestedAt: DateTime.utc(2026, 6, 18),
+      completedAt: DateTime.utc(2026, 6, 18, 1),
+      fileStatus: 'expired',
+      displayMessage:
+          'Export completed, but the file expired. Regenerate it to download again.',
+      canRegenerate: true,
+      recordCount: 12,
+      exportParameters: const <String, dynamic>{'format': 'geojson'},
+    );
+
+    await pumpDashboard(
+      tester,
+      exportsRepository: _StaticExportsRepository(<ExportJob>[expiredJob]),
+    );
+
+    await tester.drag(find.byType(ListView), const Offset(0, -900));
+    await tester.pumpAndSettle();
+
+    expect(find.text('File expired'), findsOneWidget);
+    expect(
+      find.text('Export completed, but the file expired. Regenerate it to download again.'),
+      findsOneWidget,
+    );
+    expect(find.text('Regenerate'), findsOneWidget);
+    expect(find.text('Download'), findsNothing);
+    expect(find.text('failed'), findsNothing);
   });
 
   testWidgets('exports screen handles missing session without provider crash', (

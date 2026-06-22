@@ -137,6 +137,7 @@ const LOG_METADATA_MAX_CHARS = 4000;
 const WORKER_PHASE = 'phase_f_regional_worker';
 const REGIONAL_SCIENTIFIC_LIMITATIONS = [
   'Regional proof-of-concept only; not a national model.',
+  'AI prediction quality depends on approved sample coverage.',
   'AI predictions remain separate from approved field/import features.',
   'Outputs must be reviewed before any future publication.',
 ];
@@ -486,6 +487,155 @@ const firstString = (values: unknown[]): string | null => {
   return null;
 };
 
+type SatelliteSeasonConfig = {
+  season: string;
+  from_date: string | null;
+  to_date: string | null;
+};
+
+type SatelliteTimeframeConfig = {
+  map_year: number | null;
+  seasons: SatelliteSeasonConfig[];
+};
+
+const satelliteAliases = new Map<string, string>([
+  ['sentinel2', 'sentinel2'],
+  ['sentinel-2', 'sentinel2'],
+  ['sentinel_2', 'sentinel2'],
+  ['s2', 'sentinel2'],
+  ['landsat', 'landsat'],
+  ['landsat8', 'landsat'],
+  ['landsat-8', 'landsat'],
+  ['landsat9', 'landsat'],
+  ['landsat-9', 'landsat'],
+]);
+
+const seasonAliases = new Set(['growing', 'dry', 'harvest', 'winter']);
+
+const normalizeSatelliteSource = (value: unknown): string | null => {
+  const raw = stringOrNull(value)?.toLowerCase().replace(/\s+/g, '');
+  return raw ? satelliteAliases.get(raw) ?? null : null;
+};
+
+const normalizeSeason = (value: unknown): string | null => {
+  const raw = stringOrNull(value)?.toLowerCase().replace(/\s+/g, '_');
+  return raw && seasonAliases.has(raw) ? raw : null;
+};
+
+const isoDateOrNull = (value: unknown): string | null => {
+  const raw = stringOrNull(value);
+  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return null;
+  }
+  const parsed = new Date(`${raw}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) ? null : raw;
+};
+
+const defaultSeasonRange = (year: number, season: string): { from_date: string; to_date: string } => {
+  switch (season) {
+    case 'dry':
+      return { from_date: `${year}-06-01`, to_date: `${year}-08-31` };
+    case 'harvest':
+      return { from_date: `${year}-08-01`, to_date: `${year}-10-31` };
+    case 'winter':
+      return { from_date: `${year}-12-01`, to_date: `${year + 1}-02-28` };
+    case 'growing':
+    default:
+      return { from_date: `${year}-03-01`, to_date: `${year}-06-30` };
+  }
+};
+
+const normalizeSatelliteSourcesFromSettings = (settings: Record<string, unknown>): string[] => {
+  const sources = [
+    ...stringListFrom(settings.satellite_sources),
+    ...stringListFrom(settings.satelliteSources),
+  ]
+    .map((source) => normalizeSatelliteSource(source))
+    .filter((source): source is string => source !== null);
+  const legacySource = normalizeSatelliteSource(settings.satellite_source ?? settings.satelliteSource);
+  if (sources.length === 0 && legacySource) {
+    sources.push(legacySource);
+  }
+  return Array.from(new Set(sources.length > 0 ? sources : ['sentinel2']));
+};
+
+const normalizeSatelliteTimeframesFromSettings = (
+  settings: Record<string, unknown>,
+  sources: string[],
+): Record<string, SatelliteTimeframeConfig> => {
+  const configured =
+    isRecord(settings.satellite_timeframes)
+      ? settings.satellite_timeframes
+      : isRecord(settings.satelliteTimeframes)
+        ? settings.satelliteTimeframes
+        : {};
+  const legacySeason = normalizeSeason(settings.season) ?? 'growing';
+  const legacyFromRaw = isoDateOrNull(settings.date_from ?? settings.from_date);
+  const legacyYear =
+    Math.trunc(
+      numberOrNull(
+        settings.target_year ?? settings.year ?? settings.map_year ?? legacyFromRaw?.slice(0, 4),
+      ) ?? 2025,
+    );
+  const legacyRange = defaultSeasonRange(legacyYear, legacySeason);
+  const legacyFrom = legacyFromRaw ?? legacyRange.from_date;
+  const legacyTo = isoDateOrNull(settings.date_to ?? settings.to_date) ?? legacyRange.to_date;
+
+  return sources.reduce<Record<string, SatelliteTimeframeConfig>>((timeframes, source) => {
+    const sourceConfig = isRecord(configured[source]) ? (configured[source] as Record<string, unknown>) : {};
+    const mapYear =
+      Math.trunc(
+        numberOrNull(
+          sourceConfig.map_year ??
+            sourceConfig.mapYear ??
+            isoDateOrNull(sourceConfig.from_date ?? sourceConfig.fromDate)?.slice(0, 4),
+        ) ?? legacyYear,
+      );
+    const rawSeasons = Array.isArray(sourceConfig.seasons) ? sourceConfig.seasons : [];
+    const seasons = rawSeasons
+      .map((item) => {
+        const record: Record<string, unknown> = isRecord(item) ? item : { season: item };
+        const season = normalizeSeason(record.season) ?? legacySeason;
+        const fallback = defaultSeasonRange(mapYear, season);
+        const fromDate = isoDateOrNull(record.from_date ?? record.fromDate) ?? fallback.from_date;
+        const toDate = isoDateOrNull(record.to_date ?? record.toDate) ?? fallback.to_date;
+        return {
+          season,
+          from_date: fromDate,
+          to_date: toDate,
+        };
+      })
+      .filter(
+        (item, index, all) =>
+          item.from_date <= item.to_date &&
+          all.findIndex((candidate) => candidate.season === item.season) === index,
+      );
+
+    timeframes[source] = {
+      map_year: mapYear,
+      seasons:
+        seasons.length > 0
+          ? seasons
+          : [
+              {
+                season: legacySeason,
+                from_date: legacyFrom,
+                to_date: legacyTo,
+              },
+            ],
+    };
+    return timeframes;
+  }, {});
+};
+
+const confidenceThresholdFromSettings = (
+  settings: Record<string, unknown>,
+  metadata: Record<string, unknown> | null,
+): number | null => {
+  const parsed = numberOrNull(settings.confidence_threshold ?? metadata?.confidence_threshold);
+  return parsed !== null && parsed >= 0 && parsed <= 1 ? parsed : null;
+};
+
 const metadataSettings = (metadata: Record<string, unknown> | null): Record<string, unknown> =>
   isRecord(metadata?.ai_settings) ? metadata.ai_settings : {};
 
@@ -516,10 +666,13 @@ const buildRunConfigSupportPatch = (
     ]),
   );
   const newlyEffective = [
-    'satellite_source',
+    'satellite_sources',
+    'satellite_timeframes',
     'date_range',
+    'feature_groups',
     'feature_inputs',
     'preferred_model',
+    'confidence_threshold',
     'label_field',
     'execution_mode',
     'training_samples_area_type',
@@ -614,9 +767,16 @@ const writeAiRunPipelineConfig = async ({
     throw new Error('National Lebanon scope is blocked for settings-driven regional execution.');
   }
 
+  const featureGroups = stringListFrom(settings.feature_groups);
   const featureInputs = stringListFrom(
     settings.feature_inputs ?? settings.selected_extracted_features,
   );
+  const satelliteSources = normalizeSatelliteSourcesFromSettings(settings);
+  const satelliteTimeframes = normalizeSatelliteTimeframesFromSettings(settings, satelliteSources);
+  const primarySatelliteSource = satelliteSources[0] ?? 'sentinel2';
+  const primaryTimeframe = satelliteTimeframes[primarySatelliteSource];
+  const primarySeason = primaryTimeframe?.seasons[0] ?? null;
+  const confidenceThreshold = confidenceThresholdFromSettings(settings, run.metadata);
   const projectBounds = projectBoundsFrom(run.metadata, safetySummary);
   const customPolygon =
     trainingArea === 'custom_ai_area' || predictionArea === 'custom_ai_area'
@@ -631,13 +791,18 @@ const writeAiRunPipelineConfig = async ({
     project_name: projectName,
     label_field: run.label_field,
     execution_mode: executionMode,
-    satellite_source: firstString([settings.satellite_source]) ?? 'sentinel2',
-    year: numberOrNull(settings.target_year ?? settings.year),
-    season: firstString([settings.season]) ?? null,
-    from_date: firstString([settings.date_from, settings.from_date]),
-    to_date: firstString([settings.date_to, settings.to_date]),
+    satellite_sources: satelliteSources,
+    satellite_timeframes: satelliteTimeframes,
+    satellite_source: primarySatelliteSource,
+    year: primaryTimeframe?.map_year ?? null,
+    season: primarySeason?.season ?? null,
+    from_date: primarySeason?.from_date ?? null,
+    to_date: primarySeason?.to_date ?? null,
+    feature_groups: featureGroups,
+    selected_feature_inputs: featureInputs,
     selected_extracted_features: featureInputs,
     preferred_model: firstString([settings.preferred_model]) ?? null,
+    confidence_threshold: confidenceThreshold,
     training_samples_area_type: trainingArea,
     prediction_area_type: predictionArea,
     custom_polygon: customPolygon,
@@ -666,12 +831,16 @@ const writeAiRunPipelineConfig = async ({
     contract_version: 1,
     ai_pipeline_run_id: regionalRunId,
     config_path: relativePath,
-    satellite_source: payload.satellite_source,
+    satellite_sources: satelliteSources,
+    satellite_timeframes: satelliteTimeframes,
+    satellite_source: primarySatelliteSource,
     season: payload.season,
     from_date: payload.from_date,
     to_date: payload.to_date,
+    feature_groups: featureGroups,
     selected_extracted_feature_count: featureInputs.length,
     preferred_model: payload.preferred_model,
+    confidence_threshold: confidenceThreshold,
     training_samples_area_type: trainingArea,
     prediction_area_type: predictionArea,
     custom_polygon_configured: customPolygon !== null,
@@ -728,6 +897,11 @@ const summarizeRunReadiness = async (
        FROM spatial_feature
        WHERE project_id = $1
          AND status = 'approved'
+         AND (
+           COALESCE(source, 'field') <> 'ai'
+           OR use_for_future_training = TRUE
+           OR attributes->>'useForFutureTraining' = 'true'
+         )
      )
      SELECT COUNT(*)::int AS approved_feature_count,
             COUNT(*) FILTER (WHERE class_label IS NULL)::int AS missing_label_count,
@@ -747,6 +921,11 @@ const summarizeRunReadiness = async (
      FROM spatial_feature
      WHERE project_id = $1
        AND status = 'approved'
+       AND (
+         COALESCE(source, 'field') <> 'ai'
+         OR use_for_future_training = TRUE
+         OR attributes->>'useForFutureTraining' = 'true'
+       )
        AND geom IS NOT NULL
        AND ST_IsValid(geom)
        AND NULLIF(BTRIM(attributes ->> $2), '') IS NOT NULL
@@ -765,6 +944,11 @@ const summarizeRunReadiness = async (
        FROM spatial_feature
        WHERE project_id = $1
          AND status = 'approved'
+         AND (
+           COALESCE(source, 'field') <> 'ai'
+           OR use_for_future_training = TRUE
+           OR attributes->>'useForFutureTraining' = 'true'
+         )
          AND geom IS NOT NULL
          AND ST_IsValid(geom)
          AND NULLIF(BTRIM(attributes ->> $2), '') IS NOT NULL
@@ -1181,7 +1365,7 @@ const runPipelineExecution = async ({
       metadata.model_metrics_summary =
         artifactRegistrationMetadata?.model_metrics_summary ?? {
           source: `outputs/runs/${regionalRunId}/metrics.json`,
-          note: 'Regional proof-of-concept metrics only; not national accuracy.',
+          note: 'Metrics describe this run only and depend on available validation data.',
         };
     }
     if (regionalClassificationModeSet.has(executionMode)) {

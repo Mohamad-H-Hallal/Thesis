@@ -238,12 +238,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           textAlign: TextAlign.center,
                           style: Theme.of(context).textTheme.headlineSmall,
                         ),
-                        const SizedBox(height: AppSpacing.xs),
-                        Text(
-                          'Secure ministry access for field collection operations',
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodyMedium,
-                        ),
+                        if (AppBranding.tagline.isNotEmpty) ...<Widget>[
+                          const SizedBox(height: AppSpacing.xs),
+                          Text(
+                            AppBranding.tagline,
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        ],
                       ],
                     ),
                   ),

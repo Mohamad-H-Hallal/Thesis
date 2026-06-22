@@ -78,6 +78,11 @@ export interface EnvConfig {
     | 'regional_classification'
     | 'regional_vectorization_artifacts'
     | 'regional_full_review_artifacts';
+  AI_SERVER_URL: string;
+  APP_PUBLIC_API_URL: string;
+  AI_CALLBACK_BASE_URL: string;
+  AI_CALLBACK_SECRET: string;
+  AI_SERVER_TIMEOUT_MS: number;
 }
 
 const envSchema = Joi.object({
@@ -228,6 +233,13 @@ const envSchema = Joi.object({
       'regional_full_review_artifacts',
     )
     .default('disabled'),
+  AI_SERVER_URL: Joi.string().allow('').default(''),
+  APP_PUBLIC_API_URL: Joi.string().allow('').default('http://localhost:3000'),
+  AI_CALLBACK_BASE_URL: Joi.string().allow('').default(''),
+  AI_CALLBACK_SECRET: Joi.string()
+    .allow('')
+    .default('dev-ai-callback-secret-change-me'),
+  AI_SERVER_TIMEOUT_MS: Joi.number().integer().min(1000).max(120000).default(30000),
 }).unknown(true);
 
 const validateEnv = (): EnvConfig => {

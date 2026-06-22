@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lebanese_gis_mobile/core/network/api_client.dart';
+import 'package:lebanese_gis_mobile/core/network/network_availability_base.dart';
 import 'package:lebanese_gis_mobile/core/offline/local_models.dart';
 import 'package:lebanese_gis_mobile/core/offline/local_store.dart';
 import 'package:lebanese_gis_mobile/core/providers/providers.dart';
@@ -103,6 +104,16 @@ class _AuthenticatedAuthController extends AuthController {
   }
 }
 
+class _AlwaysOnlineNetworkAvailability implements NetworkAvailabilityService {
+  const _AlwaysOnlineNetworkAvailability();
+
+  @override
+  Stream<bool> get onOnlineStatusChanged => const Stream<bool>.empty();
+
+  @override
+  Future<bool> isOnline() async => true;
+}
+
 class _FakeLocalStore implements LocalStore {
   @override
   Future<void> cacheProjects(List<ProjectSummary> projects) async {}
@@ -121,6 +132,9 @@ class _FakeLocalStore implements LocalStore {
   Future<LocalDraftFeature?> getDraftById(String draftId) async => null;
 
   @override
+  Future<void> discardDraft(String draftId) async {}
+
+  @override
   Future<List<LocalDraftFeature>> getDrafts() async =>
       const <LocalDraftFeature>[];
 
@@ -134,6 +148,40 @@ class _FakeLocalStore implements LocalStore {
   Future<OfflineMapPackage?> getCurrentOfflineMapPackage({
     required String ownerUserId,
   }) async => null;
+
+  @override
+  Future<void> upsertOfflineProjectPackage(
+    OfflineProjectPackage package,
+  ) async {}
+
+  @override
+  Future<OfflineProjectPackage?> getOfflineProjectPackage({
+    required String ownerUserId,
+    required String projectId,
+  }) async => null;
+
+  @override
+  Future<List<OfflineProjectPackage>> getOfflineProjectPackages({
+    required String ownerUserId,
+  }) async => const <OfflineProjectPackage>[];
+
+  @override
+  Future<void> deleteOfflineProjectPackage({
+    required String ownerUserId,
+    required String projectId,
+  }) async {}
+
+  @override
+  Future<int> countOfflineProjectPackagesUsingBaseMap({
+    required String ownerUserId,
+    required String baseMapVersion,
+  }) async => 0;
+
+  @override
+  Future<int> countUnsyncedDraftsForProject({
+    required String ownerUserId,
+    required String projectId,
+  }) async => 0;
 
   @override
   Future<int> getPendingSyncCount() async => 0;
@@ -207,6 +255,7 @@ SyncController _buildSyncController() {
   return SyncController(
       syncEngine: SyncEngine(localStore: localStore, apiClient: ApiClient()),
       localStore: localStore,
+      networkAvailability: const _AlwaysOnlineNetworkAvailability(),
     )
     ..state = const SyncState(
       pendingCount: 0,

@@ -301,7 +301,7 @@ const writeRegionalModelArtifacts = async ({ root, projectId, regionalRunId }) =
         macro_f1: 0.7,
         weighted_f1: 0.74,
       },
-      xgboost: {
+      gradient_boosting: {
         accuracy: 0.68,
         macro_f1: 0.62,
         weighted_f1: 0.66,
@@ -337,7 +337,7 @@ const writeRegionalModelArtifacts = async ({ root, projectId, regionalRunId }) =
   ]);
   await writeCsvArtifact(root, `${runDir}/feature_importance.csv`, [
     { model: 'random_forest', feature: 'ndvi', importance: 0.45 },
-    { model: 'xgboost', feature: 'b4', importance: 0.22 },
+    { model: 'gradient_boosting', feature: 'b4', importance: 0.22 },
   ]);
 };
 
@@ -432,22 +432,6 @@ const writePhaseMReviewArtifacts = async ({ root, regionalRunId, projectId }) =>
       lon: 35.37,
     }),
   ];
-  const confidenceFeatures = classificationFeatures.map((feature) => ({
-    ...feature,
-    properties: {
-      ...feature.properties,
-      confidence_artifact: true,
-    },
-  }));
-  const uncertaintyFeatures = classificationFeatures
-    .filter((feature) => feature.properties.uncertainty_score >= 0.34)
-    .map((feature) => ({
-      ...feature,
-      properties: {
-        ...feature.properties,
-        uncertainty_artifact: true,
-      },
-    }));
   const featureCollection = (features) => ({
     type: 'FeatureCollection',
     features,
@@ -468,7 +452,7 @@ const writePhaseMReviewArtifacts = async ({ root, regionalRunId, projectId }) =>
     classification_model: 'random_forest',
     classification_output_model: 'random_forest',
     metrics_selected_model: 'svm_rbf',
-    highest_accuracy_model: 'xgboost',
+    highest_accuracy_model: 'gradient_boosting',
     model_mismatch_reason:
       'SVM RBF was selected by metrics, but Random Forest generated the review layer.',
     regional_only: true,
@@ -498,8 +482,6 @@ const writePhaseMReviewArtifacts = async ({ root, regionalRunId, projectId }) =>
     ],
     output_paths: {
       ai_classification_review: `${runDir}/ai_classification_review.geojson`,
-      ai_confidence_review: `${runDir}/ai_confidence_review.geojson`,
-      ai_uncertainty_areas: `${runDir}/ai_uncertainty_areas.geojson`,
       ai_class_statistics_json: `${runDir}/ai_class_statistics.json`,
     },
   });
@@ -524,8 +506,6 @@ const writePhaseMReviewArtifacts = async ({ root, regionalRunId, projectId }) =>
     metrics_selected_model: 'svm_rbf',
     review_artifacts: {
       ai_classification_review: `${runDir}/ai_classification_review.geojson`,
-      ai_confidence_review: `${runDir}/ai_confidence_review.geojson`,
-      ai_uncertainty_areas: `${runDir}/ai_uncertainty_areas.geojson`,
     },
   });
   await writeJsonArtifact(root, `${runDir}/metadata.json`, {
@@ -536,7 +516,7 @@ const writePhaseMReviewArtifacts = async ({ root, regionalRunId, projectId }) =>
     national_classification: false,
     classification_model: 'random_forest',
     metrics_best_macro_f1_model: 'svm_rbf',
-    highest_accuracy_model: 'xgboost',
+    highest_accuracy_model: 'gradient_boosting',
     model_mismatch_reason:
       'SVM RBF was selected by metrics, but Random Forest generated the review layer.',
     db_write: false,
@@ -600,16 +580,6 @@ const writePhaseMReviewArtifacts = async ({ root, regionalRunId, projectId }) =>
     root,
     `${runDir}/ai_classification_review.geojson`,
     featureCollection(classificationFeatures),
-  );
-  await writeJsonArtifact(
-    root,
-    `${runDir}/ai_confidence_review.geojson`,
-    featureCollection(confidenceFeatures),
-  );
-  await writeJsonArtifact(
-    root,
-    `${runDir}/ai_uncertainty_areas.geojson`,
-    featureCollection(uncertaintyFeatures),
   );
 };
 
@@ -1091,10 +1061,13 @@ describe('AI worker skeleton phase D', () => {
       expect.objectContaining({
         python_pipeline_config_consumed: true,
         effective_pipeline_settings: expect.arrayContaining([
-          'satellite_source',
+          'satellite_sources',
+          'satellite_timeframes',
           'date_range',
+          'feature_groups',
           'feature_inputs',
           'preferred_model',
+          'confidence_threshold',
           'training_samples_area_type',
           'prediction_area_type',
         ]),
@@ -1162,7 +1135,24 @@ describe('AI worker skeleton phase D', () => {
           season: 'dry',
           date_from: '2025-06-01',
           date_to: '2025-08-31',
-          feature_inputs: ['B2', 'B3', 'NDVI'],
+          feature_groups: ['spectral_bands', 'vegetation_indices'],
+          feature_inputs: [
+            'B2',
+            'B3',
+            'B4',
+            'B5',
+            'B6',
+            'B7',
+            'B8',
+            'B8A',
+            'B11',
+            'B12',
+            'NDVI',
+            'EVI',
+            'NDRE',
+            'SAVI',
+            'NDWI',
+          ],
           preferred_model: 'random_forest',
           scope_type: 'custom_polygon',
           training_samples_area_type: 'custom_ai_area',
@@ -1211,12 +1201,42 @@ describe('AI worker skeleton phase D', () => {
         project_id: project.id,
         label_field: 'L4_descr',
         execution_mode: 'regional_feature_extraction',
+        satellite_sources: ['sentinel2'],
+        satellite_timeframes: {
+          sentinel2: {
+            map_year: 2025,
+            seasons: [
+              {
+                season: 'dry',
+                from_date: '2025-06-01',
+                to_date: '2025-08-31',
+              },
+            ],
+          },
+        },
         satellite_source: 'sentinel2',
         year: 2025,
         season: 'dry',
         from_date: '2025-06-01',
         to_date: '2025-08-31',
-        selected_extracted_features: ['B2', 'B3', 'NDVI'],
+        feature_groups: ['spectral_bands', 'vegetation_indices'],
+        selected_extracted_features: [
+          'B2',
+          'B3',
+          'B4',
+          'B5',
+          'B6',
+          'B7',
+          'B8',
+          'B8A',
+          'B11',
+          'B12',
+          'NDVI',
+          'EVI',
+          'NDRE',
+          'SAVI',
+          'NDWI',
+        ],
         preferred_model: 'random_forest',
         training_samples_area_type: 'custom_ai_area',
         prediction_area_type: 'custom_ai_area',
@@ -1475,7 +1495,7 @@ describe('AI worker skeleton phase D', () => {
       expect.objectContaining({
         phase: 'phase_h_artifact_registration',
         execution_mode: 'regional_vectorization_artifacts',
-        output_layers_registered: 4,
+        output_layers_registered: 1,
         unpublished_only: true,
         review_only: true,
         no_spatial_feature_writes: true,
@@ -1496,32 +1516,14 @@ describe('AI worker skeleton phase D', () => {
       [runId],
     );
     expect(layersResult.rows).toEqual(
-      expect.arrayContaining([
+      [
         expect.objectContaining({
           layer_type: 'classification',
           status: 'ready_for_review',
           storage_path: `outputs/runs/${regionalRunId}/classification_polygons.geojson`,
           published_at: null,
         }),
-        expect.objectContaining({
-          layer_type: 'confidence',
-          status: 'ready_for_review',
-          storage_path: `outputs/runs/${regionalRunId}/confidence_polygons.geojson`,
-          published_at: null,
-        }),
-        expect.objectContaining({
-          layer_type: 'statistics',
-          status: 'ready_for_review',
-          storage_path: `outputs/runs/${regionalRunId}/metrics.json`,
-          published_at: null,
-        }),
-        expect.objectContaining({
-          layer_type: 'uncertainty',
-          status: 'ready_for_review',
-          storage_path: `outputs/runs/${regionalRunId}/uncertainty_areas.geojson`,
-          published_at: null,
-        }),
-      ]),
+      ],
     );
     expect(await countRows('spatial_feature')).toBe(beforeSpatialCount);
   });
@@ -1634,12 +1636,9 @@ describe('AI worker skeleton phase D', () => {
       [runId],
     );
     expect(layersResult.rows).toEqual(
-      expect.arrayContaining([
+      [
         expect.objectContaining({ layer_type: 'classification', status: 'ready_for_review' }),
-        expect.objectContaining({ layer_type: 'confidence', status: 'ready_for_review' }),
-        expect.objectContaining({ layer_type: 'statistics', status: 'ready_for_review' }),
-        expect.objectContaining({ layer_type: 'uncertainty', status: 'ready_for_review' }),
-      ]),
+      ],
     );
     expect(layersResult.rows.every((row) => row.published_at === null)).toBe(true);
     const registrationLogs = await pool.query(
@@ -1654,7 +1653,7 @@ describe('AI worker skeleton phase D', () => {
     expect(registrationLogs.rows[0].level).toBe('info');
     expect(registrationLogs.rows[0].metadata).toEqual(
       expect.objectContaining({
-        output_layers_registered: 4,
+        output_layers_registered: 1,
         warnings: [],
       }),
     );
@@ -1681,10 +1680,6 @@ describe('AI worker skeleton phase D', () => {
         output_paths: {
           ai_classification_review:
             'outputs/runs/phase-m-real-regional-proof/ai_classification_review.geojson',
-          ai_confidence_review:
-            'outputs/runs/phase-m-real-regional-proof/ai_confidence_review.geojson',
-          ai_uncertainty_areas:
-            'outputs/runs/phase-m-real-regional-proof/ai_uncertainty_areas.geojson',
           ai_class_statistics_json:
             'outputs/runs/phase-m-real-regional-proof/ai_class_statistics.json',
         },
@@ -1708,10 +1703,6 @@ describe('AI worker skeleton phase D', () => {
         output_paths: {
           ai_classification_review:
             'outputs/runs/phase-m-real-regional-proof/ai_classification_review.geojson',
-          ai_confidence_review:
-            'outputs/runs/phase-m-real-regional-proof/ai_confidence_review.geojson',
-          ai_uncertainty_areas:
-            'outputs/runs/phase-m-real-regional-proof/ai_uncertainty_areas.geojson',
           ai_class_statistics_json:
             'outputs/runs/phase-m-real-regional-proof/ai_class_statistics.json',
           ai_class_statistics_csv:
@@ -1730,23 +1721,23 @@ describe('AI worker skeleton phase D', () => {
         skipped: false,
         metricsRegistered: 0,
         classStatisticsRegistered: 4,
-        outputLayersRegistered: 4,
+        outputLayersRegistered: 1,
       }),
     );
     expect(result.metadataPatch).toEqual(
       expect.objectContaining({
         classification_model: 'random_forest',
         metrics_best_macro_f1_model: 'svm_rbf',
-        highest_accuracy_model: 'xgboost',
+        highest_accuracy_model: 'gradient_boosting',
         model_mismatch_reason:
           'SVM RBF was selected by metrics, but Random Forest generated the review layer.',
-        uncertainty_feature_count: 279,
+        below_threshold_feature_count: 279,
         confidence_summary: expect.objectContaining({
           uncertain_feature_count: 279,
           threshold: 0.6,
         }),
         artifact_registration: expect.objectContaining({
-          output_layers_registered: 4,
+          output_layers_registered: 1,
           unpublished_only: true,
           review_only: true,
           no_spatial_feature_writes: true,
@@ -1765,14 +1756,12 @@ describe('AI worker skeleton phase D', () => {
       expect.objectContaining({
         ai_classification_review:
           'outputs/runs/phase-m-real-regional-proof/ai_classification_review.geojson',
-        ai_confidence_review:
-          'outputs/runs/phase-m-real-regional-proof/ai_confidence_review.geojson',
-        ai_uncertainty_areas:
-          'outputs/runs/phase-m-real-regional-proof/ai_uncertainty_areas.geojson',
         ai_class_statistics_json:
           'outputs/runs/phase-m-real-regional-proof/ai_class_statistics.json',
       }),
     );
+    expect(result.artifactPaths).not.toHaveProperty('ai_confidence_review');
+    expect(result.artifactPaths).not.toHaveProperty('ai_uncertainty_areas');
 
     const layersResult = await pool.query(
       `SELECT layer_type, status, storage_path, published_at
@@ -1782,7 +1771,7 @@ describe('AI worker skeleton phase D', () => {
       [runId],
     );
     expect(layersResult.rows).toEqual(
-      expect.arrayContaining([
+      [
         expect.objectContaining({
           layer_type: 'classification',
           status: 'ready_for_review',
@@ -1790,25 +1779,7 @@ describe('AI worker skeleton phase D', () => {
             'outputs/runs/phase-m-real-regional-proof/ai_classification_review.geojson',
           published_at: null,
         }),
-        expect.objectContaining({
-          layer_type: 'confidence',
-          status: 'ready_for_review',
-          storage_path: 'outputs/runs/phase-m-real-regional-proof/ai_confidence_review.geojson',
-          published_at: null,
-        }),
-        expect.objectContaining({
-          layer_type: 'statistics',
-          status: 'ready_for_review',
-          storage_path: 'outputs/runs/phase-m-real-regional-proof/ai_class_statistics.json',
-          published_at: null,
-        }),
-        expect.objectContaining({
-          layer_type: 'uncertainty',
-          status: 'ready_for_review',
-          storage_path: 'outputs/runs/phase-m-real-regional-proof/ai_uncertainty_areas.geojson',
-          published_at: null,
-        }),
-      ]),
+      ],
     );
 
     const classStatsResult = await pool.query(
@@ -1874,18 +1845,6 @@ describe('AI worker skeleton phase D', () => {
     expect(predictionRows.rows).toEqual([
       {
         layer_type: 'classification',
-        count: 3,
-        min_status: 'ready_for_review',
-        ai_source_only: true,
-      },
-      {
-        layer_type: 'confidence',
-        count: 3,
-        min_status: 'ready_for_review',
-        ai_source_only: true,
-      },
-      {
-        layer_type: 'uncertainty',
         count: 2,
         min_status: 'ready_for_review',
         ai_source_only: true,
@@ -1910,6 +1869,9 @@ describe('AI worker skeleton phase D', () => {
           not_official_field_data: true,
           no_spatial_feature_writes: true,
           not_national_classification: true,
+          confidence_is_attribute: true,
+          standalone_confidence_layer: false,
+          standalone_uncertainty_layer: false,
         }),
       }),
     );
@@ -1924,10 +1886,6 @@ describe('AI worker skeleton phase D', () => {
         output_paths: {
           ai_classification_review:
             'outputs/runs/phase-m-real-regional-proof/ai_classification_review.geojson',
-          ai_confidence_review:
-            'outputs/runs/phase-m-real-regional-proof/ai_confidence_review.geojson',
-          ai_uncertainty_areas:
-            'outputs/runs/phase-m-real-regional-proof/ai_uncertainty_areas.geojson',
           ai_class_statistics_json:
             'outputs/runs/phase-m-real-regional-proof/ai_class_statistics.json',
           ai_class_statistics_csv:
@@ -1939,7 +1897,7 @@ describe('AI worker skeleton phase D', () => {
         mode: 'regional_vectorization_artifacts',
       }),
     });
-    expect(duplicateResult.predictionFeaturesRegistered).toBe(8);
+    expect(duplicateResult.predictionFeaturesRegistered).toBe(2);
     expect(await countRows('ai_prediction_feature')).toBe(predictionCountBeforeRerun);
     expect(await countRows('spatial_feature')).toBe(beforeSpatialCount);
   });
@@ -2012,7 +1970,7 @@ describe('AI worker skeleton phase D', () => {
           phase: 'phase_h_artifact_registration',
           metrics_registered: 3,
           class_statistics_registered: 3,
-          output_layers_registered: 1,
+          output_layers_registered: 0,
           unpublished_only: true,
           no_spatial_feature_writes: true,
         }),
@@ -2049,7 +2007,7 @@ describe('AI worker skeleton phase D', () => {
           weighted_f1: 0.74,
         }),
         expect.objectContaining({
-          model_name: 'xgboost',
+          model_name: 'gradient_boosting',
           overall_accuracy: 0.68,
           macro_f1: 0.62,
           weighted_f1: 0.66,
@@ -2091,14 +2049,7 @@ describe('AI worker skeleton phase D', () => {
        WHERE ai_run_id = $1`,
       [runId],
     );
-    expect(layersResult.rows).toEqual([
-      expect.objectContaining({
-        layer_type: 'statistics',
-        status: 'ready_for_review',
-        storage_path: `outputs/runs/${regionalRunId}/metrics.json`,
-        published_at: null,
-      }),
-    ]);
+    expect(layersResult.rows).toEqual([]);
 
     const logsResult = await pool.query(
       `SELECT level, message, metadata
@@ -2112,7 +2063,7 @@ describe('AI worker skeleton phase D', () => {
       expect.objectContaining({
         registration_phase: 'phase_h_artifact_registration',
         metrics_registered: 3,
-        output_layers_registered: 1,
+        output_layers_registered: 0,
         no_spatial_feature_writes: true,
       }),
     );
@@ -2124,20 +2075,14 @@ describe('AI worker skeleton phase D', () => {
       .expect(200);
     expect(metricsResponse.body.data).toHaveLength(3);
     expect(metricsResponse.body.data.map((row) => row.model_name)).toEqual(
-      expect.arrayContaining(['random_forest', 'svm_rbf', 'xgboost']),
+      expect.arrayContaining(['random_forest', 'svm_rbf', 'gradient_boosting']),
     );
 
     const layersResponse = await request(app)
       .get(`${API_PREFIX}/ai/runs/${runId}/layers`)
       .set(authHeader(admin.token))
       .expect(200);
-    expect(layersResponse.body.data).toEqual([
-      expect.objectContaining({
-        layer_type: 'statistics',
-        status: 'ready_for_review',
-        published_at: null,
-      }),
-    ]);
+    expect(layersResponse.body.data).toEqual([]);
 
     expect(await countRows('spatial_feature')).toBe(beforeSpatialCount);
     expect(await countRows('ai_uncertainty_area')).toBe(0);

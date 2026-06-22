@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/config/app_branding.dart';
@@ -7,10 +8,12 @@ import 'core/providers/providers.dart';
 import 'core/realtime/workflow_realtime_coordinator.dart';
 import 'core/theme/theme.dart';
 import 'core/widgets/app_system_ui_scope.dart';
+import 'features/map/data/offline_download_foreground_service.dart';
 import 'features/notifications/presentation/widgets/push_notification_coordinator.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  OfflineDownloadForegroundService.initializeCommunication();
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   runApp(const ProviderScope(child: LebanonGisCollectorApp()));
 }
@@ -44,9 +47,11 @@ class LebanonGisCollectorApp extends ConsumerWidget {
       scrollBehavior: const AppScrollBehavior(),
       routerConfig: router,
       builder: (context, child) => AppSystemUiScope(
-        child: WorkflowRealtimeCoordinator(
-          child: PushNotificationCoordinator(
-            child: child ?? const SizedBox.shrink(),
+        child: WithForegroundTask(
+          child: WorkflowRealtimeCoordinator(
+            child: PushNotificationCoordinator(
+              child: child ?? const SizedBox.shrink(),
+            ),
           ),
         ),
       ),

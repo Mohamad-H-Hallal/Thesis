@@ -1,3 +1,5 @@
+name: ${COMPOSE_PROJECT_NAME:-gis_app}
+
 services:
   db:
     image: postgis/postgis:16-3.4
@@ -65,5 +67,8 @@ services:
 
 volumes:
   postgis_data:
+    name: ${POSTGIS_DATA_VOLUME:-gis_app_postgis_data}
   api_uploads:
+    name: ${API_UPLOADS_VOLUME:-gis_app_api_uploads}
   api_exports:
+    name: ${API_EXPORTS_VOLUME:-gis_app_api_exports}

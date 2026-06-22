@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart';
 
 import '../config/app_env.dart';
 import '../network/api_error_message.dart';
+import '../network/network_availability.dart';
+import '../network/network_availability_base.dart';
 import '../../features/admin/data/api_admin_repository.dart';
 import '../../features/admin/domain/admin_models.dart';
 import '../../features/admin/domain/admin_repository.dart';
@@ -28,6 +30,7 @@ import '../../features/imports/domain/imports_repository.dart';
 import '../../features/map/data/api_feature_workflow_repository.dart';
 import '../../features/map/data/api_map_repository.dart';
 import '../../features/map/data/device_current_location_service.dart';
+import '../../features/map/data/offline_project_download_service.dart';
 import '../../features/map/data/offline_tile_cache_manager.dart';
 import '../../features/map/domain/current_location_service.dart';
 import '../../features/map/domain/feature_workflow_repository.dart';
@@ -66,6 +69,15 @@ final apiClientProvider = Provider<ApiClient>((ref) {
   return ApiClient(storage: ref.watch(secureStorageProvider));
 });
 
+final networkAvailabilityServiceProvider = Provider<NetworkAvailabilityService>(
+  (ref) => createNetworkAvailabilityService(),
+);
+
+final networkOnlineProvider = FutureProvider<bool>((ref) async {
+  ref.watch(workflowRefreshTickProvider);
+  return ref.watch(networkAvailabilityServiceProvider).isOnline();
+});
+
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
   if (AppEnv.useMockAuth) {
     return FakeAuthRepository(
@@ -96,6 +108,16 @@ final offlineTileCacheManagerProvider = Provider<OfflineTileCacheManager>((
 ) {
   return OfflineTileCacheManager(localStore: ref.watch(localStoreProvider));
 });
+
+final offlineProjectDownloadServiceProvider =
+    Provider<OfflineProjectDownloadService>((ref) {
+      return OfflineProjectDownloadService(
+        projectsRepository: ref.watch(projectsRepositoryProvider),
+        localStore: ref.watch(localStoreProvider),
+        tileCacheManager: ref.watch(offlineTileCacheManagerProvider),
+        networkAvailability: ref.watch(networkAvailabilityServiceProvider),
+      );
+    });
 
 final currentLocationServiceProvider = Provider<CurrentLocationService>((ref) {
   return const DeviceCurrentLocationService();
@@ -212,18 +234,111 @@ List<ProjectSummary> _filterCachedProjectsForScope(
   return filtered.toList(growable: false);
 }
 
-Future<List<ProjectSummary>> _cachedProjectsForScope(
+Future<List<ProjectSummary>> _localProjectsForScope(
   Ref ref, {
   required AuthSession session,
   required ProjectViewScope scope,
 }) async {
   final localStore = ref.read(localStoreProvider);
   final cachedProjects = await localStore.getCachedProjects();
+  final downloadedPackages = await localStore.getOfflineProjectPackages(
+    ownerUserId: session.user.id,
+  );
+  final downloadedProjects = downloadedPackages
+      .map((package) => package.project)
+      .toList(growable: false);
+
+  final merged = <String, ProjectSummary>{
+    for (final project in cachedProjects) project.id: project,
+    for (final project in downloadedProjects) project.id: project,
+  };
+
   return _filterCachedProjectsForScope(
-    cachedProjects,
+    merged.values.toList(growable: false),
     session: session,
     scope: scope,
   );
+}
+
+List<ProjectSummary> _filterLocalProjectsForQuery(
+  List<ProjectSummary> projects, {
+  String? query,
+  String? status,
+  String? categoryId,
+}) {
+  final normalizedQuery = query?.trim().toLowerCase();
+  final normalizedStatus = status?.trim();
+  final normalizedCategoryId = categoryId?.trim();
+
+  return projects
+      .where((project) {
+        if (normalizedStatus != null && normalizedStatus.isNotEmpty) {
+          if (project.status != normalizedStatus) {
+            return false;
+          }
+        }
+
+        if (normalizedCategoryId != null && normalizedCategoryId.isNotEmpty) {
+          if (project.categoryId != normalizedCategoryId) {
+            return false;
+          }
+        }
+
+        if (normalizedQuery != null && normalizedQuery.isNotEmpty) {
+          return project.name.toLowerCase().contains(normalizedQuery) ||
+              project.category.toLowerCase().contains(normalizedQuery) ||
+              project.description.toLowerCase().contains(normalizedQuery);
+        }
+
+        return true;
+      })
+      .toList(growable: false);
+}
+
+PaginatedResult<ProjectSummary> _paginateLocalProjects(
+  List<ProjectSummary> projects, {
+  required int page,
+  required int limit,
+}) {
+  final safePage = page < 1 ? 1 : page;
+  final safeLimit = limit < 1 ? 20 : limit;
+  final start = (safePage - 1) * safeLimit;
+  final endCandidate = start + safeLimit;
+  final end = endCandidate > projects.length ? projects.length : endCandidate;
+
+  return PaginatedResult<ProjectSummary>(
+    items: start >= projects.length
+        ? const <ProjectSummary>[]
+        : projects.sublist(start, end),
+    page: safePage,
+    limit: safeLimit,
+    total: projects.length,
+    hasMore: end < projects.length,
+  );
+}
+
+Future<PaginatedResult<ProjectSummary>> _localProjectsPageForScope(
+  Ref ref, {
+  required AuthSession session,
+  required ProjectViewScope scope,
+  String? query,
+  String? status,
+  String? categoryId,
+  required int page,
+  required int limit,
+}) async {
+  final projects = await _localProjectsForScope(
+    ref,
+    session: session,
+    scope: scope,
+  );
+  final filtered = _filterLocalProjectsForQuery(
+    projects,
+    query: query,
+    status: status,
+    categoryId: categoryId,
+  );
+  return _paginateLocalProjects(filtered, page: page, limit: limit);
 }
 
 Future<void> _mergeProjectsIntoCache(
@@ -247,6 +362,31 @@ bool _isOfflineFeatureFetchError(Object error) {
       message.contains('connection') ||
       message.contains('timed out') ||
       message.contains('offline');
+}
+
+Future<bool> _shouldUseOfflineProjectOnly(Ref ref, String projectId) async {
+  final session = ref.read(authControllerProvider).session;
+  if (session == null || projectId.trim().isEmpty) {
+    return false;
+  }
+  final isOnline = await ref
+      .read(networkAvailabilityServiceProvider)
+      .isOnline();
+  if (isOnline) {
+    return false;
+  }
+  final package = await ref
+      .read(localStoreProvider)
+      .getOfflineProjectPackage(
+        ownerUserId: session.user.id,
+        projectId: projectId,
+      );
+  if (package == null) {
+    throw StateError(
+      'This project is not downloaded for offline use. Connect to the internet and download it first.',
+    );
+  }
+  return true;
 }
 
 final offlineBootstrapProvider = FutureProvider<void>((ref) async {
@@ -313,7 +453,11 @@ final projectsProvider = FutureProvider<List<ProjectSummary>>((ref) async {
     await localStore.cacheProjects(remoteProjects);
     return remoteProjects;
   } catch (_) {
-    return localStore.getCachedProjects();
+    return _localProjectsForScope(
+      ref,
+      session: session,
+      scope: _defaultOperationalProjectScope(session.user.role),
+    );
   }
 });
 
@@ -346,7 +490,7 @@ final projectListProvider =
         await _mergeProjectsIntoCache(ref, projects);
         return projects;
       } catch (_) {
-        return _cachedProjectsForScope(
+        return _localProjectsForScope(
           ref,
           session: session,
           scope: effectiveScope,
@@ -417,7 +561,7 @@ final mapProjectsProvider = FutureProvider<List<ProjectSummary>>((ref) async {
     await localStore.cacheProjects(projects);
     return projects;
   } catch (_) {
-    return _cachedProjectsForScope(
+    return _localProjectsForScope(
       ref,
       session: session,
       scope: ProjectViewScope.all,
@@ -441,6 +585,14 @@ final projectMapFeaturesProvider =
       final localFeatures = projectDrafts
           .map(_mapFeatureFromLocalDraft)
           .toList(growable: false);
+
+      final shouldUseOfflineOnly = await _shouldUseOfflineProjectOnly(
+        ref,
+        projectId,
+      );
+      if (shouldUseOfflineOnly) {
+        return localFeatures;
+      }
 
       try {
         final remoteFeatures = await ref
@@ -482,6 +634,16 @@ final projectMapViewportFeaturesProvider = FutureProvider.autoDispose
           })
           .toList(growable: false);
 
+      final shouldUseOfflineOnly = await _shouldUseOfflineProjectOnly(
+        ref,
+        query.projectId,
+      );
+      if (shouldUseOfflineOnly) {
+        return projectDrafts
+            .map(_mapFeatureFromLocalDraft)
+            .toList(growable: false);
+      }
+
       try {
         final remoteFeatures = await ref
             .read(mapRepositoryProvider)
@@ -522,6 +684,14 @@ final projectFeatureCountProvider = FutureProvider.autoDispose
                 .where((draft) => draft.projectId == query.projectId)
                 .length
           : 0;
+
+      final shouldUseOfflineOnly = await _shouldUseOfflineProjectOnly(
+        ref,
+        query.projectId,
+      );
+      if (shouldUseOfflineOnly) {
+        return localDraftCount;
+      }
 
       final statuses = query.statuses
           ?.where((status) => status.trim().isNotEmpty)
@@ -573,7 +743,49 @@ final paginatedProjectFeatureBrowserProvider = StateNotifierProvider.autoDispose
     >((ref, query) {
       ref.watch(workflowRefreshTickProvider);
       return PaginatedListController<MapFeatureSummary>(
-        loadPage: ({required page, required limit}) {
+        loadPage: ({required page, required limit}) async {
+          final shouldUseOfflineOnly = await _shouldUseOfflineProjectOnly(
+            ref,
+            query.projectId,
+          );
+          if (shouldUseOfflineOnly) {
+            final drafts = await ref.read(localDraftFeaturesProvider.future);
+            final items = drafts
+                .where((draft) => draft.projectId == query.projectId)
+                .map(_mapFeatureFromLocalDraft)
+                .where((feature) {
+                  final status = query.status?.trim();
+                  if (status != null &&
+                      status.isNotEmpty &&
+                      feature.status != status) {
+                    return false;
+                  }
+                  final geometryType = query.geometryType?.trim();
+                  if (geometryType != null && geometryType.isNotEmpty) {
+                    final actual =
+                        feature.sourceGeometryType ??
+                        feature.geometry['type']?.toString() ??
+                        '';
+                    if (actual.toLowerCase() != geometryType.toLowerCase()) {
+                      return false;
+                    }
+                  }
+                  return true;
+                })
+                .toList(growable: false);
+            final start = (page - 1) * limit;
+            final end = (start + limit).clamp(0, items.length);
+            return PaginatedResult<MapFeatureSummary>(
+              items: start >= items.length
+                  ? const <MapFeatureSummary>[]
+                  : items.sublist(start, end),
+              page: page,
+              limit: limit,
+              total: items.length,
+              hasMore: end < items.length,
+            );
+          }
+
           return ref
               .read(mapRepositoryProvider)
               .fetchProjectFeaturesPage(
@@ -604,6 +816,12 @@ final offlineMapPackageProvider = FutureProvider<OfflineMapPackage?>((
   final localPackage = await localStore.getCurrentOfflineMapPackage(
     ownerUserId: ownerUserId,
   );
+  final isOnline = await ref
+      .read(networkAvailabilityServiceProvider)
+      .isOnline();
+  if (!isOnline) {
+    return localPackage;
+  }
   try {
     final remotePackage = await ref
         .read(mapRepositoryProvider)
@@ -624,6 +842,40 @@ final offlineMapPackageProvider = FutureProvider<OfflineMapPackage?>((
   return localPackage;
 });
 
+final offlineProjectPackageProvider =
+    FutureProvider.family<OfflineProjectPackage?, String>((
+      ref,
+      projectId,
+    ) async {
+      await ref.watch(offlineBootstrapProvider.future);
+      final ownerUserId = ref.watch(
+        authControllerProvider.select((state) => state.session?.user.id),
+      );
+      if (ownerUserId == null || ownerUserId.isEmpty || projectId.isEmpty) {
+        return null;
+      }
+      return ref
+          .watch(localStoreProvider)
+          .getOfflineProjectPackage(
+            ownerUserId: ownerUserId,
+            projectId: projectId,
+          );
+    });
+
+final offlineProjectPackagesProvider =
+    FutureProvider<List<OfflineProjectPackage>>((ref) async {
+      await ref.watch(offlineBootstrapProvider.future);
+      final ownerUserId = ref.watch(
+        authControllerProvider.select((state) => state.session?.user.id),
+      );
+      if (ownerUserId == null || ownerUserId.isEmpty) {
+        return const <OfflineProjectPackage>[];
+      }
+      return ref
+          .watch(localStoreProvider)
+          .getOfflineProjectPackages(ownerUserId: ownerUserId);
+    });
+
 final projectByIdProvider = FutureProvider.family<ProjectSummary?, String>((
   ref,
   id,
@@ -636,6 +888,18 @@ final projectByIdProvider = FutureProvider.family<ProjectSummary?, String>((
     return null;
   }
 
+  final isOnline = await ref
+      .read(networkAvailabilityServiceProvider)
+      .isOnline();
+  if (!isOnline) {
+    final offlinePackage = await ref
+        .read(localStoreProvider)
+        .getOfflineProjectPackage(ownerUserId: session.user.id, projectId: id);
+    if (offlinePackage != null) {
+      return offlinePackage.project;
+    }
+  }
+
   try {
     final project = await ref
         .read(projectsRepositoryProvider)
@@ -645,7 +909,14 @@ final projectByIdProvider = FutureProvider.family<ProjectSummary?, String>((
     }
     return project;
   } catch (_) {
-    final cachedProjects = await _cachedProjectsForScope(
+    final offlinePackage = await ref
+        .read(localStoreProvider)
+        .getOfflineProjectPackage(ownerUserId: session.user.id, projectId: id);
+    if (offlinePackage != null) {
+      return offlinePackage.project;
+    }
+
+    final cachedProjects = await _localProjectsForScope(
       ref,
       session: session,
       scope: ProjectViewScope.all,
@@ -705,6 +976,7 @@ final syncControllerProvider = StateNotifierProvider<SyncController, SyncState>(
     final controller = SyncController(
       syncEngine: ref.watch(syncEngineProvider),
       localStore: ref.watch(localStoreProvider),
+      networkAvailability: ref.watch(networkAvailabilityServiceProvider),
     );
 
     controller.initialize();
@@ -764,17 +1036,43 @@ final paginatedProjectListProvider = StateNotifierProvider.autoDispose
       );
       return PaginatedListController<ProjectSummary>(
         loadPage: ({required page, required limit}) async {
-          final pageResult = await ref
-              .read(projectsRepositoryProvider)
-              .fetchProjectsPage(
-                userId: session.user.id,
-                role: session.user.role,
-                scope: effectiveScope,
-                page: page,
-                limit: limit,
-              );
-          await _mergeProjectsIntoCache(ref, pageResult.items);
-          return pageResult;
+          final isOnline = await ref
+              .read(networkAvailabilityServiceProvider)
+              .isOnline();
+          if (!isOnline) {
+            return _localProjectsPageForScope(
+              ref,
+              session: session,
+              scope: effectiveScope,
+              page: page,
+              limit: limit,
+            );
+          }
+
+          try {
+            final pageResult = await ref
+                .read(projectsRepositoryProvider)
+                .fetchProjectsPage(
+                  userId: session.user.id,
+                  role: session.user.role,
+                  scope: effectiveScope,
+                  page: page,
+                  limit: limit,
+                );
+            await _mergeProjectsIntoCache(ref, pageResult.items);
+            return pageResult;
+          } catch (error) {
+            if (!_isOfflineFeatureFetchError(error)) {
+              rethrow;
+            }
+            return _localProjectsPageForScope(
+              ref,
+              session: session,
+              scope: effectiveScope,
+              page: page,
+              limit: limit,
+            );
+          }
         },
       );
     });
@@ -809,20 +1107,52 @@ final paginatedProjectsProvider = StateNotifierProvider.autoDispose
       );
       return PaginatedListController<ProjectSummary>(
         loadPage: ({required page, required limit}) async {
-          final pageResult = await ref
-              .read(projectsRepositoryProvider)
-              .fetchProjectsPage(
-                userId: session.user.id,
-                role: session.user.role,
-                scope: effectiveScope,
-                query: query.query,
-                status: query.status,
-                categoryId: query.categoryId,
-                page: page,
-                limit: limit,
-              );
-          await _mergeProjectsIntoCache(ref, pageResult.items);
-          return pageResult;
+          final isOnline = await ref
+              .read(networkAvailabilityServiceProvider)
+              .isOnline();
+          if (!isOnline) {
+            return _localProjectsPageForScope(
+              ref,
+              session: session,
+              scope: effectiveScope,
+              query: query.query,
+              status: query.status,
+              categoryId: query.categoryId,
+              page: page,
+              limit: limit,
+            );
+          }
+
+          try {
+            final pageResult = await ref
+                .read(projectsRepositoryProvider)
+                .fetchProjectsPage(
+                  userId: session.user.id,
+                  role: session.user.role,
+                  scope: effectiveScope,
+                  query: query.query,
+                  status: query.status,
+                  categoryId: query.categoryId,
+                  page: page,
+                  limit: limit,
+                );
+            await _mergeProjectsIntoCache(ref, pageResult.items);
+            return pageResult;
+          } catch (error) {
+            if (!_isOfflineFeatureFetchError(error)) {
+              rethrow;
+            }
+            return _localProjectsPageForScope(
+              ref,
+              session: session,
+              scope: effectiveScope,
+              query: query.query,
+              status: query.status,
+              categoryId: query.categoryId,
+              page: page,
+              limit: limit,
+            );
+          }
         },
       );
     });

@@ -53,10 +53,13 @@ void main() {
                           },
                         ],
                       },
-                      'total_count': 1394,
+                      'total_count': 1147,
+                      'total_area_m2': 2294000.0,
+                      'total_area_hectares': 229.4,
                       'visible_count': 181,
                       'returned_count': 1,
                       'class_counts': <String, dynamic>{'olives': 1147},
+                      'area_by_class': <String, dynamic>{'olives': 2294000.0},
                       'geometry_types': <String>['Point'],
                     },
                   },
@@ -93,9 +96,11 @@ void main() {
       expect(requestedPaths, <String>['/api/v1/ai/layers/layer-1/predictions']);
       expect(requestedPaths.single.endsWith('/features'), isFalse);
       expect(requestedClassFilters, <Object?>['olives']);
-      expect(collection.featureCount, 1394);
+      expect(collection.featureCount, 1147);
       expect(collection.matchingFeatureCount, 181);
       expect(collection.returnedFeatureCount, 1);
+      expect(collection.totalAreaHectares, 229.4);
+      expect(collection.areaByClass, <String, double>{'olives': 2294000.0});
       expect(
         collection.features.single.properties,
         containsPair('source', 'ai_prediction'),

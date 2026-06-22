@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 
+import '../../../../core/config/app_env.dart';
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
@@ -13,6 +15,8 @@ import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/ai_models.dart';
+import '../../domain/ai_repository.dart';
+import '../ai_model_labels.dart';
 import '../ai_providers.dart';
 
 class AiValidationStatusCounts extends StatelessWidget {
@@ -112,7 +116,8 @@ class AiValidationTaskCard extends ConsumerWidget {
           const SizedBox(height: AppSpacing.sm),
           const _NoticeLine(
             icon: Icons.info_outline,
-            text: 'AI validation task, not official field data.',
+            text:
+                'AI validation task. Confidence is metadata and does not block review.',
           ),
           const SizedBox(height: AppSpacing.sm),
           Wrap(
@@ -128,7 +133,7 @@ class AiValidationTaskCard extends ConsumerWidget {
               Chip(
                 label: Text(
                   prediction.modelName?.trim().isNotEmpty == true
-                      ? prediction.modelName!.trim()
+                      ? formatModelName(prediction.modelName)
                       : 'Model n/a',
                 ),
               ),
@@ -218,6 +223,9 @@ class AiValidationTaskDetailsSheet extends StatelessWidget {
         MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
     final prediction = task.prediction;
     final submission = task.latestSubmission;
+    final submissionPhotos = submission == null
+        ? const <String>[]
+        : aiEvidencePhotoMediaIds(submission.evidence);
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.fromLTRB(
@@ -247,7 +255,7 @@ class AiValidationTaskDetailsSheet extends StatelessWidget {
               const _NoticeLine(
                 icon: Icons.info_outline,
                 text:
-                    'This validation will be reviewed before it becomes trusted training evidence.',
+                    'This validation will be reviewed before it becomes trusted AI feedback.',
               ),
               const SizedBox(height: AppSpacing.md),
               _DetailRows(
@@ -259,7 +267,7 @@ class AiValidationTaskDetailsSheet extends StatelessWidget {
                   ),
                   MapEntry('Confidence', _score(prediction.confidence)),
                   MapEntry('Uncertainty', _score(prediction.uncertaintyScore)),
-                  MapEntry('Model', prediction.modelName ?? 'Not recorded'),
+                  MapEntry('Model', formatModelName(prediction.modelName)),
                   MapEntry('Source', prediction.source),
                   MapEntry(
                     'Layer',
@@ -312,6 +320,10 @@ class AiValidationTaskDetailsSheet extends StatelessWidget {
                       ),
                   ],
                 ),
+                if (submissionPhotos.isNotEmpty) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  _EvidencePhotoPreviewGrid(mediaIds: submissionPhotos),
+                ],
               ],
               const SizedBox(height: AppSpacing.md),
               AppActionButtons(
@@ -365,6 +377,8 @@ class AiValidationSubmissionDialog extends ConsumerStatefulWidget {
 class _AiValidationSubmissionDialogState
     extends ConsumerState<AiValidationSubmissionDialog> {
   final TextEditingController _noteController = TextEditingController();
+  final ImagePicker _imagePicker = ImagePicker();
+  final List<AiValidationPhotoUpload> _photos = <AiValidationPhotoUpload>[];
   String _result = 'correct';
   String? _correctedClass;
   bool _submitting = false;
@@ -397,7 +411,7 @@ class _AiValidationSubmissionDialogState
               const _NoticeLine(
                 icon: Icons.info_outline,
                 text:
-                    'This validation will be reviewed before it becomes trusted training evidence.',
+                    'This validation will be reviewed before it becomes trusted AI feedback.',
               ),
               const SizedBox(height: AppSpacing.md),
               DropdownButtonFormField<String>(
@@ -451,13 +465,6 @@ class _AiValidationSubmissionDialogState
                           });
                         },
                 ),
-                const SizedBox(height: AppSpacing.xs),
-                Text(
-                  eligibleClasses.isEmpty
-                      ? 'No eligible trained class list is available.'
-                      : 'Corrected class must be one of the trained classes.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
               ],
               const SizedBox(height: AppSpacing.md),
               TextField(
@@ -470,11 +477,55 @@ class _AiValidationSubmissionDialogState
                   alignLabelWithHint: true,
                 ),
               ),
-              const SizedBox(height: AppSpacing.xs),
+              const SizedBox(height: AppSpacing.md),
               Text(
-                'Photo evidence is not attached in this phase.',
-                style: Theme.of(context).textTheme.bodySmall,
+                'Validation photos (optional)',
+                style: Theme.of(context).textTheme.titleSmall,
               ),
+              const SizedBox(height: AppSpacing.xs),
+              Wrap(
+                spacing: AppSpacing.sm,
+                runSpacing: AppSpacing.sm,
+                children: [
+                  SizedBox(
+                    width: 180,
+                    child: OutlinedButton.icon(
+                      onPressed: _submitting
+                          ? null
+                          : () => _pickPhoto(ImageSource.gallery),
+                      icon: const Icon(Icons.photo_library_outlined),
+                      label: const Text('Add photo'),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 180,
+                    child: OutlinedButton.icon(
+                      onPressed: _submitting
+                          ? null
+                          : () => _pickPhoto(ImageSource.camera),
+                      icon: const Icon(Icons.photo_camera_outlined),
+                      label: const Text('Take photo'),
+                    ),
+                  ),
+                ],
+              ),
+              if (_photos.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.xs),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final photo in _photos)
+                      InputChip(
+                        avatar: const Icon(Icons.image_outlined, size: 18),
+                        label: Text(photo.fileName),
+                        onDeleted: _submitting
+                            ? null
+                            : () => setState(() => _photos.remove(photo)),
+                      ),
+                  ],
+                ),
+              ],
               if (_errorText != null) ...[
                 const SizedBox(height: AppSpacing.sm),
                 Text(
@@ -524,6 +575,15 @@ class _AiValidationSubmissionDialogState
     });
 
     try {
+      final photoMediaIds = _photos.isEmpty
+          ? const <String>[]
+          : await ref
+                .read(aiRepositoryProvider)
+                .uploadPredictionValidationPhotos(
+                  projectId: widget.task.projectId,
+                  predictionId: widget.task.aiPredictionFeatureId,
+                  photos: _photos,
+                );
       await ref
           .read(aiRepositoryProvider)
           .submitValidationTask(
@@ -533,6 +593,7 @@ class _AiValidationSubmissionDialogState
             note: note,
             evidence: <String, dynamic>{
               'text': note,
+              if (photoMediaIds.isNotEmpty) 'photo_media_ids': photoMediaIds,
               'ui_phase': 'mobile_phase_s2',
             },
           );
@@ -554,6 +615,40 @@ class _AiValidationSubmissionDialogState
     } finally {
       if (mounted) {
         setState(() => _submitting = false);
+      }
+    }
+  }
+
+  Future<void> _pickPhoto(ImageSource source) async {
+    try {
+      final image = await _imagePicker.pickImage(
+        source: source,
+        maxWidth: 2200,
+        imageQuality: 86,
+      );
+      if (image == null) {
+        return;
+      }
+      final bytes = await image.readAsBytes();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _photos.add(
+          AiValidationPhotoUpload(
+            fileName: image.name.isEmpty ? 'validation-photo.jpg' : image.name,
+            bytes: bytes,
+          ),
+        );
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _errorText = userFacingErrorMessage(
+            error,
+            fallback: 'Unable to attach this photo.',
+          );
+        });
       }
     }
   }
@@ -600,7 +695,7 @@ class _AiValidationReviewDialogState
             Text(
               rejecting
                   ? 'Rejected validation keeps the AI prediction separate and evidence unaccepted.'
-                  : 'Accepted validation becomes reviewed evidence for future training use. It does not approve official field data.',
+                  : 'Accepted validation can create an AI-approved project map feature and mark it for future training use.',
             ),
             const SizedBox(height: AppSpacing.md),
             TextField(
@@ -826,7 +921,7 @@ void openAiValidationTaskMap(
   context.push(
     AppRoutes.mapForProject(
       task.projectId,
-      featureId: task.aiPredictionFeatureId,
+      featureId: task.id,
       focusSource: AppRoutes.focusSourceAiValidationTask,
     ),
   );
@@ -847,54 +942,141 @@ String aiValidationResultLabel(String value) {
   }
 }
 
+const aiUnclassifiedClassLabel = 'Unclassified';
+
 List<String> eligibleAiValidationClasses(
   AiPredictionValidationTask task,
   AiRun? run,
 ) {
   final labels = <String>{};
-  void addLabel(Object? value) {
-    final text = value?.toString().trim();
-    if (text != null && text.isNotEmpty) {
-      labels.add(text);
-    }
-  }
-
-  void addArray(Object? value) {
-    if (value is! List) {
-      return;
-    }
-    for (final item in value) {
-      if (item is String) {
-        addLabel(item);
-      } else if (item is Map) {
-        addLabel(item['class_label']);
-        addLabel(item['label']);
-        addLabel(item['class']);
-        addLabel(item['predicted_class']);
-      }
-    }
-  }
-
-  void collect(Map<String, dynamic> metadata) {
-    addArray(metadata['eligible_classes']);
-    addArray(metadata['trained_classes']);
-    addArray(metadata['classes']);
-    addArray(metadata['class_counts']);
-    addArray(metadata['label_counts']);
-    final summary = metadata['model_metrics_summary'];
-    if (summary is Map) {
-      addArray(summary['classes']);
-    }
-  }
-
-  collect(task.metadata);
-  collect(task.prediction.metadata);
+  _collectAiClassLabels(task.metadata, labels);
+  _collectAiClassLabels(task.prediction.metadata, labels);
   if (run != null) {
-    collect(run.metadata);
+    _collectAiClassLabels(run.metadata, labels);
   }
-  addLabel(task.prediction.predictedClass);
+  _addAiClassLabel(labels, task.prediction.predictedClass);
 
-  return labels.toList(growable: false)..sort();
+  return _sortedAiClassesWithUnclassified(labels);
+}
+
+List<String> eligibleAiPredictionFeatureClasses(
+  AiPredictionFeatureDetails details,
+) {
+  final labels = <String>{};
+  _collectAiClassLabels(details.prediction.metadata, labels);
+  _collectAiClassLabels(details.run, labels);
+  _addAiClassLabel(labels, details.prediction.predictedClass);
+  return _sortedAiClassesWithUnclassified(labels);
+}
+
+List<String> aiEvidencePhotoMediaIds(Map<String, dynamic> evidence) {
+  final values = evidence['photo_media_ids'] ?? evidence['photos'];
+  if (values is List) {
+    return values
+        .map((item) => item?.toString().trim())
+        .whereType<String>()
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+  }
+  return const <String>[];
+}
+
+class _EvidencePhotoPreviewGrid extends StatelessWidget {
+  const _EvidencePhotoPreviewGrid({required this.mediaIds});
+
+  final List<String> mediaIds;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final mediaId in mediaIds)
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: SizedBox(
+              width: 76,
+              height: 76,
+              child: Image.network(
+                _evidencePhotoUrl(mediaId),
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHigh,
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                    ),
+                  ),
+                  child: const Icon(Icons.image_not_supported_outlined),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+String _evidencePhotoUrl(String mediaId) {
+  final trimmed = mediaId.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  final baseUri = Uri.parse(AppEnv.apiBaseUrl);
+  final origin = baseUri.replace(path: '', query: null, fragment: null);
+  final relative = trimmed.startsWith('/') ? trimmed : '/$trimmed';
+  return '${origin.toString().replaceAll(RegExp(r'/$'), '')}$relative';
+}
+
+void _addAiClassLabel(Set<String> labels, Object? value) {
+  final text = value?.toString().trim();
+  if (text != null && text.isNotEmpty) {
+    labels.add(text);
+  }
+}
+
+void _addAiClassArray(Set<String> labels, Object? value) {
+  if (value is! List) {
+    return;
+  }
+  for (final item in value) {
+    if (item is String) {
+      _addAiClassLabel(labels, item);
+    } else if (item is Map) {
+      _addAiClassLabel(labels, item['class_label']);
+      _addAiClassLabel(labels, item['label']);
+      _addAiClassLabel(labels, item['class']);
+      _addAiClassLabel(labels, item['predicted_class']);
+    }
+  }
+}
+
+void _collectAiClassLabels(Map<String, dynamic> metadata, Set<String> labels) {
+  _addAiClassArray(labels, metadata['class_labels']);
+  _addAiClassArray(labels, metadata['eligible_classes']);
+  _addAiClassArray(labels, metadata['trained_classes']);
+  _addAiClassArray(labels, metadata['classes']);
+  _addAiClassArray(labels, metadata['class_counts']);
+  _addAiClassArray(labels, metadata['label_counts']);
+  final summary = metadata['model_metrics_summary'];
+  if (summary is Map) {
+    _addAiClassArray(labels, summary['classes']);
+  }
+}
+
+List<String> _sortedAiClassesWithUnclassified(Set<String> labels) {
+  final sorted =
+      labels
+          .where(
+            (label) =>
+                label.trim().isNotEmpty &&
+                label.trim().toLowerCase() !=
+                    aiUnclassifiedClassLabel.toLowerCase(),
+          )
+          .toList(growable: false)
+        ..sort();
+  return <String>[...sorted, aiUnclassifiedClassLabel];
 }
 
 String _taskStatusLabel(String status) {

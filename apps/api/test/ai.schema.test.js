@@ -243,7 +243,7 @@ describe('AI integration schema phase A', () => {
          'custom_polygon',
          ST_GeomFromText('POLYGON((35.1 33.1,35.2 33.1,35.2 33.2,35.1 33.2,35.1 33.1))', 4326),
          50,
-         '{"models":["random_forest","svm_rbf","xgboost"]}'::jsonb,
+         '{"models":["random_forest","svm_rbf","gradient_boosting"]}'::jsonb,
          $2,
          $2
        )

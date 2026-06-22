@@ -8,14 +8,20 @@ import '../offline/local_store.dart';
 import '../offline/local_models.dart';
 import 'sync_retry_policy.dart';
 
-enum SyncPushStatus { success, failed, conflict }
+enum SyncPushStatus { success, failed, conflict, discarded }
 
 class SyncPushResult {
-  const SyncPushResult({required this.status, this.error, this.remoteVersion});
+  const SyncPushResult({
+    required this.status,
+    this.error,
+    this.remoteVersion,
+    this.requiresAuthentication = false,
+  });
 
   final SyncPushStatus status;
   final String? error;
   final int? remoteVersion;
+  final bool requiresAuthentication;
 }
 
 class SyncRunSummary {
@@ -24,14 +30,18 @@ class SyncRunSummary {
     required this.succeeded,
     required this.failed,
     required this.conflicts,
+    required this.discarded,
     required this.deadLettered,
+    required this.authenticationFailures,
   });
 
   final int processed;
   final int succeeded;
   final int failed;
   final int conflicts;
+  final int discarded;
   final int deadLettered;
+  final int authenticationFailures;
 }
 
 class SyncEngine {
@@ -51,7 +61,9 @@ class SyncEngine {
     var succeeded = 0;
     var failed = 0;
     var conflicts = 0;
+    var discarded = 0;
     var deadLettered = 0;
+    var authenticationFailures = 0;
 
     for (final item in dueItems) {
       await _localStore.markSyncProcessing(item.id);
@@ -63,6 +75,12 @@ class SyncEngine {
           item,
           remoteVersion: result.remoteVersion,
         );
+        continue;
+      }
+
+      if (result.status == SyncPushStatus.discarded) {
+        discarded += 1;
+        await _localStore.discardDraft(item.entityId);
         continue;
       }
 
@@ -80,6 +98,9 @@ class SyncEngine {
         continue;
       }
 
+      if (result.requiresAuthentication) {
+        authenticationFailures += 1;
+      }
       final nextAttempt = item.attemptCount + 1;
       if (SyncRetryPolicy.shouldDeadLetter(nextAttempt)) {
         deadLettered += 1;
@@ -107,7 +128,9 @@ class SyncEngine {
       succeeded: succeeded,
       failed: failed,
       conflicts: conflicts,
+      discarded: discarded,
       deadLettered: deadLettered,
+      authenticationFailures: authenticationFailures,
     );
   }
 
@@ -152,6 +175,7 @@ class SyncEngine {
           '${AppEnv.apiVersionPrefix}/features',
           data: <String, dynamic>{
             'id': featureId,
+            'client_offline_id': featureId,
             'project_id': projectId,
             'geom': geometry,
             'attributes': attributes,
@@ -162,10 +186,7 @@ class SyncEngine {
       } else if (item.operation == SyncOperationType.update) {
         final response = await _apiClient.dio.put<Map<String, dynamic>>(
           '${AppEnv.apiVersionPrefix}/features/$featureId',
-          data: <String, dynamic>{
-            'geom': geometry,
-            'attributes': attributes,
-          },
+          data: <String, dynamic>{'geom': geometry, 'attributes': attributes},
         );
         remoteVersion = _readVersion(response.data);
       } else {
@@ -178,9 +199,7 @@ class SyncEngine {
       if (photoPaths.isNotEmpty) {
         final formData = FormData.fromMap(<String, dynamic>{
           'photos': await Future.wait(
-            photoPaths.map(
-              (path) => MultipartFile.fromFile(path),
-            ),
+            photoPaths.map((path) => MultipartFile.fromFile(path)),
           ),
         });
 
@@ -188,9 +207,7 @@ class SyncEngine {
           '${AppEnv.apiVersionPrefix}/photos/feature/$featureId',
           data: formData,
           options: Options(
-            headers: <String, dynamic>{
-              'Content-Type': 'multipart/form-data',
-            },
+            headers: <String, dynamic>{'Content-Type': 'multipart/form-data'},
           ),
         );
       }
@@ -217,10 +234,20 @@ class SyncEngine {
         );
       }
 
-      return SyncPushResult(
-        status: SyncPushStatus.failed,
-        error: message,
-      );
+      if (statusCode == 401) {
+        return const SyncPushResult(
+          status: SyncPushStatus.failed,
+          error:
+              'Sign in again to sync saved offline contributions. Your offline work is still stored on this device.',
+          requiresAuthentication: true,
+        );
+      }
+
+      if (statusCode == 403) {
+        return SyncPushResult(status: SyncPushStatus.discarded, error: message);
+      }
+
+      return SyncPushResult(status: SyncPushStatus.failed, error: message);
     } finally {
       _apiClient.dio.options.headers
         ..clear()

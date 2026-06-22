@@ -3,6 +3,22 @@ allprojects {
         google()
         mavenCentral()
     }
+
+    buildscript {
+        configurations.configureEach {
+            if (name == "classpath") {
+                resolutionStrategy.eachDependency {
+                    if (
+                        requested.group == "com.android.tools.build" &&
+                            requested.name == "gradle"
+                    ) {
+                        useVersion("8.11.1")
+                        because("Use the app's cached Android Gradle plugin for Flutter plugin builds.")
+                    }
+                }
+            }
+        }
+    }
 }
 
 val newBuildDir: Directory =

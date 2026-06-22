@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lebanese_gis_mobile/core/offline/local_models.dart';
 import 'package:lebanese_gis_mobile/core/pagination/paginated_list_controller.dart';
 import 'package:lebanese_gis_mobile/core/pagination/paginated_result.dart';
 import 'package:lebanese_gis_mobile/core/providers/providers.dart';
+import 'package:lebanese_gis_mobile/features/ai/domain/ai_models.dart';
 import 'package:lebanese_gis_mobile/features/ai/presentation/ai_providers.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_models.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_repository.dart';
@@ -218,6 +220,31 @@ class _FakeProjectsRepository implements ProjectsRepository {
     );
   }
 
+  @override
+  Future<OfflineProjectPackage> fetchOfflinePackage({
+    required String projectId,
+    required String ownerUserId,
+  }) async {
+    final project = await byId(
+      id: projectId,
+      userId: ownerUserId,
+      role: UserRole.contributor,
+    );
+    if (project == null) {
+      throw StateError('Project not found');
+    }
+    final now = DateTime.utc(2026, 4, 14, 12);
+    return OfflineProjectPackage(
+      ownerUserId: ownerUserId,
+      project: project,
+      packageVersion: 'test-package',
+      appResourcesVersion: 'test-app',
+      baseMapVersion: 'test-map',
+      downloadedAt: now,
+      refreshedAt: now,
+    );
+  }
+
   ProjectSummary _withAssignment(
     ProjectSummary project, {
     required String userId,
@@ -326,7 +353,11 @@ class _FakeProjectsRepository implements ProjectsRepository {
   Future<void> cancelProjectAccessRequest({required String projectId}) async {}
 }
 
-AuthSession _sessionForRole(UserRole role, {String userId = 'user-1'}) {
+AuthSession _sessionForRole(
+  UserRole role, {
+  String userId = 'user-1',
+  bool isProtectedSuperAdmin = false,
+}) {
   return AuthSession(
     accessToken: 'token-$userId',
     refreshToken: 'refresh-$userId',
@@ -335,6 +366,7 @@ AuthSession _sessionForRole(UserRole role, {String userId = 'user-1'}) {
       fullName: '${role.name} user',
       email: '${role.name}@example.com',
       role: role,
+      isProtectedSuperAdmin: isProtectedSuperAdmin,
     ),
   );
 }
@@ -365,6 +397,7 @@ Widget _wrapWithScope({
   required List<ProjectSummary> projects,
   required Widget child,
   _FakeProjectsRepository? repository,
+  FakeAiRepository? aiRepository,
 }) {
   final fakeRepository = repository ?? _FakeProjectsRepository(projects);
   return ProviderScope(
@@ -374,10 +407,11 @@ Widget _wrapWithScope({
       ),
       projectsRepositoryProvider.overrideWithValue(fakeRepository),
       aiRepositoryProvider.overrideWithValue(
-        FakeAiRepository(
-          settings: fakeAiSettings(projectId: 'admin-project'),
-          readiness: fakeReadiness(projectId: 'admin-project'),
-        ),
+        aiRepository ??
+            FakeAiRepository(
+              settings: fakeAiSettings(projectId: 'admin-project'),
+              readiness: fakeReadiness(projectId: 'admin-project'),
+            ),
       ),
       paginatedProjectListProvider.overrideWith((ref, scope) {
         return PaginatedListController<ProjectSummary>(
@@ -825,4 +859,60 @@ void main() {
     expect(find.text('Open Map'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'project details shows active AI run summary on compact screens',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      const projectId = 'compact-ai-project';
+      final session = _sessionForRole(
+        UserRole.admin,
+        userId: 'super-admin-1',
+        isProtectedSuperAdmin: true,
+      );
+      final repository = _FakeProjectsRepository(<ProjectSummary>[
+        _project(id: projectId, name: 'Compact AI Survey'),
+      ]);
+      final aiRepository = FakeAiRepository(
+        settings: fakeAiSettings(projectId: projectId, isEnabled: true),
+        readiness: fakeReadiness(projectId: projectId),
+        runs: <AiRun>[
+          AiRun(
+            id: 'active-run-1',
+            projectId: projectId,
+            status: 'Running',
+            displayName: 'Active compact run',
+            scopeType: 'project',
+            trainingFeatureCount: 10,
+            eligibleFeatureCount: 10,
+            excludedFeatureCount: 0,
+            stage: 'training',
+            progress: 0.42,
+            createdAt: DateTime.utc(2026, 6, 17),
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        _wrapWithScope(
+          session: session,
+          projects: const <ProjectSummary>[],
+          repository: repository,
+          aiRepository: aiRepository,
+          child: const ProjectDetailsScreen(projectId: projectId),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 900));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('Active run'));
+
+      expect(find.textContaining('Run active-r'), findsOneWidget);
+      expect(find.text('Open Active Run'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

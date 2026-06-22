@@ -46,7 +46,7 @@ class _ProjectAiValidationSectionState
               const SectionHeader(title: 'AI Prediction Validation'),
               const SizedBox(height: AppSpacing.sm),
               const Text(
-                'Create and review field validation tasks for AI prediction features. AI predictions stay separate from official field data.',
+                'Create and review field validation tasks for all AI prediction features. Confidence is shown as metadata, not a validation filter.',
               ),
               const SizedBox(height: AppSpacing.md),
               SizedBox(
@@ -63,13 +63,13 @@ class _ProjectAiValidationSectionState
                   label: Text(
                     _generating
                         ? 'Generating tasks...'
-                        : 'Generate low-confidence tasks',
+                        : 'Generate validation tasks',
                   ),
                 ),
               ),
               const SizedBox(height: AppSpacing.xs),
               Text(
-                'Generation is idempotent and does not write to spatial_feature.',
+                'Accepted validations can become AI-approved project map features for future training.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
@@ -179,7 +179,7 @@ class _ProjectAiValidationTasksView extends StatelessWidget {
             icon: Icons.rule_folder_outlined,
             title: 'No validation tasks',
             message:
-                'Generate low-confidence tasks or change the current status filter.',
+                'Generate validation tasks or change the current status filter.',
           )
         else
           for (final task in tasks.tasks) ...[

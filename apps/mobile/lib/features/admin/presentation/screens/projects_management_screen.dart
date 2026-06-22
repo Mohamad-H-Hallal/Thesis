@@ -10,6 +10,7 @@ import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_empty_state.dart';
+import '../../../../core/widgets/app_search_action_bar.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/status_chip.dart';
@@ -116,15 +117,24 @@ class _ProjectsManagementScreenState
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        final createButton = FilledButton.icon(
+                    AppSearchActionBar(
+                      searchBar: SearchBar(
+                        hintText: 'Search projects',
+                        leading: const Icon(Icons.search),
+                        onChanged: (value) {
+                          setState(() {
+                            _query = value.trim();
+                          });
+                        },
+                      ),
+                      actions: [
+                        FilledButton.icon(
                           onPressed: () =>
                               context.push(AppRoutes.projectCreate),
                           icon: const Icon(Icons.add),
                           label: const Text('Create'),
-                        );
-                        final filterButton = OutlinedButton.icon(
+                        ),
+                        OutlinedButton.icon(
                           onPressed: () =>
                               setState(() => _showFilters = !_showFilters),
                           icon: Icon(
@@ -132,48 +142,9 @@ class _ProjectsManagementScreenState
                                 ? Icons.filter_alt_off_outlined
                                 : Icons.filter_alt_outlined,
                           ),
-                          label: Text(_showFilters ? 'Hide filters' : 'Filter'),
-                        );
-
-                        final searchBar = SearchBar(
-                          hintText: 'Search projects',
-                          leading: const Icon(Icons.search),
-                          onChanged: (value) {
-                            setState(() {
-                              _query = value.trim();
-                            });
-                          },
-                        );
-
-                        if (constraints.maxWidth < 560) {
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              searchBar,
-                              const SizedBox(height: AppSpacing.sm),
-                              SizedBox(
-                                width: double.infinity,
-                                child: createButton,
-                              ),
-                              const SizedBox(height: AppSpacing.sm),
-                              SizedBox(
-                                width: double.infinity,
-                                child: filterButton,
-                              ),
-                            ],
-                          );
-                        }
-
-                        return Row(
-                          children: [
-                            Expanded(child: searchBar),
-                            const SizedBox(width: AppSpacing.sm),
-                            SizedBox(width: 180, child: createButton),
-                            const SizedBox(width: AppSpacing.sm),
-                            SizedBox(width: 160, child: filterButton),
-                          ],
-                        );
-                      },
+                          label: Text(_showFilters ? 'Hide' : 'Filter'),
+                        ),
+                      ],
                     ),
                     if (_showFilters) ...[
                       const SizedBox(height: AppSpacing.sm),

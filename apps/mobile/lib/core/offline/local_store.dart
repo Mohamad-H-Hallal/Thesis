@@ -16,6 +16,7 @@ abstract class LocalStore {
   Future<void> upsertDraft(LocalDraftFeature draft, {bool enqueueSync = true});
   Future<List<LocalDraftFeature>> getDrafts();
   Future<LocalDraftFeature?> getDraftById(String draftId);
+  Future<void> discardDraft(String draftId);
   Future<void> updateDraftStatus(
     String draftId, {
     required String status,
@@ -25,6 +26,26 @@ abstract class LocalStore {
   Future<void> upsertOfflineMapPackage(OfflineMapPackage package);
   Future<OfflineMapPackage?> getCurrentOfflineMapPackage({
     required String ownerUserId,
+  });
+  Future<void> upsertOfflineProjectPackage(OfflineProjectPackage package);
+  Future<OfflineProjectPackage?> getOfflineProjectPackage({
+    required String ownerUserId,
+    required String projectId,
+  });
+  Future<List<OfflineProjectPackage>> getOfflineProjectPackages({
+    required String ownerUserId,
+  });
+  Future<void> deleteOfflineProjectPackage({
+    required String ownerUserId,
+    required String projectId,
+  });
+  Future<int> countOfflineProjectPackagesUsingBaseMap({
+    required String ownerUserId,
+    required String baseMapVersion,
+  });
+  Future<int> countUnsyncedDraftsForProject({
+    required String ownerUserId,
+    required String projectId,
   });
 
   Future<int> getPendingSyncCount();

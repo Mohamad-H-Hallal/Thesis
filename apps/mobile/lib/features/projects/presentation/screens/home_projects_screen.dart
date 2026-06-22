@@ -9,6 +9,7 @@ import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/animated_reveal.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
+import '../../../../core/widgets/app_search_action_bar.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../auth/domain/auth_models.dart';
@@ -49,11 +50,13 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
 
     return Column(
       children: [
-        SearchBar(
-          leading: const Icon(Icons.search),
-          hintText: _searchHintForScope(role, widget.scope),
-          onChanged: (value) =>
-              setState(() => _query = value.trim().toLowerCase()),
+        AppSearchActionBar(
+          searchBar: SearchBar(
+            leading: const Icon(Icons.search),
+            hintText: _searchHintForScope(role, widget.scope),
+            onChanged: (value) =>
+                setState(() => _query = value.trim().toLowerCase()),
+          ),
         ),
         const SizedBox(height: AppSpacing.md),
         Expanded(
@@ -187,17 +190,7 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
                                       ),
                                     ),
                                   if (project.publishedAiLayerCount > 0)
-                                    Chip(
-                                      avatar: const Icon(
-                                        Icons.auto_awesome_outlined,
-                                        size: 18,
-                                      ),
-                                      label: Text(
-                                        project.publishedAiLayerCount == 1
-                                            ? 'Published AI layer'
-                                            : '${project.publishedAiLayerCount} published AI layers',
-                                      ),
-                                    ),
+                                    _PublishedAiLayerChip(project: project),
                                 ],
                               ),
                             ],
@@ -255,4 +248,24 @@ class _HomeProjectsScreenState extends ConsumerState<HomeProjectsScreen> {
         return 'No projects match your search filters.';
     }
   }
+}
+
+class _PublishedAiLayerChip extends StatelessWidget {
+  const _PublishedAiLayerChip({required this.project});
+
+  final ProjectSummary project;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = _publishedAiLayerSummary(project);
+    const icon = Icon(Icons.auto_awesome_outlined, size: 18);
+    return Chip(avatar: icon, label: Text(label));
+  }
+}
+
+String _publishedAiLayerSummary(ProjectSummary project) {
+  if (project.publishedAiLayerCount > 1) {
+    return 'Published AI results available';
+  }
+  return 'Published AI result available';
 }

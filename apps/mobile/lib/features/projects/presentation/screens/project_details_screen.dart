@@ -339,16 +339,8 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                           ),
                         ),
                         if (project.publishedAiLayerCount > 0)
-                          Chip(
-                            avatar: const Icon(
-                              Icons.auto_awesome_outlined,
-                              size: 18,
-                            ),
-                            label: Text(
-                              project.publishedAiLayerCount == 1
-                                  ? 'Published AI layer available'
-                                  : '${project.publishedAiLayerCount} published AI layers available',
-                            ),
+                          _PublishedAiSummaryPill(
+                            text: _publishedAiLayerSummary(project),
                           ),
                       ],
                     ),
@@ -611,6 +603,58 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
 
   String _formatDate(DateTime? value) {
     return formatLebanonDate(value);
+  }
+
+  String _publishedAiLayerSummary(ProjectSummary project) {
+    if (project.publishedAiLayerCount > 1) {
+      return 'This project has published AI results available.';
+    }
+    return 'AI classification layer is published for this project.';
+  }
+}
+
+class _PublishedAiSummaryPill extends StatelessWidget {
+  const _PublishedAiSummaryPill({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 520),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: scheme.outlineVariant),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.auto_awesome_outlined,
+                size: 18,
+                color: scheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  text,
+                  softWrap: true,
+                  overflow: TextOverflow.visible,
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

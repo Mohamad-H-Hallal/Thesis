@@ -223,6 +223,9 @@ class ProjectSummary {
     this.pendingAssignmentRequests = 0,
     this.rejectedAssignmentRequests = 0,
     this.publishedAiLayerCount = 0,
+    this.publishedAiRunId,
+    this.publishedAiLayerName,
+    this.publishedAiLayerPublishedAt,
     required this.description,
     this.objectives,
     this.startDate,
@@ -253,6 +256,9 @@ class ProjectSummary {
   final int pendingAssignmentRequests;
   final int rejectedAssignmentRequests;
   final int publishedAiLayerCount;
+  final String? publishedAiRunId;
+  final String? publishedAiLayerName;
+  final DateTime? publishedAiLayerPublishedAt;
   final String description;
   final String? objectives;
   final DateTime? startDate;
