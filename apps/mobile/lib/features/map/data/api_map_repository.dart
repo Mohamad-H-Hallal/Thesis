@@ -163,7 +163,12 @@ class ApiMapRepository {
     final rows = (featureCollection['features'] as List? ?? const <dynamic>[])
         .cast<Map>();
     final items = rows
-        .map((row) => _toViewportFeature(Map<String, dynamic>.from(row)))
+        .map(
+          (row) => _toViewportFeature(
+            Map<String, dynamic>.from(row),
+            expectedProjectId: projectId,
+          ),
+        )
         .toList(growable: false);
     _rememberProjectTile(cacheKey, items);
     return items;
@@ -205,7 +210,7 @@ class ApiMapRepository {
       final items = rows
           .map((row) {
             final item = Map<String, dynamic>.from(row as Map);
-            return _toProjectFeature(item);
+            return _toProjectFeature(item, expectedProjectId: projectId);
           })
           .toList(growable: false);
       final total = (pagination['total'] as num?)?.toInt() ?? items.length;
@@ -286,7 +291,10 @@ class ApiMapRepository {
     }
   }
 
-  Future<MapFeatureSummary> fetchProjectFeatureById(String featureId) async {
+  Future<MapFeatureSummary> fetchProjectFeatureById({
+    required String projectId,
+    required String featureId,
+  }) async {
     try {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         '${AppEnv.apiVersionPrefix}/features/$featureId',
@@ -295,7 +303,11 @@ class ApiMapRepository {
       final row = Map<String, dynamic>.from(
         payload['data'] as Map? ?? const <String, dynamic>{},
       );
-      return _toProjectFeature(row);
+      final feature = _toProjectFeature(row, expectedProjectId: projectId);
+      if (feature.projectId != projectId) {
+        throw StateError('The feature does not belong to the active project.');
+      }
+      return feature;
     } on DioException catch (error) {
       throw userFacingDioMessage(
         error,
@@ -316,9 +328,13 @@ class ApiMapRepository {
     );
   }
 
-  MapFeatureSummary _toProjectFeature(Map<String, dynamic> item) {
+  MapFeatureSummary _toProjectFeature(
+    Map<String, dynamic> item, {
+    required String expectedProjectId,
+  }) {
     return MapFeatureSummary(
       id: (item['id'] as String?) ?? '',
+      projectId: (item['project_id'] as String?) ?? expectedProjectId,
       status: (item['status'] as String?) ?? 'draft',
       geometry: Map<String, dynamic>.from(
         item['geometry'] as Map? ?? const <String, dynamic>{},
@@ -344,12 +360,16 @@ class ApiMapRepository {
     );
   }
 
-  MapFeatureSummary _toViewportFeature(Map<String, dynamic> feature) {
+  MapFeatureSummary _toViewportFeature(
+    Map<String, dynamic> feature, {
+    required String expectedProjectId,
+  }) {
     final properties = Map<String, dynamic>.from(
       feature['properties'] as Map? ?? const <String, dynamic>{},
     );
     return MapFeatureSummary(
       id: (feature['id'] as String?) ?? '',
+      projectId: (properties['project_id'] as String?) ?? expectedProjectId,
       status: (properties['status'] as String?) ?? 'approved',
       geometry: Map<String, dynamic>.from(
         feature['geometry'] as Map? ?? const <String, dynamic>{},

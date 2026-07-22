@@ -33,6 +33,7 @@ SyncQueueItem _queueItem({
     operation: SyncOperationType.create,
     payload: <String, dynamic>{
       'draft_id': draftId,
+      'owner_user_id': 'user-1',
       'project_id': 'project-perf',
       'geometry_type': 'Point',
       'geometry': <String, dynamic>{
@@ -43,6 +44,8 @@ SyncQueueItem _queueItem({
       'status': 'draft',
       'local_version': version,
     },
+    ownerUserId: 'user-1',
+    projectId: 'project-perf',
     localVersion: version,
     idempotencyKey: 'idem-$id',
     attemptCount: 0,
@@ -116,6 +119,7 @@ void main() {
       final engine = SyncEngine(
         localStore: store,
         apiClient: ApiClient(dio: dio),
+        ownerUserId: 'user-1',
       );
 
       const count = 8;

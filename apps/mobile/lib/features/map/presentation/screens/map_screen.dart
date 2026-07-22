@@ -4036,6 +4036,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   Future<void> _submitDraft({
+    required ProjectSummary project,
     required MapFeatureSummary feature,
     VoidCallback? onSuccess,
   }) async {
@@ -4064,15 +4065,39 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     }
 
     try {
-      await ref
-          .read(featureWorkflowRepositoryProvider)
-          .submitForReview(feature.id);
+      final session = ref.read(authControllerProvider).session;
+      final localDraft = session == null
+          ? null
+          : await ref
+                .read(localStoreProvider)
+                .getProjectDraft(
+                  ownerUserId: session.user.id,
+                  projectId: project.id,
+                  draftId: feature.id,
+                );
+      if (localDraft != null && session != null) {
+        await ref
+            .read(reviewWorkflowServiceProvider)
+            .submitDraft(
+              ownerUserId: session.user.id,
+              projectId: project.id,
+              draftId: feature.id,
+              actorName: session.user.fullName,
+            );
+        await ref.read(syncControllerProvider.notifier).refreshStatus();
+      } else {
+        await ref
+            .read(featureWorkflowRepositoryProvider)
+            .submitForReview(feature.id);
+      }
       bumpWorkflowRefresh(ref);
       if (mounted) {
         onSuccess?.call();
         AppSnackbar.showSuccess(
           context,
-          'Draft submitted for review successfully.',
+          localDraft == null
+              ? 'Draft submitted for review successfully.'
+              : 'Draft saved as pending synchronization.',
         );
       }
     } catch (error) {
@@ -4089,6 +4114,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   Future<void> _deleteDraftFeature({
+    required ProjectSummary project,
     required MapFeatureSummary feature,
     VoidCallback? onSuccess,
   }) async {
@@ -4119,7 +4145,30 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     }
 
     try {
-      await ref.read(featureWorkflowRepositoryProvider).deleteDraft(feature.id);
+      final session = ref.read(authControllerProvider).session;
+      final localDraft = session == null
+          ? null
+          : await ref
+                .read(localStoreProvider)
+                .getProjectDraft(
+                  ownerUserId: session.user.id,
+                  projectId: project.id,
+                  draftId: feature.id,
+                );
+      if (localDraft != null && session != null) {
+        await ref
+            .read(localStoreProvider)
+            .discardProjectDraft(
+              ownerUserId: session.user.id,
+              projectId: project.id,
+              draftId: feature.id,
+            );
+        await ref.read(syncControllerProvider.notifier).refreshStatus();
+      } else {
+        await ref
+            .read(featureWorkflowRepositoryProvider)
+            .deleteDraft(feature.id);
+      }
       bumpWorkflowRefresh(ref);
       if (mounted) {
         onSuccess?.call();
@@ -4167,7 +4216,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           ? Consumer(
               builder: (context, ref, _) {
                 final detailAsync = ref.watch(
-                  projectFeatureDetailsProvider(feature.id),
+                  projectFeatureDetailsProvider(
+                    ProjectFeatureIdentity(
+                      projectId: project.id,
+                      featureId: feature.id,
+                    ),
+                  ),
                 );
                 return detailAsync.when(
                   loading: () => _ProjectFeatureLoadingSheet(
@@ -4181,7 +4235,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           'Unable to load this project feature right now.',
                     ),
                     onRetry: () => ref.invalidate(
-                      projectFeatureDetailsProvider(feature.id),
+                      projectFeatureDetailsProvider(
+                        ProjectFeatureIdentity(
+                          projectId: project.id,
+                          featureId: feature.id,
+                        ),
+                      ),
                     ),
                   ),
                   data: (loadedFeature) => _buildProjectFeatureDetailsSheet(
@@ -4378,6 +4437,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     ),
                     FilledButton.icon(
                       onPressed: () => _submitDraft(
+                        project: project,
                         feature: feature,
                         onSuccess: () => Navigator.of(sheetContext).pop(),
                       ),
@@ -4386,6 +4446,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     ),
                     FilledButton.tonalIcon(
                       onPressed: () => _deleteDraftFeature(
+                        project: project,
                         feature: feature,
                         onSuccess: () => Navigator.of(sheetContext).pop(),
                       ),
@@ -4462,7 +4523,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       }
       unawaited(
         ref
-            .read(projectFeatureDetailsProvider(targetFeatureId).future)
+            .read(
+              projectFeatureDetailsProvider(
+                ProjectFeatureIdentity(
+                  projectId: project.id,
+                  featureId: targetFeatureId,
+                ),
+              ).future,
+            )
             .then((target) {
               if (!mounted) {
                 return;

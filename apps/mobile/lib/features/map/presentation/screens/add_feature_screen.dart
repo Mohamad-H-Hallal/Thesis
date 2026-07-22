@@ -963,11 +963,18 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
   }) async {
     final localStore = ref.read(localStoreProvider);
     final session = ref.read(authControllerProvider).session;
+    if (session == null) {
+      throw StateError('Sign in before saving offline contributions.');
+    }
     final now = DateTime.now();
-    final existingDraft = await localStore.getDraftById(draftId);
+    final existingDraft = await localStore.getProjectDraft(
+      ownerUserId: session.user.id,
+      projectId: project.id,
+      draftId: draftId,
+    );
     final offlineDraft = LocalDraftFeature(
       id: draftId,
-      ownerUserId: session?.user.id ?? '',
+      ownerUserId: session.user.id,
       projectId: project.id,
       projectName: project.name,
       geometryType: _selectedGeometryType ?? 'Point',

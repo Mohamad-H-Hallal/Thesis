@@ -191,9 +191,10 @@ class MockImportsRepository implements ImportsRepository {
             ),
           )
           .toList(growable: false),
-      approvedProjectFeatures: const <MapFeatureSummary>[
+      approvedProjectFeatures: <MapFeatureSummary>[
         MapFeatureSummary(
           id: 'mock-approved-feature-1',
+          projectId: projectId,
           status: 'approved',
           geometry: <String, dynamic>{
             'type': 'Point',

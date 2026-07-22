@@ -545,6 +545,7 @@ describe('Project workflow access and feature visibility', () => {
 
     const acceptedOfflineFeatureId = '77777777-7777-4777-8777-777777777777';
     const rejectedOfflineFeatureId = '88888888-8888-4888-8888-888888888888';
+    const retriedOfflineFeatureId = '99999999-9999-4999-8999-999999999999';
     const offlinePayload = {
       project_id: project.id,
       geom: { type: 'Point', coordinates: [35.5, 33.9] },
@@ -557,6 +558,46 @@ describe('Project workflow access and feature visibility', () => {
       .set(authHeader(contributorLogin.token))
       .send({ ...offlinePayload, id: acceptedOfflineFeatureId });
     expect(acceptedCreate.status).toBe(201);
+
+    const retriedCreate = await request(app)
+      .post(`${API_PREFIX}/features`)
+      .set(authHeader(contributorLogin.token))
+      .send({ ...offlinePayload, id: retriedOfflineFeatureId });
+    const createReplay = await request(app)
+      .post(`${API_PREFIX}/features`)
+      .set(authHeader(contributorLogin.token))
+      .send({ ...offlinePayload, id: retriedOfflineFeatureId });
+    expect(retriedCreate.status).toBe(201);
+    expect(createReplay.status).toBe(200);
+    const retriedFeatureCount = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM spatial_feature WHERE id = $1',
+      [retriedOfflineFeatureId],
+    );
+    expect(retriedFeatureCount.rows[0].count).toBe(1);
+
+    const firstSubmit = await request(app)
+      .post(`${API_PREFIX}/features/${retriedOfflineFeatureId}/submit`)
+      .set(authHeader(contributorLogin.token));
+    expect(firstSubmit.status).toBe(200);
+    const notificationsAfterFirstSubmit = await pool.query(
+      `SELECT COUNT(*)::int AS count
+       FROM notification
+       WHERE metadata->>'feature_id' = $1`,
+      [retriedOfflineFeatureId],
+    );
+    const submitReplay = await request(app)
+      .post(`${API_PREFIX}/features/${retriedOfflineFeatureId}/submit`)
+      .set(authHeader(contributorLogin.token));
+    expect(submitReplay.status).toBe(200);
+    const notificationsAfterReplay = await pool.query(
+      `SELECT COUNT(*)::int AS count
+       FROM notification
+       WHERE metadata->>'feature_id' = $1`,
+      [retriedOfflineFeatureId],
+    );
+    expect(notificationsAfterReplay.rows[0].count).toBe(
+      notificationsAfterFirstSubmit.rows[0].count,
+    );
 
     await pool.query(
       `DELETE FROM project_assignment
@@ -583,13 +624,13 @@ describe('Project workflow access and feature visibility', () => {
     expect(rejectedUpdate.status).toBe(403);
     expect(rejectedSubmit.status).toBe(403);
     expect(rejectedCreate.body.message).toBe(
-      'You are no longer assigned to this project. Offline draft was discarded.',
+      'You are no longer assigned to this project. Offline draft remains saved for retry.',
     );
     expect(rejectedUpdate.body.message).toBe(
-      'You are no longer assigned to this project. Offline draft was discarded.',
+      'You are no longer assigned to this project. Offline draft remains saved for retry.',
     );
     expect(rejectedSubmit.body.message).toBe(
-      'You are no longer assigned to this project. Offline draft was discarded.',
+      'You are no longer assigned to this project. Offline draft remains saved for retry.',
     );
 
     const rejectedInsertCheck = await pool.query('SELECT id FROM spatial_feature WHERE id = $1', [

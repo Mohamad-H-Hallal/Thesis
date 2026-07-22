@@ -8,7 +8,7 @@ import 'package:lebanese_gis_mobile/core/sync/sync_engine.dart';
 import 'package:lebanese_gis_mobile/core/sync/sync_retry_policy.dart';
 import 'package:lebanese_gis_mobile/features/projects/domain/project.dart';
 
-class TrackingLocalStore implements LocalStore {
+class TrackingLocalStore extends LocalStore {
   TrackingLocalStore(this._inner);
 
   final LocalStore _inner;
@@ -183,11 +183,13 @@ class TrackingLocalStore implements LocalStore {
 LocalDraftFeature _buildDraft({
   required String draftId,
   required int localVersion,
+  String ownerUserId = 'user-1',
+  String projectId = 'project-1',
 }) {
   return LocalDraftFeature(
     id: draftId,
-    ownerUserId: 'user-1',
-    projectId: 'project-1',
+    ownerUserId: ownerUserId,
+    projectId: projectId,
     projectName: 'Bekaa Orchard Census 2026',
     geometryType: 'Point',
     geometryJson: '{"type":"Point","coordinates":[35.58,33.92]}',
@@ -205,6 +207,8 @@ SyncQueueItem _queueItem({
   required int localVersion,
   String? idempotencyKey,
   Map<String, dynamic>? extra,
+  String ownerUserId = 'user-1',
+  String projectId = 'project-1',
 }) {
   return SyncQueueItem(
     id: queueId,
@@ -213,7 +217,8 @@ SyncQueueItem _queueItem({
     operation: SyncOperationType.create,
     payload: <String, dynamic>{
       'draft_id': draftId,
-      'project_id': 'project-1',
+      'owner_user_id': ownerUserId,
+      'project_id': projectId,
       'geometry_type': 'Point',
       'geometry': <String, dynamic>{
         'type': 'Point',
@@ -224,6 +229,8 @@ SyncQueueItem _queueItem({
       'local_version': localVersion,
       ...?extra,
     },
+    ownerUserId: ownerUserId,
+    projectId: projectId,
     localVersion: localVersion,
     idempotencyKey: idempotencyKey ?? 'idem-$queueId',
     attemptCount: 0,
@@ -309,7 +316,7 @@ void main() {
                       statusCode: 403,
                       data: const <String, dynamic>{
                         'message':
-                            'You are no longer assigned to this project. Offline draft was discarded.',
+                            'You are no longer assigned to this project. Offline draft remains saved for retry.',
                       },
                     ),
                     type: DioExceptionType.badResponse,
@@ -389,7 +396,11 @@ void main() {
         ),
       );
       apiClient = ApiClient(dio: dio);
-      syncEngine = SyncEngine(localStore: store, apiClient: apiClient);
+      syncEngine = SyncEngine(
+        localStore: store,
+        apiClient: apiClient,
+        ownerUserId: 'user-1',
+      );
     });
 
     tearDown(() async {
@@ -427,10 +438,7 @@ void main() {
       ]);
       expect(await store.getPendingSyncCount(), 0);
 
-      final drafts = await store.getDrafts();
-      final synced = drafts.firstWhere((d) => d.id == draftId);
-      expect(synced.status, 'draft');
-      expect(synced.remoteVersion, 5);
+      expect(await store.getDraftById(draftId), isNull);
     });
 
     test('pending -> processing -> failed (transient error)', () async {
@@ -523,7 +531,7 @@ void main() {
       expect(conflictedDraft.remoteVersion, 3);
     });
 
-    test('stale assignment rejection discards draft and queue item', () async {
+    test('stale assignment rejection retains draft and queues retry', () async {
       const draftId = 'draft-revoked-assignment';
       const queueId = 'queue-revoked-assignment';
 
@@ -540,16 +548,16 @@ void main() {
 
       expect(summary.processed, 1);
       expect(summary.succeeded, 0);
-      expect(summary.failed, 0);
-      expect(summary.discarded, 1);
+      expect(summary.failed, 1);
+      expect(summary.discarded, 0);
       expect(summary.conflicts, 0);
       expect(summary.deadLettered, 0);
       expect(store.transitions, <String>[
         'processing:$queueId',
-        'discard:$draftId',
+        'failed:$queueId',
       ]);
-      expect(await store.getPendingSyncCount(), 0);
-      expect(await store.getDraftById(draftId), isNull);
+      expect(await store.getPendingSyncCount(), 1);
+      expect(await store.getDraftById(draftId), isNotNull);
     });
 
     test('retry scheduling window progresses across attempts', () async {
@@ -668,6 +676,67 @@ void main() {
       )).firstWhere((item) => item.id == queueId);
       expect(failedAfterSecond.idempotencyKey, key);
       expect(failedAfterSecond.attemptCount, 2);
+    });
+
+    test('background sync processes only the authenticated owner', () async {
+      const sharedDraftId = 'shared-draft-id';
+      await store.upsertDraft(
+        _buildDraft(draftId: sharedDraftId, localVersion: 1),
+        enqueueSync: false,
+      );
+      await store.upsertDraft(
+        _buildDraft(
+          draftId: sharedDraftId,
+          localVersion: 1,
+          ownerUserId: 'user-2',
+          projectId: 'project-2',
+        ),
+        enqueueSync: false,
+      );
+      await store.enqueueSyncItem(
+        _queueItem(
+          queueId: 'queue-user-1',
+          draftId: sharedDraftId,
+          localVersion: 1,
+        ),
+      );
+      await store.enqueueSyncItem(
+        _queueItem(
+          queueId: 'queue-user-2',
+          draftId: sharedDraftId,
+          localVersion: 1,
+          ownerUserId: 'user-2',
+          projectId: 'project-2',
+        ),
+      );
+
+      final summary = await syncEngine.syncPending();
+
+      expect(summary.processed, 1);
+      expect(summary.succeeded, 1);
+      expect(
+        await store.getProjectDraft(
+          ownerUserId: 'user-1',
+          projectId: 'project-1',
+          draftId: sharedDraftId,
+        ),
+        isNull,
+      );
+      expect(
+        await store.getProjectDraft(
+          ownerUserId: 'user-2',
+          projectId: 'project-2',
+          draftId: sharedDraftId,
+        ),
+        isNotNull,
+      );
+      expect(
+        await store.getDueSyncItemsForOwner(
+          'user-2',
+          DateTime.now().add(const Duration(days: 1)),
+        ),
+        hasLength(1),
+      );
     });
 
     test(

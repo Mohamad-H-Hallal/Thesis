@@ -240,7 +240,9 @@ Future<List<ProjectSummary>> _localProjectsForScope(
   required ProjectViewScope scope,
 }) async {
   final localStore = ref.read(localStoreProvider);
-  final cachedProjects = await localStore.getCachedProjects();
+  final cachedProjects = await localStore.getCachedProjectsForOwner(
+    ownerUserId: session.user.id,
+  );
   final downloadedPackages = await localStore.getOfflineProjectPackages(
     ownerUserId: session.user.id,
   );
@@ -255,6 +257,21 @@ Future<List<ProjectSummary>> _localProjectsForScope(
 
   return _filterCachedProjectsForScope(
     merged.values.toList(growable: false),
+    session: session,
+    scope: scope,
+  );
+}
+
+Future<List<ProjectSummary>> _downloadedProjectsForScope(
+  Ref ref, {
+  required AuthSession session,
+  required ProjectViewScope scope,
+}) async {
+  final packages = await ref
+      .read(localStoreProvider)
+      .getOfflineProjectPackages(ownerUserId: session.user.id);
+  return _filterCachedProjectsForScope(
+    packages.map((package) => package.project).toList(growable: false),
     session: session,
     scope: scope,
   );
@@ -346,14 +363,23 @@ Future<void> _mergeProjectsIntoCache(
   List<ProjectSummary> projects,
 ) async {
   final localStore = ref.read(localStoreProvider);
-  final cachedProjects = await localStore.getCachedProjects();
+  final session = ref.read(authControllerProvider).session;
+  if (session == null) {
+    return;
+  }
+  final cachedProjects = await localStore.getCachedProjectsForOwner(
+    ownerUserId: session.user.id,
+  );
   final merged = <String, ProjectSummary>{
     for (final project in cachedProjects) project.id: project,
   };
   for (final project in projects) {
     merged[project.id] = project;
   }
-  await localStore.cacheProjects(merged.values.toList(growable: false));
+  await localStore.cacheProjectsForOwner(
+    ownerUserId: session.user.id,
+    projects: merged.values.toList(growable: false),
+  );
 }
 
 bool _isOfflineFeatureFetchError(Object error) {
@@ -450,7 +476,10 @@ final projectsProvider = FutureProvider<List<ProjectSummary>>((ref) async {
           role: session.user.role,
           scope: _defaultOperationalProjectScope(session.user.role),
         );
-    await localStore.cacheProjects(remoteProjects);
+    await localStore.cacheProjectsForOwner(
+      ownerUserId: session.user.id,
+      projects: remoteProjects,
+    );
     return remoteProjects;
   } catch (_) {
     return _localProjectsForScope(
@@ -517,7 +546,10 @@ final mapProjectsProvider = FutureProvider<List<ProjectSummary>>((ref) async {
             role: session.user.role,
             scope: ProjectViewScope.all,
           );
-      await localStore.cacheProjects(projects);
+      await localStore.cacheProjectsForOwner(
+        ownerUserId: session.user.id,
+        projects: projects,
+      );
       return projects;
     }
 
@@ -529,7 +561,10 @@ final mapProjectsProvider = FutureProvider<List<ProjectSummary>>((ref) async {
             role: session.user.role,
             scope: ProjectViewScope.public,
           );
-      await localStore.cacheProjects(projects);
+      await localStore.cacheProjectsForOwner(
+        ownerUserId: session.user.id,
+        projects: projects,
+      );
       return projects;
     }
 
@@ -558,9 +593,19 @@ final mapProjectsProvider = FutureProvider<List<ProjectSummary>>((ref) async {
     }
 
     final projects = merged.values.toList(growable: false);
-    await localStore.cacheProjects(projects);
+    await localStore.cacheProjectsForOwner(
+      ownerUserId: session.user.id,
+      projects: projects,
+    );
     return projects;
   } catch (_) {
+    if (session.user.role == UserRole.contributor) {
+      return _downloadedProjectsForScope(
+        ref,
+        session: session,
+        scope: ProjectViewScope.assigned,
+      );
+    }
     return _localProjectsForScope(
       ref,
       session: session,
@@ -598,7 +643,7 @@ final projectMapFeaturesProvider =
         final remoteFeatures = await ref
             .read(mapRepositoryProvider)
             .fetchProjectFeatures(projectId);
-        return _mergeProjectFeatures(remoteFeatures, projectDrafts);
+        return _mergeProjectFeatures(projectId, remoteFeatures, projectDrafts);
       } catch (error) {
         if (localFeatures.isNotEmpty || _isOfflineFeatureFetchError(error)) {
           return localFeatures;
@@ -657,7 +702,11 @@ final projectMapViewportFeaturesProvider = FutureProvider.autoDispose
               featureType: query.featureType,
               cacheRevision: refreshTick,
             );
-        return _mergeProjectFeatures(remoteFeatures, projectDrafts);
+        return _mergeProjectFeatures(
+          query.projectId,
+          remoteFeatures,
+          projectDrafts,
+        );
       } catch (error) {
         final localFeatures = projectDrafts
             .map(_mapFeatureFromLocalDraft)
@@ -730,9 +779,14 @@ final projectFeatureCountProvider = FutureProvider.autoDispose
     });
 
 final projectFeatureDetailsProvider = FutureProvider.autoDispose
-    .family<MapFeatureSummary, String>((ref, featureId) async {
+    .family<MapFeatureSummary, ProjectFeatureIdentity>((ref, identity) async {
       ref.watch(workflowRefreshTickProvider);
-      return ref.read(mapRepositoryProvider).fetchProjectFeatureById(featureId);
+      return ref
+          .read(mapRepositoryProvider)
+          .fetchProjectFeatureById(
+            projectId: identity.projectId,
+            featureId: identity.featureId,
+          );
     });
 
 final paginatedProjectFeatureBrowserProvider = StateNotifierProvider.autoDispose
@@ -941,15 +995,13 @@ final localDraftFeaturesProvider = FutureProvider<List<LocalDraftFeature>>((
   ref,
 ) async {
   await ref.watch(offlineBootstrapProvider.future);
+  ref.watch(workflowRefreshTickProvider);
   final localStore = ref.watch(localStoreProvider);
-  final drafts = await localStore.getDrafts();
   final session = ref.watch(authControllerProvider).session;
   if (session == null) {
     return const <LocalDraftFeature>[];
   }
-  return drafts
-      .where((draft) => draft.ownerUserId == session.user.id)
-      .toList(growable: false);
+  return localStore.getDraftsForOwner(ownerUserId: session.user.id);
 });
 
 final reviewQueueDraftsProvider = FutureProvider<List<LocalDraftFeature>>((
@@ -965,18 +1017,29 @@ final reviewQueueDraftsProvider = FutureProvider<List<LocalDraftFeature>>((
 });
 
 final syncEngineProvider = Provider<SyncEngine>((ref) {
+  final ownerUserId = ref.watch(
+    authControllerProvider.select((state) => state.session?.user.id ?? ''),
+  );
   return SyncEngine(
     localStore: ref.watch(localStoreProvider),
     apiClient: ref.watch(apiClientProvider),
+    ownerUserId: ownerUserId,
   );
 });
 
 final syncControllerProvider = StateNotifierProvider<SyncController, SyncState>(
   (ref) {
+    final ownerUserId = ref.watch(
+      authControllerProvider.select((state) => state.session?.user.id ?? ''),
+    );
     final controller = SyncController(
       syncEngine: ref.watch(syncEngineProvider),
       localStore: ref.watch(localStoreProvider),
       networkAvailability: ref.watch(networkAvailabilityServiceProvider),
+      ownerUserId: ownerUserId,
+      onLocalDataChanged: () {
+        ref.read(workflowRefreshTickProvider.notifier).state++;
+      },
     );
 
     controller.initialize();
@@ -1612,6 +1675,7 @@ ProjectViewScope _effectiveProjectScopeForRole({
 MapFeatureSummary _mapFeatureFromLocalDraft(LocalDraftFeature draft) {
   return MapFeatureSummary(
     id: draft.id,
+    projectId: draft.projectId,
     status: switch (draft.status) {
       'submitted' || 'under_review' => 'pending_review',
       'approved' => 'approved',
@@ -1635,14 +1699,21 @@ MapFeatureSummary _mapFeatureFromLocalDraft(LocalDraftFeature draft) {
 }
 
 List<MapFeatureSummary> _mergeProjectFeatures(
+  String projectId,
   List<MapFeatureSummary> remote,
   List<LocalDraftFeature> localDrafts,
 ) {
   final merged = <String, MapFeatureSummary>{};
   for (final item in remote) {
+    if (item.projectId != projectId) {
+      continue;
+    }
     merged[item.id] = item;
   }
   for (final draft in localDrafts) {
+    if (draft.projectId != projectId) {
+      continue;
+    }
     final item = _mapFeatureFromLocalDraft(draft);
     if (draft.remoteVersion != null && merged.containsKey(item.id)) {
       continue;

@@ -41,7 +41,15 @@ class _ToggleNetworkAvailability implements NetworkAvailabilityService {
 }
 
 class _CountingSyncEngine extends SyncEngine {
-  _CountingSyncEngine({required super.localStore, required super.apiClient});
+  // ignore: use_super_parameters
+  _CountingSyncEngine({
+    required MemoryLocalStore localStore,
+    required ApiClient apiClient,
+  }) : super(
+         localStore: localStore,
+         apiClient: apiClient,
+         ownerUserId: 'contributor-1',
+       );
 
   int syncCount = 0;
   Completer<void>? release;
@@ -93,9 +101,11 @@ void main() {
       syncEngine: SyncEngine(
         localStore: store,
         apiClient: ApiClient(dio: Dio()),
+        ownerUserId: 'contributor-1',
       ),
       localStore: store,
       networkAvailability: const _AlwaysOnlineNetworkAvailability(),
+      ownerUserId: 'contributor-1',
     );
     addTearDown(controller.dispose);
 
@@ -128,6 +138,7 @@ void main() {
         syncEngine: engine,
         localStore: store,
         networkAvailability: network,
+        ownerUserId: 'contributor-1',
       );
       addTearDown(controller.dispose);
 
@@ -157,6 +168,7 @@ void main() {
       syncEngine: engine,
       localStore: store,
       networkAvailability: network,
+      ownerUserId: 'contributor-1',
     );
     addTearDown(controller.dispose);
 
@@ -184,6 +196,7 @@ void main() {
       syncEngine: engine,
       localStore: store,
       networkAvailability: const _AlwaysOnlineNetworkAvailability(),
+      ownerUserId: 'contributor-1',
     );
     addTearDown(controller.dispose);
 

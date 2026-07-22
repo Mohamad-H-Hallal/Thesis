@@ -1180,7 +1180,14 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
         );
         unawaited(
           ref
-              .read(projectFeatureDetailsProvider(featureId).future)
+              .read(
+                projectFeatureDetailsProvider(
+                  ProjectFeatureIdentity(
+                    projectId: widget.projectId,
+                    featureId: featureId,
+                  ),
+                ).future,
+              )
               .then((feature) {
                 if (!mounted) {
                   return;

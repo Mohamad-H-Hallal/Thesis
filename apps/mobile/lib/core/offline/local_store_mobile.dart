@@ -13,7 +13,7 @@ class SqliteLocalStore implements LocalStore {
   Database? _db;
   Future<void>? _initialization;
   final Uuid _uuid = const Uuid();
-  static const _dbVersion = 5;
+  static const _dbVersion = 6;
 
   @override
   Future<void> initialize() async {
@@ -41,7 +41,7 @@ class SqliteLocalStore implements LocalStore {
     final dir = await getApplicationDocumentsDirectory();
     final dbPath = p.join(dir.path, 'gis_collector_offline.db');
 
-    _db = await openDatabase(
+    final db = await openDatabase(
       dbPath,
       version: _dbVersion,
       onCreate: (db, version) async {
@@ -103,62 +103,121 @@ class SqliteLocalStore implements LocalStore {
             'CREATE INDEX IF NOT EXISTS idx_offline_project_packages_base_map ON offline_project_packages(owner_user_id, base_map_version);',
           );
         }
+        if (oldVersion < 6) {
+          await _migrateProjectScopedStorage(db);
+        }
       },
     );
+    await db.update(
+      'sync_queue',
+      <String, Object?>{
+        'status': SyncQueueStatus.failed.name,
+        'next_retry_at': DateTime.now().toIso8601String(),
+        'last_error':
+            'Previous synchronization was interrupted before confirmation.',
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      where: 'status = ?',
+      whereArgs: <Object?>[SyncQueueStatus.processing.name],
+    );
+    _db = db;
+  }
+
+  Future<void> _migrateProjectScopedStorage(Database db) async {
+    final legacyDraftRows = await db.query('draft_features');
+    final legacyPhotoRows = await db.query('draft_photos');
+    final legacyQueueRows = await db.query('sync_queue');
+
+    await db.execute('ALTER TABLE draft_features RENAME TO draft_features_v5');
+    await db.execute('ALTER TABLE draft_photos RENAME TO draft_photos_v5');
+    await db.execute('ALTER TABLE sync_queue RENAME TO sync_queue_v5');
+    await db.execute('DROP TABLE projects_cache');
+
+    await _createProjectCacheTable(db);
+    await _createDraftTables(db);
+    await _createSyncQueueTable(db);
+
+    final draftIdentityById = <String, List<(String, String)>>{};
+    for (final row in legacyDraftRows) {
+      final draftRow = Map<String, Object?>.from(row);
+      final ownerUserId = (draftRow['owner_user_id'] as String?) ?? '';
+      final projectId = (draftRow['project_id'] as String?) ?? '';
+      final draftId = draftRow['id'] as String;
+      await db.insert('draft_features', draftRow);
+      draftIdentityById.putIfAbsent(draftId, () => <(String, String)>[]).add((
+        ownerUserId,
+        projectId,
+      ));
+    }
+
+    for (final row in legacyPhotoRows) {
+      final draftId = row['draft_id'] as String;
+      final identities =
+          draftIdentityById[draftId] ?? const <(String, String)>[];
+      if (identities.length != 1) {
+        continue;
+      }
+      final identity = identities.single;
+      await db.insert('draft_photos', <String, Object?>{
+        'owner_user_id': identity.$1,
+        'project_id': identity.$2,
+        ...row,
+      });
+    }
+
+    for (final row in legacyQueueRows) {
+      final queueRow = Map<String, Object?>.from(row);
+      Map<String, dynamic> payload;
+      try {
+        payload =
+            jsonDecode(queueRow['payload_json'] as String)
+                as Map<String, dynamic>;
+      } catch (_) {
+        payload = <String, dynamic>{};
+      }
+      final entityId = queueRow['entity_id'] as String;
+      final payloadProjectId = (payload['project_id'] as String?) ?? '';
+      final matchingIdentities =
+          (draftIdentityById[entityId] ?? const <(String, String)>[])
+              .where(
+                (identity) =>
+                    payloadProjectId.isEmpty || identity.$2 == payloadProjectId,
+              )
+              .toList(growable: false);
+      final identity = matchingIdentities.length == 1
+          ? matchingIdentities.single
+          : null;
+      final ownerUserId =
+          (payload['owner_user_id'] as String?) ?? identity?.$1 ?? '';
+      final projectId = payloadProjectId.isNotEmpty
+          ? payloadProjectId
+          : identity?.$2 ?? '__ambiguous__';
+      payload['owner_user_id'] = ownerUserId;
+      payload['project_id'] = projectId;
+      queueRow
+        ..['owner_user_id'] = ownerUserId
+        ..['project_id'] = projectId
+        ..['payload_json'] = jsonEncode(payload);
+      if (projectId == '__ambiguous__' || ownerUserId.isEmpty) {
+        queueRow
+          ..['status'] = SyncQueueStatus.deadLetter.name
+          ..['next_retry_at'] = null
+          ..['last_error'] =
+              'Legacy offline item was quarantined because its project could not be determined safely.';
+      }
+      await db.insert('sync_queue', queueRow);
+    }
+
+    await db.execute('DROP TABLE sync_queue_v5');
+    await db.execute('DROP TABLE draft_photos_v5');
+    await db.execute('DROP TABLE draft_features_v5');
+    await _createProjectScopedIndexes(db);
   }
 
   Future<void> _createSchema(Database db) async {
-    await db.execute('''
-      CREATE TABLE projects_cache (
-        id TEXT PRIMARY KEY,
-        payload_json TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-    ''');
-
-    await db.execute('''
-      CREATE TABLE draft_features (
-        id TEXT PRIMARY KEY,
-        owner_user_id TEXT NOT NULL,
-        project_id TEXT NOT NULL,
-        project_name TEXT NOT NULL,
-        geometry_type TEXT NOT NULL,
-        geometry_json TEXT NOT NULL,
-        attributes_json TEXT NOT NULL,
-        status TEXT NOT NULL,
-        local_version INTEGER NOT NULL,
-        remote_version INTEGER,
-        collected_offline INTEGER NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-    ''');
-
-    await db.execute('''
-      CREATE TABLE draft_photos (
-        id TEXT PRIMARY KEY,
-        draft_id TEXT NOT NULL,
-        file_path TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-    ''');
-
-    await db.execute('''
-      CREATE TABLE sync_queue (
-        id TEXT PRIMARY KEY,
-        entity_type TEXT NOT NULL,
-        entity_id TEXT NOT NULL,
-        operation TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        local_version INTEGER NOT NULL,
-        idempotency_key TEXT NOT NULL,
-        attempt_count INTEGER NOT NULL,
-        status TEXT NOT NULL,
-        next_retry_at TEXT,
-        last_error TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-    ''');
+    await _createProjectCacheTable(db);
+    await _createDraftTables(db);
+    await _createSyncQueueTable(db);
 
     await db.execute('''
       CREATE TABLE offline_map_packages (
@@ -190,9 +249,7 @@ class SqliteLocalStore implements LocalStore {
       );
     ''');
 
-    await db.execute(
-      'CREATE INDEX idx_sync_queue_due ON sync_queue(status, next_retry_at);',
-    );
+    await _createProjectScopedIndexes(db);
     await db.execute(
       'CREATE INDEX idx_offline_map_packages_current_owner ON offline_map_packages(owner_user_id, is_current);',
     );
@@ -201,6 +258,86 @@ class SqliteLocalStore implements LocalStore {
     );
     await db.execute(
       'CREATE INDEX idx_offline_project_packages_base_map ON offline_project_packages(owner_user_id, base_map_version);',
+    );
+  }
+
+  Future<void> _createProjectCacheTable(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE projects_cache (
+        owner_user_id TEXT NOT NULL,
+        id TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (owner_user_id, id)
+      );
+    ''');
+  }
+
+  Future<void> _createDraftTables(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE draft_features (
+        id TEXT NOT NULL,
+        owner_user_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        project_name TEXT NOT NULL,
+        geometry_type TEXT NOT NULL,
+        geometry_json TEXT NOT NULL,
+        attributes_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        local_version INTEGER NOT NULL,
+        remote_version INTEGER,
+        collected_offline INTEGER NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (owner_user_id, project_id, id)
+      );
+    ''');
+    await db.execute('''
+      CREATE TABLE draft_photos (
+        id TEXT NOT NULL,
+        owner_user_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        draft_id TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (owner_user_id, project_id, draft_id, id)
+      );
+    ''');
+  }
+
+  Future<void> _createSyncQueueTable(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE sync_queue (
+        id TEXT PRIMARY KEY,
+        owner_user_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        local_version INTEGER NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        next_retry_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    ''');
+  }
+
+  Future<void> _createProjectScopedIndexes(DatabaseExecutor db) async {
+    await db.execute(
+      'CREATE INDEX idx_projects_cache_owner ON projects_cache(owner_user_id, updated_at);',
+    );
+    await db.execute(
+      'CREATE INDEX idx_draft_features_owner_project ON draft_features(owner_user_id, project_id, updated_at);',
+    );
+    await db.execute(
+      'CREATE INDEX idx_sync_queue_due ON sync_queue(owner_user_id, status, next_retry_at);',
+    );
+    await db.execute(
+      'CREATE INDEX idx_sync_queue_entity ON sync_queue(owner_user_id, project_id, entity_type, entity_id);',
     );
   }
 
@@ -254,14 +391,27 @@ class SqliteLocalStore implements LocalStore {
 
   @override
   Future<void> cacheProjects(List<ProjectSummary> projects) async {
+    await cacheProjectsForOwner(ownerUserId: '', projects: projects);
+  }
+
+  @override
+  Future<void> cacheProjectsForOwner({
+    required String ownerUserId,
+    required List<ProjectSummary> projects,
+  }) async {
     final db = await _database;
     final now = DateTime.now().toIso8601String();
 
     await db.transaction((txn) async {
       final batch = txn.batch();
-      batch.delete('projects_cache');
+      batch.delete(
+        'projects_cache',
+        where: 'owner_user_id = ?',
+        whereArgs: <Object?>[ownerUserId],
+      );
       for (final project in projects) {
         batch.insert('projects_cache', {
+          'owner_user_id': ownerUserId,
           'id': project.id,
           'payload_json': jsonEncode(project.toLocalPayload()),
           'updated_at': now,
@@ -276,6 +426,26 @@ class SqliteLocalStore implements LocalStore {
     final db = await _database;
     final rows = await db.query('projects_cache', orderBy: 'updated_at DESC');
 
+    return rows
+        .map(
+          (row) => projectSummaryFromPayload(
+            jsonDecode(row['payload_json'] as String) as Map<String, dynamic>,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  @override
+  Future<List<ProjectSummary>> getCachedProjectsForOwner({
+    required String ownerUserId,
+  }) async {
+    final db = await _database;
+    final rows = await db.query(
+      'projects_cache',
+      where: 'owner_user_id = ?',
+      whereArgs: <Object?>[ownerUserId],
+      orderBy: 'updated_at DESC',
+    );
     return rows
         .map(
           (row) => projectSummaryFromPayload(
@@ -301,13 +471,15 @@ class SqliteLocalStore implements LocalStore {
 
       await txn.delete(
         'draft_photos',
-        where: 'draft_id = ?',
-        whereArgs: [draft.id],
+        where: 'owner_user_id = ? AND project_id = ? AND draft_id = ?',
+        whereArgs: [draft.ownerUserId, draft.projectId, draft.id],
       );
 
       for (final photo in draft.photos) {
         await txn.insert('draft_photos', {
           'id': photo.id,
+          'owner_user_id': draft.ownerUserId,
+          'project_id': draft.projectId,
           'draft_id': draft.id,
           'file_path': photo.filePath,
           'created_at': photo.createdAt.toIso8601String(),
@@ -319,8 +491,14 @@ class SqliteLocalStore implements LocalStore {
 
         await txn.delete(
           'sync_queue',
-          where: 'entity_type = ? AND entity_id = ?',
-          whereArgs: ['draft_feature', draft.id],
+          where:
+              'owner_user_id = ? AND project_id = ? AND entity_type = ? AND entity_id = ?',
+          whereArgs: [
+            draft.ownerUserId,
+            draft.projectId,
+            'draft_feature',
+            draft.id,
+          ],
         );
 
         final queueItem = SyncQueueItem(
@@ -332,6 +510,7 @@ class SqliteLocalStore implements LocalStore {
               : SyncOperationType.update,
           payload: {
             'draft_id': draft.id,
+            'owner_user_id': draft.ownerUserId,
             'project_id': draft.projectId,
             'geometry_type': draft.geometryType,
             'geometry': jsonDecode(draft.geometryJson) as Map<String, dynamic>,
@@ -343,6 +522,8 @@ class SqliteLocalStore implements LocalStore {
             'status': draft.status,
             'local_version': draft.localVersion,
           },
+          ownerUserId: draft.ownerUserId,
+          projectId: draft.projectId,
           localVersion: draft.localVersion,
           idempotencyKey: _uuid.v4(),
           attemptCount: 0,
@@ -366,8 +547,8 @@ class SqliteLocalStore implements LocalStore {
     for (final row in rows) {
       final photosRows = await db.query(
         'draft_photos',
-        where: 'draft_id = ?',
-        whereArgs: [row['id']],
+        where: 'owner_user_id = ? AND project_id = ? AND draft_id = ?',
+        whereArgs: [row['owner_user_id'], row['project_id'], row['id']],
       );
       final photos = photosRows
           .map(
@@ -422,6 +603,74 @@ class SqliteLocalStore implements LocalStore {
   }
 
   @override
+  Future<List<LocalDraftFeature>> getDraftsForOwner({
+    required String ownerUserId,
+  }) async {
+    return _getDraftsWhere(
+      where: 'owner_user_id = ?',
+      whereArgs: <Object?>[ownerUserId],
+    );
+  }
+
+  @override
+  Future<List<LocalDraftFeature>> getDraftsForProject({
+    required String ownerUserId,
+    required String projectId,
+  }) async {
+    return _getDraftsWhere(
+      where: 'owner_user_id = ? AND project_id = ?',
+      whereArgs: <Object?>[ownerUserId, projectId],
+    );
+  }
+
+  Future<List<LocalDraftFeature>> _getDraftsWhere({
+    required String where,
+    required List<Object?> whereArgs,
+  }) async {
+    final db = await _database;
+    final rows = await db.query(
+      'draft_features',
+      where: where,
+      whereArgs: whereArgs,
+      orderBy: 'updated_at DESC',
+    );
+    final drafts = <LocalDraftFeature>[];
+    for (final row in rows) {
+      final photosRows = await db.query(
+        'draft_photos',
+        where: 'owner_user_id = ? AND project_id = ? AND draft_id = ?',
+        whereArgs: [row['owner_user_id'], row['project_id'], row['id']],
+      );
+      final photos = photosRows
+          .map(
+            (photoRow) => DraftPhoto.fromMap(<String, dynamic>{
+              'id': photoRow['id'] as String,
+              'file_path': photoRow['file_path'] as String,
+              'created_at': photoRow['created_at'] as String,
+            }),
+          )
+          .toList(growable: false);
+      drafts.add(
+        LocalDraftFeature.fromRowMap(Map<String, dynamic>.from(row), photos),
+      );
+    }
+    return drafts;
+  }
+
+  @override
+  Future<LocalDraftFeature?> getProjectDraft({
+    required String ownerUserId,
+    required String projectId,
+    required String draftId,
+  }) async {
+    final drafts = await _getDraftsWhere(
+      where: 'owner_user_id = ? AND project_id = ? AND id = ?',
+      whereArgs: <Object?>[ownerUserId, projectId, draftId],
+    );
+    return drafts.isEmpty ? null : drafts.first;
+  }
+
+  @override
   Future<void> discardDraft(String draftId) async {
     final db = await _database;
     await db.transaction((txn) async {
@@ -436,6 +685,33 @@ class SqliteLocalStore implements LocalStore {
         whereArgs: [draftId],
       );
       await txn.delete('draft_features', where: 'id = ?', whereArgs: [draftId]);
+    });
+  }
+
+  @override
+  Future<void> discardProjectDraft({
+    required String ownerUserId,
+    required String projectId,
+    required String draftId,
+  }) async {
+    final db = await _database;
+    await db.transaction((txn) async {
+      await txn.delete(
+        'sync_queue',
+        where:
+            'owner_user_id = ? AND project_id = ? AND entity_type = ? AND entity_id = ?',
+        whereArgs: [ownerUserId, projectId, 'draft_feature', draftId],
+      );
+      await txn.delete(
+        'draft_photos',
+        where: 'owner_user_id = ? AND project_id = ? AND draft_id = ?',
+        whereArgs: [ownerUserId, projectId, draftId],
+      );
+      await txn.delete(
+        'draft_features',
+        where: 'owner_user_id = ? AND project_id = ? AND id = ?',
+        whereArgs: [ownerUserId, projectId, draftId],
+      );
     });
   }
 
@@ -459,6 +735,30 @@ class SqliteLocalStore implements LocalStore {
       values,
       where: 'id = ?',
       whereArgs: [draftId],
+    );
+  }
+
+  @override
+  Future<void> updateProjectDraftStatus({
+    required String ownerUserId,
+    required String projectId,
+    required String draftId,
+    required String status,
+    int? remoteVersion,
+  }) async {
+    final db = await _database;
+    final values = <String, Object?>{
+      'status': status,
+      'updated_at': DateTime.now().toIso8601String(),
+    };
+    if (remoteVersion != null) {
+      values['remote_version'] = remoteVersion;
+    }
+    await db.update(
+      'draft_features',
+      values,
+      where: 'owner_user_id = ? AND project_id = ? AND id = ?',
+      whereArgs: [ownerUserId, projectId, draftId],
     );
   }
 
@@ -536,16 +836,22 @@ class SqliteLocalStore implements LocalStore {
       package.toRowMap(),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
-    await _mergeCachedProject(package.project);
+    await _mergeCachedProject(package.ownerUserId, package.project);
   }
 
-  Future<void> _mergeCachedProject(ProjectSummary project) async {
-    final cached = await getCachedProjects();
+  Future<void> _mergeCachedProject(
+    String ownerUserId,
+    ProjectSummary project,
+  ) async {
+    final cached = await getCachedProjectsForOwner(ownerUserId: ownerUserId);
     final merged = <String, ProjectSummary>{
       for (final item in cached) item.id: item,
       project.id: project,
     };
-    await cacheProjects(merged.values.toList(growable: false));
+    await cacheProjectsForOwner(
+      ownerUserId: ownerUserId,
+      projects: merged.values.toList(growable: false),
+    );
   }
 
   @override
@@ -636,6 +942,8 @@ class SqliteLocalStore implements LocalStore {
                 FROM sync_queue sq
                 WHERE sq.entity_type = 'draft_feature'
                   AND sq.entity_id = df.id
+                  AND sq.owner_user_id = df.owner_user_id
+                  AND sq.project_id = df.project_id
                   AND sq.status IN ('pending', 'processing', 'failed', 'conflict', 'deadLetter')
               )
             ''',
@@ -652,9 +960,27 @@ class SqliteLocalStore implements LocalStore {
 
   @override
   Future<SyncQueueStats> getSyncQueueStats() async {
+    return _getSyncQueueStatsWhere();
+  }
+
+  @override
+  Future<SyncQueueStats> getSyncQueueStatsForOwner({
+    required String ownerUserId,
+  }) async {
+    return _getSyncQueueStatsWhere(
+      where: 'owner_user_id = ?',
+      whereArgs: <Object?>[ownerUserId],
+    );
+  }
+
+  Future<SyncQueueStats> _getSyncQueueStatsWhere({
+    String? where,
+    List<Object?>? whereArgs,
+  }) async {
     final db = await _database;
     final rows = await db.rawQuery(
-      'SELECT status, COUNT(*) AS count FROM sync_queue GROUP BY status',
+      'SELECT status, COUNT(*) AS count FROM sync_queue${where == null ? '' : ' WHERE $where'} GROUP BY status',
+      whereArgs,
     );
 
     var pending = 0;
@@ -715,6 +1041,26 @@ class SqliteLocalStore implements LocalStore {
   }
 
   @override
+  Future<List<SyncQueueItem>> getDueSyncItemsForOwner(
+    String ownerUserId,
+    DateTime now, {
+    int limit = 20,
+  }) async {
+    final db = await _database;
+    final rows = await db.query(
+      'sync_queue',
+      where:
+          "owner_user_id = ? AND (status = 'pending' OR status = 'failed') AND (next_retry_at IS NULL OR next_retry_at <= ?)",
+      whereArgs: [ownerUserId, now.toIso8601String()],
+      orderBy: 'created_at ASC',
+      limit: limit,
+    );
+    return rows
+        .map((row) => SyncQueueItem.fromRowMap(Map<String, dynamic>.from(row)))
+        .toList(growable: false);
+  }
+
+  @override
   Future<void> enqueueSyncItem(SyncQueueItem item) async {
     final db = await _database;
     await db.insert('sync_queue', item.toRowMap());
@@ -743,21 +1089,15 @@ class SqliteLocalStore implements LocalStore {
     final db = await _database;
     await db.transaction((txn) async {
       await txn.delete('sync_queue', where: 'id = ?', whereArgs: [item.id]);
-      final values = <String, Object?>{
-        'updated_at': DateTime.now().toIso8601String(),
-      };
-      if (draftStatus != null) {
-        values['status'] = draftStatus;
-      }
-      if (remoteVersion != null) {
-        values['remote_version'] = remoteVersion;
-      }
-
-      await txn.update(
+      await txn.delete(
+        'draft_photos',
+        where: 'owner_user_id = ? AND project_id = ? AND draft_id = ?',
+        whereArgs: [item.ownerUserId, item.projectId, item.entityId],
+      );
+      await txn.delete(
         'draft_features',
-        values,
-        where: 'id = ?',
-        whereArgs: [item.entityId],
+        where: 'owner_user_id = ? AND project_id = ? AND id = ?',
+        whereArgs: [item.ownerUserId, item.projectId, item.entityId],
       );
     });
   }

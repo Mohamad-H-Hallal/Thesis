@@ -471,7 +471,7 @@ const assertProjectAllowsCollectionMutations = async (projectId: string): Promis
 };
 
 const offlineAssignmentRevokedMessage =
-  'You are no longer assigned to this project. Offline draft was discarded.';
+  'You are no longer assigned to this project. Offline draft remains saved for retry.';
 
 const assertContributorAssignedForOfflineSync = async (
   projectId: string,
@@ -913,6 +913,51 @@ const createFeature = async (req: Request, res: Response): Promise<void> => {
     throw new AppError('You do not have access to this project', 403);
   }
 
+  if (id && collected_offline) {
+    const existing = await query(
+      `SELECT id, project_id, collected_by_user_id, collected_offline,
+              status, version, collected_at, ST_AsGeoJSON(geom) AS geometry,
+              ST_Equals(
+                geom,
+                ST_SetSRID(ST_GeomFromGeoJSON($2), 4326)
+              ) AS geometry_matches,
+              attributes = $3::jsonb AS attributes_match
+       FROM spatial_feature
+       WHERE id = $1`,
+      [id, JSON.stringify(normalizedGeometry), JSON.stringify(normalizedAttributes)],
+    );
+    if (existing.rows.length > 0) {
+      const feature = existing.rows[0];
+      const isSameOfflineContribution =
+        feature.project_id === project_id &&
+        feature.collected_by_user_id === req.user?.id &&
+        feature.collected_offline === true &&
+        feature.geometry_matches === true &&
+        feature.attributes_match === true;
+      if (!isSameOfflineContribution) {
+        throw new AppError('Offline feature ID is already in use', 409);
+      }
+
+      logger.info('Offline feature create replay confirmed:', {
+        featureId: feature.id,
+        projectId: project_id,
+        userId: req.user?.id,
+      });
+      res.json({
+        success: true,
+        message: 'Feature already created',
+        data: {
+          id: feature.id,
+          status: feature.status,
+          version: feature.version,
+          collected_at: feature.collected_at,
+          geometry: JSON.parse(feature.geometry),
+        },
+      });
+      return;
+    }
+  }
+
   const result = await query(
     `INSERT INTO spatial_feature (
       id, project_id, collected_by_user_id, geom, attributes,
@@ -1067,7 +1112,7 @@ const deleteFeature = async (req: Request, res: Response): Promise<void> => {
 
 const submitFeature = async (req: Request, res: Response): Promise<void> => {
   const { featureId } = req.params;
-  await transaction(async (client: any) => {
+  const alreadySubmitted = await transaction(async (client: any) => {
     const ownerCheck = await client.query(
       `SELECT sf.id, sf.status, sf.project_id, sf.collected_offline, p.name as project_name
        FROM spatial_feature sf
@@ -1078,6 +1123,10 @@ const submitFeature = async (req: Request, res: Response): Promise<void> => {
 
     if (ownerCheck.rows.length === 0) {
       throw new AppError('Feature not found', 404);
+    }
+
+    if (ownerCheck.rows[0].status === 'pending_review') {
+      return true;
     }
 
     if (ownerCheck.rows[0].status !== 'draft') {
@@ -1121,13 +1170,22 @@ const submitFeature = async (req: Request, res: Response): Promise<void> => {
         ],
       );
     }
+    return false;
   });
 
-  logger.info('Feature submitted for review:', { featureId, userId: req.user?.id });
+  logger.info(
+    alreadySubmitted ? 'Feature submit replay confirmed:' : 'Feature submitted for review:',
+    {
+      featureId,
+      userId: req.user?.id,
+    },
+  );
 
   res.json({
     success: true,
-    message: 'Feature submitted for review',
+    message: alreadySubmitted
+      ? 'Feature already submitted for review'
+      : 'Feature submitted for review',
   });
 };
 

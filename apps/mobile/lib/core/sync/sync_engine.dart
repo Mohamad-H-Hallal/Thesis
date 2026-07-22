@@ -45,15 +45,20 @@ class SyncRunSummary {
 }
 
 class SyncEngine {
-  SyncEngine({required LocalStore localStore, required ApiClient apiClient})
-    : _localStore = localStore,
-      _apiClient = apiClient;
+  SyncEngine({
+    required LocalStore localStore,
+    required ApiClient apiClient,
+    this.ownerUserId = '',
+  }) : _localStore = localStore,
+       _apiClient = apiClient;
 
   final LocalStore _localStore;
   final ApiClient _apiClient;
+  final String ownerUserId;
 
   Future<SyncRunSummary> syncPending({int limit = 25}) async {
-    final dueItems = await _localStore.getDueSyncItems(
+    final dueItems = await _localStore.getDueSyncItemsForOwner(
+      ownerUserId,
       DateTime.now(),
       limit: limit,
     );
@@ -80,14 +85,20 @@ class SyncEngine {
 
       if (result.status == SyncPushStatus.discarded) {
         discarded += 1;
-        await _localStore.discardDraft(item.entityId);
+        await _localStore.discardProjectDraft(
+          ownerUserId: item.ownerUserId,
+          projectId: item.projectId,
+          draftId: item.entityId,
+        );
         continue;
       }
 
       if (result.status == SyncPushStatus.conflict) {
         conflicts += 1;
-        await _localStore.updateDraftStatus(
-          item.entityId,
+        await _localStore.updateProjectDraftStatus(
+          ownerUserId: item.ownerUserId,
+          projectId: item.projectId,
+          draftId: item.entityId,
           status: 'rejected',
           remoteVersion: result.remoteVersion,
         );
@@ -155,6 +166,8 @@ class SyncEngine {
 
     if (projectId == null ||
         projectId.isEmpty ||
+        projectId != item.projectId ||
+        item.ownerUserId != ownerUserId ||
         geometry is! Map<String, dynamic> ||
         attributes is! Map<String, dynamic>) {
       return const SyncPushResult(
@@ -244,7 +257,7 @@ class SyncEngine {
       }
 
       if (statusCode == 403) {
-        return SyncPushResult(status: SyncPushStatus.discarded, error: message);
+        return SyncPushResult(status: SyncPushStatus.failed, error: message);
       }
 
       return SyncPushResult(status: SyncPushStatus.failed, error: message);
