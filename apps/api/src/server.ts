@@ -16,6 +16,7 @@ const { buildApp } = require('./app');
 import { ensureSuperAdminExists } from './lib/userWorkflow';
 import { attachWorkflowSocket } from './realtime/workflowSocket';
 import { startWorkflowChangeListener } from './realtime/workflowEvents';
+import { processFeatureMediaCleanupJobs } from './services/featureMediaCleanup.service';
 
 const env = validateEnv();
 const app = buildApp(env);
@@ -139,6 +140,7 @@ const prepareServerStartup = async () => {
   await ensureExportDir();
   await cleanupOldExports();
   await runNotificationMaintenance();
+  await processFeatureMediaCleanupJobs();
 };
 
 const prepareServerStartupWithRetry = async () => {
@@ -174,9 +176,9 @@ const startServer = async () => {
     );
     notificationMaintenanceInterval = setInterval(
       () =>
-        runNotificationMaintenance().catch((error) =>
-          logger.error('Scheduled notification maintenance failed:', error),
-        ),
+        runNotificationMaintenance()
+          .then(() => processFeatureMediaCleanupJobs())
+          .catch((error) => logger.error('Scheduled maintenance failed:', error)),
       env.NOTIFICATION_MAINTENANCE_INTERVAL_MINUTES * 60 * 1000,
     );
     startImportProcessingLoop();

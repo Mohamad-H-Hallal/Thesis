@@ -82,6 +82,9 @@ const applyTestEnvDefaults = (): TestDbConfig => {
   setDefault('RATE_LIMIT_MAX_REQUESTS', '1000');
   setDefault('RATE_LIMIT_AUTH_MAX_REQUESTS', '1000');
   setDefault('RATE_LIMIT_EXPORT_MAX_REQUESTS', '1000');
+  setDefault('OFFLINE_SYNC_RATE_LIMIT_WINDOW_MS', '60000');
+  setDefault('OFFLINE_SYNC_RATE_LIMIT_MAX_REQUESTS', '10000');
+  setDefault('OFFLINE_SYNC_INGRESS_RATE_LIMIT_MAX_REQUESTS', '10000');
   setDefault('AUDIT_LOG_ENABLED', 'true');
   setDefault('METRICS_ENABLED', 'false');
   setDefault('MAIL_TRANSPORT', 'mailpit');

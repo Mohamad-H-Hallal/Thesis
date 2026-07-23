@@ -30,12 +30,18 @@ export interface EnvConfig {
   RATE_LIMIT_MAX_REQUESTS: number;
   RATE_LIMIT_AUTH_MAX_REQUESTS: number;
   RATE_LIMIT_EXPORT_MAX_REQUESTS: number;
+  OFFLINE_SYNC_RATE_LIMIT_WINDOW_MS: number;
+  OFFLINE_SYNC_RATE_LIMIT_MAX_REQUESTS: number;
+  OFFLINE_SYNC_INGRESS_RATE_LIMIT_MAX_REQUESTS: number;
   LOG_LEVEL: 'error' | 'warn' | 'info' | 'http' | 'verbose' | 'debug' | 'silly';
   AUDIT_LOG_ENABLED: boolean;
   METRICS_ENABLED: boolean;
   METRICS_TOKEN: string;
   UPLOAD_DIR: string;
   PHOTO_MAX_SIZE: number;
+  PHOTO_MAX_WIDTH: number;
+  PHOTO_MAX_HEIGHT: number;
+  PHOTO_MAX_PIXELS: number;
   IMPORT_MAX_SIZE: number;
   IMPORT_MAX_FEATURES: number;
   EXPORT_DIR: string;
@@ -131,6 +137,9 @@ const envSchema = Joi.object({
   RATE_LIMIT_MAX_REQUESTS: Joi.number().integer().min(1).default(100),
   RATE_LIMIT_AUTH_MAX_REQUESTS: Joi.number().integer().min(1).default(20),
   RATE_LIMIT_EXPORT_MAX_REQUESTS: Joi.number().integer().min(1).default(40),
+  OFFLINE_SYNC_RATE_LIMIT_WINDOW_MS: Joi.number().integer().min(1000).default(60000),
+  OFFLINE_SYNC_RATE_LIMIT_MAX_REQUESTS: Joi.number().integer().min(1).default(60),
+  OFFLINE_SYNC_INGRESS_RATE_LIMIT_MAX_REQUESTS: Joi.number().integer().min(1).default(240),
 
   LOG_LEVEL: Joi.string()
     .valid('error', 'warn', 'info', 'http', 'verbose', 'debug', 'silly')
@@ -154,6 +163,9 @@ const envSchema = Joi.object({
     .integer()
     .min(1)
     .default(5 * 1024 * 1024),
+  PHOTO_MAX_WIDTH: Joi.number().integer().min(1).default(10000),
+  PHOTO_MAX_HEIGHT: Joi.number().integer().min(1).default(10000),
+  PHOTO_MAX_PIXELS: Joi.number().integer().min(1).default(40000000),
   IMPORT_MAX_SIZE: Joi.number()
     .integer()
     .min(1)

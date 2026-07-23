@@ -35,7 +35,12 @@ class RealAuthRepository implements AuthRepository {
       return null;
     }
 
-    _apiClient.setAccessToken(access);
+    final storedUser = await _readStoredUser();
+    await _apiClient.establishAuthenticatedSession(
+      accessToken: access,
+      refreshToken: refresh,
+      ownerUserId: storedUser?.id ?? '__restoring_session__',
+    );
 
     try {
       final meResponse = await _apiClient.dio.get<Map<String, dynamic>>(
@@ -44,10 +49,22 @@ class RealAuthRepository implements AuthRepository {
       final user = _parseUserFromMeResponse(
         meResponse.data ?? const <String, dynamic>{},
       );
+      var binding = _apiClient.currentSessionBinding;
+      if (binding == null) {
+        throw const AuthFailure('Authentication session expired.');
+      }
+      if (binding.ownerUserId != user.id) {
+        await _apiClient.establishAuthenticatedSession(
+          accessToken: binding.accessToken,
+          refreshToken: binding.refreshToken,
+          ownerUserId: user.id,
+        );
+        binding = _apiClient.currentSessionBinding;
+      }
       await _persistUserMetadata(user);
       return AuthSession(
-        accessToken: access,
-        refreshToken: refresh,
+        accessToken: binding?.accessToken ?? access,
+        refreshToken: binding?.refreshToken ?? refresh,
         user: user,
       );
     } on DioException catch (error) {
@@ -55,37 +72,39 @@ class RealAuthRepository implements AuthRepository {
         try {
           return await _refreshRememberedSession(refresh);
         } on DioException catch (refreshError) {
-          if (_isNetworkError(refreshError)) {
+          if (_isTemporaryAuthenticationFailure(refreshError)) {
             final fallbackUser = await _readStoredUser();
             if (fallbackUser == null) {
+              await _apiClient.invalidateAuthenticatedSession();
               await _clearStoredSession();
-              _apiClient.setAccessToken(null);
               return null;
             }
 
+            final binding = _apiClient.currentSessionBinding;
             return AuthSession(
-              accessToken: access,
-              refreshToken: refresh,
+              accessToken: binding?.accessToken ?? access,
+              refreshToken: binding?.refreshToken ?? refresh,
               user: fallbackUser,
             );
           }
 
+          await _apiClient.invalidateAuthenticatedSession();
           await _clearStoredSession();
-          _apiClient.setAccessToken(null);
           return null;
         }
       }
 
-      final fallbackUser = await _readStoredUser();
+      final fallbackUser = storedUser ?? await _readStoredUser();
       if (fallbackUser == null) {
+        await _apiClient.invalidateAuthenticatedSession();
         await _clearStoredSession();
-        _apiClient.setAccessToken(null);
         return null;
       }
 
+      final binding = _apiClient.currentSessionBinding;
       return AuthSession(
-        accessToken: access,
-        refreshToken: refresh,
+        accessToken: binding?.accessToken ?? access,
+        refreshToken: binding?.refreshToken ?? refresh,
         user: fallbackUser,
       );
     }
@@ -312,25 +331,27 @@ class RealAuthRepository implements AuthRepository {
 
   @override
   Future<void> logout() async {
+    final retired = await _apiClient.invalidateAuthenticatedSession();
+    await _clearStoredSession();
     try {
-      await _bestEffortUnregisterPushDevice();
-      await _apiClient.dio.post<Map<String, dynamic>>('$_authBasePath/logout');
+      await _bestEffortUnregisterPushDevice(retired);
+      await _apiClient.dio.post<Map<String, dynamic>>(
+        '$_authBasePath/logout',
+        options: _retiredSessionOptions(retired),
+      );
     } catch (_) {
       // Best-effort call; local token clear is mandatory.
-    } finally {
-      _apiClient.setAccessToken(null);
-      await _clearStoredSession();
     }
   }
 
   @override
   Future<void> selfDeactivate() async {
     try {
-      await _bestEffortUnregisterPushDevice();
+      await _bestEffortUnregisterPushDevice(_apiClient.currentSessionBinding);
       await _apiClient.dio.post<Map<String, dynamic>>(
         '$_authBasePath/self-deactivate',
       );
-      _apiClient.setAccessToken(null);
+      await _apiClient.invalidateAuthenticatedSession();
       await _clearStoredSession();
     } on DioException catch (error) {
       throw mapAuthDioException(
@@ -338,16 +359,6 @@ class RealAuthRepository implements AuthRepository {
         fallbackMessage: 'Account deactivation failed.',
       );
     }
-  }
-
-  Future<void> _persistSession({
-    required String accessToken,
-    required String refreshToken,
-    required AppUser user,
-  }) async {
-    await _storage.write(key: _accessKey, value: accessToken);
-    await _storage.write(key: _refreshKey, value: refreshToken);
-    await _persistUserMetadata(user);
   }
 
   Future<void> _persistUserMetadata(AppUser user) async {
@@ -395,7 +406,9 @@ class RealAuthRepository implements AuthRepository {
     await _storage.delete(key: _superAdminKey);
   }
 
-  Future<void> _bestEffortUnregisterPushDevice() async {
+  Future<void> _bestEffortUnregisterPushDevice(
+    ApiSessionBinding? retired,
+  ) async {
     final token = await _storage.read(key: storedPushDeviceTokenKey);
     if (token == null || token.trim().isEmpty) {
       return;
@@ -405,6 +418,7 @@ class RealAuthRepository implements AuthRepository {
       await _apiClient.dio.post<Map<String, dynamic>>(
         '${AppEnv.apiVersionPrefix}/notifications/devices/unregister',
         data: <String, dynamic>{'token': token.trim()},
+        options: _retiredSessionOptions(retired),
       );
       await _storage.delete(key: storedPushDeviceTokenKey);
     } catch (_) {
@@ -412,10 +426,17 @@ class RealAuthRepository implements AuthRepository {
     }
   }
 
+  Options _retiredSessionOptions(ApiSessionBinding? retired) => Options(
+    headers: <String, dynamic>{
+      'Authorization': retired == null ? null : 'Bearer ${retired.accessToken}',
+    },
+  );
+
   Future<AuthSession> _refreshRememberedSession(String refreshToken) async {
     final response = await _apiClient.dio.post<Map<String, dynamic>>(
       '$_authBasePath/refresh-token',
       data: <String, dynamic>{'refresh_token': refreshToken},
+      options: _publicAuthRequestOptions,
     );
     return _sessionFromAuthResponse(
       response.data ?? const <String, dynamic>{},
@@ -423,11 +444,14 @@ class RealAuthRepository implements AuthRepository {
     );
   }
 
-  bool _isNetworkError(DioException error) {
+  bool _isTemporaryAuthenticationFailure(DioException error) {
+    final statusCode = error.response?.statusCode;
     return error.type == DioExceptionType.connectionError ||
         error.type == DioExceptionType.connectionTimeout ||
         error.type == DioExceptionType.receiveTimeout ||
-        error.type == DioExceptionType.sendTimeout;
+        error.type == DioExceptionType.sendTimeout ||
+        statusCode == 429 ||
+        (statusCode != null && statusCode >= 500);
   }
 
   AppUser _parseUserFromMeResponse(Map<String, dynamic> payload) {
@@ -498,14 +522,15 @@ class RealAuthRepository implements AuthRepository {
       throw const AuthFailure('Authentication response is missing tokens.');
     }
 
-    _apiClient.setAccessToken(accessToken);
+    await _apiClient.establishAuthenticatedSession(
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+      ownerUserId: user.id,
+      persistTokens: rememberMe,
+    );
 
     if (rememberMe) {
-      await _persistSession(
-        accessToken: accessToken,
-        refreshToken: refreshToken,
-        user: user,
-      );
+      await _persistUserMetadata(user);
     } else {
       await _clearStoredSession();
     }

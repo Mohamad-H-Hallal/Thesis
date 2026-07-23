@@ -547,6 +547,7 @@ describe('Project workflow access and feature visibility', () => {
     const rejectedOfflineFeatureId = '88888888-8888-4888-8888-888888888888';
     const retriedOfflineFeatureId = '99999999-9999-4999-8999-999999999999';
     const offlinePayload = {
+      offline_owner_user_id: contributor.user.id,
       project_id: project.id,
       geom: { type: 'Point', coordinates: [35.5, 33.9] },
       attributes: { feature_type: 'olive', condition: 'good' },
@@ -555,17 +556,32 @@ describe('Project workflow access and feature visibility', () => {
 
     const acceptedCreate = await request(app)
       .post(`${API_PREFIX}/features`)
-      .set(authHeader(contributorLogin.token))
+      .set({
+        ...authHeader(contributorLogin.token),
+        'Idempotency-Key': '77777777-7777-4777-8777-777777777777',
+        'X-Offline-Owner-Id': contributor.user.id,
+        'X-Offline-Project-Id': project.id,
+      })
       .send({ ...offlinePayload, id: acceptedOfflineFeatureId });
     expect(acceptedCreate.status).toBe(201);
 
     const retriedCreate = await request(app)
       .post(`${API_PREFIX}/features`)
-      .set(authHeader(contributorLogin.token))
+      .set({
+        ...authHeader(contributorLogin.token),
+        'Idempotency-Key': '99999999-9999-4999-8999-999999999999',
+        'X-Offline-Owner-Id': contributor.user.id,
+        'X-Offline-Project-Id': project.id,
+      })
       .send({ ...offlinePayload, id: retriedOfflineFeatureId });
     const createReplay = await request(app)
       .post(`${API_PREFIX}/features`)
-      .set(authHeader(contributorLogin.token))
+      .set({
+        ...authHeader(contributorLogin.token),
+        'Idempotency-Key': '99999999-9999-4999-8999-999999999999',
+        'X-Offline-Owner-Id': contributor.user.id,
+        'X-Offline-Project-Id': project.id,
+      })
       .send({ ...offlinePayload, id: retriedOfflineFeatureId });
     expect(retriedCreate.status).toBe(201);
     expect(createReplay.status).toBe(200);
@@ -577,7 +593,12 @@ describe('Project workflow access and feature visibility', () => {
 
     const firstSubmit = await request(app)
       .post(`${API_PREFIX}/features/${retriedOfflineFeatureId}/submit`)
-      .set(authHeader(contributorLogin.token));
+      .set({
+        ...authHeader(contributorLogin.token),
+        'Idempotency-Key': '99999999-9999-4999-8999-999999999999',
+        'X-Offline-Owner-Id': contributor.user.id,
+        'X-Offline-Project-Id': project.id,
+      });
     expect(firstSubmit.status).toBe(200);
     const notificationsAfterFirstSubmit = await pool.query(
       `SELECT COUNT(*)::int AS count
@@ -587,7 +608,12 @@ describe('Project workflow access and feature visibility', () => {
     );
     const submitReplay = await request(app)
       .post(`${API_PREFIX}/features/${retriedOfflineFeatureId}/submit`)
-      .set(authHeader(contributorLogin.token));
+      .set({
+        ...authHeader(contributorLogin.token),
+        'Idempotency-Key': '99999999-9999-4999-8999-999999999999',
+        'X-Offline-Owner-Id': contributor.user.id,
+        'X-Offline-Project-Id': project.id,
+      });
     expect(submitReplay.status).toBe(200);
     const notificationsAfterReplay = await pool.query(
       `SELECT COUNT(*)::int AS count
@@ -607,31 +633,45 @@ describe('Project workflow access and feature visibility', () => {
 
     const rejectedCreate = await request(app)
       .post(`${API_PREFIX}/features`)
-      .set(authHeader(contributorLogin.token))
+      .set({
+        ...authHeader(contributorLogin.token),
+        'Idempotency-Key': '88888888-8888-4888-8888-888888888888',
+        'X-Offline-Owner-Id': contributor.user.id,
+        'X-Offline-Project-Id': project.id,
+      })
       .send({ ...offlinePayload, id: rejectedOfflineFeatureId });
     const rejectedUpdate = await request(app)
       .put(`${API_PREFIX}/features/${acceptedOfflineFeatureId}`)
-      .set(authHeader(contributorLogin.token))
+      .set({
+        ...authHeader(contributorLogin.token),
+        'Idempotency-Key': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        'X-Offline-Owner-Id': contributor.user.id,
+        'X-Offline-Project-Id': project.id,
+      })
       .send({
         geom: { type: 'Point', coordinates: [35.6, 33.95] },
         attributes: { feature_type: 'olive', condition: 'fair' },
+        expected_version: 1,
       });
     const rejectedSubmit = await request(app)
       .post(`${API_PREFIX}/features/${acceptedOfflineFeatureId}/submit`)
-      .set(authHeader(contributorLogin.token));
+      .set({
+        ...authHeader(contributorLogin.token),
+        'Idempotency-Key': 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        'X-Offline-Owner-Id': contributor.user.id,
+        'X-Offline-Project-Id': project.id,
+      });
 
     expect(rejectedCreate.status).toBe(403);
     expect(rejectedUpdate.status).toBe(403);
     expect(rejectedSubmit.status).toBe(403);
-    expect(rejectedCreate.body.message).toBe(
-      'You are no longer assigned to this project. Offline draft remains saved for retry.',
-    );
-    expect(rejectedUpdate.body.message).toBe(
-      'You are no longer assigned to this project. Offline draft remains saved for retry.',
-    );
-    expect(rejectedSubmit.body.message).toBe(
-      'You are no longer assigned to this project. Offline draft remains saved for retry.',
-    );
+    for (const response of [rejectedCreate, rejectedUpdate, rejectedSubmit]) {
+      expect(response.body.error).toEqual({
+        code: 'OFFLINE_SYNC_ACCESS_REVOKED',
+        disposition: 'permanent_rejection',
+        retryable: false,
+      });
+    }
 
     const rejectedInsertCheck = await pool.query('SELECT id FROM spatial_feature WHERE id = $1', [
       rejectedOfflineFeatureId,

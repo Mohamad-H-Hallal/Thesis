@@ -225,9 +225,13 @@ class SyncController extends StateNotifier<SyncState>
         statusParts.add('${summary.conflicts} conflict(s) need review');
       }
       if (summary.discarded > 0) {
-        statusParts.add(
-          '${summary.discarded} offline contribution(s) were discarded because project access changed',
-        );
+        if (summary.discardMessages.isNotEmpty) {
+          statusParts.addAll(summary.discardMessages);
+        } else {
+          statusParts.add(
+            '${summary.discarded} offline contribution(s) were discarded because project access changed',
+          );
+        }
       }
       if (summary.deadLettered > 0) {
         statusParts.add(

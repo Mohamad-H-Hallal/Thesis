@@ -13,6 +13,7 @@ import 'package:uuid/uuid.dart';
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/offline/local_models.dart';
+import '../../../../core/offline/local_store.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/utils/lebanon_time.dart';
 import '../../../../core/router/route_paths.dart';
@@ -972,31 +973,56 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       projectId: project.id,
       draftId: draftId,
     );
-    final offlineDraft = LocalDraftFeature(
-      id: draftId,
-      ownerUserId: session.user.id,
-      projectId: project.id,
-      projectName: project.name,
-      geometryType: _selectedGeometryType ?? 'Point',
-      geometryJson: jsonEncode(geometry),
-      attributesJson: jsonEncode(attributes),
-      photos: <DraftPhoto>[
-        if (existingDraft != null) ...existingDraft.photos,
-        ..._pendingPhotos.map(
-          (photo) => DraftPhoto(
-            id: photo.id,
-            filePath: photo.filePath,
-            createdAt: photo.createdAt,
-          ),
-        ),
-      ],
-      status: submit ? 'submitted' : 'draft',
-      localVersion: (existingDraft?.localVersion ?? 0) + 1,
-      remoteVersion: existingDraft?.remoteVersion,
-      updatedAt: now,
-    );
+    final DurableDraftPhotoStore? durablePhotoStore =
+        localStore is DurableDraftPhotoStore
+        ? localStore as DurableDraftPhotoStore
+        : null;
+    final retainedPhotoPaths = <String>[];
+    try {
+      for (final photo in _pendingPhotos) {
+        retainedPhotoPaths.add(
+          durablePhotoStore == null
+              ? photo.filePath
+              : await durablePhotoStore.retainDraftPhoto(
+                  ownerUserId: session.user.id,
+                  projectId: project.id,
+                  draftId: draftId,
+                  photoId: photo.id,
+                  sourceFilePath: photo.filePath,
+                  suggestedFileName: photo.fileName,
+                ),
+        );
+      }
+      final offlineDraft = LocalDraftFeature(
+        id: draftId,
+        ownerUserId: session.user.id,
+        projectId: project.id,
+        projectName: project.name,
+        geometryType: _selectedGeometryType ?? 'Point',
+        geometryJson: jsonEncode(geometry),
+        attributesJson: jsonEncode(attributes),
+        photos: <DraftPhoto>[
+          if (existingDraft != null) ...existingDraft.photos,
+          ..._pendingPhotos.indexed.map((entry) {
+            final (index, photo) = entry;
+            return DraftPhoto(
+              id: photo.id,
+              filePath: retainedPhotoPaths[index],
+              createdAt: photo.createdAt,
+            );
+          }),
+        ],
+        status: submit ? 'submitted' : 'draft',
+        localVersion: (existingDraft?.localVersion ?? 0) + 1,
+        remoteVersion: existingDraft?.remoteVersion,
+        updatedAt: now,
+      );
 
-    await localStore.upsertDraft(offlineDraft);
+      await localStore.upsertDraft(offlineDraft);
+    } catch (_) {
+      await durablePhotoStore?.releaseRetainedDraftPhotos(retainedPhotoPaths);
+      rethrow;
+    }
     await ref.read(syncControllerProvider.notifier).refreshStatus();
     bumpWorkflowRefresh(ref);
 
@@ -1682,6 +1708,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 subtitle: photo.takenAt == null
                     ? 'Uploaded to this draft'
                     : 'Captured ${_formatDateTime(photo.takenAt!)}',
+                isLocalFile: photo.isLocalFile,
               ),
             )
             .toList(growable: false);
@@ -1732,7 +1759,10 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                     style: Theme.of(context).textTheme.titleSmall,
                   ),
                   const SizedBox(height: AppSpacing.xs),
-                  FeaturePhotoGallery(items: uploadedPhotoItems),
+                  FeaturePhotoGallery(
+                    items: uploadedPhotoItems,
+                    httpHeaders: _authenticatedMediaHeaders(),
+                  ),
                 ],
                 if (_pendingPhotos.isNotEmpty) ...[
                   if (_uploadedPhotos.isNotEmpty)
@@ -1833,6 +1863,18 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     final normalized = path.replaceAll('\\', '/');
     final segments = normalized.split('/');
     return segments.isEmpty ? path : segments.last;
+  }
+
+  Map<String, String> _authenticatedMediaHeaders() {
+    final authorization = ref
+        .read(apiClientProvider)
+        .dio
+        .options
+        .headers['Authorization'];
+    if (authorization is String && authorization.trim().isNotEmpty) {
+      return <String, String>{'Authorization': authorization.trim()};
+    }
+    return const <String, String>{};
   }
 
   String _formatDateTime(DateTime value) {

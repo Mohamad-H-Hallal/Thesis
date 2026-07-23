@@ -116,6 +116,7 @@ LocalDraftFeature _draft({
   required String ownerUserId,
   required String status,
   String projectId = 'project-1',
+  List<DraftPhoto> photos = const <DraftPhoto>[],
 }) {
   return LocalDraftFeature(
     id: id,
@@ -125,7 +126,7 @@ LocalDraftFeature _draft({
     geometryType: 'Point',
     geometryJson: '{"type":"Point","coordinates":[35.58,33.92]}',
     attributesJson: '{"tree_type":"olive"}',
-    photos: const <DraftPhoto>[],
+    photos: photos,
     status: status,
     localVersion: 1,
     updatedAt: DateTime.utc(2026, 4, 14, 9),
@@ -208,6 +209,13 @@ void main() {
           ownerUserId: 'contributor-1',
           projectId: 'project-a',
           status: 'submitted',
+          photos: <DraftPhoto>[
+            DraftPhoto(
+              id: 'local-photo-a',
+              filePath: '/offline/project-a/photo.jpg',
+              createdAt: DateTime.utc(2026, 4, 14, 8),
+            ),
+          ],
         ),
         enqueueSync: false,
       );
@@ -244,30 +252,31 @@ void main() {
       );
       expect(projectA.single.projectId, 'project-a');
       expect(projectA.single.status, 'pending_review');
+      expect(projectA.single.photos.single.isLocalFile, isTrue);
       expect(projectB.single.projectId, 'project-b');
       expect(projectB.single.status, 'draft');
 
       final now = DateTime.utc(2026, 4, 14, 10);
-      await store.markSyncSuccess(
-        SyncQueueItem(
-          id: 'queue-a',
-          entityType: 'feature',
-          entityId: 'overlapping-id',
-          operation: SyncOperationType.create,
-          payload: const <String, dynamic>{
-            'owner_user_id': 'contributor-1',
-            'project_id': 'project-a',
-          },
-          ownerUserId: 'contributor-1',
-          projectId: 'project-a',
-          localVersion: 1,
-          idempotencyKey: 'queue-a',
-          attemptCount: 0,
-          status: SyncQueueStatus.processing,
-          createdAt: now,
-          updatedAt: now,
-        ),
+      final synchronizedItem = SyncQueueItem(
+        id: 'queue-a',
+        entityType: 'draft_feature',
+        entityId: 'overlapping-id',
+        operation: SyncOperationType.create,
+        payload: const <String, dynamic>{
+          'owner_user_id': 'contributor-1',
+          'project_id': 'project-a',
+        },
+        ownerUserId: 'contributor-1',
+        projectId: 'project-a',
+        localVersion: 1,
+        idempotencyKey: 'queue-a',
+        attemptCount: 0,
+        status: SyncQueueStatus.processing,
+        createdAt: now,
+        updatedAt: now,
       );
+      await store.enqueueSyncItem(synchronizedItem);
+      await store.markSyncSuccess(synchronizedItem);
       container.dispose();
 
       container = buildContainer();

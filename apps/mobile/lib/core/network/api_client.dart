@@ -1,7 +1,28 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../config/app_env.dart';
+
+/// Immutable proof that a request was created for one authenticated session.
+///
+/// The generation changes on every login/logout. The refresh token remains
+/// private to this library and is never copied into request headers.
+class ApiSessionBinding {
+  const ApiSessionBinding._({
+    required this.ownerUserId,
+    required this.generation,
+    required this.accessToken,
+    required String refreshToken,
+  }) : _refreshToken = refreshToken;
+
+  final String ownerUserId;
+  final int generation;
+  final String accessToken;
+  final String _refreshToken;
+  String get refreshToken => _refreshToken;
+}
 
 class ApiClient {
   ApiClient({Dio? dio, FlutterSecureStorage? storage})
@@ -16,38 +37,251 @@ class ApiClient {
               headers: const {'Content-Type': 'application/json'},
             ),
           ) {
-    if (_storage != null) {
-      _installTokenRefreshInterceptor();
-    }
+    _installTokenRefreshInterceptor();
   }
 
   final Dio dio;
   final FlutterSecureStorage? _storage;
-  Future<String?>? _refreshFuture;
+  final Map<({int generation, String ownerUserId}), Future<_TokenRefreshResult>>
+  _refreshFutures =
+      <({int generation, String ownerUserId}), Future<_TokenRefreshResult>>{};
+  Future<void> _tokenStorageTail = Future<void>.value();
+  ApiSessionBinding? _session;
+  int _sessionGeneration = 0;
 
   static const _accessKey = 'access_token';
   static const _refreshKey = 'refresh_token';
   static const _skipAuthRefreshKey = 'skip_auth_refresh';
+  static const _sessionBindingKey = 'api_session_binding';
 
+  ApiSessionBinding? get currentSessionBinding => _session;
+
+  /// Starts a new authentication generation after all refreshes from the old
+  /// generation have settled. Token persistence is serialized with refreshes
+  /// so a late Account A response cannot overwrite Account B's credentials.
+  Future<void> establishAuthenticatedSession({
+    required String accessToken,
+    required String refreshToken,
+    required String ownerUserId,
+    bool? persistTokens,
+  }) async {
+    final normalizedAccess = accessToken.trim();
+    final normalizedRefresh = refreshToken.trim();
+    final normalizedOwner = ownerUserId.trim();
+    if (normalizedAccess.isEmpty ||
+        normalizedRefresh.isEmpty ||
+        normalizedOwner.isEmpty) {
+      throw ArgumentError(
+        'Authenticated session identity and tokens required.',
+      );
+    }
+
+    final activationGeneration = _invalidateSessionNow();
+    await _waitForRefreshes();
+    await _runTokenStorageMutation(() async {
+      if (_sessionGeneration != activationGeneration || _session != null) {
+        return;
+      }
+      final storage = _storage;
+      if (storage == null || persistTokens == null) {
+        return;
+      }
+      if (persistTokens) {
+        await storage.write(key: _accessKey, value: normalizedAccess);
+        if (_sessionGeneration != activationGeneration || _session != null) {
+          return;
+        }
+        await storage.write(key: _refreshKey, value: normalizedRefresh);
+      } else {
+        await storage.delete(key: _accessKey);
+        if (_sessionGeneration != activationGeneration || _session != null) {
+          return;
+        }
+        await storage.delete(key: _refreshKey);
+      }
+    });
+    if (_sessionGeneration != activationGeneration || _session != null) {
+      throw StateError('Authentication session changed while being activated.');
+    }
+
+    final binding = ApiSessionBinding._(
+      ownerUserId: normalizedOwner,
+      generation: activationGeneration,
+      accessToken: normalizedAccess,
+      refreshToken: normalizedRefresh,
+    );
+    _session = binding;
+    dio.options.headers['Authorization'] = 'Bearer $normalizedAccess';
+  }
+
+  /// Invalidates the current generation synchronously, then waits for stale
+  /// refresh work before clearing persisted tokens.
+  Future<ApiSessionBinding?> invalidateAuthenticatedSession({
+    bool clearPersistedTokens = true,
+  }) async {
+    final retired = _session;
+    final invalidationGeneration = _invalidateSessionNow();
+    await _waitForRefreshes();
+    if (clearPersistedTokens) {
+      await _runTokenStorageMutation(() async {
+        if (_sessionGeneration != invalidationGeneration || _session != null) {
+          return;
+        }
+        final storage = _storage;
+        if (storage == null) {
+          return;
+        }
+        await storage.delete(key: _accessKey);
+        if (_sessionGeneration != invalidationGeneration || _session != null) {
+          return;
+        }
+        await storage.delete(key: _refreshKey);
+      });
+    }
+    return retired;
+  }
+
+  /// Compatibility hook for unauthenticated tests and legacy callers. Real
+  /// authenticated flows must use [establishAuthenticatedSession] so refresh
+  /// is bound to an owner and generation.
   void setAccessToken(String? token) {
-    if (token == null || token.isEmpty) {
-      dio.options.headers.remove('Authorization');
+    final normalized = token?.trim() ?? '';
+    final generation = _invalidateSessionNow();
+    if (normalized.isEmpty) {
       return;
     }
-    dio.options.headers['Authorization'] = 'Bearer $token';
+    _session = ApiSessionBinding._(
+      ownerUserId: '',
+      generation: generation,
+      accessToken: normalized,
+      refreshToken: '',
+    );
+    dio.options.headers['Authorization'] = 'Bearer $normalized';
+  }
+
+  ApiSessionBinding? captureSessionForOwner(String ownerUserId) {
+    final current = _session;
+    final normalizedOwner = ownerUserId.trim();
+    if (current == null ||
+        normalizedOwner.isEmpty ||
+        current.ownerUserId != normalizedOwner) {
+      return null;
+    }
+    return current;
+  }
+
+  Options bindAuthenticatedRequest({
+    required ApiSessionBinding session,
+    Map<String, dynamic> headers = const <String, dynamic>{},
+  }) {
+    return Options(
+      headers: <String, dynamic>{
+        ...headers,
+        'Authorization': 'Bearer ${session.accessToken}',
+      },
+      extra: <String, dynamic>{_sessionBindingKey: session},
+    );
+  }
+
+  int _invalidateSessionNow() {
+    _sessionGeneration += 1;
+    _session = null;
+    dio.options.headers.remove('Authorization');
+    return _sessionGeneration;
+  }
+
+  bool _isCurrentGeneration(ApiSessionBinding binding) {
+    final current = _session;
+    return current != null &&
+        current.generation == binding.generation &&
+        current.ownerUserId == binding.ownerUserId;
+  }
+
+  Future<void> _waitForRefreshes() async {
+    final pending = _refreshFutures.values.toList(growable: false);
+    if (pending.isEmpty) {
+      return;
+    }
+    await Future.wait(
+      pending.map((future) => future.then<void>((_) {}).catchError((_) {})),
+    );
+  }
+
+  Future<void> _runTokenStorageMutation(Future<void> Function() mutation) {
+    final completer = Completer<void>();
+    final previous = _tokenStorageTail;
+    _tokenStorageTail = completer.future;
+    return () async {
+      try {
+        try {
+          await previous;
+        } catch (_) {
+          // A prior storage failure must not permanently block later cleanup.
+        }
+        await mutation();
+      } finally {
+        completer.complete();
+      }
+    }();
   }
 
   void _installTokenRefreshInterceptor() {
     dio.interceptors.add(
       InterceptorsWrapper(
+        onRequest: (request, handler) {
+          final binding = request.extra[_sessionBindingKey];
+          if (binding is ApiSessionBinding) {
+            if (!_isCurrentGeneration(binding)) {
+              handler.reject(
+                DioException(
+                  requestOptions: request,
+                  type: DioExceptionType.cancel,
+                  message:
+                      'Authenticated session changed before the request was sent.',
+                ),
+              );
+              return;
+            }
+            final current = _session!;
+            request.headers['Authorization'] = 'Bearer ${current.accessToken}';
+          }
+          handler.next(request);
+        },
         onError: (error, handler) async {
-          if (!_shouldAttemptRefresh(error)) {
+          final binding = _refreshBindingFor(error);
+          if (binding == null) {
             handler.next(error);
             return;
           }
 
-          final freshAccessToken = await _refreshAccessToken();
-          if (freshAccessToken == null || freshAccessToken.isEmpty) {
+          _TokenRefreshResult refreshResult;
+          try {
+            refreshResult = await _refreshAccessToken(binding);
+          } catch (_) {
+            handler.next(error);
+            return;
+          }
+
+          final propagatedRefreshError =
+              refreshResult.terminalError ?? refreshResult.retryableError;
+          if (propagatedRefreshError != null &&
+              _isOfflineSyncRequest(error.requestOptions)) {
+            handler.next(
+              _copyRefreshErrorToOriginalRequest(
+                originalRequest: error.requestOptions,
+                refreshError: propagatedRefreshError,
+              ),
+            );
+            return;
+          }
+
+          final freshAccessToken = refreshResult.accessToken;
+          final current = _session;
+          if (freshAccessToken == null ||
+              freshAccessToken.isEmpty ||
+              current == null ||
+              !_isCurrentGeneration(binding) ||
+              current.accessToken != freshAccessToken) {
             handler.next(error);
             return;
           }
@@ -59,7 +293,8 @@ class ApiClient {
             data: _cloneRetryBody(request.data),
             headers: retryHeaders,
             extra: Map<String, dynamic>.from(request.extra)
-              ..[_skipAuthRefreshKey] = true,
+              ..[_skipAuthRefreshKey] = true
+              ..[_sessionBindingKey] = current,
           );
 
           try {
@@ -73,9 +308,28 @@ class ApiClient {
     );
   }
 
+  ApiSessionBinding? _refreshBindingFor(DioException error) {
+    if (!_shouldAttemptRefresh(error)) {
+      return null;
+    }
+    final request = error.requestOptions;
+    final explicitBinding = request.extra[_sessionBindingKey];
+    if (explicitBinding is ApiSessionBinding) {
+      return _isCurrentGeneration(explicitBinding) ? explicitBinding : null;
+    }
+
+    final current = _session;
+    final authHeader = request.headers['Authorization'];
+    if (current == null ||
+        current.ownerUserId.isEmpty ||
+        authHeader != 'Bearer ${current.accessToken}') {
+      return null;
+    }
+    return current;
+  }
+
   bool _shouldAttemptRefresh(DioException error) {
-    final statusCode = error.response?.statusCode;
-    if (statusCode != 401) {
+    if (error.response?.statusCode != 401) {
       return false;
     }
 
@@ -85,41 +339,71 @@ class ApiClient {
     }
 
     final path = request.path;
-    if (path.endsWith('/auth/login') ||
-        path.endsWith('/auth/reactivate-login') ||
-        path.endsWith('/auth/register') ||
-        path.endsWith('/auth/refresh-token')) {
-      return false;
-    }
-
-    final authHeader =
-        request.headers['Authorization'] ??
-        dio.options.headers['Authorization'];
-    return authHeader is String && authHeader.trim().isNotEmpty;
+    return !path.endsWith('/auth/login') &&
+        !path.endsWith('/auth/reactivate-login') &&
+        !path.endsWith('/auth/register') &&
+        !path.endsWith('/auth/refresh-token');
   }
 
-  Future<String?> _refreshAccessToken() {
-    final inFlight = _refreshFuture;
+  bool _isOfflineSyncRequest(RequestOptions request) {
+    return request.path.endsWith(
+      '${AppEnv.apiVersionPrefix}/features/offline-sync',
+    );
+  }
+
+  DioException _copyRefreshErrorToOriginalRequest({
+    required RequestOptions originalRequest,
+    required DioException refreshError,
+  }) {
+    final refreshResponse = refreshError.response;
+    return DioException(
+      requestOptions: originalRequest,
+      response: refreshResponse == null
+          ? null
+          : Response<dynamic>(
+              requestOptions: originalRequest,
+              data: refreshResponse.data,
+              headers: refreshResponse.headers,
+              statusCode: refreshResponse.statusCode,
+              statusMessage: refreshResponse.statusMessage,
+            ),
+      type: refreshResponse == null
+          ? refreshError.type
+          : DioExceptionType.badResponse,
+      error: refreshError.error,
+      message: refreshError.message,
+    );
+  }
+
+  Future<_TokenRefreshResult> _refreshAccessToken(ApiSessionBinding binding) {
+    final key = (
+      generation: binding.generation,
+      ownerUserId: binding.ownerUserId,
+    );
+    final inFlight = _refreshFutures[key];
     if (inFlight != null) {
       return inFlight;
     }
 
-    final future = _performTokenRefresh();
-    _refreshFuture = future;
-    return future.whenComplete(() {
-      _refreshFuture = null;
-    });
+    final future = _performTokenRefresh(binding);
+    _refreshFutures[key] = future;
+    return () async {
+      try {
+        return await future;
+      } finally {
+        if (identical(_refreshFutures[key], future)) {
+          _refreshFutures.remove(key);
+        }
+      }
+    }();
   }
 
-  Future<String?> _performTokenRefresh() async {
-    final storage = _storage;
-    if (storage == null) {
-      return null;
-    }
-
-    final refreshToken = await storage.read(key: _refreshKey);
-    if (refreshToken == null || refreshToken.isEmpty) {
-      return null;
+  Future<_TokenRefreshResult> _performTokenRefresh(
+    ApiSessionBinding binding,
+  ) async {
+    final refreshToken = binding._refreshToken;
+    if (refreshToken.isEmpty || !_isCurrentGeneration(binding)) {
+      return const _TokenRefreshResult();
     }
 
     try {
@@ -139,23 +423,105 @@ class ApiClient {
       final accessToken = (data['token'] as String?)?.trim() ?? '';
       final nextRefreshToken =
           (data['refreshToken'] as String?)?.trim() ?? refreshToken;
-      if (accessToken.isEmpty) {
-        return null;
+      if (accessToken.isEmpty || !_isCurrentGeneration(binding)) {
+        return const _TokenRefreshResult();
       }
 
-      await storage.write(key: _accessKey, value: accessToken);
-      await storage.write(key: _refreshKey, value: nextRefreshToken);
-      setAccessToken(accessToken);
-      return accessToken;
-    } on DioException catch (error) {
-      final statusCode = error.response?.statusCode;
-      if (statusCode == 400 || statusCode == 401 || statusCode == 403) {
-        setAccessToken(null);
-        await storage.delete(key: _accessKey);
-        await storage.delete(key: _refreshKey);
+      await _runTokenStorageMutation(() async {
+        if (!_isCurrentGeneration(binding)) {
+          return;
+        }
+        final storage = _storage;
+        if (storage == null) {
+          return;
+        }
+        await storage.write(key: _accessKey, value: accessToken);
+        if (!_isCurrentGeneration(binding)) {
+          return;
+        }
+        await storage.write(key: _refreshKey, value: nextRefreshToken);
+      });
+      if (!_isCurrentGeneration(binding)) {
+        return const _TokenRefreshResult();
       }
+
+      final updated = ApiSessionBinding._(
+        ownerUserId: binding.ownerUserId,
+        generation: binding.generation,
+        accessToken: accessToken,
+        refreshToken: nextRefreshToken,
+      );
+      _session = updated;
+      dio.options.headers['Authorization'] = 'Bearer $accessToken';
+      return _TokenRefreshResult(accessToken: accessToken);
+    } on DioException catch (error) {
+      final terminalError = _isDefinitiveInactiveAccount(error) ? error : null;
+      if (terminalError != null || _invalidatesCredentials(error)) {
+        final invalidationGeneration = _invalidateIfCurrent(binding);
+        if (invalidationGeneration != null) {
+          await _clearInvalidatedTokens(invalidationGeneration);
+        }
+      }
+      return _TokenRefreshResult(
+        terminalError: terminalError,
+        retryableError: _isTemporaryRefreshFailure(error) ? error : null,
+      );
+    }
+  }
+
+  int? _invalidateIfCurrent(ApiSessionBinding binding) {
+    if (!_isCurrentGeneration(binding)) {
       return null;
     }
+    return _invalidateSessionNow();
+  }
+
+  Future<void> _clearInvalidatedTokens(int invalidationGeneration) {
+    return _runTokenStorageMutation(() async {
+      if (_sessionGeneration != invalidationGeneration || _session != null) {
+        return;
+      }
+      final storage = _storage;
+      if (storage == null) {
+        return;
+      }
+      await storage.delete(key: _accessKey);
+      if (_sessionGeneration != invalidationGeneration || _session != null) {
+        return;
+      }
+      await storage.delete(key: _refreshKey);
+    });
+  }
+
+  bool _invalidatesCredentials(DioException error) {
+    final statusCode = error.response?.statusCode;
+    return statusCode == 400 || statusCode == 401 || statusCode == 403;
+  }
+
+  bool _isTemporaryRefreshFailure(DioException error) {
+    final statusCode = error.response?.statusCode;
+    return error.type == DioExceptionType.connectionError ||
+        error.type == DioExceptionType.connectionTimeout ||
+        error.type == DioExceptionType.receiveTimeout ||
+        error.type == DioExceptionType.sendTimeout ||
+        statusCode == 429 ||
+        (statusCode != null && statusCode >= 500);
+  }
+
+  bool _isDefinitiveInactiveAccount(DioException error) {
+    final statusCode = error.response?.statusCode;
+    if (statusCode == null || statusCode < 400 || statusCode >= 500) {
+      return false;
+    }
+    final responseData = error.response?.data;
+    if (responseData is! Map) {
+      return false;
+    }
+    final errorData = responseData['error'];
+    return errorData is Map &&
+        errorData['code'] == 'OFFLINE_SYNC_ACCOUNT_INACTIVE' &&
+        errorData['disposition'] == 'permanent_rejection' &&
+        errorData['retryable'] == false;
   }
 
   dynamic _cloneRetryBody(dynamic data) {
@@ -164,4 +530,16 @@ class ApiClient {
     }
     return data;
   }
+}
+
+class _TokenRefreshResult {
+  const _TokenRefreshResult({
+    this.accessToken,
+    this.terminalError,
+    this.retryableError,
+  });
+
+  final String? accessToken;
+  final DioException? terminalError;
+  final DioException? retryableError;
 }

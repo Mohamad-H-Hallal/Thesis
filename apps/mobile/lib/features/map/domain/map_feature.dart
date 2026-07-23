@@ -6,6 +6,7 @@ class MapFeaturePhoto {
     this.status,
     this.takenAt,
     this.displayOrder,
+    this.isLocalFile = false,
   });
 
   final String id;
@@ -14,6 +15,7 @@ class MapFeaturePhoto {
   final String? status;
   final DateTime? takenAt;
   final int? displayOrder;
+  final bool isLocalFile;
 }
 
 class MapFeatureSummary {

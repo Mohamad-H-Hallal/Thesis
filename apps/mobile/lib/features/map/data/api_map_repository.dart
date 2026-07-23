@@ -22,13 +22,16 @@ class ApiMapRepository {
   static const int _projectFeaturePageSize = 100;
   static const int _projectFeaturePageBatchSize = 4;
   int _projectTileCacheRevision = 0;
+  String? _projectTileCacheSessionScope;
 
   Future<List<MapFeatureSummary>> fetchProjectFeatures(String projectId) async {
+    final requestSessionScope = _captureProjectRequestSessionScope();
     final firstPage = await fetchProjectFeaturesPage(
       projectId: projectId,
       page: 1,
       limit: _projectFeaturePageSize,
     );
+    _assertProjectRequestSessionScope(requestSessionScope);
     final features = <MapFeatureSummary>[];
     features.addAll(firstPage.items);
     final totalPages = math.max(1, (firstPage.total / firstPage.limit).ceil());
@@ -50,11 +53,13 @@ class ApiMapRepository {
             limit: _projectFeaturePageSize,
           ),
       ]);
+      _assertProjectRequestSessionScope(requestSessionScope);
       for (final page in pages) {
         features.addAll(page.items);
       }
     }
 
+    _assertProjectRequestSessionScope(requestSessionScope);
     return features;
   }
 
@@ -68,6 +73,8 @@ class ApiMapRepository {
     String? featureType,
     int cacheRevision = 0,
   }) async {
+    _ensureProjectTileCacheSessionScope();
+    final requestSessionScope = _currentSessionCacheScope;
     if (_projectTileCacheRevision != cacheRevision) {
       _projectTileCacheRevision = cacheRevision;
       _projectTileCache.clear();
@@ -112,6 +119,11 @@ class ApiMapRepository {
             tileResults.add(result);
           }
         }
+        if (_currentSessionCacheScope != requestSessionScope) {
+          throw StateError(
+            'The authenticated session changed while map features were loading.',
+          );
+        }
       }
       if (tileResults.isEmpty && firstError != null) {
         throw firstError!;
@@ -140,9 +152,12 @@ class ApiMapRepository {
     required double renderZoom,
     String? featureType,
   }) async {
+    _ensureProjectTileCacheSessionScope();
+    final requestSessionScope = _currentSessionCacheScope;
     final zoomKey = renderZoom.toStringAsFixed(2);
     final featureTypeKey = featureType?.trim() ?? '';
-    final cacheKey = '$projectId:$z:$x:$y:$zoomKey:$featureTypeKey';
+    final cacheKey =
+        '$requestSessionScope:$projectId:$z:$x:$y:$zoomKey:$featureTypeKey';
     final cached = _projectTileCache.remove(cacheKey);
     if (cached != null) {
       _projectTileCache[cacheKey] = cached;
@@ -160,16 +175,30 @@ class ApiMapRepository {
     final featureCollection = Map<String, dynamic>.from(
       payload['data'] as Map? ?? const <String, dynamic>{},
     );
-    final rows = (featureCollection['features'] as List? ?? const <dynamic>[])
-        .cast<Map>();
-    final items = rows
-        .map(
-          (row) => _toViewportFeature(
-            Map<String, dynamic>.from(row),
-            expectedProjectId: projectId,
-          ),
-        )
-        .toList(growable: false);
+    final rows = featureCollection['features'] as List? ?? const <dynamic>[];
+    final items = <MapFeatureSummary>[];
+    for (final rawRow in rows) {
+      if (rawRow is! Map) {
+        throw StateError(
+          'The project feature response did not match the active project.',
+        );
+      }
+      final row = Map<String, dynamic>.from(rawRow);
+      final properties = row['properties'];
+      if (properties is! Map ||
+          properties['project_id'] is! String ||
+          properties['project_id'] != projectId) {
+        throw StateError(
+          'The project feature response did not match the active project.',
+        );
+      }
+      items.add(_toViewportFeature(row, expectedProjectId: projectId));
+    }
+    if (_currentSessionCacheScope != requestSessionScope) {
+      throw StateError(
+        'The authenticated session changed while map features were loading.',
+      );
+    }
     _rememberProjectTile(cacheKey, items);
     return items;
   }
@@ -184,6 +213,7 @@ class ApiMapRepository {
     int page = 1,
     int limit = 20,
   }) async {
+    final requestSessionScope = _captureProjectRequestSessionScope();
     try {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         '${AppEnv.apiVersionPrefix}/projects/$projectId/features',
@@ -200,6 +230,7 @@ class ApiMapRepository {
             'exclude_import_id': excludeImportId!.trim(),
         },
       );
+      _assertProjectRequestSessionScope(requestSessionScope);
 
       final payload = response.data ?? const <String, dynamic>{};
       final rows = (payload['data'] as List? ?? const <dynamic>[]);
@@ -207,12 +238,22 @@ class ApiMapRepository {
         payload['pagination'] as Map? ?? const <String, dynamic>{},
       );
 
-      final items = rows
-          .map((row) {
-            final item = Map<String, dynamic>.from(row as Map);
-            return _toProjectFeature(item, expectedProjectId: projectId);
-          })
-          .toList(growable: false);
+      final items = <MapFeatureSummary>[];
+      for (final row in rows) {
+        if (row is! Map) {
+          throw StateError(
+            'The project feature response did not match the active project.',
+          );
+        }
+        final item = Map<String, dynamic>.from(row);
+        final responseProjectId = item['project_id'];
+        if (responseProjectId is! String || responseProjectId != projectId) {
+          throw StateError(
+            'The project feature response did not match the active project.',
+          );
+        }
+        items.add(_toProjectFeature(item, expectedProjectId: projectId));
+      }
       final total = (pagination['total'] as num?)?.toInt() ?? items.length;
       final hasMore =
           (pagination['has_more'] as bool?) ??
@@ -241,6 +282,7 @@ class ApiMapRepository {
     String? featureType,
     String? excludeImportId,
   }) async {
+    final requestSessionScope = _captureProjectRequestSessionScope();
     final page = await fetchProjectFeaturesPage(
       projectId: projectId,
       search: search,
@@ -251,6 +293,7 @@ class ApiMapRepository {
       page: 1,
       limit: 1,
     );
+    _assertProjectRequestSessionScope(requestSessionScope);
     return page.total;
   }
 
@@ -295,10 +338,12 @@ class ApiMapRepository {
     required String projectId,
     required String featureId,
   }) async {
+    final requestSessionScope = _captureProjectRequestSessionScope();
     try {
       final response = await _apiClient.dio.get<Map<String, dynamic>>(
         '${AppEnv.apiVersionPrefix}/features/$featureId',
       );
+      _assertProjectRequestSessionScope(requestSessionScope);
       final payload = response.data ?? const <String, dynamic>{};
       final row = Map<String, dynamic>.from(
         payload['data'] as Map? ?? const <String, dynamic>{},
@@ -318,10 +363,16 @@ class ApiMapRepository {
   }
 
   MapFeaturePhoto _toPhoto(Map<String, dynamic> item) {
+    final id = (item['id'] as String?) ?? '';
+    final mediaPath = '${AppEnv.apiVersionPrefix}/photos/$id';
     return MapFeaturePhoto(
-      id: (item['id'] as String?) ?? '',
-      filePath: (item['file_path'] as String?) ?? '',
-      thumbnailPath: item['thumbnail_path'] as String?,
+      id: id,
+      // Server filesystem paths are internal. Feature media is loaded only
+      // through the authenticated photo endpoint.
+      filePath: id.isEmpty ? '' : mediaPath,
+      thumbnailPath: id.isEmpty || item['thumbnail_path'] == null
+          ? null
+          : '$mediaPath?thumbnail=true',
       status: item['status'] as String?,
       takenAt: _toDateTime(item['taken_at']),
       displayOrder: _toInt(item['display_order']),
@@ -428,6 +479,35 @@ class ApiMapRepository {
     _projectTileCache[cacheKey] = items;
     while (_projectTileCache.length > _projectTileCacheMaxEntries) {
       _projectTileCache.remove(_projectTileCache.keys.first);
+    }
+  }
+
+  String get _currentSessionCacheScope {
+    final session = _apiClient.currentSessionBinding;
+    return session == null
+        ? 'unauthenticated'
+        : '${session.ownerUserId}:${session.generation}';
+  }
+
+  void _ensureProjectTileCacheSessionScope() {
+    final currentScope = _currentSessionCacheScope;
+    if (_projectTileCacheSessionScope == currentScope) {
+      return;
+    }
+    _projectTileCacheSessionScope = currentScope;
+    _projectTileCache.clear();
+  }
+
+  String _captureProjectRequestSessionScope() {
+    _ensureProjectTileCacheSessionScope();
+    return _currentSessionCacheScope;
+  }
+
+  void _assertProjectRequestSessionScope(String expectedScope) {
+    if (_currentSessionCacheScope != expectedScope) {
+      throw StateError(
+        'The authenticated session changed while map features were loading.',
+      );
     }
   }
 }

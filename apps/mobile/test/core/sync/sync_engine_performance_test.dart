@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lebanese_gis_mobile/core/network/api_client.dart';
@@ -41,6 +43,7 @@ SyncQueueItem _queueItem({
         'coordinates': <double>[35.58, 33.92],
       },
       'attributes': <String, dynamic>{'tree_type': 'olive'},
+      'photo_paths': <String>[],
       'status': 'draft',
       'local_version': version,
     },
@@ -68,6 +71,12 @@ void main() {
       });
 
       final dio = Dio();
+      final apiClient = ApiClient(dio: dio);
+      await apiClient.establishAuthenticatedSession(
+        accessToken: 'perf-access',
+        refreshToken: 'perf-refresh',
+        ownerUserId: 'user-1',
+      );
       dio.interceptors.add(
         InterceptorsWrapper(
           onRequest: (options, handler) {
@@ -76,6 +85,32 @@ void main() {
                     options.data as Map<String, dynamic>,
                   )
                 : const <String, dynamic>{};
+
+            if (options.method == 'POST' &&
+                options.path.endsWith('/features/offline-sync')) {
+              final formData = options.data as FormData;
+              final rawPayload = formData.fields
+                  .firstWhere((field) => field.key == 'payload')
+                  .value;
+              final offlinePayload =
+                  jsonDecode(rawPayload) as Map<String, dynamic>;
+              handler.resolve(
+                Response<Map<String, dynamic>>(
+                  requestOptions: options,
+                  statusCode: 201,
+                  data: <String, dynamic>{
+                    'success': true,
+                    'data': <String, dynamic>{
+                      'id': offlinePayload['draft_id'],
+                      'project_id': offlinePayload['project_id'],
+                      'version': 1,
+                      'outcome': 'accepted',
+                    },
+                  },
+                ),
+              );
+              return;
+            }
 
             if (options.method == 'POST' &&
                 options.path.endsWith('/features')) {
@@ -118,7 +153,7 @@ void main() {
 
       final engine = SyncEngine(
         localStore: store,
-        apiClient: ApiClient(dio: dio),
+        apiClient: apiClient,
         ownerUserId: 'user-1',
       );
 

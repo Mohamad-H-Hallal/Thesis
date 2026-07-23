@@ -9,4 +9,3 @@ class CreatedFeatureDraft {
   final String status;
   final String projectId;
 }
-

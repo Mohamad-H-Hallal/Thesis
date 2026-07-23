@@ -34,6 +34,13 @@ This runbook covers production deployment and operations for the GIS API.
 | RATE_LIMIT_MAX_REQUESTS | 100 | 200 | tune by traffic | Anti-abuse |
 | RATE_LIMIT_AUTH_MAX_REQUESTS | 20 | 20 | tune by threat model | Brute-force protection |
 | RATE_LIMIT_EXPORT_MAX_REQUESTS | 40 | 40 | tune by workload | Export abuse protection |
+| OFFLINE_SYNC_RATE_LIMIT_WINDOW_MS | 60000 | 60000 | tune by traffic | Offline sync limiter window |
+| OFFLINE_SYNC_RATE_LIMIT_MAX_REQUESTS | 60 | 60 | tune by traffic | Per-authenticated-user sync limit |
+| OFFLINE_SYNC_INGRESS_RATE_LIMIT_MAX_REQUESTS | 240 | 240 | tune by proxy/NAT topology | Pre-parser IP limit for feature/photo writes |
+| PHOTO_MAX_SIZE | 5242880 | 5242880 | policy-driven | Maximum source image bytes |
+| PHOTO_MAX_WIDTH | 10000 | 10000 | policy-driven | Maximum decoded image width |
+| PHOTO_MAX_HEIGHT | 10000 | 10000 | policy-driven | Maximum decoded image height |
+| PHOTO_MAX_PIXELS | 40000000 | 40000000 | policy-driven | Maximum decoded image pixels |
 | AUDIT_LOG_ENABLED | true | true | true | Compliance trail |
 | METRICS_ENABLED | true | true | true | `/metrics` endpoint |
 | METRICS_TOKEN | optional | required | required | Protect metrics endpoint |
@@ -66,6 +73,10 @@ npm start
 curl -f http://<host>:3000/health
 curl -f http://<host>:3000/ready
 ```
+
+Migration `0039_feature_media_cleanup_jobs.sql` must be applied before serving
+feature/photo writes. The cleanup outbox assumes every API replica sees the
+same `UPLOAD_DIR`; use shared persistent storage rather than node-local disks.
 
 ## Phase 11 Staging Readiness
 Before production cutover, run realistic staging data and checks:
@@ -110,6 +121,8 @@ pg_restore -c -h <db_host> -U <db_user> -d <db_name> gis_app_<date>.dump
 - Alert on migration failures.
 - Alert on DB connection failures.
 - Alert on export processing failures and storage exhaustion.
+- Alert when `feature_media_cleanup_job` rows remain due for retry or their
+  `attempt_count` continues to increase.
 
 ## Incident Response
 1. Capture error logs and request IDs.

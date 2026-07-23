@@ -41,7 +41,11 @@ class FakeAuthRepository implements AuthRepository {
       isProtectedSuperAdmin: isProtectedSuperAdmin,
     );
 
-    _apiClient.setAccessToken(access);
+    await _apiClient.establishAuthenticatedSession(
+      accessToken: access,
+      refreshToken: refresh,
+      ownerUserId: user.id,
+    );
     return AuthSession(accessToken: access, refreshToken: refresh, user: user);
   }
 
@@ -134,7 +138,12 @@ class FakeAuthRepository implements AuthRepository {
       );
     }
 
-    _apiClient.setAccessToken(session.accessToken);
+    await _apiClient.establishAuthenticatedSession(
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
+      ownerUserId: session.user.id,
+      persistTokens: rememberMe,
+    );
     return session;
   }
 
@@ -167,7 +176,12 @@ class FakeAuthRepository implements AuthRepository {
       await _storage.write(key: _superAdminKey, value: 'false');
     }
 
-    _apiClient.setAccessToken(session.accessToken);
+    await _apiClient.establishAuthenticatedSession(
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
+      ownerUserId: session.user.id,
+      persistTokens: rememberMe,
+    );
     return session;
   }
 
@@ -282,7 +296,7 @@ class FakeAuthRepository implements AuthRepository {
 
   @override
   Future<void> logout() async {
-    _apiClient.setAccessToken(null);
+    await _apiClient.invalidateAuthenticatedSession();
     await _storage.delete(key: _accessKey);
     await _storage.delete(key: _refreshKey);
     await _storage.delete(key: _roleKey);
@@ -294,7 +308,7 @@ class FakeAuthRepository implements AuthRepository {
 
   @override
   Future<void> selfDeactivate() async {
-    _apiClient.setAccessToken(null);
+    await _apiClient.invalidateAuthenticatedSession();
     await _storage.delete(key: _accessKey);
     await _storage.delete(key: _refreshKey);
     await _storage.delete(key: _roleKey);

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -6,14 +7,16 @@ import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../features/projects/domain/project.dart';
+import 'local_photo_cleanup.dart';
 import 'local_models.dart';
 import 'local_store.dart';
 
-class SqliteLocalStore implements LocalStore {
+class SqliteLocalStore implements LocalStore, DurableDraftPhotoStore {
   Database? _db;
   Future<void>? _initialization;
   final Uuid _uuid = const Uuid();
-  static const _dbVersion = 6;
+  String? _offlinePhotoRootPath;
+  static const _dbVersion = 8;
 
   @override
   Future<void> initialize() async {
@@ -39,11 +42,18 @@ class SqliteLocalStore implements LocalStore {
 
   Future<void> _openDatabase() async {
     final dir = await getApplicationDocumentsDirectory();
+    final offlinePhotoRoot = Directory(p.join(dir.path, 'offline_photos'));
+    await offlinePhotoRoot.create(recursive: true);
+    _offlinePhotoRootPath = offlinePhotoRoot.path;
     final dbPath = p.join(dir.path, 'gis_collector_offline.db');
 
     final db = await openDatabase(
       dbPath,
       version: _dbVersion,
+      onConfigure: (db) async {
+        await db.execute('PRAGMA secure_delete = ON');
+        await db.execute('PRAGMA foreign_keys = ON');
+      },
       onCreate: (db, version) async {
         await _createSchema(db);
       },
@@ -106,6 +116,12 @@ class SqliteLocalStore implements LocalStore {
         if (oldVersion < 6) {
           await _migrateProjectScopedStorage(db);
         }
+        if (oldVersion < 7) {
+          await _createPendingLocalFileDeletionTable(db);
+        }
+        if (oldVersion < 8) {
+          await _migrateDraftPhotosToOwnedStorage(db);
+        }
       },
     );
     await db.update(
@@ -120,6 +136,24 @@ class SqliteLocalStore implements LocalStore {
       where: 'status = ?',
       whereArgs: <Object?>[SyncQueueStatus.processing.name],
     );
+    final now = DateTime.now().toIso8601String();
+    await db.rawUpdate(
+      '''
+      UPDATE sync_queue
+      SET status = ?, next_retry_at = ?, updated_at = ?
+      WHERE status = ?
+        AND owner_user_id <> ''
+        AND project_id <> ''
+        AND project_id <> '__ambiguous__'
+      ''',
+      <Object?>[
+        SyncQueueStatus.failed.name,
+        now,
+        now,
+        SyncQueueStatus.deadLetter.name,
+      ],
+    );
+    await _drainPendingPhotoFileDeletions(db);
     _db = db;
   }
 
@@ -218,6 +252,7 @@ class SqliteLocalStore implements LocalStore {
     await _createProjectCacheTable(db);
     await _createDraftTables(db);
     await _createSyncQueueTable(db);
+    await _createPendingLocalFileDeletionTable(db);
 
     await db.execute('''
       CREATE TABLE offline_map_packages (
@@ -324,6 +359,191 @@ class SqliteLocalStore implements LocalStore {
         updated_at TEXT NOT NULL
       );
     ''');
+  }
+
+  Future<void> _createPendingLocalFileDeletionTable(DatabaseExecutor db) async {
+    await createPendingLocalPhotoDeletionSchema(db.execute);
+  }
+
+  Future<void> _migrateDraftPhotosToOwnedStorage(Database db) async {
+    final root = _offlinePhotoRootPath;
+    if (root == null) {
+      return;
+    }
+    final rows = await db.query(
+      'draft_photos',
+      columns: const <String>[
+        'id',
+        'owner_user_id',
+        'project_id',
+        'draft_id',
+        'file_path',
+      ],
+    );
+    final rowsByDraft =
+        <
+          ({String ownerUserId, String projectId, String draftId}),
+          List<Map<String, Object?>>
+        >{};
+    for (final row in rows) {
+      final ownerUserId = row['owner_user_id'];
+      final projectId = row['project_id'];
+      final draftId = row['draft_id'];
+      final filePath = row['file_path'];
+      if (ownerUserId is! String ||
+          projectId is! String ||
+          draftId is! String ||
+          filePath is! String ||
+          ownerUserId.trim().isEmpty ||
+          projectId.trim().isEmpty ||
+          draftId.trim().isEmpty ||
+          filePath.trim().isEmpty) {
+        continue;
+      }
+      rowsByDraft
+          .putIfAbsent((
+            ownerUserId: ownerUserId,
+            projectId: projectId,
+            draftId: draftId,
+          ), () => <Map<String, Object?>>[])
+          .add(row);
+    }
+
+    for (final draftEntry in rowsByDraft.entries) {
+      final scope = draftEntry.key;
+      final draftRows = draftEntry.value;
+      final replacements = <String, String>{};
+      final copiedPaths = <String>[];
+      var canMigrateDraft = true;
+      for (final row in draftRows) {
+        final oldPath = row['file_path']! as String;
+        if (areOfflineDraftPhotoPathsScoped(
+          rootDirectory: root,
+          ownerUserId: scope.ownerUserId,
+          projectId: scope.projectId,
+          draftId: scope.draftId,
+          filePaths: <String>[oldPath],
+        )) {
+          continue;
+        }
+        final canonicalOldPath = canonicalLocalPhotoPath(oldPath);
+        if (replacements.containsKey(canonicalOldPath)) {
+          continue;
+        }
+        try {
+          final copiedPath = await _copyDraftPhotoIntoOwnedStorage(
+            ownerUserId: scope.ownerUserId,
+            projectId: scope.projectId,
+            draftId: scope.draftId,
+            sourceFilePath: oldPath,
+            suggestedFileName: oldPath,
+          );
+          replacements[canonicalOldPath] = copiedPath;
+          copiedPaths.add(copiedPath);
+        } catch (_) {
+          canMigrateDraft = false;
+          break;
+        }
+      }
+      if (!canMigrateDraft || replacements.isEmpty) {
+        if (!canMigrateDraft) {
+          await releaseRetainedDraftPhotos(copiedPaths);
+        }
+        continue;
+      }
+
+      final queueUpdates = <({String id, String payloadJson})>[];
+      final queueRows = await db.query(
+        'sync_queue',
+        columns: const <String>['id', 'payload_json'],
+        where:
+            'owner_user_id = ? AND project_id = ? AND entity_type = ? AND entity_id = ?',
+        whereArgs: <Object?>[
+          scope.ownerUserId,
+          scope.projectId,
+          'draft_feature',
+          scope.draftId,
+        ],
+      );
+      for (final queueRow in queueRows) {
+        final queueId = queueRow['id'];
+        final rawPayloadJson = queueRow['payload_json'];
+        if (queueId is! String || rawPayloadJson is! String) {
+          continue;
+        }
+        try {
+          final payload = jsonDecode(rawPayloadJson) as Map<String, dynamic>;
+          final rawPhotoPaths = payload['photo_paths'];
+          if (rawPhotoPaths is! List ||
+              !rawPhotoPaths.every((path) => path is String)) {
+            continue;
+          }
+          var changed = false;
+          final migratedPaths = rawPhotoPaths
+              .map((rawPath) {
+                final path = rawPath as String;
+                final replacement = replacements[canonicalLocalPhotoPath(path)];
+                if (replacement != null) {
+                  changed = true;
+                  return replacement;
+                }
+                return path;
+              })
+              .toList(growable: false);
+          if (changed) {
+            payload['photo_paths'] = migratedPaths;
+            queueUpdates.add((id: queueId, payloadJson: jsonEncode(payload)));
+          }
+        } catch (_) {
+          // Leave malformed legacy queue data untouched for server-side or
+          // explicit local integrity handling; never guess its association.
+        }
+      }
+
+      await db.execute('SAVEPOINT migrate_offline_draft_photos');
+      try {
+        for (final row in draftRows) {
+          final oldPath = row['file_path']! as String;
+          final replacement = replacements[canonicalLocalPhotoPath(oldPath)];
+          if (replacement == null) {
+            continue;
+          }
+          await db.update(
+            'draft_photos',
+            <String, Object?>{'file_path': replacement},
+            where:
+                'id = ? AND owner_user_id = ? AND project_id = ? AND draft_id = ? AND file_path = ?',
+            whereArgs: <Object?>[
+              row['id'],
+              scope.ownerUserId,
+              scope.projectId,
+              scope.draftId,
+              oldPath,
+            ],
+          );
+        }
+        for (final queueUpdate in queueUpdates) {
+          await db.update(
+            'sync_queue',
+            <String, Object?>{'payload_json': queueUpdate.payloadJson},
+            where:
+                'id = ? AND owner_user_id = ? AND project_id = ? AND entity_type = ? AND entity_id = ?',
+            whereArgs: <Object?>[
+              queueUpdate.id,
+              scope.ownerUserId,
+              scope.projectId,
+              'draft_feature',
+              scope.draftId,
+            ],
+          );
+        }
+        await db.execute('RELEASE SAVEPOINT migrate_offline_draft_photos');
+      } catch (_) {
+        await db.execute('ROLLBACK TO SAVEPOINT migrate_offline_draft_photos');
+        await db.execute('RELEASE SAVEPOINT migrate_offline_draft_photos');
+        await releaseRetainedDraftPhotos(copiedPaths);
+      }
+    }
   }
 
   Future<void> _createProjectScopedIndexes(DatabaseExecutor db) async {
@@ -463,24 +683,69 @@ class SqliteLocalStore implements LocalStore {
     final db = await _database;
 
     await db.transaction((txn) async {
+      final previousQueueRows = enqueueSync
+          ? await txn.query(
+              'sync_queue',
+              columns: const <String>['payload_json'],
+              where:
+                  'owner_user_id = ? AND project_id = ? AND entity_type = ? AND entity_id = ?',
+              whereArgs: <Object?>[
+                draft.ownerUserId,
+                draft.projectId,
+                'draft_feature',
+                draft.id,
+              ],
+              limit: 1,
+            )
+          : const <Map<String, Object?>>[];
+      var hasPhotoSyncState = false;
+      final syncedPhotoPaths = <String>{};
+      if (previousQueueRows.length == 1) {
+        final rawPayload = previousQueueRows.single['payload_json'];
+        try {
+          final previousPayload =
+              jsonDecode(rawPayload as String) as Map<String, dynamic>;
+          hasPhotoSyncState = previousPayload.containsKey('synced_photo_paths');
+          final rawSyncedPhotoPaths = previousPayload['synced_photo_paths'];
+          if (rawSyncedPhotoPaths is List) {
+            syncedPhotoPaths.addAll(rawSyncedPhotoPaths.whereType<String>());
+          }
+        } catch (_) {
+          hasPhotoSyncState = false;
+          syncedPhotoPaths.clear();
+        }
+      }
+      final currentPhotoPaths = draft.photos
+          .map((photo) => photo.filePath)
+          .toSet();
+      final removedSynchronizedPhoto =
+          hasPhotoSyncState && !currentPhotoPaths.containsAll(syncedPhotoPaths);
+      final effectiveDraft = removedSynchronizedPhoto
+          ? draft.copyWith(status: 'rejected')
+          : draft;
+
       await txn.insert(
         'draft_features',
-        draft.toRowMap(),
+        effectiveDraft.toRowMap(),
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
 
       await txn.delete(
         'draft_photos',
         where: 'owner_user_id = ? AND project_id = ? AND draft_id = ?',
-        whereArgs: [draft.ownerUserId, draft.projectId, draft.id],
+        whereArgs: [
+          effectiveDraft.ownerUserId,
+          effectiveDraft.projectId,
+          effectiveDraft.id,
+        ],
       );
 
-      for (final photo in draft.photos) {
+      for (final photo in effectiveDraft.photos) {
         await txn.insert('draft_photos', {
           'id': photo.id,
-          'owner_user_id': draft.ownerUserId,
-          'project_id': draft.projectId,
-          'draft_id': draft.id,
+          'owner_user_id': effectiveDraft.ownerUserId,
+          'project_id': effectiveDraft.projectId,
+          'draft_id': effectiveDraft.id,
           'file_path': photo.filePath,
           'created_at': photo.createdAt.toIso8601String(),
         });
@@ -494,41 +759,58 @@ class SqliteLocalStore implements LocalStore {
           where:
               'owner_user_id = ? AND project_id = ? AND entity_type = ? AND entity_id = ?',
           whereArgs: [
-            draft.ownerUserId,
-            draft.projectId,
+            effectiveDraft.ownerUserId,
+            effectiveDraft.projectId,
             'draft_feature',
-            draft.id,
+            effectiveDraft.id,
           ],
         );
 
         final queueItem = SyncQueueItem(
           id: _uuid.v4(),
           entityType: 'draft_feature',
-          entityId: draft.id,
-          operation: draft.remoteVersion == null
+          entityId: effectiveDraft.id,
+          operation: effectiveDraft.remoteVersion == null
               ? SyncOperationType.create
               : SyncOperationType.update,
           payload: {
-            'draft_id': draft.id,
-            'owner_user_id': draft.ownerUserId,
-            'project_id': draft.projectId,
-            'geometry_type': draft.geometryType,
-            'geometry': jsonDecode(draft.geometryJson) as Map<String, dynamic>,
+            'draft_id': effectiveDraft.id,
+            'owner_user_id': effectiveDraft.ownerUserId,
+            'project_id': effectiveDraft.projectId,
+            'geometry_type': effectiveDraft.geometryType,
+            'geometry':
+                jsonDecode(effectiveDraft.geometryJson) as Map<String, dynamic>,
             'attributes':
-                jsonDecode(draft.attributesJson) as Map<String, dynamic>,
-            'photo_paths': draft.remoteVersion == null
-                ? draft.photos.map((p) => p.filePath).toList(growable: false)
+                jsonDecode(effectiveDraft.attributesJson)
+                    as Map<String, dynamic>,
+            'photo_paths': effectiveDraft.remoteVersion == null
+                ? effectiveDraft.photos
+                      .map((p) => p.filePath)
+                      .toList(growable: false)
+                : hasPhotoSyncState
+                ? effectiveDraft.photos
+                      .map((photo) => photo.filePath)
+                      .where((path) => !syncedPhotoPaths.contains(path))
+                      .toList(growable: false)
                 : const <String>[],
-            'status': draft.status,
-            'local_version': draft.localVersion,
+            if (hasPhotoSyncState)
+              'synced_photo_paths': syncedPhotoPaths.toList(growable: false),
+            'status': effectiveDraft.status,
+            'local_version': effectiveDraft.localVersion,
+            'remote_version': effectiveDraft.remoteVersion,
           },
-          ownerUserId: draft.ownerUserId,
-          projectId: draft.projectId,
-          localVersion: draft.localVersion,
+          ownerUserId: effectiveDraft.ownerUserId,
+          projectId: effectiveDraft.projectId,
+          localVersion: effectiveDraft.localVersion,
           idempotencyKey: _uuid.v4(),
           attemptCount: 0,
-          status: SyncQueueStatus.pending,
-          nextRetryAt: now,
+          status: removedSynchronizedPhoto
+              ? SyncQueueStatus.conflict
+              : SyncQueueStatus.pending,
+          nextRetryAt: removedSynchronizedPhoto ? null : now,
+          lastError: removedSynchronizedPhoto
+              ? 'A photo already synchronized to the server was removed offline. Review this draft online.'
+              : null,
           createdAt: now,
           updatedAt: now,
         );
@@ -695,24 +977,103 @@ class SqliteLocalStore implements LocalStore {
     required String draftId,
   }) async {
     final db = await _database;
-    await db.transaction((txn) async {
-      await txn.delete(
-        'sync_queue',
-        where:
-            'owner_user_id = ? AND project_id = ? AND entity_type = ? AND entity_id = ?',
-        whereArgs: [ownerUserId, projectId, 'draft_feature', draftId],
-      );
-      await txn.delete(
-        'draft_photos',
-        where: 'owner_user_id = ? AND project_id = ? AND draft_id = ?',
-        whereArgs: [ownerUserId, projectId, draftId],
-      );
-      await txn.delete(
-        'draft_features',
-        where: 'owner_user_id = ? AND project_id = ? AND id = ?',
-        whereArgs: [ownerUserId, projectId, draftId],
-      );
-    });
+    await _removeProjectDraftBundle(
+      db,
+      ownerUserId: ownerUserId,
+      projectId: projectId,
+      draftId: draftId,
+    );
+  }
+
+  @override
+  Future<String> retainDraftPhoto({
+    required String ownerUserId,
+    required String projectId,
+    required String draftId,
+    required String photoId,
+    required String sourceFilePath,
+    String? suggestedFileName,
+  }) async {
+    await _database;
+    return _copyDraftPhotoIntoOwnedStorage(
+      ownerUserId: ownerUserId,
+      projectId: projectId,
+      draftId: draftId,
+      sourceFilePath: sourceFilePath,
+      suggestedFileName: suggestedFileName,
+    );
+  }
+
+  Future<String> _copyDraftPhotoIntoOwnedStorage({
+    required String ownerUserId,
+    required String projectId,
+    required String draftId,
+    required String sourceFilePath,
+    String? suggestedFileName,
+  }) async {
+    final root = _offlinePhotoRootPath;
+    if (root == null) {
+      throw StateError('Offline photo storage is unavailable.');
+    }
+    final source = File(sourceFilePath);
+    if (!await source.exists()) {
+      throw StateError('The selected photo is no longer available.');
+    }
+    final directoryPath = offlineDraftPhotoDirectoryPath(
+      rootDirectory: root,
+      ownerUserId: ownerUserId,
+      projectId: projectId,
+      draftId: draftId,
+    );
+    if (!isPathWithinDirectory(directoryPath, root)) {
+      throw StateError('Offline photo storage scope is invalid.');
+    }
+    final directory = Directory(directoryPath);
+    await directory.create(recursive: true);
+    final extension = _safePhotoExtension(
+      suggestedFileName?.trim().isNotEmpty == true
+          ? suggestedFileName!
+          : sourceFilePath,
+    );
+    final destination = p.join(directory.path, '${_uuid.v4()}$extension');
+    if (!isPathWithinDirectory(destination, directory.path) ||
+        !isPathWithinDirectory(destination, root)) {
+      throw StateError('Offline photo destination is invalid.');
+    }
+    await source.copy(destination);
+    return destination;
+  }
+
+  @override
+  Future<void> releaseRetainedDraftPhotos(Iterable<String> filePaths) async {
+    final root = _offlinePhotoRootPath;
+    if (root == null) {
+      return;
+    }
+    for (final filePath in filePaths.toSet()) {
+      await tryDeleteLocalPhotoFileWithinDirectory(filePath, root);
+    }
+  }
+
+  @override
+  Future<bool> areRetainedDraftPhotoPathsScoped({
+    required String ownerUserId,
+    required String projectId,
+    required String draftId,
+    required Iterable<String> filePaths,
+  }) async {
+    await _database;
+    final root = _offlinePhotoRootPath;
+    if (root == null) {
+      return false;
+    }
+    return areOfflineDraftPhotoPathsScoped(
+      rootDirectory: root,
+      ownerUserId: ownerUserId,
+      projectId: projectId,
+      draftId: draftId,
+      filePaths: filePaths,
+    );
   }
 
   @override
@@ -1061,6 +1422,24 @@ class SqliteLocalStore implements LocalStore {
   }
 
   @override
+  Future<List<SyncQueueItem>> getSyncItemsForOwner(
+    String ownerUserId, {
+    int limit = 100,
+  }) async {
+    final db = await _database;
+    final rows = await db.query(
+      'sync_queue',
+      where: 'owner_user_id = ?',
+      whereArgs: <Object?>[ownerUserId],
+      orderBy: 'created_at ASC, id ASC',
+      limit: limit,
+    );
+    return rows
+        .map((row) => SyncQueueItem.fromRowMap(Map<String, dynamic>.from(row)))
+        .toList(growable: false);
+  }
+
+  @override
   Future<void> enqueueSyncItem(SyncQueueItem item) async {
     final db = await _database;
     await db.insert('sync_queue', item.toRowMap());
@@ -1087,19 +1466,502 @@ class SqliteLocalStore implements LocalStore {
     String? draftStatus,
   }) async {
     final db = await _database;
+    await _removeProjectDraftBundle(
+      db,
+      ownerUserId: item.ownerUserId,
+      projectId: item.projectId,
+      draftId: item.entityId,
+      guardedItem: item,
+      successfulRemoteVersion: remoteVersion,
+    );
+  }
+
+  @override
+  Future<void> discardRejectedSyncItem(
+    SyncQueueItem item, {
+    bool includeSupersedingRevision = false,
+  }) async {
+    final db = await _database;
+    await _removeProjectDraftBundle(
+      db,
+      ownerUserId: item.ownerUserId,
+      projectId: item.projectId,
+      draftId: item.entityId,
+      guardedItem: includeSupersedingRevision ? null : item,
+    );
+  }
+
+  @override
+  Future<int> discardRejectedSyncItemsForOwner(String ownerUserId) async {
+    final db = await _database;
+    final discardedCount = await db.transaction((txn) async {
+      final queueRows = await txn.query(
+        'sync_queue',
+        columns: const <String>['id'],
+        where: 'owner_user_id = ?',
+        whereArgs: <Object?>[ownerUserId],
+      );
+      final photoRows = await txn.query(
+        'draft_photos',
+        columns: const <String>['project_id', 'draft_id', 'file_path'],
+        where: 'owner_user_id = ?',
+        whereArgs: <Object?>[ownerUserId],
+      );
+      final createdAt = DateTime.now().toIso8601String();
+      for (final photoRow in photoRows) {
+        final projectId = photoRow['project_id'];
+        final draftId = photoRow['draft_id'];
+        final filePath = photoRow['file_path'];
+        if (projectId is! String ||
+            draftId is! String ||
+            filePath is! String ||
+            filePath.trim().isEmpty) {
+          continue;
+        }
+        await txn.insert(
+          'pending_local_file_deletions',
+          <String, Object?>{
+            'id': _uuid.v4(),
+            'owner_user_id': ownerUserId,
+            'project_id': projectId,
+            'draft_id': draftId,
+            'file_path': filePath,
+            'attempt_count': 0,
+            'created_at': createdAt,
+            'last_attempt_at': null,
+          },
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      }
+      await txn.delete(
+        'sync_queue',
+        where: 'owner_user_id = ?',
+        whereArgs: <Object?>[ownerUserId],
+      );
+      await txn.delete(
+        'draft_photos',
+        where: 'owner_user_id = ?',
+        whereArgs: <Object?>[ownerUserId],
+      );
+      await txn.delete(
+        'draft_features',
+        where: 'owner_user_id = ?',
+        whereArgs: <Object?>[ownerUserId],
+      );
+      return queueRows.length;
+    });
+    await _drainPendingPhotoFileDeletions(db, ownerUserId: ownerUserId);
+    return discardedCount;
+  }
+
+  Future<void> _removeProjectDraftBundle(
+    Database db, {
+    required String ownerUserId,
+    required String projectId,
+    required String draftId,
+    SyncQueueItem? guardedItem,
+    int? successfulRemoteVersion,
+  }) async {
     await db.transaction((txn) async {
-      await txn.delete('sync_queue', where: 'id = ?', whereArgs: [item.id]);
+      if (guardedItem != null) {
+        final matchingQueueRows = await txn.query(
+          'sync_queue',
+          columns: const <String>['id'],
+          where:
+              'id = ? AND owner_user_id = ? AND project_id = ? AND entity_type = ? AND entity_id = ? AND operation = ? AND local_version = ? AND idempotency_key = ?',
+          whereArgs: <Object?>[
+            guardedItem.id,
+            ownerUserId,
+            projectId,
+            guardedItem.entityType,
+            draftId,
+            guardedItem.operation.name,
+            guardedItem.localVersion,
+            guardedItem.idempotencyKey,
+          ],
+          limit: 1,
+        );
+        if (matchingQueueRows.isEmpty) {
+          if (successfulRemoteVersion != null &&
+              await _tryRebaseSuccessfulRevision(
+                txn,
+                item: guardedItem,
+                remoteVersion: successfulRemoteVersion,
+              )) {
+            return;
+          }
+          return;
+        }
+        final matchingDraftRows = await txn.query(
+          'draft_features',
+          columns: const <String>['local_version', 'remote_version'],
+          where: 'owner_user_id = ? AND project_id = ? AND id = ?',
+          whereArgs: <Object?>[ownerUserId, projectId, draftId],
+          limit: 1,
+        );
+        if (matchingDraftRows.isNotEmpty &&
+            matchingDraftRows.first['local_version'] !=
+                guardedItem.localVersion) {
+          if (successfulRemoteVersion != null &&
+              await _tryRebaseSuccessfulRevision(
+                txn,
+                item: guardedItem,
+                remoteVersion: successfulRemoteVersion,
+              )) {
+            return;
+          }
+          return;
+        }
+      }
+
+      final photoRows = await txn.query(
+        'draft_photos',
+        columns: const <String>['file_path'],
+        where: 'owner_user_id = ? AND project_id = ? AND draft_id = ?',
+        whereArgs: <Object?>[ownerUserId, projectId, draftId],
+      );
+      final createdAt = DateTime.now().toIso8601String();
+      for (final photoRow in photoRows) {
+        final filePath = (photoRow['file_path'] as String?)?.trim() ?? '';
+        if (filePath.isEmpty) {
+          continue;
+        }
+        await txn.insert(
+          'pending_local_file_deletions',
+          <String, Object?>{
+            'id': _uuid.v4(),
+            'owner_user_id': ownerUserId,
+            'project_id': projectId,
+            'draft_id': draftId,
+            'file_path': filePath,
+            'attempt_count': 0,
+            'created_at': createdAt,
+            'last_attempt_at': null,
+          },
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      }
+
+      await txn.delete(
+        'sync_queue',
+        where: guardedItem == null
+            ? 'owner_user_id = ? AND project_id = ? AND entity_type = ? AND entity_id = ?'
+            : 'id = ? AND owner_user_id = ? AND project_id = ? AND entity_type = ? AND entity_id = ? AND operation = ? AND local_version = ? AND idempotency_key = ?',
+        whereArgs: guardedItem == null
+            ? <Object?>[ownerUserId, projectId, 'draft_feature', draftId]
+            : <Object?>[
+                guardedItem.id,
+                ownerUserId,
+                projectId,
+                guardedItem.entityType,
+                draftId,
+                guardedItem.operation.name,
+                guardedItem.localVersion,
+                guardedItem.idempotencyKey,
+              ],
+      );
       await txn.delete(
         'draft_photos',
         where: 'owner_user_id = ? AND project_id = ? AND draft_id = ?',
-        whereArgs: [item.ownerUserId, item.projectId, item.entityId],
+        whereArgs: <Object?>[ownerUserId, projectId, draftId],
       );
       await txn.delete(
         'draft_features',
         where: 'owner_user_id = ? AND project_id = ? AND id = ?',
-        whereArgs: [item.ownerUserId, item.projectId, item.entityId],
+        whereArgs: <Object?>[ownerUserId, projectId, draftId],
       );
     });
+    await _drainPendingPhotoFileDeletions(
+      db,
+      ownerUserId: ownerUserId,
+      projectId: projectId,
+      draftId: draftId,
+    );
+  }
+
+  Future<bool> _tryRebaseSuccessfulRevision(
+    DatabaseExecutor txn, {
+    required SyncQueueItem item,
+    required int remoteVersion,
+  }) async {
+    if (item.operation != SyncOperationType.create &&
+        item.operation != SyncOperationType.update) {
+      return false;
+    }
+
+    final draftRows = await txn.query(
+      'draft_features',
+      columns: const <String>['local_version', 'remote_version'],
+      where: 'owner_user_id = ? AND project_id = ? AND id = ?',
+      whereArgs: <Object?>[item.ownerUserId, item.projectId, item.entityId],
+      limit: 1,
+    );
+    if (draftRows.isEmpty) {
+      return false;
+    }
+    final currentLocalVersion = draftRows.first['local_version'] as int?;
+    if (currentLocalVersion == null ||
+        currentLocalVersion <= item.localVersion) {
+      return false;
+    }
+    final currentRemoteVersion = draftRows.first['remote_version'] as int?;
+    final expectedRemoteVersion = item.payload['remote_version'];
+    if ((item.operation == SyncOperationType.create &&
+            currentRemoteVersion != null) ||
+        (item.operation == SyncOperationType.update &&
+            (expectedRemoteVersion is! int ||
+                currentRemoteVersion != expectedRemoteVersion))) {
+      return false;
+    }
+
+    final queueRows = await txn.query(
+      'sync_queue',
+      where:
+          'owner_user_id = ? AND project_id = ? AND entity_type = ? AND entity_id = ? AND operation = ? AND local_version = ?',
+      whereArgs: <Object?>[
+        item.ownerUserId,
+        item.projectId,
+        item.entityType,
+        item.entityId,
+        item.operation.name,
+        currentLocalVersion,
+      ],
+      limit: 2,
+    );
+    if (queueRows.length != 1) {
+      return false;
+    }
+    final replacement = SyncQueueItem.fromRowMap(
+      Map<String, dynamic>.from(queueRows.single),
+    );
+    if (replacement.payload['draft_id'] != item.entityId ||
+        replacement.payload['owner_user_id'] != item.ownerUserId ||
+        replacement.payload['project_id'] != item.projectId ||
+        replacement.payload['local_version'] != currentLocalVersion) {
+      return false;
+    }
+
+    final acknowledgedPaths = <String>{};
+    for (final key in const <String>['synced_photo_paths', 'photo_paths']) {
+      final rawPaths = item.payload[key];
+      if (rawPaths is List) {
+        acknowledgedPaths.addAll(rawPaths.whereType<String>());
+      }
+    }
+    final photoRows = await txn.query(
+      'draft_photos',
+      columns: const <String>['file_path'],
+      where: 'owner_user_id = ? AND project_id = ? AND draft_id = ?',
+      whereArgs: <Object?>[item.ownerUserId, item.projectId, item.entityId],
+      orderBy: 'id ASC',
+    );
+    final currentPhotoPaths = photoRows
+        .map((row) => row['file_path'] as String?)
+        .whereType<String>()
+        .toList(growable: false);
+    final removedSynchronizedPhoto = !currentPhotoPaths.toSet().containsAll(
+      acknowledgedPaths,
+    );
+    final pendingPhotoPaths = currentPhotoPaths
+        .where((path) => !acknowledgedPaths.contains(path))
+        .toList(growable: false);
+    final rebasedPayload = Map<String, dynamic>.from(replacement.payload)
+      ..['photo_paths'] = pendingPhotoPaths
+      ..['synced_photo_paths'] = acknowledgedPaths.toList(growable: false)
+      ..['remote_version'] = remoteVersion;
+    if (removedSynchronizedPhoto) {
+      rebasedPayload['status'] = 'rejected';
+    }
+    final now = DateTime.now().toIso8601String();
+
+    final updatedDrafts = await txn.update(
+      'draft_features',
+      <String, Object?>{
+        'remote_version': remoteVersion,
+        if (removedSynchronizedPhoto) 'status': 'rejected',
+      },
+      where: item.operation == SyncOperationType.create
+          ? 'owner_user_id = ? AND project_id = ? AND id = ? AND local_version = ? AND remote_version IS NULL'
+          : 'owner_user_id = ? AND project_id = ? AND id = ? AND local_version = ? AND remote_version = ?',
+      whereArgs: <Object?>[
+        item.ownerUserId,
+        item.projectId,
+        item.entityId,
+        currentLocalVersion,
+        if (item.operation == SyncOperationType.update) expectedRemoteVersion,
+      ],
+    );
+    final updatedQueue = await txn.update(
+      'sync_queue',
+      <String, Object?>{
+        'operation': SyncOperationType.update.name,
+        'payload_json': jsonEncode(rebasedPayload),
+        'attempt_count': 0,
+        'status': removedSynchronizedPhoto
+            ? SyncQueueStatus.conflict.name
+            : SyncQueueStatus.pending.name,
+        'next_retry_at': removedSynchronizedPhoto ? null : now,
+        'last_error': removedSynchronizedPhoto
+            ? 'A photo accepted by the server was removed by a newer offline edit. Review this draft online.'
+            : null,
+        'updated_at': now,
+      },
+      where:
+          'id = ? AND owner_user_id = ? AND project_id = ? AND entity_type = ? AND entity_id = ? AND operation = ? AND local_version = ? AND idempotency_key = ?',
+      whereArgs: <Object?>[
+        replacement.id,
+        replacement.ownerUserId,
+        replacement.projectId,
+        replacement.entityType,
+        replacement.entityId,
+        item.operation.name,
+        replacement.localVersion,
+        replacement.idempotencyKey,
+      ],
+    );
+    if (updatedDrafts != 1 || updatedQueue != 1) {
+      throw StateError('Could not atomically rebase a synchronized draft.');
+    }
+    return true;
+  }
+
+  Future<void> _drainPendingPhotoFileDeletions(
+    DatabaseExecutor db, {
+    String? ownerUserId,
+    String? projectId,
+    String? draftId,
+  }) async {
+    final hasExactScope =
+        ownerUserId != null && projectId != null && draftId != null;
+    final hasOwnerScope =
+        ownerUserId != null && projectId == null && draftId == null;
+    List<Map<String, Object?>> rows;
+    try {
+      rows = await db.query(
+        'pending_local_file_deletions',
+        where: hasExactScope
+            ? 'owner_user_id = ? AND project_id = ? AND draft_id = ?'
+            : hasOwnerScope
+            ? 'owner_user_id = ?'
+            : null,
+        whereArgs: hasExactScope
+            ? <Object?>[ownerUserId, projectId, draftId]
+            : hasOwnerScope
+            ? <Object?>[ownerUserId]
+            : null,
+        orderBy: 'created_at ASC',
+      );
+    } catch (_) {
+      return;
+    }
+
+    final deletions = <PendingLocalPhotoDeletion>[];
+    for (final row in rows) {
+      final id = row['id'];
+      final rowOwnerUserId = row['owner_user_id'];
+      final rowProjectId = row['project_id'];
+      final rowDraftId = row['draft_id'];
+      final filePath = row['file_path'];
+      final attemptCount = row['attempt_count'];
+      if (id is! String ||
+          rowOwnerUserId is! String ||
+          rowProjectId is! String ||
+          rowDraftId is! String ||
+          filePath is! String ||
+          attemptCount is! int) {
+        continue;
+      }
+      deletions.add(
+        PendingLocalPhotoDeletion(
+          id: id,
+          ownerUserId: rowOwnerUserId,
+          projectId: rowProjectId,
+          draftId: rowDraftId,
+          filePath: filePath,
+          attemptCount: attemptCount,
+        ),
+      );
+    }
+
+    await processPendingLocalPhotoDeletions(
+      deletions,
+      decide: (deletion) async {
+        final root = _offlinePhotoRootPath;
+        if (root == null) {
+          return LocalPhotoDeletionDecision.acknowledgeWithoutDelete;
+        }
+        final expectedDirectory = offlineDraftPhotoDirectoryPath(
+          rootDirectory: root,
+          ownerUserId: deletion.ownerUserId,
+          projectId: deletion.projectId,
+          draftId: deletion.draftId,
+        );
+        if (!isPathWithinDirectory(deletion.filePath, expectedDirectory)) {
+          return LocalPhotoDeletionDecision.acknowledgeWithoutDelete;
+        }
+        final liveRows = await db.query(
+          'draft_photos',
+          columns: const <String>['file_path'],
+        );
+        final isStillReferenced = liveRows.any((row) {
+          final livePath = row['file_path'];
+          return livePath is String &&
+              localPhotoPathsEqual(livePath, deletion.filePath);
+        });
+        return isStillReferenced
+            ? LocalPhotoDeletionDecision.defer
+            : LocalPhotoDeletionDecision.delete;
+      },
+      deleteFile: (filePath) {
+        final root = _offlinePhotoRootPath;
+        return root == null
+            ? Future<bool>.value(false)
+            : tryDeleteLocalPhotoFileWithinDirectory(filePath, root);
+      },
+      acknowledge: (deletion) async {
+        await db.delete(
+          'pending_local_file_deletions',
+          where:
+              'id = ? AND owner_user_id = ? AND project_id = ? AND draft_id = ?',
+          whereArgs: <Object?>[
+            deletion.id,
+            deletion.ownerUserId,
+            deletion.projectId,
+            deletion.draftId,
+          ],
+        );
+      },
+      recordFailure: (deletion) async {
+        await db.update(
+          'pending_local_file_deletions',
+          <String, Object?>{
+            'attempt_count': deletion.attemptCount + 1,
+            'last_attempt_at': DateTime.now().toIso8601String(),
+          },
+          where:
+              'id = ? AND owner_user_id = ? AND project_id = ? AND draft_id = ?',
+          whereArgs: <Object?>[
+            deletion.id,
+            deletion.ownerUserId,
+            deletion.projectId,
+            deletion.draftId,
+          ],
+        );
+      },
+    );
+  }
+
+  String _safePhotoExtension(String fileName) {
+    final extension = p.extension(fileName).toLowerCase();
+    return const <String>{
+          '.jpg',
+          '.jpeg',
+          '.png',
+          '.heic',
+          '.heif',
+        }.contains(extension)
+        ? extension
+        : '.jpg';
   }
 
   @override
@@ -1118,8 +1980,18 @@ class SqliteLocalStore implements LocalStore {
         'last_error': error,
         'updated_at': DateTime.now().toIso8601String(),
       },
-      where: 'id = ?',
-      whereArgs: [item.id],
+      where:
+          'id = ? AND owner_user_id = ? AND project_id = ? AND entity_type = ? AND entity_id = ? AND operation = ? AND local_version = ? AND idempotency_key = ?',
+      whereArgs: <Object?>[
+        item.id,
+        item.ownerUserId,
+        item.projectId,
+        item.entityType,
+        item.entityId,
+        item.operation.name,
+        item.localVersion,
+        item.idempotencyKey,
+      ],
     );
   }
 
@@ -1127,20 +1999,51 @@ class SqliteLocalStore implements LocalStore {
   Future<void> markSyncConflict(
     SyncQueueItem item, {
     required String error,
+    int? remoteVersion,
   }) async {
     final db = await _database;
-    await db.update(
-      'sync_queue',
-      {
-        'status': SyncQueueStatus.conflict.name,
-        'attempt_count': item.attemptCount + 1,
-        'next_retry_at': null,
-        'last_error': error,
-        'updated_at': DateTime.now().toIso8601String(),
-      },
-      where: 'id = ?',
-      whereArgs: [item.id],
-    );
+    await db.transaction((txn) async {
+      final updatedQueue = await txn.update(
+        'sync_queue',
+        {
+          'status': SyncQueueStatus.conflict.name,
+          'attempt_count': item.attemptCount + 1,
+          'next_retry_at': null,
+          'last_error': error,
+          'updated_at': DateTime.now().toIso8601String(),
+        },
+        where:
+            'id = ? AND owner_user_id = ? AND project_id = ? AND entity_type = ? AND entity_id = ? AND operation = ? AND local_version = ? AND idempotency_key = ?',
+        whereArgs: <Object?>[
+          item.id,
+          item.ownerUserId,
+          item.projectId,
+          item.entityType,
+          item.entityId,
+          item.operation.name,
+          item.localVersion,
+          item.idempotencyKey,
+        ],
+      );
+      if (updatedQueue != 1) {
+        return;
+      }
+      await txn.update(
+        'draft_features',
+        <String, Object?>{
+          'status': 'rejected',
+          'remote_version': ?remoteVersion,
+        },
+        where:
+            'owner_user_id = ? AND project_id = ? AND id = ? AND local_version = ?',
+        whereArgs: <Object?>[
+          item.ownerUserId,
+          item.projectId,
+          item.entityId,
+          item.localVersion,
+        ],
+      );
+    });
   }
 
   @override
@@ -1158,8 +2061,18 @@ class SqliteLocalStore implements LocalStore {
         'last_error': error,
         'updated_at': DateTime.now().toIso8601String(),
       },
-      where: 'id = ?',
-      whereArgs: [item.id],
+      where:
+          'id = ? AND owner_user_id = ? AND project_id = ? AND entity_type = ? AND entity_id = ? AND operation = ? AND local_version = ? AND idempotency_key = ?',
+      whereArgs: <Object?>[
+        item.id,
+        item.ownerUserId,
+        item.projectId,
+        item.entityType,
+        item.entityId,
+        item.operation.name,
+        item.localVersion,
+        item.idempotencyKey,
+      ],
     );
   }
 }

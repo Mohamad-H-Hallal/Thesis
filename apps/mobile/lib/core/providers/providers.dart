@@ -1692,6 +1692,7 @@ MapFeatureSummary _mapFeatureFromLocalDraft(LocalDraftFeature draft) {
             id: photo.id,
             filePath: photo.filePath,
             takenAt: photo.createdAt,
+            isLocalFile: true,
           ),
         )
         .toList(growable: false),

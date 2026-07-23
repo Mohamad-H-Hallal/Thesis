@@ -8,6 +8,7 @@ void main() {
     expect(SyncRetryPolicy.backoffForAttempt(3).inSeconds, 40);
     expect(SyncRetryPolicy.backoffForAttempt(8).inSeconds, 300);
     expect(SyncRetryPolicy.backoffForAttempt(20).inSeconds, 300);
+    expect(SyncRetryPolicy.backoffForAttempt(1000000).inSeconds, 300);
   });
 
   test('dead-letter threshold is enforced at max attempts', () {

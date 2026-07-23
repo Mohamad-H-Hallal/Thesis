@@ -374,6 +374,8 @@ class SyncQueueItem {
   final DateTime updatedAt;
 
   SyncQueueItem copyWith({
+    SyncOperationType? operation,
+    Map<String, dynamic>? payload,
     int? attemptCount,
     SyncQueueStatus? status,
     DateTime? nextRetryAt,
@@ -384,8 +386,8 @@ class SyncQueueItem {
       id: id,
       entityType: entityType,
       entityId: entityId,
-      operation: operation,
-      payload: payload,
+      operation: operation ?? this.operation,
+      payload: payload ?? this.payload,
       ownerUserId: ownerUserId,
       projectId: projectId,
       localVersion: localVersion,

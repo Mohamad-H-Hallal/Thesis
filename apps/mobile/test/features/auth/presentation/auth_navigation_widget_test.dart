@@ -258,6 +258,7 @@ class _FakeLocalStore extends LocalStore {
   Future<void> markSyncConflict(
     SyncQueueItem item, {
     required String error,
+    int? remoteVersion,
   }) async {}
 
   @override

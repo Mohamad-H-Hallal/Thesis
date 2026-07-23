@@ -20,7 +20,8 @@ const {
   uuidValidation,
 } = require('../middleware/validation');
 const { asyncHandler } = require('../middleware/error');
-const { uploadCategoryIcon, uploadMultiple } = require('../config/upload');
+const { uploadCategoryIcon, uploadFeaturePhotos } = require('../config/upload');
+const { featurePhotoUploadRateLimit } = require('../middleware/offlineSyncRateLimit');
 import { auditAction, auditDynamicAction } from '../middleware/audit';
 
 // ============================================================================
@@ -148,7 +149,9 @@ photoRouter.post(
   '/feature/:featureId',
   uuidValidation('featureId'),
   validate,
-  uploadMultiple,
+  featurePhotoUploadRateLimit,
+  asyncHandler(photoController.preauthorizePhotoUpload),
+  uploadFeaturePhotos,
   asyncHandler(photoController.uploadPhotos),
 );
 

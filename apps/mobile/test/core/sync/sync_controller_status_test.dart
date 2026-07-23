@@ -73,6 +73,34 @@ class _CountingSyncEngine extends SyncEngine {
   }
 }
 
+class _DiscardingSyncEngine extends SyncEngine {
+  // ignore: use_super_parameters
+  _DiscardingSyncEngine({
+    required MemoryLocalStore localStore,
+    required ApiClient apiClient,
+  }) : super(
+         localStore: localStore,
+         apiClient: apiClient,
+         ownerUserId: 'contributor-1',
+       );
+
+  @override
+  Future<SyncRunSummary> syncPending({int limit = 25}) async {
+    return const SyncRunSummary(
+      processed: 1,
+      succeeded: 0,
+      failed: 0,
+      conflicts: 0,
+      discarded: 1,
+      deadLettered: 0,
+      authenticationFailures: 0,
+      discardMessages: <String>[
+        'Offline submission discarded because you no longer have access to this project.',
+      ],
+    );
+  }
+}
+
 LocalDraftFeature _draft({String id = 'draft-1'}) {
   return LocalDraftFeature(
     id: id,
@@ -210,4 +238,31 @@ void main() {
     await Future.wait(<Future<void>>[first, second]);
     expect(engine.syncCount, 1);
   });
+
+  test(
+    'definitive rejection exposes a short sanitized discard message',
+    () async {
+      final store = MemoryLocalStore();
+      await store.initialize();
+      addTearDown(() async => store.dispose());
+      final controller = SyncController(
+        syncEngine: _DiscardingSyncEngine(
+          localStore: store,
+          apiClient: ApiClient(dio: Dio()),
+        ),
+        localStore: store,
+        networkAvailability: const _AlwaysOnlineNetworkAvailability(),
+        ownerUserId: 'contributor-1',
+      );
+      addTearDown(controller.dispose);
+
+      await controller.initialize();
+      await controller.syncNow();
+
+      expect(
+        controller.state.lastError,
+        'Offline submission discarded because you no longer have access to this project.',
+      );
+    },
+  );
 }

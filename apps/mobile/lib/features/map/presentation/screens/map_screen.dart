@@ -4400,6 +4400,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       message: 'Photos will appear here after upload.',
                     )
                   : FeaturePhotoGallery(
+                      httpHeaders: _authenticatedMediaHeaders(),
                       items: feature.photos
                           .map(
                             (photo) => FeaturePhotoGalleryItem(
@@ -4409,6 +4410,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                               subtitle: photo.takenAt == null
                                   ? 'Captured photo'
                                   : 'Captured ${_formatDateTime(photo.takenAt!)}',
+                              isLocalFile: photo.isLocalFile,
                             ),
                           )
                           .toList(growable: false),
@@ -5582,6 +5584,18 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final normalized = path.replaceAll('\\', '/');
     final segments = normalized.split('/');
     return segments.isEmpty ? path : segments.last;
+  }
+
+  Map<String, String> _authenticatedMediaHeaders() {
+    final authorization = ref
+        .read(apiClientProvider)
+        .dio
+        .options
+        .headers['Authorization'];
+    if (authorization is String && authorization.trim().isNotEmpty) {
+      return <String, String>{'Authorization': authorization.trim()};
+    }
+    return const <String, String>{};
   }
 }
 

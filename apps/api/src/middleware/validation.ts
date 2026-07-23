@@ -6,6 +6,7 @@ import {
   type ValidationChain,
 } from 'express-validator';
 import type { NextFunction, Request, Response } from 'express';
+import { requestHasOfflineSyncSignal } from '../services/offlineSyncSecurity.service';
 
 const strongPasswordPattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
 const phonePattern = /^\d{8}$/;
@@ -15,6 +16,23 @@ const digitsOnly = (value: unknown): string => String(value ?? '').replace(/\D/g
 const validate = (req: Request, res: Response, next: NextFunction): Response | void => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
+    if (requestHasOfflineSyncSignal(req)) {
+      return res.status(422).json({
+        success: false,
+        requestId: req.requestId,
+        message: 'Offline submission payload was rejected.',
+        error: {
+          code: 'OFFLINE_SYNC_PAYLOAD_REJECTED',
+          disposition: 'permanent_rejection',
+          retryable: false,
+        },
+        errors: errors.array().map((error) => ({
+          type: error.type,
+          path: 'path' in error ? error.path : undefined,
+          message: error.msg,
+        })),
+      });
+    }
     return res.status(400).json({
       success: false,
       message: 'Validation failed',
@@ -196,8 +214,16 @@ const projectValidation = {
 const featureValidation = {
   create: [
     body('id').optional().isUUID().withMessage('Valid feature ID is required'),
+    body('client_offline_id')
+      .optional()
+      .isUUID()
+      .withMessage('Valid client offline ID is required'),
+    body('offline_owner_user_id')
+      .optional()
+      .isUUID()
+      .withMessage('Valid offline owner ID is required'),
     body('project_id').isUUID().withMessage('Valid project ID is required'),
-    body('geom').notEmpty().withMessage('Geometry is required'),
+    body('geom').isObject().withMessage('Geometry is required'),
     body('geom.type').isIn(['Point', 'LineString', 'Polygon']).withMessage('Invalid geometry type'),
     body('geom.coordinates').isArray().withMessage('Coordinates must be an array'),
     body('attributes').isObject().withMessage('Attributes must be a JSON object'),
@@ -216,13 +242,42 @@ const featureValidation = {
   update: [
     param('featureId').isUUID().withMessage('Valid feature ID is required'),
     body('attributes').optional().isObject(),
+    body('expected_version')
+      .optional()
+      .custom((value) => typeof value === 'number' && Number.isSafeInteger(value) && value > 0)
+      .withMessage('expected_version must be a positive integer'),
     body('geom').optional().isObject().withMessage('Geometry must be an object'),
     body('geom.type')
       .optional()
       .isIn(['Point', 'LineString', 'Polygon'])
       .withMessage('Invalid geometry type'),
     body('geom.coordinates').optional().isArray().withMessage('Coordinates must be an array'),
-    body('status').optional().isIn(['draft', 'pending_review', 'approved', 'rejected']),
+  ] as ValidationChain[],
+  batchCreate: [
+    body('features')
+      .isArray({ min: 1, max: 100 })
+      .withMessage('Features must contain between 1 and 100 items'),
+    body('features.*.id').optional().isUUID().withMessage('Valid feature ID is required'),
+    body('features.*.client_offline_id')
+      .optional()
+      .isUUID()
+      .withMessage('Valid client offline ID is required'),
+    body('features.*.offline_owner_user_id')
+      .optional()
+      .isUUID()
+      .withMessage('Valid offline owner ID is required'),
+    body('features.*.project_id').isUUID().withMessage('Valid project ID is required'),
+    body('features.*.geom').isObject().withMessage('Geometry is required'),
+    body('features.*.geom.type')
+      .isIn(['Point', 'LineString', 'Polygon'])
+      .withMessage('Invalid geometry type'),
+    body('features.*.geom.coordinates').isArray().withMessage('Coordinates must be an array'),
+    body('features.*.attributes').isObject().withMessage('Attributes must be a JSON object'),
+    body('features.*.accuracy_meters')
+      .optional({ nullable: true })
+      .isFloat({ min: 0 })
+      .withMessage('GPS accuracy must be a positive number when provided'),
+    body('features.*.collected_offline').optional().isBoolean(),
   ] as ValidationChain[],
   review: [
     param('featureId').isUUID().withMessage('Valid feature ID is required'),

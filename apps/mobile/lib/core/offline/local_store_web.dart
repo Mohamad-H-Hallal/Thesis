@@ -26,6 +26,22 @@ class MemoryLocalStore implements LocalStore {
   Future<void> initialize() async {
     final now = DateTime.now();
     _syncQueue.updateAll((_, item) {
+      if (item.status != SyncQueueStatus.deadLetter ||
+          item.ownerUserId.isEmpty ||
+          item.projectId.isEmpty ||
+          item.projectId == '__ambiguous__') {
+        return item;
+      }
+      return item.copyWith(
+        status: SyncQueueStatus.failed,
+        nextRetryAt: now,
+        updatedAt: now,
+      );
+    });
+    if (_initialized) {
+      return;
+    }
+    _syncQueue.updateAll((_, item) {
       if (item.status != SyncQueueStatus.processing) {
         return item;
       }
@@ -120,7 +136,32 @@ class MemoryLocalStore implements LocalStore {
   }) async {
     await _ensureInitialized();
     final draftKey = _draftKey(draft.ownerUserId, draft.projectId, draft.id);
-    _drafts[draftKey] = draft;
+    SyncQueueItem? previousQueue;
+    for (final queueItem in _syncQueue.values) {
+      if (queueItem.entityType == 'draft_feature' &&
+          queueItem.entityId == draft.id &&
+          queueItem.ownerUserId == draft.ownerUserId &&
+          queueItem.projectId == draft.projectId) {
+        previousQueue = queueItem;
+        break;
+      }
+    }
+    final hasPhotoSyncState =
+        previousQueue?.payload.containsKey('synced_photo_paths') ?? false;
+    final syncedPhotoPaths = hasPhotoSyncState
+        ? _payloadPhotoPaths(<String, dynamic>{
+            'photo_paths': previousQueue!.payload['synced_photo_paths'],
+          }).toSet()
+        : <String>{};
+    final currentPhotoPaths = draft.photos
+        .map((photo) => photo.filePath)
+        .toSet();
+    final removedSynchronizedPhoto =
+        hasPhotoSyncState && !currentPhotoPaths.containsAll(syncedPhotoPaths);
+    final effectiveDraft = removedSynchronizedPhoto
+        ? draft.copyWith(status: 'rejected')
+        : draft;
+    _drafts[draftKey] = effectiveDraft;
 
     if (!enqueueSync) {
       return;
@@ -129,9 +170,9 @@ class MemoryLocalStore implements LocalStore {
     _syncQueue.removeWhere(
       (_, queueItem) =>
           queueItem.entityType == 'draft_feature' &&
-          queueItem.entityId == draft.id &&
-          queueItem.ownerUserId == draft.ownerUserId &&
-          queueItem.projectId == draft.projectId,
+          queueItem.entityId == effectiveDraft.id &&
+          queueItem.ownerUserId == effectiveDraft.ownerUserId &&
+          queueItem.projectId == effectiveDraft.projectId,
     );
 
     final now = DateTime.now();
@@ -139,32 +180,47 @@ class MemoryLocalStore implements LocalStore {
     _syncQueue[queueId] = SyncQueueItem(
       id: queueId,
       entityType: 'draft_feature',
-      entityId: draft.id,
-      operation: draft.remoteVersion == null
+      entityId: effectiveDraft.id,
+      operation: effectiveDraft.remoteVersion == null
           ? SyncOperationType.create
           : SyncOperationType.update,
       payload: {
-        'draft_id': draft.id,
-        'owner_user_id': draft.ownerUserId,
-        'project_id': draft.projectId,
-        'geometry_type': draft.geometryType,
-        'geometry': jsonDecode(draft.geometryJson) as Map<String, dynamic>,
-        'attributes': jsonDecode(draft.attributesJson) as Map<String, dynamic>,
-        'photo_paths': draft.remoteVersion == null
-            ? draft.photos
+        'draft_id': effectiveDraft.id,
+        'owner_user_id': effectiveDraft.ownerUserId,
+        'project_id': effectiveDraft.projectId,
+        'geometry_type': effectiveDraft.geometryType,
+        'geometry':
+            jsonDecode(effectiveDraft.geometryJson) as Map<String, dynamic>,
+        'attributes':
+            jsonDecode(effectiveDraft.attributesJson) as Map<String, dynamic>,
+        'photo_paths': effectiveDraft.remoteVersion == null
+            ? effectiveDraft.photos
                   .map((photo) => photo.filePath)
                   .toList(growable: false)
+            : hasPhotoSyncState
+            ? effectiveDraft.photos
+                  .map((photo) => photo.filePath)
+                  .where((path) => !syncedPhotoPaths.contains(path))
+                  .toList(growable: false)
             : const <String>[],
-        'status': draft.status,
-        'local_version': draft.localVersion,
+        if (hasPhotoSyncState)
+          'synced_photo_paths': syncedPhotoPaths.toList(growable: false),
+        'status': effectiveDraft.status,
+        'local_version': effectiveDraft.localVersion,
+        'remote_version': effectiveDraft.remoteVersion,
       },
-      ownerUserId: draft.ownerUserId,
-      projectId: draft.projectId,
-      localVersion: draft.localVersion,
+      ownerUserId: effectiveDraft.ownerUserId,
+      projectId: effectiveDraft.projectId,
+      localVersion: effectiveDraft.localVersion,
       idempotencyKey: _uuid.v4(),
       attemptCount: 0,
-      status: SyncQueueStatus.pending,
-      nextRetryAt: now,
+      status: removedSynchronizedPhoto
+          ? SyncQueueStatus.conflict
+          : SyncQueueStatus.pending,
+      nextRetryAt: removedSynchronizedPhoto ? null : now,
+      lastError: removedSynchronizedPhoto
+          ? 'A photo already synchronized to the server was removed offline. Review this draft online.'
+          : null,
       createdAt: now,
       updatedAt: now,
     );
@@ -523,6 +579,24 @@ class MemoryLocalStore implements LocalStore {
   }
 
   @override
+  Future<List<SyncQueueItem>> getSyncItemsForOwner(
+    String ownerUserId, {
+    int limit = 100,
+  }) async {
+    await _ensureInitialized();
+    final items = _syncQueue.values
+        .where((item) => item.ownerUserId == ownerUserId)
+        .toList(growable: false);
+    items.sort((left, right) {
+      final createdComparison = left.createdAt.compareTo(right.createdAt);
+      return createdComparison != 0
+          ? createdComparison
+          : left.id.compareTo(right.id);
+    });
+    return items.take(limit).toList(growable: false);
+  }
+
+  @override
   Future<void> enqueueSyncItem(SyncQueueItem item) async {
     await _ensureInitialized();
     _syncQueue[item.id] = item;
@@ -547,8 +621,130 @@ class MemoryLocalStore implements LocalStore {
     String? draftStatus,
   }) async {
     await _ensureInitialized();
-    _syncQueue.remove(item.id);
+    final draftKey = _draftKey(item.ownerUserId, item.projectId, item.entityId);
+    final draft = _drafts[draftKey];
+    if (_isCurrentQueueRevision(item) &&
+        (draft == null || draft.localVersion == item.localVersion)) {
+      _syncQueue.remove(item.id);
+      _drafts.remove(draftKey);
+      return;
+    }
+
+    if (remoteVersion == null ||
+        draft == null ||
+        draft.localVersion <= item.localVersion) {
+      return;
+    }
+    if (item.operation == SyncOperationType.create &&
+        draft.remoteVersion != null) {
+      return;
+    }
+    if (item.operation == SyncOperationType.update &&
+        draft.remoteVersion != item.payload['remote_version']) {
+      return;
+    }
+
+    MapEntry<String, SyncQueueItem>? replacementEntry;
+    for (final entry in _syncQueue.entries) {
+      final replacement = entry.value;
+      if (replacement.ownerUserId == item.ownerUserId &&
+          replacement.projectId == item.projectId &&
+          replacement.entityType == item.entityType &&
+          replacement.entityId == item.entityId &&
+          replacement.operation == item.operation &&
+          replacement.localVersion == draft.localVersion) {
+        replacementEntry = entry;
+        break;
+      }
+    }
+    if (replacementEntry == null) {
+      return;
+    }
+
+    final acknowledgedPaths = <String>{
+      ..._payloadPhotoPaths(<String, dynamic>{
+        'photo_paths': item.payload['synced_photo_paths'],
+      }),
+      ..._payloadPhotoPaths(item.payload),
+    };
+    final currentPhotoPaths = draft.photos
+        .map((photo) => photo.filePath)
+        .toSet();
+    final removedSynchronizedPhoto = !currentPhotoPaths.containsAll(
+      acknowledgedPaths,
+    );
+    final pendingPhotoPaths = draft.photos
+        .map((photo) => photo.filePath)
+        .where((path) => !acknowledgedPaths.contains(path))
+        .toList(growable: false);
+    final replacement = replacementEntry.value;
+    final rebasedPayload = Map<String, dynamic>.from(replacement.payload)
+      ..['photo_paths'] = pendingPhotoPaths
+      ..['synced_photo_paths'] = acknowledgedPaths.toList(growable: false)
+      ..['remote_version'] = remoteVersion;
+    if (removedSynchronizedPhoto) {
+      rebasedPayload['status'] = 'rejected';
+    }
+    final now = DateTime.now();
+    _drafts[draftKey] = draft.copyWith(
+      remoteVersion: remoteVersion,
+      status: removedSynchronizedPhoto ? 'rejected' : draft.status,
+    );
+    _syncQueue[replacementEntry.key] = SyncQueueItem(
+      id: replacement.id,
+      entityType: replacement.entityType,
+      entityId: replacement.entityId,
+      operation: SyncOperationType.update,
+      payload: rebasedPayload,
+      ownerUserId: replacement.ownerUserId,
+      projectId: replacement.projectId,
+      localVersion: replacement.localVersion,
+      idempotencyKey: replacement.idempotencyKey,
+      attemptCount: 0,
+      status: removedSynchronizedPhoto
+          ? SyncQueueStatus.conflict
+          : SyncQueueStatus.pending,
+      nextRetryAt: removedSynchronizedPhoto ? null : now,
+      lastError: removedSynchronizedPhoto
+          ? 'A photo accepted by the server was removed by a newer offline edit. Review this draft online.'
+          : null,
+      createdAt: replacement.createdAt,
+      updatedAt: now,
+    );
+  }
+
+  @override
+  Future<void> discardRejectedSyncItem(
+    SyncQueueItem item, {
+    bool includeSupersedingRevision = false,
+  }) async {
+    await _ensureInitialized();
+    if (!includeSupersedingRevision) {
+      await markSyncSuccess(item);
+      return;
+    }
+    _syncQueue.removeWhere(
+      (_, candidate) =>
+          candidate.ownerUserId == item.ownerUserId &&
+          candidate.projectId == item.projectId &&
+          candidate.entityType == item.entityType &&
+          candidate.entityId == item.entityId,
+    );
     _drafts.remove(_draftKey(item.ownerUserId, item.projectId, item.entityId));
+  }
+
+  @override
+  Future<int> discardRejectedSyncItemsForOwner(String ownerUserId) async {
+    await _ensureInitialized();
+    final queueIds = _syncQueue.entries
+        .where((entry) => entry.value.ownerUserId == ownerUserId)
+        .map((entry) => entry.key)
+        .toList(growable: false);
+    for (final queueId in queueIds) {
+      _syncQueue.remove(queueId);
+    }
+    _drafts.removeWhere((_, draft) => draft.ownerUserId == ownerUserId);
+    return queueIds.length;
   }
 
   @override
@@ -558,6 +754,9 @@ class MemoryLocalStore implements LocalStore {
     required DateTime nextRetryAt,
   }) async {
     await _ensureInitialized();
+    if (!_isCurrentQueueRevision(item)) {
+      return;
+    }
     _syncQueue[item.id] = item.copyWith(
       attemptCount: item.attemptCount + 1,
       status: SyncQueueStatus.failed,
@@ -571,8 +770,12 @@ class MemoryLocalStore implements LocalStore {
   Future<void> markSyncConflict(
     SyncQueueItem item, {
     required String error,
+    int? remoteVersion,
   }) async {
     await _ensureInitialized();
+    if (!_isCurrentQueueRevision(item)) {
+      return;
+    }
     _syncQueue[item.id] = item.copyWith(
       attemptCount: item.attemptCount + 1,
       status: SyncQueueStatus.conflict,
@@ -580,6 +783,14 @@ class MemoryLocalStore implements LocalStore {
       lastError: error,
       updatedAt: DateTime.now(),
     );
+    final draftKey = _draftKey(item.ownerUserId, item.projectId, item.entityId);
+    final draft = _drafts[draftKey];
+    if (draft != null && draft.localVersion == item.localVersion) {
+      _drafts[draftKey] = draft.copyWith(
+        status: 'rejected',
+        remoteVersion: remoteVersion,
+      );
+    }
   }
 
   @override
@@ -588,6 +799,9 @@ class MemoryLocalStore implements LocalStore {
     required String error,
   }) async {
     await _ensureInitialized();
+    if (!_isCurrentQueueRevision(item)) {
+      return;
+    }
     _syncQueue[item.id] = item.copyWith(
       attemptCount: item.attemptCount + 1,
       status: SyncQueueStatus.deadLetter,
@@ -595,6 +809,26 @@ class MemoryLocalStore implements LocalStore {
       lastError: error,
       updatedAt: DateTime.now(),
     );
+  }
+
+  bool _isCurrentQueueRevision(SyncQueueItem expected) {
+    final current = _syncQueue[expected.id];
+    return current != null &&
+        current.ownerUserId == expected.ownerUserId &&
+        current.projectId == expected.projectId &&
+        current.entityType == expected.entityType &&
+        current.entityId == expected.entityId &&
+        current.operation == expected.operation &&
+        current.localVersion == expected.localVersion &&
+        current.idempotencyKey == expected.idempotencyKey;
+  }
+
+  List<String> _payloadPhotoPaths(Map<String, dynamic> payload) {
+    final rawPaths = payload['photo_paths'];
+    if (rawPaths is! List) {
+      return const <String>[];
+    }
+    return rawPaths.whereType<String>().toList(growable: false);
   }
 }
 
