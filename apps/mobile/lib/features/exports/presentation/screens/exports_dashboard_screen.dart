@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -1222,9 +1221,7 @@ class _ExportAreaPickerDialogState extends State<_ExportAreaPickerDialog> {
 
   void _addPointFromTap(TapUpDetails details) {
     final camera = _latestCamera ?? _mapController.camera;
-    final point = camera.pointToLatLng(
-      math.Point<double>(details.localPosition.dx, details.localPosition.dy),
-    );
+    final point = camera.screenOffsetToLatLng(details.localPosition);
     _addPoint(point);
   }
 
