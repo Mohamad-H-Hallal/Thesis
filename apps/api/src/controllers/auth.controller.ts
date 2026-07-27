@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { query, transaction } = require('../config/database');
 const { generateToken, generateRefreshToken } = require('../middleware/auth');
-const { AppError } = require('../middleware/error');
+const { AppError, permanentOfflineSyncError } = require('../middleware/error');
 const logger = require('../utils/logger');
 import {
   getUserAccessState,
@@ -604,38 +604,18 @@ const refreshToken = async (req, res) => {
   );
 
   if (result.rows.length === 0) {
-    throw new AppError('This account does not exist.', 404);
+    throw permanentOfflineSyncError(
+      'This account is no longer available.',
+      'OFFLINE_SYNC_ACCOUNT_INACTIVE',
+    );
   }
 
   const user = result.rows[0];
   if (!user.is_active) {
-    const accessState = await getUserAccessState(query, {
-      userId: user.id,
-      role: user.role,
-      isActive: user.is_active,
-    });
-    if (accessState === 'blocked') {
-      throw new AppError('Your account has been blocked.', 403);
-    }
-    if (accessState === 'rejected') {
-      throw new AppError(
-        'Your contributor request was rejected. You cannot log in with contributor access.',
-        403,
-      );
-    }
-    if (accessState === 'pending') {
-      throw new AppError(
-        'Your contributor request is still pending approval. You cannot log in yet.',
-        403,
-      );
-    }
-    if (accessState === 'inactive' && user.role === 'contributor') {
-      throw new AppError(
-        'Your contributor account is deactivated. Activate it to continue logging in.',
-        403,
-      );
-    }
-    throw new AppError('This account is inactive.', 403);
+    throw permanentOfflineSyncError(
+      'This account is no longer active.',
+      'OFFLINE_SYNC_ACCOUNT_INACTIVE',
+    );
   }
 
   const token = generateToken(user.id, user.role);

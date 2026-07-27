@@ -10,6 +10,7 @@ import {
   synchronizeProjectStatuses,
 } from '../lib/projectLifecycle';
 import { normalizeCollectionFormSchema } from '../lib/projectSchema';
+import { serializePhotoForClient } from '../lib/photoMedia';
 
 const projectAccessScopes = ['public', 'assigned', 'all'] as const;
 type ProjectAccessScope = (typeof projectAccessScopes)[number];
@@ -1046,7 +1047,9 @@ const getProjectFeatures = async (req, res) => {
     ...row,
     attributes: sanitizeManagedFeatureAttributes(row.attributes),
     geometry: JSON.parse(row.geometry),
-    photos: Array.isArray(row.photos) ? row.photos : [],
+    photos: Array.isArray(row.photos)
+      ? row.photos.map((photo: Record<string, unknown>) => serializePhotoForClient(req, photo))
+      : [],
   }));
 
   res.json({

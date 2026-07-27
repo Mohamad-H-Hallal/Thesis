@@ -1,158 +1,417 @@
-const sharp = require('sharp');
+import { randomUUID } from 'node:crypto';
+import type { NextFunction, Request, Response } from 'express';
 const path = require('path');
-const fs = require('fs').promises;
-const { query } = require('../config/database');
-const { AppError } = require('../middleware/error');
-const { thumbnailsDir } = require('../config/upload');
+const { query, transaction } = require('../config/database');
+const { AppError, permanentOfflineSyncError } = require('../middleware/error');
+const { privateFeaturePhotosDir, privateFeatureThumbnailsDir } = require('../config/upload');
 const logger = require('../utils/logger');
+const { publicVisibleStatuses, synchronizeProjectStatuses } = require('../lib/projectLifecycle');
+import {
+  attachmentRejected,
+  authorizePhotoParent,
+  hashPhotoPayload,
+  hasOfflineHeaders,
+  photoResponse,
+  preparePhoto,
+  resolveStoredPhotoPath,
+  validatePhotoFields,
+  writeNewPrivateFile,
+  type MemoryPhotoFile,
+  type PreparedPhoto,
+  type QueryExecutor,
+} from '../services/featurePhotoSecurity.service';
+import { assertCurrentOfflineAuthorization } from '../services/offlineSyncSecurity.service';
+import {
+  cancelFeatureMediaCleanupJobs,
+  makeFeatureMediaCleanupJobsAvailable,
+  processFeatureMediaCleanupJobs,
+  reserveFeatureMediaCleanupJobs,
+  withReservedFeatureMediaJobs,
+} from '../services/featureMediaCleanup.service';
 
-const hasProjectAccess = async (projectId, userId) => {
-  const accessCheck = await query(
-    `SELECT 1
-     FROM project_assignment
-     WHERE project_id = $1 AND user_id = $2 AND status = 'approved'
-     LIMIT 1`,
-    [projectId, userId]
+interface PlannedPhoto extends PreparedPhoto {
+  photoId: string;
+  photoPath: string;
+  thumbnailPath: string;
+}
+
+const assertPhotoFeatureReadable = async (
+  req: Request,
+  feature: {
+    project_id: string;
+    collected_by_user_id: string;
+    status: string;
+  },
+): Promise<void> => {
+  if (req.user?.role === 'admin') {
+    return;
+  }
+
+  const visibilityColumn =
+    req.user?.role === 'viewer' ? 'visible_to_viewers' : 'visible_to_contributors';
+  const accessResult = await query(
+    `SELECT
+       (
+         SELECT role
+         FROM project_assignment
+         WHERE project_id = $1
+           AND user_id = $2
+           AND status = 'approved'
+         LIMIT 1
+       ) AS assignment_role,
+       EXISTS (
+         SELECT 1
+         FROM project
+         WHERE id = $1
+           AND ${visibilityColumn} = TRUE
+           AND status::text = ANY($3::text[])
+       ) AS is_public_project`,
+    [feature.project_id, req.user?.id, publicVisibleStatuses],
   );
-  return accessCheck.rows.length > 0;
+  const assignmentRole = accessResult.rows[0]?.assignment_role;
+  const isPublicProject = accessResult.rows[0]?.is_public_project === true;
+  const isApproved = feature.status === 'approved';
+  const isOwner = feature.collected_by_user_id === req.user?.id;
+  const canRead =
+    (req.user?.role === 'viewer' && isApproved && (Boolean(assignmentRole) || isPublicProject)) ||
+    (req.user?.role === 'contributor' &&
+      (assignmentRole === 'admin' ||
+        (assignmentRole === 'contributor' && (isApproved || isOwner)) ||
+        (isPublicProject && isApproved)));
+
+  if (!canRead) {
+    throw new AppError('You do not have access to this feature media', 403);
+  }
+};
+
+const preauthorizePhotoUpload = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  const { featureId } = req.params;
+  const initialParent = await query('SELECT project_id FROM spatial_feature WHERE id = $1', [
+    featureId,
+  ]);
+  if (initialParent.rows[0]?.project_id && !hasOfflineHeaders(req)) {
+    await synchronizeProjectStatuses(initialParent.rows[0].project_id);
+  }
+  const parent = await authorizePhotoParent({ query }, req, featureId, false);
+  (req as Request & { offlineOriginPhoto?: boolean }).offlineOriginPhoto = parent.collectedOffline;
+  next();
 };
 
 // Upload photo(s) to feature
-const uploadPhotos = async (req, res) => {
+const uploadPhotos = async (req: Request, res: Response): Promise<void> => {
   const { featureId } = req.params;
-  const files = (req.files as any[]) || (req.file ? [req.file] : []);
+  const files = ((req.files as MemoryPhotoFile[]) || []).slice();
 
-  if (!files || files.length === 0) {
-    throw new AppError('No files uploaded', 400);
+  if (files.length === 0) {
+    throw attachmentRejected(req, 'No attachments were uploaded.', 400);
   }
 
-  // Check if feature exists and user has access
-  const featureCheck = await query(
-    `SELECT sf.id, sf.collected_by_user_id, p.max_photos
-     FROM spatial_feature sf
-     JOIN project p ON sf.project_id = p.id
-     WHERE sf.id = $1`,
-    [featureId]
-  );
-
-  if (featureCheck.rows.length === 0) {
-    throw new AppError('Feature not found', 404);
+  const initialParent = await query('SELECT project_id FROM spatial_feature WHERE id = $1', [
+    featureId,
+  ]);
+  if (initialParent.rows[0]?.project_id && !hasOfflineHeaders(req)) {
+    await synchronizeProjectStatuses(initialParent.rows[0].project_id);
   }
-
-  const feature = featureCheck.rows[0];
-
-  // Check ownership (only owner can add photos)
-  if (feature.collected_by_user_id !== req.user.id && req.user.role !== 'admin') {
-    throw new AppError('You can only add photos to your own features', 403);
-  }
-
-  // Check photo count limit
-  const currentPhotoCount = await query(
-    'SELECT COUNT(*) as count FROM photo WHERE feature_id = $1',
-    [featureId]
-  );
-
-  const currentCount = parseInt(currentPhotoCount.rows[0].count);
-  const maxPhotos = feature.max_photos;
-
-  if (currentCount + files.length > maxPhotos) {
-    throw new AppError(
-      `Maximum ${maxPhotos} photos allowed per feature. Current: ${currentCount}`,
-      400
-    );
-  }
-
-  // Process each photo
-  const uploadedPhotos: any[] = [];
-
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    const displayOrder = currentCount + i + 1;
-
-    try {
-      // Generate thumbnail
-      const thumbnailFilename = `thumb_${path.basename(file.filename)}`;
-      const thumbnailPath = path.join(thumbnailsDir, thumbnailFilename);
-
-      await sharp(file.path)
-        .resize(300, 300, {
-          fit: 'cover',
-          position: 'center',
-        })
-        .jpeg({ quality: 80 })
-        .toFile(thumbnailPath);
-
-      // Extract EXIF data
-      const metadata = await sharp(file.path).metadata();
-      const exifData = {
-        width: metadata.width,
-        height: metadata.height,
-        format: metadata.format,
-        space: metadata.space,
-        channels: metadata.channels,
-        hasAlpha: metadata.hasAlpha,
-      };
-
-      let latitude: number | null = null;
-      let longitude: number | null = null;
-      if (req.body.latitude && req.body.longitude) {
-        latitude = Number(req.body.latitude);
-        longitude = Number(req.body.longitude);
-
-        if (Number.isNaN(latitude) || Number.isNaN(longitude)) {
-          throw new AppError('Invalid latitude/longitude values', 400);
-        }
-      }
-
-      // Insert photo record
-      const result = await query(
-        `INSERT INTO photo (
-          feature_id, file_path, thumbnail_path, location,
-          accuracy_meters, exif_data, file_size_bytes, display_order
-        ) VALUES (
-          $1,
-          $2,
-          $3,
-          CASE
-            WHEN $4::double precision IS NULL OR $5::double precision IS NULL THEN NULL
-            ELSE ST_SetSRID(ST_MakePoint($5::double precision, $4::double precision), 4326)
-          END,
-          $6::double precision,
-          $7,
-          $8,
-          $9
+  const preflightParent = await authorizePhotoParent({ query }, req, featureId, false);
+  if (preflightParent.offlineBinding && preflightParent.status !== 'draft') {
+    const binding = preflightParent.offlineBinding;
+    const existingReceipt = binding
+      ? await query(
+          `SELECT 1
+           FROM offline_sync_receipt
+           WHERE user_id = $1
+             AND project_id = $2
+             AND operation = 'photo_upload'
+             AND idempotency_key_hash = $3
+           LIMIT 1`,
+          [binding.userId, binding.projectId, binding.idempotencyKeyHash],
         )
-        RETURNING id, file_path, thumbnail_path, display_order, uploaded_at`,
-        [
-          featureId,
-          file.path,
-          thumbnailPath,
-          latitude,
-          longitude,
-          req.body.accuracy_meters ? Number(req.body.accuracy_meters) : null,
-          JSON.stringify(exifData),
-          file.size,
-          displayOrder,
-        ]
+      : { rows: [] };
+    if (existingReceipt.rows.length === 0) {
+      throw permanentOfflineSyncError(
+        'Offline submission discarded because its parent feature is no longer editable.',
+        'OFFLINE_SYNC_PARENT_INACCESSIBLE',
       );
-
-      uploadedPhotos.push(result.rows[0]);
-    } catch (error: unknown) {
-      logger.error('Error processing photo:', error);
-      // Continue with other photos even if one fails
     }
+  }
+
+  const fields = validatePhotoFields(req);
+  const preparedPhotos: PreparedPhoto[] = [];
+  for (const file of files) {
+    // Avoid decoding up to ten maximum-size rasters concurrently.
+    preparedPhotos.push(await preparePhoto(req, file));
+  }
+  const plannedPhotos: PlannedPhoto[] = preparedPhotos.map((photo) => {
+    const photoId = randomUUID();
+    return {
+      ...photo,
+      photoId,
+      photoPath: path.join(privateFeaturePhotosDir, `.${photoId}.jpg`),
+      thumbnailPath: path.join(privateFeatureThumbnailsDir, `.${photoId}.jpg`),
+    };
+  });
+  const payloadHash = hashPhotoPayload(featureId, plannedPhotos, fields);
+  const reservedPaths = plannedPhotos.flatMap((photo) => [photo.photoPath, photo.thumbnailPath]);
+  const cleanupJobIds = await reserveFeatureMediaCleanupJobs(reservedPaths);
+
+  let result: { photos: any[]; replayed: boolean };
+  try {
+    result = await transaction(async (client) =>
+      withReservedFeatureMediaJobs(client, cleanupJobIds, async () => {
+        const parent = await authorizePhotoParent(client, req, featureId, true);
+        const binding = parent.offlineBinding;
+        if (binding) {
+          await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+            `${binding.userId}:${binding.projectId}:photo_upload:${binding.idempotencyKeyHash}`,
+          ]);
+          const receiptResult = await client.query(
+            `SELECT project_id, payload_hash, entity_ids
+           FROM offline_sync_receipt
+           WHERE user_id = $1
+             AND project_id = $2
+             AND operation = 'photo_upload'
+             AND idempotency_key_hash = $3
+           FOR UPDATE`,
+            [binding.userId, binding.projectId, binding.idempotencyKeyHash],
+          );
+          const receipt = receiptResult.rows[0];
+          if (receipt) {
+            if (receipt.project_id !== binding.projectId || receipt.payload_hash !== payloadHash) {
+              throw permanentOfflineSyncError(
+                'Offline attachment idempotency key does not match the original upload.',
+                'OFFLINE_SYNC_IDEMPOTENCY_MISMATCH',
+                409,
+              );
+            }
+            const entityIds = Array.isArray(receipt.entity_ids)
+              ? receipt.entity_ids.map(String)
+              : [];
+            const replayResult =
+              entityIds.length === 0
+                ? { rows: [] }
+                : await client.query(
+                    `SELECT p.id, p.file_path, p.thumbnail_path, p.display_order, p.uploaded_at
+                 FROM photo p
+                 WHERE p.id = ANY($1::uuid[])
+                   AND p.feature_id = $2
+                 ORDER BY array_position($1::uuid[], p.id)`,
+                    [entityIds, featureId],
+                  );
+            if (replayResult.rows.length !== entityIds.length) {
+              throw permanentOfflineSyncError(
+                'Offline attachment receipt does not match its parent feature.',
+                'OFFLINE_SYNC_IDEMPOTENCY_MISMATCH',
+                409,
+              );
+            }
+            await client.query(
+              `UPDATE offline_sync_receipt
+             SET outcome = 'already_synchronized'
+             WHERE user_id = $1
+               AND project_id = $2
+               AND operation = 'photo_upload'
+               AND idempotency_key_hash = $3`,
+              [binding.userId, binding.projectId, binding.idempotencyKeyHash],
+            );
+            return { photos: replayResult.rows, replayed: true };
+          }
+        }
+
+        if (binding && parent.status !== 'draft') {
+          throw permanentOfflineSyncError(
+            'Offline submission discarded because its parent feature is no longer editable.',
+            'OFFLINE_SYNC_PARENT_INACCESSIBLE',
+          );
+        }
+
+        const deduplicateOfflineOrigin = parent.collectedOffline;
+        const currentPhotos = deduplicateOfflineOrigin
+          ? await client.query(
+              `SELECT id, file_path, thumbnail_path, display_order, uploaded_at,
+                    exif_data->>'source_sha256' AS source_sha256,
+                    ST_X(location) AS longitude,
+                    ST_Y(location) AS latitude,
+                    accuracy_meters
+             FROM photo
+             WHERE feature_id = $1
+             ORDER BY display_order, uploaded_at, id
+             FOR UPDATE`,
+              [featureId],
+            )
+          : await client.query(
+              `SELECT id, file_path, thumbnail_path, display_order, uploaded_at,
+                    NULL::text AS source_sha256,
+                    NULL::double precision AS longitude,
+                    NULL::double precision AS latitude,
+                    NULL::double precision AS accuracy_meters
+             FROM photo
+             WHERE feature_id = $1
+             ORDER BY display_order, uploaded_at, id
+             FOR UPDATE`,
+              [featureId],
+            );
+        const currentCount = currentPhotos.rows.length;
+        const existingBySourceHash = new Map<string, any>();
+        if (deduplicateOfflineOrigin) {
+          for (const photo of currentPhotos.rows) {
+            if (typeof photo.source_sha256 === 'string' && photo.source_sha256.length > 0) {
+              existingBySourceHash.set(photo.source_sha256, photo);
+            }
+          }
+        }
+        const photosToInsert: PlannedPhoto[] = [];
+        const requestedSourceHashes = new Set<string>();
+        const nullableNumberMatches = (stored: unknown, requested: number | null): boolean =>
+          stored === null || stored === undefined
+            ? requested === null
+            : requested !== null && Number(stored) === requested;
+        for (const prepared of plannedPhotos) {
+          if (deduplicateOfflineOrigin && requestedSourceHashes.has(prepared.sourceHash)) {
+            continue;
+          }
+          requestedSourceHashes.add(prepared.sourceHash);
+          const reusedPhoto = existingBySourceHash.get(prepared.sourceHash);
+          if (
+            deduplicateOfflineOrigin &&
+            reusedPhoto &&
+            (!nullableNumberMatches(reusedPhoto.latitude, fields.latitude) ||
+              !nullableNumberMatches(reusedPhoto.longitude, fields.longitude) ||
+              !nullableNumberMatches(reusedPhoto.accuracy_meters, fields.accuracyMeters))
+          ) {
+            if (binding) {
+              throw permanentOfflineSyncError(
+                'Offline attachment content was already synchronized with different metadata.',
+                'OFFLINE_SYNC_IDEMPOTENCY_MISMATCH',
+                409,
+              );
+            }
+            throw new AppError(
+              'This offline-origin attachment already exists with different metadata.',
+              409,
+            );
+          }
+          if (!deduplicateOfflineOrigin || !existingBySourceHash.has(prepared.sourceHash)) {
+            photosToInsert.push(prepared);
+          }
+        }
+        if (
+          !Number.isInteger(parent.maxPhotos) ||
+          parent.maxPhotos < 0 ||
+          currentCount + photosToInsert.length > parent.maxPhotos
+        ) {
+          throw attachmentRejected(
+            req,
+            `The attachment count exceeds this project's current limit of ${parent.maxPhotos}.`,
+          );
+        }
+
+        const uploadedBySourceHash = new Map(existingBySourceHash);
+        const insertedPhotos: any[] = [];
+        for (let index = 0; index < photosToInsert.length; index += 1) {
+          const prepared = photosToInsert[index];
+          await writeNewPrivateFile(prepared.photoPath, prepared.encodedImage);
+          await writeNewPrivateFile(prepared.thumbnailPath, prepared.thumbnail);
+
+          const inserted = await client.query(
+            `INSERT INTO photo (
+             id, feature_id, file_path, thumbnail_path, location,
+             accuracy_meters, exif_data, file_size_bytes, display_order
+           ) VALUES (
+             $1,
+             $2,
+             $3,
+             $4,
+             CASE
+               WHEN $5::double precision IS NULL OR $6::double precision IS NULL THEN NULL
+               ELSE ST_SetSRID(ST_MakePoint($6::double precision, $5::double precision), 4326)
+             END,
+             $7::double precision,
+             $8::jsonb,
+             $9,
+             $10
+           )
+           RETURNING id, file_path, thumbnail_path, display_order, uploaded_at`,
+            [
+              prepared.photoId,
+              featureId,
+              prepared.photoPath,
+              prepared.thumbnailPath,
+              fields.latitude,
+              fields.longitude,
+              fields.accuracyMeters,
+              JSON.stringify(prepared.metadata),
+              prepared.encodedImage.length,
+              currentCount + index + 1,
+            ],
+          );
+          insertedPhotos.push(inserted.rows[0]);
+          uploadedBySourceHash.set(prepared.sourceHash, inserted.rows[0]);
+        }
+
+        const uploadedPhotos = deduplicateOfflineOrigin
+          ? [...requestedSourceHashes]
+              .map((sourceHash) => uploadedBySourceHash.get(sourceHash))
+              .filter(Boolean)
+          : insertedPhotos;
+
+        if (binding) {
+          await client.query(
+            `INSERT INTO offline_sync_receipt (
+             user_id, project_id, operation, idempotency_key_hash,
+             payload_hash, entity_ids, outcome
+           ) VALUES ($1, $2, 'photo_upload', $3, $4, $5::uuid[], 'accepted')`,
+            [
+              binding.userId,
+              binding.projectId,
+              binding.idempotencyKeyHash,
+              payloadHash,
+              uploadedPhotos.map((photo) => photo.id),
+            ],
+          );
+        }
+
+        return {
+          photos: uploadedPhotos,
+          replayed: deduplicateOfflineOrigin && photosToInsert.length === 0,
+        };
+      }),
+    );
+  } catch (error: unknown) {
+    try {
+      const preexistingPath = (error as { featureMediaPreexistingPath?: unknown })
+        ?.featureMediaPreexistingPath;
+      if (typeof preexistingPath === 'string') {
+        await cancelFeatureMediaCleanupJobs([preexistingPath]);
+      }
+      await makeFeatureMediaCleanupJobsAvailable({ jobIds: cleanupJobIds });
+      await processFeatureMediaCleanupJobs({ jobIds: cleanupJobIds });
+    } catch (cleanupError: unknown) {
+      logger.error('Unable to run immediate feature-photo rollback cleanup', {
+        jobCount: cleanupJobIds.length,
+        errorCode: String((cleanupError as { code?: unknown })?.code ?? 'CLEANUP_DEFERRED'),
+      });
+    }
+    throw error;
   }
 
   logger.info('Photos uploaded:', {
     featureId,
-    count: uploadedPhotos.length,
+    count: result.photos.length,
     userId: req.user.id,
+    replayed: result.replayed,
   });
 
-  res.status(201).json({
+  res.status(result.replayed ? 200 : 201).json({
     success: true,
-    message: `${uploadedPhotos.length} photo(s) uploaded successfully`,
-    data: uploadedPhotos,
+    message: result.replayed
+      ? 'Attachments were already synchronized.'
+      : `${result.photos.length} photo(s) uploaded successfully`,
+    data: result.photos.map(photoResponse),
+    idempotent_replay: result.replayed,
   });
 };
 
@@ -161,10 +420,10 @@ const getFeaturePhotos = async (req, res) => {
   const { featureId } = req.params;
 
   const featureCheck = await query(
-    `SELECT id, project_id, collected_by_user_id
+    `SELECT id, project_id, collected_by_user_id, status
      FROM spatial_feature
      WHERE id = $1`,
-    [featureId]
+    [featureId],
   );
 
   if (featureCheck.rows.length === 0) {
@@ -172,12 +431,7 @@ const getFeaturePhotos = async (req, res) => {
   }
 
   const feature = featureCheck.rows[0];
-  if (req.user.role !== 'admin') {
-    const canAccessProject = await hasProjectAccess(feature.project_id, req.user.id);
-    if (!canAccessProject && feature.collected_by_user_id !== req.user.id) {
-      throw new AppError('You do not have access to this feature', 403);
-    }
-  }
+  await assertPhotoFeatureReadable(req, feature);
 
   const result = await query(
     `SELECT id, file_path, thumbnail_path, 
@@ -187,12 +441,12 @@ const getFeaturePhotos = async (req, res) => {
      FROM photo
      WHERE feature_id = $1
      ORDER BY display_order ASC`,
-    [featureId]
+    [featureId],
   );
 
   res.json({
     success: true,
-    data: result.rows,
+    data: result.rows.map(photoResponse),
   });
 };
 
@@ -202,11 +456,12 @@ const getPhoto = async (req, res) => {
   const { thumbnail } = req.query;
 
   const result = await query(
-    `SELECT p.file_path, p.thumbnail_path, sf.project_id, sf.collected_by_user_id
+    `SELECT p.file_path, p.thumbnail_path, sf.project_id,
+            sf.collected_by_user_id, sf.status
      FROM photo p
      JOIN spatial_feature sf ON p.feature_id = sf.id
      WHERE p.id = $1`,
-    [photoId]
+    [photoId],
   );
 
   if (result.rows.length === 0) {
@@ -214,55 +469,86 @@ const getPhoto = async (req, res) => {
   }
 
   const photo = result.rows[0];
-  if (req.user.role !== 'admin') {
-    const canAccessProject = await hasProjectAccess(photo.project_id, req.user.id);
-    if (!canAccessProject && photo.collected_by_user_id !== req.user.id) {
-      throw new AppError('You do not have access to this photo', 403);
-    }
+  await assertPhotoFeatureReadable(req, photo);
+
+  const filePath = resolveStoredPhotoPath(
+    thumbnail === 'true' ? photo.thumbnail_path : photo.file_path,
+  );
+  if (!filePath) {
+    logger.error('Rejected photo path outside configured storage roots', {
+      photoId,
+      userId: req.user.id,
+    });
+    throw new AppError('Photo file is unavailable', 404);
   }
 
-  const filePath = (thumbnail === 'true' ? photo.thumbnail_path : photo.file_path) as string;
-
   // Send file
-  res.sendFile(path.resolve(filePath));
+  res.set({
+    'Cache-Control': 'private, no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Disposition': `inline; filename="${photoId}${thumbnail === 'true' ? '-thumbnail' : ''}.jpg"`,
+  });
+  res.sendFile(filePath, { dotfiles: 'allow' });
 };
 
 // Delete photo
-const deletePhoto = async (req, res) => {
+const deletePhoto = async (req: Request, res: Response): Promise<void> => {
   const { photoId } = req.params;
+  const user = req.user as Express.UserContext;
+  const photo = await transaction(async (client: QueryExecutor) => {
+    const photoCheck = await client.query(
+      `SELECT p.id,
+              p.file_path,
+              p.thumbnail_path,
+              sf.project_id,
+              sf.collected_by_user_id,
+              sf.collected_offline
+       FROM photo p
+       JOIN spatial_feature sf ON p.feature_id = sf.id
+       WHERE p.id = $1
+       FOR UPDATE OF p, sf`,
+      [photoId],
+    );
+    if (photoCheck.rows.length === 0) {
+      throw new AppError('Photo not found', 404);
+    }
 
-  // Get photo details
-  const photoCheck = await query(
-    `SELECT p.id, p.file_path, p.thumbnail_path, sf.collected_by_user_id
-     FROM photo p
-     JOIN spatial_feature sf ON p.feature_id = sf.id
-     WHERE p.id = $1`,
-    [photoId]
+    const lockedPhoto = photoCheck.rows[0];
+    if (lockedPhoto.collected_offline === true) {
+      const currentRole = await assertCurrentOfflineAuthorization({
+        executor: client,
+        userId: user.id,
+        projectId: lockedPhoto.project_id,
+        allowAdmin: true,
+      });
+      if (currentRole !== 'admin' && lockedPhoto.collected_by_user_id !== user.id) {
+        throw permanentOfflineSyncError(
+          'Offline-origin feature belongs to another account.',
+          'OFFLINE_SYNC_OWNER_MISMATCH',
+        );
+      }
+    } else if (lockedPhoto.collected_by_user_id !== user.id && user.role !== 'admin') {
+      throw new AppError('You can only delete photos from your own features', 403);
+    }
+
+    await client.query('DELETE FROM photo WHERE id = $1', [photoId]);
+    return lockedPhoto;
+  });
+
+  const storedPaths = [photo.file_path, photo.thumbnail_path].filter(
+    (filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0,
   );
-
-  if (photoCheck.rows.length === 0) {
-    throw new AppError('Photo not found', 404);
-  }
-
-  const photo = photoCheck.rows[0];
-
-  // Check ownership
-  if (photo.collected_by_user_id !== req.user.id && req.user.role !== 'admin') {
-    throw new AppError('You can only delete photos from your own features', 403);
-  }
-
-  // Delete files
   try {
-    await fs.unlink(photo.file_path);
-    await fs.unlink(photo.thumbnail_path);
-  } catch (error: unknown) {
-    logger.error('Error deleting photo files:', error);
+    await makeFeatureMediaCleanupJobsAvailable({ paths: storedPaths });
+    await processFeatureMediaCleanupJobs({ paths: storedPaths });
+  } catch (cleanupError: unknown) {
+    logger.error('Feature-photo deletion cleanup deferred', {
+      photoId,
+      errorCode: String((cleanupError as { code?: unknown })?.code ?? 'CLEANUP_DEFERRED'),
+    });
   }
 
-  // Delete database record
-  await query('DELETE FROM photo WHERE id = $1', [photoId]);
-
-  logger.info('Photo deleted:', { photoId, userId: req.user.id });
+  logger.info('Photo deleted:', { photoId, userId: user.id });
 
   res.json({
     success: true,
@@ -271,34 +557,54 @@ const deletePhoto = async (req, res) => {
 };
 
 // Update photo order
-const updatePhotoOrder = async (req, res) => {
+const updatePhotoOrder = async (req: Request, res: Response): Promise<void> => {
   const { photoId } = req.params;
   const { display_order } = req.body;
+  const user = req.user as Express.UserContext;
 
   if (typeof display_order !== 'number' || display_order < 0) {
     throw new AppError('Valid display order is required', 400);
   }
 
-  const photoCheck = await query(
-    `SELECT p.id, sf.collected_by_user_id
-     FROM photo p
-     JOIN spatial_feature sf ON p.feature_id = sf.id
-     WHERE p.id = $1`,
-    [photoId]
-  );
+  await transaction(async (client: QueryExecutor) => {
+    const photoCheck = await client.query(
+      `SELECT p.id,
+              sf.project_id,
+              sf.collected_by_user_id,
+              sf.collected_offline
+       FROM photo p
+       JOIN spatial_feature sf ON p.feature_id = sf.id
+       WHERE p.id = $1
+       FOR UPDATE OF p, sf`,
+      [photoId],
+    );
+    if (photoCheck.rows.length === 0) {
+      throw new AppError('Photo not found', 404);
+    }
 
-  if (photoCheck.rows.length === 0) {
-    throw new AppError('Photo not found', 404);
-  }
+    const lockedPhoto = photoCheck.rows[0];
+    if (lockedPhoto.collected_offline === true) {
+      const currentRole = await assertCurrentOfflineAuthorization({
+        executor: client,
+        userId: user.id,
+        projectId: lockedPhoto.project_id,
+        allowAdmin: true,
+      });
+      if (currentRole !== 'admin' && lockedPhoto.collected_by_user_id !== user.id) {
+        throw permanentOfflineSyncError(
+          'Offline-origin feature belongs to another account.',
+          'OFFLINE_SYNC_OWNER_MISMATCH',
+        );
+      }
+    } else if (user.role !== 'admin' && lockedPhoto.collected_by_user_id !== user.id) {
+      throw new AppError('You can only update your own feature photos', 403);
+    }
 
-  if (req.user.role !== 'admin' && photoCheck.rows[0].collected_by_user_id !== req.user.id) {
-    throw new AppError('You can only update your own feature photos', 403);
-  }
-
-  await query('UPDATE photo SET display_order = $1 WHERE id = $2', [
-    display_order,
-    photoId,
-  ]);
+    await client.query('UPDATE photo SET display_order = $1 WHERE id = $2', [
+      display_order,
+      photoId,
+    ]);
+  });
 
   res.json({
     success: true,
@@ -307,6 +613,7 @@ const updatePhotoOrder = async (req, res) => {
 };
 
 module.exports = {
+  preauthorizePhotoUpload,
   uploadPhotos,
   getFeaturePhotos,
   getPhoto,

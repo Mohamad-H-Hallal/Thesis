@@ -122,6 +122,7 @@ const resetDb = async () => {
 
   await pool.query(`
     TRUNCATE TABLE
+      feature_media_cleanup_job,
       notification_push_delivery,
       notification_delivery,
       push_device_registration,
@@ -147,7 +148,7 @@ const cleanupExportFiles = async () => {
   const result = await pool.query(
     `SELECT DISTINCT file_path
      FROM shapefile_export
-     WHERE file_path IS NOT NULL`
+     WHERE file_path IS NOT NULL`,
   );
 
   for (const row of result.rows) {
@@ -210,7 +211,7 @@ const createAdminUser = async ({
     `INSERT INTO "user" (email, password_hash, full_name, phone, role)
      VALUES ($1, $2, $3, $4, 'admin')
      RETURNING id, email, full_name, phone, role, created_at`,
-    [resolvedEmail, passwordHash, fullName, phone]
+    [resolvedEmail, passwordHash, fullName, phone],
   );
 
   const loginData = await loginUser({ email: resolvedEmail, password });
@@ -231,7 +232,7 @@ const approveContributorRequest = async ({ token, userId }) => {
 
   if (response.status !== 200) {
     throw new Error(
-      `approveContributorRequest failed (${response.status}): ${JSON.stringify(response.body)}`
+      `approveContributorRequest failed (${response.status}): ${JSON.stringify(response.body)}`,
     );
   }
 
@@ -245,7 +246,7 @@ const rejectContributorRequest = async ({ token, userId }) => {
 
   if (response.status !== 200) {
     throw new Error(
-      `rejectContributorRequest failed (${response.status}): ${JSON.stringify(response.body)}`
+      `rejectContributorRequest failed (${response.status}): ${JSON.stringify(response.body)}`,
     );
   }
 
@@ -261,13 +262,10 @@ const loginUser = async ({ email, password }) => {
 };
 
 const createCategory = async ({ token, name, description = 'Phase 10 category' }) => {
-  const response = await request(app)
-    .post(`${API_PREFIX}/categories`)
-    .set(authHeader(token))
-    .send({
-      name,
-      description,
-    });
+  const response = await request(app).post(`${API_PREFIX}/categories`).set(authHeader(token)).send({
+    name,
+    description,
+  });
 
   if (response.status !== 201) {
     throw new Error(`createCategory failed (${response.status}): ${JSON.stringify(response.body)}`);
@@ -336,7 +334,9 @@ const createAssignment = async ({ token, projectId, userId, role = 'contributor'
     });
 
   if (response.status !== 201) {
-    throw new Error(`createAssignment failed (${response.status}): ${JSON.stringify(response.body)}`);
+    throw new Error(
+      `createAssignment failed (${response.status}): ${JSON.stringify(response.body)}`,
+    );
   }
 
   return response.body.data;
@@ -349,7 +349,9 @@ const updateAssignmentStatus = async ({ token, assignmentId, status }) => {
     .send({ status });
 
   if (response.status !== 200) {
-    throw new Error(`updateAssignmentStatus failed (${response.status}): ${JSON.stringify(response.body)}`);
+    throw new Error(
+      `updateAssignmentStatus failed (${response.status}): ${JSON.stringify(response.body)}`,
+    );
   }
 
   return response.body.data;
@@ -368,7 +370,9 @@ const waitForExportCompletion = async ({
       .set(authHeader(token));
 
     if (response.status !== 200) {
-      throw new Error(`waitForExportCompletion failed (${response.status}): ${JSON.stringify(response.body)}`);
+      throw new Error(
+        `waitForExportCompletion failed (${response.status}): ${JSON.stringify(response.body)}`,
+      );
     }
 
     const status = response.body?.data?.status;

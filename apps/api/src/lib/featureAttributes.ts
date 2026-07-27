@@ -1,9 +1,52 @@
 const normalizeFeatureAttributeKey = (key: string): string =>
   key.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
 
+const managedFeatureAttributeKeys = new Set([
+  'id',
+  'featureid',
+  'featid',
+  'projectid',
+  'userid',
+  'ownerid',
+  'creatorid',
+  'collectedbyuserid',
+  'collectedby',
+  'collectby',
+  'reviewedbyuserid',
+  'reviewedby',
+  'reviewerid',
+  'status',
+  'reviewstatus',
+  'approvalstatus',
+  'administrativestatus',
+  'assignmentid',
+  'taskid',
+  'reviewtaskid',
+  'formid',
+  'role',
+  'permissions',
+  'version',
+  'collectedoffline',
+  'collectedat',
+  'collectat',
+  'submittedat',
+  'reviewedat',
+  'syncedat',
+  'createdat',
+  'updatedat',
+  'deletedat',
+  'photocount',
+  'photocnt',
+  'primaryphotopath',
+  'photopaths',
+  'photoref',
+  'photomanifestref',
+]);
+
 const shouldStripManagedFeatureAttributeKey = (key: string): boolean => {
   const normalized = normalizeFeatureAttributeKey(key);
   return (
+    managedFeatureAttributeKeys.has(normalized) ||
     normalized === 'accuracy' ||
     normalized === 'accuracymeter' ||
     normalized === 'accuracymeters'

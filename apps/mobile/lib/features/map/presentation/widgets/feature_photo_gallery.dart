@@ -27,10 +27,43 @@ class FeaturePhotoGalleryItem {
   final VoidCallback? onRemove;
 }
 
+ImageProvider<Object>? featurePhotoImageProvider(
+  FeaturePhotoGalleryItem item, {
+  Map<String, String> httpHeaders = const <String, String>{},
+}) {
+  final bytes = item.imageBytes;
+  if (bytes != null && bytes.isNotEmpty) {
+    return MemoryImage(Uint8List.fromList(bytes));
+  }
+
+  if (item.imagePath.trim().isEmpty) {
+    return null;
+  }
+
+  if (item.isLocalFile) {
+    if (kIsWeb) {
+      return null;
+    }
+    return FileImage(File(item.imagePath));
+  }
+
+  final raw = item.imagePath.trim();
+  final uri = Uri.tryParse(raw);
+  final resolvedUrl = uri != null && uri.hasScheme
+      ? raw
+      : '${AppEnv.apiBaseUrl}${raw.startsWith('/') ? raw : '/$raw'}';
+  return NetworkImage(resolvedUrl, headers: httpHeaders);
+}
+
 class FeaturePhotoGallery extends StatelessWidget {
-  const FeaturePhotoGallery({required this.items, super.key});
+  const FeaturePhotoGallery({
+    required this.items,
+    this.httpHeaders = const <String, String>{},
+    super.key,
+  });
 
   final List<FeaturePhotoGalleryItem> items;
+  final Map<String, String> httpHeaders;
 
   @override
   Widget build(BuildContext context) {
@@ -52,6 +85,7 @@ class FeaturePhotoGallery extends StatelessWidget {
                   builder: (_) => _FeaturePhotoViewerScreen(
                     items: items,
                     initialIndex: index,
+                    httpHeaders: httpHeaders,
                   ),
                 ),
               ),
@@ -69,7 +103,10 @@ class FeaturePhotoGallery extends StatelessWidget {
                             color: Theme.of(
                               context,
                             ).colorScheme.surfaceContainerHighest,
-                            child: _PhotoImage(item: item),
+                            child: _PhotoImage(
+                              item: item,
+                              httpHeaders: httpHeaders,
+                            ),
                           ),
                         ),
                       ),
@@ -124,14 +161,19 @@ class FeaturePhotoGallery extends StatelessWidget {
 }
 
 class _PhotoImage extends StatelessWidget {
-  const _PhotoImage({required this.item, this.fit = BoxFit.cover});
+  const _PhotoImage({
+    required this.item,
+    required this.httpHeaders,
+    this.fit = BoxFit.cover,
+  });
 
   final FeaturePhotoGalleryItem item;
+  final Map<String, String> httpHeaders;
   final BoxFit fit;
 
   @override
   Widget build(BuildContext context) {
-    final provider = _resolveImageProvider(item);
+    final provider = featurePhotoImageProvider(item, httpHeaders: httpHeaders);
     if (provider == null) {
       return const Center(child: Icon(Icons.photo_outlined, size: 32));
     }
@@ -150,41 +192,18 @@ class _PhotoImage extends StatelessWidget {
       },
     );
   }
-
-  ImageProvider<Object>? _resolveImageProvider(FeaturePhotoGalleryItem item) {
-    final bytes = item.imageBytes;
-    if (bytes != null && bytes.isNotEmpty) {
-      return MemoryImage(Uint8List.fromList(bytes));
-    }
-
-    if (item.imagePath.trim().isEmpty) {
-      return null;
-    }
-
-    if (item.isLocalFile) {
-      if (kIsWeb) {
-        return null;
-      }
-      return FileImage(File(item.imagePath));
-    }
-
-    final raw = item.imagePath.trim();
-    final uri = Uri.tryParse(raw);
-    final resolvedUrl = uri != null && uri.hasScheme
-        ? raw
-        : '${AppEnv.apiBaseUrl}${raw.startsWith('/') ? raw : '/$raw'}';
-    return NetworkImage(resolvedUrl);
-  }
 }
 
 class _FeaturePhotoViewerScreen extends StatefulWidget {
   const _FeaturePhotoViewerScreen({
     required this.items,
     required this.initialIndex,
+    required this.httpHeaders,
   });
 
   final List<FeaturePhotoGalleryItem> items;
   final int initialIndex;
+  final Map<String, String> httpHeaders;
 
   @override
   State<_FeaturePhotoViewerScreen> createState() =>
@@ -226,6 +245,7 @@ class _FeaturePhotoViewerScreenState extends State<_FeaturePhotoViewerScreen> {
                 child: Center(
                   child: _PhotoImage(
                     item: widget.items[index],
+                    httpHeaders: widget.httpHeaders,
                     fit: BoxFit.contain,
                   ),
                 ),

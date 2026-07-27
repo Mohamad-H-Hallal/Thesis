@@ -6,6 +6,7 @@ class MapFeaturePhoto {
     this.status,
     this.takenAt,
     this.displayOrder,
+    this.isLocalFile = false,
   });
 
   final String id;
@@ -14,11 +15,13 @@ class MapFeaturePhoto {
   final String? status;
   final DateTime? takenAt;
   final int? displayOrder;
+  final bool isLocalFile;
 }
 
 class MapFeatureSummary {
   const MapFeatureSummary({
     required this.id,
+    required this.projectId,
     required this.status,
     required this.geometry,
     required this.attributes,
@@ -38,6 +41,7 @@ class MapFeatureSummary {
   });
 
   final String id;
+  final String projectId;
   final String status;
   final Map<String, dynamic> geometry;
   final Map<String, dynamic> attributes;
@@ -54,6 +58,25 @@ class MapFeatureSummary {
   final bool isSummary;
   final bool isAggregate;
   final int clusterCount;
+}
+
+class ProjectFeatureIdentity {
+  const ProjectFeatureIdentity({
+    required this.projectId,
+    required this.featureId,
+  });
+
+  final String projectId;
+  final String featureId;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ProjectFeatureIdentity &&
+      other.projectId == projectId &&
+      other.featureId == featureId;
+
+  @override
+  int get hashCode => Object.hash(projectId, featureId);
 }
 
 class ProjectFeatureBrowserQuery {

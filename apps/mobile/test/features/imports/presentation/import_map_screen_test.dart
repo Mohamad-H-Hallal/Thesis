@@ -276,6 +276,7 @@ ImportedFeature _aggregatePolygonImportFeature() {
 MapFeatureSummary _approvedFeature() {
   return const MapFeatureSummary(
     id: 'approved-1',
+    projectId: 'project-1',
     status: 'approved',
     geometry: <String, dynamic>{
       'type': 'Point',

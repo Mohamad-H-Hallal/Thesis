@@ -1,22 +1,44 @@
 import type { Request, Response } from 'express';
 const { query, transaction } = require('../config/database');
-const { AppError } = require('../middleware/error');
+const {
+  AppError,
+  offlineSyncConflictError,
+  permanentOfflineSyncError,
+} = require('../middleware/error');
 const logger = require('../utils/logger');
-import { sanitizeManagedFeatureAttributes } from '../lib/featureAttributes';
+import {
+  sanitizeManagedFeatureAttributes,
+  shouldStripManagedFeatureAttributeKey,
+} from '../lib/featureAttributes';
+import { serializePhotoForClient } from '../lib/photoMedia';
 import { publicVisibleStatuses, synchronizeProjectStatuses } from '../lib/projectLifecycle';
-
-type GeometryType = 'Point' | 'LineString' | 'Polygon';
-
-interface GeoJsonGeometry {
-  type: GeometryType;
-  coordinates: unknown;
-  crs?: {
-    type?: string;
-    properties?: {
-      name?: string;
-    };
-  };
-}
+import {
+  UUID_PATTERN,
+  assertCurrentOfflineAuthorization,
+  assertGeometryAcceptedByPostgis,
+  assertMatchingOfflineReceipt,
+  assertOfflineCollectionConstraints,
+  assertOfflinePayloadSize,
+  assertOfflineRequestBinding,
+  assertOnlyAllowedKeys,
+  assertPlainObject,
+  getOfflineReceipt,
+  insertOfflineReceipt,
+  lockOfflineFeatureIds,
+  normalizeOfflineAccuracyForReceipt,
+  normalizeOfflineAttributesForReceipt,
+  offlinePayloadRejected,
+  requestHasOfflineSyncBinding,
+  requestHasOfflineSyncSignal,
+  sha256Json,
+  validateAttributesAgainstSchema,
+  validateGeoJsonGeometry,
+} from '../services/offlineSyncSecurity.service';
+import type { GeoJsonGeometry, QueryExecutor } from '../services/offlineSyncSecurity.service';
+import {
+  makeFeatureMediaCleanupJobsAvailable,
+  processFeatureMediaCleanupJobs,
+} from '../services/featureMediaCleanup.service';
 
 interface Pagination {
   page: number;
@@ -29,15 +51,6 @@ interface TileBounds {
   minLat: number;
   maxLon: number;
   maxLat: number;
-}
-
-interface FormSchemaField {
-  key?: string;
-  name?: string;
-  type?: string;
-  required?: boolean;
-  options?: unknown[];
-  enum?: unknown[];
 }
 
 type ProjectReadScope = 'admin' | 'project_admin' | 'assigned' | 'public' | 'none';
@@ -149,79 +162,6 @@ const getPagination = (pageRaw: unknown, limitRaw: unknown): Pagination => {
   const offset = (page - 1) * limit;
 
   return { page, limit, offset };
-};
-
-const isPosition = (value: unknown): value is [number, number] => {
-  if (!Array.isArray(value) || value.length < 2) {
-    return false;
-  }
-
-  const lon = Number(value[0]);
-  const lat = Number(value[1]);
-
-  return (
-    Number.isFinite(lon) &&
-    Number.isFinite(lat) &&
-    lon >= -180 &&
-    lon <= 180 &&
-    lat >= -90 &&
-    lat <= 90
-  );
-};
-
-const validateCoordinates = (type: GeometryType, coordinates: unknown): boolean => {
-  if (type === 'Point') {
-    return isPosition(coordinates);
-  }
-
-  if (type === 'LineString') {
-    return Array.isArray(coordinates) && coordinates.length >= 2 && coordinates.every(isPosition);
-  }
-
-  if (type === 'Polygon') {
-    if (!Array.isArray(coordinates) || coordinates.length === 0) {
-      return false;
-    }
-
-    return coordinates.every((ring) => {
-      if (!Array.isArray(ring) || ring.length < 4 || !ring.every(isPosition)) {
-        return false;
-      }
-
-      const first = ring[0] as [number, number];
-      const last = ring[ring.length - 1] as [number, number];
-      return first[0] === last[0] && first[1] === last[1];
-    });
-  }
-
-  return false;
-};
-
-const validateGeoJsonGeometry = (geom: unknown): GeoJsonGeometry => {
-  if (!geom || typeof geom !== 'object') {
-    throw new AppError('Geometry is required', 400);
-  }
-
-  const geometry = geom as GeoJsonGeometry;
-  const allowedTypes: GeometryType[] = ['Point', 'LineString', 'Polygon'];
-
-  if (!allowedTypes.includes(geometry.type)) {
-    throw new AppError('Geometry type must be Point, LineString, or Polygon', 400);
-  }
-
-  if (!validateCoordinates(geometry.type, geometry.coordinates)) {
-    throw new AppError('Invalid geometry coordinates for the provided geometry type', 400);
-  }
-
-  if (geometry.crs?.properties?.name) {
-    const crsName = geometry.crs.properties.name.toUpperCase();
-    const allowedCrsNames = ['EPSG:4326', 'URN:OGC:DEF:CRS:EPSG::4326'];
-    if (!allowedCrsNames.includes(crsName)) {
-      throw new AppError('Only EPSG:4326 geometry is supported', 400);
-    }
-  }
-
-  return geometry;
 };
 
 const getProjectReadScope = async (
@@ -418,15 +358,12 @@ const canAccessFeatureForUser = ({
   return false;
 };
 
-const ensureAttributesObject = (attributes: unknown): Record<string, unknown> => {
-  if (!attributes || typeof attributes !== 'object' || Array.isArray(attributes)) {
-    throw new AppError('attributes must be a JSON object', 422);
-  }
-  return attributes as Record<string, unknown>;
-};
-
-const getProjectFormSchema = async (projectId: string): Promise<Record<string, unknown>> => {
-  const projectResult = await query(
+const getProjectFormSchema = async (
+  projectId: string,
+  executor?: QueryExecutor,
+): Promise<Record<string, unknown>> => {
+  const runQuery = executor?.query.bind(executor) ?? query;
+  const projectResult = await runQuery(
     'SELECT id, collection_form_schema FROM project WHERE id = $1',
     [projectId],
   );
@@ -470,119 +407,52 @@ const assertProjectAllowsCollectionMutations = async (projectId: string): Promis
   );
 };
 
-const offlineAssignmentRevokedMessage =
-  'You are no longer assigned to this project. Offline draft was discarded.';
-
-const assertContributorAssignedForOfflineSync = async (
-  projectId: string,
-  user: Express.UserContext | undefined,
-  executor?: { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> },
-): Promise<void> => {
-  if (!user || user.role !== 'contributor') {
-    throw new AppError('Offline contribution sync is only available to contributors', 403);
+const assertCurrentCollectionAuthorization = async ({
+  executor,
+  projectId,
+  user,
+}: {
+  executor: QueryExecutor;
+  projectId: string;
+  user: Express.UserContext;
+}): Promise<void> => {
+  if (user.role === 'admin') {
+    return;
+  }
+  if (user.role !== 'contributor') {
+    throw new AppError('Your current role cannot collect features', 403);
   }
 
-  const runQuery = executor?.query.bind(executor) ?? query;
-  const assignmentResult = await runQuery(
-    `SELECT id
+  const assignmentResult = await executor.query(
+    `SELECT 1
      FROM project_assignment
      WHERE project_id = $1
        AND user_id = $2
-       AND role = 'contributor'
        AND status = 'approved'
+       AND role = 'contributor'
      LIMIT 1`,
     [projectId, user.id],
   );
-
   if (assignmentResult.rows.length === 0) {
-    throw new AppError(offlineAssignmentRevokedMessage, 403);
+    throw new AppError('You do not have permission to collect features in this project', 403);
   }
 };
 
-const validateType = (value: unknown, expectedType: string): boolean => {
-  if (value === null || value === undefined) {
-    return true;
-  }
-
-  switch (expectedType) {
-    case 'string':
-    case 'text':
-      return typeof value === 'string';
-    case 'number':
-    case 'integer':
-      return typeof value === 'number' && Number.isFinite(value);
-    case 'boolean':
-      return typeof value === 'boolean';
-    case 'object':
-      return typeof value === 'object' && !Array.isArray(value);
-    case 'array':
-      return Array.isArray(value);
-    default:
-      return true;
-  }
-};
-
-const validateAttributesAgainstSchema = (
-  attributesInput: unknown,
-  schema: Record<string, unknown>,
-): Record<string, unknown> => {
-  const attributes = ensureAttributesObject(attributesInput);
-
-  const jsonSchemaRequired = Array.isArray(schema.required) ? (schema.required as string[]) : [];
-  const jsonSchemaProps =
-    schema.properties && typeof schema.properties === 'object' && !Array.isArray(schema.properties)
-      ? (schema.properties as Record<string, Record<string, unknown>>)
-      : {};
-
-  for (const requiredKey of jsonSchemaRequired) {
-    if (
-      attributes[requiredKey] === undefined ||
-      attributes[requiredKey] === null ||
-      attributes[requiredKey] === ''
-    ) {
-      throw new AppError(`Missing required attribute: ${requiredKey}`, 422);
-    }
-  }
-
-  for (const [key, propSchema] of Object.entries(jsonSchemaProps)) {
-    if (attributes[key] === undefined) {
-      continue;
-    }
-    const expectedType = typeof propSchema?.type === 'string' ? propSchema.type : null;
-    if (expectedType && !validateType(attributes[key], expectedType)) {
-      throw new AppError(`Invalid type for attribute "${key}"`, 422);
-    }
-  }
-
-  const fields = Array.isArray(schema.fields) ? (schema.fields as FormSchemaField[]) : [];
-  for (const field of fields) {
-    const fieldKey = field.key || field.name;
-    if (!fieldKey) {
-      continue;
-    }
-
-    const value = attributes[fieldKey];
-    if (field.required && (value === undefined || value === null || value === '')) {
-      throw new AppError(`Missing required attribute: ${fieldKey}`, 422);
-    }
-
-    if (field.type && !validateType(value, field.type)) {
-      throw new AppError(`Invalid type for attribute "${fieldKey}"`, 422);
-    }
-
-    const allowedValues =
-      Array.isArray(field.options) && field.options.length > 0
-        ? field.options
-        : Array.isArray(field.enum) && field.enum.length > 0
-          ? field.enum
-          : null;
-    if (allowedValues && value !== undefined && !allowedValues.includes(value)) {
-      throw new AppError(`Invalid value for attribute "${fieldKey}"`, 422);
-    }
-  }
-
-  return sanitizeManagedFeatureAttributes(attributes);
-};
+const assertCurrentOfflineOriginOnlineAuthorization = async ({
+  executor,
+  projectId,
+  user,
+}: {
+  executor: QueryExecutor;
+  projectId: string;
+  user: Express.UserContext;
+}): Promise<'admin' | 'contributor'> =>
+  assertCurrentOfflineAuthorization({
+    executor,
+    userId: user.id,
+    projectId,
+    allowAdmin: true,
+  });
 
 const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
   await synchronizeProjectStatuses(
@@ -880,6 +750,11 @@ const getFeature = async (req: Request, res: Response): Promise<void> => {
     ...result.rows[0],
     attributes: sanitizeManagedFeatureAttributes(result.rows[0].attributes),
     geometry: JSON.parse(result.rows[0].geometry),
+    photos: Array.isArray(result.rows[0].photos)
+      ? result.rows[0].photos.map((photo: Record<string, unknown>) =>
+          serializePhotoForClient(req, photo),
+        )
+      : [],
   };
   delete feature.accuracy_meters;
 
@@ -890,28 +765,258 @@ const getFeature = async (req: Request, res: Response): Promise<void> => {
 };
 
 const createFeature = async (req: Request, res: Response): Promise<void> => {
-  const { id, project_id, geom, attributes, collected_offline = false } = req.body;
+  const {
+    id,
+    client_offline_id,
+    offline_owner_user_id,
+    project_id,
+    geom,
+    attributes,
+    accuracy_meters,
+    collected_offline = false,
+  } = req.body;
+  const isOfflineSyncRequest = requestHasOfflineSyncSignal(req);
 
-  await assertProjectAllowsCollectionMutations(project_id);
-  if (collected_offline) {
-    await assertContributorAssignedForOfflineSync(
-      project_id,
-      req.user as Express.UserContext | undefined,
+  if (isOfflineSyncRequest) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw permanentOfflineSyncError(
+        'Offline submission discarded because its owner could not be verified.',
+        'OFFLINE_SYNC_OWNER_MISMATCH',
+      );
+    }
+
+    const body = assertPlainObject(req.body, 'Offline submission');
+    assertOnlyAllowedKeys(
+      body,
+      new Set([
+        'id',
+        'client_offline_id',
+        'offline_owner_user_id',
+        'project_id',
+        'geom',
+        'attributes',
+        'accuracy_meters',
+        'collected_offline',
+      ]),
+      'Offline submission',
     );
+    assertOfflinePayloadSize(body);
+
+    if (collected_offline !== true) {
+      throw offlinePayloadRejected(
+        'Offline submission must explicitly identify itself as collected offline.',
+      );
+    }
+
+    if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
+      throw offlinePayloadRejected('Offline submission requires a valid stable feature ID.');
+    }
+    if (client_offline_id !== undefined && client_offline_id !== id) {
+      throw offlinePayloadRejected('Offline submission identifiers do not match.');
+    }
+    if (typeof offline_owner_user_id !== 'string' || offline_owner_user_id !== userId) {
+      throw permanentOfflineSyncError(
+        'Offline submission discarded because it belongs to another account.',
+        'OFFLINE_SYNC_OWNER_MISMATCH',
+      );
+    }
+
+    const { idempotencyKeyHash } = assertOfflineRequestBinding({
+      req,
+      projectId: project_id,
+      userId,
+    });
+
+    const normalizedGeometry = validateGeoJsonGeometry(geom, { strictOffline: true });
+    const receiptAttributes = normalizeOfflineAttributesForReceipt(attributes);
+    const receiptAccuracy = normalizeOfflineAccuracyForReceipt(accuracy_meters);
+    const payloadHash = sha256Json({
+      id,
+      project_id,
+      geom: normalizedGeometry,
+      attributes: receiptAttributes,
+      accuracy_meters: receiptAccuracy,
+      collected_offline: true,
+    });
+    const outcome = await transaction(async (client: QueryExecutor) => {
+      await assertCurrentOfflineAuthorization({ executor: client, userId, projectId: project_id });
+      await lockOfflineFeatureIds(client, [id]);
+      const receipt = await getOfflineReceipt({
+        executor: client,
+        userId,
+        projectId: project_id,
+        operation: 'create',
+        idempotencyKeyHash,
+      });
+      if (receipt) {
+        assertMatchingOfflineReceipt(receipt, payloadHash, [id]);
+        const replay = await client.query(
+          `SELECT id, status, version, collected_at, ST_AsGeoJSON(geom) AS geometry
+           FROM spatial_feature
+           WHERE id = $1 AND project_id = $2 AND collected_by_user_id = $3`,
+          [id, project_id, userId],
+        );
+        if (!replay.rows[0]) {
+          throw permanentOfflineSyncError(
+            'Offline submission parent record is no longer accessible.',
+            'OFFLINE_SYNC_PARENT_INACCESSIBLE',
+          );
+        }
+        return { row: replay.rows[0], alreadySynchronized: true };
+      }
+
+      const formSchema = await getProjectFormSchema(project_id, client);
+      const normalizedAttributes = validateAttributesAgainstSchema(attributes, formSchema, {
+        strictOffline: true,
+      });
+      const normalizedAccuracy = assertOfflineCollectionConstraints({
+        schema: formSchema,
+        geometry: normalizedGeometry,
+        accuracyMeters: accuracy_meters,
+      });
+      await assertGeometryAcceptedByPostgis(client, normalizedGeometry);
+
+      const existing = await client.query(
+        `SELECT id, project_id, collected_by_user_id, collected_offline,
+                status, version, collected_at, ST_AsGeoJSON(geom) AS geometry,
+                ST_Equals(
+                  geom,
+                  ST_SetSRID(ST_GeomFromGeoJSON($2), 4326)
+                ) AS geometry_matches,
+                attributes = $3::jsonb AS attributes_match,
+                accuracy_meters IS NOT DISTINCT FROM $4::double precision AS accuracy_matches
+         FROM spatial_feature
+         WHERE id = $1
+         FOR UPDATE`,
+        [
+          id,
+          JSON.stringify(normalizedGeometry),
+          JSON.stringify(normalizedAttributes),
+          normalizedAccuracy,
+        ],
+      );
+      if (existing.rows[0]) {
+        const feature = existing.rows[0];
+        const isSameOfflineContribution =
+          feature.project_id === project_id &&
+          feature.collected_by_user_id === userId &&
+          feature.collected_offline === true &&
+          feature.geometry_matches === true &&
+          feature.attributes_match === true &&
+          feature.accuracy_matches === true;
+        if (!isSameOfflineContribution) {
+          throw permanentOfflineSyncError(
+            'Offline submission identifiers or idempotency data do not match.',
+            'OFFLINE_SYNC_IDEMPOTENCY_MISMATCH',
+            409,
+          );
+        }
+        await insertOfflineReceipt({
+          executor: client,
+          userId,
+          projectId: project_id,
+          operation: 'create',
+          idempotencyKeyHash,
+          payloadHash,
+          entityIds: [id],
+        });
+        return {
+          row: {
+            id: feature.id,
+            status: feature.status,
+            version: feature.version,
+            collected_at: feature.collected_at,
+            geometry: feature.geometry,
+          },
+          alreadySynchronized: true,
+        };
+      }
+
+      const inserted = await client.query(
+        `INSERT INTO spatial_feature (
+          id, project_id, collected_by_user_id, geom, attributes,
+          accuracy_meters, collected_offline, status
+        ) VALUES (
+          $1::uuid,
+          $2,
+          $3,
+          ST_SetSRID(ST_GeomFromGeoJSON($4), 4326),
+          $5,
+          $6,
+          TRUE,
+          'draft'
+        )
+        RETURNING id, status, version, collected_at, ST_AsGeoJSON(geom) AS geometry`,
+        [
+          id,
+          project_id,
+          userId,
+          JSON.stringify(normalizedGeometry),
+          JSON.stringify(normalizedAttributes),
+          normalizedAccuracy,
+        ],
+      );
+      await insertOfflineReceipt({
+        executor: client,
+        userId,
+        projectId: project_id,
+        operation: 'create',
+        idempotencyKeyHash,
+        payloadHash,
+        entityIds: [id],
+      });
+      return { row: inserted.rows[0], alreadySynchronized: false };
+    });
+
+    logger.info(
+      outcome.alreadySynchronized
+        ? 'Offline feature create replay confirmed:'
+        : 'Offline feature created:',
+      { featureId: outcome.row.id, projectId: project_id, userId },
+    );
+    res.status(outcome.alreadySynchronized ? 200 : 201).json({
+      success: true,
+      message: outcome.alreadySynchronized
+        ? 'Feature already created'
+        : 'Feature created successfully',
+      data: {
+        ...outcome.row,
+        outcome: outcome.alreadySynchronized ? 'already_synchronized' : 'accepted',
+        geometry: JSON.parse(outcome.row.geometry),
+      },
+    });
+    return;
   }
+
+  const onlineBody = assertPlainObject(req.body, 'Feature submission');
+  assertOnlyAllowedKeys(
+    onlineBody,
+    new Set(['id', 'project_id', 'geom', 'attributes', 'accuracy_meters', 'collected_offline']),
+    'Feature submission',
+  );
+  assertOfflinePayloadSize(onlineBody);
+  if (collected_offline !== false) {
+    throw new AppError('Online feature submissions cannot set offline collection state', 422);
+  }
+  if (
+    attributes &&
+    typeof attributes === 'object' &&
+    !Array.isArray(attributes) &&
+    Object.keys(attributes).some(shouldStripManagedFeatureAttributeKey)
+  ) {
+    throw offlinePayloadRejected('Feature submission cannot set server-managed attributes.');
+  }
+  await assertProjectAllowsCollectionMutations(project_id);
   const normalizedGeometry = validateGeoJsonGeometry(geom);
   const formSchema = await getProjectFormSchema(project_id);
   const normalizedAttributes = validateAttributesAgainstSchema(attributes, formSchema);
-
-  const accessCheck = await query(
-    `SELECT id FROM project_assignment
-     WHERE project_id = $1 AND user_id = $2 AND status = 'approved'`,
-    [project_id, req.user?.id],
-  );
-
-  if (accessCheck.rows.length === 0 && req.user?.role !== 'admin') {
-    throw new AppError('You do not have access to this project', 403);
-  }
+  await assertGeometryAcceptedByPostgis({ query }, normalizedGeometry);
+  await assertCurrentCollectionAuthorization({
+    executor: { query },
+    projectId: project_id,
+    user: req.user as Express.UserContext,
+  });
 
   const result = await query(
     `INSERT INTO spatial_feature (
@@ -924,10 +1029,10 @@ const createFeature = async (req: Request, res: Response): Promise<void> => {
       ST_SetSRID(ST_GeomFromGeoJSON($4), 4326),
       $5,
       $6,
-      $7,
+      FALSE,
       'draft'
     )
-    RETURNING id, status, version, collected_at, ST_AsGeoJSON(geom) as geometry`,
+    RETURNING id, status, version, collected_at, ST_AsGeoJSON(geom) AS geometry`,
     [
       id ?? null,
       project_id,
@@ -935,7 +1040,6 @@ const createFeature = async (req: Request, res: Response): Promise<void> => {
       JSON.stringify(normalizedGeometry),
       JSON.stringify(normalizedAttributes),
       null,
-      collected_offline,
     ],
   );
 
@@ -944,7 +1048,6 @@ const createFeature = async (req: Request, res: Response): Promise<void> => {
     projectId: project_id,
     userId: req.user?.id,
   });
-
   res.status(201).json({
     success: true,
     message: 'Feature created successfully',
@@ -957,7 +1060,8 @@ const createFeature = async (req: Request, res: Response): Promise<void> => {
 
 const updateFeature = async (req: Request, res: Response): Promise<void> => {
   const { featureId } = req.params;
-  const { attributes, geom } = req.body;
+  const { attributes, geom, expected_version } = req.body;
+  const isOfflineSyncRequest = requestHasOfflineSyncSignal(req);
 
   const featureCheck = await query(
     `SELECT id, status, collected_by_user_id, project_id, collected_offline
@@ -967,22 +1071,301 @@ const updateFeature = async (req: Request, res: Response): Promise<void> => {
   );
 
   if (featureCheck.rows.length === 0) {
+    if (isOfflineSyncRequest) {
+      throw permanentOfflineSyncError(
+        'Offline submission parent record is no longer accessible.',
+        'OFFLINE_SYNC_PARENT_INACCESSIBLE',
+      );
+    }
     throw new AppError('Feature not found', 404);
   }
 
   const feature = featureCheck.rows[0];
+
+  if (isOfflineSyncRequest) {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw permanentOfflineSyncError(
+        'Offline submission discarded because its owner could not be verified.',
+        'OFFLINE_SYNC_OWNER_MISMATCH',
+      );
+    }
+    const body = assertPlainObject(req.body, 'Offline update');
+    assertOnlyAllowedKeys(
+      body,
+      new Set(['attributes', 'geom', 'expected_version']),
+      'Offline update',
+    );
+    assertOfflinePayloadSize(body);
+    if (!Number.isSafeInteger(expected_version) || expected_version < 1) {
+      throw offlinePayloadRejected('Offline synchronization version is invalid.');
+    }
+    if (attributes === undefined && geom === undefined) {
+      throw offlinePayloadRejected('Offline update does not contain editable fields.');
+    }
+    const { idempotencyKeyHash } = assertOfflineRequestBinding({
+      req,
+      projectId: feature.project_id,
+      userId,
+    });
+
+    const outcome = await transaction(async (client: QueryExecutor) => {
+      const lockedFeatureResult = await client.query(
+        `SELECT id, status, version, collected_by_user_id, project_id, collected_offline
+         FROM spatial_feature
+         WHERE id = $1
+         FOR UPDATE`,
+        [featureId],
+      );
+      const lockedFeature = lockedFeatureResult.rows[0];
+      if (!lockedFeature) {
+        throw permanentOfflineSyncError(
+          'Offline submission parent record is no longer accessible.',
+          'OFFLINE_SYNC_PARENT_INACCESSIBLE',
+        );
+      }
+      if (lockedFeature.collected_offline !== true) {
+        throw permanentOfflineSyncError(
+          'Offline submission parent record is no longer accessible.',
+          'OFFLINE_SYNC_PARENT_INACCESSIBLE',
+        );
+      }
+      if (lockedFeature.project_id !== feature.project_id) {
+        throw permanentOfflineSyncError(
+          'Offline submission discarded because its project does not match.',
+          'OFFLINE_SYNC_PROJECT_MISMATCH',
+        );
+      }
+      if (lockedFeature.collected_by_user_id !== userId) {
+        throw permanentOfflineSyncError(
+          'Offline submission discarded because it belongs to another account.',
+          'OFFLINE_SYNC_OWNER_MISMATCH',
+        );
+      }
+      await assertCurrentOfflineAuthorization({
+        executor: client,
+        userId,
+        projectId: lockedFeature.project_id,
+      });
+      const receiptGeometry =
+        geom === undefined ? null : validateGeoJsonGeometry(geom, { strictOffline: true });
+      const receiptAttributes =
+        attributes === undefined ? null : normalizeOfflineAttributesForReceipt(attributes);
+
+      const payloadHash = sha256Json({
+        feature_id: featureId,
+        project_id: lockedFeature.project_id,
+        geom: receiptGeometry,
+        attributes: receiptAttributes,
+        expected_version,
+      });
+      const receipt = await getOfflineReceipt({
+        executor: client,
+        userId,
+        projectId: lockedFeature.project_id,
+        operation: 'update',
+        idempotencyKeyHash,
+      });
+      if (receipt) {
+        assertMatchingOfflineReceipt(receipt, payloadHash, [featureId]);
+        const replay = await client.query(
+          `SELECT id, status, version, ST_AsGeoJSON(geom) AS geometry, attributes
+           FROM spatial_feature
+           WHERE id = $1`,
+          [featureId],
+        );
+        return { row: replay.rows[0], alreadySynchronized: true };
+      }
+
+      if (lockedFeature.version !== expected_version) {
+        throw offlineSyncConflictError(lockedFeature.version);
+      }
+      if (lockedFeature.status !== 'draft') {
+        throw permanentOfflineSyncError(
+          'Offline submission parent record is no longer editable.',
+          'OFFLINE_SYNC_PARENT_INACCESSIBLE',
+          409,
+        );
+      }
+      const formSchema = await getProjectFormSchema(lockedFeature.project_id, client);
+      const normalizedGeometry = receiptGeometry;
+      const normalizedAttributes =
+        attributes === undefined
+          ? null
+          : validateAttributesAgainstSchema(attributes, formSchema, { strictOffline: true });
+      if (normalizedGeometry) {
+        assertOfflineCollectionConstraints({
+          schema: formSchema,
+          geometry: normalizedGeometry,
+          accuracyMeters: null,
+        });
+        await assertGeometryAcceptedByPostgis(client, normalizedGeometry);
+      }
+
+      const updated = await client.query(
+        `UPDATE spatial_feature
+         SET attributes = COALESCE($1, attributes),
+             geom = CASE
+               WHEN $2::text IS NULL THEN geom
+               ELSE ST_SetSRID(ST_GeomFromGeoJSON($2), 4326)
+             END,
+             version = version + 1
+         WHERE id = $3
+           AND status = 'draft'
+           AND version = $4
+           AND project_id = $5
+           AND collected_by_user_id = $6
+           AND collected_offline = TRUE
+         RETURNING id, status, version, ST_AsGeoJSON(geom) AS geometry, attributes`,
+        [
+          normalizedAttributes === null ? null : JSON.stringify(normalizedAttributes),
+          normalizedGeometry === null ? null : JSON.stringify(normalizedGeometry),
+          featureId,
+          expected_version,
+          lockedFeature.project_id,
+          userId,
+        ],
+      );
+      if (!updated.rows[0]) {
+        throw offlineSyncConflictError(lockedFeature.version);
+      }
+      await insertOfflineReceipt({
+        executor: client,
+        userId,
+        projectId: lockedFeature.project_id,
+        operation: 'update',
+        idempotencyKeyHash,
+        payloadHash,
+        entityIds: [featureId],
+      });
+      return { row: updated.rows[0], alreadySynchronized: false };
+    });
+
+    logger.info(
+      outcome.alreadySynchronized
+        ? 'Offline feature update replay confirmed:'
+        : 'Offline feature updated:',
+      { featureId, userId },
+    );
+    res.json({
+      success: true,
+      message: outcome.alreadySynchronized
+        ? 'Feature update already synchronized'
+        : 'Feature updated successfully',
+      data: {
+        ...outcome.row,
+        outcome: outcome.alreadySynchronized ? 'already_synchronized' : 'accepted',
+        geometry: JSON.parse(outcome.row.geometry),
+      },
+    });
+    return;
+  }
+
+  if (feature.collected_offline === true) {
+    const user = req.user as Express.UserContext;
+    const outcome = await transaction(async (client: QueryExecutor) => {
+      const lockedResult = await client.query(
+        `SELECT id, status, collected_by_user_id, project_id, collected_offline
+         FROM spatial_feature
+         WHERE id = $1
+         FOR UPDATE`,
+        [featureId],
+      );
+      const lockedFeature = lockedResult.rows[0];
+      if (!lockedFeature || lockedFeature.collected_offline !== true) {
+        throw permanentOfflineSyncError(
+          'Offline-origin feature is no longer accessible.',
+          'OFFLINE_SYNC_PARENT_INACCESSIBLE',
+        );
+      }
+      const currentRole = await assertCurrentOfflineOriginOnlineAuthorization({
+        executor: client,
+        projectId: lockedFeature.project_id,
+        user,
+      });
+      if (currentRole !== 'admin' && lockedFeature.collected_by_user_id !== user.id) {
+        throw permanentOfflineSyncError(
+          'Offline-origin feature belongs to another account.',
+          'OFFLINE_SYNC_OWNER_MISMATCH',
+        );
+      }
+      if (lockedFeature.status !== 'draft') {
+        throw permanentOfflineSyncError(
+          'Offline-origin feature is no longer editable.',
+          'OFFLINE_SYNC_PARENT_INACCESSIBLE',
+          409,
+        );
+      }
+      const body = assertPlainObject(req.body, 'Offline-origin feature update');
+      assertOnlyAllowedKeys(body, new Set(['attributes', 'geom']), 'Offline-origin feature update');
+      assertOfflinePayloadSize(body);
+      if (attributes === undefined && geom === undefined) {
+        throw offlinePayloadRejected('Offline-origin update does not contain editable fields.');
+      }
+
+      const formSchema = await getProjectFormSchema(lockedFeature.project_id, client);
+      const normalizedGeometry =
+        geom === undefined ? null : validateGeoJsonGeometry(geom, { strictOffline: true });
+      const normalizedAttributes =
+        attributes === undefined
+          ? null
+          : validateAttributesAgainstSchema(attributes, formSchema, { strictOffline: true });
+      if (normalizedGeometry) {
+        assertOfflineCollectionConstraints({
+          schema: formSchema,
+          geometry: normalizedGeometry,
+          accuracyMeters: null,
+        });
+        await assertGeometryAcceptedByPostgis(client, normalizedGeometry);
+      }
+
+      const updated = await client.query(
+        `UPDATE spatial_feature
+         SET attributes = COALESCE($1, attributes),
+             geom = CASE
+               WHEN $2::text IS NULL THEN geom
+               ELSE ST_SetSRID(ST_GeomFromGeoJSON($2), 4326)
+             END,
+             version = version + 1
+         WHERE id = $3 AND project_id = $4 AND status = 'draft'
+         RETURNING id, status, version, ST_AsGeoJSON(geom) AS geometry, attributes`,
+        [
+          normalizedAttributes === null ? null : JSON.stringify(normalizedAttributes),
+          normalizedGeometry === null ? null : JSON.stringify(normalizedGeometry),
+          featureId,
+          lockedFeature.project_id,
+        ],
+      );
+      if (!updated.rows[0]) {
+        throw permanentOfflineSyncError(
+          'Offline-origin feature is no longer editable.',
+          'OFFLINE_SYNC_PARENT_INACCESSIBLE',
+          409,
+        );
+      }
+      return updated.rows[0];
+    });
+
+    logger.info('Offline-origin feature edited online:', { featureId, userId: user.id });
+    res.json({
+      success: true,
+      message: 'Feature updated successfully',
+      data: { ...outcome, geometry: JSON.parse(outcome.geometry) },
+    });
+    return;
+  }
 
   if (req.user?.role !== 'admin' && feature.collected_by_user_id !== req.user?.id) {
     throw new AppError('You can only update your own features', 403);
   }
 
   await assertProjectAllowsCollectionMutations(feature.project_id);
-  if (feature.collected_offline) {
-    await assertContributorAssignedForOfflineSync(
-      feature.project_id,
-      req.user as Express.UserContext | undefined,
-    );
-  }
+
+  await assertCurrentCollectionAuthorization({
+    executor: { query },
+    projectId: feature.project_id,
+    user: req.user as Express.UserContext,
+  });
 
   if (feature.status !== 'draft') {
     throw new AppError('Only draft features can be updated', 400);
@@ -992,11 +1375,27 @@ const updateFeature = async (req: Request, res: Response): Promise<void> => {
     throw new AppError('No fields to update', 400);
   }
 
-  const normalizedGeometry = geom === undefined ? null : validateGeoJsonGeometry(geom);
+  const onlineBody = assertPlainObject(req.body, 'Feature update');
+  assertOnlyAllowedKeys(onlineBody, new Set(['attributes', 'geom']), 'Feature update');
+  assertOfflinePayloadSize(onlineBody);
+  if (
+    attributes &&
+    typeof attributes === 'object' &&
+    !Array.isArray(attributes) &&
+    Object.keys(attributes).some(shouldStripManagedFeatureAttributeKey)
+  ) {
+    throw offlinePayloadRejected('Feature update cannot set server-managed attributes.');
+  }
+  const formSchema = await getProjectFormSchema(feature.project_id);
+  const normalizedGeometry =
+    geom === undefined ? null : validateGeoJsonGeometry(geom);
   const normalizedAttributes =
     attributes === undefined
       ? null
-      : validateAttributesAgainstSchema(attributes, await getProjectFormSchema(feature.project_id));
+      : validateAttributesAgainstSchema(attributes, formSchema);
+  if (normalizedGeometry) {
+    await assertGeometryAcceptedByPostgis({ query }, normalizedGeometry);
+  }
 
   const result = await query(
     `
@@ -1031,34 +1430,95 @@ const updateFeature = async (req: Request, res: Response): Promise<void> => {
 
 const deleteFeature = async (req: Request, res: Response): Promise<void> => {
   const { featureId } = req.params;
-
-  const featureCheck = await query(
-    `SELECT id, status, collected_by_user_id, project_id
+  const initialFeature = await query(
+    `SELECT project_id, collected_offline
      FROM spatial_feature
      WHERE id = $1`,
     [featureId],
   );
 
-  if (featureCheck.rows.length === 0) {
+  if (initialFeature.rows.length === 0) {
     throw new AppError('Feature not found', 404);
   }
 
-  const feature = featureCheck.rows[0];
-
-  if (feature.status !== 'draft') {
-    throw new AppError('Only draft features can be deleted', 400);
+  if (initialFeature.rows[0].collected_offline !== true) {
+    await assertProjectAllowsCollectionMutations(initialFeature.rows[0].project_id);
   }
 
-  await assertProjectAllowsCollectionMutations(feature.project_id);
+  const user = req.user as Express.UserContext;
+  const deletedMediaPaths = await transaction(async (client: QueryExecutor) => {
+    const featureCheck = await client.query(
+      `SELECT id, status, collected_by_user_id, project_id, collected_offline
+       FROM spatial_feature
+       WHERE id = $1
+       FOR UPDATE`,
+      [featureId],
+    );
+    const feature = featureCheck.rows[0];
+    if (!feature) {
+      if (initialFeature.rows[0].collected_offline === true) {
+        throw permanentOfflineSyncError(
+          'Offline-origin feature is no longer accessible.',
+          'OFFLINE_SYNC_PARENT_INACCESSIBLE',
+        );
+      }
+      throw new AppError('Feature not found', 404);
+    }
 
-  if (req.user?.role !== 'admin' && feature.collected_by_user_id !== req.user?.id) {
-    throw new AppError('You can only delete your own draft features', 403);
+    if (feature.collected_offline === true) {
+      const currentRole = await assertCurrentOfflineOriginOnlineAuthorization({
+        executor: client,
+        projectId: feature.project_id,
+        user,
+      });
+      if (currentRole !== 'admin' && feature.collected_by_user_id !== user.id) {
+        throw permanentOfflineSyncError(
+          'Offline-origin feature belongs to another account.',
+          'OFFLINE_SYNC_OWNER_MISMATCH',
+        );
+      }
+      if (feature.status !== 'draft') {
+        throw permanentOfflineSyncError(
+          'Offline-origin feature is no longer editable.',
+          'OFFLINE_SYNC_PARENT_INACCESSIBLE',
+          409,
+        );
+      }
+    } else {
+      if (feature.status !== 'draft') {
+        throw new AppError('Only draft features can be deleted', 400);
+      }
+      if (user.role !== 'admin' && feature.collected_by_user_id !== user.id) {
+        throw new AppError('You can only delete your own draft features', 403);
+      }
+    }
+
+    const photoPaths = await client.query(
+      `SELECT file_path, thumbnail_path
+       FROM photo
+       WHERE feature_id = $1
+       FOR UPDATE`,
+      [featureId],
+    );
+    await client.query('DELETE FROM spatial_feature WHERE id = $1', [featureId]);
+    return photoPaths.rows
+      .flatMap((photo) => [photo.file_path, photo.thumbnail_path])
+      .filter(
+        (filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0,
+      );
+  });
+
+  try {
+    await makeFeatureMediaCleanupJobsAvailable({ paths: deletedMediaPaths });
+    await processFeatureMediaCleanupJobs({ paths: deletedMediaPaths });
+  } catch (cleanupError: unknown) {
+    logger.error('Feature deletion media cleanup deferred', {
+      featureId,
+      errorCode: String((cleanupError as { code?: unknown })?.code ?? 'CLEANUP_DEFERRED'),
+    });
   }
 
-  await query('DELETE FROM spatial_feature WHERE id = $1', [featureId]);
-
-  logger.info('Feature deleted:', { featureId, userId: req.user?.id });
-
+  logger.info('Feature deleted:', { featureId, userId: user.id });
   res.json({
     success: true,
     message: 'Feature deleted successfully',
@@ -1067,30 +1527,250 @@ const deleteFeature = async (req: Request, res: Response): Promise<void> => {
 
 const submitFeature = async (req: Request, res: Response): Promise<void> => {
   const { featureId } = req.params;
-  await transaction(async (client: any) => {
+  const isOfflineSyncRequest = requestHasOfflineSyncBinding(req);
+  const projectLookup = await query('SELECT project_id FROM spatial_feature WHERE id = $1', [
+    featureId,
+  ]);
+  if (projectLookup.rows[0] && !isOfflineSyncRequest) {
+    await synchronizeProjectStatuses(projectLookup.rows[0].project_id);
+  }
+
+  const result = await transaction(async (client: QueryExecutor) => {
     const ownerCheck = await client.query(
       `SELECT sf.id, sf.status, sf.project_id, sf.collected_offline, p.name as project_name
        FROM spatial_feature sf
        JOIN project p ON p.id = sf.project_id
-       WHERE sf.id = $1 AND sf.collected_by_user_id = $2`,
-      [featureId, req.user?.id],
+       WHERE sf.id = $1
+       FOR UPDATE OF sf`,
+      [featureId],
     );
 
     if (ownerCheck.rows.length === 0) {
+      if (isOfflineSyncRequest) {
+        throw permanentOfflineSyncError(
+          'Offline submission parent record is no longer accessible.',
+          'OFFLINE_SYNC_PARENT_INACCESSIBLE',
+        );
+      }
       throw new AppError('Feature not found', 404);
     }
 
-    if (ownerCheck.rows[0].status !== 'draft') {
+    const feature = ownerCheck.rows[0];
+    const userId = req.user?.id;
+    const isOfflineSync = isOfflineSyncRequest;
+    if (isOfflineSync) {
+      if (!userId) {
+        throw permanentOfflineSyncError(
+          'Offline submission discarded because its owner could not be verified.',
+          'OFFLINE_SYNC_OWNER_MISMATCH',
+        );
+      }
+      const body = assertPlainObject(req.body ?? {}, 'Offline submission');
+      assertOnlyAllowedKeys(body, new Set(), 'Offline submission');
+      assertOfflinePayloadSize(body);
+      if (feature.collected_offline !== true) {
+        throw permanentOfflineSyncError(
+          'Offline submission parent record is no longer accessible.',
+          'OFFLINE_SYNC_PARENT_INACCESSIBLE',
+        );
+      }
+      const { idempotencyKeyHash } = assertOfflineRequestBinding({
+        req,
+        projectId: feature.project_id,
+        userId,
+      });
+      const ownership = await client.query(
+        `SELECT 1
+         FROM spatial_feature
+         WHERE id = $1 AND collected_by_user_id = $2`,
+        [featureId, userId],
+      );
+      if (ownership.rows.length === 0) {
+        throw permanentOfflineSyncError(
+          'Offline submission discarded because it belongs to another account.',
+          'OFFLINE_SYNC_OWNER_MISMATCH',
+        );
+      }
+      await assertCurrentOfflineAuthorization({
+        executor: client,
+        userId,
+        projectId: feature.project_id,
+      });
+
+      const payloadHash = sha256Json({
+        feature_id: featureId,
+        project_id: feature.project_id,
+        operation: 'submit',
+      });
+      const receipt = await getOfflineReceipt({
+        executor: client,
+        userId,
+        projectId: feature.project_id,
+        operation: 'submit',
+        idempotencyKeyHash,
+      });
+      if (receipt) {
+        assertMatchingOfflineReceipt(receipt, payloadHash, [featureId]);
+        return { alreadySubmitted: true, offline: true };
+      }
+
+      if (feature.status === 'pending_review') {
+        await insertOfflineReceipt({
+          executor: client,
+          userId,
+          projectId: feature.project_id,
+          operation: 'submit',
+          idempotencyKeyHash,
+          payloadHash,
+          entityIds: [featureId],
+        });
+        return { alreadySubmitted: true, offline: true };
+      }
+      if (feature.status !== 'draft') {
+        throw permanentOfflineSyncError(
+          'Offline submission parent record is no longer submittable.',
+          'OFFLINE_SYNC_PARENT_INACCESSIBLE',
+          409,
+        );
+      }
+
+      const photoPolicyResult = await client.query(
+        `SELECT p.requires_photos,
+                p.min_photos,
+                p.max_photos,
+                (SELECT COUNT(*)::int FROM photo WHERE feature_id = $2) AS photo_count
+         FROM project p
+         WHERE p.id = $1`,
+        [feature.project_id, featureId],
+      );
+      const photoPolicy = photoPolicyResult.rows[0];
+      const photoCount = Number(photoPolicy?.photo_count);
+      const minPhotos = Number(photoPolicy?.min_photos);
+      const maxPhotos = Number(photoPolicy?.max_photos);
+      if (
+        !photoPolicy ||
+        !Number.isSafeInteger(photoCount) ||
+        !Number.isSafeInteger(minPhotos) ||
+        !Number.isSafeInteger(maxPhotos)
+      ) {
+        throw new Error('Project attachment policy could not be evaluated.');
+      }
+      if (
+        photoCount > maxPhotos ||
+        (photoPolicy.requires_photos === true && photoCount < minPhotos)
+      ) {
+        throw permanentOfflineSyncError(
+          'Offline submission does not meet the project attachment requirements.',
+          'OFFLINE_SYNC_ATTACHMENT_REJECTED',
+          422,
+        );
+      }
+
+      await client.query(
+        `UPDATE spatial_feature
+         SET status = 'pending_review', submitted_at = NOW(), version = version + 1
+         WHERE id = $1 AND status = 'draft'`,
+        [featureId],
+      );
+      const adminUsers = await client.query(
+        `SELECT id FROM "user" WHERE role = 'admin' AND is_active = TRUE`,
+      );
+      for (const admin of adminUsers.rows) {
+        await client.query(
+          `INSERT INTO notification (user_id, type, title, message, metadata)
+           VALUES ($1, 'review_completed', 'Feature review pending', $2, $3)`,
+          [
+            admin.id,
+            `A submitted feature in ${feature.project_name} is waiting for review.`,
+            JSON.stringify({
+              feature_id: featureId,
+              project_id: feature.project_id,
+              project_name: feature.project_name,
+              status: 'pending_review',
+            }),
+          ],
+        );
+      }
+      await insertOfflineReceipt({
+        executor: client,
+        userId,
+        projectId: feature.project_id,
+        operation: 'submit',
+        idempotencyKeyHash,
+        payloadHash,
+        entityIds: [featureId],
+      });
+      return { alreadySubmitted: false, offline: true };
+    }
+
+    if (feature.collected_offline === true) {
+      const body = assertPlainObject(req.body ?? {}, 'Offline-origin submission');
+      assertOnlyAllowedKeys(body, new Set(), 'Offline-origin submission');
+      assertOfflinePayloadSize(body);
+    }
+
+    const owner = await client.query(
+      `SELECT 1 FROM spatial_feature WHERE id = $1 AND collected_by_user_id = $2`,
+      [featureId, req.user?.id],
+    );
+    if (owner.rows.length === 0) {
+      throw new AppError('Feature not found', 404);
+    }
+
+    if (feature.collected_offline === true) {
+      await assertCurrentOfflineOriginOnlineAuthorization({
+        executor: client,
+        projectId: feature.project_id,
+        user: req.user as Express.UserContext,
+      });
+    } else {
+      await assertCurrentCollectionAuthorization({
+        executor: client,
+        projectId: feature.project_id,
+        user: req.user as Express.UserContext,
+      });
+    }
+
+    if (feature.status === 'pending_review') {
+      return { alreadySubmitted: true, offline: false };
+    }
+
+    if (feature.status !== 'draft') {
       throw new AppError('Only draft features can be submitted', 400);
     }
 
-    await assertProjectAllowsCollectionMutations(ownerCheck.rows[0].project_id);
-    if (ownerCheck.rows[0].collected_offline) {
-      await assertContributorAssignedForOfflineSync(
-        ownerCheck.rows[0].project_id,
-        req.user as Express.UserContext | undefined,
-        client,
+    if (feature.collected_offline === true) {
+      const photoPolicyResult = await client.query(
+        `SELECT p.requires_photos,
+                p.min_photos,
+                p.max_photos,
+                (SELECT COUNT(*)::int FROM photo WHERE feature_id = $2) AS photo_count
+         FROM project p
+         WHERE p.id = $1`,
+        [feature.project_id, featureId],
       );
+      const photoPolicy = photoPolicyResult.rows[0];
+      const photoCount = Number(photoPolicy?.photo_count);
+      const minPhotos = Number(photoPolicy?.min_photos);
+      const maxPhotos = Number(photoPolicy?.max_photos);
+      if (
+        !photoPolicy ||
+        !Number.isSafeInteger(photoCount) ||
+        !Number.isSafeInteger(minPhotos) ||
+        !Number.isSafeInteger(maxPhotos)
+      ) {
+        throw new Error('Project attachment policy could not be evaluated.');
+      }
+      if (
+        photoCount > maxPhotos ||
+        (photoPolicy.requires_photos === true && photoCount < minPhotos)
+      ) {
+        throw new AppError('This feature does not meet the project attachment requirements.', 422);
+      }
+    }
+
+    if (feature.collected_offline !== true) {
+      await assertProjectAllowsCollectionMutations(feature.project_id);
     }
 
     await client.query(
@@ -1111,23 +1791,35 @@ const submitFeature = async (req: Request, res: Response): Promise<void> => {
                  $2, $3)`,
         [
           admin.id,
-          `A submitted feature in ${ownerCheck.rows[0].project_name} is waiting for review.`,
+          `A submitted feature in ${feature.project_name} is waiting for review.`,
           JSON.stringify({
             feature_id: featureId,
-            project_id: ownerCheck.rows[0].project_id,
-            project_name: ownerCheck.rows[0].project_name,
+            project_id: feature.project_id,
+            project_name: feature.project_name,
             status: 'pending_review',
           }),
         ],
       );
     }
+    return { alreadySubmitted: false, offline: false };
   });
 
-  logger.info('Feature submitted for review:', { featureId, userId: req.user?.id });
+  logger.info(
+    result.alreadySubmitted ? 'Feature submit replay confirmed:' : 'Feature submitted for review:',
+    {
+      featureId,
+      userId: req.user?.id,
+    },
+  );
 
   res.json({
     success: true,
-    message: 'Feature submitted for review',
+    message: result.alreadySubmitted
+      ? 'Feature already submitted for review'
+      : 'Feature submitted for review',
+    data: {
+      outcome: result.alreadySubmitted ? 'already_synchronized' : 'accepted',
+    },
   });
 };
 
@@ -1653,97 +2345,211 @@ const batchCreateFeatures = async (req: Request, res: Response): Promise<void> =
   const { features } = req.body;
 
   if (!Array.isArray(features) || features.length === 0) {
-    throw new AppError('Features array is required', 400);
+    throw offlinePayloadRejected('Offline feature batch is required.');
   }
 
-  if (features.length > 500) {
-    throw new AppError('Batch size cannot exceed 500 features', 400);
+  if (features.length > 100) {
+    throw offlinePayloadRejected('Offline feature batch cannot exceed 100 features.');
   }
 
-  const projectIds = [...new Set(features.map((f: any) => f.project_id).filter(Boolean))];
-
-  if (req.user?.role !== 'admin') {
-    if (projectIds.length === 0) {
-      throw new AppError('Each feature must include project_id', 400);
-    }
-
-    const accessResult = await query(
-      `SELECT DISTINCT project_id
-       FROM project_assignment
-       WHERE user_id = $1
-         AND status = 'approved'
-         AND project_id = ANY($2::uuid[])`,
-      [req.user?.id, projectIds],
+  const userId = req.user?.id;
+  if (!userId) {
+    throw permanentOfflineSyncError(
+      'Offline submission discarded because its owner could not be verified.',
+      'OFFLINE_SYNC_OWNER_MISMATCH',
     );
+  }
+  const envelope = assertPlainObject(req.body, 'Offline batch');
+  assertOnlyAllowedKeys(envelope, new Set(['features']), 'Offline batch');
+  assertOfflinePayloadSize(envelope);
 
-    const accessibleProjects = new Set(accessResult.rows.map((row: any) => row.project_id));
-    const unauthorizedProject = projectIds.find((projectId) => !accessibleProjects.has(projectId));
-    if (unauthorizedProject) {
-      throw new AppError(`You do not have access to project ${unauthorizedProject}`, 403);
+  const allowedFeatureKeys = new Set([
+    'id',
+    'client_offline_id',
+    'offline_owner_user_id',
+    'project_id',
+    'geom',
+    'attributes',
+    'accuracy_meters',
+    'collected_offline',
+  ]);
+  for (const feature of features) {
+    const featureObject = assertPlainObject(feature, 'Offline batch feature');
+    assertOnlyAllowedKeys(featureObject, allowedFeatureKeys, 'Offline batch feature');
+    if (
+      featureObject.collected_offline !== true ||
+      typeof featureObject.id !== 'string' ||
+      !UUID_PATTERN.test(featureObject.id)
+    ) {
+      throw offlinePayloadRejected('Every offline batch feature requires a stable feature ID.');
+    }
+    if (
+      featureObject.client_offline_id !== undefined &&
+      featureObject.client_offline_id !== featureObject.id
+    ) {
+      throw offlinePayloadRejected('Offline batch feature identifiers do not match.');
+    }
+    if (
+      typeof featureObject.offline_owner_user_id !== 'string' ||
+      featureObject.offline_owner_user_id !== userId
+    ) {
+      throw permanentOfflineSyncError(
+        'Offline submission discarded because it belongs to another account.',
+        'OFFLINE_SYNC_OWNER_MISMATCH',
+      );
     }
   }
 
-  for (const projectId of projectIds) {
-    await assertProjectAllowsCollectionMutations(projectId);
+  const projectIds = [...new Set(features.map((feature: any) => feature.project_id))];
+  if (projectIds.length !== 1 || typeof projectIds[0] !== 'string') {
+    throw permanentOfflineSyncError(
+      'Offline submission discarded because its project does not match.',
+      'OFFLINE_SYNC_PROJECT_MISMATCH',
+    );
   }
+  const projectId = projectIds[0];
+  const { idempotencyKeyHash } = assertOfflineRequestBinding({ req, projectId, userId });
+  const receiptFeatures = features.map((feature: any) => ({
+    id: feature.id,
+    project_id: projectId,
+    geom: validateGeoJsonGeometry(feature.geom, { strictOffline: true }),
+    attributes: normalizeOfflineAttributesForReceipt(feature.attributes),
+    accuracy_meters: normalizeOfflineAccuracyForReceipt(feature.accuracy_meters),
+  }));
+  const entityIds = receiptFeatures.map((feature) => feature.id);
+  if (new Set(entityIds).size !== entityIds.length) {
+    throw offlinePayloadRejected('Offline feature batch contains duplicate identifiers.');
+  }
+  const payloadHash = sha256Json(receiptFeatures);
 
-  const createdFeatures = await transaction(async (client: any) => {
-    const results: any[] = [];
-
-    for (const feature of features) {
-      const { id, project_id, geom, attributes, collected_offline } = feature;
-      if (collected_offline) {
-        await assertContributorAssignedForOfflineSync(
-          project_id,
-          req.user as Express.UserContext | undefined,
-          client,
+  const outcome = await transaction(async (client: QueryExecutor) => {
+    await assertCurrentOfflineAuthorization({ executor: client, userId, projectId });
+    await lockOfflineFeatureIds(client, entityIds);
+    const receipt = await getOfflineReceipt({
+      executor: client,
+      userId,
+      projectId,
+      operation: 'batch_create',
+      idempotencyKeyHash,
+    });
+    if (receipt) {
+      assertMatchingOfflineReceipt(receipt, payloadHash, entityIds);
+      const replay = await client.query(
+        `SELECT id, status, version, collected_at
+         FROM spatial_feature
+         WHERE project_id = $1
+           AND collected_by_user_id = $2
+           AND id = ANY($3::uuid[])
+         ORDER BY array_position($3::uuid[], id)`,
+        [projectId, userId, entityIds],
+      );
+      if (replay.rows.length !== entityIds.length) {
+        throw permanentOfflineSyncError(
+          'Offline submission parent record is no longer accessible.',
+          'OFFLINE_SYNC_PARENT_INACCESSIBLE',
         );
       }
-      const normalizedGeometry = validateGeoJsonGeometry(geom);
-      const formSchema = await getProjectFormSchema(project_id);
-      const normalizedAttributes = validateAttributesAgainstSchema(attributes, formSchema);
+      return { rows: replay.rows, alreadySynchronized: true };
+    }
 
-      const result = await client.query(
+    const formSchema = await getProjectFormSchema(projectId, client);
+    const normalizedFeatures: Array<{
+      id: string;
+      project_id: string;
+      geom: GeoJsonGeometry;
+      attributes: Record<string, unknown>;
+      accuracy_meters: number | null;
+    }> = [];
+
+    for (const feature of features) {
+      const normalizedGeometry = validateGeoJsonGeometry(feature.geom, { strictOffline: true });
+      const normalizedAttributes = validateAttributesAgainstSchema(feature.attributes, formSchema, {
+        strictOffline: true,
+      });
+      const normalizedAccuracy = assertOfflineCollectionConstraints({
+        schema: formSchema,
+        geometry: normalizedGeometry,
+        accuracyMeters: feature.accuracy_meters,
+      });
+      await assertGeometryAcceptedByPostgis(client, normalizedGeometry);
+      normalizedFeatures.push({
+        id: feature.id,
+        project_id: projectId,
+        geom: normalizedGeometry,
+        attributes: normalizedAttributes,
+        accuracy_meters: normalizedAccuracy,
+      });
+    }
+
+    const collision = await client.query(
+      `SELECT id FROM spatial_feature WHERE id = ANY($1::uuid[]) LIMIT 1 FOR UPDATE`,
+      [entityIds],
+    );
+    if (collision.rows[0]) {
+      throw permanentOfflineSyncError(
+        'Offline submission identifiers or idempotency data do not match.',
+        'OFFLINE_SYNC_IDEMPOTENCY_MISMATCH',
+        409,
+      );
+    }
+
+    const results: any[] = [];
+    for (const feature of normalizedFeatures) {
+      const inserted = await client.query(
         `INSERT INTO spatial_feature (
           id, project_id, collected_by_user_id, geom, attributes,
           accuracy_meters, collected_offline, status
         ) VALUES (
-          COALESCE($1::uuid, uuid_generate_v4()),
+          $1::uuid,
           $2,
           $3,
           ST_SetSRID(ST_GeomFromGeoJSON($4), 4326),
           $5,
           $6,
-          $7,
+          TRUE,
           'draft'
         )
         RETURNING id, status, version, collected_at`,
         [
-          id ?? null,
-          project_id,
-          req.user?.id,
-          JSON.stringify(normalizedGeometry),
-          JSON.stringify(normalizedAttributes),
-          null,
-          collected_offline || false,
+          feature.id,
+          projectId,
+          userId,
+          JSON.stringify(feature.geom),
+          JSON.stringify(feature.attributes),
+          feature.accuracy_meters,
         ],
       );
-
-      results.push(result.rows[0]);
+      results.push(inserted.rows[0]);
     }
-
-    return results;
+    await insertOfflineReceipt({
+      executor: client,
+      userId,
+      projectId,
+      operation: 'batch_create',
+      idempotencyKeyHash,
+      payloadHash,
+      entityIds,
+    });
+    return { rows: results, alreadySynchronized: false };
   });
 
-  logger.info('Batch features created:', {
-    count: createdFeatures.length,
-    userId: req.user?.id,
-  });
-
-  res.status(201).json({
+  logger.info(
+    outcome.alreadySynchronized
+      ? 'Offline feature batch replay confirmed:'
+      : 'Offline feature batch created:',
+    {
+      count: outcome.rows.length,
+      projectId,
+      userId,
+    },
+  );
+  res.status(outcome.alreadySynchronized ? 200 : 201).json({
     success: true,
-    message: `${createdFeatures.length} features created successfully`,
-    data: createdFeatures,
+    message: outcome.alreadySynchronized
+      ? `${outcome.rows.length} features already synchronized`
+      : `${outcome.rows.length} features created successfully`,
+    data: outcome.rows,
+    outcome: outcome.alreadySynchronized ? 'already_synchronized' : 'accepted',
   });
 };
 

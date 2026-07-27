@@ -16,10 +16,14 @@ class ReviewWorkflowService {
   final ReviewNotificationEmitter _emitNotification;
 
   Future<void> submitDraft({
+    required String ownerUserId,
+    required String projectId,
     required String draftId,
     required String actorName,
   }) async {
     await _transition(
+      ownerUserId: ownerUserId,
+      projectId: projectId,
       draftId: draftId,
       actorName: actorName,
       expectedCurrentStatuses: const <String>[
@@ -36,10 +40,14 @@ class ReviewWorkflowService {
   }
 
   Future<void> startReview({
+    required String ownerUserId,
+    required String projectId,
     required String draftId,
     required String reviewerName,
   }) async {
     await _transition(
+      ownerUserId: ownerUserId,
+      projectId: projectId,
       draftId: draftId,
       actorName: reviewerName,
       expectedCurrentStatuses: const <String>[DraftWorkflowStatus.submitted],
@@ -53,11 +61,15 @@ class ReviewWorkflowService {
   }
 
   Future<void> approveDraft({
+    required String ownerUserId,
+    required String projectId,
     required String draftId,
     required String reviewerName,
     required String note,
   }) async {
     await _transition(
+      ownerUserId: ownerUserId,
+      projectId: projectId,
       draftId: draftId,
       actorName: reviewerName,
       expectedCurrentStatuses: const <String>[
@@ -74,6 +86,8 @@ class ReviewWorkflowService {
   }
 
   Future<void> rejectDraft({
+    required String ownerUserId,
+    required String projectId,
     required String draftId,
     required String reviewerName,
     required String note,
@@ -82,6 +96,8 @@ class ReviewWorkflowService {
       throw StateError('Rejection note is required.');
     }
     await _transition(
+      ownerUserId: ownerUserId,
+      projectId: projectId,
       draftId: draftId,
       actorName: reviewerName,
       expectedCurrentStatuses: const <String>[
@@ -98,6 +114,8 @@ class ReviewWorkflowService {
   }
 
   Future<void> _transition({
+    required String ownerUserId,
+    required String projectId,
     required String draftId,
     required String actorName,
     required List<String> expectedCurrentStatuses,
@@ -107,7 +125,11 @@ class ReviewWorkflowService {
     required String notificationTitle,
     required String notificationMessage,
   }) async {
-    final draft = await _getDraftById(draftId);
+    final draft = await _getDraft(
+      ownerUserId: ownerUserId,
+      projectId: projectId,
+      draftId: draftId,
+    );
     if (!expectedCurrentStatuses.contains(draft.status)) {
       throw StateError(
         'Invalid transition from "${draft.status}" to "$nextStatus".',
@@ -131,12 +153,18 @@ class ReviewWorkflowService {
     _emitNotification(title: notificationTitle, message: notificationMessage);
   }
 
-  Future<LocalDraftFeature> _getDraftById(String draftId) async {
-    final drafts = await _localStore.getDrafts();
-    for (final draft in drafts) {
-      if (draft.id == draftId) {
-        return draft;
-      }
+  Future<LocalDraftFeature> _getDraft({
+    required String ownerUserId,
+    required String projectId,
+    required String draftId,
+  }) async {
+    final draft = await _localStore.getProjectDraft(
+      ownerUserId: ownerUserId,
+      projectId: projectId,
+      draftId: draftId,
+    );
+    if (draft != null) {
+      return draft;
     }
     throw StateError('Draft $draftId not found.');
   }

@@ -6,7 +6,7 @@ class SyncRetryPolicy {
   static const int maxAttempts = 5;
 
   static Duration backoffForAttempt(int attempt) {
-    final safeAttempt = max(1, attempt);
+    final safeAttempt = min(max(1, attempt), 6);
     final seconds = min(pow(2, safeAttempt).toInt() * 5, 300);
     return Duration(seconds: seconds);
   }

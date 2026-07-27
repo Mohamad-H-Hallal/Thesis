@@ -338,12 +338,14 @@ class LocalDraftFeature {
 }
 
 class SyncQueueItem {
-  const SyncQueueItem({
+  SyncQueueItem({
     required this.id,
     required this.entityType,
     required this.entityId,
     required this.operation,
     required this.payload,
+    String? ownerUserId,
+    String? projectId,
     required this.localVersion,
     required this.idempotencyKey,
     required this.attemptCount,
@@ -352,13 +354,16 @@ class SyncQueueItem {
     this.lastError,
     required this.createdAt,
     required this.updatedAt,
-  });
+  }) : ownerUserId = ownerUserId ?? payload['owner_user_id'] as String? ?? '',
+       projectId = projectId ?? payload['project_id'] as String? ?? '';
 
   final String id;
   final String entityType;
   final String entityId;
   final SyncOperationType operation;
   final Map<String, dynamic> payload;
+  final String ownerUserId;
+  final String projectId;
   final int localVersion;
   final String idempotencyKey;
   final int attemptCount;
@@ -369,6 +374,8 @@ class SyncQueueItem {
   final DateTime updatedAt;
 
   SyncQueueItem copyWith({
+    SyncOperationType? operation,
+    Map<String, dynamic>? payload,
     int? attemptCount,
     SyncQueueStatus? status,
     DateTime? nextRetryAt,
@@ -379,8 +386,10 @@ class SyncQueueItem {
       id: id,
       entityType: entityType,
       entityId: entityId,
-      operation: operation,
-      payload: payload,
+      operation: operation ?? this.operation,
+      payload: payload ?? this.payload,
+      ownerUserId: ownerUserId,
+      projectId: projectId,
       localVersion: localVersion,
       idempotencyKey: idempotencyKey,
       attemptCount: attemptCount ?? this.attemptCount,
@@ -398,6 +407,8 @@ class SyncQueueItem {
       'entity_type': entityType,
       'entity_id': entityId,
       'operation': operation.name,
+      'owner_user_id': ownerUserId,
+      'project_id': projectId,
       'payload_json': jsonEncode(payload),
       'local_version': localVersion,
       'idempotency_key': idempotencyKey,
@@ -418,6 +429,8 @@ class SyncQueueItem {
       operation: SyncOperationType.values.byName(row['operation'] as String),
       payload:
           jsonDecode(row['payload_json'] as String) as Map<String, dynamic>,
+      ownerUserId: row['owner_user_id'] as String?,
+      projectId: row['project_id'] as String?,
       localVersion: row['local_version'] as int,
       idempotencyKey: row['idempotency_key'] as String,
       attemptCount: row['attempt_count'] as int,

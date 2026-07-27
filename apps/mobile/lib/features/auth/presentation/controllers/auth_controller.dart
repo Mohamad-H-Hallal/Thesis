@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/auth_failure.dart';
@@ -36,6 +34,7 @@ class AuthController extends StateNotifier<AuthState> {
   AuthController(this._repository) : super(const AuthState.checking());
 
   final AuthRepository _repository;
+  Future<void>? _logoutFuture;
 
   Future<void> bootstrap() async {
     state = const AuthState.checking();
@@ -64,6 +63,10 @@ class AuthController extends StateNotifier<AuthState> {
     required String password,
     required bool rememberMe,
   }) async {
+    await _waitForPendingLogout();
+    if (!mounted) {
+      return;
+    }
     state = const AuthState.loading();
     try {
       final session = await _repository.login(
@@ -92,6 +95,10 @@ class AuthController extends StateNotifier<AuthState> {
     required String password,
     required bool rememberMe,
   }) async {
+    await _waitForPendingLogout();
+    if (!mounted) {
+      return;
+    }
     state = const AuthState.loading();
     try {
       final session = await _repository.reactivateContributorAndLogin(
@@ -157,7 +164,7 @@ class AuthController extends StateNotifier<AuthState> {
       status: AuthStatus.unauthenticated,
       errorCode: 'logged_out',
     );
-    unawaited(_repository.logout());
+    await _finishLogout();
   }
 
   Future<void> forceLogout({String? message, String? code}) async {
@@ -169,7 +176,31 @@ class AuthController extends StateNotifier<AuthState> {
       error: message,
       errorCode: code ?? 'logged_out',
     );
-    unawaited(_repository.logout());
+    await _finishLogout();
+  }
+
+  Future<void> _waitForPendingLogout() async {
+    final pendingLogout = _logoutFuture;
+    if (pendingLogout != null) {
+      await pendingLogout;
+    }
+  }
+
+  Future<void> _finishLogout() {
+    final pendingLogout = _logoutFuture;
+    if (pendingLogout != null) {
+      return pendingLogout;
+    }
+    final future = _repository.logout().catchError((_) {
+      // Local unauthenticated state is authoritative even when the best-effort
+      // server logout request fails.
+    });
+    _logoutFuture = future;
+    return future.whenComplete(() {
+      if (identical(_logoutFuture, future)) {
+        _logoutFuture = null;
+      }
+    });
   }
 
   Future<void> selfDeactivate() async {

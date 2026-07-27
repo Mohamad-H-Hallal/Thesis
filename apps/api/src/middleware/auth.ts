@@ -5,11 +5,26 @@ const logger = require('../utils/logger');
 import type { user_role } from '../types/roles';
 import { publicVisibleStatuses, synchronizeProjectStatuses } from '../lib/projectLifecycle';
 import { isProtectedSuperAdminEmail } from '../lib/userWorkflow';
+import { requestHasOfflineSyncSignal } from '../services/offlineSyncSecurity.service';
+import { permanentOfflineSyncError } from './error';
 
 interface TokenPayload extends JwtPayload {
   userId: string;
   role?: user_role;
 }
+
+const isOfflineSyncRequest = (req: Request): boolean => {
+  const requestPath = req.originalUrl.toLowerCase();
+  const isFeatureMutation =
+    ['POST', 'PUT', 'PATCH'].includes(req.method) && /\/features(?:\/|[?]|$)/.test(requestPath);
+  const isFeaturePhotoUpload =
+    req.method === 'POST' && /\/photos\/feature\/[^/?]+(?:[/?]|$)/.test(requestPath);
+  return (
+    isFeatureMutation ||
+    isFeaturePhotoUpload ||
+    requestHasOfflineSyncSignal(req)
+  );
+};
 
 const getSecrets = (current: string, previousRaw?: string): string[] => {
   const previous = (previousRaw ?? '')
@@ -35,26 +50,22 @@ const verifyWithSecrets = (token: string, secrets: string[]): TokenPayload => {
 const generateToken = (userId: string, role: user_role): string => {
   const signingSecret = process.env.JWT_SECRET_CURRENT || process.env.JWT_SECRET;
   const expiresIn = (process.env.JWT_EXPIRE || '7d') as SignOptions['expiresIn'];
-  return jwt.sign(
-    { userId, role },
-    signingSecret as string,
-    { expiresIn }
-  );
+  return jwt.sign({ userId, role }, signingSecret as string, { expiresIn });
 };
 
 // Generate refresh token
 const generateRefreshToken = (userId: string): string => {
   const signingSecret = process.env.JWT_REFRESH_SECRET_CURRENT || process.env.JWT_REFRESH_SECRET;
   const expiresIn = (process.env.JWT_REFRESH_EXPIRE || '30d') as SignOptions['expiresIn'];
-  return jwt.sign(
-    { userId },
-    signingSecret as string,
-    { expiresIn }
-  );
+  return jwt.sign({ userId }, signingSecret as string, { expiresIn });
 };
 
 // Verify JWT token middleware
-const authenticate = async (req: Request, res: Response, next: NextFunction): Promise<Response | void> => {
+const authenticate = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<Response | void> => {
   try {
     // Get token from header
     const authHeader = req.headers.authorization;
@@ -76,17 +87,25 @@ const authenticate = async (req: Request, res: Response, next: NextFunction): Pr
     // Verify token
     const accessSecrets = getSecrets(
       process.env.JWT_SECRET_CURRENT || process.env.JWT_SECRET || '',
-      process.env.JWT_SECRET_PREVIOUS
+      process.env.JWT_SECRET_PREVIOUS,
     );
     const decoded = verifyWithSecrets(token, accessSecrets);
 
     // Get user from database
     const result = await query(
       'SELECT id, email, full_name, role, is_active FROM "user" WHERE id = $1',
-      [decoded.userId]
+      [decoded.userId],
     );
 
     if (result.rows.length === 0) {
+      if (isOfflineSyncRequest(req)) {
+        return next(
+          permanentOfflineSyncError(
+            'Offline submission discarded because this account is no longer available.',
+            'OFFLINE_SYNC_ACCOUNT_INACTIVE',
+          ),
+        );
+      }
       return res.status(401).json({
         success: false,
         message: 'User not found',
@@ -97,6 +116,14 @@ const authenticate = async (req: Request, res: Response, next: NextFunction): Pr
 
     // Check if user is active
     if (!user.is_active) {
+      if (isOfflineSyncRequest(req)) {
+        return next(
+          permanentOfflineSyncError(
+            'Offline submission discarded because this account is no longer active.',
+            'OFFLINE_SYNC_ACCOUNT_INACTIVE',
+          ),
+        );
+      }
       return res.status(401).json({
         success: false,
         message: 'User account is inactive',
@@ -107,16 +134,16 @@ const authenticate = async (req: Request, res: Response, next: NextFunction): Pr
     req.user = user;
     next();
   } catch (error: unknown) {
-    if (error instanceof jwt.JsonWebTokenError) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid token',
-      });
-    }
     if (error instanceof jwt.TokenExpiredError) {
       return res.status(401).json({
         success: false,
         message: 'Token expired',
+      });
+    }
+    if (error instanceof jwt.JsonWebTokenError) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid token',
       });
     }
     logger.error('Authentication error:', error);
@@ -149,7 +176,11 @@ const authorize = (...roles: user_role[]) => {
 };
 
 // Protected super-admin authorization middleware
-const requireProtectedSuperAdmin = (req: Request, res: Response, next: NextFunction): Response | void => {
+const requireProtectedSuperAdmin = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Response | void => {
   if (!req.user) {
     return res.status(401).json({
       success: false,
@@ -168,7 +199,11 @@ const requireProtectedSuperAdmin = (req: Request, res: Response, next: NextFunct
 };
 
 // Check project access middleware
-const checkProjectAccess = async (req: Request, res: Response, next: NextFunction): Promise<Response | void> => {
+const checkProjectAccess = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<Response | void> => {
   try {
     const projectId = req.params.projectId || req.body.project_id;
     const userId = req.user?.id;
@@ -194,7 +229,7 @@ const checkProjectAccess = async (req: Request, res: Response, next: NextFunctio
          WHERE id = $1
            AND visible_to_viewers = TRUE
            AND status IN (${visibleStatuses})`,
-        [projectId]
+        [projectId],
       );
 
       if (visibleProject.rows.length === 0) {
@@ -232,7 +267,7 @@ const checkProjectAccess = async (req: Request, res: Response, next: NextFunctio
               AND visible_to_contributors = TRUE
               AND status IN (${visibleStatuses})
           ) AS is_public_project`,
-      [projectId, userId]
+      [projectId, userId],
     );
 
     const accessRow = contributorAccess.rows[0];
@@ -260,7 +295,11 @@ const checkProjectAccess = async (req: Request, res: Response, next: NextFunctio
 };
 
 // Check project admin access
-const checkProjectAdmin = async (req: Request, res: Response, next: NextFunction): Promise<Response | void> => {
+const checkProjectAdmin = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<Response | void> => {
   try {
     const projectId = req.params.projectId || req.body.project_id;
     const userId = req.user?.id;
@@ -282,7 +321,7 @@ const checkProjectAdmin = async (req: Request, res: Response, next: NextFunction
     const result = await query(
       `SELECT id FROM project_assignment 
        WHERE project_id = $1 AND user_id = $2 AND role = 'admin' AND status = 'approved'`,
-      [projectId, userId]
+      [projectId, userId],
     );
 
     if (result.rows.length === 0) {

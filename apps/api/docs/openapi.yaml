@@ -114,6 +114,8 @@ paths:
           description: Validation failed
         '401':
           description: Invalid refresh token
+        '403':
+          description: Definitive inactive or unavailable account rejection
   /api/v1/auth/me:
     get:
       tags: [Auth]
@@ -1376,6 +1378,83 @@ paths:
           description: Unauthorized
         '403':
           description: Forbidden
+  /api/v1/features/offline-sync:
+    post:
+      tags: [Features]
+      security:
+        - bearerAuth: []
+      summary: Atomically synchronize one project-scoped offline feature bundle
+      description: >-
+        Revalidates the authenticated contributor, project, assignment, owner,
+        feature relationship, payload, geometry, and raster attachments from
+        current server state. The Idempotency-Key is scoped to the authenticated
+        owner, project, operation, and normalized payload. A successful replay
+        returns already_synchronized without creating duplicate records.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+        - in: header
+          name: X-Offline-Owner-Id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: X-Offline-Project-Id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [payload]
+              properties:
+                payload:
+                  type: string
+                  maxLength: 262144
+                  description: >-
+                    JSON object containing only draft_id,
+                    offline_owner_user_id, project_id, operation (create or
+                    update), geom, attributes, optional accuracy_meters,
+                    submit_for_review, and expected_version (null/omitted for
+                    create; a positive integer for update).
+                photos:
+                  type: array
+                  maxItems: 10
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        '200':
+          description: Idempotent duplicate of an already committed bundle
+        '201':
+          description: Bundle fully accepted and committed
+        '401':
+          description: Authentication is missing, invalid, or refresh is required
+        '403':
+          description: Definitive current-authorization rejection
+        '409':
+          description: >-
+            Definitive parent/idempotency mismatch, or a retained version
+            conflict when the server record changed after offline collection
+        '413':
+          description: Definitive oversized payload rejection
+        '422':
+          description: Definitive unsafe payload, geometry, or attachment rejection
+        '429':
+          description: Temporary rate limit; retain locally and retry after Retry-After
+        '500':
+          description: Temporary server failure; retain locally and retry
   /api/v1/features/nearby:
     get:
       tags: [Features]
@@ -1449,8 +1528,28 @@ paths:
       security:
         - bearerAuth: []
       summary: Update draft feature
+      description: >-
+        Updates a draft. Legacy offline-bound requests must include the current
+        positive integer expected_version and all offline ownership, project,
+        and idempotency headers. A stale version returns the structured
+        OFFLINE_SYNC_VERSION_CONFLICT response without changing the feature.
       parameters:
         - $ref: '#/components/parameters/featureId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                attributes:
+                  type: object
+                geom:
+                  type: object
+                expected_version:
+                  type: integer
+                  minimum: 1
       responses:
         '200':
           description: Feature updated
@@ -1462,6 +1561,8 @@ paths:
           description: Forbidden
         '404':
           description: Not found
+        '409':
+          description: Draft state conflict or structured offline version conflict
     delete:
       tags: [Features]
       security:

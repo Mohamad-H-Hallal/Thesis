@@ -268,7 +268,10 @@ class ApiImportsRepository implements ImportsRepository {
     final approvedRows =
         (data['approved_project_features'] as List? ?? const <dynamic>[])
             .map(
-              (row) => _toProjectFeature(Map<String, dynamic>.from(row as Map)),
+              (row) => _toProjectFeature(
+                Map<String, dynamic>.from(row as Map),
+                expectedProjectId: projectId,
+              ),
             )
             .toList(growable: false);
     final tileData = ImportMapData(
@@ -653,9 +656,13 @@ class ApiImportsRepository implements ImportsRepository {
     );
   }
 
-  MapFeatureSummary _toProjectFeature(Map<String, dynamic> item) {
+  MapFeatureSummary _toProjectFeature(
+    Map<String, dynamic> item, {
+    required String expectedProjectId,
+  }) {
     return MapFeatureSummary(
       id: (item['id'] as String?) ?? '',
+      projectId: (item['project_id'] as String?) ?? expectedProjectId,
       status: (item['status'] as String?) ?? 'approved',
       geometry: Map<String, dynamic>.from(
         item['geometry'] as Map? ?? const <String, dynamic>{},

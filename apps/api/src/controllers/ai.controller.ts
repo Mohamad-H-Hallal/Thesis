@@ -5788,7 +5788,7 @@ const uploadProjectAiPredictionValidationPhotos = async (
   const photos = files
     .filter((file) => typeof file.filename === 'string' && file.filename.trim().length > 0)
     .map((file) => {
-      const url = `/uploads/photos/${file.filename}`;
+      const url = `/uploads/ai-validation/${file.filename}`;
       return {
         id: url,
         url,

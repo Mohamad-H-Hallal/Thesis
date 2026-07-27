@@ -614,6 +614,8 @@ const createStartableAiProjectFixture = async (name = 'AI Server Config Project'
   return fixture;
 };
 
+const DATABASE_HOOK_TIMEOUT_MS = 30_000;
+
 beforeEach(async () => {
   await resetDb();
   process.env.SUPER_ADMIN_EMAIL = SUPER_ADMIN_EMAIL;
@@ -626,7 +628,7 @@ beforeEach(async () => {
   process.env.AI_CALLBACK_SECRET = 'test-ai-callback-secret';
   process.env.AI_SERVER_TIMEOUT_MS = '5000';
   mockAiServerFetch();
-});
+}, DATABASE_HOOK_TIMEOUT_MS);
 
 afterEach(async () => {
   jest.restoreAllMocks();
@@ -670,7 +672,7 @@ afterEach(async () => {
   } else {
     process.env.AI_SERVER_TIMEOUT_MS = ORIGINAL_AI_SERVER_TIMEOUT_MS;
   }
-});
+}, DATABASE_HOOK_TIMEOUT_MS);
 
 afterAll(async () => {
   delete process.env.SUPER_ADMIN_EMAIL;

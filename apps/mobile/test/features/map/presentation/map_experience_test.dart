@@ -124,7 +124,7 @@ class _AlwaysOnlineNetworkAvailability implements NetworkAvailabilityService {
   Future<bool> isOnline() async => true;
 }
 
-class _FakeLocalStore implements LocalStore {
+class _FakeLocalStore extends LocalStore {
   @override
   Future<void> cacheProjects(List<ProjectSummary> projects) async {}
 
@@ -212,6 +212,7 @@ class _FakeLocalStore implements LocalStore {
   Future<void> markSyncConflict(
     SyncQueueItem item, {
     required String error,
+    int? remoteVersion,
   }) async {}
 
   @override
@@ -339,6 +340,7 @@ List<MapFeatureSummary> _projectFeatures() {
   return const <MapFeatureSummary>[
     MapFeatureSummary(
       id: 'feature-olive-001',
+      projectId: 'project-1',
       status: 'approved',
       geometry: <String, dynamic>{
         'type': 'Point',
@@ -350,6 +352,7 @@ List<MapFeatureSummary> _projectFeatures() {
     ),
     MapFeatureSummary(
       id: 'feature-line-002',
+      projectId: 'project-1',
       status: 'pending_review',
       geometry: <String, dynamic>{
         'type': 'LineString',
@@ -482,9 +485,9 @@ Widget _wrapWithScope({
             )
             .toList(growable: false);
       }),
-      projectFeatureDetailsProvider.overrideWith((ref, featureId) async {
+      projectFeatureDetailsProvider.overrideWith((ref, identity) async {
         return _projectFeatures().firstWhere(
-          (feature) => feature.id == featureId,
+          (feature) => feature.id == identity.featureId,
         );
       }),
       projectFeatureCountProvider.overrideWith((ref, query) async {
@@ -529,6 +532,7 @@ void main() {
         ..._projectFeatures(),
         const MapFeatureSummary(
           id: 'feature-polygon-003',
+          projectId: 'project-1',
           status: 'rejected',
           geometry: <String, dynamic>{
             'type': 'Polygon',
@@ -934,10 +938,10 @@ void main() {
           projectMapFeaturesProvider.overrideWith(
             (ref, projectId) async => _projectFeatures(),
           ),
-          projectFeatureDetailsProvider.overrideWith((ref, featureId) async {
+          projectFeatureDetailsProvider.overrideWith((ref, identity) async {
             detailFetchCount += 1;
             return _projectFeatures().firstWhere(
-              (feature) => feature.id == featureId,
+              (feature) => feature.id == identity.featureId,
             );
           }),
           offlineMapPackageProvider.overrideWith((ref) async => null),

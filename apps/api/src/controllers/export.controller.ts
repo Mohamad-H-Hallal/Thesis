@@ -880,6 +880,9 @@ const createShapefile = async (outputDir, fileName, features, _geometryType) => 
     if (sanitizedAttributes) {
       Object.keys(sanitizedAttributes).forEach((key) => {
         const truncatedKey = key.substring(0, 10);
+        if (Object.prototype.hasOwnProperty.call(properties, truncatedKey)) {
+          return;
+        }
         let value = sanitizedAttributes[key];
 
         if (typeof value === 'string') {
@@ -980,6 +983,7 @@ const createGeoJSON = (features, projectName, geometryType) => {
         type: 'Feature',
         geometry: geom,
         properties: {
+          ...sanitizeManagedFeatureAttributes(f.attributes),
           feature_id: f.id,
           collected_at: formatLebanonDateTime(f.collected_at),
           collected_by: f.collected_by,
@@ -988,7 +992,6 @@ const createGeoJSON = (features, projectName, geometryType) => {
             Array.isArray(f.photo_paths) && f.photo_paths.length > 0 ? f.photo_paths[0] : null,
           photo_paths: Array.isArray(f.photo_paths) ? f.photo_paths : [],
           photo_manifest_ref: Number(f.photo_count ?? 0) > 0 ? 'photos_manifest.json' : null,
-          ...sanitizeManagedFeatureAttributes(f.attributes),
         },
       };
     }),

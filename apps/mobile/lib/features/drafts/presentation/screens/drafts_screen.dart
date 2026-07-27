@@ -115,6 +115,8 @@ class DraftsScreen extends ConsumerWidget {
                                     await ref
                                         .read(reviewWorkflowServiceProvider)
                                         .submitDraft(
+                                          ownerUserId: draft.ownerUserId,
+                                          projectId: draft.projectId,
                                           draftId: draft.id,
                                           actorName: userName,
                                         );

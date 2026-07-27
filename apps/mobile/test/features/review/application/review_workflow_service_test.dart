@@ -44,9 +44,21 @@ void main() {
   });
 
   test('submit -> review -> approve workflow is persisted', () async {
-    await service.submitDraft(draftId: 'draft-wf-1', actorName: 'Contributor');
-    await service.startReview(draftId: 'draft-wf-1', reviewerName: 'Reviewer');
+    await service.submitDraft(
+      ownerUserId: 'contributor-1',
+      projectId: 'proj-1',
+      draftId: 'draft-wf-1',
+      actorName: 'Contributor',
+    );
+    await service.startReview(
+      ownerUserId: 'contributor-1',
+      projectId: 'proj-1',
+      draftId: 'draft-wf-1',
+      reviewerName: 'Reviewer',
+    );
     await service.approveDraft(
+      ownerUserId: 'contributor-1',
+      projectId: 'proj-1',
       draftId: 'draft-wf-1',
       reviewerName: 'Reviewer',
       note: 'Validated geometry and attributes.',
@@ -67,10 +79,17 @@ void main() {
   });
 
   test('reject requires non-empty note', () async {
-    await service.submitDraft(draftId: 'draft-wf-1', actorName: 'Contributor');
+    await service.submitDraft(
+      ownerUserId: 'contributor-1',
+      projectId: 'proj-1',
+      draftId: 'draft-wf-1',
+      actorName: 'Contributor',
+    );
 
     expect(
       () => service.rejectDraft(
+        ownerUserId: 'contributor-1',
+        projectId: 'proj-1',
         draftId: 'draft-wf-1',
         reviewerName: 'Reviewer',
         note: '',

@@ -72,6 +72,8 @@ class SyncController extends StateNotifier<SyncState>
     required SyncEngine syncEngine,
     required LocalStore localStore,
     required NetworkAvailabilityService networkAvailability,
+    this.ownerUserId = '',
+    this.onLocalDataChanged,
   }) : _syncEngine = syncEngine,
        _localStore = localStore,
        _networkAvailability = networkAvailability,
@@ -80,6 +82,8 @@ class SyncController extends StateNotifier<SyncState>
   final SyncEngine _syncEngine;
   final LocalStore _localStore;
   final NetworkAvailabilityService _networkAvailability;
+  final String ownerUserId;
+  final VoidCallback? onLocalDataChanged;
 
   Timer? _timer;
   Future<void>? _initializeFuture;
@@ -205,6 +209,9 @@ class SyncController extends StateNotifier<SyncState>
     try {
       await _localStore.initialize();
       final summary = await _syncEngine.syncPending();
+      if (summary.processed > 0) {
+        onLocalDataChanged?.call();
+      }
       await _refreshPendingCount();
       if (!mounted) {
         return;
@@ -218,9 +225,13 @@ class SyncController extends StateNotifier<SyncState>
         statusParts.add('${summary.conflicts} conflict(s) need review');
       }
       if (summary.discarded > 0) {
-        statusParts.add(
-          '${summary.discarded} offline contribution(s) were discarded because project access changed',
-        );
+        if (summary.discardMessages.isNotEmpty) {
+          statusParts.addAll(summary.discardMessages);
+        } else {
+          statusParts.add(
+            '${summary.discarded} offline contribution(s) were discarded because project access changed',
+          );
+        }
       }
       if (summary.deadLettered > 0) {
         statusParts.add(
@@ -313,7 +324,9 @@ class SyncController extends StateNotifier<SyncState>
 
   Future<void> _refreshPendingCount() async {
     await _localStore.initialize();
-    final stats = await _localStore.getSyncQueueStats();
+    final stats = await _localStore.getSyncQueueStatsForOwner(
+      ownerUserId: ownerUserId,
+    );
     if (!mounted) {
       return;
     }

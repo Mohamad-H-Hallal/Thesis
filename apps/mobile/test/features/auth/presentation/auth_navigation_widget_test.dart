@@ -167,7 +167,7 @@ class _AlwaysOnlineNetworkAvailability implements NetworkAvailabilityService {
   Future<bool> isOnline() async => true;
 }
 
-class _FakeLocalStore implements LocalStore {
+class _FakeLocalStore extends LocalStore {
   @override
   Future<void> cacheProjects(List<ProjectSummary> projects) async {}
 
@@ -258,6 +258,7 @@ class _FakeLocalStore implements LocalStore {
   Future<void> markSyncConflict(
     SyncQueueItem item, {
     required String error,
+    int? remoteVersion,
   }) async {}
 
   @override

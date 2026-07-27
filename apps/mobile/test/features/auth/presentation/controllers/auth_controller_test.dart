@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_failure.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_models.dart';
@@ -10,6 +12,8 @@ class _TestAuthRepository implements AuthRepository {
   Object? loginError;
   Object? signupError;
   bool logoutCalled = false;
+  int loginCallCount = 0;
+  Completer<void>? logoutCompleter;
 
   @override
   Future<AuthSession?> restoreSession() async => restoredSession;
@@ -20,6 +24,7 @@ class _TestAuthRepository implements AuthRepository {
     required String password,
     required bool rememberMe,
   }) async {
+    loginCallCount += 1;
     if (loginError != null) {
       throw loginError!;
     }
@@ -118,6 +123,7 @@ class _TestAuthRepository implements AuthRepository {
   @override
   Future<void> logout() async {
     logoutCalled = true;
+    await logoutCompleter?.future;
   }
 
   @override
@@ -197,6 +203,49 @@ void main() {
 
       expect(repository.logoutCalled, isTrue);
       expect(controller.state.status, AuthStatus.unauthenticated);
+    });
+
+    test('a new login waits for pending logout cleanup', () async {
+      final repository = _TestAuthRepository();
+      final controller = AuthController(repository);
+
+      await controller.login(
+        email: 'account-a@example.com',
+        password: 'Passw0rd!123',
+        rememberMe: true,
+      );
+      expect(repository.loginCallCount, 1);
+
+      repository
+        ..logoutCompleter = Completer<void>()
+        ..loginSession = AuthSession(
+          accessToken: 'token-b',
+          refreshToken: 'refresh-b',
+          user: const AppUser(
+            id: 'user-b',
+            fullName: 'Account B',
+            email: 'account-b@example.com',
+            role: UserRole.contributor,
+          ),
+        );
+
+      final logoutFuture = controller.logout();
+      final loginFuture = controller.login(
+        email: 'account-b@example.com',
+        password: 'Passw0rd!123',
+        rememberMe: true,
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.state.status, AuthStatus.unauthenticated);
+      expect(repository.loginCallCount, 1);
+
+      repository.logoutCompleter!.complete();
+      await Future.wait(<Future<void>>[logoutFuture, loginFuture]);
+
+      expect(repository.loginCallCount, 2);
+      expect(controller.state.status, AuthStatus.authenticated);
+      expect(controller.state.session?.user.id, 'user-b');
     });
   });
 }

@@ -107,22 +107,30 @@ describe('Phase 11 data-flow E2E', () => {
       password: contributor.password,
     });
 
+    const offlineFeatureId = '11111111-1111-4111-8111-111111111111';
+    const offlineSyncHeaders = {
+      ...authHeader(contributorLogin.token),
+      'Idempotency-Key': '11111111-1111-4111-8111-111111111111',
+      'X-Offline-Owner-Id': contributor.user.id,
+      'X-Offline-Project-Id': project.id,
+    };
     const offlineFeatureResponse = await request(app)
       .post(`${API_PREFIX}/features`)
-      .set(authHeader(contributorLogin.token))
+      .set(offlineSyncHeaders)
       .send({
+        id: offlineFeatureId,
+        offline_owner_user_id: contributor.user.id,
         project_id: project.id,
         geom: { type: 'Point', coordinates: [35.49, 33.91] },
         attributes: {
           feature_type: 'olive',
-          tree_type: 'olive',
           condition: 'good',
         },
         accuracy_meters: 5.3,
         collected_offline: true,
       });
     expect(offlineFeatureResponse.status).toBe(201);
-    const offlineFeatureId = offlineFeatureResponse.body.data.id;
+    expect(offlineFeatureResponse.body.data.id).toBe(offlineFeatureId);
 
     const onlineFeatureResponse = await request(app)
       .post(`${API_PREFIX}/features`)
@@ -142,7 +150,7 @@ describe('Phase 11 data-flow E2E', () => {
 
     const uploadPhotoResponse = await request(app)
       .post(`${API_PREFIX}/photos/feature/${offlineFeatureId}`)
-      .set(authHeader(contributorLogin.token))
+      .set(offlineSyncHeaders)
       .field('latitude', '33.91')
       .field('longitude', '35.49')
       .field('accuracy_meters', '2.5')
@@ -153,7 +161,7 @@ describe('Phase 11 data-flow E2E', () => {
 
     const submitResponse = await request(app)
       .post(`${API_PREFIX}/features/${offlineFeatureId}/submit`)
-      .set(authHeader(contributorLogin.token));
+      .set(offlineSyncHeaders);
     expect(submitResponse.status).toBe(200);
 
     const reviewResponse = await request(app)
@@ -184,7 +192,7 @@ describe('Phase 11 data-flow E2E', () => {
 
     const featureRow = await pool.query(
       'SELECT collected_offline, status, version FROM spatial_feature WHERE id = $1',
-      [offlineFeatureId]
+      [offlineFeatureId],
     );
     expect(featureRow.rows[0].collected_offline).toBe(true);
     expect(featureRow.rows[0].status).toBe('approved');
@@ -192,7 +200,7 @@ describe('Phase 11 data-flow E2E', () => {
 
     const photoRow = await pool.query(
       'SELECT id, file_size_bytes FROM photo WHERE feature_id = $1',
-      [offlineFeatureId]
+      [offlineFeatureId],
     );
     expect(photoRow.rows.length).toBe(1);
     expect(Number(photoRow.rows[0].file_size_bytes)).toBeGreaterThan(0);
@@ -203,7 +211,7 @@ describe('Phase 11 data-flow E2E', () => {
        WHERE metadata ? 'project_id'
           OR metadata ? 'feature_id'
           OR metadata ? 'assignment_id'
-          OR metadata ? 'export_id'`
+          OR metadata ? 'export_id'`,
     );
     expect(notificationCount.rows[0].total).toBeGreaterThanOrEqual(4);
 
@@ -216,7 +224,7 @@ describe('Phase 11 data-flow E2E', () => {
             SELECT 1
             FROM jsonb_object_keys(n.metadata) AS k(key_name)
             WHERE key_name ~* '(_id|_ids|_uuid|ids)$'
-          )`
+          )`,
     );
     expect(invalidMetadata.rows[0].invalid_count).toBe(0);
 
@@ -224,14 +232,18 @@ describe('Phase 11 data-flow E2E', () => {
       `SELECT action_type, entity_type
        FROM audit_log
        WHERE entity_type IN ('project', 'project_assignment', 'spatial_feature', 'shapefile_export')
-       ORDER BY created_at ASC`
+       ORDER BY created_at ASC`,
     );
     expect(auditRows.rows.length).toBeGreaterThanOrEqual(6);
     expect(
-      auditRows.rows.some((row) => row.action_type === 'approve' && row.entity_type === 'spatial_feature')
+      auditRows.rows.some(
+        (row) => row.action_type === 'approve' && row.entity_type === 'spatial_feature',
+      ),
     ).toBe(true);
     expect(
-      auditRows.rows.some((row) => row.action_type === 'export' && row.entity_type === 'shapefile_export')
+      auditRows.rows.some(
+        (row) => row.action_type === 'export' && row.entity_type === 'shapefile_export',
+      ),
     ).toBe(true);
   });
 });

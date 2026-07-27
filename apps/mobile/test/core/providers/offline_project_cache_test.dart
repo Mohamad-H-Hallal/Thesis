@@ -451,7 +451,10 @@ void main() {
   ) async {
     final store = MemoryLocalStore();
     await store.initialize();
-    await store.cacheProjects(projects);
+    await store.cacheProjectsForOwner(
+      ownerUserId: 'contributor-1',
+      projects: projects,
+    );
 
     final container = _container(
       store: store,
@@ -518,7 +521,7 @@ void main() {
   );
 
   test(
-    'map projects fall back to cached union of contributor public and assigned projects while offline',
+    'map projects exclude cached projects that were not explicitly downloaded',
     () async {
       final container = await containerWithCache(<ProjectSummary>[
         _project(
@@ -540,10 +543,7 @@ void main() {
 
       final projects = await container.read(mapProjectsProvider.future);
 
-      expect(projects.map((item) => item.id).toSet(), <String>{
-        'public-project',
-        'assigned-project',
-      });
+      expect(projects, isEmpty);
     },
   );
 

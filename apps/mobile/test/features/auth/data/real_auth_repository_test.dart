@@ -138,7 +138,10 @@ void main() {
       ),
     );
 
-    final repository = RealAuthRepository(storage, ApiClient(dio: dio));
+    final repository = RealAuthRepository(
+      storage,
+      ApiClient(dio: dio, storage: storage),
+    );
 
     final session = await repository.restoreSession();
 
@@ -175,7 +178,10 @@ void main() {
         ),
       );
 
-      final repository = RealAuthRepository(storage, ApiClient(dio: dio));
+      final repository = RealAuthRepository(
+        storage,
+        ApiClient(dio: dio, storage: storage),
+      );
 
       final session = await repository.restoreSession();
 
@@ -185,6 +191,85 @@ void main() {
       expect(session.user.id, 'contributor-1');
     },
   );
+
+  for (final testCase in <(int?, DioExceptionType, String)>[
+    (429, DioExceptionType.badResponse, 'rate limit'),
+    (503, DioExceptionType.badResponse, 'server failure'),
+    (null, DioExceptionType.connectionTimeout, 'timeout'),
+  ]) {
+    test(
+      'restoreSession preserves remembered credentials on refresh ${testCase.$3}',
+      () async {
+        final storage = _MemorySecureStorage();
+        await seedStoredSession(
+          storage,
+          accessToken: 'expired-access',
+          refreshToken: 'remembered-refresh',
+        );
+        final refreshAuthorizationHeaders = <dynamic>[];
+        final dio = Dio();
+        dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              if (options.path == '${AppEnv.apiVersionPrefix}/auth/me') {
+                handler.reject(
+                  DioException(
+                    requestOptions: options,
+                    response: Response<Map<String, dynamic>>(
+                      requestOptions: options,
+                      statusCode: 401,
+                      data: const <String, dynamic>{'message': 'Token expired'},
+                    ),
+                    type: DioExceptionType.badResponse,
+                  ),
+                );
+                return;
+              }
+              if (options.path ==
+                  '${AppEnv.apiVersionPrefix}/auth/refresh-token') {
+                refreshAuthorizationHeaders.add(
+                  options.headers['Authorization'],
+                );
+                final statusCode = testCase.$1;
+                handler.reject(
+                  DioException(
+                    requestOptions: options,
+                    response: statusCode == null
+                        ? null
+                        : Response<Map<String, dynamic>>(
+                            requestOptions: options,
+                            statusCode: statusCode,
+                            data: const <String, dynamic>{
+                              'message': 'Authentication service unavailable',
+                            },
+                          ),
+                    type: testCase.$2,
+                  ),
+                );
+                return;
+              }
+              handler.next(options);
+            },
+          ),
+        );
+
+        final repository = RealAuthRepository(
+          storage,
+          ApiClient(dio: dio, storage: storage),
+        );
+        final session = await repository.restoreSession();
+
+        expect(session, isNotNull);
+        expect(session!.user.id, 'contributor-1');
+        expect(session.accessToken, 'expired-access');
+        expect(session.refreshToken, 'remembered-refresh');
+        expect(await storage.read(key: 'access_token'), 'expired-access');
+        expect(await storage.read(key: 'refresh_token'), 'remembered-refresh');
+        expect(refreshAuthorizationHeaders, isNotEmpty);
+        expect(refreshAuthorizationHeaders, everyElement(isNull));
+      },
+    );
+  }
 
   test('login transport failures do not clear a remembered session', () async {
     final storage = _MemorySecureStorage();
@@ -209,7 +294,10 @@ void main() {
       ),
     );
 
-    final repository = RealAuthRepository(storage, ApiClient(dio: dio));
+    final repository = RealAuthRepository(
+      storage,
+      ApiClient(dio: dio, storage: storage),
+    );
 
     await expectLater(
       repository.login(
