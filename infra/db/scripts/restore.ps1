@@ -38,7 +38,7 @@ if ([string]::IsNullOrWhiteSpace($dbName) -or [string]::IsNullOrWhiteSpace($dbUs
 }
 
 $dbHost = if ([string]::IsNullOrWhiteSpace($dbHost)) { "localhost" } else { $dbHost }
-$dbPort = if ([string]::IsNullOrWhiteSpace($dbPort)) { "55433" } else { $dbPort }
+$dbPort = if ([string]::IsNullOrWhiteSpace($dbPort)) { "54329" } else { $dbPort }
 
 $env:PGPASSWORD = $dbPassword
 & $PgRestoreBinary -h $dbHost -p $dbPort -U $dbUser -d $dbName -c $DumpFile

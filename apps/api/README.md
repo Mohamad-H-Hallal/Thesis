@@ -9,10 +9,10 @@
 nvm use
 ```
 2. Copy `.env.example` to `.env` and fill secrets.
-   - Default local DB connection is `localhost:55433`, which matches the official root Docker compose stack.
+   - Default local DB connection is `localhost:54329`, which matches the official root Docker compose stack.
    - Official app runtime uses the root Docker compose stack from the repo root; `infra/db/docker-compose.yml` is maintenance tooling only, not normal app runtime.
 3. Copy `.env.test.example` to `.env.test` if you need to override the isolated API test DB target.
-   - Default test DB connection is `localhost:55433`, database `gis_app_test`.
+   - Default test DB connection is `localhost:54329`, database `gis_app_test`.
    - Test commands do not reuse the normal runtime database.
 4. Install dependencies:
 ```bash
@@ -69,7 +69,7 @@ npm run test:ci
 ```
 - The backend test commands now:
   - use `TEST_DB_*` settings instead of the normal runtime DB
-  - default to `localhost:55433` / `gis_app_test`
+  - default to `localhost:54329` / `gis_app_test`
   - create the test database if it is missing
   - apply migrations before the API test suites run
 
@@ -216,7 +216,7 @@ npm run test:ci
 - Backup and restore scripts:
   - `infra/db/scripts/backup.ps1`
   - `infra/db/scripts/restore.ps1`
-  - these now target the official compose-backed DB on `localhost:55433` by default
+  - these now target the official compose-backed DB on `localhost:54329` by default
 
 ## Phase 10 Quality Engineering Notes
 - New tests:

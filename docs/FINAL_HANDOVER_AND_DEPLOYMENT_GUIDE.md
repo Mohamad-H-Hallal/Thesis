@@ -138,7 +138,7 @@ Useful dev URLs:
 - API: `http://localhost:3000`
 - API docs: `http://localhost:3000/docs/openapi.yaml`
 - Mailpit: `http://localhost:8025`
-- Dev DB host port: `55433`
+- Dev DB host port: `54329`
 
 ### Production-style compose
 
@@ -231,7 +231,7 @@ iOS has not been runtime-proven in this Windows environment. Treat iOS as build-
 
 Requirements:
 - macOS with Xcode.
-- Flutter stable.
+- Flutter 3.41.2 stable / Dart 3.11.0.
 - Apple Developer account for TestFlight/App Store.
 - iOS Firebase config if push notifications are enabled.
 
@@ -322,7 +322,7 @@ bash ./scripts/backup.sh
 PowerShell script for env-file based backup:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\infra\db\scripts\backup.ps1 -EnvFile .\.env -OutputDir .\backups -PgPort 55433
+powershell -ExecutionPolicy Bypass -File .\infra\db\scripts\backup.ps1 -EnvFile .\.env -OutputDir .\backups -PgPort 54329
 ```
 
 ### Restore
@@ -334,7 +334,7 @@ bash ./scripts/restore.sh ./backups/gis_app_YYYYMMDD_HHMMSS.dump
 PowerShell restore:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\infra\db\scripts\restore.ps1 -DumpFile .\backups\gis_app_YYYYMMDD_HHMMSS.dump -EnvFile .\.env -PgPort 55433
+powershell -ExecutionPolicy Bypass -File .\infra\db\scripts\restore.ps1 -DumpFile .\backups\gis_app_YYYYMMDD_HHMMSS.dump -EnvFile .\.env -PgPort 54329
 ```
 
 ### Safe dev runtime reset

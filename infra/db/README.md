@@ -4,7 +4,7 @@ This folder is for DB maintenance utilities, not the main app runtime.
 
 Official runtime:
 - start the app from the repo root with `docker compose up -d db migrate api`
-- compose-backed PostGIS is exposed on `localhost:55433`
+- compose-backed PostGIS is exposed on `localhost:54329`
 
 Do not start `infra/db/docker-compose.yml` for normal app usage unless you intentionally need an isolated standalone PostGIS/Adminer stack for separate experiments.
 
@@ -21,7 +21,7 @@ Optional parameters:
 
 Defaults:
 - `POSTGRES_HOST=localhost`
-- `POSTGRES_PORT=55433`
+- `POSTGRES_PORT=54329`
 
 ## Restore (Windows PowerShell)
 ```powershell

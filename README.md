@@ -23,8 +23,8 @@ repo/
 ## Prerequisites
 
 - Docker Desktop (Linux containers)
-- Node.js 22.x (LTS)
-- Flutter stable
+- Node.js 22.23.1 (LTS; pinned in `.node-version`)
+- Flutter 3.41.2 stable / Dart 3.11.0
 - JDK 17 (Android Gradle)
 
 ## Production Deployment (Single Server Docker Compose)
@@ -77,7 +77,7 @@ Notes:
   - AI server callbacks API at `http://api:3000`
   - AI server connects to Postgres with the internal Docker URL
     `postgresql://...@db:5432/gis_app`
-- Dev DB mapping in root compose is `55433:5432`.
+- Dev DB mapping in root compose defaults to `54329:5432` and can be overridden with `POSTGRES_HOST_PORT`.
 - Dev SMTP/UI now uses Mailpit through the same compose stack:
   - SMTP inside Docker: `mailpit:1025`
   - SMTP from host-side API commands: `localhost:1025`
@@ -154,7 +154,7 @@ Copy-Item .env.example .env
 # SUPER_ADMIN_EMAIL=superadmin@example.com
 # SUPER_ADMIN_PASSWORD=replace-with-strong-super-admin-password
 # SUPER_ADMIN_FULL_NAME=GIS Super Administrator
-# apps/api/.env.example now defaults to the official compose-backed runtime DB on 55433.
+# apps/api/.env.example now defaults to the official compose-backed runtime DB on 54329.
 npm ci
 npm run migrate
 npm run dev
@@ -173,7 +173,7 @@ AI_SERVER_TIMEOUT_MS=30000
 
 For the Python AI server in host/manual mode, `DATABASE_URL` must point from
 Windows to the Postgres host port, for example
-`postgresql://<user>:<password>@127.0.0.1:55578/gis_app`. In Docker Compose,
+`postgresql://<user>:<password>@127.0.0.1:54329/gis_app`. In Docker Compose,
 the AI server runs inside the Compose network, so it uses the service name:
 `postgresql://<user>:<password>@db:5432/gis_app`.
 
@@ -313,7 +313,7 @@ npm run test:ci
 Notes:
 - API tests use an isolated database by default:
   - host `localhost`
-  - port `55433`
+  - port `54329`
   - database `gis_app_test`
 - Override the isolated test target with `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_DB_NAME`, `TEST_DB_USER`, `TEST_DB_PASSWORD`, and optional `TEST_DB_ADMIN_DB`.
 - `npm run test:db:prepare` creates the test database if it is missing and applies migrations before the API test commands run.
@@ -404,7 +404,7 @@ Official Docker runtime commands:
 - Start with web reverse proxy too: `docker compose up -d db migrate api nginx`
 - Stop: `docker compose down`
 - Health: `Invoke-WebRequest http://localhost:3000/health`
-- DB host port for the official runtime: `55433`
+- DB host port for the official runtime: `54329`
 - API test DB on the same server: `gis_app_test`
 
 ## Mobile Local

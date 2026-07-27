@@ -35,7 +35,7 @@
 ## E) Port Conflict Gate
 - [x] 5433 conflict root cause identified (`gis_app_db`)
 - [x] compose.prod keeps DB internal-only
-- [x] dev override changed DB host port to `55433`
+- [x] dev override uses configurable DB host port `POSTGRES_HOST_PORT` with default `54329`
 
 ## F) Release Verification Script
 - [x] Windows one-command gate: `scripts/verify_all.ps1`

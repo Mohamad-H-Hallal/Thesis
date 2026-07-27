@@ -50,7 +50,7 @@ const applyTestEnvDefaults = (): TestDbConfig => {
   loadTestEnvFiles();
 
   const host = process.env.TEST_DB_HOST?.trim() || 'localhost';
-  const port = resolveNumber(process.env.TEST_DB_PORT, 55578);
+  const port = resolveNumber(process.env.TEST_DB_PORT, 54329);
   const database = process.env.TEST_DB_NAME?.trim() || 'gis_app_test';
   const user = process.env.TEST_DB_USER?.trim() || 'gis_user';
   const password = process.env.TEST_DB_PASSWORD ?? 'change_me';

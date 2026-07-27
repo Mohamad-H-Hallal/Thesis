@@ -22,20 +22,7 @@ on:
       - 'docker-compose.yml'
       - 'docker-compose.override.yml'
       - 'scripts/verify_all.ps1'
-  pull_request:
-    paths:
-      - 'apps/mobile/**'
-      - '.github/workflows/monorepo-ci.yml'
-      - '.github/workflows/reusable-api-release-gate.yml'
-      - 'README.md'
-      - '.env.example'
-      - '.env.dev.example'
-      - '.env.staging.example'
-      - '.env.prod.example'
-      - 'compose.prod.yml'
-      - 'docker-compose.yml'
-      - 'docker-compose.override.yml'
-      - 'scripts/verify_all.ps1'
+  pull_request: {}
 
 jobs:
   api:
@@ -54,6 +41,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.41.2'
           channel: stable
       - name: Flutter pub get
         run: flutter pub get
