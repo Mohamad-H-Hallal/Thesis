@@ -9,7 +9,7 @@ Clone the repo, start the backend, run the Flutter app on an Android emulator, a
 - Windows 10/11
 - Git
 - Docker Desktop
-- Node.js 22.x
+- Node.js 22.23.1
 - Flutter 3.41.2 stable
 - Dart 3.11.0
 - Android Studio with:
@@ -73,7 +73,7 @@ Notes:
 - Backend tests use `gis_app_test` on the same compose-backed PostGIS server by default.
 - The default local test target is:
   - host `localhost`
-  - port `55433`
+  - port `54329`
   - database `gis_app_test`
 - Override with `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_DB_NAME`, `TEST_DB_USER`, `TEST_DB_PASSWORD`, and optional `TEST_DB_ADMIN_DB` if needed.
 
@@ -205,7 +205,7 @@ docker compose logs api
 
 Official Docker runtime ports:
 - API: `http://localhost:3000`
-- DB: `localhost:55433`
+- DB: `localhost:54329`
 
 ### 5) Wrong role behavior in UI
 

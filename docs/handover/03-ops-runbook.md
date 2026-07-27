@@ -111,7 +111,7 @@ Detected owner of `5433`:
 
 Fix applied:
 - `compose.prod.yml` keeps DB internal-only (no host DB port mapping)
-- `docker-compose.override.yml` dev DB mapping moved from `5433` to `55433`
+- `docker-compose.override.yml` dev DB mapping moved from `5433` to the configurable `POSTGRES_HOST_PORT` default `54329`
 
 Evidence:
 - `docs/handover/evidence/port-5433-docker-ps.log`

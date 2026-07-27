@@ -58,7 +58,7 @@ $dbPassword = Get-EnvValue -Values $appEnv -Names @('DB_PASSWORD', 'POSTGRES_PAS
 $configuredDbHost = Get-EnvValue -Values $appEnv -Names @('DB_HOST') -Fallback '127.0.0.1'
 $hostDbHost = if ($configuredDbHost -in @('127.0.0.1', 'localhost')) { $configuredDbHost } else { '127.0.0.1' }
 $hostDbPort = if ($configuredDbHost -eq 'db') {
-  Get-EnvValue -Values $appEnv -Names @('POSTGRES_HOST_PORT') -Fallback '55578'
+  Get-EnvValue -Values $appEnv -Names @('POSTGRES_HOST_PORT') -Fallback '54329'
 } else {
   Get-EnvValue -Values $appEnv -Names @('DB_PORT', 'POSTGRES_HOST_PORT') -Fallback '5432'
 }

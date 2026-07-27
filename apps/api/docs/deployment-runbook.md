@@ -4,7 +4,7 @@
 This runbook covers production deployment and operations for the GIS API.
 
 ## Prerequisites
-- Node.js 20 LTS
+- Node.js 22.23.1 LTS
 - PostgreSQL 15+ with PostGIS extension
 - Reverse proxy (Nginx or equivalent)
 - TLS certificates
