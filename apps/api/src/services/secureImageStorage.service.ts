@@ -1,10 +1,11 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { storageAdapter } from './storageAdapter.service';
 
 interface ReleasedImage {
   filename: string;
   filePath: string;
+  storageReference: string;
   size: number;
 }
 
@@ -12,29 +13,29 @@ const releaseNormalizedJpeg = async (
   encodedImage: Buffer,
   destinationDirectory: string,
 ): Promise<ReleasedImage> => {
-  const directory = path.resolve(destinationDirectory);
   const identifier = randomUUID();
-  const temporaryPath = path.join(directory, `.${identifier}.tmp`);
   const filename = `${identifier}.jpg`;
-  const finalPath = path.join(directory, filename);
-
-  await fs.writeFile(temporaryPath, encodedImage, { flag: 'wx', mode: 0o600 });
-  try {
-    await fs.rename(temporaryPath, finalPath);
-  } catch (error) {
-    await fs.rm(temporaryPath, { force: true });
-    throw error;
+  const resolved = storageAdapter.resolve(path.join(destinationDirectory, filename), ['uploads']);
+  if (
+    !resolved ||
+    !['.private/ai-validation/', 'category-icons/'].some((prefix) =>
+      resolved.key.startsWith(prefix),
+    )
+  ) {
+    throw new Error('Refusing to release an image outside managed image storage.');
   }
+  const stored = await storageAdapter.writeAtomic(resolved.reference, encodedImage);
 
   return {
     filename,
-    filePath: finalPath,
+    filePath: stored.localPath,
+    storageReference: stored.reference,
     size: encodedImage.length,
   };
 };
 
 const removeReleasedImages = async (filePaths: string[]): Promise<void> => {
-  await Promise.all(filePaths.map((filePath) => fs.rm(filePath, { force: true })));
+  await Promise.all(filePaths.map((filePath) => storageAdapter.remove(filePath)));
 };
 
 export { releaseNormalizedJpeg, removeReleasedImages, type ReleasedImage };

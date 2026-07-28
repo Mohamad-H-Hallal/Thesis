@@ -1,21 +1,19 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import type { Request, Response } from 'express';
 import { query } from '../config/database';
-import { aiValidationPhotosDir, privateAiValidationPhotosDir, photosDir } from '../config/upload';
 import { publicVisibleStatuses, synchronizeProjectStatuses } from '../lib/projectLifecycle';
 import { AppError } from '../middleware/error';
+import { storageAdapter } from '../services/storageAdapter.service';
 
 type PrivateMediaDirectory = 'ai-validation' | 'photos';
 
 const safeStorageName =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:jpe?g|png|gif|hei[cf]s?)$/i;
 
-const mediaRoots = (directory: PrivateMediaDirectory): string[] =>
+const mediaReferences = (directory: PrivateMediaDirectory, storageName: string): string[] =>
   (directory === 'ai-validation'
-    ? [privateAiValidationPhotosDir, aiValidationPhotosDir]
-    : [photosDir]
-  ).map((root) => path.resolve(root));
+    ? [`.private/ai-validation/${storageName}`, `ai-validation/${storageName}`]
+    : [`photos/${storageName}`]
+  ).map((key) => storageAdapter.reference('uploads', key));
 
 const referencedProjectIds = async (
   directory: PrivateMediaDirectory,
@@ -137,17 +135,11 @@ const servePrivateMedia = async (
   }
 
   let filePath: string | null = null;
-  for (const root of mediaRoots(directory)) {
-    const candidate = path.resolve(root, storageName);
-    if (path.dirname(candidate) !== root) {
-      continue;
-    }
+  for (const reference of mediaReferences(directory, storageName)) {
     try {
-      const stat = await fs.stat(candidate);
-      if (stat.isFile()) {
-        filePath = candidate;
-        break;
-      }
+      const info = await storageAdapter.locate(reference, ['uploads']);
+      filePath = info.localPath;
+      break;
     } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
         throw error;

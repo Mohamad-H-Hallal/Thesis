@@ -6,6 +6,8 @@ const path = require('path');
 const AdmZip = require('adm-zip');
 import { sanitizeManagedFeatureAttributes } from '../lib/featureAttributes';
 import { isProtectedSuperAdminEmail } from '../lib/userWorkflow';
+import { resolveStoredPhotoPath } from '../services/featurePhotoSecurity.service';
+import { storageAdapter } from '../services/storageAdapter.service';
 
 // For shapefile generation
 const shpwrite = require('@mapbox/shp-write');
@@ -460,6 +462,9 @@ const requestExport = async (req, res) => {
 
 // Process the export (background job)
 const processExport = async (exportId, projectName) => {
+  let workingExportPath: string | null = null;
+  let workingZipPath: string | null = null;
+  let publishedExportReference: string | null = null;
   try {
     // Update status to processing
     await query(
@@ -609,8 +614,11 @@ const processExport = async (exportId, projectName) => {
     // Create export directory for this request
     const exportTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const sourceSuffix = exportSource === 'ai_predictions' ? '_ai_predictions' : '';
-    const exportName = `${projectName.replace(/[^a-zA-Z0-9]/g, '_')}${sourceSuffix}_${exportTimestamp}`;
+    const exportName =
+      `${projectName.replace(/[^a-zA-Z0-9]/g, '_')}` +
+      `${sourceSuffix}_${exportTimestamp}_${exportId}`;
     const exportPath = path.join(EXPORT_DIR, exportId);
+    workingExportPath = exportPath;
     await fs.mkdir(exportPath, { recursive: true });
 
     logger.info('Created export directory:', { exportId, path: exportPath });
@@ -734,13 +742,25 @@ const processExport = async (exportId, projectName) => {
 
     // Zip everything
     const zipPath = path.join(EXPORT_DIR, `${exportName}.zip`);
+    workingZipPath = zipPath;
     await zipDirectory(exportPath, zipPath);
 
-    logger.info('Created ZIP:', { exportId, zipPath });
+    const stagedZip = await storageAdapter.info(zipPath, ['exports']);
+    publishedExportReference = storageAdapter.reference(
+      'exports',
+      `completed/${exportName}.zip`,
+    );
+    const publishedZip = await storageAdapter.copyVerified(
+      stagedZip.reference,
+      publishedExportReference,
+      {
+        size: stagedZip.size,
+        sha256: stagedZip.sha256,
+      },
+    );
+    const fileSizeBytes = publishedZip.destination.size;
 
-    // Get file size
-    const stats = await fs.stat(zipPath);
-    const fileSizeBytes = stats.size;
+    logger.info('Created and verified export package', { exportId });
 
     await transaction(async (client) => {
       await client.query(
@@ -756,7 +776,13 @@ const processExport = async (exportId, projectName) => {
              retention_expired_at = NULL,
              retention_expires_at = CURRENT_TIMESTAMP + ($4::int * INTERVAL '1 day')
          WHERE id = $5`,
-        [zipPath, features.rows.length, fileSizeBytes, RETENTION_DAYS, exportId],
+        [
+          publishedExportReference,
+          features.rows.length,
+          fileSizeBytes,
+          RETENTION_DAYS,
+          exportId,
+        ],
       );
 
       await client.query(
@@ -776,9 +802,23 @@ const processExport = async (exportId, projectName) => {
         ],
       );
     });
+    publishedExportReference = null;
 
-    // Clean up temporary directory
-    await fs.rm(exportPath, { recursive: true, force: true });
+    // Cleanup failures must not turn a committed, verified export into a failed job.
+    await fs.rm(exportPath, { recursive: true, force: true }).catch((cleanupError) => {
+      logger.warn('Committed export retained a temporary working directory', {
+        exportId,
+        errorCode: cleanupError?.code ?? 'UNKNOWN',
+      });
+    });
+    workingExportPath = null;
+    await storageAdapter.remove(zipPath).catch((cleanupError) => {
+      logger.warn('Committed export retained a staged ZIP copy', {
+        exportId,
+        errorCode: cleanupError?.code ?? 'UNKNOWN',
+      });
+    });
+    workingZipPath = null;
 
     logger.info('Export completed:', {
       exportId,
@@ -792,6 +832,20 @@ const processExport = async (exportId, projectName) => {
       error: error.message,
       stack: error.stack,
     });
+    if (publishedExportReference) {
+      await storageAdapter.remove(publishedExportReference).catch((cleanupError) => {
+        logger.error('Failed to remove an uncommitted export package', {
+          exportId,
+          errorCode: cleanupError?.code ?? 'UNKNOWN',
+        });
+      });
+    }
+    if (workingZipPath) {
+      await storageAdapter.remove(workingZipPath).catch(() => undefined);
+    }
+    if (workingExportPath) {
+      await fs.rm(workingExportPath, { recursive: true, force: true }).catch(() => undefined);
+    }
 
     await transaction(async (client) => {
       await client.query(
@@ -1011,19 +1065,31 @@ const attachExportPhotos = async (exportPath: string, features: any[]) => {
     const photoRows = normalizePhotoRows(feature);
     const paths: string[] = [];
     for (const photo of photoRows) {
-      const sourcePath = path.resolve(String(photo.file_path ?? ''));
-      const extension = path.extname(sourcePath).toLowerCase() || '.jpg';
-      const fileName = `${sanitizeZipSegment(photo.id)}${extension}`;
-      const relativePath = path.posix.join('photos', sanitizeZipSegment(feature.id), fileName);
-      const destinationPath = path.join(
-        exportPath,
-        'photos',
-        sanitizeZipSegment(feature.id),
-        fileName,
-      );
+      const sourcePath = resolveStoredPhotoPath(photo.file_path);
+      if (!sourcePath) {
+        logger.warn('Skipping export photo outside managed storage', {
+          featureId: feature.id,
+          photoId: photo.id,
+        });
+        continue;
+      }
       try {
+        const source = await storageAdapter.locate(sourcePath, ['uploads']);
+        const extension = path.extname(source.localPath).toLowerCase() || '.jpg';
+        const fileName = `${sanitizeZipSegment(photo.id)}${extension}`;
+        const relativePath = path.posix.join(
+          'photos',
+          sanitizeZipSegment(feature.id),
+          fileName,
+        );
+        const destinationPath = path.join(
+          exportPath,
+          'photos',
+          sanitizeZipSegment(feature.id),
+          fileName,
+        );
         await fs.mkdir(path.dirname(destinationPath), { recursive: true });
-        await fs.copyFile(sourcePath, destinationPath);
+        await fs.copyFile(source.localPath, destinationPath);
         paths.push(relativePath);
         manifest.push({
           feature_id: feature.id,
@@ -1589,12 +1655,17 @@ const downloadExport = async (req, res) => {
   if (!exportData.file_path) {
     throw new AppError('Export file not found', 404);
   }
+  if (!storageAdapter.resolve(exportData.file_path, ['exports'])) {
+    logger.error('Rejected export reference outside configured storage', { exportId });
+    throw new AppError('Export file no longer available', 404);
+  }
 
   // Check if file exists
+  let resolvedExport: Awaited<ReturnType<typeof storageAdapter.locate>>;
   try {
-    await fs.access(exportData.file_path);
+    resolvedExport = await storageAdapter.locate(exportData.file_path, ['exports']);
   } catch (_error) {
-    logger.error('Export file not accessible:', { exportId, path: exportData.file_path });
+    logger.error('Export file not accessible:', { exportId });
     const completedAt = exportData.completed_at ? new Date(exportData.completed_at) : null;
     const retentionExpired =
       exportData.retention_expires_at && new Date(exportData.retention_expires_at) <= new Date();
@@ -1620,10 +1691,10 @@ const downloadExport = async (req, res) => {
   }
 
   const format = exportData.export_parameters?.format || 'geojson';
-  logger.info('Downloading export:', { exportId, path: exportData.file_path, format });
+  logger.info('Downloading export:', { exportId, format });
 
   // Send file
-  res.download(exportData.file_path, (err) => {
+  res.download(resolvedExport.localPath, (err) => {
     if (err) {
       logger.error('Download error:', { exportId, error: err });
     }
@@ -1652,7 +1723,7 @@ const cleanupOldExports = async () => {
 
     for (const exp of oldExports.rows) {
       if (exp.file_path) {
-        await fs.unlink(exp.file_path).catch((err) => {
+        await storageAdapter.remove(exp.file_path).catch((err) => {
           logger.error('Error deleting export file:', err);
         });
       }

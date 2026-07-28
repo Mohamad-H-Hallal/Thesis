@@ -1,9 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
-const path = require('path');
 const { query, transaction } = require('../config/database');
 const { AppError, permanentOfflineSyncError } = require('../middleware/error');
-const { privateFeaturePhotosDir, privateFeatureThumbnailsDir } = require('../config/upload');
 const logger = require('../utils/logger');
 const { publicVisibleStatuses, synchronizeProjectStatuses } = require('../lib/projectLifecycle');
 import {
@@ -21,6 +19,7 @@ import {
   type QueryExecutor,
 } from '../services/featurePhotoSecurity.service';
 import { assertCurrentOfflineAuthorization } from '../services/offlineSyncSecurity.service';
+import { storageAdapter } from '../services/storageAdapter.service';
 import {
   cancelFeatureMediaCleanupJobs,
   makeFeatureMediaCleanupJobsAvailable,
@@ -150,8 +149,14 @@ const uploadPhotos = async (req: Request, res: Response): Promise<void> => {
     return {
       ...photo,
       photoId,
-      photoPath: path.join(privateFeaturePhotosDir, `.${photoId}.jpg`),
-      thumbnailPath: path.join(privateFeatureThumbnailsDir, `.${photoId}.jpg`),
+      photoPath: storageAdapter.reference(
+        'uploads',
+        `.private/feature-photos/.${photoId}.jpg`,
+      ),
+      thumbnailPath: storageAdapter.reference(
+        'uploads',
+        `.private/feature-thumbnails/.${photoId}.jpg`,
+      ),
     };
   });
   const payloadHash = hashPhotoPayload(featureId, plannedPhotos, fields);
@@ -481,6 +486,17 @@ const getPhoto = async (req, res) => {
     });
     throw new AppError('Photo file is unavailable', 404);
   }
+  let storedPhoto: Awaited<ReturnType<typeof storageAdapter.locate>>;
+  try {
+    storedPhoto = await storageAdapter.locate(filePath, ['uploads']);
+  } catch (error: unknown) {
+    logger.error('Photo file failed managed-storage verification', {
+      photoId,
+      userId: req.user.id,
+      errorCode: (error as NodeJS.ErrnoException)?.code ?? 'UNSAFE_STORAGE_OBJECT',
+    });
+    throw new AppError('Photo file is unavailable', 404);
+  }
 
   // Send file
   res.set({
@@ -488,7 +504,7 @@ const getPhoto = async (req, res) => {
     'X-Content-Type-Options': 'nosniff',
     'Content-Disposition': `inline; filename="${photoId}${thumbnail === 'true' ? '-thumbnail' : ''}.jpg"`,
   });
-  res.sendFile(filePath, { dotfiles: 'allow' });
+  res.sendFile(storedPhoto.localPath, { dotfiles: 'allow' });
 };
 
 // Delete photo

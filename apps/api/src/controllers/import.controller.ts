@@ -14,7 +14,6 @@ import { validateEnv } from '../config/env';
 import { sanitizeManagedFeatureAttributes } from '../lib/featureAttributes';
 import { createNotification, isProtectedSuperAdminEmail } from '../lib/userWorkflow';
 import { synchronizeProjectStatuses } from '../lib/projectLifecycle';
-import { privateImportsDir, importsDir } from '../config/upload';
 import {
   requireAcceptableMalwareScan,
   scanBufferForMalware,
@@ -27,6 +26,7 @@ import {
   recordQuarantinedUpload,
   releaseQuarantinedUpload,
 } from '../services/uploadQuarantine.service';
+import { storageAdapter } from '../services/storageAdapter.service';
 
 const LEBANON_BOUNDS = {
   minLon: 35.094,
@@ -471,20 +471,22 @@ const inferImportFileType = (filename: string): ImportFileType => {
   );
 };
 
-const ALLOWED_IMPORT_DIRECTORIES = [privateImportsDir, importsDir].map((directory) =>
-  path.resolve(directory),
-);
-
-const resolveStoredImportPath = (filePath: unknown): string | null => {
+const resolveStoredImportPath = async (filePath: unknown): Promise<string | null> => {
   if (typeof filePath !== 'string' || filePath.trim().length === 0) {
     return null;
   }
-  const resolved = path.resolve(filePath);
-  const isAllowed = ALLOWED_IMPORT_DIRECTORIES.some((directory) => {
-    const relative = path.relative(directory, resolved);
-    return relative.length > 0 && !relative.startsWith('..') && !path.isAbsolute(relative);
-  });
-  return isAllowed ? resolved : null;
+  const resolved = storageAdapter.resolve(filePath, ['uploads']);
+  if (
+    !resolved ||
+    !['.private/imports/', 'imports/'].some((prefix) => resolved.key.startsWith(prefix))
+  ) {
+    return null;
+  }
+  try {
+    return (await storageAdapter.locate(resolved.reference, ['uploads'])).localPath;
+  } catch {
+    return null;
+  }
 };
 
 const ensureAttributesObject = (attributes: unknown): Record<string, unknown> => {
@@ -2818,7 +2820,7 @@ const processImportJob = async (importJobId: string): Promise<void> => {
   const job = jobResult.rows[0];
   let parsed: ParsedImportPayload;
   try {
-    const verifiedPath = resolveStoredImportPath(job.file_path);
+    const verifiedPath = await resolveStoredImportPath(job.file_path);
     if (!verifiedPath) {
       throw new AppError('The stored import path is outside the managed import area.', 422);
     }
@@ -4155,8 +4157,24 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
     [projectId, fileChecksum],
   );
   const duplicateOfImportJobId = duplicateImportResult.rows[0]?.id ?? null;
-  const releasedPath = path.resolve(privateImportsDir, req.file.filename);
-  await fs.rename(quarantinePath, releasedPath);
+  const releasedReference = storageAdapter.reference(
+    'uploads',
+    `.private/imports/${req.file.filename}`,
+  );
+  const releasedLocation = storageAdapter.resolve(releasedReference, ['uploads']);
+  if (!releasedLocation) {
+    await keepUploadQuarantined(quarantineId, 'UPLOAD_RELEASE_FAILED');
+    throw new AppError('The upload storage destination is unavailable.', 503);
+  }
+  try {
+    await storageAdapter.copyVerified(quarantinePath, releasedReference, {
+      size: req.file.size,
+      sha256: fileChecksum,
+    });
+  } catch (error) {
+    await keepUploadQuarantined(quarantineId, 'UPLOAD_RELEASE_FAILED');
+    throw error;
+  }
 
   let createdJob;
   try {
@@ -4188,7 +4206,7 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
           duplicateOfImportJobId,
           req.file.originalname,
           req.file.filename,
-          releasedPath,
+          releasedReference,
           req.file.size,
           fileChecksum,
           fileType,
@@ -4238,16 +4256,16 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
       await releaseQuarantinedUpload({
         executor: client,
         quarantineId,
-        releasedPath,
+        releasedPath: releasedReference,
       });
 
       return detailResult.rows[0];
     });
   } catch (error) {
     try {
-      await fs.rename(releasedPath, quarantinePath);
+      await storageAdapter.remove(releasedReference);
     } catch (rollbackError: unknown) {
-      logger.error('Failed to return an import file to quarantine after database rollback', {
+      logger.error('Failed to remove an import release copy after database rollback', {
         quarantineId,
         errorCode: (rollbackError as NodeJS.ErrnoException)?.code ?? 'UNKNOWN',
       });
@@ -4255,6 +4273,12 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
     await keepUploadQuarantined(quarantineId, 'UPLOAD_RELEASE_FAILED');
     throw error;
   }
+  await storageAdapter.remove(quarantinePath).catch((cleanupError: unknown) => {
+    logger.warn('Released import retained a redundant quarantine copy', {
+      quarantineId,
+      errorCode: (cleanupError as NodeJS.ErrnoException)?.code ?? 'UNKNOWN',
+    });
+  });
 
   scheduleImportProcessing();
 
@@ -4281,14 +4305,8 @@ const downloadImport = async (req: Request, res: Response): Promise<void> => {
   if (!canDownload) {
     throw new AppError('You are not allowed to download this import file.', 403);
   }
-  const filePath = resolveStoredImportPath(job.file_path);
+  const filePath = await resolveStoredImportPath(job.file_path);
   if (!filePath) {
-    throw new AppError('The original import file is no longer available for download.', 404);
-  }
-
-  try {
-    await fs.access(filePath);
-  } catch (_error) {
     throw new AppError('The original import file is no longer available for download.', 404);
   }
 

@@ -39,8 +39,10 @@ No database row or stored file is deleted, moved, or rewritten by this slice.
 
 ## Slice 2B — intake quarantine and content safety
 
-Status: implemented on `fix/upload-quarantine-malware-scanning`; merge and CI
-evidence must still be recorded before this slice is called complete.
+Status: complete. PR
+[#8](https://github.com/Mohamad-H-Hallal/Thesis/pull/8) merged into
+`handover-ready` as `75099f9b50b09777f1db0900286f60c48de473df` after all
+required GitHub checks passed.
 
 The implementation now:
 
@@ -104,8 +106,14 @@ protocol does not provide transport encryption or authentication.
 
 ## Slice 2C — storage migration and orphan reconciliation
 
-The final slice must introduce the replaceable storage adapter and migration
-workflow:
+Status: implemented on `fix/storage-adapter-legacy-reconciliation`; full
+release-gate and CI evidence must be recorded before this slice is complete.
+
+The final slice introduces an implementation-neutral storage adapter, canonical
+`storage://uploads/...` and `storage://exports/...` references, compatibility
+with contained legacy local paths, and canonical references for every newly
+created private feature photo, thumbnail, import, released AI image, and
+completed export. The migration workflow:
 
 1. copy without changing the active reference;
 2. verify source and destination SHA-256 plus size;
@@ -114,6 +122,60 @@ workflow:
 5. inventory unreferenced media in read-only mode;
 6. quarantine only explicitly reviewed orphan candidates;
 7. permanently delete nothing in this phase.
+
+Storage keys reject traversal, encoded-path ambiguity, NUL bytes, and
+backslashes. The local driver also rejects symbolic-link traversal for reads,
+writes, copies, inventory, and removal. Migration and orphan manifests reject
+unknown fields, duplicate targets, stale review timestamps, unapproved tables
+or columns, checksum mismatches, and objects outside the configured roots.
+
+Migration state is recorded in `storage_object_migration`. A migration copies
+and verifies the destination before locking and switching the exact database
+row. The original remains present for the reviewed rollback period. Rollback
+verifies both retained objects, switches the reference back transactionally,
+and retains the destination.
+
+The non-mutating migration preflight also verifies every live source checksum,
+the exact current database value, and any pre-existing destination. The
+non-mutating orphan preflight regenerates the checksummed inventory and requires
+its hash and every reviewed candidate to match.
+
+Orphan actions are recorded in `storage_orphan_quarantine_record`. The tool
+requires the exact hash of a checksummed read-only inventory, reviewer identity,
+review time, and reason. Immediately before removing the source copy, it locks
+all reference tables and confirms the object is still unreferenced. The
+verified quarantine copy is retained. There is deliberately no permanent-delete
+action.
+
+The authoritative operating procedure, manifest formats, confirmations,
+rollback instructions, and failure rules are in
+[`phase-2-storage-reconciliation-runbook.md`](phase-2-storage-reconciliation-runbook.md).
+
+Local verification recorded on 2026-07-28:
+
+- adapter, inventory, manifest, migration, rollback, orphan, symbolic-link, and
+  real PostgreSQL transaction/lock tests passed;
+- the complete API suite executed 30 suites and 224 tests at 71.25% line
+  coverage; its real-database test exposed an ambiguous PostgreSQL regex in
+  migration `0042`, and additive migration `0043` corrected it without
+  rewriting applied history;
+- the corrected PostgreSQL integration suite passed both migration/rollback
+  and orphan-quarantine cases;
+- OpenAPI, lint, TypeScript, both GIS performance tests, the production audit,
+  and the complete development audit passed with zero vulnerabilities;
+- a rebuilt disposable database applied exactly 44 migration files, including
+  exactly one `0043`, and created the corrected quarantine constraint;
+- Flutter analysis reported no issues and the serial full suite passed all 330
+  tests;
+- all four maintained Compose configurations rendered successfully;
+- the inventory CLI emitted valid read-only JSON. The local host/database
+  volume mismatch still reports missing and unresolved references, so that
+  exploratory report is correctly barred from authorizing quarantine.
+
+The required GitHub clean aggregate run and merge evidence remain the final
+repository gate for this slice. Production-like staging must still execute the
+inventory, migration/rollback, and reviewed-quarantine drills against matched
+database and storage volumes before any production storage mutation.
 
 The Phase 2 gate is not complete until all three slices pass the complete API,
 mobile, migration, audit, and CI release gates.

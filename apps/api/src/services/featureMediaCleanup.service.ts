@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
-import fs from 'node:fs/promises';
 import type { PoolClient } from 'pg';
 import { query, transaction } from '../config/database';
 import { resolveStoredPhotoPath } from './featurePhotoSecurity.service';
+import { storageAdapter } from './storageAdapter.service';
 
 const logger = require('../utils/logger');
 
@@ -176,7 +176,7 @@ export const processFeatureMediaCleanupJobs = async ({
       }
 
       try {
-        await fs.unlink(resolvedPath);
+        await storageAdapter.remove(job.storage_path);
         await client.query('DELETE FROM feature_media_cleanup_job WHERE id = $1', [job.id]);
         completed += 1;
       } catch (error: unknown) {

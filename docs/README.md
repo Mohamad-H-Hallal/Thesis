@@ -25,5 +25,8 @@
 - `predeployment/phase-2-private-storage-secure-uploads.md`: authoritative
   private-file delivery, upload quarantine and scanning, storage migration, and
   orphan-reconciliation plan and gate.
+- `predeployment/phase-2-storage-reconciliation-runbook.md`: Phase 2C
+  checksummed inventory, reviewed migration, rollback, orphan quarantine, and
+  failure-recovery procedure.
 
 Tracked files under `handover/evidence/` are historical verification artifacts from earlier release checks. Treat them as evidence of the run they were captured from, not as current runtime failures unless a current validation report explicitly says so.
