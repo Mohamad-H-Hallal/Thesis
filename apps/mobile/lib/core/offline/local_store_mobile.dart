@@ -3,15 +3,21 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../features/projects/domain/project.dart';
+import 'local_database_migration.dart';
+import 'local_database_security.dart';
 import 'local_photo_cleanup.dart';
 import 'local_models.dart';
 import 'local_store.dart';
 
 class SqliteLocalStore implements LocalStore, DurableDraftPhotoStore {
+  SqliteLocalStore({required LocalDatabaseKeyManager databaseKeyManager})
+    : _databaseKeyManager = databaseKeyManager;
+
+  final LocalDatabaseKeyManager _databaseKeyManager;
   Database? _db;
   Future<void>? _initialization;
   final Uuid _uuid = const Uuid();
@@ -46,13 +52,23 @@ class SqliteLocalStore implements LocalStore, DurableDraftPhotoStore {
     await offlinePhotoRoot.create(recursive: true);
     _offlinePhotoRootPath = offlinePhotoRoot.path;
     final dbPath = p.join(dir.path, 'gis_collector_offline.db');
+    final databaseState = await inspectLocalDatabaseFile(File(dbPath));
+    final databaseKey = await _databaseKeyManager.loadOrCreateKey(
+      databaseState,
+    );
+    await prepareEncryptedLocalDatabase(
+      databasePath: dbPath,
+      password: databaseKey,
+    );
 
     final db = await openDatabase(
       dbPath,
+      password: databaseKey,
       version: _dbVersion,
       onConfigure: (db) async {
-        await db.execute('PRAGMA secure_delete = ON');
-        await db.execute('PRAGMA foreign_keys = ON');
+        await db.rawQuery('PRAGMA cipher_memory_security = ON');
+        await db.rawQuery('PRAGMA secure_delete = ON');
+        await db.rawQuery('PRAGMA foreign_keys = ON');
       },
       onCreate: (db, version) async {
         await _createSchema(db);
@@ -2077,4 +2093,6 @@ class SqliteLocalStore implements LocalStore, DurableDraftPhotoStore {
   }
 }
 
-LocalStore createPlatformLocalStore() => SqliteLocalStore();
+LocalStore createPlatformLocalStore({
+  required LocalDatabaseKeyManager databaseKeyManager,
+}) => SqliteLocalStore(databaseKeyManager: databaseKeyManager);

@@ -51,18 +51,33 @@ import '../../features/review/domain/review_item.dart';
 import '../../features/review/domain/review_repository.dart';
 import '../../features/review/domain/review_workflow.dart';
 import '../network/api_client.dart';
+import '../offline/local_database_security.dart';
 import '../offline/local_models.dart';
 import '../offline/local_store.dart';
 import '../offline/local_store_factory.dart';
 import '../pagination/paginated_list_controller.dart';
 import '../pagination/paginated_result.dart';
+import '../security/secure_string_store.dart';
 import '../realtime/workflow_realtime_service.dart';
 import '../router/app_router.dart';
 import '../sync/sync_controller.dart';
 import '../sync/sync_engine.dart';
 
 final secureStorageProvider = Provider<FlutterSecureStorage>((ref) {
-  return const FlutterSecureStorage();
+  return const FlutterSecureStorage(
+    aOptions: AndroidOptions(
+      resetOnError: false,
+      migrateOnAlgorithmChange: true,
+    ),
+  );
+});
+
+final localDatabaseKeyManagerProvider = Provider<LocalDatabaseKeyManager>((
+  ref,
+) {
+  return LocalDatabaseKeyManager(
+    FlutterSecureStringStore(ref.watch(secureStorageProvider)),
+  );
 });
 
 final apiClientProvider = Provider<ApiClient>((ref) {
@@ -194,7 +209,9 @@ final adminRepositoryProvider = Provider<AdminRepository>((ref) {
 });
 
 final localStoreProvider = Provider<LocalStore>((ref) {
-  final store = createLocalStore();
+  final store = createLocalStore(
+    databaseKeyManager: ref.watch(localDatabaseKeyManagerProvider),
+  );
   ref.onDispose(() {
     store.dispose();
   });

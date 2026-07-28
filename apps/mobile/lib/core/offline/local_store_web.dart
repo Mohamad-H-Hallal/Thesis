@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:uuid/uuid.dart';
 
 import '../../features/projects/domain/project.dart';
+import 'local_database_security.dart';
 import 'local_models.dart';
 import 'local_store.dart';
 
@@ -832,4 +833,6 @@ class MemoryLocalStore implements LocalStore {
   }
 }
 
-LocalStore createPlatformLocalStore() => MemoryLocalStore();
+LocalStore createPlatformLocalStore({
+  required LocalDatabaseKeyManager databaseKeyManager,
+}) => MemoryLocalStore();
