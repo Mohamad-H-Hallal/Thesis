@@ -10,10 +10,13 @@ import {
   normalizeEmail,
   getUserAccessState,
 } from '../lib/userWorkflow';
+import { isPlatformPushEnabled, isPushDeliveryConfigured } from '../lib/firebasePush';
+import { categoryIconsDir } from '../config/upload';
+import { type MemoryPhotoFile } from '../services/featurePhotoSecurity.service';
 import {
-  isPlatformPushEnabled,
-  isPushDeliveryConfigured,
-} from '../lib/firebasePush';
+  prepareQuarantinedImage,
+  releaseQuarantinedImages,
+} from '../services/secureImageIntake.service';
 
 const getSupportSettingsRow = async () => {
   await query(`
@@ -141,9 +144,7 @@ const categoryController = {
     const requestedLimit = Number.parseInt(String(req.query.limit ?? '20'), 10);
     const page = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
     const limit =
-      Number.isFinite(requestedLimit) && requestedLimit > 0
-        ? Math.min(requestedLimit, 100)
-        : 20;
+      Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.min(requestedLimit, 100) : 20;
     const offset = (page - 1) * limit;
     const searchQuery = String(req.query.q ?? '').trim();
 
@@ -261,13 +262,18 @@ const categoryController = {
   },
 
   uploadIcon: async (req, res) => {
-    const file = req.file;
+    const file = req.file as MemoryPhotoFile | undefined;
 
     if (!file) {
       throw new AppError('Category icon image is required', 400);
     }
 
-    const iconUrl = `/uploads/category-icons/${file.filename}`;
+    const prepared = await prepareQuarantinedImage(req, file, {
+      kind: 'category_icon',
+      uploadedByUserId: req.user.id,
+    });
+    const [released] = await releaseQuarantinedImages([prepared], categoryIconsDir);
+    const iconUrl = `/uploads/category-icons/${released.filename}`;
 
     res.status(201).json({
       success: true,
@@ -275,7 +281,7 @@ const categoryController = {
       data: {
         icon_url: iconUrl,
         original_name: file.originalname,
-        file_size_bytes: file.size,
+        file_size_bytes: released.size,
       },
     });
   },
@@ -380,9 +386,7 @@ const notificationController = {
     const requestedLimit = Number.parseInt(String(req.query.limit ?? '20'), 10);
     const page = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
     const limit =
-      Number.isFinite(requestedLimit) && requestedLimit > 0
-        ? Math.min(requestedLimit, 100)
-        : 20;
+      Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.min(requestedLimit, 100) : 20;
     const offset = (page - 1) * limit;
 
     let whereClause = `
@@ -523,7 +527,9 @@ const notificationController = {
 
   registerDevice: async (req, res) => {
     const token = String(req.body?.token ?? '').trim();
-    const platform = String(req.body?.platform ?? '').trim().toLowerCase();
+    const platform = String(req.body?.platform ?? '')
+      .trim()
+      .toLowerCase();
     const deviceLabel = String(req.body?.device_label ?? '').trim();
     const appVersion = String(req.body?.app_version ?? '').trim();
 

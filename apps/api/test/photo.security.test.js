@@ -20,7 +20,7 @@ const {
   updateAssignmentStatus,
 } = require('./helpers/api-test-helpers');
 const {
-  aiValidationPhotosDir,
+  privateAiValidationPhotosDir,
   categoryIconsDir,
   importsDir,
   photosDir,
@@ -791,7 +791,7 @@ describe('offline feature photo synchronization security', () => {
     const evidenceName = `${randomUUID()}.jpg`;
     const iconName = `${randomUUID()}.png`;
     const importName = `${randomUUID()}.geojson`;
-    const evidencePath = path.join(aiValidationPhotosDir, evidenceName);
+    const evidencePath = path.join(privateAiValidationPhotosDir, evidenceName);
     const iconPath = path.join(categoryIconsDir, iconName);
     const importPath = path.join(importsDir, importName);
     await Promise.all([
@@ -826,6 +826,72 @@ describe('offline feature photo synchronization security', () => {
         fs.unlink(iconPath).catch(() => undefined),
         fs.unlink(importPath).catch(() => undefined),
       ]);
+    }
+  });
+
+  test('scans, normalizes, and atomically releases public category icons', async () => {
+    const context = await provisionOfflineFeature();
+    const source = await createImage();
+    const response = await request(app)
+      .post(`${API_PREFIX}/categories/icon`)
+      .set(authHeader(context.admin.token))
+      .attach('icon', source, { filename: 'category.png', contentType: 'image/png' })
+      .expect(201);
+
+    const iconUrl = response.body.data.icon_url;
+    expect(iconUrl).toMatch(/^\/uploads\/category-icons\/[0-9a-f-]+\.jpg$/);
+    const filename = path.basename(iconUrl);
+    const iconPath = path.join(categoryIconsDir, filename);
+    try {
+      const metadata = await sharp(iconPath).metadata();
+      expect(metadata.format).toBe('jpeg');
+      await request(app)
+        .get(iconUrl)
+        .expect(200)
+        .expect('X-Content-Type-Options', 'nosniff');
+
+      await request(app)
+        .post(`${API_PREFIX}/categories/icon`)
+        .set(authHeader(context.admin.token))
+        .attach('icon', Buffer.from('<script>alert(1)</script>'), {
+          filename: 'fake.png',
+          contentType: 'image/png',
+        })
+        .expect(422);
+
+      const quarantineRecords = await pool.query(
+        `SELECT original_filename, storage_path, scan_status, disposition, reason_code
+         FROM upload_quarantine_record
+         WHERE uploaded_by_user_id = $1
+           AND upload_kind = 'category_icon'
+           AND original_filename = ANY($2::text[])
+         ORDER BY original_filename`,
+        [context.admin.user.id, ['category.png', 'fake.png']],
+      );
+      expect(
+        quarantineRecords.rows.map(({ storage_path: _storagePath, ...record }) => record),
+      ).toEqual([
+        {
+          original_filename: 'category.png',
+          scan_status: 'skipped',
+          disposition: 'released',
+          reason_code: null,
+        },
+        {
+          original_filename: 'fake.png',
+          scan_status: 'skipped',
+          disposition: 'quarantined',
+          reason_code: 'UPLOAD_IMAGE_CONTENT_REJECTED',
+        },
+      ]);
+      const rejectedPath = quarantineRecords.rows.find(
+        (record) => record.original_filename === 'fake.png',
+      )?.storage_path;
+      if (rejectedPath) {
+        await fs.unlink(rejectedPath).catch(() => undefined);
+      }
+    } finally {
+      await fs.unlink(iconPath).catch(() => undefined);
     }
   });
 

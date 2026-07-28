@@ -1411,16 +1411,26 @@ describe('GIS import workflow', () => {
       'zip',
       'not really a zip',
     );
-    const corruptedZipDetail = await uploadAndWaitForImport({
-      token: contributorLogin.token,
-      reviewerToken: admin.token,
-      projectId: project.id,
-      filePath: corruptedZipPath,
-      status: 'failed',
-    });
-    expect(corruptedZipDetail.body.data.job.processing_message).toContain(
-      'The Shapefile ZIP could not be read.',
+    const corruptedZipResponse = await request(app)
+      .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+      .set(authHeader(contributorLogin.token))
+      .attach('file', corruptedZipPath)
+      .expect(422);
+    expect(corruptedZipResponse.body.error.code).toBe('UPLOAD_SIGNATURE_REJECTED');
+    const quarantinedCorruptZip = await pool.query(
+      `SELECT disposition, scan_status, reason_code
+       FROM upload_quarantine_record
+       WHERE project_id = $1
+         AND original_filename = $2`,
+      [project.id, path.basename(corruptedZipPath)],
     );
+    expect(quarantinedCorruptZip.rows).toEqual([
+      {
+        disposition: 'quarantined',
+        scan_status: 'pending',
+        reason_code: 'UPLOAD_SIGNATURE_REJECTED',
+      },
+    ]);
   });
 
   test('handles KML lines, polygons, malformed XML, and missing geometry safely', async () => {
@@ -1518,28 +1528,20 @@ describe('GIS import workflow', () => {
       },
       'kmz',
     );
-    const missingKmlDetail = await uploadAndWaitForImport({
-      token: contributorLogin.token,
-      reviewerToken: admin.token,
-      projectId: project.id,
-      filePath: missingKmlPath,
-      status: 'failed',
-    });
-    expect(missingKmlDetail.body.data.job.processing_message).toContain(
-      'KMZ archive does not contain a KML document.',
-    );
+    const missingKmlResponse = await request(app)
+      .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+      .set(authHeader(contributorLogin.token))
+      .attach('file', missingKmlPath)
+      .expect(422);
+    expect(missingKmlResponse.body.error.code).toBe('UPLOAD_ARCHIVE_REJECTED');
 
     const corruptedKmzPath = await createTempBinaryFile('kmz-corrupt', 'kmz', 'not really a kmz');
-    const corruptedKmzDetail = await uploadAndWaitForImport({
-      token: contributorLogin.token,
-      reviewerToken: admin.token,
-      projectId: project.id,
-      filePath: corruptedKmzPath,
-      status: 'failed',
-    });
-    expect(corruptedKmzDetail.body.data.job.processing_message).toContain(
-      'The KMZ archive could not be read.',
-    );
+    const corruptedKmzResponse = await request(app)
+      .post(`${API_PREFIX}/imports/project/${project.id}/upload`)
+      .set(authHeader(contributorLogin.token))
+      .attach('file', corruptedKmzPath)
+      .expect(422);
+    expect(corruptedKmzResponse.body.error.code).toBe('UPLOAD_SIGNATURE_REJECTED');
   });
 
   test('handles real-world CSV headers, delimiters, blanks, and photo references', async () => {

@@ -16,6 +16,7 @@ const {
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const sharp = require('sharp');
 
 const SUPER_ADMIN_EMAIL = 'ai-superadmin@gov.lb';
 const ORIGINAL_AI_PIPELINE_ROOT = process.env.AI_PIPELINE_ROOT;
@@ -2698,6 +2699,137 @@ describe('AI backend endpoints phase B', () => {
         }),
       }),
     );
+  });
+
+  test('AI validation photos are normalized, audited, and retained coherently on batch failure', async () => {
+    const { admin, project } = await createProjectFixture('AI Validation Photo Intake');
+    await enableProjectAiSettings({ projectId: project.id, userId: admin.user.id });
+    const { runId, layerId } = await createPreviewableAiLayer({
+      projectId: project.id,
+      userId: admin.user.id,
+      status: 'ready_for_review',
+    });
+    const predictionId = await insertAiPredictionFeature({
+      projectId: project.id,
+      runId,
+      layerId,
+      artifactFeatureId: 'validation-photo-intake',
+    });
+    const contributor = await createContributorToken({
+      adminToken: admin.token,
+      emailPrefix: 'ai-validation-photo-contributor',
+    });
+    await assignContributorToProject({
+      projectId: project.id,
+      userId: contributor.user.id,
+      approvedBy: admin.user.id,
+    });
+    await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/runs/${runId}/publish`)
+      .set(authHeader(admin.token))
+      .expect(200);
+
+    const validImage = await sharp({
+      create: {
+        width: 24,
+        height: 16,
+        channels: 4,
+        background: { r: 20, g: 100, b: 180, alpha: 0.8 },
+      },
+    })
+      .png()
+      .toBuffer();
+    const cleanupPaths = [];
+
+    try {
+      await request(app)
+        .post(
+          `${API_PREFIX}/projects/${project.id}/ai/predictions/${predictionId}/validation-photos`,
+        )
+        .set(authHeader(contributor.token))
+        .attach('photos', validImage, {
+          filename: 'batch-valid.png',
+          contentType: 'image/png',
+        })
+        .attach('photos', Buffer.from('<script>not an image</script>'), {
+          filename: 'batch-invalid.png',
+          contentType: 'image/png',
+        })
+        .expect(422);
+
+      const rejectedBatch = await pool.query(
+        `SELECT original_filename, storage_path, released_path, scan_status, disposition, reason_code
+         FROM upload_quarantine_record
+         WHERE uploaded_by_user_id = $1
+           AND upload_kind = 'ai_validation_photo'
+           AND original_filename = ANY($2::text[])
+         ORDER BY original_filename`,
+        [contributor.user.id, ['batch-valid.png', 'batch-invalid.png']],
+      );
+      expect(
+        rejectedBatch.rows.map(
+          ({ storage_path: _storagePath, released_path: _releasedPath, ...record }) => record,
+        ),
+      ).toEqual([
+        {
+          original_filename: 'batch-invalid.png',
+          scan_status: 'skipped',
+          disposition: 'quarantined',
+          reason_code: 'UPLOAD_IMAGE_CONTENT_REJECTED',
+        },
+        {
+          original_filename: 'batch-valid.png',
+          scan_status: 'skipped',
+          disposition: 'quarantined',
+          reason_code: 'UPLOAD_BATCH_ABORTED',
+        },
+      ]);
+      cleanupPaths.push(...rejectedBatch.rows.map((row) => row.storage_path));
+
+      const successfulUpload = await request(app)
+        .post(
+          `${API_PREFIX}/projects/${project.id}/ai/predictions/${predictionId}/validation-photos`,
+        )
+        .set(authHeader(contributor.token))
+        .attach('photos', validImage, {
+          filename: 'released-evidence.png',
+          contentType: 'image/png',
+        })
+        .expect(201);
+      expect(successfulUpload.body.data.photos).toEqual([
+        expect.objectContaining({
+          file_name: 'released-evidence.png',
+          mime_type: 'image/jpeg',
+        }),
+      ]);
+
+      const releasedRecord = await pool.query(
+        `SELECT storage_path, released_path, scan_status, disposition, reason_code
+         FROM upload_quarantine_record
+         WHERE uploaded_by_user_id = $1
+           AND upload_kind = 'ai_validation_photo'
+           AND original_filename = 'released-evidence.png'`,
+        [contributor.user.id],
+      );
+      expect(releasedRecord.rows).toHaveLength(1);
+      expect(releasedRecord.rows[0]).toEqual(
+        expect.objectContaining({
+          scan_status: 'skipped',
+          disposition: 'released',
+          reason_code: null,
+          released_path: expect.stringMatching(/\.jpg$/),
+        }),
+      );
+      cleanupPaths.push(
+        releasedRecord.rows[0].storage_path,
+        releasedRecord.rows[0].released_path,
+      );
+      await expect(sharp(releasedRecord.rows[0].released_path).metadata()).resolves.toEqual(
+        expect.objectContaining({ format: 'jpeg' }),
+      );
+    } finally {
+      await Promise.all(cleanupPaths.map((filePath) => fs.rm(filePath, { force: true })));
+    }
   });
 
   test('AI prediction validation generation creates all-prediction tasks idempotently without spatial_feature writes', async () => {

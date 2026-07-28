@@ -2,6 +2,11 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { Request } from 'express';
 import { assertCurrentOfflineAuthorization } from './offlineSyncSecurity.service';
+import {
+  requireAcceptableMalwareScan,
+  scanBufferForMalware,
+  type MalwareScanResult,
+} from './malwareScanner.service';
 const sharp = require('sharp');
 const fs = require('fs').promises;
 const { AppError, permanentOfflineSyncError } = require('../middleware/error');
@@ -40,6 +45,8 @@ export interface PreparedPhoto {
     height: number;
     format: string;
     source_sha256: string;
+    malware_scan_status: 'clean' | 'skipped';
+    malware_scanner: 'clamav' | 'disabled';
   };
 }
 
@@ -80,6 +87,8 @@ export const photoResponse = (row: any): any => {
       : row.exif_data;
   if (exifData && typeof exifData === 'object') {
     delete exifData.source_sha256;
+    delete exifData.malware_scan_status;
+    delete exifData.malware_scanner;
   }
   return {
     ...row,
@@ -312,7 +321,11 @@ const expectedFormatFor = (file: MemoryPhotoFile): 'jpeg' | 'png' | 'heif' | nul
   return null;
 };
 
-export const preparePhoto = async (req: Request, file: MemoryPhotoFile): Promise<PreparedPhoto> => {
+export const preparePhoto = async (
+  req: Request,
+  file: MemoryPhotoFile,
+  completedMalwareScan?: MalwareScanResult,
+): Promise<PreparedPhoto> => {
   if (!Buffer.isBuffer(file.buffer) || file.buffer.length === 0) {
     throw attachmentRejected(req, 'The attachment is empty or unreadable.');
   }
@@ -321,6 +334,9 @@ export const preparePhoto = async (req: Request, file: MemoryPhotoFile): Promise
   if (!expectedFormat) {
     throw attachmentRejected(req, 'The attachment filename and declared image type do not match.');
   }
+
+  const malwareScan = completedMalwareScan ?? (await scanBufferForMalware(file.buffer));
+  requireAcceptableMalwareScan(malwareScan);
 
   try {
     const inputOptions = {
@@ -375,6 +391,8 @@ export const preparePhoto = async (req: Request, file: MemoryPhotoFile): Promise
         height,
         format: expectedFormat,
         source_sha256: sourceHash,
+        malware_scan_status: malwareScan.status as 'clean' | 'skipped',
+        malware_scanner: malwareScan.scanner,
       },
     };
   } catch (error: unknown) {

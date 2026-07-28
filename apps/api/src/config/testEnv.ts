@@ -100,6 +100,15 @@ const applyTestEnvDefaults = (): TestDbConfig => {
   setDefault('AI_PYTHON_BIN', 'python');
   setDefault('AI_PIPELINE_TIMEOUT_MS', '60000');
   setDefault('AI_PIPELINE_MODE', 'disabled');
+  setDefault('MALWARE_SCANNER_MODE', 'disabled');
+  setDefault('CLAMAV_HOST', '127.0.0.1');
+  setDefault('CLAMAV_PORT', '3310');
+  setDefault('CLAMAV_TIMEOUT_MS', '15000');
+  setDefault('CLAMAV_MAX_STREAM_BYTES', String(30 * 1024 * 1024));
+  setDefault('ARCHIVE_MAX_ENTRIES', '1000');
+  setDefault('ARCHIVE_MAX_EXPANDED_BYTES', String(100 * 1024 * 1024));
+  setDefault('ARCHIVE_MAX_ENTRY_BYTES', String(50 * 1024 * 1024));
+  setDefault('ARCHIVE_MAX_COMPRESSION_RATIO', '100');
 
   return {
     host,

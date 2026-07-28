@@ -2,10 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Request, Response } from 'express';
 import { query } from '../config/database';
-import {
-  aiValidationPhotosDir,
-  photosDir,
-} from '../config/upload';
+import { aiValidationPhotosDir, privateAiValidationPhotosDir, photosDir } from '../config/upload';
 import { publicVisibleStatuses, synchronizeProjectStatuses } from '../lib/projectLifecycle';
 import { AppError } from '../middleware/error';
 
@@ -14,8 +11,11 @@ type PrivateMediaDirectory = 'ai-validation' | 'photos';
 const safeStorageName =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:jpe?g|png|gif|hei[cf]s?)$/i;
 
-const mediaRoot = (directory: PrivateMediaDirectory): string =>
-  path.resolve(directory === 'ai-validation' ? aiValidationPhotosDir : photosDir);
+const mediaRoots = (directory: PrivateMediaDirectory): string[] =>
+  (directory === 'ai-validation'
+    ? [privateAiValidationPhotosDir, aiValidationPhotosDir]
+    : [photosDir]
+  ).map((root) => path.resolve(root));
 
 const referencedProjectIds = async (
   directory: PrivateMediaDirectory,
@@ -34,10 +34,7 @@ const referencedProjectIds = async (
     }
   }
 
-  const urls = [
-    `/uploads/${directory}/${storageName}`,
-    `uploads/${directory}/${storageName}`,
-  ];
+  const urls = [`/uploads/${directory}/${storageName}`, `uploads/${directory}/${storageName}`];
   const result = await query(
     `WITH referenced_project AS (
        SELECT validation.project_id
@@ -139,24 +136,26 @@ const servePrivateMedia = async (
     throw new AppError('You do not have access to this media', 403);
   }
 
-  const root = mediaRoot(directory);
-  const filePath = path.resolve(root, storageName);
-  if (path.dirname(filePath) !== root) {
-    throw new AppError('Media file not found', 404);
+  let filePath: string | null = null;
+  for (const root of mediaRoots(directory)) {
+    const candidate = path.resolve(root, storageName);
+    if (path.dirname(candidate) !== root) {
+      continue;
+    }
+    try {
+      const stat = await fs.stat(candidate);
+      if (stat.isFile()) {
+        filePath = candidate;
+        break;
+      }
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+        throw error;
+      }
+    }
   }
-  try {
-    const stat = await fs.stat(filePath);
-    if (!stat.isFile()) {
-      throw new AppError('Media file not found', 404);
-    }
-  } catch (error: unknown) {
-    if (error instanceof AppError) {
-      throw error;
-    }
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
-      throw new AppError('Media file not found', 404);
-    }
-    throw error;
+  if (!filePath) {
+    throw new AppError('Media file not found', 404);
   }
 
   res.set({
@@ -164,7 +163,10 @@ const servePrivateMedia = async (
     'X-Content-Type-Options': 'nosniff',
     'Content-Disposition': `inline; filename="${storageName}"`,
   });
-  res.sendFile(filePath, { dotfiles: 'deny' });
+  // The new private storage root intentionally contains a `.private` path
+  // segment. The candidate path and generated filename have already passed
+  // strict root-containment and allowlist checks above.
+  res.sendFile(filePath, { dotfiles: 'allow' });
 };
 
 const getAiValidationMedia = async (req: Request, res: Response): Promise<void> =>
