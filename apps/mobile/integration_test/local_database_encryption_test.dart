@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:lebanese_gis_mobile/core/offline/local_database_migration.dart';
 import 'package:lebanese_gis_mobile/core/offline/local_database_security.dart';
+import 'package:lebanese_gis_mobile/core/offline/local_photo_security.dart';
 import 'package:lebanese_gis_mobile/core/offline/local_store_mobile.dart';
 import 'package:lebanese_gis_mobile/core/security/secure_string_store.dart';
 import 'package:path/path.dart' as p;
@@ -191,6 +192,7 @@ void main() {
     final keyStorage = _MemorySecureStringStore();
     final store = SqliteLocalStore(
       databaseKeyManager: LocalDatabaseKeyManager(keyStorage),
+      photoKeyManager: LocalPhotoKeyManager(keyStorage),
     );
     await store.initialize();
     await store.dispose();
@@ -234,6 +236,7 @@ void main() {
 
     final upgradedStore = SqliteLocalStore(
       databaseKeyManager: LocalDatabaseKeyManager(keyStorage),
+      photoKeyManager: LocalPhotoKeyManager(keyStorage),
     );
     await upgradedStore.initialize();
     await upgradedStore.dispose();

@@ -1709,6 +1709,21 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                     ? 'Uploaded to this draft'
                     : 'Captured ${_formatDateTime(photo.takenAt!)}',
                 isLocalFile: photo.isLocalFile,
+                loadImageBytes: photo.isLocalFile
+                    ? () async {
+                        final store = ref.read(localStoreProvider);
+                        if (store is! ProtectedDraftPhotoStore) {
+                          throw StateError(
+                            'Protected offline photo storage is unavailable.',
+                          );
+                        }
+                        final protectedStore =
+                            store as ProtectedDraftPhotoStore;
+                        return (await protectedStore.readProtectedDraftPhoto(
+                          photo.filePath,
+                        )).bytes;
+                      }
+                    : null,
               ),
             )
             .toList(growable: false);

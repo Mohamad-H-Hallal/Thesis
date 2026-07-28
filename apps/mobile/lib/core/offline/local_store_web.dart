@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../features/projects/domain/project.dart';
 import 'local_database_security.dart';
+import 'local_photo_security.dart';
 import 'local_models.dart';
 import 'local_store.dart';
 
@@ -835,4 +836,5 @@ class MemoryLocalStore implements LocalStore {
 
 LocalStore createPlatformLocalStore({
   required LocalDatabaseKeyManager databaseKeyManager,
+  required LocalPhotoKeyManager photoKeyManager,
 }) => MemoryLocalStore();

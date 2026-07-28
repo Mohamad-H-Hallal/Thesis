@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -10,19 +11,28 @@ import '../../features/projects/domain/project.dart';
 import 'local_database_migration.dart';
 import 'local_database_security.dart';
 import 'local_photo_cleanup.dart';
+import 'local_photo_encryption.dart';
+import 'local_photo_security.dart';
 import 'local_models.dart';
 import 'local_store.dart';
 
-class SqliteLocalStore implements LocalStore, DurableDraftPhotoStore {
-  SqliteLocalStore({required LocalDatabaseKeyManager databaseKeyManager})
-    : _databaseKeyManager = databaseKeyManager;
+class SqliteLocalStore
+    implements LocalStore, DurableDraftPhotoStore, ProtectedDraftPhotoStore {
+  SqliteLocalStore({
+    required LocalDatabaseKeyManager databaseKeyManager,
+    required LocalPhotoKeyManager photoKeyManager,
+  }) : _databaseKeyManager = databaseKeyManager,
+       _photoKeyManager = photoKeyManager;
 
   final LocalDatabaseKeyManager _databaseKeyManager;
+  final LocalPhotoKeyManager _photoKeyManager;
+  final OfflinePhotoCipher _photoCipher = OfflinePhotoCipher();
   Database? _db;
+  Uint8List? _photoKeyBytes;
   Future<void>? _initialization;
   final Uuid _uuid = const Uuid();
   String? _offlinePhotoRootPath;
-  static const _dbVersion = 8;
+  static const _dbVersion = 9;
 
   @override
   Future<void> initialize() async {
@@ -51,6 +61,13 @@ class SqliteLocalStore implements LocalStore, DurableDraftPhotoStore {
     final offlinePhotoRoot = Directory(p.join(dir.path, 'offline_photos'));
     await offlinePhotoRoot.create(recursive: true);
     _offlinePhotoRootPath = offlinePhotoRoot.path;
+    final hasEncryptedPhotos = await _photoTreeHasEncryptedFiles(
+      offlinePhotoRoot.path,
+    );
+    final encodedPhotoKey = await _photoKeyManager.loadOrCreateKey(
+      hasEncryptedPhotos: hasEncryptedPhotos,
+    );
+    _photoKeyBytes = LocalPhotoKeyManager.decodeKey(encodedPhotoKey);
     final dbPath = p.join(dir.path, 'gis_collector_offline.db');
     final databaseState = await inspectLocalDatabaseFile(File(dbPath));
     final databaseKey = await _databaseKeyManager.loadOrCreateKey(
@@ -138,39 +155,50 @@ class SqliteLocalStore implements LocalStore, DurableDraftPhotoStore {
         if (oldVersion < 8) {
           await _migrateDraftPhotosToOwnedStorage(db);
         }
+        if (oldVersion < 9) {
+          await _migrateDraftPhotosToEncryptedStorage(db);
+        }
       },
     );
-    await db.update(
-      'sync_queue',
-      <String, Object?>{
-        'status': SyncQueueStatus.failed.name,
-        'next_retry_at': DateTime.now().toIso8601String(),
-        'last_error':
-            'Previous synchronization was interrupted before confirmation.',
-        'updated_at': DateTime.now().toIso8601String(),
-      },
-      where: 'status = ?',
-      whereArgs: <Object?>[SyncQueueStatus.processing.name],
-    );
-    final now = DateTime.now().toIso8601String();
-    await db.rawUpdate(
-      '''
-      UPDATE sync_queue
-      SET status = ?, next_retry_at = ?, updated_at = ?
-      WHERE status = ?
-        AND owner_user_id <> ''
-        AND project_id <> ''
-        AND project_id <> '__ambiguous__'
-      ''',
-      <Object?>[
-        SyncQueueStatus.failed.name,
-        now,
-        now,
-        SyncQueueStatus.deadLetter.name,
-      ],
-    );
-    await _drainPendingPhotoFileDeletions(db);
-    _db = db;
+    try {
+      await db.update(
+        'sync_queue',
+        <String, Object?>{
+          'status': SyncQueueStatus.failed.name,
+          'next_retry_at': DateTime.now().toIso8601String(),
+          'last_error':
+              'Previous synchronization was interrupted before confirmation.',
+          'updated_at': DateTime.now().toIso8601String(),
+        },
+        where: 'status = ?',
+        whereArgs: <Object?>[SyncQueueStatus.processing.name],
+      );
+      final now = DateTime.now().toIso8601String();
+      await db.rawUpdate(
+        '''
+        UPDATE sync_queue
+        SET status = ?, next_retry_at = ?, updated_at = ?
+        WHERE status = ?
+          AND owner_user_id <> ''
+          AND project_id <> ''
+          AND project_id <> '__ambiguous__'
+        ''',
+        <Object?>[
+          SyncQueueStatus.failed.name,
+          now,
+          now,
+          SyncQueueStatus.deadLetter.name,
+        ],
+      );
+      await db.transaction(_migrateDraftPhotosToEncryptedStorage);
+      await _drainPendingPhotoFileDeletions(db);
+      await _encryptUnreferencedPlaintextPhotos();
+      await _assertNoPlaintextPhotoFiles();
+      _db = db;
+    } catch (_) {
+      await db.close();
+      rethrow;
+    }
   }
 
   Future<void> _migrateProjectScopedStorage(Database db) async {
@@ -562,6 +590,376 @@ class SqliteLocalStore implements LocalStore, DurableDraftPhotoStore {
     }
   }
 
+  Future<void> _migrateDraftPhotosToEncryptedStorage(
+    DatabaseExecutor db,
+  ) async {
+    final root = _offlinePhotoRootPath;
+    final keyBytes = _photoKeyBytes;
+    if (root == null || keyBytes == null) {
+      throw const LocalPhotoSecurityException(
+        'Protected offline photo storage is unavailable.',
+      );
+    }
+
+    final rows = await db.query(
+      'draft_photos',
+      columns: const <String>[
+        'id',
+        'owner_user_id',
+        'project_id',
+        'draft_id',
+        'file_path',
+      ],
+      orderBy: 'owner_user_id, project_id, draft_id, id',
+    );
+    for (final row in rows) {
+      final photoId = row['id'];
+      final ownerUserId = row['owner_user_id'];
+      final projectId = row['project_id'];
+      final draftId = row['draft_id'];
+      final oldPath = row['file_path'];
+      if (photoId is! String ||
+          ownerUserId is! String ||
+          projectId is! String ||
+          draftId is! String ||
+          oldPath is! String ||
+          photoId.trim().isEmpty ||
+          ownerUserId.trim().isEmpty ||
+          projectId.trim().isEmpty ||
+          draftId.trim().isEmpty ||
+          oldPath.trim().isEmpty) {
+        throw const LocalPhotoSecurityException(
+          'An offline draft photo has incomplete ownership metadata. The '
+          'database and files were preserved.',
+        );
+      }
+      if (!areOfflineDraftPhotoPathsScoped(
+        rootDirectory: root,
+        ownerUserId: ownerUserId,
+        projectId: projectId,
+        draftId: draftId,
+        filePaths: <String>[oldPath],
+      )) {
+        throw const LocalPhotoSecurityException(
+          'An offline draft photo is outside its exact owner/project/draft '
+          'scope. The database and files were preserved.',
+        );
+      }
+
+      final source = File(oldPath);
+      final sourceType = await FileSystemEntity.type(
+        source.path,
+        followLinks: false,
+      );
+      if (sourceType == FileSystemEntityType.notFound) {
+        throw const LocalPhotoSecurityException(
+          'A referenced offline draft photo is missing. The database was '
+          'preserved for recovery.',
+        );
+      }
+      if (sourceType != FileSystemEntityType.file) {
+        throw const LocalPhotoSecurityException(
+          'A referenced offline draft photo is not a regular file. The '
+          'database and files were preserved.',
+        );
+      }
+      if (await _photoCipher.isEncryptedFile(source)) {
+        if (!_photoCipher.pathClaimsEncryptedFormat(oldPath)) {
+          throw const LocalPhotoSecurityException(
+            'A referenced encrypted offline photo has an invalid path.',
+          );
+        }
+        await _photoCipher.validate(
+          encrypted: source,
+          keyBytes: keyBytes,
+          authenticationScope: _photoAuthenticationScope(oldPath),
+        );
+        continue;
+      }
+      if (_photoCipher.pathClaimsEncryptedFormat(oldPath)) {
+        throw const LocalPhotoSecurityException(
+          'A referenced offline photo claims encryption but contains '
+          'plaintext or invalid data.',
+        );
+      }
+
+      final mediaType = await _photoCipher.detectPlaintextMediaType(source);
+      final encryptedPath = _photoCipher.encryptedPath(
+        directoryPath: p.dirname(oldPath),
+        fileStem: p.basenameWithoutExtension(oldPath),
+        mediaType: mediaType,
+      );
+      await _photoCipher.prepareEncryptedCopy(
+        source: source,
+        destination: File(encryptedPath),
+        keyBytes: keyBytes,
+        authenticationScope: _photoAuthenticationScope(encryptedPath),
+        mediaType: mediaType,
+      );
+      await _replaceQueuedDraftPhotoPath(
+        db,
+        ownerUserId: ownerUserId,
+        projectId: projectId,
+        draftId: draftId,
+        oldPath: oldPath,
+        encryptedPath: encryptedPath,
+      );
+      final updated = await db.update(
+        'draft_photos',
+        <String, Object?>{'file_path': encryptedPath},
+        where:
+            'id = ? AND owner_user_id = ? AND project_id = ? AND draft_id = ? AND file_path = ?',
+        whereArgs: <Object?>[photoId, ownerUserId, projectId, draftId, oldPath],
+      );
+      if (updated != 1) {
+        throw const LocalPhotoSecurityException(
+          'The offline photo reference changed during encryption. All files '
+          'were preserved.',
+        );
+      }
+      await db.insert(
+        'pending_local_file_deletions',
+        <String, Object?>{
+          'id': _uuid.v4(),
+          'owner_user_id': ownerUserId,
+          'project_id': projectId,
+          'draft_id': draftId,
+          'file_path': oldPath,
+          'attempt_count': 0,
+          'created_at': DateTime.now().toIso8601String(),
+          'last_attempt_at': null,
+        },
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+    }
+  }
+
+  Future<void> _replaceQueuedDraftPhotoPath(
+    DatabaseExecutor db, {
+    required String ownerUserId,
+    required String projectId,
+    required String draftId,
+    required String oldPath,
+    required String encryptedPath,
+  }) async {
+    final queueRows = await db.query(
+      'sync_queue',
+      columns: const <String>['id', 'payload_json'],
+      where:
+          'owner_user_id = ? AND project_id = ? AND entity_type = ? AND entity_id = ?',
+      whereArgs: <Object?>[ownerUserId, projectId, 'draft_feature', draftId],
+    );
+    for (final queueRow in queueRows) {
+      final queueId = queueRow['id'];
+      final rawPayloadJson = queueRow['payload_json'];
+      if (queueId is! String || rawPayloadJson is! String) {
+        throw const LocalPhotoSecurityException(
+          'An offline synchronization record is malformed. Photo migration '
+          'was stopped without switching references.',
+        );
+      }
+      Map<String, dynamic> payload;
+      try {
+        payload = Map<String, dynamic>.from(jsonDecode(rawPayloadJson) as Map);
+      } catch (_) {
+        throw const LocalPhotoSecurityException(
+          'An offline synchronization payload cannot be verified. Photo '
+          'migration was stopped without switching references.',
+        );
+      }
+
+      var changed = false;
+      for (final key in const <String>['photo_paths', 'synced_photo_paths']) {
+        final rawPaths = payload[key];
+        if (rawPaths == null) {
+          continue;
+        }
+        if (rawPaths is! List || !rawPaths.every((value) => value is String)) {
+          throw const LocalPhotoSecurityException(
+            'An offline synchronization photo list cannot be verified. Photo '
+            'migration was stopped without switching references.',
+          );
+        }
+        payload[key] = rawPaths
+            .map((value) {
+              final path = value as String;
+              if (localPhotoPathsEqual(path, oldPath)) {
+                changed = true;
+                return encryptedPath;
+              }
+              return path;
+            })
+            .toList(growable: false);
+      }
+      if (!changed) {
+        continue;
+      }
+      final updated = await db.update(
+        'sync_queue',
+        <String, Object?>{'payload_json': jsonEncode(payload)},
+        where:
+            'id = ? AND owner_user_id = ? AND project_id = ? AND entity_type = ? AND entity_id = ?',
+        whereArgs: <Object?>[
+          queueId,
+          ownerUserId,
+          projectId,
+          'draft_feature',
+          draftId,
+        ],
+      );
+      if (updated != 1) {
+        throw const LocalPhotoSecurityException(
+          'An offline synchronization record changed during photo migration.',
+        );
+      }
+    }
+  }
+
+  Future<void> _encryptUnreferencedPlaintextPhotos() async {
+    final root = _offlinePhotoRootPath;
+    final keyBytes = _photoKeyBytes;
+    if (root == null || keyBytes == null) {
+      throw const LocalPhotoSecurityException(
+        'Protected offline photo storage is unavailable.',
+      );
+    }
+    for (final plaintextPath in await _listPlaintextPhotoFiles()) {
+      final source = File(plaintextPath);
+      final mediaType = await _photoCipher.detectPlaintextMediaType(source);
+      final encryptedPath = _photoCipher.encryptedPath(
+        directoryPath: p.dirname(plaintextPath),
+        fileStem: p.basenameWithoutExtension(plaintextPath),
+        mediaType: mediaType,
+      );
+      await _photoCipher.prepareEncryptedCopy(
+        source: source,
+        destination: File(encryptedPath),
+        keyBytes: keyBytes,
+        authenticationScope: _photoAuthenticationScope(encryptedPath),
+        mediaType: mediaType,
+      );
+      final deleted = await tryDeleteLocalPhotoFileWithinDirectory(
+        plaintextPath,
+        root,
+      );
+      if (!deleted && await File(plaintextPath).exists()) {
+        throw const LocalPhotoSecurityException(
+          'A verified plaintext offline photo could not be removed. Protected '
+          'storage remains unavailable until cleanup succeeds.',
+        );
+      }
+    }
+  }
+
+  Future<bool> _photoTreeHasEncryptedFiles(String root) async {
+    var hasEncryptedPhotos = false;
+    await for (final entity in Directory(
+      root,
+    ).list(recursive: true, followLinks: false)) {
+      final type = await FileSystemEntity.type(entity.path, followLinks: false);
+      if (type == FileSystemEntityType.link) {
+        throw const LocalPhotoSecurityException(
+          'Offline photo storage contains a symbolic link.',
+        );
+      }
+      if (type == FileSystemEntityType.file &&
+          (_photoCipher.pathClaimsEncryptedFormat(entity.path) ||
+              await _photoCipher.isEncryptedFile(File(entity.path)))) {
+        hasEncryptedPhotos = true;
+      }
+    }
+    return hasEncryptedPhotos;
+  }
+
+  Future<List<String>> _listPlaintextPhotoFiles() async {
+    final root = _offlinePhotoRootPath;
+    if (root == null) {
+      throw const LocalPhotoSecurityException(
+        'Protected offline photo storage is unavailable.',
+      );
+    }
+    final plaintextPaths = <String>[];
+    await for (final entity in Directory(
+      root,
+    ).list(recursive: true, followLinks: false)) {
+      final type = await FileSystemEntity.type(entity.path, followLinks: false);
+      if (type == FileSystemEntityType.link) {
+        throw const LocalPhotoSecurityException(
+          'Offline photo storage contains a symbolic link.',
+        );
+      }
+      if (type == FileSystemEntityType.file &&
+          !await _photoCipher.isEncryptedFile(File(entity.path))) {
+        plaintextPaths.add(p.normalize(p.absolute(entity.path)));
+      }
+    }
+    plaintextPaths.sort();
+    return plaintextPaths;
+  }
+
+  Future<void> _assertNoPlaintextPhotoFiles() async {
+    if ((await _listPlaintextPhotoFiles()).isNotEmpty) {
+      throw const LocalPhotoSecurityException(
+        'Plaintext offline photo files remain. They were preserved and local '
+        'storage was not exposed.',
+      );
+    }
+  }
+
+  String _photoAuthenticationScope(String filePath) {
+    final root = _offlinePhotoRootPath;
+    if (root == null || !isPathWithinDirectory(filePath, root)) {
+      throw const LocalPhotoSecurityException(
+        'The offline photo authentication path is outside protected storage.',
+      );
+    }
+    final relativePath = p
+        .relative(p.normalize(p.absolute(filePath)), from: root)
+        .replaceAll(p.separator, '/');
+    if (relativePath.isEmpty ||
+        relativePath == '.' ||
+        relativePath == '..' ||
+        relativePath.startsWith('../')) {
+      throw const LocalPhotoSecurityException(
+        'The offline photo authentication scope is invalid.',
+      );
+    }
+    return relativePath;
+  }
+
+  Future<void> _createSafePhotoDirectory(String directoryPath) async {
+    final root = _offlinePhotoRootPath;
+    if (root == null || !isPathWithinDirectory(directoryPath, root)) {
+      throw const LocalPhotoSecurityException(
+        'The offline photo directory is outside protected storage.',
+      );
+    }
+    final relative = p.relative(
+      p.normalize(p.absolute(directoryPath)),
+      from: p.normalize(p.absolute(root)),
+    );
+    var current = p.normalize(p.absolute(root));
+    for (final segment in p.split(relative)) {
+      if (segment.isEmpty || segment == '.') {
+        continue;
+      }
+      if (segment == '..') {
+        throw const LocalPhotoSecurityException(
+          'The offline photo directory escapes protected storage.',
+        );
+      }
+      current = p.join(current, segment);
+      final type = await FileSystemEntity.type(current, followLinks: false);
+      if (type == FileSystemEntityType.notFound) {
+        await Directory(current).create();
+      } else if (type != FileSystemEntityType.directory) {
+        throw const LocalPhotoSecurityException(
+          'Offline photo storage contains an unsafe path component.',
+        );
+      }
+    }
+  }
+
   Future<void> _createProjectScopedIndexes(DatabaseExecutor db) async {
     await db.execute(
       'CREATE INDEX idx_projects_cache_owner ON projects_cache(owner_user_id, updated_at);',
@@ -598,6 +996,11 @@ class SqliteLocalStore implements LocalStore, DurableDraftPhotoStore {
     }
     await _db?.close();
     _db = null;
+    final photoKeyBytes = _photoKeyBytes;
+    if (photoKeyBytes != null) {
+      photoKeyBytes.fillRange(0, photoKeyBytes.length, 0);
+    }
+    _photoKeyBytes = null;
     _initialization = null;
   }
 
@@ -1028,8 +1431,9 @@ class SqliteLocalStore implements LocalStore, DurableDraftPhotoStore {
     String? suggestedFileName,
   }) async {
     final root = _offlinePhotoRootPath;
-    if (root == null) {
-      throw StateError('Offline photo storage is unavailable.');
+    final keyBytes = _photoKeyBytes;
+    if (root == null || keyBytes == null) {
+      throw StateError('Protected offline photo storage is unavailable.');
     }
     final source = File(sourceFilePath);
     if (!await source.exists()) {
@@ -1044,20 +1448,39 @@ class SqliteLocalStore implements LocalStore, DurableDraftPhotoStore {
     if (!isPathWithinDirectory(directoryPath, root)) {
       throw StateError('Offline photo storage scope is invalid.');
     }
-    final directory = Directory(directoryPath);
-    await directory.create(recursive: true);
-    final extension = _safePhotoExtension(
-      suggestedFileName?.trim().isNotEmpty == true
-          ? suggestedFileName!
-          : sourceFilePath,
+    await _createSafePhotoDirectory(directoryPath);
+    final mediaType = await _photoCipher.detectPlaintextMediaType(source);
+    final destination = _photoCipher.encryptedPath(
+      directoryPath: directoryPath,
+      fileStem: _uuid.v4(),
+      mediaType: mediaType,
     );
-    final destination = p.join(directory.path, '${_uuid.v4()}$extension');
-    if (!isPathWithinDirectory(destination, directory.path) ||
+    if (!isPathWithinDirectory(destination, directoryPath) ||
         !isPathWithinDirectory(destination, root)) {
       throw StateError('Offline photo destination is invalid.');
     }
-    await source.copy(destination);
+    await _photoCipher.prepareEncryptedCopy(
+      source: source,
+      destination: File(destination),
+      keyBytes: keyBytes,
+      authenticationScope: _photoAuthenticationScope(destination),
+      mediaType: mediaType,
+    );
     return destination;
+  }
+
+  @override
+  Future<DecryptedOfflinePhoto> readProtectedDraftPhoto(String filePath) async {
+    await _database;
+    final keyBytes = _photoKeyBytes;
+    if (keyBytes == null) {
+      throw StateError('Protected offline photo storage is unavailable.');
+    }
+    return _photoCipher.decrypt(
+      encrypted: File(filePath),
+      keyBytes: keyBytes,
+      authenticationScope: _photoAuthenticationScope(filePath),
+    );
   }
 
   @override
@@ -1967,19 +2390,6 @@ class SqliteLocalStore implements LocalStore, DurableDraftPhotoStore {
     );
   }
 
-  String _safePhotoExtension(String fileName) {
-    final extension = p.extension(fileName).toLowerCase();
-    return const <String>{
-          '.jpg',
-          '.jpeg',
-          '.png',
-          '.heic',
-          '.heif',
-        }.contains(extension)
-        ? extension
-        : '.jpg';
-  }
-
   @override
   Future<void> markSyncFailure(
     SyncQueueItem item, {
@@ -2095,4 +2505,8 @@ class SqliteLocalStore implements LocalStore, DurableDraftPhotoStore {
 
 LocalStore createPlatformLocalStore({
   required LocalDatabaseKeyManager databaseKeyManager,
-}) => SqliteLocalStore(databaseKeyManager: databaseKeyManager);
+  required LocalPhotoKeyManager photoKeyManager,
+}) => SqliteLocalStore(
+  databaseKeyManager: databaseKeyManager,
+  photoKeyManager: photoKeyManager,
+);

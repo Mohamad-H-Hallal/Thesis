@@ -1,5 +1,6 @@
 import '../../features/projects/domain/project.dart';
 import 'local_models.dart';
+import 'local_photo_encryption.dart';
 
 abstract class LocalStore {
   Future<void> initialize();
@@ -189,4 +190,9 @@ abstract interface class DurableDraftPhotoStore {
     required String draftId,
     required Iterable<String> filePaths,
   });
+}
+
+abstract interface class ProtectedDraftPhotoStore {
+  /// Authenticates and decrypts one exact app-owned draft photo in memory.
+  Future<DecryptedOfflinePhoto> readProtectedDraftPhoto(String filePath);
 }

@@ -308,6 +308,9 @@ class SyncEngine {
       final durablePhotoStore = _localStore is DurableDraftPhotoStore
           ? _localStore as DurableDraftPhotoStore
           : null;
+      final protectedPhotoStore = _localStore is ProtectedDraftPhotoStore
+          ? _localStore as ProtectedDraftPhotoStore
+          : null;
       if (durablePhotoStore != null &&
           !await durablePhotoStore.areRetainedDraftPhotoPathsScoped(
             ownerUserId: item.ownerUserId,
@@ -360,7 +363,19 @@ class SyncEngine {
         }),
         if (photoPaths.isNotEmpty)
           'photos': await Future.wait(
-            photoPaths.map((path) => MultipartFile.fromFile(path)),
+            photoPaths.map((path) async {
+              if (protectedPhotoStore == null) {
+                return MultipartFile.fromFile(path);
+              }
+              final content = await protectedPhotoStore.readProtectedDraftPhoto(
+                path,
+              );
+              return MultipartFile.fromBytes(
+                content.bytes,
+                filename: content.fileName,
+                contentType: DioMediaType.parse(content.mimeType),
+              );
+            }),
           ),
       });
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
