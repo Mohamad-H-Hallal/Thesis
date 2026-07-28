@@ -22,5 +22,8 @@
 - `predeployment/phase-1-data-safety-foundation.md`: authoritative
   pre-deployment environment isolation, data classification, recovery targets,
   verified restore drill, migration, and rollback policy.
+- `predeployment/phase-2-private-storage-secure-uploads.md`: authoritative
+  private-file delivery, upload quarantine and scanning, storage migration, and
+  orphan-reconciliation plan and gate.
 
 Tracked files under `handover/evidence/` are historical verification artifacts from earlier release checks. Treat them as evidence of the run they were captured from, not as current runtime failures unless a current validation report explicitly says so.

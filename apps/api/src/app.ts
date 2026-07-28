@@ -16,8 +16,9 @@ import {
   assertMetricsConfig,
 } from './middleware/observability';
 import { broadcastWorkflowMutations } from './middleware/workflowBroadcast';
-import { guardLegacyFeaturePhotoDirectory } from './middleware/legacyFeaturePhotoGuard';
 import { offlineSyncIngressRateLimit } from './middleware/offlineSyncRateLimit';
+import { categoryIconsDir } from './config/upload';
+import { privateMediaRouter } from './routes/privateMedia.routes';
 
 // Import routes
 const authRoutes = require('./routes/auth.routes');
@@ -149,9 +150,15 @@ const buildApp = (env) => {
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   app.use(compression());
   app.use('/docs', express.static(path.join(__dirname, '..', 'docs')));
-  app.use('/uploads/photos', guardLegacyFeaturePhotoDirectory('photos'));
-  app.use('/uploads/thumbnails', guardLegacyFeaturePhotoDirectory('thumbnails'));
-  app.use('/uploads', express.static(path.resolve(env.UPLOAD_DIR ?? './uploads')));
+  app.use(
+    '/uploads/category-icons',
+    express.static(categoryIconsDir, {
+      dotfiles: 'deny',
+      index: false,
+      redirect: false,
+    }),
+  );
+  app.use('/uploads', privateMediaRouter);
 
   if (env.NODE_ENV === 'development') {
     app.use(morgan('dev'));

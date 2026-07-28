@@ -201,7 +201,7 @@ class AiValidationTaskCard extends ConsumerWidget {
   }
 }
 
-class AiValidationTaskDetailsSheet extends StatelessWidget {
+class AiValidationTaskDetailsSheet extends ConsumerWidget {
   const AiValidationTaskDetailsSheet({
     required this.task,
     this.onOpenMap,
@@ -218,9 +218,17 @@ class AiValidationTaskDetailsSheet extends StatelessWidget {
   final VoidCallback? onReject;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final bottomInset =
         MediaQuery.viewPaddingOf(context).bottom + AppSpacing.lg;
+    final accessToken = ref.watch(
+      authControllerProvider.select(
+        (state) => state.session?.accessToken.trim() ?? '',
+      ),
+    );
+    final evidenceHeaders = accessToken.isEmpty
+        ? const <String, String>{}
+        : <String, String>{'Authorization': 'Bearer $accessToken'};
     final prediction = task.prediction;
     final submission = task.latestSubmission;
     final submissionPhotos = submission == null
@@ -322,7 +330,10 @@ class AiValidationTaskDetailsSheet extends StatelessWidget {
                 ),
                 if (submissionPhotos.isNotEmpty) ...[
                   const SizedBox(height: AppSpacing.sm),
-                  _EvidencePhotoPreviewGrid(mediaIds: submissionPhotos),
+                  _EvidencePhotoPreviewGrid(
+                    mediaIds: submissionPhotos,
+                    httpHeaders: evidenceHeaders,
+                  ),
                 ],
               ],
               const SizedBox(height: AppSpacing.md),
@@ -982,9 +993,13 @@ List<String> aiEvidencePhotoMediaIds(Map<String, dynamic> evidence) {
 }
 
 class _EvidencePhotoPreviewGrid extends StatelessWidget {
-  const _EvidencePhotoPreviewGrid({required this.mediaIds});
+  const _EvidencePhotoPreviewGrid({
+    required this.mediaIds,
+    required this.httpHeaders,
+  });
 
   final List<String> mediaIds;
+  final Map<String, String> httpHeaders;
 
   @override
   Widget build(BuildContext context) {
@@ -1000,6 +1015,7 @@ class _EvidencePhotoPreviewGrid extends StatelessWidget {
               height: 76,
               child: Image.network(
                 _evidencePhotoUrl(mediaId),
+                headers: httpHeaders,
                 fit: BoxFit.cover,
                 errorBuilder: (context, error, stackTrace) => DecoratedBox(
                   decoration: BoxDecoration(
