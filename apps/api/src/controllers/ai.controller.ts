@@ -33,6 +33,14 @@ import {
 } from '../services/aiPredictionFeatureValidation.service';
 import { publicVisibleStatuses, synchronizeProjectStatuses } from '../lib/projectLifecycle';
 import { isProtectedSuperAdminEmail } from '../lib/userWorkflow';
+import { privateAiValidationPhotosDir } from '../config/upload';
+import { type MemoryPhotoFile } from '../services/featurePhotoSecurity.service';
+import {
+  keepPreparedImagesQuarantined,
+  prepareQuarantinedImage,
+  releaseQuarantinedImages,
+  type QuarantinedPreparedImage,
+} from '../services/secureImageIntake.service';
 
 const allowedRunStatuses = [
   'draft',
@@ -126,12 +134,40 @@ const lebanonApproxBounds = {
 const lebanonStaticGovernorateZones = [
   { key: 'akkar', label: 'Akkar', min_lon: 35.65, min_lat: 34.35, max_lon: 36.65, max_lat: 34.75 },
   { key: 'north', label: 'North', min_lon: 35.55, min_lat: 34.05, max_lon: 36.35, max_lat: 34.45 },
-  { key: 'beirut', label: 'Beirut', min_lon: 35.42, min_lat: 33.82, max_lon: 35.57, max_lat: 33.95 },
-  { key: 'mount_lebanon', label: 'Mount Lebanon', min_lon: 35.35, min_lat: 33.45, max_lon: 36.1, max_lat: 34.15 },
+  {
+    key: 'beirut',
+    label: 'Beirut',
+    min_lon: 35.42,
+    min_lat: 33.82,
+    max_lon: 35.57,
+    max_lat: 33.95,
+  },
+  {
+    key: 'mount_lebanon',
+    label: 'Mount Lebanon',
+    min_lon: 35.35,
+    min_lat: 33.45,
+    max_lon: 36.1,
+    max_lat: 34.15,
+  },
   { key: 'bekaa', label: 'Bekaa', min_lon: 35.75, min_lat: 33.55, max_lon: 36.65, max_lat: 34.15 },
-  { key: 'baalbek_hermel', label: 'Baalbek-Hermel', min_lon: 36.0, min_lat: 34.0, max_lon: 36.7, max_lat: 34.65 },
+  {
+    key: 'baalbek_hermel',
+    label: 'Baalbek-Hermel',
+    min_lon: 36.0,
+    min_lat: 34.0,
+    max_lon: 36.7,
+    max_lat: 34.65,
+  },
   { key: 'south', label: 'South', min_lon: 35.15, min_lat: 33.15, max_lon: 35.75, max_lat: 33.6 },
-  { key: 'nabatieh', label: 'Nabatieh', min_lon: 35.35, min_lat: 33.05, max_lon: 36.0, max_lat: 33.65 },
+  {
+    key: 'nabatieh',
+    label: 'Nabatieh',
+    min_lon: 35.35,
+    min_lat: 33.05,
+    max_lon: 36.0,
+    max_lat: 33.65,
+  },
 ] as const;
 
 const NATIONAL_GRID_COLUMNS = 5;
@@ -214,7 +250,9 @@ const normalizeSatelliteSource = (value: unknown): 'sentinel2' | 'landsat' | nul
   return supportedSatelliteAliases[value.trim().toLowerCase()] ?? null;
 };
 
-const normalizeSatelliteSources = (preferences: Record<string, unknown>): Array<'sentinel2' | 'landsat'> => {
+const normalizeSatelliteSources = (
+  preferences: Record<string, unknown>,
+): Array<'sentinel2' | 'landsat'> => {
   const rawSources = Array.isArray(preferences.satellite_sources)
     ? preferences.satellite_sources
     : Array.isArray(preferences.satelliteSources)
@@ -251,7 +289,10 @@ const normalizeSeason = (value: unknown): string | null => {
   return supportedSeasons.has(normalized) ? normalized : null;
 };
 
-const defaultSeasonRange = (season: string, year: number): { from_date: string; to_date: string } => {
+const defaultSeasonRange = (
+  season: string,
+  year: number,
+): { from_date: string; to_date: string } => {
   switch (season) {
     case 'dry':
       return { from_date: `${year}-06-01`, to_date: `${year}-08-31` };
@@ -289,15 +330,22 @@ const normalizeYear = (value: unknown): number => {
 const normalizeSatelliteTimeframes = (
   preferences: Record<string, unknown>,
   satelliteSources: Array<'sentinel2' | 'landsat'>,
-): Record<string, { map_year: number; seasons: Array<{ season: string; from_date: string; to_date: string }> }> => {
+): Record<
+  string,
+  { map_year: number; seasons: Array<{ season: string; from_date: string; to_date: string }> }
+> => {
   const rawTimeframes =
     preferences.satellite_timeframes && typeof preferences.satellite_timeframes === 'object'
       ? (preferences.satellite_timeframes as Record<string, unknown>)
       : preferences.satelliteTimeframes && typeof preferences.satelliteTimeframes === 'object'
         ? (preferences.satelliteTimeframes as Record<string, unknown>)
         : {};
-  const fallbackFrom = normalizeDateString(preferences.date_from ?? preferences.from_date ?? preferences.fromDate);
-  const fallbackTo = normalizeDateString(preferences.date_to ?? preferences.to_date ?? preferences.toDate);
+  const fallbackFrom = normalizeDateString(
+    preferences.date_from ?? preferences.from_date ?? preferences.fromDate,
+  );
+  const fallbackTo = normalizeDateString(
+    preferences.date_to ?? preferences.to_date ?? preferences.toDate,
+  );
   const fallbackDateYear = fallbackFrom?.slice(0, 4);
   const fallbackYear = normalizeYear(
     preferences.target_year ?? preferences.year ?? preferences.mapYear ?? fallbackDateYear,
@@ -365,16 +413,26 @@ const normalizeSatelliteTimeframes = (
     }
     normalized[source] = {
       map_year: mapYear,
-      seasons: seasons.length > 0
-        ? seasons
-        : [{ season: fallbackSeason, from_date: fallbackRange.from_date, to_date: fallbackRange.to_date }],
+      seasons:
+        seasons.length > 0
+          ? seasons
+          : [
+              {
+                season: fallbackSeason,
+                from_date: fallbackRange.from_date,
+                to_date: fallbackRange.to_date,
+              },
+            ],
     };
   }
 
   return normalized;
 };
 
-const normalizeConfidenceThreshold = (value: unknown, fallback = defaultSettings.confidence_threshold): number => {
+const normalizeConfidenceThreshold = (
+  value: unknown,
+  fallback = defaultSettings.confidence_threshold,
+): number => {
   const parsed =
     typeof value === 'number'
       ? value
@@ -463,7 +521,9 @@ const expandFeatureGroups = (
   return Array.from(features);
 };
 
-const defaultFeatureInputsForSources = (satelliteSources: Array<'sentinel2' | 'landsat'>): string[] => {
+const defaultFeatureInputsForSources = (
+  satelliteSources: Array<'sentinel2' | 'landsat'>,
+): string[] => {
   const features = new Set<string>();
   if (satelliteSources.includes('sentinel2')) {
     defaultSentinel2FeatureInputs.forEach((feature) => features.add(feature));
@@ -515,7 +575,18 @@ const applyFeatureDependencyDefaults = ({
     }
   }
 
-  const sentinel2OnlyFeatures = new Set(['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12']);
+  const sentinel2OnlyFeatures = new Set([
+    'B2',
+    'B3',
+    'B4',
+    'B5',
+    'B6',
+    'B7',
+    'B8',
+    'B8A',
+    'B11',
+    'B12',
+  ]);
   if (!hasSentinel2 && [...features].some((feature) => sentinel2OnlyFeatures.has(feature))) {
     errors.push('Sentinel-2 bands and red-edge indices require Sentinel-2.');
   }
@@ -544,10 +615,7 @@ const supportedAiModelAliases: Record<string, string> = {
   gradient_tree_boost: 'gradient_boosting',
 };
 
-const normalizePreferredAiModel = (
-  value: unknown,
-  options: { strict?: boolean } = {},
-): string => {
+const normalizePreferredAiModel = (value: unknown, options: { strict?: boolean } = {}): string => {
   const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
   if (!raw) {
     return 'auto';
@@ -597,8 +665,10 @@ const normalizeFeatureInputs = (value: string[]): string[] => {
   return inputs;
 };
 
-const boolPreference = (preferences: Record<string, unknown> | null | undefined, key: string): boolean =>
-  preferences?.[key] === true;
+const boolPreference = (
+  preferences: Record<string, unknown> | null | undefined,
+  key: string,
+): boolean => preferences?.[key] === true;
 
 const normalizeAiModelPreferences = (
   preferences: unknown,
@@ -619,7 +689,8 @@ const normalizeAiModelPreferences = (
         : [];
   const rawFeatureInputs = normalizeFeatureInputs(legacyFeatureInputs);
   const initialFeatureGroups = normalizeFeatureGroups(raw.feature_groups, rawFeatureInputs);
-  const hasExplicitFeatureGroups = Array.isArray(raw.feature_groups) && initialFeatureGroups.length > 0;
+  const hasExplicitFeatureGroups =
+    Array.isArray(raw.feature_groups) && initialFeatureGroups.length > 0;
   const baseFeatureInputs =
     rawFeatureInputs.length > 0
       ? rawFeatureInputs
@@ -766,11 +837,17 @@ const gridCellKeyForSample = (sample: NationalCoverageSample): string | null => 
   const height = lebanonApproxBounds.max_lat - lebanonApproxBounds.min_lat;
   const column = Math.min(
     NATIONAL_GRID_COLUMNS - 1,
-    Math.max(0, Math.floor(((sample.lon - lebanonApproxBounds.min_lon) / width) * NATIONAL_GRID_COLUMNS)),
+    Math.max(
+      0,
+      Math.floor(((sample.lon - lebanonApproxBounds.min_lon) / width) * NATIONAL_GRID_COLUMNS),
+    ),
   );
   const row = Math.min(
     NATIONAL_GRID_ROWS - 1,
-    Math.max(0, Math.floor(((sample.lat - lebanonApproxBounds.min_lat) / height) * NATIONAL_GRID_ROWS)),
+    Math.max(
+      0,
+      Math.floor(((sample.lat - lebanonApproxBounds.min_lat) / height) * NATIONAL_GRID_ROWS),
+    ),
   );
   return `${row}:${column}`;
 };
@@ -860,10 +937,7 @@ const nationalScopeEligibilityFor = ({
   const invalidGeometryCount = Number(totals?.invalid_geometry_count ?? 0);
   const coverage = computeNationalCoverage({ samples, labelCounts, minSamplesPerClass });
   const nationalModeAllowed = boolPreference(modelPreferences, 'national_mode_allowed');
-  const lebanonBoundaryConfigured = boolPreference(
-    modelPreferences,
-    'lebanon_boundary_configured',
-  );
+  const lebanonBoundaryConfigured = boolPreference(modelPreferences, 'lebanon_boundary_configured');
   const pipelineSupportsNational =
     boolPreference(modelPreferences, 'pipeline_supports_national_scope') &&
     boolPreference(modelPreferences, 'backend_bridge_supports_national_scope') &&
@@ -972,7 +1046,9 @@ const nationalScopeEligibilityFor = ({
   const eligible = requirements.every((requirement) => requirement.passed);
   const unmetRequirements = eligible
     ? []
-    : requirements.filter((requirement) => !requirement.passed).map((requirement) => requirement.message);
+    : requirements
+        .filter((requirement) => !requirement.passed)
+        .map((requirement) => requirement.message);
   return {
     eligible,
     requirements,
@@ -1205,8 +1281,7 @@ const getEffectiveAiSettings = async (projectId: string) => {
     scope_type: existing?.scope_type ?? defaultSettings.scope_type,
     scope_geometry: existing?.scope_geometry ?? defaultSettings.scope_geometry,
     min_samples_per_class: existing?.min_samples_per_class ?? defaultSettings.min_samples_per_class,
-    confidence_threshold:
-      existing?.confidence_threshold ?? defaultSettings.confidence_threshold,
+    confidence_threshold: existing?.confidence_threshold ?? defaultSettings.confidence_threshold,
     model_preferences: normalizeAiModelPreferences(
       existing?.model_preferences ?? defaultSettings.model_preferences,
     ),
@@ -1815,10 +1890,11 @@ const getFeatureReadinessSummary = async ({
     national_scope_enabled: nationalScopeEnabled,
     national_scope_eligibility: nationalScopeEligibility,
     custom_scope_applied: scopeGeometryText !== null,
-    coverage_warning_applies: topLevelWarnings.some((warning) =>
-      warning.toLowerCase().includes('coverage') ||
-      warning.toLowerCase().includes('distributed') ||
-      warning.toLowerCase().includes('spatially limited'),
+    coverage_warning_applies: topLevelWarnings.some(
+      (warning) =>
+        warning.toLowerCase().includes('coverage') ||
+        warning.toLowerCase().includes('distributed') ||
+        warning.toLowerCase().includes('spatially limited'),
     ),
     warnings: topLevelWarnings,
     blockers,
@@ -1855,8 +1931,7 @@ const isAiPredictionGeometryInsertError = (...values: unknown[]): boolean => {
     .toLowerCase();
   return (
     text.includes('chk_ai_prediction_feature_geom_valid') ||
-    (text.includes('ai_prediction_feature') &&
-      text.includes('violates check constraint')) ||
+    (text.includes('ai_prediction_feature') && text.includes('violates check constraint')) ||
     (text.includes('ai_prediction_feature') && text.includes('failing row contains'))
   );
 };
@@ -2042,9 +2117,7 @@ const normalizeRunRow = (row: any) => {
         ? artifacts
         : runJsonRecord(aiServer.artifacts ?? metadata.artifacts),
     counts:
-      Object.keys(counts).length > 0
-        ? counts
-        : runJsonRecord(aiServer.counts ?? metadata.counts),
+      Object.keys(counts).length > 0 ? counts : runJsonRecord(aiServer.counts ?? metadata.counts),
     error,
     can_cancel: ['queued', 'created', 'starting', 'running', 'cancelling'].includes(
       String(row.status),
@@ -2164,7 +2237,8 @@ const updateAiRunFromServerPayload = async (
   const rawErrorInput =
     Object.keys(payloadErrorRecord).length > 0 ? payload.error : payload.message;
   const rawErrorDetails = errorRecordFrom(rawErrorInput);
-  const errorDetails = status === 'failed' ? storeAiRunErrorRecord(rawErrorInput) : payloadErrorRecord;
+  const errorDetails =
+    status === 'failed' ? storeAiRunErrorRecord(rawErrorInput) : payloadErrorRecord;
   const message =
     publicAiRunMessage(payload.message, rawErrorDetails, errorDetails) ??
     normalizeOptionalString((errorDetails as { message?: unknown }).message);
@@ -2173,8 +2247,8 @@ const updateAiRunFromServerPayload = async (
   const counts = runJsonRecord(payload.counts);
   const failureReason =
     status === 'failed'
-      ? publicAiRunMessage((errorDetails as { message?: unknown }).message, rawErrorDetails) ??
-        message
+      ? (publicAiRunMessage((errorDetails as { message?: unknown }).message, rawErrorDetails) ??
+        message)
       : null;
   const predictionsInserted = Number(counts.predictions_inserted ?? counts.prediction_count ?? 0);
   const payloadDryRun =
@@ -2384,11 +2458,11 @@ const buildProjectAreaScopePayload = ({
           lebanonApproxBounds.max_lat,
         ]
       : typeof extent.min_lon === 'number' &&
-    typeof extent.min_lat === 'number' &&
-    typeof extent.max_lon === 'number' &&
-    typeof extent.max_lat === 'number'
-      ? [extent.min_lon, extent.min_lat, extent.max_lon, extent.max_lat]
-      : [];
+          typeof extent.min_lat === 'number' &&
+          typeof extent.max_lon === 'number' &&
+          typeof extent.max_lat === 'number'
+        ? [extent.min_lon, extent.min_lat, extent.max_lon, extent.max_lat]
+        : [];
   const type =
     scopeType === 'custom_polygon'
       ? 'custom_aoi'
@@ -2404,10 +2478,10 @@ const buildProjectAreaScopePayload = ({
       scopeType === 'national'
         ? 'static_lebanon_boundary'
         : geometry !== null
-        ? 'explicit_project_ai_scope_geometry'
-        : bbox.length === 4
-          ? 'project_feature_extent'
-          : 'not_configured',
+          ? 'explicit_project_ai_scope_geometry'
+          : bbox.length === 4
+            ? 'project_feature_extent'
+            : 'not_configured',
   };
 };
 
@@ -2697,7 +2771,9 @@ const getProjectAiReadiness = async (req: Request, res: Response): Promise<void>
   const readinessWithAiServer = { ...readiness };
   const aiServerWarnings: string[] = [];
   if (!aiServerClient.isConfigured()) {
-    aiServerWarnings.push('AI server URL is not configured. Set AI_SERVER_URL before starting AI runs.');
+    aiServerWarnings.push(
+      'AI server URL is not configured. Set AI_SERVER_URL before starting AI runs.',
+    );
   } else if (aiServerHealth.available !== true) {
     const healthStatus =
       typeof aiServerHealth.status === 'string' ? aiServerHealth.status : 'unavailable';
@@ -2712,7 +2788,9 @@ const getProjectAiReadiness = async (req: Request, res: Response): Promise<void>
     );
   }
   if (aiServerClient.callbackSecret().trim().length === 0) {
-    aiServerWarnings.push('AI_CALLBACK_SECRET is not configured. AI server callbacks cannot be accepted.');
+    aiServerWarnings.push(
+      'AI_CALLBACK_SECRET is not configured. AI server callbacks cannot be accepted.',
+    );
   }
   if (aiServerWarnings.length > 0) {
     readinessWithAiServer.warnings = Array.from(
@@ -2971,11 +3049,7 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
     throw new AppError('AI run cannot start until readiness blockers are resolved.', 422);
   }
 
-  if (
-    shouldStart &&
-    isNationalScope &&
-    regionalExecutionModes.includes(executionMode)
-  ) {
+  if (shouldStart && isNationalScope && regionalExecutionModes.includes(executionMode)) {
     throw new AppError(
       'National Lebanon AI runs are not available in the current regional AI pipeline. Choose Project area or Custom AI area.',
       422,
@@ -2995,7 +3069,8 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
         responseMessage: message,
       };
     } else if (aiServerClient.callbackSecret().trim().length === 0) {
-      const message = 'AI_CALLBACK_SECRET is not configured. AI server callbacks cannot be accepted.';
+      const message =
+        'AI_CALLBACK_SECRET is not configured. AI server callbacks cannot be accepted.';
       preDispatchFailure = {
         error: new AppError(message, 503),
         responseMessage: message,
@@ -3017,7 +3092,8 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
       } catch (error) {
         preDispatchFailure = {
           error,
-          responseMessage: 'AI server is unavailable. Please start the AI server and refresh readiness.',
+          responseMessage:
+            'AI server is unavailable. Please start the AI server and refresh readiness.',
         };
       }
     }
@@ -3037,14 +3113,12 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
     'prediction_area_type',
     ...(scopeType === 'custom_polygon' ? ['custom_area'] : []),
   ];
-  const runCreatedLogMessage =
-    shouldStart
-      ? 'AI run record created; dispatching to AI server.'
-      : 'AI run draft created; no AI server execution started.';
-  const runCreatedResponseMessage =
-    shouldStart
-      ? 'AI run created and dispatching to the AI server.'
-      : 'AI run draft created. No AI server execution has started.';
+  const runCreatedLogMessage = shouldStart
+    ? 'AI run record created; dispatching to AI server.'
+    : 'AI run draft created; no AI server execution started.';
+  const runCreatedResponseMessage = shouldStart
+    ? 'AI run created and dispatching to the AI server.'
+    : 'AI run draft created. No AI server execution has started.';
   const runDisplayName = `AI Classification - ${project.name} - ${new Date()
     .toISOString()
     .slice(0, 10)}`;
@@ -3234,7 +3308,10 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
             }),
           ),
           selected_classes: readiness.label_counts
-            .filter((row: { class_label: string; sample_count: number }) => row.sample_count >= minSamplesPerClass)
+            .filter(
+              (row: { class_label: string; sample_count: number }) =>
+                row.sample_count >= minSamplesPerClass,
+            )
             .map((row: { class_label: string; sample_count: number }) => row.class_label),
           ai_server: {
             status: shouldStart ? 'dispatching' : 'not_started',
@@ -3571,7 +3648,10 @@ const resumeProjectAiRun = async (req: Request, res: Response): Promise<void> =>
   }
   const aiServerClient = createAiServerClient();
   if (!aiServerClient.isConfigured()) {
-    throw new AppError('AI server URL is not configured. Set AI_SERVER_URL before resuming runs.', 503);
+    throw new AppError(
+      'AI server URL is not configured. Set AI_SERVER_URL before resuming runs.',
+      503,
+    );
   }
   let serverResponse: AiServerStatusPayload;
   try {
@@ -3609,19 +3689,13 @@ const resumeProjectAiRun = async (req: Request, res: Response): Promise<void> =>
   });
 };
 
-const insertCallbackMetricRows = async (
-  runId: string,
-  metricsValue: unknown,
-): Promise<number> => {
+const insertCallbackMetricRows = async (runId: string, metricsValue: unknown): Promise<number> => {
   const metrics = runJsonRecord(metricsValue);
   if (Object.keys(metrics).length === 0) {
     return 0;
   }
 
-  const metricNumber = (
-    record: Record<string, unknown>,
-    keys: string[],
-  ): number | null => {
+  const metricNumber = (record: Record<string, unknown>, keys: string[]): number | null => {
     for (const key of keys) {
       const parsed = parseOptionalBodyNumber(record[key]);
       if (parsed !== null) {
@@ -3635,7 +3709,10 @@ const insertCallbackMetricRows = async (
     normalizeOptionalString(record.model) ??
     normalizeOptionalString(record.model_key);
   const normalizeMetricModelName = (value: string | null): string | null =>
-    value?.trim().toLowerCase().replace(/[-\s]+/g, '_') ?? null;
+    value
+      ?.trim()
+      .toLowerCase()
+      .replace(/[-\s]+/g, '_') ?? null;
   const globalSelection = runJsonRecord(metrics.model_selection);
   const selectedModel =
     normalizeOptionalString(metrics.model_used_for_classification_map) ??
@@ -3675,10 +3752,7 @@ const insertCallbackMetricRows = async (
     }
     return [
       {
-        model_name:
-          selectedModel ??
-          normalizeOptionalString(metrics.model_name) ??
-          'AI pipeline',
+        model_name: selectedModel ?? normalizeOptionalString(metrics.model_name) ?? 'AI pipeline',
         overall_accuracy: metrics.overall_accuracy ?? metrics.accuracy ?? null,
         macro_f1: metrics.macro_f1 ?? metrics.macroF1 ?? null,
         weighted_f1: metrics.weighted_f1 ?? metrics.weightedF1 ?? null,
@@ -3706,8 +3780,9 @@ const insertCallbackMetricRows = async (
         'oa_mean',
       ]),
     }))
-    .filter((row): row is { modelName: string; accuracy: number } =>
-      row.modelName !== null && row.accuracy !== null,
+    .filter(
+      (row): row is { modelName: string; accuracy: number } =>
+        row.modelName !== null && row.accuracy !== null,
     )
     .sort((left, right) => right.accuracy - left.accuracy)[0];
   const bestBalanced =
@@ -3731,18 +3806,19 @@ const insertCallbackMetricRows = async (
   const selectedClasses = Array.isArray(metrics.selected_classes)
     ? metrics.selected_classes.map(String).filter((value) => value.trim().length > 0)
     : [];
-  const fallbackClassLabels = selectedClasses.length > 0
-    ? selectedClasses
-    : Array.isArray(metrics.classes)
-      ? metrics.classes.map(String).filter((value) => value.trim().length > 0)
-      : rows
-          .flatMap((row) => {
-            const labels = row.confusion_matrix_labels;
-            return Array.isArray(labels) ? labels.map(String) : [];
-          })
-          .filter((value, index, values) =>
-            value.trim().length > 0 && values.indexOf(value) === index,
-          );
+  const fallbackClassLabels =
+    selectedClasses.length > 0
+      ? selectedClasses
+      : Array.isArray(metrics.classes)
+        ? metrics.classes.map(String).filter((value) => value.trim().length > 0)
+        : rows
+            .flatMap((row) => {
+              const labels = row.confusion_matrix_labels;
+              return Array.isArray(labels) ? labels.map(String) : [];
+            })
+            .filter(
+              (value, index, values) => value.trim().length > 0 && values.indexOf(value) === index,
+            );
   const hasMetricRows = (value: unknown): boolean => {
     if (Array.isArray(value)) {
       return value.length > 0;
@@ -3803,15 +3879,15 @@ const insertCallbackMetricRows = async (
     const confusionMatrix =
       confusionMatrixFrom(
         (isSelectedModel
-          ? nonEmptyMetricRows(metrics.confusion_matrix) ??
-            nonEmptyMetricRows(metrics.confusionMatrix)
+          ? (nonEmptyMetricRows(metrics.confusion_matrix) ??
+            nonEmptyMetricRows(metrics.confusionMatrix))
           : undefined) ??
           nonEmptyMetricRows(record.confusion_matrix) ??
           record.holdout_confusion_matrix,
       ) ?? {};
     const featureImportance =
       (isSelectedModel
-        ? nonEmptyArray(metrics.feature_importance) ?? nonEmptyArray(metrics.featureImportance)
+        ? (nonEmptyArray(metrics.feature_importance) ?? nonEmptyArray(metrics.featureImportance))
         : undefined) ??
       nonEmptyArray(record.feature_importance) ??
       [];
@@ -4003,12 +4079,16 @@ const retrainCheckProjectAiRun = async (req: Request, res: Response): Promise<vo
   );
   const validationSummary = {
     ...summaryResult.rows[0],
-    new_training_samples_count:
-      Number(trainingSamplesResult.rows[0]?.new_training_samples_count ?? 0),
+    new_training_samples_count: Number(
+      trainingSamplesResult.rows[0]?.new_training_samples_count ?? 0,
+    ),
   };
   const aiServerClient = createAiServerClient();
   if (!aiServerClient.isConfigured()) {
-    throw new AppError('AI server URL is not configured. Set AI_SERVER_URL before checking retraining.', 503);
+    throw new AppError(
+      'AI server URL is not configured. Set AI_SERVER_URL before checking retraining.',
+      503,
+    );
   }
   const result = await aiServerClient.checkRetrain({
     project_id: projectId,
@@ -4966,9 +5046,11 @@ const predictionFeaturePropertiesFromRow = (row: any): Record<string, unknown> =
     source: row.source ?? 'ai_prediction',
     status: row.status,
     layer_id: row.ai_output_layer_id,
-    source_resolution_m: row.source_resolution_m ?? row.metadata?.properties?.source_resolution_m ?? null,
+    source_resolution_m:
+      row.source_resolution_m ?? row.metadata?.properties?.source_resolution_m ?? null,
     processed_area_m2: row.processed_area_m2 ?? row.metadata?.properties?.processed_area_m2 ?? null,
-    area_change_percent: row.area_change_percent ?? row.metadata?.properties?.area_change_percent ?? null,
+    area_change_percent:
+      row.area_change_percent ?? row.metadata?.properties?.area_change_percent ?? null,
     processing_method: row.processing_method ?? row.metadata?.properties?.processing_method ?? null,
     geometry_quality: row.geometry_quality ?? row.metadata?.properties?.geometry_quality ?? null,
     not_official_field_data: true,
@@ -5331,11 +5413,10 @@ const aiLayerPredictionResponseData = ({
     uncertaintyMin: null,
     uncertaintyMax: null,
   };
-  const {
-    featureCollection,
-    returnedFeatureCount,
-    cap,
-  } = buildAiLayerFeatureCollection(parsed, collectionQuery);
+  const { featureCollection, returnedFeatureCount, cap } = buildAiLayerFeatureCollection(
+    parsed,
+    collectionQuery,
+  );
   const capped = featureQuery.offset + returnedFeatureCount < stats.totalCount;
 
   return {
@@ -5764,9 +5845,9 @@ const uploadProjectAiPredictionValidationPhotos = async (
 ): Promise<void> => {
   const currentUser = req.user as Express.UserContext;
   const files = ((req.files as any[]) || []) as Array<{
-    filename?: string;
-    originalname?: string;
-    mimetype?: string;
+    buffer: Buffer;
+    originalname: string;
+    mimetype: string;
     size?: number;
   }>;
   if (files.length === 0) {
@@ -5785,18 +5866,32 @@ const uploadProjectAiPredictionValidationPhotos = async (
     throw new AppError('Only contributors and admins can attach AI validation photos.', 403);
   }
 
-  const photos = files
-    .filter((file) => typeof file.filename === 'string' && file.filename.trim().length > 0)
-    .map((file) => {
-      const url = `/uploads/ai-validation/${file.filename}`;
-      return {
-        id: url,
-        url,
-        file_name: file.originalname ?? file.filename,
-        mime_type: file.mimetype ?? null,
-        size_bytes: file.size ?? null,
-      };
-    });
+  const prepared: QuarantinedPreparedImage[] = [];
+  try {
+    for (const file of files) {
+      prepared.push(
+        await prepareQuarantinedImage(req, file as MemoryPhotoFile, {
+          kind: 'ai_validation_photo',
+          uploadedByUserId: currentUser.id,
+          projectId: req.params.projectId,
+        }),
+      );
+    }
+  } catch (error) {
+    await keepPreparedImagesQuarantined(prepared, 'UPLOAD_BATCH_ABORTED');
+    throw error;
+  }
+  const released = await releaseQuarantinedImages(prepared, privateAiValidationPhotosDir);
+  const photos = released.map((file) => {
+    const url = `/uploads/ai-validation/${file.filename}`;
+    return {
+      id: url,
+      url,
+      file_name: file.originalFilename,
+      mime_type: 'image/jpeg',
+      size_bytes: file.size,
+    };
+  });
   if (photos.length === 0) {
     throw new AppError('No usable validation photos were uploaded.', 400);
   }
@@ -5818,10 +5913,7 @@ const uploadProjectAiPredictionValidationPhotos = async (
   });
 };
 
-const submitProjectAiPredictionValidation = async (
-  req: Request,
-  res: Response,
-): Promise<void> => {
+const submitProjectAiPredictionValidation = async (req: Request, res: Response): Promise<void> => {
   const currentUser = req.user as Express.UserContext;
   const metadata =
     req.body?.metadata && typeof req.body.metadata === 'object' && !Array.isArray(req.body.metadata)
@@ -5832,9 +5924,8 @@ const submitProjectAiPredictionValidation = async (
       projectId: req.params.projectId,
       predictionId: req.params.predictionId,
       submittedBy: currentUser.id,
-      result:
-        (normalizeOptionalString(req.body?.validation_result) ??
-          normalizeOptionalString(req.body?.result)) as any,
+      result: (normalizeOptionalString(req.body?.validation_result) ??
+        normalizeOptionalString(req.body?.result)) as any,
       correctedClass: normalizeOptionalString(req.body?.corrected_class),
       note: normalizeOptionalString(req.body?.note),
       photoMediaIds: req.body?.photo_media_ids ?? req.body?.photos,
@@ -5852,10 +5943,7 @@ const submitProjectAiPredictionValidation = async (
   });
 };
 
-const getMyProjectAiPredictionValidation = async (
-  req: Request,
-  res: Response,
-): Promise<void> => {
+const getMyProjectAiPredictionValidation = async (req: Request, res: Response): Promise<void> => {
   const result = await getMyPredictionFeatureValidation({
     projectId: req.params.projectId,
     predictionId: req.params.predictionId,
@@ -5868,10 +5956,7 @@ const getMyProjectAiPredictionValidation = async (
   });
 };
 
-const listProjectAiPredictionValidations = async (
-  req: Request,
-  res: Response,
-): Promise<void> => {
+const listProjectAiPredictionValidations = async (req: Request, res: Response): Promise<void> => {
   const result = await listPredictionFeatureValidations({
     projectId: req.params.projectId,
     predictionId: req.params.predictionId,
@@ -5889,9 +5974,8 @@ const reviewProjectAiPrediction = async (req: Request, res: Response): Promise<v
       projectId: req.params.projectId,
       predictionId: req.params.predictionId,
       reviewedBy: (req.user as Express.UserContext).id,
-      approvalStatus:
-        (normalizeOptionalString(req.body?.approval_status) ??
-          normalizeOptionalString(req.body?.status)) as any,
+      approvalStatus: (normalizeOptionalString(req.body?.approval_status) ??
+        normalizeOptionalString(req.body?.status)) as any,
       approvedClass: normalizeOptionalString(req.body?.approved_class),
       adminNote: normalizeOptionalString(req.body?.admin_note ?? req.body?.note),
     },
@@ -5905,10 +5989,7 @@ const reviewProjectAiPrediction = async (req: Request, res: Response): Promise<v
   });
 };
 
-const getProjectAiRunValidationSummary = async (
-  req: Request,
-  res: Response,
-): Promise<void> => {
+const getProjectAiRunValidationSummary = async (req: Request, res: Response): Promise<void> => {
   await loadProjectAiRunOrFail(req.params.projectId, req.params.runId);
   const result = await getRunPredictionValidationSummary({
     projectId: req.params.projectId,
@@ -6035,10 +6116,7 @@ const getAiLayerFeatures = async (req: Request, res: Response): Promise<void> =>
   }
 
   if (!parsed || parsed.type !== 'FeatureCollection' || !Array.isArray(parsed.features)) {
-    throw new AppError(
-      'AI output layer preview output must be a GeoJSON FeatureCollection.',
-      422,
-    );
+    throw new AppError('AI output layer preview output must be a GeoJSON FeatureCollection.', 422);
   }
 
   const {

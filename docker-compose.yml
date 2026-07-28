@@ -28,6 +28,24 @@ services:
     command: ["node", "dist/db/migrate.js"]
     restart: "no"
 
+  clamav:
+    image: clamav/clamav:1.5.3-debian@sha256:9ea1c2bc1955c58d094bb3d168718d0173c7899096012523278ad76e06cc75a2
+    restart: unless-stopped
+    expose:
+      - "3310"
+    volumes:
+      - clamav_signatures:/var/lib/clamav
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
   api:
     build:
       context: .
@@ -39,6 +57,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      clamav:
+        condition: service_healthy
     expose:
       - "3000"
     volumes:
@@ -72,3 +92,5 @@ volumes:
     name: ${API_UPLOADS_VOLUME:-gis_app_api_uploads}
   api_exports:
     name: ${API_EXPORTS_VOLUME:-gis_app_api_exports}
+  clamav_signatures:
+    name: ${CLAMAV_SIGNATURES_VOLUME:-gis_app_clamav_signatures}

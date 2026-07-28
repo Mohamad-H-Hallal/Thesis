@@ -14,6 +14,19 @@ import { validateEnv } from '../config/env';
 import { sanitizeManagedFeatureAttributes } from '../lib/featureAttributes';
 import { createNotification, isProtectedSuperAdminEmail } from '../lib/userWorkflow';
 import { synchronizeProjectStatuses } from '../lib/projectLifecycle';
+import { privateImportsDir, importsDir } from '../config/upload';
+import {
+  requireAcceptableMalwareScan,
+  scanBufferForMalware,
+} from '../services/malwareScanner.service';
+import { inspectImportContent } from '../services/uploadContentSecurity.service';
+import {
+  keepUploadQuarantined,
+  recordContentInspection,
+  recordMalwareScan,
+  recordQuarantinedUpload,
+  releaseQuarantinedUpload,
+} from '../services/uploadQuarantine.service';
 
 const LEBANON_BOUNDS = {
   minLon: 35.094,
@@ -458,9 +471,20 @@ const inferImportFileType = (filename: string): ImportFileType => {
   );
 };
 
-const sha256File = async (filePath: string): Promise<string> => {
-  const buffer = await fs.readFile(filePath);
-  return crypto.createHash('sha256').update(buffer).digest('hex');
+const ALLOWED_IMPORT_DIRECTORIES = [privateImportsDir, importsDir].map((directory) =>
+  path.resolve(directory),
+);
+
+const resolveStoredImportPath = (filePath: unknown): string | null => {
+  if (typeof filePath !== 'string' || filePath.trim().length === 0) {
+    return null;
+  }
+  const resolved = path.resolve(filePath);
+  const isAllowed = ALLOWED_IMPORT_DIRECTORIES.some((directory) => {
+    const relative = path.relative(directory, resolved);
+    return relative.length > 0 && !relative.startsWith('..') && !path.isAbsolute(relative);
+  });
+  return isAllowed ? resolved : null;
 };
 
 const ensureAttributesObject = (attributes: unknown): Record<string, unknown> => {
@@ -2794,7 +2818,17 @@ const processImportJob = async (importJobId: string): Promise<void> => {
   const job = jobResult.rows[0];
   let parsed: ParsedImportPayload;
   try {
-    parsed = await parseImportFile(job.file_path, job.file_type);
+    const verifiedPath = resolveStoredImportPath(job.file_path);
+    if (!verifiedPath) {
+      throw new AppError('The stored import path is outside the managed import area.', 422);
+    }
+    const storedBuffer = await fs.readFile(verifiedPath);
+    const storedChecksum = crypto.createHash('sha256').update(storedBuffer).digest('hex');
+    if (storedChecksum !== job.file_checksum_sha256) {
+      throw new AppError('The stored import failed its integrity check.', 422);
+    }
+    inspectImportContent(storedBuffer, job.file_type as ImportFileType);
+    parsed = await parseImportFile(verifiedPath, job.file_type);
   } catch (error) {
     logger.warn('GIS import file parsing failed', {
       importJobId,
@@ -4031,6 +4065,21 @@ const listImportFeatures = async (req: Request, res: Response): Promise<void> =>
   });
 };
 
+const preauthorizeImportUpload = async (
+  req: Request,
+  _res: Response,
+  next: (error?: unknown) => void,
+): Promise<void> => {
+  const projectId = req.params.projectId;
+  const currentUser = req.user as Express.UserContext;
+  const hasAccess = await hasProjectImportAccess(projectId, currentUser);
+  if (!hasAccess) {
+    throw new AppError('You do not have permission to import data into this project.', 403);
+  }
+  await assertProjectAllowsImport(projectId);
+  next();
+};
+
 const uploadImport = async (req: Request, res: Response): Promise<void> => {
   const projectId = req.params.projectId;
   const currentUser = req.user as Express.UserContext;
@@ -4038,15 +4087,64 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
     throw new AppError('A GIS file is required.', 400);
   }
 
+  const fileType = inferImportFileType(req.file.originalname);
+  const quarantinePath = path.resolve(req.file.path);
+  const fileBuffer = await fs.readFile(quarantinePath);
+  const fileChecksum = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+  const quarantineId = await recordQuarantinedUpload({
+    uploadKind: 'gis_import',
+    storagePath: quarantinePath,
+    originalFilename: req.file.originalname,
+    uploadedByUserId: currentUser.id,
+    projectId,
+    fileSizeBytes: req.file.size,
+    checksumSha256: fileChecksum,
+    metadata: {
+      declared_mime_type: req.file.mimetype,
+      inferred_file_type: fileType,
+    },
+  });
+
   const hasAccess = await hasProjectImportAccess(projectId, currentUser);
   if (!hasAccess) {
+    await keepUploadQuarantined(quarantineId, 'UPLOAD_AUTHORIZATION_REJECTED');
     throw new AppError('You do not have permission to import data into this project.', 403);
   }
 
-  await assertProjectAllowsImport(projectId);
+  try {
+    await assertProjectAllowsImport(projectId);
+  } catch (error) {
+    await keepUploadQuarantined(quarantineId, 'UPLOAD_PROJECT_STATE_REJECTED');
+    throw error;
+  }
+
+  let contentInspection;
+  try {
+    contentInspection = inspectImportContent(fileBuffer, fileType);
+    await recordContentInspection({
+      quarantineId,
+      detectedType: contentInspection.detectedType,
+      metadata: contentInspection.archive
+        ? {
+            archive_entry_count: contentInspection.archive.entryCount,
+            archive_expanded_bytes: contentInspection.archive.expandedBytes,
+            archive_maximum_compression_ratio: contentInspection.archive.maximumCompressionRatio,
+          }
+        : undefined,
+    });
+  } catch (error: unknown) {
+    const uploadError = error as { errorCode?: unknown };
+    const reasonCode =
+      typeof uploadError.errorCode === 'string' ? uploadError.errorCode : 'UPLOAD_CONTENT_REJECTED';
+    await keepUploadQuarantined(quarantineId, reasonCode);
+    throw error;
+  }
+
+  const malwareScan = await scanBufferForMalware(fileBuffer);
+  await recordMalwareScan(quarantineId, malwareScan);
+  requireAcceptableMalwareScan(malwareScan);
+
   const project = await getProjectForImport(projectId);
-  const fileType = inferImportFileType(req.file.originalname);
-  const fileChecksum = await sha256File(req.file.path);
   const duplicateImportResult = await query(
     `SELECT id
      FROM gis_import_job
@@ -4057,10 +4155,14 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
     [projectId, fileChecksum],
   );
   const duplicateOfImportJobId = duplicateImportResult.rows[0]?.id ?? null;
+  const releasedPath = path.resolve(privateImportsDir, req.file.filename);
+  await fs.rename(quarantinePath, releasedPath);
 
-  const createdJob = await transaction(async (client: any) => {
-    const insertedJob = await client.query(
-      `INSERT INTO gis_import_job (
+  let createdJob;
+  try {
+    createdJob = await transaction(async (client: any) => {
+      const insertedJob = await client.query(
+        `INSERT INTO gis_import_job (
          project_id,
          uploaded_by_user_id,
          duplicate_of_import_job_id,
@@ -4080,37 +4182,49 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
          $1, $2, $3, $4, $5, $6, $7, $8, $9::gis_import_file_type, NULL, NULL, 'uploaded', $10::jsonb, '{}'::jsonb, 'Import queued for background processing'
        )
        RETURNING id`,
-      [
+        [
+          projectId,
+          currentUser.id,
+          duplicateOfImportJobId,
+          req.file.originalname,
+          req.file.filename,
+          releasedPath,
+          req.file.size,
+          fileChecksum,
+          fileType,
+          JSON.stringify({
+            file_name: req.file.originalname,
+            file_size_bytes: req.file.size,
+            queued_at: new Date().toISOString(),
+            quarantine_record_id: quarantineId,
+            detected_type: contentInspection.detectedType,
+            malware_scan_status: malwareScan.status,
+            malware_scanner: malwareScan.scanner,
+            ...(contentInspection.archive
+              ? {
+                  archive_entry_count: contentInspection.archive.entryCount,
+                  archive_expanded_bytes: contentInspection.archive.expandedBytes,
+                  archive_maximum_compression_ratio:
+                    contentInspection.archive.maximumCompressionRatio,
+                }
+              : {}),
+          }),
+        ],
+      );
+
+      const importJobId = insertedJob.rows[0].id;
+
+      await createImportSubmissionNotifications(client, {
+        importJobId,
         projectId,
-        currentUser.id,
-        duplicateOfImportJobId,
-        req.file.originalname,
-        req.file.filename,
-        req.file.path,
-        req.file.size,
-        fileChecksum,
-        fileType,
-        JSON.stringify({
-          file_name: req.file.originalname,
-          file_size_bytes: req.file.size,
-          queued_at: new Date().toISOString(),
-        }),
-      ],
-    );
+        projectName: project.name,
+        uploader: currentUser,
+        originalFilename: req.file.originalname,
+        uploaderRole: currentUser.role,
+      });
 
-    const importJobId = insertedJob.rows[0].id;
-
-    await createImportSubmissionNotifications(client, {
-      importJobId,
-      projectId,
-      projectName: project.name,
-      uploader: currentUser,
-      originalFilename: req.file.originalname,
-      uploaderRole: currentUser.role,
-    });
-
-    const detailResult = await client.query(
-      `SELECT gij.*, p.name AS project_name,
+      const detailResult = await client.query(
+        `SELECT gij.*, p.name AS project_name,
               uploader.full_name AS uploaded_by_name,
               reviewer.full_name AS reviewed_by_name
        FROM gis_import_job gij
@@ -4118,11 +4232,29 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
        JOIN "user" uploader ON uploader.id = gij.uploaded_by_user_id
        LEFT JOIN "user" reviewer ON reviewer.id = gij.reviewed_by_user_id
       WHERE gij.id = $1`,
-      [importJobId],
-    );
+        [importJobId],
+      );
 
-    return detailResult.rows[0];
-  });
+      await releaseQuarantinedUpload({
+        executor: client,
+        quarantineId,
+        releasedPath,
+      });
+
+      return detailResult.rows[0];
+    });
+  } catch (error) {
+    try {
+      await fs.rename(releasedPath, quarantinePath);
+    } catch (rollbackError: unknown) {
+      logger.error('Failed to return an import file to quarantine after database rollback', {
+        quarantineId,
+        errorCode: (rollbackError as NodeJS.ErrnoException)?.code ?? 'UNKNOWN',
+      });
+    }
+    await keepUploadQuarantined(quarantineId, 'UPLOAD_RELEASE_FAILED');
+    throw error;
+  }
 
   scheduleImportProcessing();
 
@@ -4149,7 +4281,10 @@ const downloadImport = async (req: Request, res: Response): Promise<void> => {
   if (!canDownload) {
     throw new AppError('You are not allowed to download this import file.', 403);
   }
-  const filePath = path.resolve(job.file_path);
+  const filePath = resolveStoredImportPath(job.file_path);
+  if (!filePath) {
+    throw new AppError('The original import file is no longer available for download.', 404);
+  }
 
   try {
     await fs.access(filePath);
@@ -4601,6 +4736,7 @@ module.exports = {
   getImportMapTileData,
   getImportFeatureDetails,
   listImportFeatures,
+  preauthorizeImportUpload,
   uploadImport,
   downloadImport,
   listImportComments,

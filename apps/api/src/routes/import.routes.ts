@@ -33,6 +33,7 @@ router.post(
     resolveEntityId: (_req, _res, body) => body?.data?.id ?? null,
   }),
   validate,
+  asyncHandler(importController.preauthorizeImportUpload),
   uploadImportFile,
   asyncHandler(importController.uploadImport),
 );

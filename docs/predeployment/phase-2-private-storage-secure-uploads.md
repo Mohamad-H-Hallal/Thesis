@@ -39,16 +39,68 @@ No database row or stored file is deleted, moved, or rewritten by this slice.
 
 ## Slice 2B — intake quarantine and content safety
 
-The next slice must:
+Status: implemented on `fix/upload-quarantine-malware-scanning`; merge and CI
+evidence must still be recorded before this slice is called complete.
 
-1. accept private imports and evidence into a non-public quarantine area;
-2. identify content from bytes rather than extension or client MIME type;
-3. apply bounded archive entry, expanded-size, compression-ratio, nesting,
-   symlink, and traversal checks;
-4. integrate a real malware scanner;
-5. fail closed in production when scanning is unavailable;
-6. prevent parsers and publication from seeing files until the scan is clean;
-7. retain evidence and audit status for clean, rejected, and failed scans.
+The implementation now:
+
+1. authorizes GIS imports before accepting multipart file bytes;
+2. stores import sources under `.quarantine/imports` and records their size,
+   SHA-256, uploader, project, detected type, scan status, disposition, and
+   rejection reason in `upload_quarantine_record`;
+3. identifies JSON, XML, UTF-8 text, and ZIP-based formats from their bytes
+   before release;
+4. rejects unsafe archive paths, symlinks, encrypted entries, nested archives,
+   excessive entry counts, oversized entries/expansion, and excessive
+   compression ratios before a GIS parser can see the file;
+5. sends every accepted import and image source to ClamAV using its bounded
+   `INSTREAM` protocol;
+6. keeps rejected imports in quarantine and moves only clean imports into the
+   private import root;
+7. rechecks the released file's managed root, SHA-256, and content constraints
+   inside the background worker immediately before parsing;
+8. holds feature photos, AI evidence, and category icons in memory until
+   scanning and strict raster decoding succeed, strips image metadata by
+   normalizing to JPEG, and releases the result atomically;
+9. forces `MALWARE_SCANNER_MODE=clamav` in production and returns a retryable
+   `503` without parsing or publishing when the scanner is unavailable;
+10. deploys ClamAV on the private Compose network only, with no host port, a
+    persistent signature volume, a health check, and a 4 GiB memory ceiling.
+
+The scanner protocol and container choices follow the official
+[ClamAV `INSTREAM` protocol](https://docs.clamav.net/manual/Usage/ClamdProtocol.html)
+and [ClamAV container guidance](https://docs.clamav.net/manual/Installing/Docker.html).
+The controls also implement the signature validation, authorization, storage,
+archive, and malware-scanning recommendations in the
+[OWASP File Upload Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html).
+
+Repository verification includes scanner protocol tests, clean/infected/
+unavailable behavior, archive-bomb and traversal tests, immediate `422`
+rejection for corrupt archives, quarantine-registry assertions, existing import
+workflow tests, photo security tests, image normalization tests, TypeScript,
+lint, migration application, and Compose rendering.
+
+Local verification recorded on 2026-07-28:
+
+- the complete API release gate passed: 27 suites and 216 tests, 70.95% line
+  coverage, both GIS performance tests, OpenAPI, lint, TypeScript, and zero
+  production dependency vulnerabilities;
+- a fresh disposable PostgreSQL database applied all 42 migration files and
+  created the quarantine registry successfully;
+- the complete npm audit reported zero vulnerabilities across production and
+  development dependencies;
+- all four maintained Compose configurations rendered successfully;
+- the pinned real ClamAV container returned clean for harmless content,
+  detected the standard EICAR test object, and caused the application to fail
+  closed when the scanner was stopped;
+- Flutter analysis passed and all 330 mobile tests passed, confirming that this
+  API-only slice did not regress the mobile application.
+
+Production-like staging must still prove that signature updates succeed, the
+scanner becomes healthy after a cold start, a harmless EICAR test object is
+rejected and retained in quarantine, and stopping ClamAV causes uploads to fail
+closed with `503`. The ClamAV TCP port must remain internal because the clamd
+protocol does not provide transport encryption or authentication.
 
 ## Slice 2C — storage migration and orphan reconciliation
 

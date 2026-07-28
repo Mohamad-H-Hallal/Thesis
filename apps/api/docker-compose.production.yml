@@ -1,4 +1,18 @@
 services:
+  clamav:
+    image: clamav/clamav:1.5.3-debian@sha256:9ea1c2bc1955c58d094bb3d168718d0173c7899096012523278ad76e06cc75a2
+    expose:
+      - "3310"
+    volumes:
+      - clamav_signatures:/var/lib/clamav
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -7,5 +21,14 @@ services:
       - "3000:3000"
     env_file:
       - .env
+    environment:
+      MALWARE_SCANNER_MODE: clamav
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
+    depends_on:
+      clamav:
+        condition: service_healthy
     restart: unless-stopped
 
+volumes:
+  clamav_signatures:

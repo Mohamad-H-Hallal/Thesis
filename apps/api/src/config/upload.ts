@@ -9,86 +9,6 @@ const positiveIntegerSetting = (value: string | undefined, fallback: number): nu
   const parsed = Number.parseInt(value ?? '', 10);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 };
-
-// Ensure upload directories exist
-const uploadDir = process.env.UPLOAD_DIR ?? './uploads';
-const photosDir = path.join(uploadDir, 'photos');
-const thumbnailsDir = path.join(uploadDir, 'thumbnails');
-const aiValidationPhotosDir = path.join(uploadDir, 'ai-validation');
-// Feature photos are read through authenticated API routes. The controller
-// stores them here with dot-prefixed generated names so the app's generic
-// `/uploads` static mount will not serve them directly.
-const privateFeaturePhotosDir = path.join(uploadDir, '.private', 'feature-photos');
-const privateFeatureThumbnailsDir = path.join(uploadDir, '.private', 'feature-thumbnails');
-const categoryIconsDir = path.join(uploadDir, 'category-icons');
-const importsDir = path.join(uploadDir, 'imports');
-
-[
-  uploadDir,
-  photosDir,
-  thumbnailsDir,
-  aiValidationPhotosDir,
-  privateFeaturePhotosDir,
-  privateFeatureThumbnailsDir,
-  categoryIconsDir,
-  importsDir,
-].forEach((dir) => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-});
-
-// Storage configuration
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    // This legacy disk-backed uploader is used only by AI validation evidence.
-    // Keep it physically separate from feature media so an orphaned feature
-    // file can never become public through the generic static mount.
-    cb(null, aiValidationPhotosDir);
-  },
-  filename: (_req, file, cb) => {
-    const uniqueName = `${randomUUID()}${path.extname(file.originalname)}`;
-    cb(null, uniqueName);
-  },
-});
-
-// File filter
-const fileFilter = (
-  _req: Request,
-  file: { originalname: string; mimetype: string },
-  cb: FileFilterCallback,
-): void => {
-  // Accept only images
-  const allowedTypes = /jpeg|jpg|png|heic|heif/;
-  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-  const mimetype = allowedTypes.test(file.mimetype);
-
-  if (mimetype && extname) {
-    cb(null, true);
-    return;
-  }
-  cb(new Error('Only image files are allowed (jpeg, jpg, png, heic, heif)'));
-};
-
-// Multer configuration
-const upload = multer({
-  storage: storage,
-  limits: {
-    fileSize: positiveIntegerSetting(process.env.PHOTO_MAX_SIZE, 5242880), // 5MB default
-  },
-  fileFilter: fileFilter,
-});
-
-// Single photo upload
-const uploadSingle = upload.single('photo');
-
-// Multiple photos upload (max 10)
-const uploadMultiple = upload.array('photos', 10);
-
-const featurePhotoMimeTypes = new Set(['image/jpeg', 'image/png', 'image/heic', 'image/heif']);
-const featurePhotoExtensions = new Set(['.jpg', '.jpeg', '.png', '.heic', '.heif']);
-const FEATURE_PHOTO_MAX_COUNT = 10;
-const OFFLINE_BUNDLE_PAYLOAD_MAX_SIZE = 256 * 1024;
 const hasUnsafeFilenameCodePoint = (value: string): boolean =>
   Array.from(value).some((character) => {
     const codePoint = character.codePointAt(0) ?? 0;
@@ -101,6 +21,93 @@ const hasUnsafeFilenameCodePoint = (value: string): boolean =>
       codePoint === 0xfffd
     );
   });
+const hasUnsafeUploadName = (originalName: string): boolean =>
+  originalName.length === 0 ||
+  Buffer.byteLength(originalName, 'utf8') > 255 ||
+  hasUnsafeFilenameCodePoint(originalName) ||
+  originalName.includes('/') ||
+  originalName.includes('\\') ||
+  path.basename(originalName) !== originalName;
+
+// Ensure upload directories exist
+const uploadDir = process.env.UPLOAD_DIR ?? './uploads';
+const photosDir = path.join(uploadDir, 'photos');
+const thumbnailsDir = path.join(uploadDir, 'thumbnails');
+// Existing AI evidence remains readable from this compatibility directory.
+const aiValidationPhotosDir = path.join(uploadDir, 'ai-validation');
+// Feature photos are read through authenticated API routes. The controller
+// stores them here with dot-prefixed generated names so the app's generic
+// `/uploads` static mount will not serve them directly.
+const privateFeaturePhotosDir = path.join(uploadDir, '.private', 'feature-photos');
+const privateFeatureThumbnailsDir = path.join(uploadDir, '.private', 'feature-thumbnails');
+const privateAiValidationPhotosDir = path.join(uploadDir, '.private', 'ai-validation');
+const privateImportsDir = path.join(uploadDir, '.private', 'imports');
+const quarantineImportsDir = path.join(uploadDir, '.quarantine', 'imports');
+const quarantineImagesDir = path.join(uploadDir, '.quarantine', 'images');
+const categoryIconsDir = path.join(uploadDir, 'category-icons');
+const importsDir = path.join(uploadDir, 'imports');
+
+[
+  uploadDir,
+  photosDir,
+  thumbnailsDir,
+  aiValidationPhotosDir,
+  privateFeaturePhotosDir,
+  privateFeatureThumbnailsDir,
+  privateAiValidationPhotosDir,
+  privateImportsDir,
+  quarantineImportsDir,
+  quarantineImagesDir,
+  categoryIconsDir,
+  importsDir,
+].forEach((dir) => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+});
+
+// File filter
+const fileFilter = (
+  _req: Request,
+  file: { originalname: string; mimetype: string },
+  cb: FileFilterCallback,
+): void => {
+  // Accept only images
+  const originalName = file.originalname ?? '';
+  const extension = path.extname(originalName).toLowerCase();
+  const stem = originalName.slice(0, Math.max(0, originalName.length - extension.length));
+  const allowedTypes = /jpeg|jpg|png|heic|heif/;
+  const extname = allowedTypes.test(extension);
+  const mimetype = allowedTypes.test(file.mimetype);
+
+  if (!hasUnsafeUploadName(originalName) && stem.length > 0 && !stem.includes('.') && mimetype && extname) {
+    cb(null, true);
+    return;
+  }
+  cb(new Error('Only image files are allowed (jpeg, jpg, png, heic, heif)'));
+};
+
+// Multer configuration
+const upload = multer({
+  // Hold images outside the webroot until the controller has completed
+  // authorization, signature validation, normalization, and malware scanning.
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: positiveIntegerSetting(process.env.PHOTO_MAX_SIZE, 5242880), // 5MB default
+  },
+  fileFilter: fileFilter,
+});
+
+// Single photo upload
+const uploadSingleMiddleware = upload.single('photo');
+
+// Multiple photos upload (max 10)
+const uploadMultipleMiddleware = upload.array('photos', 10);
+
+const featurePhotoMimeTypes = new Set(['image/jpeg', 'image/png', 'image/heic', 'image/heif']);
+const featurePhotoExtensions = new Set(['.jpg', '.jpeg', '.png', '.heic', '.heif']);
+const FEATURE_PHOTO_MAX_COUNT = 10;
+const OFFLINE_BUNDLE_PAYLOAD_MAX_SIZE = 256 * 1024;
 const isOfflineMultipartRequest = (req: Request): boolean => {
   const owner = req.headers['x-offline-owner-id'];
   const project = req.headers['x-offline-project-id'];
@@ -307,27 +314,38 @@ const uploadOfflineFeatureBundle = (req: Request, res: Response, next: NextFunct
   );
 };
 
-const categoryIconStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, categoryIconsDir);
-  },
-  filename: (_req, file, cb) => {
-    const uniqueName = `${randomUUID()}${path.extname(file.originalname)}`;
-    cb(null, uniqueName);
-  },
-});
+const uploadSingle = (req: Request, res: Response, next: NextFunction): void => {
+  runMultipartUpload(uploadSingleMiddleware, req, res, next, {
+    alwaysPermanent: false,
+    payloadAware: false,
+  });
+};
 
-const uploadCategoryIcon = multer({
-  storage: categoryIconStorage,
+const uploadMultiple = (req: Request, res: Response, next: NextFunction): void => {
+  runMultipartUpload(uploadMultipleMiddleware, req, res, next, {
+    alwaysPermanent: false,
+    payloadAware: false,
+  });
+};
+
+const categoryIconUpload = multer({
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: positiveIntegerSetting(process.env.CATEGORY_ICON_MAX_SIZE, 3145728),
   },
   fileFilter: fileFilter,
 }).single('icon');
 
+const uploadCategoryIcon = (req: Request, res: Response, next: NextFunction): void => {
+  runMultipartUpload(categoryIconUpload, req, res, next, {
+    alwaysPermanent: false,
+    payloadAware: false,
+  });
+};
+
 const importStorage = multer.diskStorage({
   destination: (_req, _file, cb) => {
-    cb(null, importsDir);
+    cb(null, quarantineImportsDir);
   },
   filename: (_req, file, cb) => {
     const uniqueName = `${randomUUID()}${path.extname(file.originalname)}`;
@@ -342,7 +360,7 @@ const importFileFilter = (
 ): void => {
   const ext = path.extname(file.originalname).toLowerCase();
   const allowedExt = new Set(['.geojson', '.json', '.zip', '.kml', '.kmz', '.csv', '.xlsx']);
-  if (allowedExt.has(ext)) {
+  if (!hasUnsafeUploadName(file.originalname) && allowedExt.has(ext)) {
     cb(null, true);
     return;
   }
@@ -353,13 +371,20 @@ const importFileFilter = (
   );
 };
 
-const uploadImportFile = multer({
+const importFileUpload = multer({
   storage: importStorage,
   limits: {
     fileSize: positiveIntegerSetting(process.env.IMPORT_MAX_SIZE, 26214400),
   },
   fileFilter: importFileFilter,
 }).single('file');
+
+const uploadImportFile = (req: Request, res: Response, next: NextFunction): void => {
+  runMultipartUpload(importFileUpload, req, res, next, {
+    alwaysPermanent: false,
+    payloadAware: false,
+  });
+};
 
 export {
   uploadSingle,
@@ -373,6 +398,10 @@ export {
   aiValidationPhotosDir,
   privateFeaturePhotosDir,
   privateFeatureThumbnailsDir,
+  privateAiValidationPhotosDir,
+  privateImportsDir,
+  quarantineImportsDir,
+  quarantineImagesDir,
   categoryIconsDir,
   importsDir,
   multipartError as classifyMultipartUploadError,

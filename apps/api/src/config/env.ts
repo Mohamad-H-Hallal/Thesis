@@ -44,6 +44,15 @@ export interface EnvConfig {
   PHOTO_MAX_PIXELS: number;
   IMPORT_MAX_SIZE: number;
   IMPORT_MAX_FEATURES: number;
+  MALWARE_SCANNER_MODE: 'disabled' | 'clamav';
+  CLAMAV_HOST: string;
+  CLAMAV_PORT: number;
+  CLAMAV_TIMEOUT_MS: number;
+  CLAMAV_MAX_STREAM_BYTES: number;
+  ARCHIVE_MAX_ENTRIES: number;
+  ARCHIVE_MAX_EXPANDED_BYTES: number;
+  ARCHIVE_MAX_ENTRY_BYTES: number;
+  ARCHIVE_MAX_COMPRESSION_RATIO: number;
   EXPORT_DIR: string;
   EXPORT_RETENTION_DAYS: number;
   EXPORT_CLEANUP_INTERVAL_HOURS: number;
@@ -171,6 +180,24 @@ const envSchema = Joi.object({
     .min(1)
     .default(25 * 1024 * 1024),
   IMPORT_MAX_FEATURES: Joi.number().integer().min(1).max(50000).default(20000),
+  MALWARE_SCANNER_MODE: Joi.string().valid('disabled', 'clamav').default('disabled'),
+  CLAMAV_HOST: Joi.string().hostname().default('clamav'),
+  CLAMAV_PORT: Joi.number().port().default(3310),
+  CLAMAV_TIMEOUT_MS: Joi.number().integer().min(1000).max(120000).default(15000),
+  CLAMAV_MAX_STREAM_BYTES: Joi.number()
+    .integer()
+    .min(1024)
+    .default(30 * 1024 * 1024),
+  ARCHIVE_MAX_ENTRIES: Joi.number().integer().min(1).max(10000).default(1000),
+  ARCHIVE_MAX_EXPANDED_BYTES: Joi.number()
+    .integer()
+    .min(1024)
+    .default(100 * 1024 * 1024),
+  ARCHIVE_MAX_ENTRY_BYTES: Joi.number()
+    .integer()
+    .min(1024)
+    .default(50 * 1024 * 1024),
+  ARCHIVE_MAX_COMPRESSION_RATIO: Joi.number().integer().min(1).max(10000).default(100),
 
   EXPORT_DIR: Joi.string().default('./exports'),
   EXPORT_RETENTION_DAYS: Joi.number().integer().min(1).default(7),
@@ -248,9 +275,7 @@ const envSchema = Joi.object({
   AI_SERVER_URL: Joi.string().allow('').default(''),
   APP_PUBLIC_API_URL: Joi.string().allow('').default('http://localhost:3000'),
   AI_CALLBACK_BASE_URL: Joi.string().allow('').default(''),
-  AI_CALLBACK_SECRET: Joi.string()
-    .allow('')
-    .default('dev-ai-callback-secret-change-me'),
+  AI_CALLBACK_SECRET: Joi.string().allow('').default('dev-ai-callback-secret-change-me'),
   AI_SERVER_TIMEOUT_MS: Joi.number().integer().min(1000).max(120000).default(30000),
 }).unknown(true);
 
@@ -310,6 +335,18 @@ const validateEnv = (): EnvConfig => {
   if (value.NODE_ENV === 'production' && !hasSmtpConfig) {
     throw new Error(
       'Environment validation failed: production requires SMTP_HOST and SMTP_FROM_EMAIL',
+    );
+  }
+
+  if (value.NODE_ENV === 'production' && value.MALWARE_SCANNER_MODE !== 'clamav') {
+    throw new Error(
+      'Environment validation failed: production requires MALWARE_SCANNER_MODE=clamav',
+    );
+  }
+
+  if (value.CLAMAV_MAX_STREAM_BYTES < Math.max(value.IMPORT_MAX_SIZE, value.PHOTO_MAX_SIZE)) {
+    throw new Error(
+      'Environment validation failed: CLAMAV_MAX_STREAM_BYTES must cover the largest configured upload',
     );
   }
 
