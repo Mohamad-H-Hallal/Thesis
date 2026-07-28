@@ -20,6 +20,9 @@ const {
   updateAssignmentStatus,
 } = require('./helpers/api-test-helpers');
 const {
+  aiValidationPhotosDir,
+  categoryIconsDir,
+  importsDir,
   photosDir,
   privateFeaturePhotosDir,
   privateFeatureThumbnailsDir,
@@ -659,11 +662,16 @@ describe('offline feature photo synchronization security', () => {
   });
 
   test('does not expose an orphaned legacy feature file through the static media mount', async () => {
+    const admin = await createAdminUser({ emailPrefix: 'photo-security-orphan-admin' });
     const orphanName = `${randomUUID()}.jpg`;
     const orphanPath = path.join(photosDir, orphanName);
     await fs.writeFile(orphanPath, await createImage({ format: 'jpeg' }));
     try {
-      await request(app).get(`/uploads/photos/${orphanName}`).expect(404);
+      await request(app).get(`/uploads/photos/${orphanName}`).expect(401);
+      await request(app)
+        .get(`/uploads/photos/${orphanName}`)
+        .set(authHeader(admin.token))
+        .expect(404);
     } finally {
       await fs.unlink(orphanPath).catch(() => undefined);
     }
@@ -706,7 +714,7 @@ describe('offline feature photo synchronization security', () => {
     }
   });
 
-  test('serves only migration-snapshotted AI evidence, not later mutable references', async () => {
+  test('serves only authorized, migration-snapshotted legacy AI evidence', async () => {
     const context = await provisionOfflineFeature();
     const grandfatheredName = `${randomUUID()}.heic`;
     const injectedName = `${randomUUID()}.heif`;
@@ -728,11 +736,25 @@ describe('offline feature photo synchronization security', () => {
       await insertMutableAiLegacyReference({
         projectId: context.project.id,
         userId: context.contributor.user.id,
+        legacyUrl: `/uploads/photos/${grandfatheredName}`,
+      });
+      await insertMutableAiLegacyReference({
+        projectId: context.project.id,
+        userId: context.contributor.user.id,
         legacyUrl: `/uploads/photos/${injectedName}`,
       });
 
-      await request(app).get(`/uploads/photos/${grandfatheredName}`).expect(200);
-      await request(app).get(`/uploads/photos/${injectedName}`).expect(404);
+      await request(app).get(`/uploads/photos/${grandfatheredName}`).expect(401);
+      await request(app)
+        .get(`/uploads/photos/${grandfatheredName}`)
+        .set(authHeader(context.contributorLogin.token))
+        .expect(200)
+        .expect('Cache-Control', 'private, no-store')
+        .expect('X-Content-Type-Options', 'nosniff');
+      await request(app)
+        .get(`/uploads/photos/${injectedName}`)
+        .set(authHeader(context.contributorLogin.token))
+        .expect(404);
     } finally {
       await mutateLegacyAiSnapshotForFixture((client) =>
         client.query('DELETE FROM legacy_ai_validation_media_snapshot WHERE storage_name = $1', [
@@ -742,6 +764,67 @@ describe('offline feature photo synchronization security', () => {
       await Promise.all([
         fs.unlink(grandfatheredPath).catch(() => undefined),
         fs.unlink(injectedPath).catch(() => undefined),
+      ]);
+    }
+  });
+
+  test('keeps current AI evidence private and preserves only the public category-icon mount', async () => {
+    const context = await provisionOfflineFeature();
+    const unrelated = await registerUser({
+      emailPrefix: 'photo-security-unrelated-contributor',
+    });
+    await approveContributorRequest({
+      token: context.admin.token,
+      userId: unrelated.user.id,
+    });
+    const unrelatedLogin = await loginUser({
+      email: unrelated.email,
+      password: unrelated.password,
+    });
+    await pool.query(
+      `UPDATE project
+       SET visible_to_contributors = FALSE,
+           visible_to_viewers = FALSE
+       WHERE id = $1`,
+      [context.project.id],
+    );
+    const evidenceName = `${randomUUID()}.jpg`;
+    const iconName = `${randomUUID()}.png`;
+    const importName = `${randomUUID()}.geojson`;
+    const evidencePath = path.join(aiValidationPhotosDir, evidenceName);
+    const iconPath = path.join(categoryIconsDir, iconName);
+    const importPath = path.join(importsDir, importName);
+    await Promise.all([
+      fs.writeFile(evidencePath, await createImage({ format: 'jpeg' })),
+      fs.writeFile(iconPath, await createImage()),
+      fs.writeFile(importPath, '{"type":"FeatureCollection","features":[]}'),
+    ]);
+    await insertMutableAiLegacyReference({
+      projectId: context.project.id,
+      userId: context.contributor.user.id,
+      legacyUrl: `/uploads/ai-validation/${evidenceName}`,
+    });
+
+    try {
+      await request(app).get(`/uploads/ai-validation/${evidenceName}`).expect(401);
+      await request(app)
+        .get(`/uploads/ai-validation/${evidenceName}`)
+        .set(authHeader(context.contributorLogin.token))
+        .expect(200)
+        .expect('Cache-Control', 'private, no-store')
+        .expect('X-Content-Type-Options', 'nosniff');
+      await request(app)
+        .get(`/uploads/ai-validation/${evidenceName}`)
+        .set(authHeader(unrelatedLogin.token))
+        .expect(403);
+      await request(app).get(`/uploads/category-icons/${iconName}`).expect(200);
+      await request(app).get(`/uploads/imports/${importName}`).expect(404);
+      await request(app).get(`/uploads/thumbnails/${iconName}`).expect(404);
+    } finally {
+      await Promise.all([
+        fs.unlink(evidencePath).catch(() => undefined),
+        fs.unlink(iconPath).catch(() => undefined),
+        fs.unlink(importPath).catch(() => undefined),
       ]);
     }
   });
