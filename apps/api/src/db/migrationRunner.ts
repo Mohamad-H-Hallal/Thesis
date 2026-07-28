@@ -1,9 +1,16 @@
 import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { pool } from '../config/database';
+import {
+  calculateCompatibleMigrationChecksums,
+  calculateMigrationChecksum,
+  findMigrationIntegrityIssues,
+  resolveMigrationChecksumCompatibility,
+  type MigrationChecksumRecord,
+  type MigrationSourceChecksumRecord,
+} from './migrationIntegrity';
 const logger = require('../utils/logger');
 
 const resolveMigrationsDir = (): string => {
@@ -30,9 +37,7 @@ const resolveMigrationsDir = (): string => {
     }
   }
 
-  throw new Error(
-    `Unable to locate infra/migrations. Checked: ${candidates.join(', ')}`
-  );
+  throw new Error(`Unable to locate infra/migrations. Checked: ${candidates.join(', ')}`);
 };
 
 const migrationsDir = resolveMigrationsDir();
@@ -52,28 +57,78 @@ const loadMigrationFiles = async (): Promise<string[]> => {
   try {
     await fsPromises.mkdir(migrationsDir, { recursive: true });
     const files = await fsPromises.readdir(migrationsDir);
-    return files
-      .filter((file) => file.endsWith('.sql'))
-      .sort((a, b) => a.localeCompare(b, 'en'));
+    return files.filter((file) => file.endsWith('.sql')).sort((a, b) => a.localeCompare(b, 'en'));
   } catch (error: unknown) {
     logger.error('Failed to load migration files:', error);
     throw error;
   }
 };
 
-const getAppliedMigrations = async (client: PoolClient): Promise<Set<string>> => {
-  const result = await client.query<{ filename: string }>('SELECT filename FROM schema_migrations');
-  return new Set(result.rows.map((row) => row.filename));
+const loadMigrationChecksums = async (
+  files: readonly string[],
+): Promise<MigrationSourceChecksumRecord[]> => {
+  const migrations = await Promise.all(
+    files.map(async (filename) => {
+      const sql = await fsPromises.readFile(path.join(migrationsDir, filename), 'utf8');
+      return {
+        filename,
+        checksum: calculateMigrationChecksum(sql),
+        compatibleChecksums: calculateCompatibleMigrationChecksums(sql),
+      };
+    }),
+  );
+  const compatibilityPath = path.join(migrationsDir, 'checksum-compatibility.json');
+  let compatibilityValue: unknown = { version: 1, migrations: [] };
+  try {
+    compatibilityValue = JSON.parse(await fsPromises.readFile(compatibilityPath, 'utf8'));
+  } catch (error: unknown) {
+    const isMissing =
+      error instanceof Error &&
+      'code' in error &&
+      (error as NodeJS.ErrnoException).code === 'ENOENT';
+    if (!isMissing) {
+      throw error;
+    }
+  }
+  const compatibility = resolveMigrationChecksumCompatibility(compatibilityValue, migrations);
+
+  return migrations.map((migration) => ({
+    ...migration,
+    compatibleChecksums: [
+      ...(migration.compatibleChecksums ?? []),
+      ...(compatibility.get(migration.filename) ?? []),
+    ],
+  }));
+};
+
+const getAppliedMigrations = async (client: PoolClient): Promise<MigrationChecksumRecord[]> => {
+  const result = await client.query<MigrationChecksumRecord>(
+    'SELECT filename, checksum FROM schema_migrations ORDER BY filename',
+  );
+  return result.rows;
+};
+
+const requireMigrationIntegrity = async (
+  client: PoolClient,
+  files: readonly string[],
+): Promise<Set<string>> => {
+  const [available, applied] = await Promise.all([
+    loadMigrationChecksums(files),
+    getAppliedMigrations(client),
+  ]);
+  const issues = findMigrationIntegrityIssues(available, applied);
+  if (issues.length > 0) {
+    throw new Error(`Migration integrity check failed:\n- ${issues.join('\n- ')}`);
+  }
+  return new Set(applied.map((migration) => migration.filename));
 };
 
 const getPendingMigrations = async (): Promise<string[]> => {
   const client = await pool.connect();
   try {
     await ensureMigrationsTable(client);
-    const [files, applied] = await Promise.all([
-      loadMigrationFiles(),
-      getAppliedMigrations(client),
-    ]);
+    const files = await loadMigrationFiles();
+    const applied = await requireMigrationIntegrity(client, files);
 
     return files.filter((file) => !applied.has(file));
   } finally {
@@ -88,7 +143,7 @@ const applyPendingMigrations = async (): Promise<string[]> => {
   try {
     await ensureMigrationsTable(client);
     const files = await loadMigrationFiles();
-    const applied = await getAppliedMigrations(client);
+    const applied = await requireMigrationIntegrity(client, files);
     const pending = files.filter((file) => !applied.has(file));
 
     if (pending.length === 0) {
@@ -99,7 +154,7 @@ const applyPendingMigrations = async (): Promise<string[]> => {
     for (const file of pending) {
       const filePath = path.join(migrationsDir, file);
       const sql = await fsPromises.readFile(filePath, 'utf8');
-      const checksum = crypto.createHash('sha256').update(sql).digest('hex');
+      const checksum = calculateMigrationChecksum(sql);
 
       await client.query('BEGIN');
       try {
@@ -107,7 +162,7 @@ const applyPendingMigrations = async (): Promise<string[]> => {
         await client.query(
           `INSERT INTO schema_migrations (filename, checksum)
            VALUES ($1, $2)`,
-          [file, checksum]
+          [file, checksum],
         );
         await client.query('COMMIT');
         appliedInRun.push(file);
@@ -127,4 +182,3 @@ const applyPendingMigrations = async (): Promise<string[]> => {
 };
 
 export { getPendingMigrations, applyPendingMigrations };
-

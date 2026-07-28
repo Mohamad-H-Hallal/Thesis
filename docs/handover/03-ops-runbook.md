@@ -89,10 +89,20 @@ Linux/macOS shell scripts:
 Usage:
 ```bash
 bash ./scripts/backup.sh
+
+# Approved disaster recovery only; prefer restoring to a new instance.
+ALLOW_DESTRUCTIVE_RESTORE=I_UNDERSTAND \
+EXPECTED_DATABASE=gis_app_prod \
 bash ./scripts/restore.sh ./backups/gis_app_YYYYMMDD_HHMMSS.dump
 ```
 
-Windows PowerShell scripts remain available under `infra/db/scripts`.
+Safe Windows drill:
+```powershell
+.\scripts\dev\restore_drill.ps1 `
+  -ContainerName gis_app-db-1 `
+  -Database gis_app `
+  -User gis_user
+```
 
 Restore drill checklist: `docs/handover/10-restore-drill-checklist.md`
 
