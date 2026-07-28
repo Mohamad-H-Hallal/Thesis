@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "migrations": [
+    {
+      "filename": "0027_ai_uncertainty_validation_phase_s.sql",
+      "sourceChecksum": "31d22acd82a1b4c6b78919fb2d936436b4fd868348c2176b5ed9ed3bfaa560b6",
+      "acceptedChecksums": [
+        "5ae885c736f7171e7a408749f75c847721d4b268d301c76711ff1cbfa906896b"
+      ],
+      "reason": "The pre-release development database applied the original Phase S migration before this filename became a historical no-op marker."
+    },
+    {
+      "filename": "0035_offline_sync_receipts.sql",
+      "sourceChecksum": "1949508604aef16b094ebebd51ac6ce292fbf32ad90a540fa689a72cfd2a9055",
+      "acceptedChecksums": [
+        "d11ecbf876a83c91f4ff34457bb91ea1694d7224714d56a976a736b01db73d85"
+      ],
+      "reason": "The pre-release development database applied an earlier working-copy revision; migration 0040 reconciles its final schema."
+    },
+    {
+      "filename": "0038_legacy_ai_media_snapshot.sql",
+      "sourceChecksum": "5f8e6974fa2cbdbf5ba0c3cd1efe45c00a8ceb0b24adab5ed0366d58c1956757",
+      "acceptedChecksums": [
+        "5f2ef83c90527714608a9f0493c1263e721aeb4a7c02ddef853c4ce143d84b39"
+      ],
+      "reason": "The pre-release development database applied an earlier working-copy revision; migration 0040 reapplies the hardened constraint and immutability trigger."
+    },
+    {
+      "filename": "0039_feature_media_cleanup_jobs.sql",
+      "sourceChecksum": "3ef6798682677f43371396c222134ec1644b19d6796be02feea4f2c8850392f3",
+      "acceptedChecksums": [
+        "fdbcc6e1254555f47bf0d7e89ff8d65087c2a7a7d0c201d23ca1692acd6046cb"
+      ],
+      "reason": "The pre-release development database applied an earlier working-copy revision; migration 0040 reapplies the final cleanup functions and indexes."
+    }
+  ]
+}

@@ -4,30 +4,24 @@
 Verify that database backups are reliable and restoration is repeatable.
 
 ## Prerequisites
-- Dockerized PostGIS running (`infra/db/docker-compose.yml`)
-- `pg_dump` and `pg_restore` available
-- `infra/db/.env` configured
+- Dockerized PostGIS running
+- PowerShell 7 and Docker available
+- The exact source container, database, and database user are known
 
-## Backup Execution
+## Safe Isolated Drill
 ```powershell
-cd infra/db/scripts
-./backup.ps1
+.\scripts\dev\restore_drill.ps1 `
+  -ContainerName gis_app-db-1 `
+  -Database gis_app `
+  -User gis_user
 ```
 
 Expected output:
-- Dump file in `infra/db/backups/` with timestamped filename.
-
-## Restore Drill (Staging/Test DB)
-1. Use a non-production target DB.
-2. Execute:
-```powershell
-cd infra/db/scripts
-./restore.ps1 -DumpFile ..\backups\gis_app_YYYYMMDD_HHMMSS.dump
-```
-3. Validate:
-   - API `GET /ready` returns ready.
-   - Key table counts match expected snapshot.
-   - Sample auth/project/feature/export workflows work.
+- dump, SHA-256 manifest, and drill report under ignored `backups/db/`;
+- successful `pg_restore --list`;
+- restore into a uniquely named temporary database;
+- exact public table names and row counts match;
+- temporary database is removed.
 
 ## Acceptance Criteria
 - Backup completes with zero errors.
@@ -40,5 +34,5 @@ cd infra/db/scripts
 - Perform restore drill at least monthly.
 
 ## Incident Recovery Targets
-- Target RPO: 24h (or better per policy).
-- Target RTO: defined by hosting SLO and tested in drills.
+- Authoritative pre-deployment targets:
+  `docs/predeployment/phase-1-data-safety-foundation.md`.

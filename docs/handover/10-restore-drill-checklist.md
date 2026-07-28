@@ -4,43 +4,32 @@
 Prove backup files can be restored and application behavior is valid after restore.
 
 ## Pre-Drill Preparation
-- [ ] Confirm latest backup file exists (`backups/*.dump`).
-- [ ] Confirm target environment and maintenance window.
-- [ ] Confirm compose stack file (`compose.prod.yml`).
+- [ ] Confirm the exact source container, database, and user.
+- [ ] Confirm free disk capacity for a dump and temporary database.
+- [ ] Confirm this is a drill, not an active-database restore.
 
 ## Drill Steps
-1. Stop application traffic (maintenance mode).
-2. Restore database from backup:
-```bash
-bash ./scripts/restore.sh ./backups/<backup-file>.dump
-```
-3. Restart stack if needed:
 ```powershell
-docker compose -f compose.prod.yml up -d
+.\scripts\dev\restore_drill.ps1 `
+  -ContainerName gis_app-db-1 `
+  -Database gis_app `
+  -User gis_user
 ```
 
 ## Post-Restore Verification
-- [ ] `docker compose -f compose.prod.yml ps` shows healthy db/api/nginx.
-- [ ] `GET /health` returns 200.
-- [ ] `GET /ready` returns 200.
-- [ ] Login works with known test user.
-- [ ] At least one project and one feature record are queryable.
-- [ ] Export request path responds.
-- [ ] Audit log writes still function.
-
-## Validation SQL Examples
-```sql
-SELECT COUNT(*) FROM "user";
-SELECT COUNT(*) FROM project;
-SELECT COUNT(*) FROM spatial_feature;
-SELECT COUNT(*) FROM schema_migrations;
-```
+- [ ] SHA-256 matched the manifest.
+- [ ] Dump catalog validation passed.
+- [ ] Exact row counts matched for every public table.
+- [ ] The temporary restore database was removed.
+- [ ] The JSON drill report has `status: passed`.
 
 ## Drill Evidence
-- Save command outputs under `docs/handover/evidence`.
-- Record timestamp, operator, backup file used, and pass/fail decision.
+- Keep the ignored dump, manifest, and drill JSON only as long as the local
+  rollback policy requires.
+- Record the reviewed result in the release evidence; never commit a dump.
 
 ## Success Criteria
 - Restore completes without errors.
-- Core API paths and auth are operational.
-- Data counts are within expected range.
+- Exact table names and row counts match.
+- Source database is not modified or replaced.
+- Temporary restore database is removed.

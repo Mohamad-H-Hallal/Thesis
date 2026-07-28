@@ -19,5 +19,8 @@
 - `phase-11/03-training-materials-and-sops.md`: training packs and SOP framework.
 - `phase-11/04-go-live-support-and-release-cycle.md`: go-live/hypercare and monthly release cycle.
 - `phase-11/05-operations-checklists.md`: deployment and incident checklists.
+- `predeployment/phase-1-data-safety-foundation.md`: authoritative
+  pre-deployment environment isolation, data classification, recovery targets,
+  verified restore drill, migration, and rollback policy.
 
 Tracked files under `handover/evidence/` are historical verification artifacts from earlier release checks. Treat them as evidence of the run they were captured from, not as current runtime failures unless a current validation report explicitly says so.

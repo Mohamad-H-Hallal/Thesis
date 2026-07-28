@@ -29,6 +29,18 @@ if (-not $SkipPreRestoreBackup) {
 
 $fileName = Split-Path -Path $resolvedBackup -Leaf
 $containerPath = "/tmp/restore-$([guid]::NewGuid().ToString('N'))-$fileName"
+$manifestPath = "$resolvedBackup.manifest.json"
+
+if (Test-Path -LiteralPath $manifestPath) {
+  $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+  $actualHash = (Get-FileHash -LiteralPath $resolvedBackup -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($manifest.schemaVersion -ne 1 -or $actualHash -ne $manifest.sha256) {
+    throw 'Backup checksum validation failed.'
+  }
+  Write-Host '[OK] Backup checksum matches its manifest.'
+} else {
+  throw "Backup manifest not found: $manifestPath"
+}
 
 try {
   docker cp $resolvedBackup "${ContainerName}:$containerPath"
@@ -36,9 +48,15 @@ try {
     throw 'docker cp failed while copying the backup into the database container.'
   }
 
+  docker exec $ContainerName pg_restore --list $containerPath | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw 'pg_restore could not read the copied dump.'
+  }
+
   docker exec $ContainerName pg_restore `
     -U $User `
     -d $Database `
+    --exit-on-error `
     --clean `
     --if-exists `
     --no-owner `
