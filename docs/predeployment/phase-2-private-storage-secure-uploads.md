@@ -155,7 +155,7 @@ Local verification recorded on 2026-07-28:
 
 - adapter, inventory, manifest, migration, rollback, orphan, symbolic-link, and
   real PostgreSQL transaction/lock tests passed;
-- the complete API suite executed 30 suites and 224 tests at 71.25% line
+- the complete API suite executed 30 suites and 224 tests at 71.23% line
   coverage; its real-database test exposed an ambiguous PostgreSQL regex in
   migration `0042`, and additive migration `0043` corrected it without
   rewriting applied history;
