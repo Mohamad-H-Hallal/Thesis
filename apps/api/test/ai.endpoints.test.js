@@ -17,6 +17,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const sharp = require('sharp');
+const { storageAdapter } = require('../src/services/storageAdapter.service');
 
 const SUPER_ADMIN_EMAIL = 'ai-superadmin@gov.lb';
 const ORIGINAL_AI_PIPELINE_ROOT = process.env.AI_PIPELINE_ROOT;
@@ -2820,11 +2821,13 @@ describe('AI backend endpoints phase B', () => {
           released_path: expect.stringMatching(/\.jpg$/),
         }),
       );
-      cleanupPaths.push(
-        releasedRecord.rows[0].storage_path,
+      const releasedLocation = storageAdapter.resolve(
         releasedRecord.rows[0].released_path,
+        ['uploads'],
       );
-      await expect(sharp(releasedRecord.rows[0].released_path).metadata()).resolves.toEqual(
+      expect(releasedLocation).not.toBeNull();
+      cleanupPaths.push(releasedRecord.rows[0].storage_path, releasedLocation.localPath);
+      await expect(sharp(releasedLocation.localPath).metadata()).resolves.toEqual(
         expect.objectContaining({ format: 'jpeg' }),
       );
     } finally {

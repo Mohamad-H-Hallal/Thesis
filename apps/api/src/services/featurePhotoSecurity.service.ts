@@ -7,15 +7,9 @@ import {
   scanBufferForMalware,
   type MalwareScanResult,
 } from './malwareScanner.service';
+import { storageAdapter } from './storageAdapter.service';
 const sharp = require('sharp');
-const fs = require('fs').promises;
 const { AppError, permanentOfflineSyncError } = require('../middleware/error');
-const {
-  photosDir,
-  thumbnailsDir,
-  privateFeaturePhotosDir,
-  privateFeatureThumbnailsDir,
-} = require('../config/upload');
 
 export interface QueryExecutor {
   query: (sql: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount?: number | null }>;
@@ -73,12 +67,12 @@ const MAX_ENCODED_SIZE = positiveIntegerSetting(process.env.PHOTO_MAX_SIZE, 5 * 
 const SAFE_IDEMPOTENCY_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const API_PREFIX = String(process.env.API_VERSION_PREFIX ?? '/api/v1').replace(/\/+$/, '');
-const ALLOWED_PHOTO_DIRECTORIES = [
-  photosDir,
-  thumbnailsDir,
-  privateFeaturePhotosDir,
-  privateFeatureThumbnailsDir,
-].map((directory) => path.resolve(directory));
+const ALLOWED_PHOTO_KEY_PREFIXES = [
+  'photos/',
+  'thumbnails/',
+  '.private/feature-photos/',
+  '.private/feature-thumbnails/',
+];
 
 export const photoResponse = (row: any): any => {
   const exifData =
@@ -105,12 +99,11 @@ export const resolveStoredPhotoPath = (filePath: unknown): string | null => {
   if (typeof filePath !== 'string' || filePath.trim().length === 0) {
     return null;
   }
-  const resolved = path.resolve(filePath);
-  const isAllowed = ALLOWED_PHOTO_DIRECTORIES.some((directory) => {
-    const relative = path.relative(directory, resolved);
-    return relative.length > 0 && !relative.startsWith('..') && !path.isAbsolute(relative);
-  });
-  return isAllowed ? resolved : null;
+  const resolved = storageAdapter.resolve(filePath, ['uploads']);
+  return resolved &&
+    ALLOWED_PHOTO_KEY_PREFIXES.some((prefix) => resolved.key.startsWith(prefix))
+    ? resolved.localPath
+    : null;
 };
 
 export const hasOfflineHeaders = (req: Request): boolean =>
@@ -461,7 +454,16 @@ export const hashPhotoPayload = (
 
 export const writeNewPrivateFile = async (filePath: string, contents: Buffer): Promise<void> => {
   try {
-    await fs.writeFile(filePath, contents, { flag: 'wx', mode: 0o600 });
+    const resolved = storageAdapter.resolve(filePath, ['uploads']);
+    if (
+      !resolved ||
+      !['.private/feature-photos/', '.private/feature-thumbnails/'].some((prefix) =>
+        resolved.key.startsWith(prefix),
+      )
+    ) {
+      throw new Error('Refusing to write outside private feature-media storage.');
+    }
+    await storageAdapter.writeExclusive(resolved.reference, contents);
   } catch (error: unknown) {
     if ((error as { code?: string }).code === 'EEXIST' && error && typeof error === 'object') {
       (error as { featureMediaPreexistingPath?: string }).featureMediaPreexistingPath = filePath;

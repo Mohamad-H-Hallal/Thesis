@@ -148,7 +148,7 @@ const releaseQuarantinedImages = async (
         await releaseQuarantinedUpload({
           executor: client,
           quarantineId: image.quarantineId,
-          releasedPath: image.filePath,
+          releasedPath: image.storageReference,
         });
       }
     });

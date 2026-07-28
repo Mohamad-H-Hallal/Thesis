@@ -18,9 +18,16 @@ const {
   loginUser,
   waitForExportCompletion,
 } = require('./helpers/api-test-helpers');
+const { storageAdapter } = require('../src/services/storageAdapter.service');
 
 const EXPORT_FEATURE_COUNT = Number(process.env.PERF_EXPORT_FEATURE_COUNT ?? 1200);
 const EXPORT_MAX_MS = Number(process.env.PERF_EXPORT_MAX_MS ?? 30000);
+
+const localExportPath = (reference) => {
+  const resolved = storageAdapter.resolve(reference, ['exports']);
+  if (!resolved) throw new Error(`Invalid test export reference: ${reference}`);
+  return resolved.localPath;
+};
 
 jest.setTimeout(120000);
 
@@ -149,7 +156,7 @@ describe('Phase 10 performance: exports', () => {
     expect(Number(completedExport.file_size_bytes)).toBeGreaterThan(0);
     expect(exportDurationMs).toBeLessThanOrEqual(EXPORT_MAX_MS);
 
-    await fs.access(completedExport.file_path);
+    await fs.access(localExportPath(completedExport.file_path));
 
     const downloadResponse = await request(app)
       .get(`${API_PREFIX}/exports/${exportId}/download`)

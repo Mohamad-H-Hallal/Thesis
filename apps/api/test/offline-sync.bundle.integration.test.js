@@ -25,6 +25,7 @@ const {
   makeFeatureMediaCleanupJobsAvailable,
   processFeatureMediaCleanupJobs,
 } = require('../src/services/featureMediaCleanup.service');
+const { storageAdapter } = require('../src/services/storageAdapter.service');
 const logger = require('../src/utils/logger');
 
 jest.setTimeout(90000);
@@ -48,6 +49,12 @@ const listPrivatePhotoStorage = async () => {
     }
   }
   return files.sort();
+};
+
+const localStoragePath = (reference) => {
+  const resolved = storageAdapter.resolve(reference, ['uploads']);
+  if (!resolved) throw new Error(`Invalid test storage reference: ${reference}`);
+  return resolved.localPath;
 };
 
 const createImage = async () =>
@@ -281,8 +288,12 @@ describe('POST /features/offline-sync atomic security contract', () => {
       [payload.draft_id],
     );
     expect(storedPhoto.rows).toHaveLength(1);
-    await expect(fs.access(storedPhoto.rows[0].file_path)).resolves.toBeUndefined();
-    await expect(fs.access(storedPhoto.rows[0].thumbnail_path)).resolves.toBeUndefined();
+    await expect(
+      fs.access(localStoragePath(storedPhoto.rows[0].file_path)),
+    ).resolves.toBeUndefined();
+    await expect(
+      fs.access(localStoragePath(storedPhoto.rows[0].thumbnail_path)),
+    ).resolves.toBeUndefined();
 
     const originalPolicy = await pool.query(
       `SELECT collection_form_schema, max_photos

@@ -1,4 +1,3 @@
-const fs = require('fs').promises;
 const bcrypt = require('bcryptjs');
 const request = require('supertest');
 const { Pool } = require('pg');
@@ -8,6 +7,7 @@ applyTestEnvDefaults();
 const { buildApp } = require('../../src/app');
 const { closePool } = require('../../src/config/database');
 const { validateEnv } = require('../../src/config/env');
+const { storageAdapter } = require('../../src/services/storageAdapter.service');
 const {
   stopImportProcessingLoop,
   waitForImportProcessingIdle,
@@ -153,7 +153,7 @@ const cleanupExportFiles = async () => {
 
   for (const row of result.rows) {
     try {
-      await fs.unlink(row.file_path);
+      await storageAdapter.remove(row.file_path);
     } catch (_error) {
       // Ignore missing/deleted files
     }

@@ -23,10 +23,17 @@ const path = require('path');
 const sharp = require('sharp');
 const jwt = require('jsonwebtoken');
 const { cleanupOldExports } = require('../src/controllers/export.controller');
+const { storageAdapter } = require('../src/services/storageAdapter.service');
 
 jest.setTimeout(90000);
 
 const tempFiles = [];
+
+const localExportPath = (reference) => {
+  const resolved = storageAdapter.resolve(reference, ['exports']);
+  if (!resolved) throw new Error(`Invalid test export reference: ${reference}`);
+  return resolved.localPath;
+};
 
 const createTempPhotoFile = async (name, background = { r: 20, g: 120, b: 60 }) => {
   const filePath = path.join(
@@ -339,7 +346,7 @@ describe('Phase 10 E2E workflow', () => {
     expect(downloadResponse.status).toBe(200);
     expect(downloadResponse.headers['content-type']).toMatch(/zip|octet-stream/i);
 
-    const zip = new AdmZip(completedExport.file_path);
+    const zip = new AdmZip(localExportPath(completedExport.file_path));
     const entryNames = zip.getEntries().map((entry) => entry.entryName);
     const geojsonEntries = zip
       .getEntries()
@@ -655,7 +662,7 @@ describe('Phase 10 E2E workflow', () => {
 
     expect(downloadResponse.headers['content-type']).toMatch(/zip|octet-stream/i);
 
-    const zip = new AdmZip(completedExport.file_path);
+    const zip = new AdmZip(localExportPath(completedExport.file_path));
     const geojsonEntry = zip
       .getEntries()
       .find((entry) => entry.entryName.toLowerCase().endsWith('.geojson'));
@@ -808,7 +815,7 @@ describe('Phase 10 E2E workflow', () => {
     expect(completedExport.export_parameters.feature_type).toBe('olive');
     expect(completedExport.export_parameters.export_polygon).toEqual(polygon);
 
-    const zip = new AdmZip(completedExport.file_path);
+    const zip = new AdmZip(localExportPath(completedExport.file_path));
     const geojsonEntry = zip
       .getEntries()
       .find((entry) => entry.entryName.toLowerCase().endsWith('.geojson'));
@@ -988,7 +995,7 @@ describe('Phase 10 E2E workflow', () => {
     };
 
     const allWithBbox = await requestExport('geojson', { bbox });
-    expectExportedFeatureNames(exportedGeojsonFeatures(new AdmZip(allWithBbox.file_path)), [
+    expectExportedFeatureNames(exportedGeojsonFeatures(new AdmZip(localExportPath(allWithBbox.file_path))), [
       'Olive inside current',
       'Citrus inside current',
       'Olive inside old',
@@ -999,7 +1006,7 @@ describe('Phase 10 E2E workflow', () => {
       bbox,
       feature_type: 'olive',
     });
-    expectExportedFeatureNames(exportedGeojsonFeatures(new AdmZip(oliveWithBbox.file_path)), [
+    expectExportedFeatureNames(exportedGeojsonFeatures(new AdmZip(localExportPath(oliveWithBbox.file_path))), [
       'Olive inside current',
       'Olive inside old',
     ]);
@@ -1009,7 +1016,7 @@ describe('Phase 10 E2E workflow', () => {
       date_from: '2024-05-01',
       date_to: '2024-05-31',
     });
-    expectExportedFeatureNames(exportedGeojsonFeatures(new AdmZip(oliveWithDate.file_path)), [
+    expectExportedFeatureNames(exportedGeojsonFeatures(new AdmZip(localExportPath(oliveWithDate.file_path))), [
       'Olive inside current',
       'Olive outside current',
     ]);
@@ -1018,7 +1025,7 @@ describe('Phase 10 E2E workflow', () => {
       feature_type: 'olive',
       export_polygon: JSON.stringify(polygon),
     });
-    expectExportedFeatureNames(exportedGeojsonFeatures(new AdmZip(oliveWithPolygon.file_path)), [
+    expectExportedFeatureNames(exportedGeojsonFeatures(new AdmZip(localExportPath(oliveWithPolygon.file_path))), [
       'Olive inside current',
       'Olive inside old',
     ]);
@@ -1031,7 +1038,7 @@ describe('Phase 10 E2E workflow', () => {
       export_polygon: JSON.stringify(polygon),
       include_photos: true,
     });
-    const geojsonAllFiltersZip = new AdmZip(geojsonAllFilters.file_path);
+    const geojsonAllFiltersZip = new AdmZip(localExportPath(geojsonAllFilters.file_path));
     const geojsonAllFilterFeatures = exportedGeojsonFeatures(geojsonAllFiltersZip);
     expect(geojsonAllFilterFeatures).toHaveLength(1);
     expect(geojsonAllFilterFeatures[0].properties.feature_id).toBe(oliveInsideCurrentId);
@@ -1047,7 +1054,7 @@ describe('Phase 10 E2E workflow', () => {
       include_photos: true,
     });
     expect(shapefileAllFilters.feature_count).toBe(1);
-    const shapefileZip = new AdmZip(shapefileAllFilters.file_path);
+    const shapefileZip = new AdmZip(localExportPath(shapefileAllFilters.file_path));
     const manifest = JSON.parse(
       getZipEntry(shapefileZip, 'photos_manifest.json').getData().toString('utf8'),
     );
@@ -1205,7 +1212,7 @@ describe('Phase 10 E2E workflow', () => {
     expect(downloadResponse.status).toBe(200);
     expect(downloadResponse.headers['content-type']).toMatch(/zip|octet-stream/i);
 
-    const zip = new AdmZip(completedExport.file_path);
+    const zip = new AdmZip(localExportPath(completedExport.file_path));
     const entryNames = zip.getEntries().map((entry) => entry.entryName);
 
     expect(entryNames.some((name) => name.endsWith('.shp'))).toBe(true);

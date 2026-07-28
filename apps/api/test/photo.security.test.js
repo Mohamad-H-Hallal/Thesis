@@ -32,6 +32,7 @@ const {
   makeFeatureMediaCleanupJobsAvailable,
   processFeatureMediaCleanupJobs,
 } = require('../src/services/featureMediaCleanup.service');
+const { storageAdapter } = require('../src/services/storageAdapter.service');
 const logger = require('../src/utils/logger');
 
 jest.setTimeout(90000);
@@ -55,6 +56,12 @@ const listPrivatePhotoStorage = async () => {
     }
   }
   return entries.sort();
+};
+
+const localStoragePath = (reference) => {
+  const resolved = storageAdapter.resolve(reference, ['uploads']);
+  if (!resolved) throw new Error(`Invalid test storage reference: ${reference}`);
+  return resolved.localPath;
 };
 
 const createImage = async ({ width = 32, height = 24, format = 'png' } = {}) => {
@@ -254,13 +261,17 @@ describe('offline feature photo synchronization security', () => {
       [context.featureId],
     );
     expect(stored.rows).toHaveLength(1);
-    const normalizedMetadata = await sharp(stored.rows[0].file_path).metadata();
+    const storedLocation = storageAdapter.resolve(stored.rows[0].file_path, ['uploads']);
+    expect(storedLocation).not.toBeNull();
+    const normalizedMetadata = await sharp(storedLocation.localPath).metadata();
     expect(normalizedMetadata.format).toBe('jpeg');
     expect(normalizedMetadata.exif).toBeUndefined();
-    expect(path.resolve(stored.rows[0].file_path)).toContain(path.resolve(privateFeaturePhotosDir));
+    expect(stored.rows[0].file_path).toMatch(
+      /^storage:\/\/uploads\/\.private\/feature-photos\/\.[0-9a-f-]+\.jpg$/,
+    );
 
     const staticAttempt = await request(app).get(
-      `/uploads/.private/feature-photos/${path.basename(stored.rows[0].file_path)}`,
+      `/uploads/${storedLocation.key}`,
     );
     expect(staticAttempt.status).toBe(404);
 
@@ -468,7 +479,7 @@ describe('offline feature photo synchronization security', () => {
     const unlinkFailure = Object.assign(new Error('simulated sharing violation'), {
       code: 'EBUSY',
     });
-    const unlinkSpy = jest.spyOn(fs, 'unlink').mockRejectedValue(unlinkFailure);
+    const unlinkSpy = jest.spyOn(storageAdapter, 'remove').mockRejectedValue(unlinkFailure);
     let deleted;
     try {
       deleted = await request(app)
@@ -528,11 +539,11 @@ describe('offline feature photo synchronization security', () => {
     );
 
     const cleanupLog = jest.spyOn(logger, 'error').mockImplementation(() => undefined);
-    const unlinkSpy = jest.spyOn(fs, 'unlink');
+    const unlinkSpy = jest.spyOn(storageAdapter, 'remove');
     const result = await processFeatureMediaCleanupJobs({ paths: [livePath, unsafePath] });
     expect(result).toEqual({ completed: 2, deferred: 0 });
     expect(unlinkSpy).not.toHaveBeenCalled();
-    expect(await fs.access(livePath)).toBeUndefined();
+    expect(await fs.access(localStoragePath(livePath))).toBeUndefined();
     expect(JSON.stringify(cleanupLog.mock.calls)).not.toContain(unsafePath);
     unlinkSpy.mockRestore();
     cleanupLog.mockRestore();

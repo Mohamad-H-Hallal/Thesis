@@ -35,6 +35,8 @@
     "seed": "tsx src/db/seed.ts",
     "seed:staging": "tsx src/db/seedStaging.ts",
     "staging:verify": "tsx src/db/stagingVerify.ts",
+    "storage:inventory": "tsx src/storage/runStorageInventory.ts",
+    "storage:reconcile": "tsx src/storage/runStorageReconciliation.ts",
     "ai:worker:once": "tsx src/jobs/runAiWorkerOnce.ts --once --mock",
     "ai:worker:dry-run": "tsx src/jobs/runAiWorkerOnce.ts --once --dry-run",
     "ai:worker:bridge-once": "tsx src/jobs/runAiWorkerOnce.ts --once --pipeline-bridge",
