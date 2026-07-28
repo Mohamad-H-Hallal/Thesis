@@ -3,7 +3,7 @@ const {
   calculateMigrationChecksum,
   findMigrationIntegrityIssues,
   resolveMigrationChecksumCompatibility,
-} = require('../dist/db/migrationIntegrity');
+} = require('../src/db/migrationIntegrity');
 
 describe('migration integrity', () => {
   test('uses stable SHA-256 checksums', () => {
