@@ -137,8 +137,12 @@ const applyGrants = () =>
     '/opt/gis/apply-runtime-grants.sh',
   ]);
 
-fs.writeFileSync(adminSecretPath, `${adminPassword}\n`, { mode: 0o600 });
-fs.writeFileSync(runtimeSecretPath, `${firstRuntimePassword}\n`, { mode: 0o600 });
+// Docker Compose secrets are mounted read-only and container-readable. These
+// synthetic, randomly located test secrets must model that behavior on Linux,
+// where a 0600 host file owned by the CI runner is unreadable by the PostGIS
+// image's unprivileged user. The temporary directory is removed in `finally`.
+fs.writeFileSync(adminSecretPath, `${adminPassword}\n`, { mode: 0o644 });
+fs.writeFileSync(runtimeSecretPath, `${firstRuntimePassword}\n`, { mode: 0o644 });
 
 try {
   run(['network', 'create', networkName]);
@@ -298,7 +302,7 @@ try {
     /permission denied for table schema_migrations/i,
   );
 
-  fs.writeFileSync(runtimeSecretPath, `${secondRuntimePassword}\n`, { mode: 0o600 });
+  fs.writeFileSync(runtimeSecretPath, `${secondRuntimePassword}\n`, { mode: 0o644 });
   applyGrants();
   expectDenied(
     firstRuntimePassword,
