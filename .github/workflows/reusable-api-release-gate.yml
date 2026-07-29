@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgis:
-        image: postgis/postgis:16-3.4@sha256:44126d872ac91993766c341e369c539e8196614321765d36a6f1bab0419a5fa5
+        image: postgis/postgis:16-3.5-alpine@sha256:0d14e6c83a1bde7e453c2a5fb41785279992cb5793073a686f4f9e8ec2c5b077
         env:
           POSTGRES_DB: gis_app
           POSTGRES_USER: gis_user

@@ -1,6 +1,8 @@
 services:
   db:
-    image: postgis/postgis:16-3.4@sha256:44126d872ac91993766c341e369c539e8196614321765d36a6f1bab0419a5fa5
+    build:
+      context: .
+      dockerfile: infra/db/Dockerfile.production
     restart: unless-stopped
     env_file:
       - ${API_ENV_FILE:-.env}
@@ -70,7 +72,9 @@ services:
         max-file: "3"
 
   db-security:
-    image: postgis/postgis:16-3.4@sha256:44126d872ac91993766c341e369c539e8196614321765d36a6f1bab0419a5fa5
+    build:
+      context: .
+      dockerfile: infra/db/Dockerfile.production
     environment:
       DB_HOST: db
       DB_PORT: 5432
@@ -106,7 +110,7 @@ services:
         max-file: "3"
 
   clamav:
-    image: clamav/clamav:1.5.3-debian@sha256:9ea1c2bc1955c58d094bb3d168718d0173c7899096012523278ad76e06cc75a2
+    image: clamav/clamav:1.5.3@sha256:7f5389ccaa2368c383fa80e167ccfe44348d71e685f926fce4755eed1757673a
     restart: unless-stopped
     expose:
       - "3310"
@@ -309,7 +313,7 @@ services:
         max-file: "10"
 
   nginx:
-    image: nginxinc/nginx-unprivileged:1.29.4-alpine@sha256:a6c4f61f456b85b8fdf7ec7ab28cc3e299440e6fb4a9dea520e5fd8fd440025e
+    image: nginxinc/nginx-unprivileged:1.31.3-alpine3.24@sha256:59ccf0943b0b8e8d9e6ea9039a39555730f544701a655c596f7df7d096c593f5
     depends_on:
       api:
         condition: service_healthy
@@ -361,7 +365,9 @@ services:
         max-file: "10"
 
   certbot-renew:
-    image: certbot/certbot:v5.7.0@sha256:34ee91d2f43008eb78a007d22f23ed4b2eaa9a454cb27ca2c042b49527a695b4
+    build:
+      context: .
+      dockerfile: infra/certbot/Dockerfile.production
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
@@ -390,7 +396,9 @@ services:
         max-file: "5"
 
   certbot-bootstrap:
-    image: certbot/certbot:v5.7.0@sha256:34ee91d2f43008eb78a007d22f23ed4b2eaa9a454cb27ca2c042b49527a695b4
+    build:
+      context: .
+      dockerfile: infra/certbot/Dockerfile.production
     profiles:
       - certificate-bootstrap
     environment:

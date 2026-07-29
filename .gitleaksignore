@@ -1,0 +1,40 @@
+# Exact historical false-positive fingerprints only.
+#
+# Every entry below is a deterministic local/CI test value or a prior scanner
+# output echo. No live credential is allowlisted. Keeping fingerprints exact
+# means a new value, line, file, or commit still fails the full-history scan.
+18735d6acabfa3bc0d9a3cb5a39054c64040e896:apps/api/test/phase5.production-security.test.js:generic-api-key:18
+18735d6acabfa3bc0d9a3cb5a39054c64040e896:apps/api/test/phase5.production-security.test.js:generic-api-key:19
+18735d6acabfa3bc0d9a3cb5a39054c64040e896:apps/api/test/phase5.production-security.test.js:generic-api-key:20
+18735d6acabfa3bc0d9a3cb5a39054c64040e896:apps/api/test/phase5.production-security.test.js:generic-api-key:21
+18735d6acabfa3bc0d9a3cb5a39054c64040e896:apps/api/test/phase5.production-security.test.js:generic-api-key:22
+18735d6acabfa3bc0d9a3cb5a39054c64040e896:apps/api/test/phase5.production-security.test.js:generic-api-key:29
+18735d6acabfa3bc0d9a3cb5a39054c64040e896:apps/api/test/phase5.production-security.test.js:generic-api-key:36
+18735d6acabfa3bc0d9a3cb5a39054c64040e896:apps/api/test/phase5.production-security.test.js:generic-api-key:45
+18735d6acabfa3bc0d9a3cb5a39054c64040e896:apps/api/test/phase5.production-security.test.js:generic-api-key:48
+18735d6acabfa3bc0d9a3cb5a39054c64040e896:apps/api/test/phase5.production-security.test.js:generic-api-key:85
+18735d6acabfa3bc0d9a3cb5a39054c64040e896:apps/api/test/phase5.production-security.test.js:generic-api-key:98
+19e9820c0f4062d580f62437b7a39ae4087511f1:.github/workflows/ci.yml:generic-api-key:41
+19e9820c0f4062d580f62437b7a39ae4087511f1:.github/workflows/ci.yml:generic-api-key:42
+19e9820c0f4062d580f62437b7a39ae4087511f1:.github/workflows/monorepo-ci.yml:generic-api-key:36
+19e9820c0f4062d580f62437b7a39ae4087511f1:.github/workflows/monorepo-ci.yml:generic-api-key:37
+19e9820c0f4062d580f62437b7a39ae4087511f1:.github/workflows/staging-readiness.yml:generic-api-key:36
+19e9820c0f4062d580f62437b7a39ae4087511f1:.github/workflows/staging-readiness.yml:generic-api-key:37
+52fc0c47f3a89bc254719b8cd31502756f11ed78:apps/api/.env.test.example:generic-api-key:8
+52fc0c47f3a89bc254719b8cd31502756f11ed78:apps/api/src/config/testEnv.ts:generic-api-key:68
+6a9789f8e5bf0044847f411533e4a404c40a5e1f:docs/handover/evidence/repo-secrets-scan.log:generic-api-key:55
+6a9789f8e5bf0044847f411533e4a404c40a5e1f:docs/handover/evidence/repo-secrets-scan.log:generic-api-key:56
+6a9789f8e5bf0044847f411533e4a404c40a5e1f:docs/handover/evidence/repo-secrets-scan.log:generic-api-key:70
+6a9789f8e5bf0044847f411533e4a404c40a5e1f:docs/handover/evidence/repo-secrets-scan.log:generic-api-key:71
+6a9789f8e5bf0044847f411533e4a404c40a5e1f:docs/handover/evidence/repo-secrets-scan.log:generic-api-key:74
+6a9789f8e5bf0044847f411533e4a404c40a5e1f:docs/handover/evidence/repo-secrets-scan.log:generic-api-key:75
+88d5b7507954af98b7ab561b2b7aa920a8aa1cde:apps/mobile/integration_test/local_database_encryption_test.dart:generic-api-key:58
+ab6319edc8f6c9f9e58804e90f9504b87b96a552:.github/workflows/reusable-api-release-gate.yml:generic-api-key:34
+ab6319edc8f6c9f9e58804e90f9504b87b96a552:.github/workflows/reusable-api-release-gate.yml:generic-api-key:35
+c4cf93f7ef4f874093da4b61439538f4a3407465:docs/handover/evidence/secrets-scan-phase11.log:generic-api-key:19
+c4cf93f7ef4f874093da4b61439538f4a3407465:docs/handover/evidence/secrets-scan-phase11.log:generic-api-key:20
+c4cf93f7ef4f874093da4b61439538f4a3407465:docs/handover/evidence/secrets-scan-phase11.log:generic-api-key:23
+c4cf93f7ef4f874093da4b61439538f4a3407465:docs/handover/evidence/secrets-scan-phase11.log:generic-api-key:24
+c4cf93f7ef4f874093da4b61439538f4a3407465:docs/handover/evidence/secrets-scan-phase11.log:generic-api-key:4
+c4cf93f7ef4f874093da4b61439538f4a3407465:docs/handover/evidence/secrets-scan-phase11.log:generic-api-key:5
+dc33057acca06d2508b078652574c2133a3555b4:apps/mobile/integration_test/local_database_encryption_test.dart:generic-api-key:120

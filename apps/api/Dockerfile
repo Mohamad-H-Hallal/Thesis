@@ -25,7 +25,13 @@ COPY --from=build /app/infra/migrations /app/infra/migrations
 COPY apps/api/.env.example ./.env.example
 COPY apps/api/docker/entrypoint.sh /usr/local/bin/api-entrypoint.sh
 
-RUN mkdir -p uploads exports \
+RUN rm -rf \
+      /usr/local/lib/node_modules/npm \
+      /usr/local/lib/node_modules/corepack \
+      /usr/local/bin/npm \
+      /usr/local/bin/npx \
+      /usr/local/bin/corepack \
+  && mkdir -p uploads exports \
   && chmod +x /usr/local/bin/api-entrypoint.sh \
   && chown -R node:node /app/apps/api /app/infra
 

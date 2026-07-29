@@ -1,0 +1,81 @@
+FROM node:22.22.3-alpine@sha256:e58326d0d441090181ac150dc2078d3e2cf6a0d42e809aebba3ef5880935ffdd AS ui
+
+ARG PROMETHEUS_COMMIT=73ff57ce2b8161059ac7fe5188f03f1c3d22b29a
+ARG PROMETHEUS_SOURCE_SHA256=322276709c16cb3c22a4d01d244beb91f0380a257699358d2a20ac7086d7256c
+
+WORKDIR /src
+RUN apk add --no-cache 'bash=5.3.9-r1' 'gzip=1.14-r2' \
+  && wget -qO source.tar.gz \
+      "https://github.com/prometheus/prometheus/archive/${PROMETHEUS_COMMIT}.tar.gz" \
+  && echo "${PROMETHEUS_SOURCE_SHA256}  source.tar.gz" | sha256sum -c - \
+  && tar -xzf source.tar.gz --strip-components=1 \
+  && rm source.tar.gz \
+  && corepack enable \
+  && corepack prepare pnpm@11.18.0 --activate
+
+# The signed source lockfiles already pin every artifact and integrity hash.
+# Avoid a second registry-wide publication-age metadata pass during the
+# reproducible rebuild; keep downloads cached and retry transient registry
+# failures.
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+  cd web/ui \
+  && pnpm install --frozen-lockfile --config.min-release-age=0 \
+      --network-concurrency=8 --fetch-retries=5 \
+  && cd react-app \
+  && pnpm install --frozen-lockfile --config.min-release-age=0 \
+      --network-concurrency=8 --fetch-retries=5
+
+RUN cd web/ui \
+  && CI="" pnpm run build \
+  && cd ../.. \
+  && scripts/compress_assets.sh
+
+FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build
+
+ARG PROMETHEUS_COMMIT=73ff57ce2b8161059ac7fe5188f03f1c3d22b29a
+ARG PROMETHEUS_SOURCE_SHA256=322276709c16cb3c22a4d01d244beb91f0380a257699358d2a20ac7086d7256c
+
+WORKDIR /src
+RUN wget -qO source.tar.gz \
+      "https://github.com/prometheus/prometheus/archive/${PROMETHEUS_COMMIT}.tar.gz" \
+  && echo "${PROMETHEUS_SOURCE_SHA256}  source.tar.gz" | sha256sum -c - \
+  && tar -xzf source.tar.gz --strip-components=1 \
+  && rm source.tar.gz
+
+# Prometheus 3.13.1 predates two July 2026 Go dependency advisories. Keep the
+# signed upstream source fixed while moving only the affected modules to their
+# first patched releases.
+RUN go get \
+      golang.org/x/text@v0.39.0 \
+      google.golang.org/grpc@v1.82.1 \
+  && go mod tidy \
+  && test "$(go list -m -f '{{.Version}}' golang.org/x/text)" = "v0.39.0" \
+  && test "$(go list -m -f '{{.Version}}' google.golang.org/grpc)" = "v1.82.1"
+
+COPY --from=ui /src/web/ui/embed.go /src/web/ui/embed.go
+COPY --from=ui /src/web/ui/static /src/web/ui/static
+
+ARG VERSION=3.13.1-phase6.1
+ARG REVISION=73ff57ce2b8161059ac7fe5188f03f1c3d22b29a
+ARG BUILD_DATE=20260729-00:00:00
+RUN CGO_ENABLED=0 go build -trimpath -tags "netgo,builtinassets" \
+      -ldflags="-s -w \
+        -X github.com/prometheus/common/version.Version=${VERSION} \
+        -X github.com/prometheus/common/version.Revision=${REVISION} \
+        -X github.com/prometheus/common/version.Branch=phase6-security-patch \
+        -X github.com/prometheus/common/version.BuildUser=gis-release \
+        -X github.com/prometheus/common/version.BuildDate=${BUILD_DATE}" \
+      -o /out/prometheus ./cmd/prometheus \
+  && CGO_ENABLED=0 go build -trimpath -tags "netgo,builtinassets" \
+      -ldflags="-s -w \
+        -X github.com/prometheus/common/version.Version=${VERSION} \
+        -X github.com/prometheus/common/version.Revision=${REVISION} \
+        -X github.com/prometheus/common/version.Branch=phase6-security-patch \
+        -X github.com/prometheus/common/version.BuildUser=gis-release \
+        -X github.com/prometheus/common/version.BuildDate=${BUILD_DATE}" \
+      -o /out/promtool ./cmd/promtool
+
+FROM prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893
+
+COPY --from=build /out/prometheus /bin/prometheus
+COPY --from=build /out/promtool /bin/promtool

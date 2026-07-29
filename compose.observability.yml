@@ -6,7 +6,9 @@ x-observability-logging: &observability-logging
 
 services:
   prometheus:
-    image: prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893
+    build:
+      context: .
+      dockerfile: infra/prometheus/Dockerfile.production
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -41,7 +43,9 @@ services:
     logging: *observability-logging
 
   alertmanager:
-    image: prom/alertmanager:v0.33.1@sha256:9e082985f56f4c8c9f724e18f2288c6708f472e56a5286b8863d080434ea065d
+    build:
+      context: .
+      dockerfile: infra/alertmanager/Dockerfile.production
     command:
       - --config.file=/etc/alertmanager/alertmanager.yml
       - --storage.path=/alertmanager
@@ -64,7 +68,9 @@ services:
     logging: *observability-logging
 
   blackbox:
-    image: prom/blackbox-exporter:v0.28.0@sha256:e753ff9f3fc458d02cca5eddab5a77e1c175eee484a8925ac7d524f04366c2fc
+    build:
+      context: .
+      dockerfile: infra/blackbox/Dockerfile.production
     command:
       - --config.file=/etc/blackbox/blackbox.yml
     volumes:
@@ -85,7 +91,9 @@ services:
     logging: *observability-logging
 
   loki:
-    image: grafana/loki:3.7.4@sha256:87f0a067673756a3cede1bcbf0c74875f7df9b09fddb53e399d0c576f756cfcc
+    build:
+      context: ./infra/loki
+      dockerfile: Dockerfile.production
     command:
       - -config.file=/etc/loki/loki.yml
     volumes:

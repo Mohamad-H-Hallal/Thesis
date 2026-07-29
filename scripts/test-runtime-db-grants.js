@@ -7,8 +7,7 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const fullSchemaValidation = process.argv.includes('--full-schema');
-const image =
-  'postgis/postgis:16-3.4@sha256:44126d872ac91993766c341e369c539e8196614321765d36a6f1bab0419a5fa5';
+const image = process.env.RELEASE_DATABASE_IMAGE || 'gis-phase6-postgis-audit:local';
 const suffix = `${process.pid}-${Date.now()}`;
 const containerName = `gis-phase5-db-grants-${suffix}`;
 const networkName = `gis-phase5-db-grants-${suffix}`;
@@ -145,6 +144,21 @@ fs.writeFileSync(adminSecretPath, `${adminPassword}\n`, { mode: 0o644 });
 fs.writeFileSync(runtimeSecretPath, `${firstRuntimePassword}\n`, { mode: 0o644 });
 
 try {
+  try {
+    run(['image', 'inspect', image], { stdio: 'ignore' });
+  } catch {
+    if (image !== 'gis-phase6-postgis-audit:local') {
+      throw new Error(`Configured release database image is unavailable: ${image}`);
+    }
+    run([
+      'build',
+      '--tag',
+      image,
+      '--file',
+      'infra/db/Dockerfile.production',
+      '.',
+    ]);
+  }
   run(['network', 'create', networkName]);
   run([
     'run',

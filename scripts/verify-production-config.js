@@ -22,6 +22,32 @@ const shouldRun = (component) =>
 const productionComposePath = path.join(root, 'compose.prod.yml');
 const observabilityComposePath = path.join(root, 'compose.observability.yml');
 const apiDockerfilePath = path.join(root, 'apps', 'api', 'Dockerfile');
+const databaseDockerfilePath = path.join(root, 'infra', 'db', 'Dockerfile.production');
+const certbotDockerfilePath = path.join(root, 'infra', 'certbot', 'Dockerfile.production');
+const prometheusDockerfilePath = path.join(
+  root,
+  'infra',
+  'prometheus',
+  'Dockerfile.production',
+);
+const alertmanagerDockerfilePath = path.join(
+  root,
+  'infra',
+  'alertmanager',
+  'Dockerfile.production',
+);
+const blackboxDockerfilePath = path.join(
+  root,
+  'infra',
+  'blackbox',
+  'Dockerfile.production',
+);
+const lokiDockerfilePath = path.join(
+  root,
+  'infra',
+  'loki',
+  'Dockerfile.production',
+);
 const nginxTemplatePath = path.join(root, 'infra', 'nginx', 'production.conf.template');
 const observabilityPath = path.join(root, 'infra', 'observability');
 
@@ -35,6 +61,12 @@ const assert = (condition, message) => {
 const productionCompose = read(productionComposePath);
 const observabilityCompose = read(observabilityComposePath);
 const apiDockerfile = read(apiDockerfilePath);
+const databaseDockerfile = read(databaseDockerfilePath);
+const certbotDockerfile = read(certbotDockerfilePath);
+const prometheusDockerfile = read(prometheusDockerfilePath);
+const alertmanagerDockerfile = read(alertmanagerDockerfilePath);
+const blackboxDockerfile = read(blackboxDockerfilePath);
+const lokiDockerfile = read(lokiDockerfilePath);
 const gitignore = read(path.join(root, '.gitignore'));
 const workflowImages = [
   read(path.join(root, '.github', 'workflows', 'reusable-api-release-gate.yml')),
@@ -49,7 +81,7 @@ const composeImages = `${productionCompose}\n${observabilityCompose}`
   .split(/\r?\n/)
   .map((line) => line.match(/^\s*image:\s*(\S+)\s*$/)?.[1])
   .filter(Boolean);
-assert(composeImages.length >= 9, 'Expected production and observability image declarations');
+assert(composeImages.length >= 4, 'Expected production and observability image declarations');
 for (const image of composeImages) {
   assert(
     /@sha256:[a-f0-9]{64}$/.test(image),
@@ -68,6 +100,116 @@ assert(dockerfileBases.length > 0, 'API Dockerfile has no base image');
 for (const image of dockerfileBases) {
   assert(/@sha256:[a-f0-9]{64}$/.test(image), `API base image is not digest-pinned: ${image}`);
 }
+const databaseDockerfileBases = databaseDockerfile
+  .split(/\r?\n/)
+  .map((line) => line.match(/^\s*FROM\s+(\S+)/i)?.[1])
+  .filter(Boolean);
+assert(databaseDockerfileBases.length === 1, 'Database Dockerfile must have one base image');
+assert(
+  /@sha256:[a-f0-9]{64}$/.test(databaseDockerfileBases[0]),
+  `Database base image is not digest-pinned: ${databaseDockerfileBases[0]}`,
+);
+assert(
+  (productionCompose.match(/dockerfile:\s*infra\/db\/Dockerfile\.production/g) ?? [])
+    .length === 2,
+  'Production database services must use the hardened database image build',
+);
+assert(
+  databaseDockerfile.includes("su-exec=0.3-r0") &&
+    databaseDockerfile.includes('rm -f /usr/local/bin/gosu'),
+  'Hardened database image must replace the upstream gosu helper',
+);
+const certbotDockerfileBases = certbotDockerfile
+  .split(/\r?\n/)
+  .map((line) => line.match(/^\s*FROM\s+(\S+)/i)?.[1])
+  .filter(Boolean);
+assert(certbotDockerfileBases.length === 1, 'Certbot Dockerfile must have one base image');
+assert(
+  /@sha256:[a-f0-9]{64}$/.test(certbotDockerfileBases[0]),
+  `Certbot base image is not digest-pinned: ${certbotDockerfileBases[0]}`,
+);
+assert(
+  (productionCompose.match(/dockerfile:\s*infra\/certbot\/Dockerfile\.production/g) ?? [])
+    .length === 2,
+  'Production certificate services must use the hardened Certbot image build',
+);
+assert(
+  certbotDockerfile.includes('rm -f /usr/local/bin/uv /usr/local/bin/uvx'),
+  'Hardened Certbot image must remove package-management tooling',
+);
+const prometheusDockerfileBases = prometheusDockerfile
+  .split(/\r?\n/)
+  .map((line) => line.match(/^\s*FROM\s+(\S+)/i)?.[1])
+  .filter(Boolean);
+assert(
+  prometheusDockerfileBases.length === 3 &&
+    prometheusDockerfileBases.every((image) => /@sha256:[a-f0-9]{64}$/.test(image)),
+  'Prometheus build and runtime images must all be digest-pinned',
+);
+assert(
+  observabilityCompose.includes('dockerfile: infra/prometheus/Dockerfile.production'),
+  'Production observability must use the patched Prometheus image build',
+);
+assert(
+  prometheusDockerfile.includes('golang.org/x/text@v0.39.0') &&
+    prometheusDockerfile.includes('google.golang.org/grpc@v1.82.1') &&
+    prometheusDockerfile.includes('PROMETHEUS_SOURCE_SHA256='),
+  'Prometheus security rebuild must pin source and patched Go modules',
+);
+for (const [name, dockerfile, expectedPath] of [
+  [
+    'Alertmanager',
+    alertmanagerDockerfile,
+    'infra/alertmanager/Dockerfile.production',
+  ],
+  ['Blackbox exporter', blackboxDockerfile, 'infra/blackbox/Dockerfile.production'],
+]) {
+  const bases = dockerfile
+    .split(/\r?\n/)
+    .map((line) => line.match(/^\s*FROM\s+(\S+)/i)?.[1])
+    .filter(Boolean);
+  assert(
+    bases.length >= 2 &&
+      bases.every((image) => /@sha256:[a-f0-9]{64}$/.test(image)),
+    `${name} build and runtime images must all be digest-pinned`,
+  );
+  assert(
+    observabilityCompose.includes(`dockerfile: ${expectedPath}`),
+    `Production observability must use the patched ${name} image build`,
+  );
+  assert(
+    dockerfile.includes('golang.org/x/text@v0.39.0') &&
+      dockerfile.includes('google.golang.org/grpc@v1.82.1') &&
+      dockerfile.includes('SOURCE_SHA256='),
+    `${name} security rebuild must pin source and patched Go modules`,
+  );
+}
+const lokiBases = lokiDockerfile
+  .split(/\r?\n/)
+  .map((line) => line.match(/^\s*FROM\s+(\S+)/i)?.[1])
+  .filter(Boolean);
+assert(
+  lokiBases.length === 2 &&
+    lokiBases.every((image) => /@sha256:[a-f0-9]{64}$/.test(image)),
+  'Loki build and runtime images must be digest-pinned',
+);
+assert(
+  observabilityCompose.includes('context: ./infra/loki') &&
+    observabilityCompose.includes('dockerfile: Dockerfile.production'),
+  'Production observability must use the patched Loki image build',
+);
+assert(
+  lokiDockerfile.includes('golang.org/x/text@v0.39.0') &&
+    lokiDockerfile.includes('google.golang.org/grpc@v1.82.1') &&
+    lokiDockerfile.includes('LOKI_SOURCE_SHA256=') &&
+    lokiDockerfile.includes('go mod vendor'),
+  'Loki security rebuild must pin source, patched Go modules, and vendor state',
+);
+assert(
+  apiDockerfile.includes('/usr/local/lib/node_modules/npm') &&
+    apiDockerfile.includes('/usr/local/bin/npx'),
+  'Production API runtime must remove package-management tooling',
+);
 
 assert(!/redis(?:s)?:\/\/[^\s/]*@/i.test(productionCompose), 'Redis credential found in URL');
 assert(!/VALKEY_PASSWORD/.test(productionCompose), 'Legacy inline Valkey password remains');
@@ -177,19 +319,19 @@ if (!runtimeValidation) {
 
 const images = {
   prometheus:
-    'prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893',
+    'gis-phase6-prometheus-audit:local',
   alertmanager:
-    'prom/alertmanager:v0.33.1@sha256:9e082985f56f4c8c9f724e18f2288c6708f472e56a5286b8863d080434ea065d',
+    'gis-phase6-alertmanager-audit:local',
   blackbox:
-    'prom/blackbox-exporter:v0.28.0@sha256:e753ff9f3fc458d02cca5eddab5a77e1c175eee484a8925ac7d524f04366c2fc',
+    'gis-phase6-blackbox-audit:local',
   loki:
-    'grafana/loki:3.7.4@sha256:87f0a067673756a3cede1bcbf0c74875f7df9b09fddb53e399d0c576f756cfcc',
+    'gis-phase6-loki-audit:local',
   alloy:
     'grafana/alloy:v1.18.0@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308',
   nginx:
-    'nginxinc/nginx-unprivileged:1.29.4-alpine@sha256:a6c4f61f456b85b8fdf7ec7ab28cc3e299440e6fb4a9dea520e5fd8fd440025e',
+    'nginxinc/nginx-unprivileged:1.31.3-alpine3.24@sha256:59ccf0943b0b8e8d9e6ea9039a39555730f544701a655c596f7df7d096c593f5',
   certbot:
-    'certbot/certbot:v5.7.0@sha256:34ee91d2f43008eb78a007d22f23ed4b2eaa9a454cb27ca2c042b49527a695b4',
+    'gis-phase6-certbot-audit:local',
 };
 
 const dockerRun = (args, options = {}) =>
@@ -199,6 +341,27 @@ const dockerRun = (args, options = {}) =>
     stdio: options.stdio ?? 'pipe',
     timeout: options.timeout ?? 180000,
   });
+
+for (const [image, dockerfile, context = '.'] of [
+  [images.certbot, 'infra/certbot/Dockerfile.production'],
+  [images.prometheus, 'infra/prometheus/Dockerfile.production'],
+  [images.alertmanager, 'infra/alertmanager/Dockerfile.production'],
+  [images.blackbox, 'infra/blackbox/Dockerfile.production'],
+  [images.loki, 'infra/loki/Dockerfile.production', 'infra/loki'],
+]) {
+  try {
+    dockerRun(['image', 'inspect', image], { stdio: 'ignore' });
+  } catch {
+    dockerRun([
+      'build',
+      '--tag',
+      image,
+      '--file',
+      dockerfile,
+      context,
+    ]);
+  }
+}
 
 const common = [
   'run',

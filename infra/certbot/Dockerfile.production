@@ -1,0 +1,9 @@
+FROM certbot/certbot:v5.7.0@sha256:34ee91d2f43008eb78a007d22f23ed4b2eaa9a454cb27ca2c042b49527a695b4
+
+# uv/uvx are image-build package managers and are not used by the Certbot
+# runtime. Removing them keeps vulnerable build tooling out of the release
+# artifact while preserving the official Certbot installation and entrypoint.
+RUN rm -f /usr/local/bin/uv /usr/local/bin/uvx \
+  && test ! -e /usr/local/bin/uv \
+  && test ! -e /usr/local/bin/uvx \
+  && certbot --version
