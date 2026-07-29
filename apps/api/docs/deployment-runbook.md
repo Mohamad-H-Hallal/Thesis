@@ -1,5 +1,11 @@
 # Deployment Runbook
 
+> This API-only runbook is historical. For the current pre-deployment security
+> boundary, TLS/bootstrap sequence, secret mounts, database role split,
+> monitoring, and external gates, use
+> `docs/security/production-infrastructure-observability.md` from the repository
+> root. Do not deploy from this file alone.
+
 ## Scope
 This runbook covers production deployment and operations for the GIS API.
 

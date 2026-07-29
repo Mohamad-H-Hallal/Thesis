@@ -19,6 +19,11 @@ on:
       - '.env.staging.example'
       - '.env.prod.example'
       - 'compose.prod.yml'
+      - 'compose.observability.yml'
+      - 'infra/nginx/**'
+      - 'infra/observability/**'
+      - 'scripts/verify-production-config.js'
+      - 'scripts/test-runtime-db-grants.js'
       - 'docker-compose.yml'
       - 'docker-compose.override.yml'
       - 'scripts/verify_all.ps1'
@@ -51,3 +56,13 @@ jobs:
         run: flutter test --coverage
       - name: Enforce Flutter coverage threshold
         run: dart run tool/check_coverage.dart --min-line ${{ env.MOBILE_MIN_LINE_COVERAGE }}
+
+  production-config:
+    name: Production Config + Alert Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify restricted database runtime role
+        run: node scripts/test-runtime-db-grants.js
+      - name: Validate pinned production configuration
+        run: node scripts/verify-production-config.js --runtime

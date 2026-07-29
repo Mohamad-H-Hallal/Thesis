@@ -27,14 +27,18 @@ const query = async <T extends QueryResultRow = QueryResultRow>(
   params: unknown[] = []
 ): Promise<QueryResult<T>> => {
   const start = Date.now();
+  const operation = text.trim().split(/\s+/, 1)[0]?.toUpperCase() || 'UNKNOWN';
   try {
     const result = await pool.query<T>(text, params);
     const duration = Date.now() - start;
-    logger.debug('Executed query', { text, duration, rows: result.rowCount });
+    logger.debug('Executed database query', { operation, duration, rows: result.rowCount });
     return result;
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown query error';
-    logger.error('Query error:', { text, error: message });
+    const errorCode =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code ?? '')
+        : '';
+    logger.error('Database query failed', { operation, errorCode });
     throw error;
   }
 };
@@ -58,8 +62,8 @@ const transaction = async <T>(callback: (client: PoolClient) => Promise<T>): Pro
 // Test connection function
 const testConnection = async (): Promise<boolean> => {
   try {
-    const result = await query<{ now: string }>('SELECT NOW() as now');
-    logger.info('Database connection test successful:', result.rows[0]);
+    await query('SELECT 1 AS ok');
+    logger.info('Database connection test successful');
     return true;
   } catch (error: unknown) {
     logger.error('Database connection test failed:', error);

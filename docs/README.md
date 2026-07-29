@@ -11,6 +11,11 @@
 - `phase-2/03-api-versioning.md`: API versioning policy (`/api/v1` path prefix).
 - `phase-9/01-security-reliability-observability.md`: phase 9 security and observability baseline.
 - `phase-9/02-secret-rotation-runbook.md`: JWT secret rotation procedure.
+- `security/production-infrastructure-observability.md`: current hardened
+  production reference, secret/role boundaries, observability, rotation, and
+  mandatory external staging gates.
+- `predeployment/phase-5-production-infrastructure-observability.md`: Phase 5
+  implementation and verification evidence.
 - `phase-9/03-backup-restore-drill.md`: backup/restore drill execution guide.
 - `phase-10/01-quality-engineering.md`: quality engineering scope, test matrix, and exit criteria.
 - `phase-10/02-release-gates.md`: release gate scripts, CI gate wiring, and performance thresholds.

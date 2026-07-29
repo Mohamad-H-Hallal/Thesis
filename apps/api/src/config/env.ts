@@ -6,6 +6,7 @@ export interface EnvConfig {
   PORT: number;
   HOST: string;
   TRUST_PROXY: boolean;
+  TRUST_PROXY_HOPS: number;
   ENFORCE_HTTPS: boolean;
   DB_HOST: string;
   DB_PORT: number;
@@ -32,6 +33,7 @@ export interface EnvConfig {
   RATE_LIMIT_EXPORT_MAX_REQUESTS: number;
   RATE_LIMIT_STORE: 'memory' | 'redis';
   REDIS_URL: string;
+  REDIS_PASSWORD: string;
   REDIS_CONNECT_TIMEOUT_MS: number;
   RATE_LIMIT_WORKLOAD_WINDOW_MS: number;
   RATE_LIMIT_IMPORT_MAX_REQUESTS: number;
@@ -50,7 +52,11 @@ export interface EnvConfig {
   OFFLINE_SYNC_RATE_LIMIT_MAX_REQUESTS: number;
   OFFLINE_SYNC_INGRESS_RATE_LIMIT_MAX_REQUESTS: number;
   LOG_LEVEL: 'error' | 'warn' | 'info' | 'http' | 'verbose' | 'debug' | 'silly';
+  LOG_PRETTY: boolean;
+  LOG_TO_FILE: boolean;
   AUDIT_LOG_ENABLED: boolean;
+  API_DOCS_ENABLED: boolean;
+  API_DOCS_TOKEN: string;
   METRICS_ENABLED: boolean;
   METRICS_TOKEN: string;
   UPLOAD_DIR: string;
@@ -116,12 +122,27 @@ export interface EnvConfig {
   AI_SERVER_TIMEOUT_MS: number;
 }
 
+export interface WorkloadWorkerEnvConfig {
+  NODE_ENV: 'development' | 'test' | 'production';
+  DB_HOST: string;
+  DB_PORT: number;
+  DB_NAME: string;
+  DB_USER: string;
+  DB_PASSWORD: string;
+  DB_MAX_CONNECTIONS: number;
+  WORKLOAD_WORKER_MODE: 'inline' | 'external' | 'disabled';
+  WORKLOAD_HARD_EXIT_ON_TIMEOUT: boolean;
+  LOG_PRETTY: boolean;
+  LOG_TO_FILE: boolean;
+}
+
 const envSchema = Joi.object({
   NODE_ENV: Joi.string().valid('development', 'test', 'production').default('development'),
   MAIL_TRANSPORT: Joi.string().valid('mailpit', 'smtp').default('mailpit'),
   PORT: Joi.number().port().default(3000),
   HOST: Joi.string().default('localhost'),
   TRUST_PROXY: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(false),
+  TRUST_PROXY_HOPS: Joi.number().integer().min(1).max(5).default(1),
   ENFORCE_HTTPS: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(false),
 
   DB_HOST: Joi.string().required(),
@@ -167,6 +188,7 @@ const envSchema = Joi.object({
     .uri({ scheme: ['redis', 'rediss'] })
     .allow('')
     .default(''),
+  REDIS_PASSWORD: Joi.string().allow('').default(''),
   REDIS_CONNECT_TIMEOUT_MS: Joi.number().integer().min(1000).max(60000).default(5000),
   RATE_LIMIT_WORKLOAD_WINDOW_MS: Joi.number().integer().min(1000).default(60000),
   RATE_LIMIT_IMPORT_MAX_REQUESTS: Joi.number().integer().min(1).default(6),
@@ -193,12 +215,31 @@ const envSchema = Joi.object({
   LOG_LEVEL: Joi.string()
     .valid('error', 'warn', 'info', 'http', 'verbose', 'debug', 'silly')
     .default('info'),
+  LOG_PRETTY: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(true),
+  LOG_TO_FILE: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(false),
   AUDIT_LOG_ENABLED: Joi.boolean()
     .truthy('true')
     .truthy('1')
     .falsy('false')
     .falsy('0')
     .default(true),
+  API_DOCS_ENABLED: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(true),
+  API_DOCS_TOKEN: Joi.string().allow('').default(''),
   METRICS_ENABLED: Joi.boolean()
     .truthy('true')
     .truthy('1')
@@ -319,8 +360,63 @@ const envSchema = Joi.object({
   AI_SERVER_TIMEOUT_MS: Joi.number().integer().min(1000).max(120000).default(30000),
 }).unknown(true);
 
-const validateEnv = (): EnvConfig => {
-  const { error, value } = envSchema.validate(process.env, { abortEarly: false });
+const unsafeProductionSecret = (value: unknown): boolean => {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return (
+    normalized.length < 16 ||
+    [
+      'change_me',
+      'changeme',
+      'password',
+      'replace-',
+      'replace_',
+      'example',
+      'dev-',
+      'test-',
+    ].some((marker) => normalized.includes(marker))
+  );
+};
+
+const unsafeProductionIdentifier = (value: unknown): boolean => {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return (
+    normalized.length === 0 ||
+    ['change_me', 'changeme', 'replace-', 'replace_', 'example'].some((marker) =>
+      normalized.includes(marker),
+    )
+  );
+};
+
+const validateProductionOrigin = (origin: string): boolean => {
+  try {
+    const parsed = new URL(origin);
+    const normalizedHostname = parsed.hostname.toLowerCase();
+    const hostnameLabels = normalizedHostname.split('.');
+    const isReservedHostname =
+      normalizedHostname === 'localhost' ||
+      normalizedHostname === '127.0.0.1' ||
+      normalizedHostname === '::1' ||
+      normalizedHostname.endsWith('.localhost') ||
+      normalizedHostname.endsWith('.example') ||
+      normalizedHostname.endsWith('.invalid') ||
+      normalizedHostname.endsWith('.test') ||
+      hostnameLabels.includes('example');
+    return (
+      parsed.protocol === 'https:' &&
+      parsed.username === '' &&
+      parsed.password === '' &&
+      !isReservedHostname &&
+      parsed.pathname === '/' &&
+      parsed.search === '' &&
+      parsed.hash === ''
+    );
+  } catch {
+    return false;
+  }
+};
+
+const validateEnv = (source: NodeJS.ProcessEnv = process.env): EnvConfig => {
+  const { error, value } = envSchema.validate(source, { abortEarly: false });
   if (error) {
     const details = error.details.map((d: { message: string }) => d.message).join('; ');
     throw new Error(`Environment validation failed: ${details}`);
@@ -360,7 +456,7 @@ const validateEnv = (): EnvConfig => {
     (item: string) => item.trim().length > 0,
   );
   const hasExplicitSmtpPort =
-    typeof process.env.SMTP_PORT === 'string' && process.env.SMTP_PORT.trim().length > 0;
+    typeof source.SMTP_PORT === 'string' && source.SMTP_PORT.trim().length > 0;
 
   if (value.MAIL_TRANSPORT === 'smtp' && (!hasSmtpConfig || !hasExplicitSmtpPort)) {
     throw new Error(
@@ -376,6 +472,119 @@ const validateEnv = (): EnvConfig => {
     throw new Error(
       'Environment validation failed: production requires SMTP_HOST and SMTP_FROM_EMAIL',
     );
+  }
+
+  if (value.NODE_ENV === 'production') {
+    if (!value.TRUST_PROXY || !value.ENFORCE_HTTPS) {
+      throw new Error(
+        'Environment validation failed: production requires TRUST_PROXY=true and ENFORCE_HTTPS=true',
+      );
+    }
+
+    const productionOrigins = String(value.CORS_ORIGIN)
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean);
+    if (
+      !value.CORS_STRICT ||
+      productionOrigins.length === 0 ||
+      productionOrigins.some((origin) => !validateProductionOrigin(origin))
+    ) {
+      throw new Error(
+        'Environment validation failed: production requires strict explicit HTTPS CORS origins',
+      );
+    }
+
+    if (value.ENABLE_LEGACY_API_PREFIX) {
+      throw new Error(
+        'Environment validation failed: production requires ENABLE_LEGACY_API_PREFIX=false',
+      );
+    }
+
+    if (!value.METRICS_ENABLED || unsafeProductionSecret(value.METRICS_TOKEN)) {
+      throw new Error(
+        'Environment validation failed: production requires protected metrics with a non-placeholder token',
+      );
+    }
+
+    if (value.API_DOCS_ENABLED && unsafeProductionSecret(value.API_DOCS_TOKEN)) {
+      throw new Error(
+        'Environment validation failed: enabled production API docs require a non-placeholder token',
+      );
+    }
+
+    if (value.LOG_PRETTY || value.LOG_TO_FILE) {
+      throw new Error(
+        'Environment validation failed: production requires redacted JSON logs on stdout (LOG_PRETTY=false, LOG_TO_FILE=false)',
+      );
+    }
+
+    if (!value.PASSWORD_RESET_REQUIRE_REAL_DELIVERY) {
+      throw new Error(
+        'Environment validation failed: production requires PASSWORD_RESET_REQUIRE_REAL_DELIVERY=true',
+      );
+    }
+
+    let publicApiUrl: URL;
+    try {
+      publicApiUrl = new URL(String(value.APP_PUBLIC_API_URL));
+    } catch {
+      throw new Error(
+        'Environment validation failed: APP_PUBLIC_API_URL must be a valid production HTTPS URL',
+      );
+    }
+    if (
+      publicApiUrl.protocol !== 'https:' ||
+      publicApiUrl.username ||
+      publicApiUrl.password ||
+      !validateProductionOrigin(publicApiUrl.origin)
+    ) {
+      throw new Error(
+        'Environment validation failed: APP_PUBLIC_API_URL must be a public HTTPS URL in production',
+      );
+    }
+
+    const requiredStrongSecrets = [
+      ['DB_PASSWORD', value.DB_PASSWORD],
+      ['JWT_SECRET_CURRENT', value.JWT_SECRET_CURRENT],
+      ['JWT_REFRESH_SECRET_CURRENT', value.JWT_REFRESH_SECRET_CURRENT],
+      ['SUPER_ADMIN_PASSWORD', value.SUPER_ADMIN_PASSWORD],
+    ] as const;
+    const unsafeSecrets = requiredStrongSecrets
+      .filter(([, secret]) => unsafeProductionSecret(secret))
+      .map(([name]) => name);
+    if (unsafeSecrets.length > 0) {
+      throw new Error(
+        `Environment validation failed: insecure or placeholder production secrets: ${unsafeSecrets.join(', ')}`,
+      );
+    }
+
+    const hasSmtpUser = String(value.SMTP_USER).trim().length > 0;
+    const hasSmtpPassword = String(value.SMTP_PASS).trim().length > 0;
+    if (hasSmtpUser !== hasSmtpPassword) {
+      throw new Error(
+        'Environment validation failed: SMTP_USER and SMTP_PASS must be set together',
+      );
+    }
+    if (hasSmtpPassword && unsafeProductionSecret(value.SMTP_PASS)) {
+      throw new Error(
+        'Environment validation failed: SMTP_PASS must not be a placeholder in production',
+      );
+    }
+    if (hasSmtpUser && unsafeProductionIdentifier(value.SMTP_USER)) {
+      throw new Error(
+        'Environment validation failed: SMTP_USER must not be a placeholder in production',
+      );
+    }
+
+    if (
+      String(value.AI_CALLBACK_SECRET).trim().length > 0 &&
+      unsafeProductionSecret(value.AI_CALLBACK_SECRET)
+    ) {
+      throw new Error(
+        'Environment validation failed: AI_CALLBACK_SECRET must not be a placeholder in production',
+      );
+    }
   }
 
   if (value.NODE_ENV === 'production' && value.MALWARE_SCANNER_MODE !== 'clamav') {
@@ -419,7 +628,7 @@ const validateEnv = (): EnvConfig => {
       String(value.FIREBASE_SERVICE_ACCOUNT_JSON ?? '').trim().length > 0 ||
       String(value.FIREBASE_SERVICE_ACCOUNT_BASE64 ?? '').trim().length > 0 ||
       String(value.FIREBASE_SERVICE_ACCOUNT_PATH ?? '').trim().length > 0 ||
-      String(process.env.GOOGLE_APPLICATION_CREDENTIALS ?? '').trim().length > 0;
+      String(source.GOOGLE_APPLICATION_CREDENTIALS ?? '').trim().length > 0;
 
     if (!hasInlineFirebaseConfig) {
       throw new Error(
@@ -431,4 +640,63 @@ const validateEnv = (): EnvConfig => {
   return value as EnvConfig;
 };
 
-export { validateEnv };
+const workloadWorkerEnvSchema = Joi.object({
+  NODE_ENV: Joi.string().valid('development', 'test', 'production').default('development'),
+  DB_HOST: Joi.string().required(),
+  DB_PORT: Joi.number().port().required(),
+  DB_NAME: Joi.string().required(),
+  DB_USER: Joi.string().required(),
+  DB_PASSWORD: Joi.string().required(),
+  DB_MAX_CONNECTIONS: Joi.number().integer().min(1).default(20),
+  WORKLOAD_WORKER_MODE: Joi.string().valid('inline', 'external', 'disabled').default('inline'),
+  WORKLOAD_HARD_EXIT_ON_TIMEOUT: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(false),
+  LOG_PRETTY: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(true),
+  LOG_TO_FILE: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(false),
+}).unknown(true);
+
+const validateWorkloadWorkerEnv = (
+  source: NodeJS.ProcessEnv = process.env,
+): WorkloadWorkerEnvConfig => {
+  const { error, value } = workloadWorkerEnvSchema.validate(source, { abortEarly: false });
+  if (error) {
+    const details = error.details.map((detail: { message: string }) => detail.message).join('; ');
+    throw new Error(`Workload worker environment validation failed: ${details}`);
+  }
+
+  if (value.NODE_ENV === 'production') {
+    if (unsafeProductionSecret(value.DB_PASSWORD)) {
+      throw new Error(
+        'Workload worker environment validation failed: DB_PASSWORD is insecure or a placeholder',
+      );
+    }
+    if (value.WORKLOAD_WORKER_MODE !== 'external' || !value.WORKLOAD_HARD_EXIT_ON_TIMEOUT) {
+      throw new Error(
+        'Workload worker environment validation failed: production requires an external worker with hard timeout exit',
+      );
+    }
+    if (value.LOG_PRETTY || value.LOG_TO_FILE) {
+      throw new Error(
+        'Workload worker environment validation failed: production requires redacted JSON stdout logs',
+      );
+    }
+  }
+
+  return value as WorkloadWorkerEnvConfig;
+};
+
+export { validateEnv, validateWorkloadWorkerEnv };

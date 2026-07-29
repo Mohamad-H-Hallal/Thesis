@@ -3,7 +3,7 @@ loadBackendEnvFiles();
 
 const logger = require('../utils/logger');
 const { closePool, testConnection } = require('../config/database');
-const { validateEnv } = require('../config/env');
+const { validateWorkloadWorkerEnv } = require('../config/env');
 const { getPendingMigrations } = require('../db/migrationRunner');
 import {
   startWorkloadWorker,
@@ -11,7 +11,7 @@ import {
   waitForWorkloadWorkerIdle,
 } from './workloadWorker';
 
-const env = validateEnv();
+const env = validateWorkloadWorkerEnv();
 let shuttingDown = false;
 
 const shutdown = async (signal: string): Promise<void> => {

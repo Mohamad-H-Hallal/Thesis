@@ -1,5 +1,10 @@
 # Release Checklist (Phase 11)
 
+> Historical evidence only. This checklist predates the Phase 3–8
+> pre-deployment hardening program and is not current deployment approval.
+> Current Phase 5 gates are tracked in
+> [`phase-5-production-infrastructure-observability.md`](../predeployment/phase-5-production-infrastructure-observability.md).
+
 ## A) Backend Quality Gates
 - [x] `npm ci`
 - [x] `npm run lint`

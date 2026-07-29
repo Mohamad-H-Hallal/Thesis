@@ -1,4 +1,4 @@
-FROM node:22-alpine AS build
+FROM node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS build
 WORKDIR /app/apps/api
 
 COPY apps/api/package*.json ./
@@ -13,7 +13,7 @@ RUN npm run build \
   && npm prune --omit=dev \
   && npm cache clean --force
 
-FROM node:22-alpine AS runtime
+FROM node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS runtime
 ENV NODE_ENV=production
 WORKDIR /app/apps/api
 

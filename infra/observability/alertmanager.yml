@@ -1,0 +1,14 @@
+route:
+  receiver: staging-receiver-required
+  group_by:
+    - alertname
+    - severity
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  # This intentionally has no delivery integration. Replace it in staging with
+  # an approved email, PagerDuty, Slack, or generic webhook receiver and prove
+  # delivery before release. Prometheus still records firing alerts meanwhile.
+  - name: staging-receiver-required

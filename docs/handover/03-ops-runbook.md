@@ -1,69 +1,56 @@
 # Operations Runbook (Phase 11 Production)
 
+> Phase 5 pre-deployment hardening supersedes the old direct-start and HTTP
+> instructions below. The canonical security/operations procedure is
+> [`production-infrastructure-observability.md`](../security/production-infrastructure-observability.md).
+> Do not deploy from this historical Phase 11 runbook. Phase 7 will reconcile
+> the final release runbook after all hardening phases are merged.
+
 ## 1) Production Stack Overview
-Primary deploy file: `compose.prod.yml`
+Primary reference files: `compose.prod.yml` and `compose.observability.yml`
 
 Services:
 - `db` (Postgres/PostGIS) with persistent volume `postgis_data`
-- `migrate` one-off service running `node dist/db/migrate.js`
+- `migrate` one-off service running with the database-owner credential
+- `db-security` one-off restricted runtime-role grant service
+- `valkey`, `clamav`, and a separate `workload-worker`
 - `api` Node.js production build (no watch mode)
-- `nginx` reverse proxy, TLS-ready config
+- `nginx` TLS reverse proxy and Certbot bootstrap/renewal services
+- internal Prometheus, Alertmanager, blackbox exporter, Loki, and Alloy
 
 Routing:
 - `/api/*` -> API container
-- `/docs/*` -> API docs
+- `/docs`, `/ready`, and `/metrics` are denied at the public edge
 - `/` -> Flutter web build (if present at `apps/mobile/build/web`)
 
-## 2) First-Time Setup (Windows)
-1. Prepare env file:
+## 2) Repository Validation
+
+These commands do not deploy:
+
 ```powershell
-cd D:\GIS_APP
-Copy-Item .env.prod.example .env
-```
-Set a non-conflicting public port for local verification if needed:
-```powershell
-# Example for local Windows host (avoid common 80/8080 conflicts)
-(Get-Content .env) -replace '^NGINX_HTTP_PORT=.*', 'NGINX_HTTP_PORT=8088' | Set-Content .env
-```
-2. Replace placeholder secrets in `.env` OR use Docker secrets files from `secrets/README.md`.
-3. Validate compose:
-```powershell
-docker compose -f compose.prod.yml config
-```
-4. Start stack:
-```powershell
-docker compose -f compose.prod.yml up -d --build
-```
-5. Verify status:
-```powershell
-docker compose -f compose.prod.yml ps
-$port = (Get-Content .env | Where-Object { $_ -like 'NGINX_HTTP_PORT=*' }).Split('=')[1]
-Invoke-WebRequest "http://localhost:$port/health"
-Invoke-WebRequest "http://localhost:$port/api/v1"
-Invoke-WebRequest "http://localhost:$port/docs/openapi.yaml"
+npm --prefix apps/api run production:config:check
+npm --prefix apps/api run database:grants:check
+npm --prefix apps/api run observability:config:check
 ```
 
 ## 3) Staging Setup
-1. Copy staging template:
-```powershell
-Copy-Item .env.staging.example .env
-```
-2. Configure staging domain/CORS/secrets.
-3. Deploy with same compose file:
-```powershell
-docker compose -f compose.prod.yml up -d --build
-```
+
+Staging setup requires explicit approval and the external gates in the Phase 5
+security design. Use a real non-production DNS name, unique staging secrets,
+an approved alert receiver, encrypted off-server backup, and a documented
+rollback. Never reuse production credentials.
 
 ## 4) Environment Variables (Required)
 Core:
 - `NODE_ENV`, `HOST`, `PORT`, `TRUST_PROXY`, `ENFORCE_HTTPS`
 
 Database:
-- `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` (or `POSTGRES_PASSWORD_FILE`)
-- `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `MIGRATIONS_DIR`
+- `POSTGRES_DB`, `POSTGRES_USER`, `DB_RUNTIME_USER`
+- database owner/runtime secret files selected by the host environment
+- `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `MIGRATIONS_DIR`
 
 Auth:
-- `JWT_SECRET`, `JWT_SECRET_CURRENT`, `JWT_REFRESH_SECRET`, `JWT_REFRESH_SECRET_CURRENT`
+- mounted JWT access/refresh secret files
 - rotation fields: `JWT_SECRET_PREVIOUS`, `JWT_REFRESH_SECRET_PREVIOUS`
 
 API/security:
@@ -74,7 +61,7 @@ API/security:
 
 Observability:
 - `METRICS_ENABLED`
-- `METRICS_TOKEN` (or `METRICS_TOKEN_FILE`) required when metrics are enabled in production.
+- mounted metrics token required when metrics are enabled in production
 
 ## 5) Migrations and DB Source of Truth
 - Canonical migrations: `infra/migrations`
@@ -129,7 +116,11 @@ Evidence:
 - `docs/handover/evidence/port-5433-container-owner.log`
 - `docs/handover/evidence/port-5433-pid-owner.log`
 
-## 9) Smoke Test
+## 9) Historical Smoke Test
+
+The old smoke scripts expect public HTTP and public API docs, so they are not a
+Phase 5 release gate. Phase 7 must replace them with HTTPS-only, hidden-ops
+release probes before deployment.
 PowerShell:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\smoke-test.ps1 -ComposeFile compose.prod.yml

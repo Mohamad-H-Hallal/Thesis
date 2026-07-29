@@ -1,0 +1,147 @@
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: critical dependency and edge failures trigger
+    interval: 1m
+    input_series:
+      - series: 'up{job="gis-api"}'
+        values: '0x10'
+      - series: 'probe_success{job="public-health"}'
+        values: '0x10'
+      - series: 'gis_api_dependency_ready{dependency="database"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: GisApiUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: gis-api
+              severity: critical
+            exp_annotations:
+              summary: GIS API metrics endpoint is unavailable
+      - eval_time: 3m
+        alertname: GisPublicHealthCheckFailed
+        exp_alerts:
+          - exp_labels:
+              job: public-health
+              severity: critical
+            exp_annotations:
+              summary: Public HTTPS health check is failing
+      - eval_time: 3m
+        alertname: GisRequiredDependencyUnavailable
+        exp_alerts:
+          - exp_labels:
+              dependency: database
+              severity: critical
+            exp_annotations:
+              summary: Required GIS API dependency is unavailable
+
+  - name: attack pressure and high error rate trigger
+    interval: 1m
+    input_series:
+      - series: 'gis_api_http_requests_total{path="/api/v1/auth/login",status_class="4xx",status_code="401"}'
+        values: '0+120x20'
+      - series: 'gis_api_http_requests_total{path="/api/v1/projects",status_class="5xx",status_code="500"}'
+        values: '0+60x20'
+      - series: 'gis_api_http_requests_total{path="/api/v1/projects",status_class="2xx",status_code="200"}'
+        values: '0+60x20'
+      - series: 'gis_api_http_requests_total{path="/api/v1/imports",status_class="4xx",status_code="429"}'
+        values: '0+60x20'
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: GisAuthenticationAttackSuspected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: Sustained authentication failures detected
+      - eval_time: 12m
+        alertname: GisApiHighErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: GIS API 5xx rate is above 5 percent
+      - eval_time: 11m
+        alertname: GisRateLimitPressure
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: Sustained API rate-limit responses detected
+
+  - name: storage queues malware and certificate gates trigger
+    interval: 1m
+    input_series:
+      - series: 'gis_api_storage_available_bytes{area="uploads"}'
+        values: '1000000x40'
+      - series: 'gis_api_workload_jobs{status="dead_letter"}'
+        values: '1x40'
+      - series: 'gis_api_media_cleanup_backlog'
+        values: '101x40'
+      - series: 'gis_api_quarantine_pending'
+        values: '11x40'
+      - series: 'gis_api_malware_detections_recent'
+        values: '1x40'
+      - series: 'probe_ssl_earliest_cert_expiry{job="public-health"}'
+        values: '1000000x40'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: GisStorageLow
+        exp_alerts:
+          - exp_labels:
+              area: uploads
+              severity: critical
+            exp_annotations:
+              summary: API-managed storage has less than 5 GiB available
+      - eval_time: 7m
+        alertname: GisWorkloadDeadLettered
+        exp_alerts:
+          - exp_labels:
+              status: dead_letter
+              severity: critical
+            exp_annotations:
+              summary: Durable workload jobs require operator review
+      - eval_time: 32m
+        alertname: GisMediaCleanupBacklog
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: Feature-media cleanup backlog is growing
+      - eval_time: 17m
+        alertname: GisQuarantineBacklog
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: Upload quarantine backlog requires review
+      - eval_time: 1m
+        alertname: GisMalwareDetected
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: Malware was detected in a recent upload
+      - eval_time: 17m
+        alertname: GisTlsCertificateExpiring
+        exp_alerts:
+          - exp_labels:
+              job: public-health
+              severity: warning
+            exp_annotations:
+              summary: Public TLS certificate expires in less than 14 days
+
+  - name: missing backup telemetry triggers
+    interval: 1m
+    alert_rule_test:
+      - eval_time: 32m
+        alertname: GisDatabaseBackupMissing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: No verified database backup has been reported in 26 hours

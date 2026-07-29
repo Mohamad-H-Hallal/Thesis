@@ -27,6 +27,10 @@
     "test:perf:workloads": "jest --config jest.config.cjs --runInBand test/phase4.performance.workloads.test.js",
     "test:perf": "npm run test:perf:bbox && npm run test:perf:exports && npm run test:perf:workloads",
     "openapi:check": "node scripts/check-openapi.js",
+    "production:config:check": "node ../../scripts/verify-production-config.js",
+    "observability:config:check": "node ../../scripts/verify-production-config.js --runtime",
+    "database:grants:check": "node ../../scripts/test-runtime-db-grants.js",
+    "database:full-chain:check": "npm run build && node ../../scripts/test-runtime-db-grants.js --full-schema",
     "lint": "eslint src test",
     "lint:fix": "eslint src test --fix",
     "audit:prod": "npm audit --omit=dev",
@@ -44,7 +48,7 @@
     "notifications:run": "tsx src/jobs/runNotificationMaintenance.ts",
     "workloads:worker": "tsx src/jobs/runWorkloadWorker.ts",
     "phase11:staging": "npm run migrate && npm run seed:staging && npm run staging:verify",
-    "release:gate": "npm run openapi:check && npm run lint && npm run typecheck && npm run test:ci && npm run test:perf && npm run audit:prod",
+    "release:gate": "npm run production:config:check && npm run openapi:check && npm run lint && npm run typecheck && npm run database:full-chain:check && npm run test:ci && npm run test:perf && npm run audit:prod",
     "migrate:prod": "node dist/db/migrate.js"
   },
   "keywords": [
