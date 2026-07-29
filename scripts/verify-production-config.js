@@ -215,6 +215,10 @@ const common = [
   '--memory',
   '512m',
 ];
+const hostFilesystemUser =
+  typeof process.getuid === 'function' && typeof process.getgid === 'function'
+    ? ['--user', `${process.getuid()}:${process.getgid()}`]
+    : [];
 
 const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gis-phase5-config-'));
 try {
@@ -351,6 +355,7 @@ try {
     const privateKeyPath = path.join(liveCertificatePath, 'privkey.pem');
     dockerRun([
       ...common,
+      ...hostFilesystemUser,
       '--volume',
       `${certificateRoot}:/certs:rw`,
       '--entrypoint',
