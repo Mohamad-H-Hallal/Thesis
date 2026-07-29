@@ -6,15 +6,15 @@ const compression = require('compression');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 
-const logger = require('./utils/logger');
 const { notFound, errorHandler } = require('./middleware/error');
 import { attachRequestContext } from './middleware/requestContext';
 import {
   collectRequestMetrics,
-  metricsHandler,
+  createMetricsHandler,
   readinessHandler,
   assertMetricsConfig,
 } from './middleware/observability';
+import { createOperationalTokenGuard } from './middleware/operationalAccess';
 import { broadcastWorkflowMutations } from './middleware/workflowBroadcast';
 import { offlineSyncIngressRateLimit } from './middleware/offlineSyncRateLimit';
 import { categoryIconsDir } from './config/upload';
@@ -78,7 +78,7 @@ const buildApp = (env) => {
   }
 
   if (env.TRUST_PROXY) {
-    app.set('trust proxy', 1);
+    app.set('trust proxy', env.TRUST_PROXY_HOPS);
   }
 
   const corsOriginHandler = (origin, callback) => {
@@ -102,7 +102,11 @@ const buildApp = (env) => {
       return;
     }
 
-    callback(new Error('Origin is not allowed by CORS'));
+    const corsError = new Error('Origin is not allowed by CORS') as Error & {
+      statusCode?: number;
+    };
+    corsError.statusCode = 403;
+    callback(corsError);
   };
 
   app.use(attachRequestContext);
@@ -115,10 +119,7 @@ const buildApp = (env) => {
       return;
     }
 
-    const forwardedProto = req.headers['x-forwarded-proto'];
-    const isHttps = req.secure || forwardedProto === 'https';
-
-    if (isHttps) {
+    if (req.secure) {
       next();
       return;
     }
@@ -154,7 +155,26 @@ const buildApp = (env) => {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   app.use(compression());
-  app.use('/docs', express.static(path.join(__dirname, '..', 'docs')));
+  if (env.API_DOCS_ENABLED) {
+    if (env.NODE_ENV === 'production') {
+      app.use(
+        '/docs',
+        createOperationalTokenGuard({
+          expectedToken: env.API_DOCS_TOKEN,
+          headerName: 'x-api-docs-token',
+          hidden: true,
+        }),
+      );
+    }
+    app.use(
+      '/docs',
+      express.static(path.join(__dirname, '..', 'docs'), {
+        dotfiles: 'deny',
+        index: false,
+        redirect: false,
+      }),
+    );
+  }
   app.use(
     '/uploads/category-icons',
     express.static(categoryIconsDir, {
@@ -167,14 +187,6 @@ const buildApp = (env) => {
 
   if (env.NODE_ENV === 'development') {
     app.use(morgan('dev'));
-  } else {
-    app.use(
-      morgan('combined', {
-        stream: {
-          write: (message) => logger.info(message.trim()),
-        },
-      })
-    );
   }
 
   const limiter = rateLimit({
@@ -210,14 +222,28 @@ const buildApp = (env) => {
       status: 'live',
       message: 'Server is running',
       timestamp: new Date().toISOString(),
-      environment: env.NODE_ENV,
       requestId: req.requestId,
     });
   });
   app.get('/ready', readinessHandler);
   assertMetricsConfig(env);
   if (env.METRICS_ENABLED) {
-    app.get('/metrics', metricsHandler);
+    if (String(env.METRICS_TOKEN ?? '').trim()) {
+      app.get(
+        '/metrics',
+        createOperationalTokenGuard({
+          expectedToken: env.METRICS_TOKEN,
+          headerName: 'x-metrics-token',
+        }),
+      );
+    }
+    app.get(
+      '/metrics',
+      createMetricsHandler({
+        uploadDir: env.UPLOAD_DIR,
+        exportDir: env.EXPORT_DIR,
+      }),
+    );
   }
 
   const metadataHandler = (req, res) => {
@@ -242,7 +268,7 @@ const buildApp = (env) => {
         settings: `${normalizedApiPrefix}/settings`,
         users: `${normalizedApiPrefix}/users (admin only)`,
       },
-      documentation: '/docs/openapi.yaml',
+      documentation: env.API_DOCS_ENABLED ? '/docs/openapi.yaml' : 'disabled',
       operations: {
         health: '/health',
         readiness: '/ready',

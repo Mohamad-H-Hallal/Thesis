@@ -53,6 +53,17 @@ const ensureMigrationsTable = async (client: PoolClient): Promise<void> => {
   `);
 };
 
+const requireMigrationsTable = async (client: PoolClient): Promise<void> => {
+  const result = await client.query<{ relation_name: string | null }>(
+    `SELECT to_regclass('public.schema_migrations')::text AS relation_name`,
+  );
+  if (!result.rows[0]?.relation_name) {
+    throw new Error(
+      'Required schema_migrations table is missing; run the one-shot migration service before production startup',
+    );
+  }
+};
+
 const loadMigrationFiles = async (): Promise<string[]> => {
   try {
     await fsPromises.mkdir(migrationsDir, { recursive: true });
@@ -126,7 +137,11 @@ const requireMigrationIntegrity = async (
 const getPendingMigrations = async (): Promise<string[]> => {
   const client = await pool.connect();
   try {
-    await ensureMigrationsTable(client);
+    if (process.env.NODE_ENV === 'production') {
+      await requireMigrationsTable(client);
+    } else {
+      await ensureMigrationsTable(client);
+    }
     const files = await loadMigrationFiles();
     const applied = await requireMigrationIntegrity(client, files);
 

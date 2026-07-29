@@ -27,8 +27,17 @@ load_secret_var() {
 load_secret_var DB_PASSWORD
 load_secret_var JWT_SECRET
 load_secret_var JWT_SECRET_CURRENT
+load_secret_var JWT_SECRET_PREVIOUS
 load_secret_var JWT_REFRESH_SECRET
 load_secret_var JWT_REFRESH_SECRET_CURRENT
+load_secret_var JWT_REFRESH_SECRET_PREVIOUS
+load_secret_var REDIS_PASSWORD
 load_secret_var METRICS_TOKEN
+load_secret_var API_DOCS_TOKEN
+load_secret_var SMTP_PASS
+load_secret_var SUPER_ADMIN_PASSWORD
+load_secret_var AI_CALLBACK_SECRET
+load_secret_var FIREBASE_SERVICE_ACCOUNT_JSON
+load_secret_var FIREBASE_SERVICE_ACCOUNT_BASE64
 
 exec "$@"

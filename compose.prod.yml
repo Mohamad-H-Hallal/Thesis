@@ -1,14 +1,16 @@
 services:
   db:
-    image: postgis/postgis:16-3.4
+    image: postgis/postgis:16-3.4@sha256:44126d872ac91993766c341e369c539e8196614321765d36a6f1bab0419a5fa5
     restart: unless-stopped
     env_file:
-      - .env
+      - ${API_ENV_FILE:-.env}
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_PASSWORD_FILE: ${POSTGRES_PASSWORD_FILE:-}
+      POSTGRES_PASSWORD: ""
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_admin_password
+    secrets:
+      - db_admin_password
     volumes:
       - postgis_data:/var/lib/postgresql/data
       - ./infra/db/init:/docker-entrypoint-initdb.d:ro
@@ -18,23 +20,90 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 2g
+    cpus: 2
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
 
   migrate:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
     env_file:
-      - .env
+      - ${API_ENV_FILE:-.env}
     environment:
       NODE_ENV: production
+      SERVICE_NAME: gis-migrate
       DB_HOST: db
       DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ""
+      DB_PASSWORD_FILE: /run/secrets/db_admin_password
       MIGRATIONS_DIR: /app/infra/migrations
+    secrets:
+      - db_admin_password
     depends_on:
       db:
         condition: service_healthy
-    entrypoint: ["node", "dist/db/migrate.js"]
+    command: ["node", "dist/db/migrate.js"]
     restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  db-security:
+    image: postgis/postgis:16-3.4@sha256:44126d872ac91993766c341e369c539e8196614321765d36a6f1bab0419a5fa5
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB}
+      DB_OWNER_USER: ${POSTGRES_USER}
+      DB_RUNTIME_USER: ${DB_RUNTIME_USER:?Set the restricted runtime database role}
+      DB_ADMIN_PASSWORD_FILE: /run/secrets/db_admin_password
+      DB_RUNTIME_PASSWORD_FILE: /run/secrets/db_runtime_password
+    secrets:
+      - db_admin_password
+      - db_runtime_password
+    volumes:
+      - ./infra/db/security/apply-runtime-grants.sh:/opt/gis/apply-runtime-grants.sh:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "/opt/gis/apply-runtime-grants.sh"]
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
 
   clamav:
     image: clamav/clamav:1.5.3-debian@sha256:9ea1c2bc1955c58d094bb3d168718d0173c7899096012523278ad76e06cc75a2
@@ -49,65 +118,114 @@ services:
       timeout: 10s
       retries: 10
       start_period: 120s
-    deploy:
-      resources:
-        limits:
-          memory: 4G
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 4g
+    cpus: 2
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
 
   valkey:
     image: valkey/valkey:8.1.9-alpine@sha256:a038175878d66b9d274fbf8be73c0305e93798b83917647f167e18cef3c71eec
     restart: unless-stopped
-    environment:
-      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?Set VALKEY_PASSWORD to a URL-safe secret}
     command:
       [
         "sh",
         "-c",
-        "exec valkey-server --appendonly yes --requirepass \"$$VALKEY_PASSWORD\"",
+        "exec valkey-server --appendonly yes --requirepass \"$$(cat /run/secrets/redis_password)\"",
       ]
+    secrets:
+      - redis_password
     volumes:
       - valkey_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "valkey-cli -a \"$$VALKEY_PASSWORD\" ping | grep -q PONG"]
+      test:
+        [
+          "CMD-SHELL",
+          "valkey-cli -a \"$$(cat /run/secrets/redis_password)\" ping 2>/dev/null | grep -q PONG",
+        ]
       interval: 5s
       timeout: 3s
       retries: 10
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
 
   api:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+    init: true
     env_file:
-      - .env
+      - ${API_ENV_FILE:-.env}
     environment:
       NODE_ENV: production
+      SERVICE_NAME: gis-api
       HOST: 0.0.0.0
       PORT: 3000
       DB_HOST: db
       DB_PORT: 5432
+      DB_USER: ${DB_RUNTIME_USER}
       MIGRATIONS_DIR: /app/infra/migrations
-      # Docker secrets-style pattern: map /run/secrets/* + *_FILE vars.
-      DB_PASSWORD_FILE: ${DB_PASSWORD_FILE:-}
-      JWT_SECRET_FILE: ${JWT_SECRET_FILE:-}
-      JWT_SECRET_CURRENT_FILE: ${JWT_SECRET_CURRENT_FILE:-}
-      JWT_REFRESH_SECRET_FILE: ${JWT_REFRESH_SECRET_FILE:-}
-      JWT_REFRESH_SECRET_CURRENT_FILE: ${JWT_REFRESH_SECRET_CURRENT_FILE:-}
-      METRICS_TOKEN_FILE: ${METRICS_TOKEN_FILE:-}
+      DB_PASSWORD: ""
+      DB_PASSWORD_FILE: /run/secrets/db_runtime_password
+      JWT_SECRET: ""
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      JWT_SECRET_CURRENT: ""
+      JWT_SECRET_CURRENT_FILE: /run/secrets/jwt_secret
+      JWT_REFRESH_SECRET: ""
+      JWT_REFRESH_SECRET_FILE: /run/secrets/jwt_refresh_secret
+      JWT_REFRESH_SECRET_CURRENT: ""
+      JWT_REFRESH_SECRET_CURRENT_FILE: /run/secrets/jwt_refresh_secret
+      REDIS_PASSWORD: ""
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      METRICS_TOKEN: ""
+      METRICS_TOKEN_FILE: /run/secrets/metrics_token
+      SMTP_PASS: ""
+      SMTP_PASS_FILE: /run/secrets/smtp_password
+      SUPER_ADMIN_PASSWORD: ""
+      SUPER_ADMIN_PASSWORD_FILE: /run/secrets/super_admin_password
+      AI_CALLBACK_SECRET: ""
+      AI_CALLBACK_SECRET_FILE: /run/secrets/ai_callback_secret
+      API_DOCS_TOKEN: ""
+      API_DOCS_TOKEN_FILE: /run/secrets/api_docs_token
       MALWARE_SCANNER_MODE: clamav
       CLAMAV_HOST: clamav
       CLAMAV_PORT: 3310
       RATE_LIMIT_STORE: redis
-      REDIS_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
+      REDIS_URL: redis://valkey:6379
       WORKLOAD_WORKER_MODE: external
       WORKLOAD_HARD_EXIT_ON_TIMEOUT: "true"
+    secrets:
+      - db_runtime_password
+      - jwt_secret
+      - jwt_refresh_secret
+      - redis_password
+      - metrics_token
+      - smtp_password
+      - super_admin_password
+      - ai_callback_secret
+      - api_docs_token
     volumes:
       - api_uploads:/app/apps/api/uploads
       - api_exports:/app/apps/api/exports
-      - ./secrets:/run/secrets:ro
     depends_on:
       db:
         condition: service_healthy
-      migrate:
+      db-security:
         condition: service_completed_successfully
       clamav:
         condition: service_healthy
@@ -116,67 +234,228 @@ services:
     expose:
       - "3000"
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 30s
     restart: unless-stopped
+    stop_grace_period: 45s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1536m
+    cpus: 2
+    logging:
+      driver: json-file
+      options:
+        max-size: 50m
+        max-file: "10"
 
   workload-worker:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+    init: true
     env_file:
-      - .env
+      - ${API_ENV_FILE:-.env}
     environment:
       NODE_ENV: production
+      SERVICE_NAME: gis-workload-worker
       DB_HOST: db
       DB_PORT: 5432
+      DB_USER: ${DB_RUNTIME_USER}
       MIGRATIONS_DIR: /app/infra/migrations
-      DB_PASSWORD_FILE: ${DB_PASSWORD_FILE:-}
-      RATE_LIMIT_STORE: redis
-      REDIS_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
+      DB_PASSWORD: ""
+      DB_PASSWORD_FILE: /run/secrets/db_runtime_password
       WORKLOAD_WORKER_MODE: external
       WORKLOAD_HARD_EXIT_ON_TIMEOUT: "true"
-      MALWARE_SCANNER_MODE: clamav
-      CLAMAV_HOST: clamav
-      CLAMAV_PORT: 3310
+    secrets:
+      - db_runtime_password
     volumes:
       - api_uploads:/app/apps/api/uploads
       - api_exports:/app/apps/api/exports
-      - ./secrets:/run/secrets:ro
     depends_on:
       db:
         condition: service_healthy
-      migrate:
+      db-security:
         condition: service_completed_successfully
-      clamav:
-        condition: service_healthy
     command: ["node", "dist/jobs/runWorkloadWorker.js"]
     restart: unless-stopped
+    stop_grace_period: 45s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 2g
+    cpus: 2
+    logging:
+      driver: json-file
+      options:
+        max-size: 50m
+        max-file: "10"
 
   nginx:
-    image: nginxinc/nginx-unprivileged:1.27-alpine
+    image: nginxinc/nginx-unprivileged:1.29.4-alpine@sha256:a6c4f61f456b85b8fdf7ec7ab28cc3e299440e6fb4a9dea520e5fd8fd440025e
     depends_on:
       api:
         condition: service_healthy
+    environment:
+      PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME:?Set the public DNS hostname}
+      NGINX_ENVSUBST_FILTER: ^PUBLIC_HOSTNAME$
     ports:
       - "${NGINX_HTTP_PORT:-80}:8080"
+      - "${NGINX_HTTPS_PORT:-443}:8443"
     volumes:
-      - ./infra/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./infra/nginx/production.conf.template:/etc/nginx/templates/default.conf.template:ro
       - ./apps/mobile/build/web:/usr/share/nginx/html:ro
+      - letsencrypt:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+    command:
+      [
+        "/bin/sh",
+        "-c",
+        "(while sleep 21600; do nginx -s reload; done) & exec nginx -g 'daemon off;'",
+      ]
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/health || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "wget --no-check-certificate -q -O /dev/null https://127.0.0.1:8443/health || exit 1",
+        ]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 15s
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /etc/nginx/conf.d:rw,noexec,nosuid,size=8m
+      - /var/cache/nginx:rw,noexec,nosuid,size=64m
+      - /var/run:rw,noexec,nosuid,size=8m
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 1
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "10"
+
+  certbot-renew:
+    image: certbot/certbot:v5.7.0@sha256:34ee91d2f43008eb78a007d22f23ed4b2eaa9a454cb27ca2c042b49527a695b4
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        trap exit TERM;
+        while :; do
+          certbot renew --webroot --webroot-path /var/www/certbot --quiet;
+          chown -R 101:101 /etc/letsencrypt/live /etc/letsencrypt/archive 2>/dev/null || true;
+          find /etc/letsencrypt/live /etc/letsencrypt/archive -type f -exec chmod 0640 {} \; 2>/dev/null || true;
+          sleep 43200 & wait $$!;
+        done
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  certbot-bootstrap:
+    image: certbot/certbot:v5.7.0@sha256:34ee91d2f43008eb78a007d22f23ed4b2eaa9a454cb27ca2c042b49527a695b4
+    profiles:
+      - certificate-bootstrap
+    environment:
+      PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME:?Set the public DNS hostname}
+      CERTBOT_EMAIL: ${CERTBOT_EMAIL:?Set the certificate contact email}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        case "$$PUBLIC_HOSTNAME" in ""|*[!A-Za-z0-9.-]*) echo "Invalid PUBLIC_HOSTNAME" >&2; exit 1;; esac;
+        case "$$CERTBOT_EMAIL" in *@*.*) ;; *) echo "Invalid CERTBOT_EMAIL" >&2; exit 1;; esac;
+        certbot certonly --standalone --http-01-port 8080 --non-interactive
+        --agree-tos --no-eff-email --email "$$CERTBOT_EMAIL" -d "$$PUBLIC_HOSTNAME";
+        chown -R 101:101 /etc/letsencrypt/live /etc/letsencrypt/archive;
+        find /etc/letsencrypt/live /etc/letsencrypt/archive -type f -exec chmod 0640 {} \;
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:8080"
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /var/lib/letsencrypt:rw,noexec,nosuid,size=64m
+      - /var/log/letsencrypt:rw,noexec,nosuid,size=32m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+secrets:
+  db_admin_password:
+    file: ${DB_ADMIN_PASSWORD_SECRET_FILE:-./secrets/db_admin_password.txt}
+  db_runtime_password:
+    file: ${DB_RUNTIME_PASSWORD_SECRET_FILE:-./secrets/db_runtime_password.txt}
+  jwt_secret:
+    file: ${JWT_SECRET_FILE_HOST:-./secrets/jwt_secret.txt}
+  jwt_refresh_secret:
+    file: ${JWT_REFRESH_SECRET_FILE_HOST:-./secrets/jwt_refresh_secret.txt}
+  redis_password:
+    file: ${REDIS_PASSWORD_SECRET_FILE:-./secrets/redis_password.txt}
+  metrics_token:
+    file: ${METRICS_TOKEN_SECRET_FILE:-./secrets/metrics_token.txt}
+  smtp_password:
+    file: ${SMTP_PASSWORD_SECRET_FILE:-./secrets/smtp_password.txt}
+  super_admin_password:
+    file: ${SUPER_ADMIN_PASSWORD_SECRET_FILE:-./secrets/super_admin_password.txt}
+  ai_callback_secret:
+    file: ${AI_CALLBACK_SECRET_FILE_HOST:-./secrets/ai_callback_secret.txt}
+  api_docs_token:
+    file: ${API_DOCS_TOKEN_SECRET_FILE:-./secrets/api_docs_token.txt}
 
 volumes:
   postgis_data:
+    name: ${POSTGIS_PROD_DATA_VOLUME:?Set POSTGIS_PROD_DATA_VOLUME}
   api_uploads:
   api_exports:
   clamav_signatures:
   valkey_data:
+  letsencrypt:
+  certbot_www:

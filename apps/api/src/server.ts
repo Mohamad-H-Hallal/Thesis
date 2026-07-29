@@ -200,7 +200,11 @@ const startServer = async () => {
       logger.info(`Server address: http://${env.HOST}:${env.PORT}`);
       logger.info(`Health check: http://${env.HOST}:${env.PORT}/health`);
       logger.info(`API root: http://${env.HOST}:${env.PORT}${apiPrefix}`);
-      logger.info(`API documentation: http://${env.HOST}:${env.PORT}/docs/openapi.yaml`);
+      logger.info(
+        env.API_DOCS_ENABLED
+          ? `API documentation endpoint enabled at /docs/openapi.yaml`
+          : 'API documentation endpoint disabled',
+      );
       logAiServerRuntimeConfig();
     });
     closeWorkflowSocket = attachWorkflowSocket(server, apiPrefix);

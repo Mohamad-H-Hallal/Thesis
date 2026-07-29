@@ -1,10 +1,15 @@
-# Production-oriented template. Copy .env.prod.example to an ignored .env or
-# point your deployment platform at equivalent secret-managed variables.
-# Reverse proxy/TLS can be handled by the nginx service here or by an external
-# load balancer in front of the api service.
+# Historical AI research/demo stack only. It is intentionally excluded from
+# the production configuration gate and must not be deployed as staging or
+# production. The AI pipeline still requires separate model/data governance,
+# credential isolation, image pinning, TLS, least-privilege storage/database
+# access, observability, and rollback work. The only canonical release
+# reference is compose.prod.yml plus compose.observability.yml.
+#
+# This file is retained so controlled local research can reproduce the earlier
+# AI demo without weakening the hardened application stack.
 # Do not commit real DATABASE_URL, GEE keys, SMTP credentials, JWT secrets, or
 # AI_CALLBACK_SECRET. In real production set AI_DRY_RUN=false.
-name: ${COMPOSE_PROJECT_NAME:-gis_app_prod}
+name: ${COMPOSE_PROJECT_NAME:-gis_app_ai_research}
 
 services:
   db:

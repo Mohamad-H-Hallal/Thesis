@@ -8,6 +8,7 @@ type RateLimitStoreMode = 'memory' | 'redis';
 interface RateLimitBackendConfig {
   RATE_LIMIT_STORE?: RateLimitStoreMode;
   REDIS_URL?: string;
+  REDIS_PASSWORD?: string;
   REDIS_CONNECT_TIMEOUT_MS?: number;
 }
 
@@ -26,6 +27,7 @@ class RateLimitBackendUnavailableError extends Error {
 let configuredMode: RateLimitStoreMode =
   process.env.RATE_LIMIT_STORE === 'redis' ? 'redis' : 'memory';
 let configuredRedisUrl = process.env.REDIS_URL?.trim() ?? '';
+let configuredRedisPassword = process.env.REDIS_PASSWORD ?? '';
 let configuredConnectTimeoutMs = Math.max(
   1000,
   Number.parseInt(process.env.REDIS_CONNECT_TIMEOUT_MS ?? '5000', 10) || 5000,
@@ -35,14 +37,23 @@ let redisClient: RedisClientType | null = null;
 const configureRateLimitBackend = (config: RateLimitBackendConfig): void => {
   const nextMode = config.RATE_LIMIT_STORE === 'redis' ? 'redis' : 'memory';
   const nextUrl = String(config.REDIS_URL ?? '').trim();
+  const nextPassword = String(config.REDIS_PASSWORD ?? '');
   const nextTimeout = Math.max(1000, Number(config.REDIS_CONNECT_TIMEOUT_MS ?? 5000));
 
-  if (redisClient && (nextMode !== configuredMode || nextUrl !== configuredRedisUrl)) {
+  if (
+    redisClient &&
+    (
+      nextMode !== configuredMode ||
+      nextUrl !== configuredRedisUrl ||
+      nextPassword !== configuredRedisPassword
+    )
+  ) {
     throw new Error('Rate-limit backend cannot be reconfigured after its client is created');
   }
 
   configuredMode = nextMode;
   configuredRedisUrl = nextUrl;
+  configuredRedisPassword = nextPassword;
   configuredConnectTimeoutMs = nextTimeout;
 };
 
@@ -56,6 +67,7 @@ const getOrCreateRedisClient = (): RedisClientType => {
 
   redisClient = createClient({
     url: configuredRedisUrl,
+    ...(configuredRedisPassword ? { password: configuredRedisPassword } : {}),
     socket: {
       connectTimeout: configuredConnectTimeoutMs,
       reconnectStrategy: (retries) => {

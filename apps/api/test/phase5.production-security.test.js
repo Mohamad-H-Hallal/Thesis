@@ -1,0 +1,165 @@
+const { validateEnv, validateWorkloadWorkerEnv } = require('../src/config/env');
+const { safeTokenEqual } = require('../src/middleware/operationalAccess');
+const { normalizeRequestId, normalizeRequestPath } = require('../src/middleware/requestContext');
+const { redactSensitive, sanitizeLogString } = require('../src/utils/logger');
+
+const validProductionEnv = (overrides = {}) => ({
+  NODE_ENV: 'production',
+  MAIL_TRANSPORT: 'smtp',
+  HOST: '0.0.0.0',
+  PORT: '3000',
+  TRUST_PROXY: 'true',
+  TRUST_PROXY_HOPS: '1',
+  ENFORCE_HTTPS: 'true',
+  DB_HOST: 'db',
+  DB_PORT: '5432',
+  DB_NAME: 'gis_app',
+  DB_USER: 'gis_runtime',
+  DB_PASSWORD: 'G7m4Q2v9N8s6K3x1',
+  JWT_SECRET: 'eK9w7Q2m4X8v6N3s1P5r0T2y7U4i9O6p',
+  JWT_SECRET_CURRENT: 'eK9w7Q2m4X8v6N3s1P5r0T2y7U4i9O6p',
+  JWT_REFRESH_SECRET: 'qP3n8V5m1X7k4S9r2T6w0Y8u5I1o7A4d',
+  JWT_REFRESH_SECRET_CURRENT: 'qP3n8V5m1X7k4S9r2T6w0Y8u5I1o7A4d',
+  CORS_ORIGIN: 'https://collector.gis.gov.lb',
+  CORS_STRICT: 'true',
+  CORS_CREDENTIALS: 'true',
+  ENABLE_LEGACY_API_PREFIX: 'false',
+  RATE_LIMIT_STORE: 'redis',
+  REDIS_URL: 'redis://valkey:6379',
+  REDIS_PASSWORD: 'R6d2M8p4V9x1K7s3',
+  WORKLOAD_WORKER_MODE: 'external',
+  WORKLOAD_HARD_EXIT_ON_TIMEOUT: 'true',
+  LOG_PRETTY: 'false',
+  LOG_TO_FILE: 'false',
+  API_DOCS_ENABLED: 'false',
+  METRICS_ENABLED: 'true',
+  METRICS_TOKEN: 'M9x4Q7v2K8s5P1d6R3t0W4y7',
+  MALWARE_SCANNER_MODE: 'clamav',
+  PASSWORD_RESET_REQUIRE_REAL_DELIVERY: 'true',
+  SMTP_HOST: 'smtp.gis.gov.lb',
+  SMTP_PORT: '587',
+  SMTP_USER: 'gis-mailer',
+  SMTP_PASS: 'S8m2V5q9N4x7K1d6',
+  SMTP_FROM_EMAIL: 'no-reply@gis.gov.lb',
+  SUPER_ADMIN_EMAIL: 'superadmin@gis.gov.lb',
+  SUPER_ADMIN_PASSWORD: 'A7m3Q9v5K1x8R4d2',
+  SUPER_ADMIN_FULL_NAME: 'GIS Super Administrator',
+  APP_PUBLIC_API_URL: 'https://collector.gis.gov.lb',
+  AI_CALLBACK_SECRET: 'C9v3N7m1Q5x8K2d6R4t0W9y7',
+  ...overrides,
+});
+
+describe('Phase 5 production security controls', () => {
+  test('accepts a fail-closed production configuration', () => {
+    const env = validateEnv(validProductionEnv());
+    expect(env.NODE_ENV).toBe('production');
+    expect(env.ENFORCE_HTTPS).toBe(true);
+    expect(env.CORS_STRICT).toBe(true);
+    expect(env.METRICS_ENABLED).toBe(true);
+  });
+
+  test.each([
+    [{ ENFORCE_HTTPS: 'false' }, 'ENFORCE_HTTPS=true'],
+    [{ CORS_ORIGIN: 'http://collector.gis.gov.lb' }, 'HTTPS CORS origins'],
+    [{ CORS_ORIGIN: 'https://collector.example' }, 'HTTPS CORS origins'],
+    [{ CORS_ORIGIN: 'https://collector.example.gov.lb' }, 'HTTPS CORS origins'],
+    [{ ENABLE_LEGACY_API_PREFIX: 'true' }, 'ENABLE_LEGACY_API_PREFIX=false'],
+    [{ METRICS_ENABLED: 'false' }, 'protected metrics'],
+    [{ LOG_PRETTY: 'true' }, 'redacted JSON logs'],
+    [{ PASSWORD_RESET_REQUIRE_REAL_DELIVERY: 'false' }, 'PASSWORD_RESET_REQUIRE_REAL_DELIVERY=true'],
+    [{ DB_PASSWORD: 'replace-with-password' }, 'DB_PASSWORD'],
+    [{ SMTP_USER: 'replace-with-smtp-username' }, 'SMTP_USER'],
+  ])('rejects insecure production override %j', (override, expectedMessage) => {
+    expect(() => validateEnv(validProductionEnv(override))).toThrow(expectedMessage);
+  });
+
+  test('requires a strong token when production API docs are enabled', () => {
+    expect(() =>
+      validateEnv(validProductionEnv({ API_DOCS_ENABLED: 'true', API_DOCS_TOKEN: '' })),
+    ).toThrow('production API docs require');
+
+    expect(
+      validateEnv(
+        validProductionEnv({
+          API_DOCS_ENABLED: 'true',
+          API_DOCS_TOKEN: 'D4m8Q1v7K3x9R5s2N6p0T4w8',
+        }),
+      ).API_DOCS_ENABLED,
+    ).toBe(true);
+  });
+
+  test('workload worker validates only its required credential boundary', () => {
+    const workerEnv = validateWorkloadWorkerEnv({
+      NODE_ENV: 'production',
+      DB_HOST: 'db',
+      DB_PORT: '5432',
+      DB_NAME: 'gis_app',
+      DB_USER: 'gis_runtime',
+      DB_PASSWORD: 'G7m4Q2v9N8s6K3x1',
+      WORKLOAD_WORKER_MODE: 'external',
+      WORKLOAD_HARD_EXIT_ON_TIMEOUT: 'true',
+      LOG_PRETTY: 'false',
+      LOG_TO_FILE: 'false',
+    });
+    expect(workerEnv.DB_USER).toBe('gis_runtime');
+    expect(workerEnv.WORKLOAD_WORKER_MODE).toBe('external');
+
+    expect(() =>
+      validateWorkloadWorkerEnv({
+        ...workerEnv,
+        DB_PASSWORD: 'replace-with-password',
+      }),
+    ).toThrow('DB_PASSWORD');
+  });
+
+  test('compares operational tokens without accepting partial values', () => {
+    expect(safeTokenEqual('a-strong-operational-token', 'a-strong-operational-token')).toBe(true);
+    expect(safeTokenEqual('a-strong-operational', 'a-strong-operational-token')).toBe(false);
+    expect(safeTokenEqual('', 'a-strong-operational-token')).toBe(false);
+  });
+
+  test('removes query strings and high-cardinality identifiers from request paths', () => {
+    expect(
+      normalizeRequestPath(
+        '/api/v1/projects/88b10e32-d91f-4c04-a582-b1f03c4fb853/features?bbox=1,2,3,4&token=secret',
+      ),
+    ).toBe('/api/v1/projects/:id/features');
+  });
+
+  test('accepts only bounded safe request IDs', () => {
+    expect(normalizeRequestId('trace-123_A.B')).toBe('trace-123_A.B');
+    expect(normalizeRequestId('trace\r\nx-injected: yes')).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(normalizeRequestId('x'.repeat(129))).not.toBe('x'.repeat(129));
+  });
+
+  test('redacts nested credentials, private keys, tokens, and GIS payloads', () => {
+    const redacted = redactSensitive({
+      password: 'do-not-log',
+      nested: {
+        authorization: 'Bearer abc.def.ghi',
+        newPassword: 'also-do-not-log',
+        jwtSecretCurrent: 'never-log-this',
+        geometry: { type: 'Point', coordinates: [1, 2] },
+        attributes: { owner: 'sensitive-field-data' },
+        storagePath: 'tenant/project/private-object.jpg',
+        safeCount: 3,
+      },
+    });
+    expect(redacted.password).toBe('[REDACTED]');
+    expect(redacted.nested.authorization).toBe('[REDACTED]');
+    expect(redacted.nested.newPassword).toBe('[REDACTED]');
+    expect(redacted.nested.jwtSecretCurrent).toBe('[REDACTED]');
+    expect(redacted.nested.geometry).toBe('[REDACTED]');
+    expect(redacted.nested.attributes).toBe('[REDACTED]');
+    expect(redacted.nested.storagePath).toBe('[REDACTED]');
+    expect(redacted.nested.safeCount).toBe(3);
+
+    const line = sanitizeLogString(
+      'Authorization: Bearer abc.def.ghi redis://user:password@valkey:6379',
+    );
+    expect(line).not.toContain('abc.def.ghi');
+    expect(line).not.toContain('user:password');
+  });
+});

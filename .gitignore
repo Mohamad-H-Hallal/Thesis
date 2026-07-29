@@ -8,6 +8,7 @@
 *.log
 !docs/handover/evidence/*.log
 secrets/*.txt
+secrets/**/*.txt
 secrets/*.json
 secrets/**/*.json
 !secrets/README.md

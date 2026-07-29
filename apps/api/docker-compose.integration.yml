@@ -1,20 +1,27 @@
+# Local API integration dependencies only. This is not a production deployment
+# path: it intentionally has no TLS edge, database, secret manager, or
+# observability stack. Use ../../compose.prod.yml for staging/release work.
 services:
   valkey:
     image: valkey/valkey:8.1.9-alpine@sha256:a038175878d66b9d274fbf8be73c0305e93798b83917647f167e18cef3c71eec
     expose:
       - "6379"
-    environment:
-      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?Set VALKEY_PASSWORD to a URL-safe secret}
     command:
       [
         "sh",
         "-c",
-        "exec valkey-server --appendonly yes --requirepass \"$$VALKEY_PASSWORD\"",
+        "exec valkey-server --appendonly yes --requirepass \"$$(cat /run/secrets/redis_password)\"",
       ]
+    secrets:
+      - redis_password
     volumes:
       - valkey_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "valkey-cli -a \"$$VALKEY_PASSWORD\" ping | grep -q PONG"]
+      test:
+        [
+          "CMD-SHELL",
+          "valkey-cli -a \"$$(cat /run/secrets/redis_password)\" ping 2>/dev/null | grep -q PONG",
+        ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -47,7 +54,9 @@ services:
       CLAMAV_HOST: clamav
       CLAMAV_PORT: 3310
       RATE_LIMIT_STORE: redis
-      REDIS_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
+      REDIS_URL: redis://valkey:6379
+      REDIS_PASSWORD: ""
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
       WORKLOAD_WORKER_MODE: external
       WORKLOAD_HARD_EXIT_ON_TIMEOUT: "true"
     depends_on:
@@ -55,6 +64,8 @@ services:
         condition: service_healthy
       valkey:
         condition: service_healthy
+    secrets:
+      - redis_password
     restart: unless-stopped
 
   workload-worker:
@@ -69,7 +80,9 @@ services:
       CLAMAV_HOST: clamav
       CLAMAV_PORT: 3310
       RATE_LIMIT_STORE: redis
-      REDIS_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
+      REDIS_URL: redis://valkey:6379
+      REDIS_PASSWORD: ""
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
       WORKLOAD_WORKER_MODE: external
       WORKLOAD_HARD_EXIT_ON_TIMEOUT: "true"
     depends_on:
@@ -77,9 +90,15 @@ services:
         condition: service_healthy
       clamav:
         condition: service_healthy
+    secrets:
+      - redis_password
     command: ["node", "dist/jobs/runWorkloadWorker.js"]
     restart: unless-stopped
 
 volumes:
   clamav_signatures:
   valkey_data:
+
+secrets:
+  redis_password:
+    file: ../../secrets/redis_password.txt

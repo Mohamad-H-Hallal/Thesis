@@ -27,7 +27,7 @@ describe('API smoke tests', () => {
         const response = await request(app).get('/health');
         expect(response.status).toBe(200);
         expect(response.body.success).toBe(true);
-        expect(response.body.environment).toBe('test');
+        expect(response.body.environment).toBeUndefined();
     });
     test(`GET ${API_PREFIX} returns API metadata`, async () => {
         const response = await request(app).get(API_PREFIX);
@@ -39,6 +39,33 @@ describe('API smoke tests', () => {
         const response = await request(app).get('/docs/openapi.yaml');
         expect(response.status).toBe(200);
         expect(response.text).toContain('openapi: 3.0.3');
+    });
+    test('can hide API documentation completely', async () => {
+        const docsDisabledApp = buildApp({
+            ...testEnv,
+            API_DOCS_ENABLED: false,
+        });
+        const response = await request(docsDisabledApp).get('/docs/openapi.yaml');
+        expect(response.status).toBe(404);
+    });
+    test('protects and serves Prometheus metrics without sensitive route queries', async () => {
+        const metricsApp = buildApp({
+            ...testEnv,
+            METRICS_ENABLED: true,
+            METRICS_TOKEN: 'metrics-token-for-test-only',
+        });
+        const unauthorized = await request(metricsApp).get('/metrics');
+        expect(unauthorized.status).toBe(401);
+
+        await request(metricsApp).get('/health?token=must-not-appear');
+        const response = await request(metricsApp)
+            .get('/metrics')
+            .set('Authorization', 'Bearer metrics-token-for-test-only');
+        expect(response.status).toBe(200);
+        expect(response.headers['content-type']).toContain('text/plain');
+        expect(response.text).toContain('# TYPE gis_api_http_requests_total counter');
+        expect(response.text).toContain('gis_api_dependency_ready');
+        expect(response.text).not.toContain('must-not-appear');
     });
     test('allows localhost browser origins on arbitrary ports outside production', async () => {
         const response = await request(app)
@@ -57,7 +84,7 @@ describe('API smoke tests', () => {
         const response = await request(strictApp)
             .get('/health')
             .set('Origin', 'https://malicious.example.com');
-        expect(response.status).toBe(500);
+        expect(response.status).toBe(403);
         expect(response.body.success).toBe(false);
         expect(response.body.message).toContain('Origin is not allowed by CORS');
     });

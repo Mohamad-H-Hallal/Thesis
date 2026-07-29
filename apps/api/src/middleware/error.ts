@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { isRateLimitBackendUnavailableError } from '../services/sharedRateLimit.service';
+import { normalizeRequestPath } from './requestContext';
 const logger = require('../utils/logger');
 
 // Custom error class
@@ -169,12 +170,17 @@ const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunc
 
   // Request bodies and file contents are intentionally excluded. This also
   // keeps rejected unsafe payloads out of normal logs.
-  logger.error('Error:', {
-    message: error.message,
+  const logMethod = statusCode >= 500 ? 'error' : 'warn';
+  logger[logMethod]('Request failed', {
+    message:
+      process.env.NODE_ENV === 'production'
+        ? 'Request processing failed'
+        : error.message,
+    errorName: error.name,
     statusCode,
-    stack: error.stack,
+    stack: process.env.NODE_ENV === 'production' ? undefined : error.stack,
     requestId: req.requestId,
-    url: req.originalUrl,
+    path: normalizeRequestPath(req.originalUrl),
     method: req.method,
     ip: req.ip,
     userId: req.user?.id,

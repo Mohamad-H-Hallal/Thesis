@@ -183,7 +183,11 @@ The AI server calls the backend callback if the persisted status has
 
 ## Production Compose
 
-Use `docker-compose.prod.example.yml` as a template, not as a secrets file.
+`docker-compose.ai-research.example.yml` is retained only for controlled local
+AI research/demo reproduction. It is not a production template. A release AI
+integration must be redesigned as a hardened overlay on the canonical
+`compose.prod.yml` and `compose.observability.yml` stack after model/data
+governance and external staging gates are approved.
 Provide real values through an ignored `.env` file or a secret manager:
 
 - `DATABASE_URL` or DB service credentials

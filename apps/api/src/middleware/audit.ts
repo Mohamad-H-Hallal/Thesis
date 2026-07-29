@@ -27,7 +27,8 @@ interface DynamicAuditActionOptions extends Omit<AuditActionOptions, 'actionType
   ) => AuditActionType | null | undefined;
 }
 
-const SENSITIVE_KEYS = ['password', 'password_hash', 'token', 'refresh_token', 'refreshToken'];
+const SENSITIVE_KEY_PATTERN =
+  /^(?:password|password_hash|token|refresh_token|refreshToken|authorization|cookie|secret|private_?key|geometry|coordinates|feature_collection|file_buffer|raw_content)$/i;
 
 const sanitizeObject = (input: unknown): unknown => {
   if (Array.isArray(input)) {
@@ -41,7 +42,7 @@ const sanitizeObject = (input: unknown): unknown => {
   const obj = input as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
-    if (SENSITIVE_KEYS.includes(key)) {
+    if (SENSITIVE_KEY_PATTERN.test(key)) {
       out[key] = '[REDACTED]';
       continue;
     }

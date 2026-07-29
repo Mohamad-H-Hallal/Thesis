@@ -27,26 +27,25 @@ repo/
 - Flutter 3.41.2 stable / Dart 3.11.0
 - JDK 17 (Android Gradle)
 
-## Production Deployment (Single Server Docker Compose)
+## Production Reference Configuration
+
+`compose.prod.yml` plus `compose.observability.yml` is the hardened
+single-server reference. It is not permission to deploy. Real DNS, certificate,
+secret-manager, alert-delivery, WAF, backup/restore, and controlled outage
+gates must pass in approved staging first.
 
 ```powershell
 cd D:\GIS_APP
-Copy-Item .env.prod.example .env
-# Replace placeholders and/or use secrets files (see secrets/README.md)
-# Production/staging also require SMTP settings for password reset email.
-# If 80 or 8080 is occupied on your host, set:
-# NGINX_HTTP_PORT=8088
-
-docker compose -f compose.prod.yml config
-docker compose -f compose.prod.yml up -d --build
-docker compose -f compose.prod.yml ps
+npm --prefix apps/api run production:config:check
+npm --prefix apps/api run database:grants:check
+npm --prefix apps/api run observability:config:check
 ```
 
-Smoke test:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\smoke-test.ps1 -BaseUrl http://localhost:8088 -ComposeFile compose.prod.yml
-```
+For the certificate bootstrap, secret file inventory, staging exercises, and
+rollback gates, follow
+[`production-infrastructure-observability.md`](docs/security/production-infrastructure-observability.md).
+Do not copy the example environment and run it unchanged: production
+validation deliberately rejects its placeholder hostnames and identities.
 
 ## Development Docker Stack
 
@@ -295,7 +294,7 @@ without committing those secrets to this repository. AI run output files persist
 in the named `ai_outputs` volume.
 
 Production should run the AI server as a managed service/container, for example
-with `docker-compose.prod.example.yml`, systemd, Kubernetes, or the platform's
+with an approved hardened overlay, systemd, Kubernetes, or the platform's
 service manager. The mobile app never starts it.
 
 More deployment detail lives in `docs/ai-deployment.md`.
