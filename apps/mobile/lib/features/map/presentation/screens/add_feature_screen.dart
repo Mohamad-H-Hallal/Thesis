@@ -820,6 +820,13 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
         await repository.submitForReview(featureId);
       }
 
+      final localStore = ref.read(localStoreProvider);
+      if (localStore is DurableDraftPhotoStore) {
+        await (localStore as DurableDraftPhotoStore)
+            .removeTemporaryPickedPhotoCopies(
+              _pendingPhotos.map((photo) => photo.filePath),
+            );
+      }
       bumpWorkflowRefresh(ref);
 
       if (!mounted) {

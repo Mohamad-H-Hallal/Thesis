@@ -106,8 +106,10 @@ protocol does not provide transport encryption or authentication.
 
 ## Slice 2C — storage migration and orphan reconciliation
 
-Status: implemented on `fix/storage-adapter-legacy-reconciliation`; full
-release-gate and CI evidence must be recorded before this slice is complete.
+Status: complete. PR
+[#9](https://github.com/Mohamad-H-Hallal/Thesis/pull/9) merged into
+`handover-ready` as `b8c4c190fd785d9b26fa35ef515c9a370d4da419` after the
+required API and Flutter GitHub checks passed.
 
 The final slice introduces an implementation-neutral storage adapter, canonical
 `storage://uploads/...` and `storage://exports/...` references, compatibility
@@ -172,10 +174,13 @@ Local verification recorded on 2026-07-28:
   volume mismatch still reports missing and unresolved references, so that
   exploratory report is correctly barred from authorizing quarantine.
 
-The required GitHub clean aggregate run and merge evidence remain the final
-repository gate for this slice. Production-like staging must still execute the
-inventory, migration/rollback, and reviewed-quarantine drills against matched
-database and storage volumes before any production storage mutation.
+The Phase 2 repository gate is complete. Production-like staging must still
+execute the inventory, migration/rollback, and reviewed-quarantine drills
+against matched database and storage volumes before any production storage
+mutation.
 
-The Phase 2 gate is not complete until all three slices pass the complete API,
-mobile, migration, audit, and CI release gates.
+All three Phase 2 slices passed their repository API, mobile, migration, audit,
+and CI release gates. The external acceptance gate remains deliberately
+deferred until staging provides a real ClamAV service plus matched database and
+storage volumes. That staging evidence is part of the later infrastructure and
+release-candidate phases; it is not permission to mutate production.

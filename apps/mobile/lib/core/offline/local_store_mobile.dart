@@ -16,6 +16,14 @@ import 'local_photo_security.dart';
 import 'local_models.dart';
 import 'local_store.dart';
 
+/// Reserved identities used only to preserve pre-owner-schema offline work.
+///
+/// Authentication user identifiers are UUIDs, so these values can never match
+/// a real signed-in account. Quarantined rows remain recoverable without being
+/// exposed to any account or sent to the API automatically.
+const legacyUnownedOfflineOwnerId = '__legacy_unowned__';
+const legacyAmbiguousOfflineProjectId = '__legacy_ambiguous__';
+
 class SqliteLocalStore
     implements LocalStore, DurableDraftPhotoStore, ProtectedDraftPhotoStore {
   SqliteLocalStore({
@@ -156,11 +164,15 @@ class SqliteLocalStore
           await _migrateDraftPhotosToOwnedStorage(db);
         }
         if (oldVersion < 9) {
+          await _createPendingTemporaryPhotoDeletionTable(db);
+          await _quarantineLegacyUnownedRows(db);
+          await _migrateDraftPhotosToOwnedStorage(db);
           await _migrateDraftPhotosToEncryptedStorage(db);
         }
       },
     );
     try {
+      await _createPendingTemporaryPhotoDeletionTable(db);
       await db.update(
         'sync_queue',
         <String, Object?>{
@@ -180,7 +192,9 @@ class SqliteLocalStore
         SET status = ?, next_retry_at = ?, updated_at = ?
         WHERE status = ?
           AND owner_user_id <> ''
+          AND owner_user_id <> ?
           AND project_id <> ''
+          AND project_id <> ?
           AND project_id <> '__ambiguous__'
         ''',
         <Object?>[
@@ -188,10 +202,17 @@ class SqliteLocalStore
           now,
           now,
           SyncQueueStatus.deadLetter.name,
+          legacyUnownedOfflineOwnerId,
+          legacyAmbiguousOfflineProjectId,
         ],
       );
-      await db.transaction(_migrateDraftPhotosToEncryptedStorage);
+      await db.transaction((transaction) async {
+        await _quarantineLegacyUnownedRows(transaction);
+        await _migrateDraftPhotosToOwnedStorage(transaction);
+        await _migrateDraftPhotosToEncryptedStorage(transaction);
+      });
       await _drainPendingPhotoFileDeletions(db);
+      await _drainPendingTemporaryPhotoDeletions(db);
       await _encryptUnreferencedPlaintextPhotos();
       await _assertNoPlaintextPhotoFiles();
       _db = db;
@@ -292,11 +313,199 @@ class SqliteLocalStore
     await _createProjectScopedIndexes(db);
   }
 
+  Future<void> _quarantineLegacyUnownedRows(DatabaseExecutor db) async {
+    final draftRows = await db.query(
+      'draft_features',
+      columns: const <String>['id', 'owner_user_id', 'project_id'],
+      orderBy: 'id, owner_user_id, project_id',
+    );
+    for (final row in draftRows) {
+      final draftId = row['id'];
+      final oldOwnerUserId = row['owner_user_id'];
+      final oldProjectId = row['project_id'];
+      if (draftId is! String ||
+          oldOwnerUserId is! String ||
+          oldProjectId is! String ||
+          draftId.trim().isEmpty) {
+        throw const LocalPhotoSecurityException(
+          'A legacy offline draft has invalid identity metadata. The database '
+          'and files were preserved.',
+        );
+      }
+      final ownerUserId = oldOwnerUserId.trim().isEmpty
+          ? legacyUnownedOfflineOwnerId
+          : oldOwnerUserId;
+      final projectId = oldProjectId.trim().isEmpty
+          ? legacyAmbiguousOfflineProjectId
+          : oldProjectId;
+      if (ownerUserId == oldOwnerUserId && projectId == oldProjectId) {
+        continue;
+      }
+
+      final updatedDrafts = await db.update(
+        'draft_features',
+        <String, Object?>{
+          'owner_user_id': ownerUserId,
+          'project_id': projectId,
+        },
+        where: 'id = ? AND owner_user_id = ? AND project_id = ?',
+        whereArgs: <Object?>[draftId, oldOwnerUserId, oldProjectId],
+      );
+      if (updatedDrafts != 1) {
+        throw const LocalPhotoSecurityException(
+          'A legacy offline draft changed during ownership quarantine. The '
+          'database and files were preserved.',
+        );
+      }
+    }
+
+    final currentDraftRows = await db.query(
+      'draft_features',
+      columns: const <String>['id', 'owner_user_id', 'project_id'],
+      orderBy: 'id, owner_user_id, project_id',
+    );
+    final identitiesByDraftId =
+        <String, List<({String ownerUserId, String projectId})>>{};
+    for (final row in currentDraftRows) {
+      final draftId = row['id'];
+      final ownerUserId = row['owner_user_id'];
+      final projectId = row['project_id'];
+      if (draftId is String &&
+          ownerUserId is String &&
+          projectId is String &&
+          draftId.trim().isNotEmpty &&
+          ownerUserId.trim().isNotEmpty &&
+          projectId.trim().isNotEmpty) {
+        identitiesByDraftId
+            .putIfAbsent(
+              draftId,
+              () => <({String ownerUserId, String projectId})>[],
+            )
+            .add((ownerUserId: ownerUserId, projectId: projectId));
+      }
+    }
+
+    final photoRows = await db.query(
+      'draft_photos',
+      columns: const <String>['id', 'owner_user_id', 'project_id', 'draft_id'],
+      where: "TRIM(owner_user_id) = '' OR TRIM(project_id) = ''",
+      orderBy: 'draft_id, id',
+    );
+    for (final row in photoRows) {
+      final photoId = row['id'];
+      final draftId = row['draft_id'];
+      final oldOwnerUserId = row['owner_user_id'];
+      final oldProjectId = row['project_id'];
+      final identities = draftId is String
+          ? identitiesByDraftId[draftId] ??
+                const <({String ownerUserId, String projectId})>[]
+          : const <({String ownerUserId, String projectId})>[];
+      if (photoId is! String ||
+          draftId is! String ||
+          oldOwnerUserId is! String ||
+          oldProjectId is! String ||
+          identities.length != 1) {
+        throw const LocalPhotoSecurityException(
+          'A legacy offline photo has ambiguous ownership. The database and '
+          'files were preserved.',
+        );
+      }
+      final identity = identities.single;
+      final updatedPhotos = await db.update(
+        'draft_photos',
+        <String, Object?>{
+          'owner_user_id': identity.ownerUserId,
+          'project_id': identity.projectId,
+        },
+        where:
+            'id = ? AND draft_id = ? AND owner_user_id = ? AND project_id = ?',
+        whereArgs: <Object?>[photoId, draftId, oldOwnerUserId, oldProjectId],
+      );
+      if (updatedPhotos != 1) {
+        throw const LocalPhotoSecurityException(
+          'A legacy offline photo changed during ownership quarantine. The '
+          'database and files were preserved.',
+        );
+      }
+    }
+
+    final queueRows = await db.query(
+      'sync_queue',
+      columns: const <String>[
+        'id',
+        'owner_user_id',
+        'project_id',
+        'entity_id',
+        'payload_json',
+      ],
+      where: "TRIM(owner_user_id) = '' OR TRIM(project_id) = ''",
+      orderBy: 'id',
+    );
+    for (final row in queueRows) {
+      final queueId = row['id'];
+      final entityId = row['entity_id'];
+      final oldOwnerUserId = row['owner_user_id'];
+      final oldProjectId = row['project_id'];
+      final rawPayloadJson = row['payload_json'];
+      if (queueId is! String ||
+          entityId is! String ||
+          oldOwnerUserId is! String ||
+          oldProjectId is! String ||
+          rawPayloadJson is! String) {
+        throw const LocalPhotoSecurityException(
+          'A legacy synchronization item has invalid identity metadata. The '
+          'database and files were preserved.',
+        );
+      }
+      final identities =
+          identitiesByDraftId[entityId] ??
+          const <({String ownerUserId, String projectId})>[];
+      final ownerUserId = identities.length == 1
+          ? identities.single.ownerUserId
+          : legacyUnownedOfflineOwnerId;
+      final projectId = identities.length == 1
+          ? identities.single.projectId
+          : legacyAmbiguousOfflineProjectId;
+      Map<String, dynamic> payload;
+      try {
+        payload = jsonDecode(rawPayloadJson) as Map<String, dynamic>;
+      } catch (_) {
+        payload = <String, dynamic>{};
+      }
+      payload
+        ..['owner_user_id'] = ownerUserId
+        ..['project_id'] = projectId;
+      final updatedQueue = await db.update(
+        'sync_queue',
+        <String, Object?>{
+          'owner_user_id': ownerUserId,
+          'project_id': projectId,
+          'payload_json': jsonEncode(payload),
+          'status': SyncQueueStatus.deadLetter.name,
+          'next_retry_at': null,
+          'last_error':
+              'Legacy offline item was quarantined because its original '
+              'account identity is unavailable.',
+          'updated_at': DateTime.now().toIso8601String(),
+        },
+        where: 'id = ? AND owner_user_id = ? AND project_id = ?',
+        whereArgs: <Object?>[queueId, oldOwnerUserId, oldProjectId],
+      );
+      if (updatedQueue != 1) {
+        throw const LocalPhotoSecurityException(
+          'A legacy synchronization item changed during ownership quarantine. '
+          'The database and files were preserved.',
+        );
+      }
+    }
+  }
+
   Future<void> _createSchema(Database db) async {
     await _createProjectCacheTable(db);
     await _createDraftTables(db);
     await _createSyncQueueTable(db);
     await _createPendingLocalFileDeletionTable(db);
+    await _createPendingTemporaryPhotoDeletionTable(db);
 
     await db.execute('''
       CREATE TABLE offline_map_packages (
@@ -409,7 +618,21 @@ class SqliteLocalStore
     await createPendingLocalPhotoDeletionSchema(db.execute);
   }
 
-  Future<void> _migrateDraftPhotosToOwnedStorage(Database db) async {
+  Future<void> _createPendingTemporaryPhotoDeletionTable(
+    DatabaseExecutor db,
+  ) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS pending_temporary_photo_deletions (
+        id TEXT PRIMARY KEY,
+        file_path TEXT NOT NULL UNIQUE,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_attempt_at TEXT
+      )
+    ''');
+  }
+
+  Future<void> _migrateDraftPhotosToOwnedStorage(DatabaseExecutor db) async {
     final root = _offlinePhotoRootPath;
     if (root == null) {
       return;
@@ -481,6 +704,7 @@ class SqliteLocalStore
             draftId: scope.draftId,
             sourceFilePath: oldPath,
             suggestedFileName: oldPath,
+            cleanupDatabase: db,
           );
           replacements[canonicalOldPath] = copiedPath;
           copiedPaths.add(copiedPath);
@@ -1237,6 +1461,7 @@ class SqliteLocalStore
         await txn.insert('sync_queue', queueItem.toRowMap());
       }
     });
+    await _drainPendingTemporaryPhotoDeletions(db);
   }
 
   @override
@@ -1429,6 +1654,7 @@ class SqliteLocalStore
     required String draftId,
     required String sourceFilePath,
     String? suggestedFileName,
+    DatabaseExecutor? cleanupDatabase,
   }) async {
     final root = _offlinePhotoRootPath;
     final keyBytes = _photoKeyBytes;
@@ -1466,6 +1692,10 @@ class SqliteLocalStore
       authenticationScope: _photoAuthenticationScope(destination),
       mediaType: mediaType,
     );
+    await _scheduleTemporaryPhotoDeletion(
+      source.path,
+      database: cleanupDatabase,
+    );
     return destination;
   }
 
@@ -1491,6 +1721,22 @@ class SqliteLocalStore
     }
     for (final filePath in filePaths.toSet()) {
       await tryDeleteLocalPhotoFileWithinDirectory(filePath, root);
+    }
+  }
+
+  @override
+  Future<void> removeTemporaryPickedPhotoCopies(
+    Iterable<String> filePaths,
+  ) async {
+    try {
+      final db = await _database;
+      for (final filePath in filePaths.toSet()) {
+        await _scheduleTemporaryPhotoDeletion(filePath, database: db);
+      }
+      await _drainPendingTemporaryPhotoDeletions(db);
+    } catch (_) {
+      // The durable queue retries cleanup on initialization. Cleanup must not
+      // convert a successful upload or local save into a duplicate retry.
     }
   }
 
@@ -2262,6 +2508,142 @@ class SqliteLocalStore
       throw StateError('Could not atomically rebase a synchronized draft.');
     }
     return true;
+  }
+
+  Future<void> _scheduleTemporaryPhotoDeletion(
+    String rawPath, {
+    DatabaseExecutor? database,
+  }) async {
+    final root = await _temporaryPhotoRootContaining(rawPath);
+    if (root == null ||
+        !await _isSafeTemporaryPhotoFile(rawPath, root, allowMissing: false)) {
+      return;
+    }
+    final db = database ?? await _database;
+    await db.insert(
+      'pending_temporary_photo_deletions',
+      <String, Object?>{
+        'id': _uuid.v4(),
+        'file_path': p.normalize(p.absolute(rawPath)),
+        'attempt_count': 0,
+        'created_at': DateTime.now().toIso8601String(),
+        'last_attempt_at': null,
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+  }
+
+  Future<void> _drainPendingTemporaryPhotoDeletions(DatabaseExecutor db) async {
+    final rows = await db.query(
+      'pending_temporary_photo_deletions',
+      orderBy: 'created_at, id',
+    );
+    for (final row in rows) {
+      final id = row['id'];
+      final filePath = row['file_path'];
+      final attemptCount = row['attempt_count'];
+      if (id is! String || filePath is! String || attemptCount is! int) {
+        continue;
+      }
+      var deleted = false;
+      try {
+        final root = await _temporaryPhotoRootContaining(filePath);
+        if (root != null &&
+            await _isSafeTemporaryPhotoFile(
+              filePath,
+              root,
+              allowMissing: true,
+            )) {
+          final type = await FileSystemEntity.type(
+            filePath,
+            followLinks: false,
+          );
+          if (type == FileSystemEntityType.notFound) {
+            deleted = true;
+          } else {
+            await File(filePath).delete();
+            deleted =
+                await FileSystemEntity.type(filePath, followLinks: false) ==
+                FileSystemEntityType.notFound;
+          }
+        }
+      } catch (_) {
+        deleted = false;
+      }
+
+      if (deleted) {
+        await db.delete(
+          'pending_temporary_photo_deletions',
+          where: 'id = ? AND file_path = ?',
+          whereArgs: <Object?>[id, filePath],
+        );
+      } else {
+        await db.update(
+          'pending_temporary_photo_deletions',
+          <String, Object?>{
+            'attempt_count': attemptCount + 1,
+            'last_attempt_at': DateTime.now().toIso8601String(),
+          },
+          where: 'id = ? AND file_path = ?',
+          whereArgs: <Object?>[id, filePath],
+        );
+      }
+    }
+  }
+
+  Future<String?> _temporaryPhotoRootContaining(String rawPath) async {
+    final roots = <String>{};
+    try {
+      roots.add((await getTemporaryDirectory()).path);
+    } catch (_) {
+      // Unsupported platform directory.
+    }
+    try {
+      roots.add((await getApplicationCacheDirectory()).path);
+    } catch (_) {
+      // Unsupported platform directory.
+    }
+    for (final root in roots) {
+      if (isPathWithinDirectory(rawPath, root)) {
+        return root;
+      }
+    }
+    return null;
+  }
+
+  Future<bool> _isSafeTemporaryPhotoFile(
+    String rawPath,
+    String rawRoot, {
+    required bool allowMissing,
+  }) async {
+    if (!isPathWithinDirectory(rawPath, rawRoot)) {
+      return false;
+    }
+    final root = p.normalize(p.absolute(rawRoot));
+    final rootType = await FileSystemEntity.type(root, followLinks: false);
+    if (rootType != FileSystemEntityType.directory) {
+      return false;
+    }
+    final relative = p.relative(p.normalize(p.absolute(rawPath)), from: root);
+    final segments = p.split(relative);
+    var current = root;
+    for (var index = 0; index < segments.length; index += 1) {
+      final segment = segments[index];
+      if (segment.isEmpty || segment == '.' || segment == '..') {
+        return false;
+      }
+      current = p.join(current, segment);
+      final type = await FileSystemEntity.type(current, followLinks: false);
+      final isLast = index == segments.length - 1;
+      if (isLast) {
+        return type == FileSystemEntityType.file ||
+            (allowMissing && type == FileSystemEntityType.notFound);
+      }
+      if (type != FileSystemEntityType.directory) {
+        return false;
+      }
+    }
+    return false;
   }
 
   Future<void> _drainPendingPhotoFileDeletions(

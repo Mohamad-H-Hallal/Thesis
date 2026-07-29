@@ -84,8 +84,14 @@ class OfflinePhotoCipher {
     }
   }
 
-  bool pathClaimsEncryptedFormat(String path) =>
-      path.toLowerCase().endsWith(encryptedOfflinePhotoSuffix);
+  bool pathClaimsEncryptedFormat(String path) {
+    final normalized = path.toLowerCase();
+    return normalized.endsWith(encryptedOfflinePhotoSuffix) ||
+        normalized.endsWith(
+          '$encryptedOfflinePhotoSuffix'
+          '$encryptedOfflinePhotoTemporarySuffix',
+        );
+  }
 
   Future<OfflinePhotoMediaType> detectPlaintextMediaType(File source) async {
     final type = await FileSystemEntity.type(source.path, followLinks: false);
@@ -158,6 +164,7 @@ class OfflinePhotoCipher {
     required String authenticationScope,
     OfflinePhotoMediaType? mediaType,
   }) async {
+    _requireKeyLength(keyBytes);
     final detectedMediaType =
         mediaType ?? await detectPlaintextMediaType(source);
     final temporary = File(
@@ -225,6 +232,7 @@ class OfflinePhotoCipher {
     required Uint8List keyBytes,
     required String authenticationScope,
   }) async {
+    _requireKeyLength(keyBytes);
     final parsed = await _readEncryptedFile(encrypted);
     final output = BytesBuilder(copy: false);
     try {
@@ -263,6 +271,7 @@ class OfflinePhotoCipher {
     required Uint8List keyBytes,
     required String authenticationScope,
   }) async {
+    _requireKeyLength(keyBytes);
     final parsed = await _readEncryptedFile(encrypted);
     try {
       await for (final _ in _decryptStream(
@@ -453,6 +462,15 @@ class OfflinePhotoCipher {
     if (type != FileSystemEntityType.file) {
       throw const LocalPhotoSecurityException(
         'Offline photo storage contains an unsafe filesystem object.',
+      );
+    }
+  }
+
+  void _requireKeyLength(Uint8List keyBytes) {
+    if (keyBytes.length != 32) {
+      throw const LocalPhotoSecurityException(
+        'The offline photo encryption key is invalid. Existing files were '
+        'preserved.',
       );
     }
   }

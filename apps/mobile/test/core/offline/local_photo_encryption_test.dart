@@ -71,6 +71,19 @@ void main() {
       );
     });
 
+    test('fails closed when a format marker exists without its key', () {
+      final storage = _MemorySecureStringStore()
+        ..values[LocalPhotoKeyManager.photoKeyFormatStorageKey] =
+            LocalPhotoKeyManager.photoKeyFormatVersion;
+
+      expect(
+        () => LocalPhotoKeyManager(
+          storage,
+        ).loadOrCreateKey(hasEncryptedPhotos: false),
+        throwsA(isA<LocalPhotoSecurityException>()),
+      );
+    });
+
     test('rejects a random source that does not return 256 bits', () {
       final manager = LocalPhotoKeyManager(
         _MemorySecureStringStore(),
@@ -237,6 +250,67 @@ void main() {
       expect(recovered.bytes, jpegBytes);
     });
 
+    test('preserves a conflicting encrypted destination', () async {
+      await cipher.prepareEncryptedCopy(
+        source: plaintext,
+        destination: encrypted,
+        keyBytes: keyBytes,
+        authenticationScope: authenticationScope,
+      );
+      final originalCiphertext = await encrypted.readAsBytes();
+      await plaintext.writeAsBytes(<int>[
+        0xff,
+        0xd8,
+        0xff,
+        ...List<int>.filled(128, 7),
+        0xff,
+        0xd9,
+      ], flush: true);
+
+      await expectLater(
+        cipher.prepareEncryptedCopy(
+          source: plaintext,
+          destination: encrypted,
+          keyBytes: keyBytes,
+          authenticationScope: authenticationScope,
+        ),
+        throwsA(isA<LocalPhotoSecurityException>()),
+      );
+      expect(await encrypted.readAsBytes(), originalCiphertext);
+    });
+
+    test('detects supported PNG, HEIC, and HEIF signatures', () async {
+      final png = File(p.join(directory.path, 'image.bin'));
+      await png.writeAsBytes(const <int>[
+        0x89,
+        0x50,
+        0x4e,
+        0x47,
+        0x0d,
+        0x0a,
+        0x1a,
+        0x0a,
+        1,
+      ]);
+      final heic = File(p.join(directory.path, 'heic.bin'));
+      await heic.writeAsBytes(<int>[0, 0, 0, 20, ...'ftypheic'.codeUnits, 1]);
+      final heif = File(p.join(directory.path, 'heif.bin'));
+      await heif.writeAsBytes(<int>[0, 0, 0, 20, ...'ftypmif1'.codeUnits, 1]);
+
+      expect(
+        await cipher.detectPlaintextMediaType(png),
+        OfflinePhotoMediaType.png,
+      );
+      expect(
+        await cipher.detectPlaintextMediaType(heic),
+        OfflinePhotoMediaType.heic,
+      );
+      expect(
+        await cipher.detectPlaintextMediaType(heif),
+        OfflinePhotoMediaType.heif,
+      );
+    });
+
     test('rejects invalid image signatures before encryption', () async {
       await plaintext.writeAsBytes(utf8.encode('not an image'), flush: true);
 
@@ -251,6 +325,32 @@ void main() {
       );
       expect(await encrypted.exists(), isFalse);
       expect(await plaintext.exists(), isTrue);
+    });
+
+    test('recognizes both final and interrupted encrypted path claims', () {
+      expect(cipher.pathClaimsEncryptedFormat('photo.jpg.tlphoto'), isTrue);
+      expect(cipher.pathClaimsEncryptedFormat('photo.jpg.tlphoto.tmp'), isTrue);
+      expect(cipher.pathClaimsEncryptedFormat('photo.jpg'), isFalse);
+    });
+
+    test('rejects a malformed key before creating an encrypted file', () async {
+      await expectLater(
+        cipher.prepareEncryptedCopy(
+          source: plaintext,
+          destination: encrypted,
+          keyBytes: Uint8List(31),
+          authenticationScope: authenticationScope,
+        ),
+        throwsA(isA<LocalPhotoSecurityException>()),
+      );
+      expect(await plaintext.exists(), isTrue);
+      expect(await encrypted.exists(), isFalse);
+      expect(
+        await File(
+          '${encrypted.path}$encryptedOfflinePhotoTemporarySuffix',
+        ).exists(),
+        isFalse,
+      );
     });
   });
 }
