@@ -19,6 +19,10 @@ import { broadcastWorkflowMutations } from './middleware/workflowBroadcast';
 import { offlineSyncIngressRateLimit } from './middleware/offlineSyncRateLimit';
 import { categoryIconsDir } from './config/upload';
 import { privateMediaRouter } from './routes/privateMedia.routes';
+import {
+  configureRateLimitBackend,
+  createSharedRateLimitStore,
+} from './services/sharedRateLimit.service';
 
 // Import routes
 const authRoutes = require('./routes/auth.routes');
@@ -56,6 +60,7 @@ const isLocalDevelopmentOrigin = (origin: string): boolean => {
 };
 
 const buildApp = (env) => {
+  configureRateLimitBackend(env);
   const app = express();
   const normalizedApiPrefix = String(env.API_VERSION_PREFIX || '/api/v1').replace(/\/+$/, '');
   const legacyPrefix = '/api';
@@ -178,6 +183,8 @@ const buildApp = (env) => {
     message: 'Too many requests from this IP, please try again later',
     standardHeaders: true,
     legacyHeaders: false,
+    passOnStoreError: false,
+    store: createSharedRateLimitStore('anonymous-api'),
     skip: (req) => Boolean(req.headers.authorization),
   });
   for (const prefix of apiPrefixes) {
@@ -190,6 +197,8 @@ const buildApp = (env) => {
     message: 'Too many authentication attempts, please try again later',
     standardHeaders: true,
     legacyHeaders: false,
+    passOnStoreError: false,
+    store: createSharedRateLimitStore('authentication'),
   });
   for (const prefix of apiPrefixes) {
     app.use(`${prefix}/auth`, authLimiter);

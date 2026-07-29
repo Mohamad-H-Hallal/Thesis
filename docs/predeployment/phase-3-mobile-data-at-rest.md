@@ -1,8 +1,8 @@
 # Phase 3 — Mobile Data at Rest
 
-Status: implementation complete on `codex/phase-3-mobile-encryption`;
-repository PR/CI and the separate macOS/iOS release gate must still be
-recorded.
+Status: repository gate complete. PR #10 merged into protected
+`handover-ready` as `dea30d4d6fa811169b145eb899ae7581d7f1573d`.
+The separate macOS/iOS release gate remains open.
 
 This phase encrypts the native mobile application's offline database and draft
 photos without deleting unsynchronized work. It does not authorize a
@@ -209,10 +209,11 @@ Local verification recorded on 2026-07-29:
 - Pub reported available newer dependency releases as informational; no
   unrelated or incompatible major upgrade was added to this security phase.
 
-Repository PR, merge commit, and required-check evidence must be added to the
-phase handoff report after GitHub completes them. The Apple gate in section 7
-was not executable on this Windows host and remains explicitly open.
+PR #10 passed its required API and Flutter checks and merged into the protected
+`handover-ready` branch as
+`dea30d4d6fa811169b145eb899ae7581d7f1573d`. The post-merge required workflow
+also passed on the same source. The Apple gate in section 7 was not executable
+on this Windows host and remains explicitly open.
 
-Phase 3 is repository-complete only after its PR merges green into the protected
-`handover-ready` branch. It is not an iOS release approval and is not a
+Phase 3 is repository-complete. It is not an iOS release approval and is not a
 production deployment approval.

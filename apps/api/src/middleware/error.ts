@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import { isRateLimitBackendUnavailableError } from '../services/sharedRateLimit.service';
 const logger = require('../utils/logger');
 
 // Custom error class
@@ -85,6 +86,14 @@ const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunc
   let responseErrorCode = error.errorCode;
   let responseDisposition = error.disposition;
   let responseRetryable = error.retryable;
+
+  if (isRateLimitBackendUnavailableError(err)) {
+    statusCode = 503;
+    message = 'Shared rate limiting is temporarily unavailable. Please retry later.';
+    responseErrorCode = 'RATE_LIMIT_BACKEND_UNAVAILABLE';
+    responseDisposition = 'retry';
+    responseRetryable = true;
+  }
 
   // PostgreSQL errors
   if (error.code) {

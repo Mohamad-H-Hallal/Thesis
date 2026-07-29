@@ -33,6 +33,7 @@ const app = buildApp(testEnv);
 const resetDb = async () => {
   await pool.query(`
     TRUNCATE TABLE
+      workload_job,
       notification_push_delivery,
       notification_delivery,
       push_device_registration,

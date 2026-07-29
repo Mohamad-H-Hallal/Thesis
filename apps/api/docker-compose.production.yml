@@ -1,4 +1,25 @@
 services:
+  valkey:
+    image: valkey/valkey:8.1.9-alpine@sha256:a038175878d66b9d274fbf8be73c0305e93798b83917647f167e18cef3c71eec
+    expose:
+      - "6379"
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?Set VALKEY_PASSWORD to a URL-safe secret}
+    command:
+      [
+        "sh",
+        "-c",
+        "exec valkey-server --appendonly yes --requirepass \"$$VALKEY_PASSWORD\"",
+      ]
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$VALKEY_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   clamav:
     image: clamav/clamav:1.5.3-debian@sha256:9ea1c2bc1955c58d094bb3d168718d0173c7899096012523278ad76e06cc75a2
     expose:
@@ -25,10 +46,40 @@ services:
       MALWARE_SCANNER_MODE: clamav
       CLAMAV_HOST: clamav
       CLAMAV_PORT: 3310
+      RATE_LIMIT_STORE: redis
+      REDIS_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
+      WORKLOAD_WORKER_MODE: external
+      WORKLOAD_HARD_EXIT_ON_TIMEOUT: "true"
     depends_on:
       clamav:
         condition: service_healthy
+      valkey:
+        condition: service_healthy
+    restart: unless-stopped
+
+  workload-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      MALWARE_SCANNER_MODE: clamav
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
+      RATE_LIMIT_STORE: redis
+      REDIS_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
+      WORKLOAD_WORKER_MODE: external
+      WORKLOAD_HARD_EXIT_ON_TIMEOUT: "true"
+    depends_on:
+      valkey:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    command: ["node", "dist/jobs/runWorkloadWorker.js"]
     restart: unless-stopped
 
 volumes:
   clamav_signatures:
+  valkey_data:

@@ -24,6 +24,15 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      valkey:
+        image: valkey/valkey:8.1.9-alpine@sha256:a038175878d66b9d274fbf8be73c0305e93798b83917647f167e18cef3c71eec
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     defaults:
       run:
         working-directory: apps/api
@@ -46,6 +55,7 @@ jobs:
       RATE_LIMIT_MAX_REQUESTS: 1000
       RATE_LIMIT_AUTH_MAX_REQUESTS: 1000
       RATE_LIMIT_EXPORT_MAX_REQUESTS: 1000
+      PHASE4_REDIS_URL: redis://localhost:6379
       PERF_BBOX_MAX_MS: 3000
       PERF_EXPORT_MAX_MS: 45000
       PERF_EXPORT_TIMEOUT_MS: 60000

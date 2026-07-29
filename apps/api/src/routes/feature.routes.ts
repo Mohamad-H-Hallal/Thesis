@@ -20,6 +20,7 @@ const {
 } = require('../middleware/validation');
 const { asyncHandler } = require('../middleware/error');
 import { auditAction, auditDynamicAction } from '../middleware/audit';
+import { mapAggregationRateLimit } from '../middleware/workloadRateLimit';
 
 // All routes require authentication
 router.use(authenticate);
@@ -45,11 +46,16 @@ router.post(
 router.get('/', paginationValidation, validate, asyncHandler(featureController.getAllFeatures));
 
 // Spatial query: Find features nearby
-router.get('/nearby', asyncHandler(featureController.findFeaturesNearby));
+router.get(
+  '/nearby',
+  mapAggregationRateLimit,
+  asyncHandler(featureController.findFeaturesNearby),
+);
 
 // Spatial query: BBOX for map rendering
 router.get(
   '/bbox',
+  mapAggregationRateLimit,
   bboxValidation,
   bboxPaginationValidation,
   validate,
@@ -59,6 +65,7 @@ router.get(
 // Spatial query: XYZ tile delivery for map rendering
 router.get(
   '/tiles/:z/:x/:y',
+  mapAggregationRateLimit,
   tileParamValidation,
   tileFeatureQueryValidation,
   validate,

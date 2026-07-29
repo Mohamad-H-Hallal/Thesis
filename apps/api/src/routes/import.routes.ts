@@ -13,6 +13,10 @@ const {
 const { asyncHandler } = require('../middleware/error');
 const { uploadImportFile } = require('../config/upload');
 import { auditAction, auditDynamicAction } from '../middleware/audit';
+import {
+  importUploadRateLimit,
+  mapAggregationRateLimit,
+} from '../middleware/workloadRateLimit';
 
 router.use(authenticate);
 
@@ -26,6 +30,7 @@ router.get(
 
 router.post(
   '/project/:projectId/upload',
+  importUploadRateLimit,
   uuidValidation('projectId'),
   auditAction({
     actionType: 'create',
@@ -47,6 +52,7 @@ router.get(
 
 router.get(
   '/:importId/map',
+  mapAggregationRateLimit,
   uuidValidation('importId'),
   bboxValidation,
   validate,
@@ -55,6 +61,7 @@ router.get(
 
 router.get(
   '/:importId/quick-map',
+  mapAggregationRateLimit,
   uuidValidation('importId'),
   validate,
   asyncHandler(importController.getImportQuickMapPreview),
@@ -62,6 +69,7 @@ router.get(
 
 router.get(
   '/:importId/tiles/:z/:x/:y',
+  mapAggregationRateLimit,
   uuidValidation('importId'),
   tileParamValidation,
   validate,

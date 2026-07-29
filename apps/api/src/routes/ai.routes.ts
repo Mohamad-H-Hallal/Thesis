@@ -8,6 +8,7 @@ const {
   uuidValidation,
 } = require('../middleware/validation');
 const { asyncHandler } = require('../middleware/error');
+const { aiJobRateLimit } = require('../middleware/workloadRateLimit');
 
 const router = express.Router();
 
@@ -60,6 +61,7 @@ router.get(
 
 router.post(
   '/layers/:layerId/publish',
+  aiJobRateLimit,
   uuidValidation('layerId'),
   validate,
   requireProtectedSuperAdmin,
@@ -68,6 +70,7 @@ router.post(
 
 router.post(
   '/layers/:layerId/unpublish',
+  aiJobRateLimit,
   uuidValidation('layerId'),
   validate,
   requireProtectedSuperAdmin,
@@ -126,6 +129,7 @@ router.get(
 
 router.post(
   '/runs/:runId/review',
+  aiJobRateLimit,
   uuidValidation('runId'),
   aiValidation.reviewRun,
   validate,
