@@ -19,6 +19,10 @@ const {
 const { asyncHandler } = require('../middleware/error');
 const { uploadMultiple } = require('../config/upload');
 import { auditAction } from '../middleware/audit';
+import {
+  aiJobRateLimit,
+  mapAggregationRateLimit,
+} from '../middleware/workloadRateLimit';
 
 // All routes require authentication
 router.use(authenticate);
@@ -82,6 +86,7 @@ router.delete(
 // Get project statistics
 router.get(
   '/:projectId/stats',
+  mapAggregationRateLimit,
   uuidValidation('projectId'),
   validate,
   checkProjectAccess,
@@ -90,6 +95,7 @@ router.get(
 
 router.get(
   '/:projectId/offline-package',
+  mapAggregationRateLimit,
   uuidValidation('projectId'),
   validate,
   checkProjectAccess,
@@ -125,6 +131,7 @@ router.get(
 
 router.get(
   '/:projectId/ai/published-predictions',
+  mapAggregationRateLimit,
   uuidValidation('projectId'),
   validate,
   checkProjectAccess,
@@ -220,6 +227,7 @@ router.get(
 
 router.post(
   '/:projectId/ai/prediction-validation-tasks/generate',
+  aiJobRateLimit,
   uuidValidation('projectId'),
   aiValidation.generatePredictionValidationTasks,
   validate,
@@ -255,6 +263,7 @@ router.patch(
 
 router.post(
   '/:projectId/ai/runs',
+  aiJobRateLimit,
   uuidValidation('projectId'),
   aiValidation.createRun,
   validate,
@@ -292,6 +301,7 @@ router.get(
 
 router.post(
   '/:projectId/ai/runs/:runId/publish',
+  aiJobRateLimit,
   uuidValidation('projectId'),
   uuidValidation('runId'),
   validate,
@@ -301,6 +311,7 @@ router.post(
 
 router.post(
   '/:projectId/ai/runs/:runId/unpublish',
+  aiJobRateLimit,
   uuidValidation('projectId'),
   uuidValidation('runId'),
   validate,
@@ -310,6 +321,7 @@ router.post(
 
 router.post(
   '/:projectId/ai/runs/:runId/cancel',
+  aiJobRateLimit,
   uuidValidation('projectId'),
   uuidValidation('runId'),
   validate,
@@ -319,6 +331,7 @@ router.post(
 
 router.post(
   '/:projectId/ai/runs/:runId/resume',
+  aiJobRateLimit,
   uuidValidation('projectId'),
   uuidValidation('runId'),
   validate,
@@ -328,6 +341,7 @@ router.post(
 
 router.post(
   '/:projectId/ai/runs/:runId/retrain-check',
+  aiJobRateLimit,
   uuidValidation('projectId'),
   uuidValidation('runId'),
   validate,
@@ -337,6 +351,7 @@ router.post(
 
 router.post(
   '/:projectId/ai/retrain-check',
+  aiJobRateLimit,
   uuidValidation('projectId'),
   validate,
   requireProtectedSuperAdmin,

@@ -5,6 +5,7 @@ import { ensureSuperAdminExists } from '../lib/userWorkflow';
 const logger = require('../utils/logger');
 
 const RUNTIME_TABLES = [
+  'workload_job',
   'password_reset_request',
   'notification_push_delivery',
   'notification_delivery',

@@ -12,6 +12,11 @@ const {
   stopImportProcessingLoop,
   waitForImportProcessingIdle,
 } = require('../../src/controllers/import.controller');
+const {
+  startWorkloadWorker,
+  stopWorkloadWorker,
+  waitForWorkloadWorkerIdle,
+} = require('../../src/jobs/workloadWorker');
 
 const API_PREFIX = process.env.API_PREFIX || '/api/v1';
 
@@ -49,6 +54,8 @@ const uniqueEmail = (prefix = 'phase10-user') =>
   `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}@example.com`;
 
 const resetDb = async () => {
+  stopWorkloadWorker();
+  await waitForWorkloadWorkerIdle();
   stopImportProcessingLoop();
   await waitForImportProcessingIdle();
 
@@ -122,6 +129,7 @@ const resetDb = async () => {
 
   await pool.query(`
     TRUNCATE TABLE
+      workload_job,
       feature_media_cleanup_job,
       notification_push_delivery,
       notification_delivery,
@@ -142,6 +150,7 @@ const resetDb = async () => {
       "user"
     RESTART IDENTITY CASCADE
   `);
+  startWorkloadWorker();
 };
 
 const cleanupExportFiles = async () => {
@@ -161,6 +170,8 @@ const cleanupExportFiles = async () => {
 };
 
 const shutdown = async () => {
+  stopWorkloadWorker();
+  await waitForWorkloadWorkerIdle();
   await pool.end();
   await closePool();
 };

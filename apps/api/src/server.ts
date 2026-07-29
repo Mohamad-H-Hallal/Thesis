@@ -8,7 +8,6 @@ const { validateEnv } = require('./config/env');
 const { applyPendingMigrations, getPendingMigrations } = require('./db/migrationRunner');
 const { ensureExportDir, cleanupOldExports } = require('./controllers/export.controller');
 const {
-  startImportProcessingLoop,
   stopImportProcessingLoop,
 } = require('./controllers/import.controller');
 const { runNotificationMaintenance } = require('./jobs/notificationMaintenance');
@@ -17,6 +16,15 @@ import { ensureSuperAdminExists } from './lib/userWorkflow';
 import { attachWorkflowSocket } from './realtime/workflowSocket';
 import { startWorkflowChangeListener } from './realtime/workflowEvents';
 import { processFeatureMediaCleanupJobs } from './services/featureMediaCleanup.service';
+import {
+  closeRateLimitBackend,
+  initializeRateLimitBackend,
+} from './services/sharedRateLimit.service';
+import {
+  startWorkloadWorker,
+  stopWorkloadWorker,
+  waitForWorkloadWorkerIdle,
+} from './jobs/workloadWorker';
 
 const env = validateEnv();
 const app = buildApp(env);
@@ -141,6 +149,7 @@ const prepareServerStartup = async () => {
   await cleanupOldExports();
   await runNotificationMaintenance();
   await processFeatureMediaCleanupJobs();
+  await initializeRateLimitBackend(env);
 };
 
 const prepareServerStartupWithRetry = async () => {
@@ -181,7 +190,9 @@ const startServer = async () => {
           .catch((error) => logger.error('Scheduled maintenance failed:', error)),
       env.NOTIFICATION_MAINTENANCE_INTERVAL_MINUTES * 60 * 1000,
     );
-    startImportProcessingLoop();
+    if (env.WORKLOAD_WORKER_MODE === 'inline') {
+      startWorkloadWorker();
+    }
     closeWorkflowChangeListener = await startWorkflowChangeListener();
 
     server = app.listen(env.PORT, env.HOST, () => {
@@ -214,6 +225,7 @@ const shutdown = async (signal) => {
     clearInterval(notificationMaintenanceInterval);
   }
   stopImportProcessingLoop();
+  stopWorkloadWorker();
   if (closeWorkflowSocket) {
     closeWorkflowSocket();
   }
@@ -235,7 +247,8 @@ const shutdown = async (signal) => {
     });
   });
 
-  await closePool();
+  await waitForWorkloadWorkerIdle();
+  await Promise.all([closeRateLimitBackend(), closePool()]);
   process.exit(0);
 };
 

@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { query } from '../config/database';
+import { getRateLimitBackendReadiness } from '../services/sharedRateLimit.service';
 const logger = require('../utils/logger');
 
 interface RequestMetricsState {
@@ -100,37 +101,50 @@ const metricsHandler = (req: Request, res: Response): void => {
 };
 
 const readinessHandler = async (req: Request, res: Response): Promise<void> => {
+  const startedAt = Date.now();
+  let databaseCheck: { status: 'up' | 'down'; latencyMs?: number };
   try {
-    const startedAt = Date.now();
     await query('SELECT 1 AS ok');
-    const dbLatencyMs = Date.now() - startedAt;
+    databaseCheck = {
+      status: 'up',
+      latencyMs: Date.now() - startedAt,
+    };
+  } catch {
+    databaseCheck = {
+      status: 'down',
+    };
+  }
+  const rateLimitBackend = await getRateLimitBackendReadiness();
+  const ready = databaseCheck.status === 'up' && rateLimitBackend.status !== 'down';
 
+  if (ready) {
     res.json({
       success: true,
       status: 'ready',
       requestId: req.requestId,
       checks: {
-        database: {
-          status: 'up',
-          latencyMs: dbLatencyMs,
-        },
+        database: databaseCheck,
+        rateLimitBackend,
       },
       timestamp: new Date().toISOString(),
     });
-  } catch (error) {
-    logger.error('Readiness check failed', { error });
-    res.status(503).json({
-      success: false,
-      status: 'not_ready',
-      requestId: req.requestId,
-      checks: {
-        database: {
-          status: 'down',
-        },
-      },
-      timestamp: new Date().toISOString(),
-    });
+    return;
   }
+
+  logger.error('Readiness check failed', {
+    database: databaseCheck.status,
+    rateLimitBackend: rateLimitBackend.status,
+  });
+  res.status(503).json({
+    success: false,
+    status: 'not_ready',
+    requestId: req.requestId,
+    checks: {
+      database: databaseCheck,
+      rateLimitBackend,
+    },
+    timestamp: new Date().toISOString(),
+  });
 };
 
 export {

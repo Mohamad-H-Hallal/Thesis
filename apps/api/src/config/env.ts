@@ -30,6 +30,22 @@ export interface EnvConfig {
   RATE_LIMIT_MAX_REQUESTS: number;
   RATE_LIMIT_AUTH_MAX_REQUESTS: number;
   RATE_LIMIT_EXPORT_MAX_REQUESTS: number;
+  RATE_LIMIT_STORE: 'memory' | 'redis';
+  REDIS_URL: string;
+  REDIS_CONNECT_TIMEOUT_MS: number;
+  RATE_LIMIT_WORKLOAD_WINDOW_MS: number;
+  RATE_LIMIT_IMPORT_MAX_REQUESTS: number;
+  RATE_LIMIT_AI_JOB_MAX_REQUESTS: number;
+  RATE_LIMIT_MAP_MAX_REQUESTS: number;
+  RATE_LIMIT_NOTIFICATION_MAX_REQUESTS: number;
+  RATE_LIMIT_PASSWORD_RESET_MAX_REQUESTS: number;
+  WORKLOAD_WORKER_MODE: 'inline' | 'external' | 'disabled';
+  WORKLOAD_WORKER_CONCURRENCY: number;
+  WORKLOAD_POLL_INTERVAL_MS: number;
+  WORKLOAD_LEASE_MS: number;
+  WORKLOAD_JOB_TIMEOUT_MS: number;
+  WORKLOAD_MAX_ATTEMPTS: number;
+  WORKLOAD_HARD_EXIT_ON_TIMEOUT: boolean;
   OFFLINE_SYNC_RATE_LIMIT_WINDOW_MS: number;
   OFFLINE_SYNC_RATE_LIMIT_MAX_REQUESTS: number;
   OFFLINE_SYNC_INGRESS_RATE_LIMIT_MAX_REQUESTS: number;
@@ -146,6 +162,30 @@ const envSchema = Joi.object({
   RATE_LIMIT_MAX_REQUESTS: Joi.number().integer().min(1).default(100),
   RATE_LIMIT_AUTH_MAX_REQUESTS: Joi.number().integer().min(1).default(20),
   RATE_LIMIT_EXPORT_MAX_REQUESTS: Joi.number().integer().min(1).default(40),
+  RATE_LIMIT_STORE: Joi.string().valid('memory', 'redis').default('memory'),
+  REDIS_URL: Joi.string()
+    .uri({ scheme: ['redis', 'rediss'] })
+    .allow('')
+    .default(''),
+  REDIS_CONNECT_TIMEOUT_MS: Joi.number().integer().min(1000).max(60000).default(5000),
+  RATE_LIMIT_WORKLOAD_WINDOW_MS: Joi.number().integer().min(1000).default(60000),
+  RATE_LIMIT_IMPORT_MAX_REQUESTS: Joi.number().integer().min(1).default(6),
+  RATE_LIMIT_AI_JOB_MAX_REQUESTS: Joi.number().integer().min(1).default(10),
+  RATE_LIMIT_MAP_MAX_REQUESTS: Joi.number().integer().min(1).default(60),
+  RATE_LIMIT_NOTIFICATION_MAX_REQUESTS: Joi.number().integer().min(1).default(30),
+  RATE_LIMIT_PASSWORD_RESET_MAX_REQUESTS: Joi.number().integer().min(1).default(5),
+  WORKLOAD_WORKER_MODE: Joi.string().valid('inline', 'external', 'disabled').default('inline'),
+  WORKLOAD_WORKER_CONCURRENCY: Joi.number().integer().min(1).max(16).default(2),
+  WORKLOAD_POLL_INTERVAL_MS: Joi.number().integer().min(100).max(60000).default(1000),
+  WORKLOAD_LEASE_MS: Joi.number().integer().min(10000).max(3600000).default(300000),
+  WORKLOAD_JOB_TIMEOUT_MS: Joi.number().integer().min(10000).max(7200000).default(1800000),
+  WORKLOAD_MAX_ATTEMPTS: Joi.number().integer().min(1).max(20).default(3),
+  WORKLOAD_HARD_EXIT_ON_TIMEOUT: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(false),
   OFFLINE_SYNC_RATE_LIMIT_WINDOW_MS: Joi.number().integer().min(1000).default(60000),
   OFFLINE_SYNC_RATE_LIMIT_MAX_REQUESTS: Joi.number().integer().min(1).default(60),
   OFFLINE_SYNC_INGRESS_RATE_LIMIT_MAX_REQUESTS: Joi.number().integer().min(1).default(240),
@@ -341,6 +381,30 @@ const validateEnv = (): EnvConfig => {
   if (value.NODE_ENV === 'production' && value.MALWARE_SCANNER_MODE !== 'clamav') {
     throw new Error(
       'Environment validation failed: production requires MALWARE_SCANNER_MODE=clamav',
+    );
+  }
+
+  if (value.RATE_LIMIT_STORE === 'redis' && !String(value.REDIS_URL).trim()) {
+    throw new Error(
+      'Environment validation failed: RATE_LIMIT_STORE=redis requires REDIS_URL',
+    );
+  }
+
+  if (value.NODE_ENV === 'production' && value.RATE_LIMIT_STORE !== 'redis') {
+    throw new Error(
+      'Environment validation failed: production requires RATE_LIMIT_STORE=redis',
+    );
+  }
+
+  if (value.NODE_ENV === 'production' && value.WORKLOAD_WORKER_MODE !== 'external') {
+    throw new Error(
+      'Environment validation failed: production requires WORKLOAD_WORKER_MODE=external',
+    );
+  }
+
+  if (value.NODE_ENV === 'production' && !value.WORKLOAD_HARD_EXIT_ON_TIMEOUT) {
+    throw new Error(
+      'Environment validation failed: production requires WORKLOAD_HARD_EXIT_ON_TIMEOUT=true',
     );
   }
 

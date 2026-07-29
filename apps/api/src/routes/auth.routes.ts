@@ -5,6 +5,7 @@ const { authenticate } = require('../middleware/auth');
 const { userValidation, validate } = require('../middleware/validation');
 const { asyncHandler } = require('../middleware/error');
 import { auditAction } from '../middleware/audit';
+import { passwordResetRateLimit } from '../middleware/workloadRateLimit';
 
 // Public routes
 router.post(
@@ -47,6 +48,7 @@ router.post(
 
 router.post(
   '/forgot-password',
+  passwordResetRateLimit,
   userValidation.forgotPassword,
   validate,
   asyncHandler(authController.requestPasswordReset)
@@ -54,6 +56,7 @@ router.post(
 
 router.post(
   '/verify-reset-otp',
+  passwordResetRateLimit,
   userValidation.verifyResetOtp,
   validate,
   asyncHandler(authController.verifyPasswordResetOtp)
@@ -61,6 +64,7 @@ router.post(
 
 router.post(
   '/reset-password',
+  passwordResetRateLimit,
   userValidation.resetPassword,
   validate,
   asyncHandler(authController.resetPassword)

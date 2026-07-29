@@ -26,6 +26,17 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+  valkey:
+    image: valkey/valkey:8.1.9-alpine@sha256:a038175878d66b9d274fbf8be73c0305e93798b83917647f167e18cef3c71eec
+    ports:
+      - "${VALKEY_HOST_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   ai-server:
     build:
       context: ../AI-ML-pipeline-for-AI-Enhanced-Mobile-GIS
@@ -106,6 +117,9 @@ services:
       APP_PUBLIC_API_URL: http://localhost:3000
       AI_CALLBACK_SECRET: ${AI_CALLBACK_SECRET:-dev-ai-callback-secret-change-me}
       AI_SERVER_TIMEOUT_MS: 30000
+      RATE_LIMIT_STORE: redis
+      REDIS_URL: redis://valkey:6379
+      WORKLOAD_WORKER_MODE: external
     depends_on:
       db:
         condition: service_healthy
@@ -115,6 +129,8 @@ services:
         condition: service_healthy
       mailpit:
         condition: service_started
+      valkey:
+        condition: service_healthy
     ports:
       - "3000:3000"
     volumes:
@@ -140,6 +156,38 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    restart: unless-stopped
+
+  workload-worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile.dev
+    working_dir: /workspace/apps/api
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      MIGRATIONS_DIR: /workspace/infra/migrations
+      RATE_LIMIT_STORE: redis
+      REDIS_URL: redis://valkey:6379
+      WORKLOAD_WORKER_MODE: external
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command:
+      [
+        "sh",
+        "-lc",
+        "sh /workspace/apps/api/docker/dev-entrypoint.sh npm run workloads:worker",
+      ]
+    volumes:
+      - .:/workspace
+      - api_node_modules:/workspace/apps/api/node_modules
+      - api_uploads:/workspace/apps/api/uploads
+      - api_exports:/workspace/apps/api/exports
     restart: unless-stopped
 
 volumes:

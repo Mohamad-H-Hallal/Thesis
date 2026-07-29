@@ -8,6 +8,7 @@ import { sanitizeManagedFeatureAttributes } from '../lib/featureAttributes';
 import { isProtectedSuperAdminEmail } from '../lib/userWorkflow';
 import { resolveStoredPhotoPath } from '../services/featurePhotoSecurity.service';
 import { storageAdapter } from '../services/storageAdapter.service';
+import { enqueueWorkloadJob } from '../services/workloadQueue.service';
 
 // For shapefile generation
 const shpwrite = require('@mapbox/shp-write');
@@ -420,25 +421,31 @@ const requestExport = async (req, res) => {
   }
 
   // Create export request
-  const result = await query(
-    `INSERT INTO shapefile_export (
-      project_id,
-      requested_by_user_id,
-      export_parameters,
-      status,
-      file_status,
-      regenerated_from_export_id
-    ) VALUES ($1, $2, $3, 'pending', 'missing', $4)
-    RETURNING id, requested_at`,
-    [projectId, req.user.id, JSON.stringify(exportParams), regeneratedFromExportId ?? null],
-  );
+  const result = await transaction(async (client) => {
+    const inserted = await client.query(
+      `INSERT INTO shapefile_export (
+        project_id,
+        requested_by_user_id,
+        export_parameters,
+        status,
+        file_status,
+        regenerated_from_export_id
+      ) VALUES ($1, $2, $3, 'pending', 'missing', $4)
+      RETURNING id, requested_at`,
+      [projectId, req.user.id, JSON.stringify(exportParams), regeneratedFromExportId ?? null],
+    );
+    await enqueueWorkloadJob(client, {
+      kind: 'project_export',
+      entityId: inserted.rows[0].id,
+      maxAttempts: Math.max(
+        1,
+        Number.parseInt(process.env.WORKLOAD_MAX_ATTEMPTS ?? '3', 10) || 3,
+      ),
+    });
+    return inserted;
+  });
 
   const exportId = result.rows[0].id;
-
-  // Start async export process (don't wait for completion)
-  processExport(exportId, project.name).catch((error) => {
-    logger.error('Export processing error:', { exportId, error });
-  });
 
   logger.info('Export requested:', {
     exportId,
@@ -847,44 +854,7 @@ const processExport = async (exportId, projectName) => {
       await fs.rm(workingExportPath, { recursive: true, force: true }).catch(() => undefined);
     }
 
-    await transaction(async (client) => {
-      await client.query(
-        `UPDATE shapefile_export 
-         SET status = 'failed',
-             file_status = 'missing',
-             completed_at = CURRENT_TIMESTAMP,
-             error_message = $1
-         WHERE id = $2`,
-        [error.message, exportId],
-      );
-
-      const exportDetails = await client.query(
-        `SELECT se.requested_by_user_id, se.project_id, p.name AS project_name
-         FROM shapefile_export se
-         JOIN project p ON p.id = se.project_id
-         WHERE se.id = $1`,
-        [exportId],
-      );
-
-      if (exportDetails.rows.length > 0) {
-        await client.query(
-          `INSERT INTO notification (user_id, type, title, message, metadata)
-           VALUES ($1, 'export_ready', 'Export failed',
-                   $2, $3)`,
-          [
-            exportDetails.rows[0].requested_by_user_id,
-            `${exportDetails.rows[0].project_name} export failed. ${error.message}`,
-            JSON.stringify({
-              export_id: exportId,
-              project_id: exportDetails.rows[0].project_id,
-              project_name: exportDetails.rows[0].project_name,
-              status: 'failed',
-              error: error.message,
-            }),
-          ],
-        );
-      }
-    });
+    throw error;
   }
 };
 
@@ -1754,6 +1724,7 @@ module.exports = {
   downloadExport,
   cleanupOldExports,
   ensureExportDir,
+  processExport,
 };
 
 export {};

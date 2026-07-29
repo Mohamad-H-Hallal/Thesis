@@ -27,6 +27,7 @@ import {
   releaseQuarantinedUpload,
 } from '../services/uploadQuarantine.service';
 import { storageAdapter } from '../services/storageAdapter.service';
+import { enqueueWorkloadJob } from '../services/workloadQueue.service';
 
 const LEBANON_BOUNDS = {
   minLon: 35.094,
@@ -4231,6 +4232,14 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
       );
 
       const importJobId = insertedJob.rows[0].id;
+      await enqueueWorkloadJob(client, {
+        kind: 'gis_import',
+        entityId: importJobId,
+        maxAttempts: Math.max(
+          1,
+          Number.parseInt(process.env.WORKLOAD_MAX_ATTEMPTS ?? '3', 10) || 3,
+        ),
+      });
 
       await createImportSubmissionNotifications(client, {
         importJobId,
@@ -4279,8 +4288,6 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
       errorCode: (cleanupError as NodeJS.ErrnoException)?.code ?? 'UNKNOWN',
     });
   });
-
-  scheduleImportProcessing();
 
   logger.info('GIS import uploaded and queued', {
     importJobId: createdJob.id,
@@ -4763,6 +4770,7 @@ module.exports = {
   startImportProcessingLoop,
   stopImportProcessingLoop,
   waitForImportProcessingIdle,
+  processImportJob,
 };
 
 export {};

@@ -54,6 +54,25 @@ services:
         limits:
           memory: 4G
 
+  valkey:
+    image: valkey/valkey:8.1.9-alpine@sha256:a038175878d66b9d274fbf8be73c0305e93798b83917647f167e18cef3c71eec
+    restart: unless-stopped
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?Set VALKEY_PASSWORD to a URL-safe secret}
+    command:
+      [
+        "sh",
+        "-c",
+        "exec valkey-server --appendonly yes --requirepass \"$$VALKEY_PASSWORD\"",
+      ]
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$VALKEY_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   api:
     build:
       context: .
@@ -77,6 +96,10 @@ services:
       MALWARE_SCANNER_MODE: clamav
       CLAMAV_HOST: clamav
       CLAMAV_PORT: 3310
+      RATE_LIMIT_STORE: redis
+      REDIS_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
+      WORKLOAD_WORKER_MODE: external
+      WORKLOAD_HARD_EXIT_ON_TIMEOUT: "true"
     volumes:
       - api_uploads:/app/apps/api/uploads
       - api_exports:/app/apps/api/exports
@@ -88,6 +111,8 @@ services:
         condition: service_completed_successfully
       clamav:
         condition: service_healthy
+      valkey:
+        condition: service_healthy
     expose:
       - "3000"
     healthcheck:
@@ -96,6 +121,39 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    restart: unless-stopped
+
+  workload-worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DB_HOST: db
+      DB_PORT: 5432
+      MIGRATIONS_DIR: /app/infra/migrations
+      DB_PASSWORD_FILE: ${DB_PASSWORD_FILE:-}
+      RATE_LIMIT_STORE: redis
+      REDIS_URL: redis://:${VALKEY_PASSWORD}@valkey:6379
+      WORKLOAD_WORKER_MODE: external
+      WORKLOAD_HARD_EXIT_ON_TIMEOUT: "true"
+      MALWARE_SCANNER_MODE: clamav
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
+    volumes:
+      - api_uploads:/app/apps/api/uploads
+      - api_exports:/app/apps/api/exports
+      - ./secrets:/run/secrets:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      clamav:
+        condition: service_healthy
+    command: ["node", "dist/jobs/runWorkloadWorker.js"]
     restart: unless-stopped
 
   nginx:
@@ -121,3 +179,4 @@ volumes:
   api_uploads:
   api_exports:
   clamav_signatures:
+  valkey_data:

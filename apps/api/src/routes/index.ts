@@ -23,6 +23,7 @@ const { asyncHandler } = require('../middleware/error');
 const { uploadCategoryIcon, uploadFeaturePhotos } = require('../config/upload');
 const { featurePhotoUploadRateLimit } = require('../middleware/offlineSyncRateLimit');
 import { auditAction, auditDynamicAction } from '../middleware/audit';
+import { notificationMutationRateLimit } from '../middleware/workloadRateLimit';
 
 // ============================================================================
 // ASSIGNMENT ROUTES
@@ -273,6 +274,7 @@ notificationRouter.get('/unread/count', asyncHandler(notificationController.getU
 // Mark notification as read
 notificationRouter.put(
   '/:notificationId/read',
+  notificationMutationRateLimit,
   uuidValidation('notificationId'),
   validate,
   asyncHandler(notificationController.markAsRead),
@@ -280,21 +282,28 @@ notificationRouter.put(
 
 notificationRouter.put(
   '/:notificationId/unread',
+  notificationMutationRateLimit,
   uuidValidation('notificationId'),
   validate,
   asyncHandler(notificationController.markAsUnread),
 );
 
 // Mark all as read
-notificationRouter.put('/read-all', asyncHandler(notificationController.markAllAsRead));
+notificationRouter.put(
+  '/read-all',
+  notificationMutationRateLimit,
+  asyncHandler(notificationController.markAllAsRead),
+);
 notificationRouter.post(
   '/devices/register',
+  notificationMutationRateLimit,
   notificationValidation.registerDevice,
   validate,
   asyncHandler(notificationController.registerDevice),
 );
 notificationRouter.post(
   '/devices/unregister',
+  notificationMutationRateLimit,
   notificationValidation.unregisterDevice,
   validate,
   asyncHandler(notificationController.unregisterDevice),
@@ -303,6 +312,7 @@ notificationRouter.post(
 // Delete notification
 notificationRouter.delete(
   '/:notificationId',
+  notificationMutationRateLimit,
   uuidValidation('notificationId'),
   validate,
   asyncHandler(notificationController.delete),
