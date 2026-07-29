@@ -1,5 +1,6 @@
 import '../../features/projects/domain/project.dart';
 import 'local_models.dart';
+import 'local_photo_encryption.dart';
 
 abstract class LocalStore {
   Future<void> initialize();
@@ -180,6 +181,12 @@ abstract interface class DurableDraftPhotoStore {
   /// Best-effort rollback for files retained before a draft transaction fails.
   Future<void> releaseRetainedDraftPhotos(Iterable<String> filePaths);
 
+  /// Removes only picker copies contained by this application's temporary or
+  /// cache directories. Gallery originals and arbitrary external paths are
+  /// never deletion candidates.
+  Future<void> removeTemporaryPickedPhotoCopies(Iterable<String> filePaths) =>
+      Future<void>.value();
+
   /// Checks that every path is inside the app-owned directory for this exact
   /// owner/project/draft. This is a containment check; callers must also derive
   /// the paths from the matching scoped draft rows instead of queue payloads.
@@ -189,4 +196,9 @@ abstract interface class DurableDraftPhotoStore {
     required String draftId,
     required Iterable<String> filePaths,
   });
+}
+
+abstract interface class ProtectedDraftPhotoStore {
+  /// Authenticates and decrypts one exact app-owned draft photo in memory.
+  Future<DecryptedOfflinePhoto> readProtectedDraftPhoto(String filePath);
 }

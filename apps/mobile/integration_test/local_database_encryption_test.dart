@@ -5,11 +5,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:lebanese_gis_mobile/core/offline/local_database_migration.dart';
 import 'package:lebanese_gis_mobile/core/offline/local_database_security.dart';
+import 'package:lebanese_gis_mobile/core/offline/local_photo_encryption.dart';
+import 'package:lebanese_gis_mobile/core/offline/local_photo_security.dart';
 import 'package:lebanese_gis_mobile/core/offline/local_store_mobile.dart';
 import 'package:lebanese_gis_mobile/core/security/secure_string_store.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
+
+import 'fixtures/historical_local_database_fixtures.dart';
 
 class _MemorySecureStringStore implements SecureStringStore {
   final Map<String, String> values = <String, String>{};
@@ -113,7 +117,7 @@ void main() {
     'plaintext schema versions 1 through 8 preserve typed row content',
     (tester) async {
       final tempDirectory = await getTemporaryDirectory();
-      const password = 'schema-version-matrix-key';
+      const password = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8';
 
       for (var version = 1; version <= 8; version += 1) {
         final path = p.join(
@@ -182,6 +186,190 @@ void main() {
     },
   );
 
+  testWidgets(
+    'real schema versions 1 through 8 upgrade, isolate, and encrypt photos',
+    (tester) async {
+      final documentsDirectory = await getApplicationDocumentsDirectory();
+      final databasePath = p.join(
+        documentsDirectory.path,
+        'gis_collector_offline.db',
+      );
+      final photoRoot = Directory(
+        p.join(documentsDirectory.path, 'offline_photos'),
+      );
+      final temporaryDirectory = await getTemporaryDirectory();
+
+      for (var version = 1; version <= 8; version += 1) {
+        await _deleteDatabaseArtifacts(databasePath);
+        if (await photoRoot.exists()) {
+          await photoRoot.delete(recursive: true);
+        }
+        await photoRoot.create(recursive: true);
+        addTearDown(() async {
+          await _deleteDatabaseArtifacts(databasePath);
+          if (await photoRoot.exists()) {
+            await photoRoot.delete(recursive: true);
+          }
+        });
+
+        late HistoricalLocalDatabaseFixture fixture;
+        final plaintext = await openDatabase(
+          databasePath,
+          version: version,
+          singleInstance: false,
+          onCreate: (database, createdVersion) async {
+            fixture = await createHistoricalLocalDatabaseFixture(
+              database: database,
+              version: createdVersion,
+              offlinePhotoRoot: photoRoot.path,
+              legacyUnownedOwnerId: legacyUnownedOfflineOwnerId,
+              legacyPhotoRoot: p.join(
+                temporaryDirectory.path,
+                'historical-photo-sources',
+              ),
+            );
+          },
+        );
+        await plaintext.close();
+        expect(
+          await inspectLocalDatabaseFile(File(databasePath)),
+          LocalDatabaseFileState.plaintext,
+          reason: 'historical schema v$version must start plaintext',
+        );
+
+        final keyStorage = _MemorySecureStringStore();
+        final store = SqliteLocalStore(
+          databaseKeyManager: LocalDatabaseKeyManager(keyStorage),
+          photoKeyManager: LocalPhotoKeyManager(keyStorage),
+        );
+        await store.initialize();
+
+        final visibleToOwner = await store.getDraftsForOwner(
+          ownerUserId: fixture.expectedOwnerUserId,
+        );
+        expect(
+          visibleToOwner,
+          hasLength(1),
+          reason: 'historical schema v$version lost its offline draft',
+        );
+        expect(
+          await store.getDraftsForOwner(
+            ownerUserId: '90000000-0000-4000-8000-000000000009',
+          ),
+          isEmpty,
+          reason: 'historical schema v$version crossed account ownership',
+        );
+        final encryptedPhotoPath = visibleToOwner.single.photos.single.filePath;
+        expect(encryptedPhotoPath, endsWith(encryptedOfflinePhotoSuffix));
+        expect(await File(encryptedPhotoPath).exists(), isTrue);
+        expect(await File(fixture.plaintextPhotoPath).exists(), isFalse);
+        final decrypted = await store.readProtectedDraftPhoto(
+          encryptedPhotoPath,
+        );
+        expect(decrypted.bytes.take(3).toList(), <int>[0xff, 0xd8, 0xff]);
+
+        final databaseKey =
+            keyStorage.values[LocalDatabaseKeyManager.databaseKeyStorageKey];
+        final photoKey =
+            keyStorage.values[LocalPhotoKeyManager.photoKeyStorageKey];
+        expect(databaseKey, isNotEmpty);
+        expect(photoKey, isNotEmpty);
+        await store.dispose();
+
+        final encryptedDatabase = await openDatabase(
+          databasePath,
+          password: databaseKey,
+          singleInstance: false,
+        );
+        expect(
+          Sqflite.firstIntValue(
+            await encryptedDatabase.rawQuery('PRAGMA user_version'),
+          ),
+          9,
+        );
+        expect(
+          Sqflite.firstIntValue(
+            await encryptedDatabase.rawQuery(
+              'SELECT COUNT(*) FROM pending_local_file_deletions',
+            ),
+          ),
+          0,
+        );
+        expect(
+          Sqflite.firstIntValue(
+            await encryptedDatabase.rawQuery(
+              'SELECT COUNT(*) FROM pending_temporary_photo_deletions',
+            ),
+          ),
+          0,
+        );
+        final queueRow = (await encryptedDatabase.query(
+          'sync_queue',
+          where: 'id = ?',
+          whereArgs: <Object?>[historicalFixtureQueueId],
+        )).single;
+        expect(queueRow['owner_user_id'], fixture.expectedOwnerUserId);
+        if (version <= 2) {
+          expect(queueRow['status'], 'deadLetter');
+        }
+        await encryptedDatabase.close();
+
+        final protectedFiles = await photoRoot
+            .list(recursive: true, followLinks: false)
+            .where((entity) => entity is File)
+            .cast<File>()
+            .toList();
+        expect(protectedFiles, isNotEmpty);
+        for (final file in protectedFiles) {
+          expect(
+            file.path,
+            endsWith(encryptedOfflinePhotoSuffix),
+            reason: 'schema v$version left a plaintext-named photo',
+          );
+          expect(
+            await OfflinePhotoCipher().isEncryptedFile(file),
+            isTrue,
+            reason: 'schema v$version left plaintext photo bytes',
+          );
+        }
+
+        final accountSwitchStore = SqliteLocalStore(
+          databaseKeyManager: LocalDatabaseKeyManager(keyStorage),
+          photoKeyManager: LocalPhotoKeyManager(keyStorage),
+        );
+        await accountSwitchStore.initialize();
+        expect(
+          await accountSwitchStore.getDraftsForOwner(
+            ownerUserId: fixture.expectedOwnerUserId,
+          ),
+          hasLength(1),
+        );
+        expect(
+          keyStorage.values[LocalDatabaseKeyManager.databaseKeyStorageKey],
+          databaseKey,
+        );
+        expect(
+          keyStorage.values[LocalPhotoKeyManager.photoKeyStorageKey],
+          photoKey,
+        );
+        await accountSwitchStore.dispose();
+
+        keyStorage.values.remove(LocalPhotoKeyManager.photoKeyStorageKey);
+        final missingPhotoKeyStore = SqliteLocalStore(
+          databaseKeyManager: LocalDatabaseKeyManager(keyStorage),
+          photoKeyManager: LocalPhotoKeyManager(keyStorage),
+        );
+        await expectLater(
+          missingPhotoKeyStore.initialize(),
+          throwsA(isA<LocalPhotoSecurityException>()),
+        );
+        expect(await File(databasePath).exists(), isTrue);
+        expect(await File(encryptedPhotoPath).exists(), isTrue);
+        keyStorage.values[LocalPhotoKeyManager.photoKeyStorageKey] = photoKey!;
+      }
+    },
+  );
+
   testWidgets('new local store creates an encrypted schema', (tester) async {
     final documentsDirectory = await getApplicationDocumentsDirectory();
     final path = p.join(documentsDirectory.path, 'gis_collector_offline.db');
@@ -191,6 +379,7 @@ void main() {
     final keyStorage = _MemorySecureStringStore();
     final store = SqliteLocalStore(
       databaseKeyManager: LocalDatabaseKeyManager(keyStorage),
+      photoKeyManager: LocalPhotoKeyManager(keyStorage),
     );
     await store.initialize();
     await store.dispose();
@@ -234,6 +423,7 @@ void main() {
 
     final upgradedStore = SqliteLocalStore(
       databaseKeyManager: LocalDatabaseKeyManager(keyStorage),
+      photoKeyManager: LocalPhotoKeyManager(keyStorage),
     );
     await upgradedStore.initialize();
     await upgradedStore.dispose();

@@ -13,6 +13,7 @@ class FeaturePhotoGalleryItem {
     required this.imagePath,
     required this.label,
     this.imageBytes,
+    this.loadImageBytes,
     this.subtitle,
     this.isLocalFile = false,
     this.onRemove,
@@ -22,6 +23,7 @@ class FeaturePhotoGalleryItem {
   final String imagePath;
   final String label;
   final List<int>? imageBytes;
+  final Future<List<int>> Function()? loadImageBytes;
   final String? subtitle;
   final bool isLocalFile;
   final VoidCallback? onRemove;
@@ -160,7 +162,7 @@ class FeaturePhotoGallery extends StatelessWidget {
   }
 }
 
-class _PhotoImage extends StatelessWidget {
+class _PhotoImage extends StatefulWidget {
   const _PhotoImage({
     required this.item,
     required this.httpHeaders,
@@ -172,15 +174,71 @@ class _PhotoImage extends StatelessWidget {
   final BoxFit fit;
 
   @override
+  State<_PhotoImage> createState() => _PhotoImageState();
+}
+
+class _PhotoImageState extends State<_PhotoImage> {
+  Future<List<int>>? _protectedBytes;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshProtectedBytes();
+  }
+
+  @override
+  void didUpdateWidget(covariant _PhotoImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.item.id != widget.item.id ||
+        oldWidget.item.imagePath != widget.item.imagePath ||
+        oldWidget.item.loadImageBytes != widget.item.loadImageBytes) {
+      _refreshProtectedBytes();
+    }
+  }
+
+  void _refreshProtectedBytes() {
+    _protectedBytes =
+        widget.item.imageBytes == null && widget.item.loadImageBytes != null
+        ? widget.item.loadImageBytes!()
+        : null;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final provider = featurePhotoImageProvider(item, httpHeaders: httpHeaders);
+    final protectedBytes = _protectedBytes;
+    if (protectedBytes != null) {
+      return FutureBuilder<List<int>>(
+        future: protectedBytes,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final bytes = snapshot.data;
+          if (snapshot.hasError || bytes == null || bytes.isEmpty) {
+            return const Center(child: Icon(Icons.broken_image_outlined));
+          }
+          return Image.memory(
+            Uint8List.fromList(bytes),
+            fit: widget.fit,
+            width: double.infinity,
+            errorBuilder: (_, _, _) =>
+                const Center(child: Icon(Icons.broken_image_outlined)),
+          );
+        },
+      );
+    }
+
+    final provider = featurePhotoImageProvider(
+      widget.item,
+      httpHeaders: widget.httpHeaders,
+    );
     if (provider == null) {
       return const Center(child: Icon(Icons.photo_outlined, size: 32));
     }
 
     return Image(
       image: provider,
-      fit: fit,
+      fit: widget.fit,
       width: double.infinity,
       errorBuilder: (_, _, _) =>
           const Center(child: Icon(Icons.broken_image_outlined, size: 32)),

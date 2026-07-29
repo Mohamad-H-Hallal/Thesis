@@ -820,6 +820,13 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
         await repository.submitForReview(featureId);
       }
 
+      final localStore = ref.read(localStoreProvider);
+      if (localStore is DurableDraftPhotoStore) {
+        await (localStore as DurableDraftPhotoStore)
+            .removeTemporaryPickedPhotoCopies(
+              _pendingPhotos.map((photo) => photo.filePath),
+            );
+      }
       bumpWorkflowRefresh(ref);
 
       if (!mounted) {
@@ -1709,6 +1716,21 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                     ? 'Uploaded to this draft'
                     : 'Captured ${_formatDateTime(photo.takenAt!)}',
                 isLocalFile: photo.isLocalFile,
+                loadImageBytes: photo.isLocalFile
+                    ? () async {
+                        final store = ref.read(localStoreProvider);
+                        if (store is! ProtectedDraftPhotoStore) {
+                          throw StateError(
+                            'Protected offline photo storage is unavailable.',
+                          );
+                        }
+                        final protectedStore =
+                            store as ProtectedDraftPhotoStore;
+                        return (await protectedStore.readProtectedDraftPhoto(
+                          photo.filePath,
+                        )).bytes;
+                      }
+                    : null,
               ),
             )
             .toList(growable: false);

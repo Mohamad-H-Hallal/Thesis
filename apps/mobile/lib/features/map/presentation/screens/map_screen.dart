@@ -13,6 +13,7 @@ import '../../../../core/config/app_env.dart';
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/offline/local_models.dart';
+import '../../../../core/offline/local_store.dart';
 import '../../../../core/pagination/paginated_list_controller.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/utils/lebanon_time.dart';
@@ -4411,6 +4412,25 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                                   ? 'Captured photo'
                                   : 'Captured ${_formatDateTime(photo.takenAt!)}',
                               isLocalFile: photo.isLocalFile,
+                              loadImageBytes: photo.isLocalFile
+                                  ? () async {
+                                      final store = ref.read(
+                                        localStoreProvider,
+                                      );
+                                      if (store is! ProtectedDraftPhotoStore) {
+                                        throw StateError(
+                                          'Protected offline photo storage is unavailable.',
+                                        );
+                                      }
+                                      final protectedStore =
+                                          store as ProtectedDraftPhotoStore;
+                                      return (await protectedStore
+                                              .readProtectedDraftPhoto(
+                                                photo.filePath,
+                                              ))
+                                          .bytes;
+                                    }
+                                  : null,
                             ),
                           )
                           .toList(growable: false),

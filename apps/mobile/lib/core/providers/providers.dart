@@ -53,6 +53,7 @@ import '../../features/review/domain/review_workflow.dart';
 import '../network/api_client.dart';
 import '../offline/local_database_security.dart';
 import '../offline/local_models.dart';
+import '../offline/local_photo_security.dart';
 import '../offline/local_store.dart';
 import '../offline/local_store_factory.dart';
 import '../pagination/paginated_list_controller.dart';
@@ -68,6 +69,11 @@ final secureStorageProvider = Provider<FlutterSecureStorage>((ref) {
     aOptions: AndroidOptions(
       resetOnError: false,
       migrateOnAlgorithmChange: true,
+      migrateWithBackup: true,
+    ),
+    iOptions: IOSOptions(
+      accessibility: KeychainAccessibility.first_unlock_this_device,
+      synchronizable: false,
     ),
   );
 });
@@ -76,6 +82,12 @@ final localDatabaseKeyManagerProvider = Provider<LocalDatabaseKeyManager>((
   ref,
 ) {
   return LocalDatabaseKeyManager(
+    FlutterSecureStringStore(ref.watch(secureStorageProvider)),
+  );
+});
+
+final localPhotoKeyManagerProvider = Provider<LocalPhotoKeyManager>((ref) {
+  return LocalPhotoKeyManager(
     FlutterSecureStringStore(ref.watch(secureStorageProvider)),
   );
 });
@@ -211,6 +223,7 @@ final adminRepositoryProvider = Provider<AdminRepository>((ref) {
 final localStoreProvider = Provider<LocalStore>((ref) {
   final store = createLocalStore(
     databaseKeyManager: ref.watch(localDatabaseKeyManagerProvider),
+    photoKeyManager: ref.watch(localPhotoKeyManagerProvider),
   );
   ref.onDispose(() {
     store.dispose();

@@ -1,6 +1,7 @@
 # Mobile Data-at-Rest Security Design
 
-Status: Phase 1A implementation and rollback design
+Status: Phase 3 implementation complete on its isolated branch; repository CI
+and macOS/iOS release validation remain mandatory gates
 
 Baseline: `preprod-baseline-2026-07-27`
 
@@ -15,9 +16,9 @@ and account isolation during upgrades.
 
 This design separates two storage classes:
 
-1. `gis_collector_offline.db`, which can be protected with SQLCipher.
-2. Offline draft photos, which are independent files and are not protected by
-   database encryption.
+1. `gis_collector_offline.db`, protected with SQLCipher.
+2. Offline draft photos, protected independently with authenticated
+   AES-256-GCM files because SQLCipher covers only the database.
 
 Offline map tiles contain public basemap imagery and are not classified as
 sensitive user data. Their ownership paths still need containment checks, but
@@ -27,10 +28,10 @@ they do not require content encryption in this phase.
 
 | Data | Location | Current protection | Required treatment |
 | --- | --- | --- | --- |
-| Access and refresh tokens | `flutter_secure_storage` | Platform secure storage | Keep; harden error and backup behavior |
+| Access and refresh tokens | `flutter_secure_storage` | Device-bound platform secure storage | Keep |
 | User metadata | `flutter_secure_storage` | Platform secure storage | Keep |
-| Projects, drafts, sync queue, package metadata | `gis_collector_offline.db` in application documents | App sandbox and `secure_delete`; no database encryption | Encrypt with SQLCipher |
-| Draft photos | `offline_photos/` in application documents | App sandbox and owner/project/draft path containment | Encrypt separately; SQLCipher does not cover these files |
+| Projects, drafts, sync queue, package metadata | `gis_collector_offline.db` in application documents | SQLCipher, `secure_delete`, integrity gates, and a device-only 256-bit key | Keep; validate every release |
+| Draft photos | `offline_photos/` in application documents | AES-256-GCM, path-bound authentication, exact owner/project/draft containment, and a separate device-only 256-bit key | Keep; validate migration and tamper gates |
 | Basemap tiles | `offline_tiles/` in application documents | App sandbox and owner-scoped paths | Exclude from backup; content encryption not required |
 | Downloaded exports/imports | App documents or Android external app storage | App sandbox or shareable file location | Govern separately by export/import retention policy |
 
@@ -48,6 +49,7 @@ This phase protects against:
 - restoring a database without its matching secure-storage key;
 - a crash or power loss during plaintext-to-encrypted migration;
 - an old or incorrect key causing the app to overwrite an unreadable database;
+- reading, modifying, or moving an offline photo without detection;
 - account switching exposing rows owned by another account.
 
 This phase does not claim to protect against:
@@ -55,12 +57,13 @@ This phase does not claim to protect against:
 - a fully compromised device while the application is unlocked and using the
   decryption key;
 - screenshots, accessibility capture, or data already displayed by the app;
-- plaintext draft photos until the separate file-encryption slice is complete;
 - files deliberately exported to a user-visible/shareable location.
 
 ## Key Lifecycle Decision
 
-Use one random, installation-scoped 256-bit database key.
+Use separate random, installation-scoped 256-bit keys for the database and
+offline photos. Separating the keys limits cross-format key reuse and lets each
+format evolve independently.
 
 - Generate the key with the operating system cryptographic random source.
 - Encode it with unpadded base64url for storage and transport inside the app.
@@ -76,8 +79,10 @@ Use one random, installation-scoped 256-bit database key.
   error must fail closed because silently generating a replacement key would
   make the existing encrypted database unrecoverable.
 
-The database key is not synchronized across devices. Each installation
-downloads its own server-backed data and owns its own unsynchronized drafts.
+Neither key is synchronized across devices. On Apple platforms the keychain
+items use `first_unlock_this_device` and are explicitly non-synchronizable.
+Each installation downloads its own server-backed data and owns its own
+unsynchronized drafts.
 
 ## Database State Detection
 
@@ -167,12 +172,13 @@ Therefore:
   is ever required;
 - never keep a permanent plaintext rollback copy on the device.
 
-Before production rollout, test upgrades from schema versions 1 through 8 and
+Before production rollout, test upgrades from schema versions 1 through 9 and
 test interrupted migration at every file-transition boundary.
 
 ## Missing-Key and Recovery Policy
 
-If an encrypted database exists but its secure-storage key is unavailable:
+If an encrypted database or photo exists but its matching secure-storage key
+is unavailable:
 
 - do not delete the database;
 - do not create a replacement key;
@@ -181,38 +187,60 @@ If an encrypted database exists but its secure-storage key is unavailable:
 - allow a destructive local reset only through an explicit confirmation that
   warns that unsynchronized work cannot be inspected or recovered.
 
-Android application backup and device-transfer rules must exclude secure
-storage, the database, offline photos, and offline tiles. This avoids restoring
-only one half of the database/key pair. On iOS, the same directories must be
-marked as excluded from backup before iOS rollout.
+Android disables application backup and device transfer and also carries
+explicit exclusion rules for root, file, database, preferences, and external
+domains. On iOS, startup marks Documents and Application Support as excluded
+from backup, reads the resource value back, and refuses startup if exclusion
+cannot be verified. This prevents restoring encrypted data without its
+device-only key.
 
 ## Offline Photo Decision
 
 SQLCipher does not encrypt `offline_photos/`.
 
-The follow-up file-encryption slice will:
+The implemented photo vault:
 
-- create a separate random photo master key in secure storage;
-- derive per-file keys or nonces safely and encrypt each file with an
-  authenticated cipher such as AES-256-GCM;
-- store only encrypted file bytes at rest;
-- keep owner/project/draft path containment checks;
-- decrypt to memory for display and upload where practical;
-- use protected, short-lived temporary files only where an API requires a path;
-- clean temporary plaintext files after success, failure, cancellation, and
-  process restart;
-- migrate existing photos transactionally with matching database path updates.
+- uses a separate random 256-bit key stored only in device-bound secure
+  storage;
+- encrypts each file with AES-256-GCM and a fresh 96-bit nonce;
+- authenticates the file header, media type, and normalized
+  owner/project/draft-relative destination path;
+- recognizes only JPEG, PNG, HEIC, and HEIF signatures before encryption;
+- rejects symlinks and non-regular files;
+- writes to an exclusive temporary file, flushes it, authenticates and hashes
+  it against the source, then renames it into place;
+- updates draft and synchronization references in one database transaction;
+- queues the old plaintext path for idempotent deletion only after the
+  reference switch;
+- deletes picker-created plaintext copies only when they are proven to be
+  regular, non-symlink files inside this application's temporary or cache
+  directory; gallery originals and arbitrary external paths are never deletion
+  candidates;
+- records temporary-copy cleanup durably and retries it after interruption;
+- resumes a verified temporary file after interruption and preserves
+  conflicting candidates;
+- decrypts into memory for gallery display and multipart upload, never into a
+  persistent plaintext preview or upload file;
+- validates declared upload MIME type from authenticated file metadata; and
+- scans the protected photo tree at startup and refuses to expose the local
+  store while plaintext, unsafe filesystem objects, missing keys, invalid
+  formats, or failed authentication remain.
 
-Database encryption may ship only if release notes clearly state that offline
-photo encryption is still incomplete, or both slices may be held and released
-together. For production handling of sensitive field photos, release them
-together.
+Moving ciphertext to a different authenticated relative path, modifying any
+byte, or using the wrong key causes authenticated decryption to fail.
+
+Historical databases from schema versions 1 and 2 predate account ownership.
+Their rows are preserved under reserved identities that cannot equal a real
+authenticated UUID. Their synchronization work is moved to `deadLetter`
+instead of being exposed to an account or uploaded automatically. A historical
+photo is assigned only when exactly one preserved draft identity matches; any
+ambiguous ownership fails closed without deleting the database or files.
 
 ## Platform and Dependency Decision
 
-The existing store uses the asynchronous `sqflite` API throughout. The least
-disruptive integration is the current `sqflite_sqlcipher` release, which keeps
-that API and supports Android, iOS, and macOS.
+The database uses `sqflite_sqlcipher` 3.4.0. Offline photos use
+`cryptography` 2.9.0 with AES-GCM streaming. Keys use
+`flutter_secure_storage` 10.3.1.
 
 The selected Flutter release declares SQLCipher 4.10.0. Android overrides that
 transitive dependency with an exact 4.17.0 constraint, and the application
@@ -241,18 +269,25 @@ The implementation is not complete until all of these pass:
 - new database files do not expose the SQLite plaintext header;
 - the wrong key cannot open or modify the database;
 - plaintext versions 1 through 8 migrate without row loss;
-- encrypted schema version 8 opens without an unintended schema migration;
+- encrypted schema version 9 opens without an unintended schema migration;
 - source and encrypted row counts match;
 - source and encrypted schema/content digests match;
 - both SQLCipher and SQLite integrity checks pass;
 - crash-recovery matrix tests pass;
 - logout/account switching retains the installation key and row isolation;
 - Android backup/device-transfer exclusions are verified;
-- offline photo plaintext is either encrypted or documented as a release
-  blocker;
+- photo key-loss, tamper, wrong-key, path-rebinding, conflict, and interrupted
+  migration tests pass;
+- the offline photo tree contains no remaining plaintext files;
+- iOS backup exclusion is verified by the native unit test and on a release
+  device;
 - Flutter analysis and the complete mobile test suite pass;
 - Android debug and release builds pass;
 - iOS validation passes on macOS before iOS release.
+
+The authoritative implementation, recovery, rollback, verification, and
+platform-gate runbook is
+[`phase-3-mobile-data-at-rest.md`](../predeployment/phase-3-mobile-data-at-rest.md).
 
 ## Primary References
 
@@ -266,3 +301,7 @@ The implementation is not complete until all of these pass:
   https://github.com/juliansteenbakker/flutter_secure_storage
 - SQLCipher-compatible sqflite package:
   https://pub.dev/packages/sqflite_sqlcipher
+- Dart AES-GCM implementation:
+  https://pub.dev/packages/cryptography
+- Apple backup exclusion:
+  https://developer.apple.com/documentation/foundation/urlresourcekey/isexcludedfrombackupkey
