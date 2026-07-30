@@ -1,7 +1,9 @@
 # Phase 1 - Data-Safety Foundation
 
-Status: engineering controls complete; managed cloud resources are deliberately
-not provisioned yet.
+Status: repository gate complete. PR
+[#6](https://github.com/Mohamad-H-Hallal/Thesis/pull/6) merged into protected
+`handover-ready` as `243b303512c64352ebbd51ab9a5c8232db1b5c9d`.
+Managed cloud resources are deliberately not provisioned yet.
 
 This is the authoritative pre-deployment data-safety policy. Historical
 handover documents describe earlier demo readiness and must not be treated as a

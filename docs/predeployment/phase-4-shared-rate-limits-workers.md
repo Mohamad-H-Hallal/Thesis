@@ -1,7 +1,9 @@
 # Phase 4 — Shared Rate Limits and Durable Workers
 
-Status: implementation complete on
-`codex/phase-4-shared-rate-limits-workers`; repository PR/CI is pending.
+Status: repository gate complete. PR
+[#11](https://github.com/Mohamad-H-Hallal/Thesis/pull/11) merged into protected
+`handover-ready` as `17af7d7634a026aa36575d6c8b66a451d3df85ee`
+after all required GitHub checks passed.
 
 This phase protects expensive endpoints across API replicas and moves
 production import/export processing to a durable, separately scalable worker.

@@ -14,6 +14,8 @@
 - `security/production-infrastructure-observability.md`: current hardened
   production reference, secret/role boundaries, observability, rotation, and
   mandatory external staging gates.
+- `predeployment/phase-0-clean-release-baseline.md`: Phase 0 dependency,
+  offline-security, toolchain, protected-branch, and baseline-tag evidence.
 - `predeployment/phase-5-production-infrastructure-observability.md`: Phase 5
   implementation and verification evidence.
 - `predeployment/phase-6-full-release-verification.md`: Phase 6 repository and
