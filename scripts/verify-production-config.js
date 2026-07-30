@@ -467,14 +467,10 @@ for (const [image, dockerfile, context = '.'] of [
   try {
     dockerRun(['image', 'inspect', image], { stdio: 'ignore' });
   } catch {
-    dockerRun([
-      'build',
-      '--tag',
-      image,
-      '--file',
-      dockerfile,
-      context,
-    ]);
+    dockerRun(
+      ['build', '--tag', image, '--file', dockerfile, context],
+      { timeout: 1800000 },
+    );
   }
 }
 
