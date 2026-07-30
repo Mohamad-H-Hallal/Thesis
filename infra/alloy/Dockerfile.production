@@ -1,0 +1,92 @@
+FROM golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 AS source
+
+ARG ALLOY_COMMIT=a435563ff073d5355952c1a8d1821110b1392691
+ARG ALLOY_SOURCE_SHA256=6ba0318a3eb0da0a67b7567e97720e880e5ba0dd880e3ef73f68227f2b8c7150
+
+WORKDIR /src
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+      libsystemd-dev=252.39-1~deb12u2 \
+  && rm -rf /var/lib/apt/lists/* \
+  && curl --fail --location --retry 3 --retry-all-errors \
+      --output source.tar.gz \
+      "https://github.com/grafana/alloy/archive/${ALLOY_COMMIT}.tar.gz" \
+  && echo "${ALLOY_SOURCE_SHA256}  source.tar.gz" | sha256sum -c - \
+  && tar -xzf source.tar.gz --strip-components=1 \
+  && rm source.tar.gz \
+  && sed -i \
+      's/^GIT_REVISION :=.*/GIT_REVISION := a435563/' \
+      Makefile \
+  && sed -i \
+      's/^GIT_BRANCH   :=.*/GIT_BRANCH   := phase6-security-patch/' \
+      Makefile \
+  && grep -qx 'GIT_REVISION := a435563' Makefile \
+  && grep -qx 'GIT_BRANCH   := phase6-security-patch' Makefile
+
+FROM node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS ui
+COPY --from=source /src /src
+WORKDIR /src/internal/web/ui
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+  npm ci --no-audit --no-fund \
+  && npm run build
+
+FROM source AS build
+COPY --from=ui /src/internal/web/ui/dist /src/internal/web/ui/dist
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+  success=false; \
+  for attempt in 1 2 3; do \
+    if go get \
+        github.com/klauspost/compress@v1.18.7 \
+        golang.org/x/text@v0.39.0 \
+        google.golang.org/grpc@v1.82.1 \
+      && go mod tidy \
+      && cd collector \
+      && go get \
+        github.com/klauspost/compress@v1.18.7 \
+        golang.org/x/text@v0.39.0 \
+        google.golang.org/grpc@v1.82.1 \
+      && go mod tidy; then \
+      success=true; \
+      break; \
+    fi; \
+    cd /src; \
+    echo "Go dependency transport failure; retrying (${attempt}/3)" >&2; \
+    sleep $((attempt * 5)); \
+  done; \
+  test "${success}" = true \
+  && cd /src/collector \
+  && test "$(go list -m -f '{{.Version}}' github.com/klauspost/compress)" = "v1.18.7" \
+  && test "$(go list -m -f '{{.Version}}' golang.org/x/text)" = "v0.39.0" \
+  && test "$(go list -m -f '{{.Version}}' google.golang.org/grpc)" = "v1.82.1"
+
+ARG VERSION=v1.18.0-phase6.1
+ARG SOURCE_DATE_EPOCH=1785283200
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+  RELEASE_BUILD=1 \
+  VERSION="${VERSION}" \
+  SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+  BUILDER_USER=gis-release \
+  BUILDER_HOST=build \
+  GO_TAGS="netgo embedalloyui promtail_journal_enabled" \
+  SKIP_UI_BUILD=1 \
+  SKIP_CODE_GENERATION=1 \
+  make alloy
+
+FROM grafana/alloy:v1.18.0@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308
+
+RUN apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      libc-bin=2.39-0ubuntu8.8 \
+      libc6=2.39-0ubuntu8.8 \
+      libpam-modules=1.5.3-5ubuntu5.6 \
+      libpam-modules-bin=1.5.3-5ubuntu5.6 \
+      libpam-runtime=1.5.3-5ubuntu5.6 \
+      libpam0g=1.5.3-5ubuntu5.6 \
+      tar=1.35+dfsg-3ubuntu0.4 \
+  && rm -f /usr/bin/mount /usr/bin/umount \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /src/build/alloy /bin/alloy

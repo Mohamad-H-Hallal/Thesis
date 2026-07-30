@@ -40,20 +40,38 @@ class OfflineDownloadForegroundService {
   static bool _initialized = false;
   static bool _startedByOfflineDownload = false;
 
+  @visibleForTesting
+  static bool isAvailableOnPlatform({required bool isWeb}) => !isWeb;
+
+  static bool get _isAvailable => isAvailableOnPlatform(isWeb: kIsWeb);
+
   static void initializeCommunication() {
+    if (!_isAvailable) {
+      return;
+    }
     FlutterForegroundTask.initCommunicationPort();
   }
 
   static void addTaskDataCallback(void Function(Object data) callback) {
+    if (!_isAvailable) {
+      return;
+    }
     FlutterForegroundTask.addTaskDataCallback(callback);
   }
 
   static void removeTaskDataCallback(void Function(Object data) callback) {
+    if (!_isAvailable) {
+      return;
+    }
     FlutterForegroundTask.removeTaskDataCallback(callback);
   }
 
   static Future<void> initialize() async {
     if (_initialized) {
+      return;
+    }
+    if (!_isAvailable) {
+      _initialized = true;
       return;
     }
     FlutterForegroundTask.init(
@@ -84,6 +102,9 @@ class OfflineDownloadForegroundService {
     required String projectName,
     required bool refreshOnly,
   }) async {
+    if (!_isAvailable) {
+      return;
+    }
     await initialize();
     await _requestRequiredPermissions();
 
@@ -127,7 +148,8 @@ class OfflineDownloadForegroundService {
   }
 
   static Future<void> updateProgress(String label) async {
-    if (!_startedByOfflineDownload ||
+    if (!_isAvailable ||
+        !_startedByOfflineDownload ||
         !await FlutterForegroundTask.isRunningService) {
       return;
     }
@@ -142,7 +164,7 @@ class OfflineDownloadForegroundService {
   }
 
   static Future<void> stop() async {
-    if (!_startedByOfflineDownload) {
+    if (!_isAvailable || !_startedByOfflineDownload) {
       return;
     }
     _startedByOfflineDownload = false;
@@ -153,6 +175,9 @@ class OfflineDownloadForegroundService {
   }
 
   static Future<void> _requestRequiredPermissions() async {
+    if (!_isAvailable) {
+      return;
+    }
     final notificationPermission =
         await FlutterForegroundTask.checkNotificationPermission();
     if (notificationPermission != NotificationPermission.granted) {

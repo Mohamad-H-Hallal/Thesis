@@ -1,0 +1,55 @@
+FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build
+
+ARG BLACKBOX_COMMIT=5a059bee8d8ffa4e75947c5055fb0abeefc582e6
+ARG BLACKBOX_SOURCE_SHA256=12b6eb9b307ebc5e55eafe6eb503816756fa0c344854897fb5aeb687544999f9
+
+WORKDIR /src
+RUN wget -qO source.tar.gz \
+      "https://github.com/prometheus/blackbox_exporter/archive/${BLACKBOX_COMMIT}.tar.gz" \
+  && echo "${BLACKBOX_SOURCE_SHA256}  source.tar.gz" | sha256sum -c - \
+  && tar -xzf source.tar.gz --strip-components=1 \
+  && rm source.tar.gz
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+  success=false; \
+  for attempt in 1 2 3; do \
+    if go get \
+        github.com/google/cel-go@v0.29.0 \
+        github.com/quic-go/quic-go@v0.59.1 \
+        golang.org/x/crypto@v0.53.0 \
+        golang.org/x/net@v0.56.0 \
+        golang.org/x/text@v0.39.0 \
+        google.golang.org/grpc@v1.82.1 \
+      && go mod tidy; then \
+      success=true; \
+      break; \
+    fi; \
+    echo "Go dependency transport failure; retrying (${attempt}/3)" >&2; \
+    sleep $((attempt * 5)); \
+  done; \
+  test "${success}" = true \
+  && test "$(go list -m -f '{{.Version}}' github.com/google/cel-go)" = "v0.29.0" \
+  && test "$(go list -m -f '{{.Version}}' github.com/quic-go/quic-go)" = "v0.59.1" \
+  && test "$(go list -m -f '{{.Version}}' golang.org/x/crypto)" = "v0.53.0" \
+  && test "$(go list -m -f '{{.Version}}' golang.org/x/net)" = "v0.56.0" \
+  && test "$(go list -m -f '{{.Version}}' golang.org/x/text)" = "v0.39.0" \
+  && test "$(go list -m -f '{{.Version}}' google.golang.org/grpc)" = "v1.82.1"
+
+ARG VERSION=0.28.0-phase6.1
+ARG REVISION=5a059bee8d8ffa4e75947c5055fb0abeefc582e6
+ARG BUILD_DATE=20260729-00:00:00
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+  CGO_ENABLED=0 go build -trimpath -tags netgo \
+    -ldflags="-s -w \
+      -X github.com/prometheus/common/version.Version=${VERSION} \
+      -X github.com/prometheus/common/version.Revision=${REVISION} \
+      -X github.com/prometheus/common/version.Branch=phase6-security-patch \
+      -X github.com/prometheus/common/version.BuildUser=gis-release \
+      -X github.com/prometheus/common/version.BuildDate=${BUILD_DATE}" \
+    -o /out/blackbox_exporter .
+
+FROM prom/blackbox-exporter:v0.28.0@sha256:e753ff9f3fc458d02cca5eddab5a77e1c175eee484a8925ac7d524f04366c2fc
+
+COPY --from=build /out/blackbox_exporter /bin/blackbox_exporter

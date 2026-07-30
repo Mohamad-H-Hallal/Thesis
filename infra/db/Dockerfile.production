@@ -1,0 +1,11 @@
+FROM postgis/postgis:16-3.5-alpine@sha256:0d14e6c83a1bde7e453c2a5fb41785279992cb5793073a686f4f9e8ec2c5b077
+
+# The upstream entrypoint uses gosu only to drop from root to postgres. Replace
+# that Go binary with Alpine's small C implementation so release scans do not
+# inherit unrelated Go standard-library CVEs from gosu's build toolchain.
+RUN apk add --no-cache 'su-exec=0.3-r0' \
+  && test "$(grep -c 'exec gosu postgres' /usr/local/bin/docker-entrypoint.sh)" = "1" \
+  && sed -i 's/exec gosu postgres/exec su-exec postgres/' /usr/local/bin/docker-entrypoint.sh \
+  && rm -f /usr/local/bin/gosu \
+  && grep -q 'exec su-exec postgres' /usr/local/bin/docker-entrypoint.sh \
+  && ! grep -q 'gosu' /usr/local/bin/docker-entrypoint.sh

@@ -1,7 +1,9 @@
 # Phase 5 — Production Infrastructure and Observability
 
-Status: implementation and local verification complete on
-`codex/phase-5-production-observability`; repository PR/CI is pending.
+Status: repository gate complete. PR
+[#12](https://github.com/Mohamad-H-Hallal/Thesis/pull/12) merged into protected
+`handover-ready` as `721a1dd09dfd98fd459d4b36dc5a990a9449edc3`
+after all required GitHub checks passed.
 
 This phase makes production configuration fail closed, provides an immutable
 single-server reference stack, and adds observability/security gates. It does

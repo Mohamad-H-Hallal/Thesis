@@ -20,6 +20,10 @@ into independently reviewable slices.
 
 ## Slice 2A — delivery boundary
 
+Status: complete. PR
+[#7](https://github.com/Mohamad-H-Hallal/Thesis/pull/7) merged into protected
+`handover-ready` as `00055ac6021ab47aec08a91bccd082732f52c6ef`.
+
 The broad `/uploads` static mount is removed. Public category icons retain
 their existing `/uploads/category-icons/<name>` URLs through an exact,
 dotfile-denying static mount.

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -17,6 +18,12 @@ Future<void> main() async {
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   runApp(const ProviderScope(child: LebanonGisCollectorApp()));
 }
+
+@visibleForTesting
+Widget wrapForegroundTaskForPlatform({
+  required Widget child,
+  required bool isWeb,
+}) => isWeb ? child : WithForegroundTask(child: child);
 
 class AppScrollBehavior extends MaterialScrollBehavior {
   const AppScrollBehavior();
@@ -46,15 +53,19 @@ class LebanonGisCollectorApp extends ConsumerWidget {
       themeMode: ThemeMode.system,
       scrollBehavior: const AppScrollBehavior(),
       routerConfig: router,
-      builder: (context, child) => AppSystemUiScope(
-        child: WithForegroundTask(
-          child: WorkflowRealtimeCoordinator(
-            child: PushNotificationCoordinator(
-              child: child ?? const SizedBox.shrink(),
-            ),
+      builder: (context, child) {
+        final coordinatedChild = WorkflowRealtimeCoordinator(
+          child: PushNotificationCoordinator(
+            child: child ?? const SizedBox.shrink(),
           ),
-        ),
-      ),
+        );
+        return AppSystemUiScope(
+          child: wrapForegroundTaskForPlatform(
+            child: coordinatedChild,
+            isWeb: kIsWeb,
+          ),
+        );
+      },
     );
   }
 }

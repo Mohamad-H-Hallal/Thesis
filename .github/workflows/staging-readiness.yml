@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgis:
-        image: postgis/postgis:16-3.4@sha256:44126d872ac91993766c341e369c539e8196614321765d36a6f1bab0419a5fa5
+        image: postgis/postgis:16-3.5-alpine@sha256:0d14e6c83a1bde7e453c2a5fb41785279992cb5793073a686f4f9e8ec2c5b077
         env:
           POSTGRES_DB: gis_app
           POSTGRES_USER: gis_user
@@ -71,10 +71,12 @@ jobs:
       PERF_EXPORT_TIMEOUT_MS: 60000
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm

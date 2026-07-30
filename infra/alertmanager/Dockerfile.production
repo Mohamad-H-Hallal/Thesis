@@ -1,0 +1,76 @@
+FROM node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS ui
+
+ARG ALERTMANAGER_COMMIT=2c8da51e03f3dbbed24f9711ca2d76aab4eef9c5
+ARG ALERTMANAGER_SOURCE_SHA256=fdeab39769b39ebeb2fa0da244295dfb02da76e1c8b5afc041fbd99076ed5181
+
+WORKDIR /src
+RUN wget -qO source.tar.gz \
+      "https://github.com/prometheus/alertmanager/archive/${ALERTMANAGER_COMMIT}.tar.gz" \
+  && echo "${ALERTMANAGER_SOURCE_SHA256}  source.tar.gz" | sha256sum -c - \
+  && tar -xzf source.tar.gz --strip-components=1 \
+  && rm source.tar.gz
+RUN --mount=type=cache,target=/root/.npm \
+  cd ui/app \
+  && npm ci --no-audit --no-fund \
+  && npm run build
+
+FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build
+
+ARG ALERTMANAGER_COMMIT=2c8da51e03f3dbbed24f9711ca2d76aab4eef9c5
+ARG ALERTMANAGER_SOURCE_SHA256=fdeab39769b39ebeb2fa0da244295dfb02da76e1c8b5afc041fbd99076ed5181
+
+WORKDIR /src
+RUN wget -qO source.tar.gz \
+      "https://github.com/prometheus/alertmanager/archive/${ALERTMANAGER_COMMIT}.tar.gz" \
+  && echo "${ALERTMANAGER_SOURCE_SHA256}  source.tar.gz" | sha256sum -c - \
+  && tar -xzf source.tar.gz --strip-components=1 \
+  && rm source.tar.gz
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+  success=false; \
+  for attempt in 1 2 3; do \
+    if go get \
+        golang.org/x/crypto@v0.53.0 \
+        golang.org/x/text@v0.39.0 \
+        google.golang.org/grpc@v1.82.1 \
+      && go mod tidy; then \
+      success=true; \
+      break; \
+    fi; \
+    echo "Go dependency transport failure; retrying (${attempt}/3)" >&2; \
+    sleep $((attempt * 5)); \
+  done; \
+  test "${success}" = true \
+  && test "$(go list -m -f '{{.Version}}' golang.org/x/crypto)" = "v0.53.0" \
+  && test "$(go list -m -f '{{.Version}}' golang.org/x/text)" = "v0.39.0" \
+  && test "$(go list -m -f '{{.Version}}' google.golang.org/grpc)" = "v1.82.1"
+
+COPY --from=ui /src/ui/app/dist /src/ui/app/dist
+
+ARG VERSION=0.33.1-phase6.1
+ARG REVISION=2c8da51e03f3dbbed24f9711ca2d76aab4eef9c5
+ARG BUILD_DATE=20260729-00:00:00
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+  CGO_ENABLED=0 go build -trimpath -tags netgo \
+      -ldflags="-s -w \
+        -X github.com/prometheus/common/version.Version=${VERSION} \
+        -X github.com/prometheus/common/version.Revision=${REVISION} \
+        -X github.com/prometheus/common/version.Branch=phase6-security-patch \
+        -X github.com/prometheus/common/version.BuildUser=gis-release \
+        -X github.com/prometheus/common/version.BuildDate=${BUILD_DATE}" \
+      -o /out/alertmanager ./cmd/alertmanager \
+  && CGO_ENABLED=0 go build -trimpath -tags netgo \
+      -ldflags="-s -w \
+        -X github.com/prometheus/common/version.Version=${VERSION} \
+        -X github.com/prometheus/common/version.Revision=${REVISION} \
+        -X github.com/prometheus/common/version.Branch=phase6-security-patch \
+        -X github.com/prometheus/common/version.BuildUser=gis-release \
+        -X github.com/prometheus/common/version.BuildDate=${BUILD_DATE}" \
+      -o /out/amtool ./cmd/amtool
+
+FROM prom/alertmanager:v0.33.1@sha256:9e082985f56f4c8c9f724e18f2288c6708f472e56a5286b8863d080434ea065d
+
+COPY --from=build /out/alertmanager /bin/alertmanager
+COPY --from=build /out/amtool /bin/amtool
