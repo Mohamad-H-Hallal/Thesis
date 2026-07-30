@@ -122,6 +122,10 @@ const buildTrivyArgs = (
   cacheDirectory,
   { exitCode = '1', severity = 'CRITICAL,HIGH', vexPath } = {},
 ) => {
+  const hostUser =
+    typeof process.getuid === 'function' && typeof process.getgid === 'function'
+      ? [`${process.getuid()}:${process.getgid()}`]
+      : [];
   const args = [
     'run',
     '--rm',
@@ -133,6 +137,7 @@ const buildTrivyArgs = (
     '256',
     '--memory',
     '2g',
+    ...(hostUser.length > 0 ? ['--user', hostUser[0]] : []),
     '--volume',
     `${archivePath}:/image.tar:ro`,
     '--volume',
