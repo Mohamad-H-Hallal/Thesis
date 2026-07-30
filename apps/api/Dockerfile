@@ -14,6 +14,11 @@ RUN npm run build \
   && npm cache clean --force
 
 FROM node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS runtime
+ARG APP_RELEASE_VERSION=development
+ARG APP_RELEASE_COMMIT=unknown
+LABEL org.opencontainers.image.source="https://github.com/Mohamad-H-Hallal/Thesis" \
+      org.opencontainers.image.version="${APP_RELEASE_VERSION}" \
+      org.opencontainers.image.revision="${APP_RELEASE_COMMIT}"
 ENV NODE_ENV=production
 WORKDIR /app/apps/api
 

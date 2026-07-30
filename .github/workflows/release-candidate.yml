@@ -1,0 +1,364 @@
+name: Release Candidate
+
+on:
+  pull_request:
+    branches:
+      - handover-ready
+    paths:
+      - ".github/workflows/release-candidate.yml"
+      - "apps/api/Dockerfile"
+      - "apps/mobile/android/app/build.gradle.kts"
+      - "scripts/release-candidate.js"
+      - "scripts/release-candidate.test.js"
+      - "release/evidence/**"
+      - "docs/predeployment/phase-7-release-candidate-pilot.md"
+      - "CHANGELOG.md"
+  push:
+    branches:
+      - handover-ready
+    tags:
+      - "v*.*.*-rc.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    name: Release Candidate Contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/api/package-lock.json
+
+      - name: Test release-candidate controls
+        run: node scripts/release-candidate.test.js
+
+      - name: Verify release-candidate contract
+        run: node scripts/release-candidate.js verify-contract
+
+  build:
+    name: Signed Immutable Release Candidate
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: release-candidate
+    permissions:
+      contents: write
+      packages: write
+      attestations: write
+      id-token: write
+    env:
+      ANDROID_APPLICATION_ID: ${{ vars.ANDROID_APPLICATION_ID }}
+      ANDROID_VERSION_CODE: ${{ vars.ANDROID_VERSION_CODE }}
+      RC_API_BASE_URL: ${{ vars.RC_API_BASE_URL }}
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.ANDROID_GOOGLE_SERVICES_JSON_BASE64 }}
+      TERRALEB_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      TERRALEB_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      TERRALEB_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+
+      - name: Verify annotated tag and protected source
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.([1-9][0-9]*)$ ]]; then
+            echo "::error::Release-candidate tag does not match vMAJOR.MINOR.PATCH-rc.NUMBER."
+            exit 1
+          fi
+          if [[ "$(git cat-file -t "$GITHUB_REF_NAME")" != "tag" ]]; then
+            echo "::error::Release-candidate tags must be annotated."
+            exit 1
+          fi
+          git fetch --no-tags origin \
+            handover-ready:refs/remotes/origin/handover-ready
+          source_commit="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
+          protected_head="$(git rev-parse origin/handover-ready)"
+          if [[ "$source_commit" != "$protected_head" ]]; then
+            echo "::error::The candidate must tag the current protected handover-ready head."
+            exit 1
+          fi
+          source_date="$(git show -s --format=%cI "$source_commit")"
+          source_epoch="$(git show -s --format=%ct "$source_commit")"
+          version="${GITHUB_REF_NAME#v}"
+          image_path="$(printf '%s-api' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          {
+            echo "source_commit=$source_commit"
+            echo "source_date=$source_date"
+            echo "source_epoch=$source_epoch"
+            echo "version=$version"
+            echo "api_image=ghcr.io/$image_path"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Validate protected release inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            ANDROID_APPLICATION_ID \
+            ANDROID_VERSION_CODE \
+            RC_API_BASE_URL \
+            ANDROID_KEYSTORE_BASE64 \
+            ANDROID_GOOGLE_SERVICES_JSON_BASE64 \
+            TERRALEB_KEYSTORE_PASSWORD \
+            TERRALEB_KEY_ALIAS \
+            TERRALEB_KEY_PASSWORD
+          do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            printf '::error::Missing release-candidate environment values: %s\n' \
+              "${missing[*]}"
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/api/package-lock.json
+
+      - name: Validate release identity and staging endpoint
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.source_commit }}
+          SOURCE_DATE: ${{ steps.source.outputs.source_date }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/release-candidate.js verify-prebuild
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --proto '=https' \
+            --tlsv1.2 \
+            --connect-timeout 10 \
+            --max-time 30 \
+            "${RC_API_BASE_URL%/}/health" \
+            > /dev/null
+
+      - name: Set up Java
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: "3.41.2"
+          channel: stable
+          cache: true
+
+      - name: Create protected Android configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          keystore_path="$RUNNER_TEMP/terraleb-release.jks"
+          google_services_path="$GITHUB_WORKSPACE/apps/mobile/android/app/google-services.json"
+          if [[ -e "$google_services_path" ]]; then
+            echo "::error::The tagged source unexpectedly contains google-services.json."
+            exit 1
+          fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
+          printf '%s' "$ANDROID_GOOGLE_SERVICES_JSON_BASE64" | base64 --decode \
+            > "$google_services_path"
+          chmod 600 "$keystore_path"
+          chmod 600 "$google_services_path"
+          if [[ ! -s "$keystore_path" ]]; then
+            echo "::error::Decoded Android keystore is empty."
+            exit 1
+          fi
+          node scripts/release-candidate.js verify-google-services \
+            --file "$google_services_path"
+          echo "TERRALEB_KEYSTORE_PATH=$keystore_path" >> "$GITHUB_ENV"
+          echo "TERRALEB_APPLICATION_ID=$ANDROID_APPLICATION_ID" >> "$GITHUB_ENV"
+
+      - name: Resolve locked Flutter dependencies
+        working-directory: apps/mobile
+        run: flutter pub get --enforce-lockfile
+
+      - name: Build signed Android App Bundle
+        working-directory: apps/mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build appbundle \
+            --release \
+            --build-name "${{ steps.source.outputs.version }}" \
+            --build-number "$ANDROID_VERSION_CODE" \
+            --dart-define=APP_FLAVOR=staging \
+            --dart-define=API_BASE_URL="$RC_API_BASE_URL" \
+            --dart-define=USE_MOCK_AUTH=false \
+            --dart-define=USE_MOCK_DATA=false
+          mkdir -p "$GITHUB_WORKSPACE/release/out"
+          cp build/app/outputs/bundle/release/app-release.aab \
+            "$GITHUB_WORKSPACE/release/out/terraleb-${{ steps.source.outputs.version }}.aab"
+
+      - name: Verify Android release signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          aab="release/out/terraleb-${{ steps.source.outputs.version }}.aab"
+          jarsigner -verify -strict -verbose "$aab"
+          keytool -printcert -jarfile "$aab" \
+            > "release/out/android-signing-certificate.txt"
+
+      - name: Build web release bundle
+        working-directory: apps/mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build web \
+            --release \
+            --dart-define=APP_FLAVOR=staging \
+            --dart-define=API_BASE_URL="$RC_API_BASE_URL" \
+            --dart-define=USE_MOCK_AUTH=false \
+            --dart-define=USE_MOCK_DATA=false
+          (
+            cd build/web
+            zip -X -q -r \
+              "$GITHUB_WORKSPACE/release/out/terraleb-web-${{ steps.source.outputs.version }}.zip" \
+              .
+          )
+
+      - name: Log in to GitHub Container Registry
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io \
+            --username "$GITHUB_ACTOR" \
+            --password-stdin
+
+      - name: Build and publish API candidate by tag
+        id: image
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          image="${{ steps.source.outputs.api_image }}"
+          tag="$GITHUB_REF_NAME"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "::error::A GitHub release already exists for this immutable candidate tag."
+            exit 1
+          fi
+          if docker manifest inspect "$image:$tag" > /dev/null 2>&1; then
+            echo "::error::A registry image already exists for this immutable candidate tag."
+            exit 1
+          fi
+          docker build \
+            --file apps/api/Dockerfile \
+            --build-arg "APP_RELEASE_VERSION=$tag" \
+            --build-arg "APP_RELEASE_COMMIT=${{ steps.source.outputs.source_commit }}" \
+            --tag "$image:$tag" \
+            .
+          docker push "$image:$tag"
+          digest="$(docker inspect --format='{{index .RepoDigests 0}}' "$image:$tag")"
+          digest="${digest##*@}"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Published API image did not return a SHA-256 digest."
+            exit 1
+          fi
+          docker save "$image:$tag" --output "$RUNNER_TEMP/api-image.tar"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Generate API image SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .trivy-cache release/out
+          chmod 777 .trivy-cache release/out
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --volume "$RUNNER_TEMP:/input:ro" \
+            --volume "$PWD/.trivy-cache:/root/.cache/trivy" \
+            --volume "$PWD/release/out:/output" \
+            ghcr.io/aquasecurity/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f \
+            image \
+            --input /input/api-image.tar \
+            --format cyclonedx \
+            --output /output/api-image.cdx.json
+
+      - name: Create content-addressed release manifest
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.source_commit }}
+          SOURCE_DATE: ${{ steps.source.outputs.source_date }}
+          REPOSITORY: ${{ github.repository }}
+          API_IMAGE: ${{ steps.source.outputs.api_image }}
+          API_IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp CHANGELOG.md release/out/CHANGELOG.md
+          node scripts/release-candidate.js create-manifest --artifact-dir release/out
+
+      - name: Attest file artifacts
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d
+        with:
+          subject-path: "release/out/*"
+
+      - name: Attest API image
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d
+        with:
+          subject-name: ${{ steps.source.outputs.api_image }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+
+      - name: Upload release-candidate artifacts
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: terraleb-${{ github.ref_name }}
+          path: release/out
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Publish GitHub prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --prerelease \
+            --title "TerraLeb $GITHUB_REF_NAME" \
+            --notes-file CHANGELOG.md \
+            release/out/*
+
+      - name: Remove signing material and registry session
+        if: always()
+        shell: bash
+        run: |
+          rm -f "${TERRALEB_KEYSTORE_PATH:-$RUNNER_TEMP/terraleb-release.jks}"
+          rm -f "$GITHUB_WORKSPACE/apps/mobile/android/app/google-services.json"
+          docker logout ghcr.io || true

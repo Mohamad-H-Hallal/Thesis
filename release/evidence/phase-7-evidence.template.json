@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "status": "blocked",
+  "candidate": {
+    "tag": "",
+    "sourceCommit": "",
+    "manifestSha256": "",
+    "apiImage": "",
+    "apiImageDigest": "",
+    "androidApplicationId": "",
+    "androidAabSha256": "",
+    "webBundleSha256": ""
+  },
+  "approvals": {
+    "stagingChangeApproved": false,
+    "pilotApproved": false,
+    "releaseOwner": "",
+    "securityReviewer": "",
+    "operationsOwner": ""
+  },
+  "staging": {
+    "baseUrl": "",
+    "dnsTlsVerified": false,
+    "privateStorageVerified": false,
+    "scannerVerified": false,
+    "valkeyVerified": false,
+    "pushNotificationsVerified": false,
+    "alertDeliveryVerified": false,
+    "deployedDigestMatchesManifest": false,
+    "smokeTestsPassed": false
+  },
+  "backupRestore": {
+    "offServerBackupVerified": false,
+    "restoreExercisePassed": false,
+    "sourceRowCount": 0,
+    "restoredRowCount": 0,
+    "checksumMatched": false,
+    "evidenceUrl": ""
+  },
+  "devices": {
+    "androidPhysicalDevicePassed": false,
+    "androidDeviceModel": "",
+    "androidOsVersion": "",
+    "appleReleaseInScope": true,
+    "macosIosValidationPassed": false,
+    "appleDeviceModel": "",
+    "appleOsVersion": ""
+  },
+  "soak": {
+    "approvedDurationHours": 0,
+    "startedAt": "",
+    "endedAt": "",
+    "durationHours": 0,
+    "criticalAlerts": 0,
+    "unresolvedHighAlerts": 0,
+    "dataIntegrityChecksPassed": false,
+    "scannerFailurePolicyExercised": false,
+    "valkeyOutagePolicyExercised": false
+  },
+  "rollback": {
+    "rehearsed": false,
+    "candidateDigestUsed": "",
+    "previousDigestRestored": "",
+    "databaseRollbackDecisionRecorded": false,
+    "dataLossDetected": true,
+    "recoveryTimeMinutes": 0,
+    "evidenceUrl": ""
+  },
+  "pilot": {
+    "authorizedUserCount": 0,
+    "completedUserCount": 0,
+    "criticalDefects": 0,
+    "unresolvedHighDefects": 0,
+    "dataIntegrityDiffs": 0,
+    "ownerSignoff": "",
+    "evidenceUrl": ""
+  },
+  "notes": [
+    "Copy this template to a candidate-specific evidence file.",
+    "Never change status to complete until every applicable external gate has real evidence.",
+    "If Apple release is deferred, set appleReleaseInScope to false and keep the macOS/iOS gate explicitly recorded for the future Apple release."
+  ]
+}
