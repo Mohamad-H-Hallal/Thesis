@@ -21,6 +21,9 @@
 - `predeployment/phase-6-full-release-verification.md`: Phase 6 repository and
   local release-verification evidence, formal Medium-risk decisions, and
   external release gates.
+- `predeployment/phase-7-release-candidate-pilot.md`: Phase 7 release-candidate
+  supply-chain controls, external-input inventory, staging/pilot evidence
+  contract, rollback gates, and current blocking status.
 - `phase-9/03-backup-restore-drill.md`: backup/restore drill execution guide.
 - `phase-10/01-quality-engineering.md`: quality engineering scope, test matrix, and exit criteria.
 - `phase-10/02-release-gates.md`: release gate scripts, CI gate wiring, and performance thresholds.

@@ -18,6 +18,9 @@ device_offline_*.db
 *.sqlite3
 *.db-wal
 *.db-shm
+*.jks
+*.keystore
+release/out/
 
 # Node
 **/node_modules/
