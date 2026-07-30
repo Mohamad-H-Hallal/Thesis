@@ -48,6 +48,19 @@ const lokiDockerfilePath = path.join(
   'loki',
   'Dockerfile.production',
 );
+const alloyDockerfilePath = path.join(
+  root,
+  'infra',
+  'alloy',
+  'Dockerfile.production',
+);
+const alloyVexPath = path.join(root, 'infra', 'alloy', 'alloy.openvex.json');
+const alloyMediumPolicyPath = path.join(
+  root,
+  'infra',
+  'alloy',
+  'alloy.medium-risk-acceptance.json',
+);
 const nginxTemplatePath = path.join(root, 'infra', 'nginx', 'production.conf.template');
 const observabilityPath = path.join(root, 'infra', 'observability');
 
@@ -67,6 +80,9 @@ const prometheusDockerfile = read(prometheusDockerfilePath);
 const alertmanagerDockerfile = read(alertmanagerDockerfilePath);
 const blackboxDockerfile = read(blackboxDockerfilePath);
 const lokiDockerfile = read(lokiDockerfilePath);
+const alloyDockerfile = read(alloyDockerfilePath);
+const alloyVex = JSON.parse(read(alloyVexPath));
+const alloyMediumPolicy = JSON.parse(read(alloyMediumPolicyPath));
 const gitignore = read(path.join(root, '.gitignore'));
 const workflowImages = [
   read(path.join(root, '.github', 'workflows', 'reusable-api-release-gate.yml')),
@@ -81,7 +97,7 @@ const composeImages = `${productionCompose}\n${observabilityCompose}`
   .split(/\r?\n/)
   .map((line) => line.match(/^\s*image:\s*(\S+)\s*$/)?.[1])
   .filter(Boolean);
-assert(composeImages.length >= 4, 'Expected production and observability image declarations');
+assert(composeImages.length >= 3, 'Expected production and observability image declarations');
 for (const image of composeImages) {
   assert(
     /@sha256:[a-f0-9]{64}$/.test(image),
@@ -134,7 +150,8 @@ assert(
   'Production certificate services must use the hardened Certbot image build',
 );
 assert(
-  certbotDockerfile.includes('rm -f /usr/local/bin/uv /usr/local/bin/uvx'),
+  certbotDockerfile.includes('rm -f /usr/local/bin/uv /usr/local/bin/uvx') &&
+    certbotDockerfile.includes('site-packages/setuptools'),
   'Hardened Certbot image must remove package-management tooling',
 );
 const prometheusDockerfileBases = prometheusDockerfile
@@ -184,6 +201,11 @@ for (const [name, dockerfile, expectedPath] of [
     `${name} security rebuild must pin source and patched Go modules`,
   );
 }
+assert(
+  blackboxDockerfile.includes('github.com/google/cel-go@v0.29.0') &&
+    blackboxDockerfile.includes('github.com/quic-go/quic-go@v0.59.1'),
+  'Blackbox security rebuild must patch reviewed Medium Go dependencies',
+);
 const lokiBases = lokiDockerfile
   .split(/\r?\n/)
   .map((line) => line.match(/^\s*FROM\s+(\S+)/i)?.[1])
@@ -204,6 +226,89 @@ assert(
     lokiDockerfile.includes('LOKI_SOURCE_SHA256=') &&
     lokiDockerfile.includes('go mod vendor'),
   'Loki security rebuild must pin source, patched Go modules, and vendor state',
+);
+const alloyBases = alloyDockerfile
+  .split(/\r?\n/)
+  .map((line) => line.match(/^\s*FROM\s+(\S+)/i)?.[1])
+  .filter(Boolean);
+assert(
+  alloyBases.length === 4 &&
+    alloyBases.filter((image) => image !== 'source').length === 3 &&
+    alloyBases
+      .filter((image) => image !== 'source')
+      .every((image) => /@sha256:[a-f0-9]{64}$/.test(image)),
+  'Alloy build and runtime images must all be digest-pinned',
+);
+assert(
+  observabilityCompose.includes('dockerfile: infra/alloy/Dockerfile.production'),
+  'Production observability must use the patched Alloy image build',
+);
+assert(
+  alloyDockerfile.includes(
+    'ALLOY_COMMIT=a435563ff073d5355952c1a8d1821110b1392691',
+  ) &&
+    alloyDockerfile.includes(
+      'ALLOY_SOURCE_SHA256=6ba0318a3eb0da0a67b7567e97720e880e5ba0dd880e3ef73f68227f2b8c7150',
+    ) &&
+    alloyDockerfile.includes('golang.org/x/text@v0.39.0') &&
+    alloyDockerfile.includes('google.golang.org/grpc@v1.82.1') &&
+    alloyDockerfile.includes('libc6=2.39-0ubuntu8.8') &&
+    alloyDockerfile.includes('libpam0g=1.5.3-5ubuntu5.6') &&
+    alloyDockerfile.includes('tar=1.35+dfsg-3ubuntu0.4'),
+  'Alloy security rebuild must pin source, patched Go modules, and OS updates',
+);
+const expectedAlloyVulnerabilities = [
+  'CVE-2026-33997',
+  'CVE-2026-34040',
+  'CVE-2026-41568',
+  'CVE-2026-41567',
+  'CVE-2026-42306',
+];
+const alloyVexStatements = alloyVex.statements ?? [];
+assert(
+  alloyVexStatements.length === expectedAlloyVulnerabilities.length &&
+    alloyVexStatements
+      .map((statement) => statement.vulnerability?.name)
+      .sort()
+      .join(',') === [...expectedAlloyVulnerabilities].sort().join(','),
+  'Alloy VEX must contain exactly the five reviewed upstream findings',
+);
+for (const statement of alloyVexStatements) {
+  assert(
+    statement.status === 'not_affected' &&
+      statement.justification === 'vulnerable_code_not_in_execute_path' &&
+      statement.products?.length === 1 &&
+      statement.products[0]['@id'] ===
+        'pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible',
+    `Alloy VEX scope is invalid for ${statement.vulnerability?.name ?? 'unknown finding'}`,
+  );
+}
+assert(
+  /^\d{4}-\d{2}-\d{2}$/.test(alloyVex.x_expiry) &&
+    Date.parse(`${alloyVex.x_expiry}T00:00:00Z`) > Date.now(),
+  'Alloy VEX security decision has expired',
+);
+const expectedAlloyMediumPolicyIds = [
+  'CVE-2026-13757',
+  'CVE-2026-27456',
+  'CVE-2026-33997',
+  'CVE-2026-41568',
+];
+assert(
+  alloyMediumPolicy.schemaVersion === 1 &&
+    typeof alloyMediumPolicy.owner === 'string' &&
+    alloyMediumPolicy.owner.trim().length > 0 &&
+    /^\d{4}-\d{2}-\d{2}$/.test(alloyMediumPolicy.reviewBy) &&
+    Date.parse(`${alloyMediumPolicy.reviewBy}T00:00:00Z`) > Date.now() &&
+    alloyMediumPolicy.findings?.length === 10 &&
+    [...new Set(alloyMediumPolicy.findings.map(({ id }) => id))]
+      .sort()
+      .join(',') === expectedAlloyMediumPolicyIds.sort().join(',') &&
+    alloyMediumPolicy.findings.every(
+      ({ decision }) =>
+        decision === 'accepted_with_mitigation' || decision === 'not_affected',
+    ),
+  'Alloy Medium risk acceptance is missing, changed, or expired',
 );
 assert(
   apiDockerfile.includes('/usr/local/lib/node_modules/npm') &&
@@ -251,6 +356,15 @@ assert(
   observabilityCompose.includes('/var/lib/docker/containers:ro') &&
     !observabilityCompose.includes('/var/run/docker.sock'),
   'Log collection must use read-only files without the Docker control socket',
+);
+const alloyConfig = read(path.join(observabilityPath, 'config.alloy'));
+assert(
+  alloyConfig.includes('local.file_match') &&
+    alloyConfig.includes('loki.source.file') &&
+    !/(discovery\.docker|prometheus\.exporter\.cadvisor|docker\.sock)/.test(
+      alloyConfig,
+    ),
+  'Alloy must remain on file-based log collection without Docker discovery or cAdvisor',
 );
 assert(gitignore.includes('secrets/**/*.txt'), 'Nested secret text files are not ignored');
 assert(
@@ -327,7 +441,7 @@ const images = {
   loki:
     'gis-phase6-loki-audit:local',
   alloy:
-    'grafana/alloy:v1.18.0@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308',
+    'gis-phase6-alloy-audit:local',
   nginx:
     'nginxinc/nginx-unprivileged:1.31.3-alpine3.24@sha256:59ccf0943b0b8e8d9e6ea9039a39555730f544701a655c596f7df7d096c593f5',
   certbot:
@@ -348,6 +462,7 @@ for (const [image, dockerfile, context = '.'] of [
   [images.alertmanager, 'infra/alertmanager/Dockerfile.production'],
   [images.blackbox, 'infra/blackbox/Dockerfile.production'],
   [images.loki, 'infra/loki/Dockerfile.production', 'infra/loki'],
+  [images.alloy, 'infra/alloy/Dockerfile.production'],
 ]) {
   try {
     dockerRun(['image', 'inspect', image], { stdio: 'ignore' });
@@ -452,6 +567,15 @@ try {
   }
 
   if (shouldRun('alloy')) {
+    dockerRun([
+      ...common,
+      '--entrypoint',
+      '/bin/sh',
+      images.alloy,
+      '-c',
+      'test ! -e /usr/bin/mount && test ! -e /usr/bin/umount',
+    ]);
+    dockerRun([...common, images.alloy, '--version']);
     dockerRun([
       ...common,
       '--tmpfs',

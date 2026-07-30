@@ -185,17 +185,27 @@ try {
   let ready = false;
   for (let attempt = 0; attempt < 60; attempt += 1) {
     try {
-      run([
+      const probe = run([
         'exec',
+        '--env',
+        `PGPASSWORD=${adminPassword}`,
         containerName,
-        'pg_isready',
+        'psql',
         '--username',
         'gis_owner',
         '--dbname',
         'gis_phase5_grants',
-      ]);
-      ready = true;
-      break;
+        '--tuples-only',
+        '--no-align',
+        '--set',
+        'ON_ERROR_STOP=1',
+        '--command',
+        'SELECT 1;',
+      ]).trim();
+      if (probe === '1') {
+        ready = true;
+        break;
+      }
     } catch {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
     }

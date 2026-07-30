@@ -24,6 +24,24 @@ const blackboxImage =
   process.env.RELEASE_BLACKBOX_IMAGE || 'gis-phase6-blackbox-audit:local';
 const lokiImage =
   process.env.RELEASE_LOKI_IMAGE || 'gis-phase6-loki-audit:local';
+const alloyImage =
+  process.env.RELEASE_ALLOY_IMAGE || 'gis-phase6-alloy-audit:local';
+const alloyVexPath = path.join(root, 'infra', 'alloy', 'alloy.openvex.json');
+const alloyMediumPolicy = JSON.parse(
+  fs.readFileSync(
+    path.join(root, 'infra', 'alloy', 'alloy.medium-risk-acceptance.json'),
+    'utf8',
+  ),
+);
+const expectedAlloyFindings = [
+  'CVE-2026-34040|github.com/docker/docker|v28.5.2+incompatible',
+  'CVE-2026-41567|github.com/docker/docker|v28.5.2+incompatible',
+  'CVE-2026-42306|github.com/docker/docker|v28.5.2+incompatible',
+];
+const expectedAlloyMediumFindings = alloyMediumPolicy.findings.map(
+  ({ id, package: packageName, installedVersion }) =>
+    `${id}|${packageName}|${installedVersion}`,
+);
 const pullBeforeScan = process.argv.includes('--pull');
 const onlyApi = process.argv.includes('--only-api');
 const onlyDatabase = process.argv.includes('--only-database');
@@ -32,6 +50,7 @@ const onlyPrometheus = process.argv.includes('--only-prometheus');
 const onlyAlertmanager = process.argv.includes('--only-alertmanager');
 const onlyBlackbox = process.argv.includes('--only-blackbox');
 const onlyLoki = process.argv.includes('--only-loki');
+const onlyAlloy = process.argv.includes('--only-alloy');
 const onlyImageArgument = process.argv.find((argument) =>
   argument.startsWith('--image='),
 );
@@ -46,6 +65,7 @@ if (
     alertmanagerImage,
     blackboxImage,
     lokiImage,
+    alloyImage,
   ].includes(onlyImage) &&
   !/@sha256:[a-f0-9]{64}$/.test(onlyImage)
 ) {
@@ -97,7 +117,11 @@ const printFindings = (findings) => {
   }
 };
 
-const scanArchive = (archivePath, cacheDirectory) => {
+const buildTrivyArgs = (
+  archivePath,
+  cacheDirectory,
+  { exitCode = '1', severity = 'CRITICAL,HIGH', vexPath } = {},
+) => {
   const args = [
     'run',
     '--rm',
@@ -113,6 +137,11 @@ const scanArchive = (archivePath, cacheDirectory) => {
     `${archivePath}:/image.tar:ro`,
     '--volume',
     `${cacheDirectory}:/trivy-cache:rw`,
+  ];
+  if (vexPath) {
+    args.push('--volume', `${vexPath}:/scan.openvex.json:ro`);
+  }
+  args.push(
     trivyImage,
     'image',
     '--input',
@@ -120,9 +149,9 @@ const scanArchive = (archivePath, cacheDirectory) => {
     '--scanners',
     'vuln',
     '--severity',
-    'CRITICAL,HIGH',
+    severity,
     '--exit-code',
-    '1',
+    exitCode,
     '--no-progress',
     '--cache-dir',
     '/trivy-cache',
@@ -132,7 +161,72 @@ const scanArchive = (archivePath, cacheDirectory) => {
     'template',
     '--template',
     trivyTemplate,
-  ];
+  );
+  if (vexPath) {
+    args.push('--vex', '/scan.openvex.json');
+  }
+  return args;
+};
+
+const collectArchiveFindings = (
+  archivePath,
+  cacheDirectory,
+  severity = 'CRITICAL,HIGH',
+) => {
+  const args = buildTrivyArgs(archivePath, cacheDirectory, {
+    exitCode: '0',
+    severity,
+  });
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const output = runDocker(args, { stdio: 'pipe', timeout: 900000 });
+      const findings = parseTrivyFindings(output);
+      if (findings === null) {
+        throw new Error('Trivy returned an unreadable findings report');
+      }
+      return findings;
+    } catch (error) {
+      const output = [error?.stdout, error?.stderr, error?.message]
+        .filter(Boolean)
+        .join('\n');
+      const isTransient =
+        /unexpected EOF|connection reset|timed? out|temporarily unavailable|\b50[234]\b|failed to download/i.test(
+          output,
+        );
+      if (!isTransient || attempt === 3) {
+        throw error;
+      }
+      console.warn(`Scanner transport failure; retrying raw image scan (${attempt}/3)`);
+      Atomics.wait(
+        new Int32Array(new SharedArrayBuffer(4)),
+        0,
+        0,
+        attempt * 5000,
+      );
+    }
+  }
+  throw new Error('Trivy raw image scan did not complete');
+};
+
+const assertExpectedFindings = (findings, expectedFindings, label) => {
+  const actual = findings
+    .map(
+      ({ id, packageName, installedVersion }) =>
+        `${id}|${packageName}|${installedVersion}`,
+    )
+    .sort();
+  const expected = [...expectedFindings].sort();
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    printFindings(findings);
+    throw new Error(
+      `${label} changed; expected exactly ${expected.length} reviewed findings`,
+    );
+  }
+  console.log(`${label} match ${expected.length} reviewed records`);
+};
+
+const scanArchive = (archivePath, cacheDirectory, vexPath) => {
+  const args = buildTrivyArgs(archivePath, cacheDirectory, { vexPath });
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
       const output = runDocker(args, { stdio: 'pipe', timeout: 900000 });
@@ -210,6 +304,8 @@ const images = onlyImage
               ? [blackboxImage]
               : onlyLoki
                 ? [lokiImage]
+                : onlyAlloy
+                  ? [alloyImage]
                 : [
                     apiImage,
                     databaseImage,
@@ -218,6 +314,7 @@ const images = onlyImage
                     alertmanagerImage,
                     blackboxImage,
                     lokiImage,
+                    alloyImage,
                     ...readDeclaredImages(),
                   ];
 const temporaryDirectory = fs.mkdtempSync(
@@ -247,6 +344,7 @@ try {
             alertmanagerImage,
             blackboxImage,
             lokiImage,
+            alloyImage,
           ].includes(image)
         ) {
           throw new Error(
@@ -260,7 +358,24 @@ try {
     const archivePath = path.join(temporaryDirectory, `image-${index}.tar`);
     try {
       runDocker(['save', '--output', archivePath, image]);
-      scanArchive(archivePath, scannerCacheDirectory);
+      const vexPath = image === alloyImage ? alloyVexPath : undefined;
+      if (vexPath) {
+        assertExpectedFindings(
+          collectArchiveFindings(archivePath, scannerCacheDirectory),
+          expectedAlloyFindings,
+          'Alloy unsuppressed Critical/High findings',
+        );
+        assertExpectedFindings(
+          collectArchiveFindings(
+            archivePath,
+            scannerCacheDirectory,
+            'MEDIUM',
+          ),
+          expectedAlloyMediumFindings,
+          'Alloy Medium risk inventory',
+        );
+      }
+      scanArchive(archivePath, scannerCacheDirectory, vexPath);
     } finally {
       fs.rmSync(archivePath, { force: true });
     }

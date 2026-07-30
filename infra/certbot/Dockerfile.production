@@ -1,9 +1,15 @@
 FROM certbot/certbot:v5.7.0@sha256:34ee91d2f43008eb78a007d22f23ed4b2eaa9a454cb27ca2c042b49527a695b4
 
-# uv/uvx are image-build package managers and are not used by the Certbot
-# runtime. Removing them keeps vulnerable build tooling out of the release
-# artifact while preserving the official Certbot installation and entrypoint.
+# uv/uvx and setuptools are image-build package managers and are not used by
+# the Certbot runtime. Removing them keeps vulnerable build tooling out of the
+# release artifact while preserving the official installation and plugins.
 RUN rm -f /usr/local/bin/uv /usr/local/bin/uvx \
+  && rm -rf \
+      /usr/local/lib/python3.14/site-packages/setuptools \
+      /usr/local/lib/python3.14/site-packages/setuptools-*.dist-info \
+      /usr/local/bin/easy_install* \
   && test ! -e /usr/local/bin/uv \
   && test ! -e /usr/local/bin/uvx \
-  && certbot --version
+  && ! python -c 'import setuptools' 2>/dev/null \
+  && certbot --version \
+  && certbot plugins >/dev/null

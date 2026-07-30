@@ -1,0 +1,75 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/Mohamad-H-Hallal/Thesis/security/openvex/alloy-v1.18.0-phase6.1",
+  "author": "Mohamad-H-Hallal/Thesis maintainers",
+  "timestamp": "2026-07-30T00:00:00Z",
+  "version": 1,
+  "x_expiry": "2027-01-01",
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-34040"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The affected Docker daemon authorization handler is not executed. Alloy reaches this module through cAdvisor client imports; this deployment reads container log files and has no Docker control socket."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-41567"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The affected Docker daemon archive-upload handler is not executed. Alloy reaches this module through cAdvisor client imports; this deployment reads container log files and has no Docker control socket."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-42306"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The affected Docker daemon copy/archive path is not executed. Alloy reaches this module through cAdvisor client imports; this deployment reads container log files and has no Docker control socket."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-33997"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The affected Docker daemon plugin-install privilege validation is not executed. Alloy imports Docker client code through cAdvisor, has no Docker socket, and cannot install Docker plugins."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-41568"
+      },
+      "products": [
+        {
+          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The affected Docker daemon copy/archive handler is not executed. Alloy imports Docker client code through cAdvisor, has no Docker socket, and cannot invoke docker cp or the archive API."
+    }
+  ]
+}

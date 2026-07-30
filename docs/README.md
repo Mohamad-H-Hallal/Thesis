@@ -16,6 +16,9 @@
   mandatory external staging gates.
 - `predeployment/phase-5-production-infrastructure-observability.md`: Phase 5
   implementation and verification evidence.
+- `predeployment/phase-6-full-release-verification.md`: Phase 6 repository and
+  local release-verification evidence, formal Medium-risk decisions, and
+  external release gates.
 - `phase-9/03-backup-restore-drill.md`: backup/restore drill execution guide.
 - `phase-10/01-quality-engineering.md`: quality engineering scope, test matrix, and exit criteria.
 - `phase-10/02-release-gates.md`: release gate scripts, CI gate wiring, and performance thresholds.
@@ -33,5 +36,9 @@
 - `predeployment/phase-2-storage-reconciliation-runbook.md`: Phase 2C
   checksummed inventory, reviewed migration, rollback, orphan quarantine, and
   failure-recovery procedure.
+- `predeployment/phase-3-mobile-data-at-rest.md`: Phase 3 encrypted mobile
+  database/photo implementation, recovery behavior, and device-platform gates.
+- `predeployment/phase-4-shared-rate-limits-workers.md`: Phase 4 shared limits,
+  durable workers, verification evidence, and deployed-replica gates.
 
 Tracked files under `handover/evidence/` are historical verification artifacts from earlier release checks. Treat them as evidence of the run they were captured from, not as current runtime failures unless a current validation report explicitly says so.
