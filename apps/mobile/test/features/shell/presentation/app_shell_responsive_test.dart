@@ -341,4 +341,25 @@ void main() {
     expect(find.text('Projects'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('hamburger drawer centers the TerraLeb brand in its header', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(_buildShell());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Open navigation menu'));
+    await tester.pumpAndSettle();
+
+    final headerRect = tester.getRect(find.byType(DrawerHeader));
+    final logoRect = tester.getRect(
+      find.byKey(const ValueKey<String>('drawer-brand-logo')),
+    );
+
+    expect((headerRect.center.dx - logoRect.center.dx).abs(), lessThan(1));
+    expect((headerRect.center.dy - logoRect.center.dy).abs(), lessThan(1));
+    expect(tester.takeException(), isNull);
+  });
 }

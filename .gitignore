@@ -13,6 +13,7 @@ secrets/*.json
 secrets/**/*.json
 !secrets/README.md
 backups/
+tmp/
 device_offline_*.db
 *.sqlite
 *.sqlite3

@@ -94,7 +94,7 @@ String _sanitizeMessage(String message, {required String fallback}) {
     return fallback;
   }
 
-  const removablePrefixes = <String>['Exception:', 'Error:'];
+  const removablePrefixes = <String>['Exception:', 'Error:', 'Bad state:'];
   for (final prefix in removablePrefixes) {
     if (normalized.startsWith(prefix)) {
       normalized = normalized.substring(prefix.length).trim();
@@ -120,6 +120,9 @@ String _sanitizeMessage(String message, {required String fallback}) {
     'boxconstraints forces',
     'null check operator used on a null value',
     'child.hassize',
+    'response did not match the active project',
+    'response did not match the active import',
+    'authenticated session changed while',
   ];
 
   if (lower.startsWith('instance of') ||

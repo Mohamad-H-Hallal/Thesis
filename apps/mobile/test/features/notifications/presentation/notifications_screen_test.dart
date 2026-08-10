@@ -56,6 +56,28 @@ class _FakeNotificationsRepository implements NotificationsRepository {
 }
 
 void main() {
+  testWidgets('empty inbox describes workflow alerts without email imagery', (
+    tester,
+  ) async {
+    final repository = _FakeNotificationsRepository(const <AppNotification>[]);
+    final controller = NotificationsController.empty(repository);
+    await controller.load();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          notificationsControllerProvider.overrideWith((ref) => controller),
+        ],
+        child: const MaterialApp(home: Scaffold(body: NotificationsScreen())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('AI processing'), findsOneWidget);
+    expect(find.byIcon(Icons.mark_email_read_outlined), findsNothing);
+    expect(find.byIcon(Icons.mark_email_unread_outlined), findsNothing);
+  });
+
   testWidgets('notification action buttons align across card content lengths', (
     tester,
   ) async {

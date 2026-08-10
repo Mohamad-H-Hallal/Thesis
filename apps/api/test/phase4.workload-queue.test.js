@@ -7,6 +7,7 @@ const {
   completeWorkloadJob,
   failWorkloadJob,
 } = require('../src/services/workloadQueue.service');
+const { finalizeDeadLetterEntity } = require('../src/jobs/workloadWorker');
 const { closePool } = require('../src/config/database');
 
 const pool = new Pool({
@@ -50,9 +51,10 @@ describe('Phase 4 durable workload queue', () => {
     const owner = first.length === 1 ? 'replica-a' : 'replica-b';
     await expect(completeWorkloadJob({ jobId: claimed.id, workerId: owner })).resolves.toBe(true);
 
-    const stored = await pool.query('SELECT status, attempt_count FROM workload_job WHERE id = $1', [
-      claimed.id,
-    ]);
+    const stored = await pool.query(
+      'SELECT status, attempt_count FROM workload_job WHERE id = $1',
+      [claimed.id],
+    );
     expect(stored.rows[0]).toMatchObject({ status: 'succeeded', attempt_count: 1 });
   });
 
@@ -121,5 +123,78 @@ describe('Phase 4 durable workload queue', () => {
       last_error: 'persistent failure',
     });
     expect(stored.rows[0].completed_at).not.toBeNull();
+  });
+
+  test('a dead-letter import notifies its uploader in-app without email delivery', async () => {
+    const suffix = `${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    const userResult = await pool.query(
+      `INSERT INTO "user"
+         (email, password_hash, full_name, role, is_active, account_status,
+          email_verified_at, phone, phone_e164, phone_verified_at)
+       VALUES ($1, 'unused-test-hash', 'Import Owner', 'admin', TRUE, 'active',
+               CURRENT_TIMESTAMP, $2, $2, CURRENT_TIMESTAMP)
+       RETURNING id`,
+      [`dead-letter-${suffix}@example.com`, `+96171${String(Date.now()).slice(-6)}`],
+    );
+    const categoryResult = await pool.query(
+      `INSERT INTO project_category (name) VALUES ($1) RETURNING id`,
+      [`Dead Letter Category ${suffix}`],
+    );
+    const projectResult = await pool.query(
+      `INSERT INTO project (category_id, created_by_user_id, name, status)
+       VALUES ($1, $2, $3, 'draft')
+       RETURNING id, name`,
+      [categoryResult.rows[0].id, userResult.rows[0].id, `Dead Letter Project ${suffix}`],
+    );
+    const importResult = await pool.query(
+      `INSERT INTO gis_import_job
+         (project_id, uploaded_by_user_id, original_filename, stored_filename, file_path,
+          file_size_bytes, file_checksum_sha256, file_type, status)
+       VALUES ($1, $2, 'failed.geojson', 'failed.geojson', 'test/failed.geojson',
+               1, $3, 'geojson', 'processing')
+       RETURNING id`,
+      [projectResult.rows[0].id, userResult.rows[0].id, 'a'.repeat(64)],
+    );
+
+    try {
+      await finalizeDeadLetterEntity(
+        { kind: 'gis_import', entity_id: importResult.rows[0].id },
+        new Error('persistent parser failure'),
+      );
+
+      const storedImport = await pool.query(
+        `SELECT status, processing_message FROM gis_import_job WHERE id = $1`,
+        [importResult.rows[0].id],
+      );
+      expect(storedImport.rows[0].status).toBe('failed');
+      expect(storedImport.rows[0].processing_message).toContain('dead-letter queue');
+
+      const notifications = await pool.query(
+        `SELECT title, metadata
+         FROM notification
+         WHERE user_id = $1
+           AND type = 'import_event'
+           AND metadata->>'import_job_id' = $2`,
+        [userResult.rows[0].id, importResult.rows[0].id],
+      );
+      expect(notifications.rows).toEqual([
+        expect.objectContaining({
+          title: 'Import failed',
+          metadata: expect.objectContaining({ status: 'failed', dead_letter: true }),
+        }),
+      ]);
+
+      const emailDeliveries = await pool.query(
+        `SELECT id FROM notification_delivery WHERE notification_id IN (
+           SELECT id FROM notification WHERE user_id = $1
+         )`,
+        [userResult.rows[0].id],
+      );
+      expect(emailDeliveries.rows).toHaveLength(0);
+    } finally {
+      await pool.query(`DELETE FROM project WHERE id = $1`, [projectResult.rows[0].id]);
+      await pool.query(`DELETE FROM project_category WHERE id = $1`, [categoryResult.rows[0].id]);
+      await pool.query(`DELETE FROM "user" WHERE id = $1`, [userResult.rows[0].id]);
+    }
   });
 });

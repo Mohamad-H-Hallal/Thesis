@@ -1,5 +1,6 @@
 const { query } = require('../config/database');
 const { AppError } = require('../middleware/error');
+import { notifyProjectStatusChanged } from './workflowNotifications';
 
 const publicVisibleStatuses = ['draft', 'active', 'paused', 'completed'] as const;
 const projectScheduleReminderKinds = [
@@ -145,7 +146,10 @@ const resolveProjectScheduleForMutation = ({
   return { startDate, endDate };
 };
 
-const synchronizeProjectStatuses = async (projectId?: string): Promise<void> => {
+const synchronizeProjectStatuses = async (
+  projectId?: string,
+  actorUserId?: string | null,
+): Promise<void> => {
   const conditions = [
     `(status = 'draft' AND start_date IS NOT NULL AND start_date <= CURRENT_DATE AND (end_date IS NULL OR end_date >= CURRENT_DATE))`,
     `(status IN ('active', 'paused') AND end_date IS NOT NULL AND end_date <= CURRENT_DATE)`,
@@ -158,37 +162,62 @@ const synchronizeProjectStatuses = async (projectId?: string): Promise<void> => 
     params.push(projectId);
   }
 
-  await query(
+  const changedProjects = await query(
     `
-      UPDATE project
-      SET status = CASE
-        WHEN status IN ('active', 'paused')
-          AND end_date IS NOT NULL
-          AND end_date <= CURRENT_DATE
-          THEN 'completed'::project_status
-        WHEN status = 'draft'
-          AND end_date IS NOT NULL
-          AND end_date < CURRENT_DATE
-          THEN 'completed'::project_status
-        WHEN status = 'draft'
-          AND start_date IS NOT NULL
-          AND start_date <= CURRENT_DATE
-          AND (end_date IS NULL OR end_date >= CURRENT_DATE)
-          THEN 'active'::project_status
-        ELSE status
-      END
-      WHERE (${conditions.join(' OR ')})
-      ${projectClause}
+      WITH candidates AS (
+        SELECT id,
+               status AS previous_status,
+               CASE
+                 WHEN status IN ('active', 'paused')
+                   AND end_date IS NOT NULL
+                   AND end_date <= CURRENT_DATE
+                   THEN 'completed'::project_status
+                 WHEN status = 'draft'
+                   AND end_date IS NOT NULL
+                   AND end_date < CURRENT_DATE
+                   THEN 'completed'::project_status
+                 WHEN status = 'draft'
+                   AND start_date IS NOT NULL
+                   AND start_date <= CURRENT_DATE
+                   AND (end_date IS NULL OR end_date >= CURRENT_DATE)
+                   THEN 'active'::project_status
+                 ELSE status
+               END AS next_status
+        FROM project
+        WHERE (${conditions.join(' OR ')})
+        ${projectClause}
+      )
+      UPDATE project p
+      SET status = candidates.next_status
+      FROM candidates
+      WHERE p.id = candidates.id
+        AND p.status = candidates.previous_status
+        AND candidates.next_status <> candidates.previous_status
+      RETURNING p.id, p.name, candidates.previous_status, p.status
     `,
     params,
   );
 
+  for (const project of changedProjects.rows as Array<{
+    id: string;
+    name: string;
+    previous_status: string;
+    status: string;
+  }>) {
+    await notifyProjectStatusChanged(query, {
+      projectId: project.id,
+      projectName: project.name,
+      previousStatus: project.previous_status,
+      status: project.status,
+      actorUserId,
+      eventKey: `project_status:scheduled:${project.id}:${project.previous_status}:${project.status}:${todayIsoDate()}`,
+    });
+  }
+
   await synchronizeProjectScheduleNotifications(projectId);
 };
 
-const synchronizeProjectScheduleNotifications = async (
-  projectId?: string,
-): Promise<void> => {
+const synchronizeProjectScheduleNotifications = async (projectId?: string): Promise<void> => {
   const params: unknown[] = [];
   const projectFilter = projectId ? 'WHERE p.id = $1' : '';
   if (projectId) {
@@ -196,9 +225,7 @@ const synchronizeProjectScheduleNotifications = async (
   }
 
   const [tomorrowResult, adminsResult, projectsResult] = await Promise.all([
-    query(
-      `SELECT TO_CHAR(CURRENT_DATE + INTERVAL '1 day', 'YYYY-MM-DD') AS tomorrow`,
-    ),
+    query(`SELECT TO_CHAR(CURRENT_DATE + INTERVAL '1 day', 'YYYY-MM-DD') AS tomorrow`),
     query(
       `SELECT id
        FROM "user"
@@ -218,8 +245,7 @@ const synchronizeProjectScheduleNotifications = async (
     ),
   ]);
 
-  const tomorrow = (tomorrowResult.rows[0] as { tomorrow?: string } | undefined)
-    ?.tomorrow;
+  const tomorrow = (tomorrowResult.rows[0] as { tomorrow?: string } | undefined)?.tomorrow;
   if (!tomorrow || adminsResult.rows.length === 0) {
     return;
   }
@@ -242,9 +268,7 @@ const synchronizeProjectScheduleNotifications = async (
       desiredKinds.add('paused_ends_tomorrow');
     }
 
-    const staleKinds = projectScheduleReminderKinds.filter(
-      (kind) => !desiredKinds.has(kind),
-    );
+    const staleKinds = projectScheduleReminderKinds.filter((kind) => !desiredKinds.has(kind));
     if (staleKinds.length > 0) {
       await query(
         `DELETE FROM notification
@@ -272,8 +296,7 @@ const synchronizeProjectScheduleNotifications = async (
         project_id: project.id,
         project_name: project.name,
         schedule_reminder_kind: kind,
-        target_date:
-          kind === 'starts_tomorrow' ? project.start_date : project.end_date,
+        target_date: kind === 'starts_tomorrow' ? project.start_date : project.end_date,
       });
 
       for (const admin of adminsResult.rows as Array<{ id: string }>) {

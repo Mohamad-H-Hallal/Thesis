@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
-  title: Lebanese GIS Mobile Application API
-  version: 1.1.0
+  title: TerraLeb API
+  version: 1.2.0
   description: >
     Government field data collection API for projects, assignments, geospatial features,
     exports, notifications, and administration.
@@ -69,11 +69,11 @@ paths:
               $ref: '#/components/schemas/RegisterRequest'
       responses:
         '201':
-          description: User created
+          description: Pending user created with a limited verification-session token; no full-access JWT is issued
         '400':
           description: Validation failed
         '409':
-          description: Email already exists
+          description: Email already exists, or the normalized mobile number is already used by three accounts
   /api/v1/auth/login:
     post:
       tags: [Auth]
@@ -91,8 +91,97 @@ paths:
           description: Validation failed
         '401':
           description: Invalid credentials
+        '403':
+          description: Contact verification or account approval is still required
         '429':
           description: Rate limited
+  /api/v1/auth/verification/status:
+    get:
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      summary: Resume a limited contact-verification session
+      responses:
+        '200':
+          description: Masked destinations and required next step
+        '401':
+          description: Verification session invalid, expired, or replaced
+  /api/v1/auth/verification/email/send:
+    post:
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      summary: Send or resend the signup/invitation email verification code
+      responses:
+        '200':
+          description: Generic delivery acknowledgement and cooldown
+        '429':
+          description: Cooldown, target, account, IP, or device limit reached
+  /api/v1/auth/verification/email/confirm:
+    post:
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      summary: Confirm email ownership with a single-use code
+      responses:
+        '200':
+          description: Email verified; completed signups must explicitly sign in, while sms_otp deployments continue to phone ownership verification
+        '400':
+          description: Code invalid, expired, used, or replaced
+  /api/v1/auth/verification/pending-signup:
+    delete:
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      summary: Remove the caller's unfinished, unverified self-signup
+      description: Requires the limited verification-session token. Verified, invited, admin, and legacy accounts cannot be deleted through this endpoint.
+      responses:
+        '200':
+          description: Pending user and active verification challenges removed
+        '409':
+          description: Account is not eligible for pending-signup cancellation
+  /api/v1/auth/verification/phone/validate:
+    post:
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      summary: Validate and normalize a Lebanese mobile number under the configured format policy
+      description: Available only in format_only mode. The default provider uses maintained local libphonenumber metadata without a network account. This endpoint does not send an SMS and does not prove possession, assignment, or reachability.
+      responses:
+        '200':
+          description: Format assurance recorded separately from ownership verification; completed signups must explicitly sign in
+        '400':
+          description: Number is not a structurally valid Lebanese mobile number
+        '409':
+          description: SMS ownership verification is required by the configured policy
+        '429':
+          description: Cooldown, target, account, IP, or device limit reached
+        '503':
+          description: Configured external format provider unavailable
+  /api/v1/auth/verification/phone/send:
+    post:
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      summary: Send an SMS OTP to a structurally valid Lebanese mobile number in sms_otp mode
+      responses:
+        '200':
+          description: Generic delivery acknowledgement and cooldown
+        '429':
+          description: Cooldown, target, account, IP, or device limit reached
+        '503':
+          description: SMS verification provider unavailable
+  /api/v1/auth/verification/phone/confirm:
+    post:
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      summary: Confirm mobile ownership and activate an eligible account
+      responses:
+        '200':
+          description: Phone verified; completed signups must explicitly sign in
+        '400':
+          description: OTP invalid, expired, used, or replaced
   /api/v1/auth/refresh-token:
     post:
       tags: [Auth]
@@ -131,7 +220,7 @@ paths:
       tags: [Auth]
       security:
         - bearerAuth: []
-      summary: Update own profile
+      summary: Update own non-contact profile fields
       responses:
         '200':
           description: Profile updated
@@ -139,6 +228,28 @@ paths:
           description: Validation failed
         '401':
           description: Not authenticated
+  /api/v1/auth/me/phone-change/request:
+    post:
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      summary: Re-authenticate and validate a replacement mobile number under the configured policy
+      responses:
+        '200':
+          description: Format-only changes complete immediately; sms_otp deployments keep the existing phone until OTP confirmation
+        '401':
+          description: Current password is incorrect
+        '409':
+          description: The normalized mobile number is already used by the configured maximum number of accounts
+  /api/v1/auth/me/phone-change/confirm:
+    post:
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      summary: Verify and atomically install the pending mobile number
+      responses:
+        '200':
+          description: Mobile number changed and replacement access/refresh tokens returned
   /api/v1/auth/change-password:
     post:
       tags: [Auth]

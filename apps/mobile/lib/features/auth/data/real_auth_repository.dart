@@ -8,6 +8,7 @@ import '../domain/auth_error_mapper.dart';
 import '../domain/auth_failure.dart';
 import '../domain/auth_models.dart';
 import '../domain/auth_repository.dart';
+import 'contact_verification_repository.dart';
 
 class RealAuthRepository implements AuthRepository {
   RealAuthRepository(this._storage, this._apiClient);
@@ -127,6 +128,9 @@ class RealAuthRepository implements AuthRepository {
         rememberMe: rememberMe,
       );
     } on DioException catch (error) {
+      if (_isContactVerificationRequired(error)) {
+        await _savePendingVerificationToken(error.response?.data);
+      }
       throw mapAuthDioException(error, fallbackMessage: 'Login failed.');
     }
   }
@@ -181,6 +185,7 @@ class RealAuthRepository implements AuthRepository {
         options: _publicAuthRequestOptions,
       );
       final payloadMap = response.data ?? const <String, dynamic>{};
+      await _savePendingVerificationToken(payloadMap);
       final message = payloadMap['message'] as String?;
       return message?.trim().isNotEmpty == true
           ? message!.trim()
@@ -371,6 +376,27 @@ class RealAuthRepository implements AuthRepository {
       key: _superAdminKey,
       value: user.isProtectedSuperAdmin.toString(),
     );
+  }
+
+  bool _isContactVerificationRequired(DioException error) {
+    final payload = error.response?.data;
+    if (payload is! Map) return false;
+    final responseError = payload['error'];
+    return responseError is Map &&
+        responseError['code'] == 'CONTACT_VERIFICATION_REQUIRED';
+  }
+
+  Future<void> _savePendingVerificationToken(Object? payload) async {
+    if (payload is! Map) return;
+    final data = payload['data'];
+    if (data is! Map) return;
+    final token = data['verification_token'];
+    if (token is String && token.trim().isNotEmpty) {
+      await _storage.write(
+        key: ContactVerificationRepository.pendingTokenKey,
+        value: token.trim(),
+      );
+    }
   }
 
   Future<AppUser?> _readStoredUser() async {

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,9 +15,19 @@ import 'features/notifications/presentation/widgets/push_notification_coordinato
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  _disableDebugVisualOverlays();
   OfflineDownloadForegroundService.initializeCommunication();
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   runApp(const ProviderScope(child: LebanonGisCollectorApp()));
+}
+
+void _disableDebugVisualOverlays() {
+  if (!kDebugMode) return;
+  debugPaintSizeEnabled = false;
+  debugPaintBaselinesEnabled = false;
+  debugPaintPointersEnabled = false;
+  debugPaintLayerBordersEnabled = false;
+  debugRepaintRainbowEnabled = false;
 }
 
 @visibleForTesting
@@ -51,6 +62,7 @@ class LebanonGisCollectorApp extends ConsumerWidget {
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: ThemeMode.system,
+      themeAnimationDuration: Duration.zero,
       scrollBehavior: const AppScrollBehavior(),
       routerConfig: router,
       builder: (context, child) {

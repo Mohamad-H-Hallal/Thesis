@@ -70,6 +70,45 @@ void main() {
 
       expect(errors, isEmpty);
     });
+
+    test('validates third-party email and Lebanese mobile fields', () {
+      const contactSchema = CollectionFormSchema(
+        version: 'v2',
+        fields: <CollectionFormFieldSchema>[
+          CollectionFormFieldSchema(
+            key: 'owner_email',
+            label: 'Owner email',
+            type: CollectionFieldType.email,
+          ),
+          CollectionFormFieldSchema(
+            key: 'owner_mobile',
+            label: 'Owner mobile',
+            type: CollectionFieldType.lebaneseMobile,
+          ),
+        ],
+      );
+
+      expect(
+        Phase6Validation.validateAttributes(
+          schema: contactSchema,
+          values: const <String, dynamic>{
+            'owner_email': 'owner@example.com',
+            'owner_mobile': '٠٣ ١٢٣ ٤٥٦',
+          },
+        ),
+        isEmpty,
+      );
+
+      final errors = Phase6Validation.validateAttributes(
+        schema: contactSchema,
+        values: const <String, dynamic>{
+          'owner_email': 'not-an-email',
+          'owner_mobile': '12 345 678',
+        },
+      );
+      expect(errors['owner_email'], 'Enter a valid email address.');
+      expect(errors['owner_mobile'], 'Enter a valid Lebanese mobile number.');
+    });
   });
 
   group('Phase6Validation photos', () {

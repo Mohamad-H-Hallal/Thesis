@@ -56,7 +56,7 @@ describe('Security: registration, contributor approval, and protected super admi
     });
 
     expect(contributor.message).toBe(
-      'Account created successfully. Your contributor request is pending admin approval.',
+      'Your contacts are verified. Your contributor request is pending approval.',
     );
 
     const requestNotifications = await pool.query(
@@ -203,6 +203,19 @@ describe('Security: registration, contributor approval, and protected super admi
     expect(revert.status).toBe(200);
     expect(revert.body.data.role).toBe('viewer');
 
+    const roleNotifications = await pool.query(
+      `SELECT title, metadata->>'role' AS role
+       FROM notification
+       WHERE user_id = $1
+         AND type = 'account_event'
+       ORDER BY created_at ASC`,
+      [viewer.user.id],
+    );
+    expect(roleNotifications.rows).toEqual([
+      { title: 'Account role changed', role: 'admin' },
+      { title: 'Account role changed', role: 'viewer' },
+    ]);
+
     const fixedAdmin = await createAdminUser({
       fullName: 'Fixed Admin',
       emailPrefix: 'fixed-admin',
@@ -337,6 +350,18 @@ describe('Security: registration, contributor approval, and protected super admi
     expect(blockResponse.body.data.is_blocked).toBe(true);
     expect(blockResponse.body.data.account_state).toBe('blocked');
 
+    const blockedNotification = await pool.query(
+      `SELECT title, metadata
+       FROM notification
+       WHERE user_id = $1
+         AND type = 'account_event'
+         AND metadata->>'account_state' = 'blocked'`,
+      [viewer.user.id],
+    );
+    expect(blockedNotification.rows).toEqual([
+      expect.objectContaining({ title: 'Account access blocked' }),
+    ]);
+
     const blockedLogin = await request(app).post(`${API_PREFIX}/auth/login`).send({
       email: viewer.email,
       password: viewer.password,
@@ -352,6 +377,26 @@ describe('Security: registration, contributor approval, and protected super admi
 
     expect(unblockResponse.status).toBe(200);
     expect(unblockResponse.body.data.is_blocked).toBe(false);
+
+    const restoredNotification = await pool.query(
+      `SELECT title
+       FROM notification
+       WHERE user_id = $1
+         AND type = 'account_event'
+         AND metadata->>'account_state' = 'active'`,
+      [viewer.user.id],
+    );
+    expect(restoredNotification.rows).toEqual([{ title: 'Account access restored' }]);
+
+    const workflowEmailDeliveries = await pool.query(
+      `SELECT nd.id
+       FROM notification_delivery nd
+       JOIN notification n ON n.id = nd.notification_id
+       WHERE n.user_id = $1
+         AND n.type = 'account_event'`,
+      [viewer.user.id],
+    );
+    expect(workflowEmailDeliveries.rows).toHaveLength(0);
 
     const unblockedLogin = await request(app).post(`${API_PREFIX}/auth/login`).send({
       email: viewer.email,

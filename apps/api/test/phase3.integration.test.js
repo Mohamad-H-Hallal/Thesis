@@ -55,10 +55,13 @@ const setupAuthenticatedContext = async () => {
   const passwordHash = await bcrypt.hash(password, 12);
 
   const userResult = await pool.query(
-    `INSERT INTO "user" (email, password_hash, full_name, role)
-     VALUES ($1, $2, $3, 'contributor')
+    `INSERT INTO "user"
+       (email, password_hash, full_name, role, is_active, account_status,
+        email_verified_at, phone, phone_e164, phone_verified_at)
+     VALUES ($1, $2, $3, 'contributor', TRUE, 'active', CURRENT_TIMESTAMP,
+             '+96171123456', '+96171123456', CURRENT_TIMESTAMP)
      RETURNING id, email`,
-    ['phase3-user@example.com', passwordHash, 'Phase3 User']
+    ['phase3-user@example.com', passwordHash, 'Phase3 User'],
   );
 
   const user = userResult.rows[0];
@@ -66,7 +69,7 @@ const setupAuthenticatedContext = async () => {
   const categoryResult = await pool.query(
     `INSERT INTO project_category (name, description)
      VALUES ('Fruit Trees', 'Phase3 test category')
-     RETURNING id`
+     RETURNING id`,
   );
   const categoryId = categoryResult.rows[0].id;
 
@@ -80,7 +83,7 @@ const setupAuthenticatedContext = async () => {
       status
     ) VALUES ($1, $2, 'Phase3 Project', 'Test project', '{}'::jsonb, 'draft')
     RETURNING id`,
-    [categoryId, user.id]
+    [categoryId, user.id],
   );
   const projectId = projectResult.rows[0].id;
 
@@ -88,7 +91,7 @@ const setupAuthenticatedContext = async () => {
     `UPDATE project
      SET status = 'active'
      WHERE id = $1`,
-    [projectId]
+    [projectId],
   );
 
   await pool.query(
@@ -101,7 +104,7 @@ const setupAuthenticatedContext = async () => {
        approved_date
      )
      VALUES ($1, $2, 'contributor', 'approved', $2, CURRENT_DATE)`,
-    [projectId, user.id]
+    [projectId, user.id],
   );
 
   const loginResponse = await request(app).post(`${API_PREFIX}/auth/login`).send({
@@ -119,7 +122,14 @@ const setupAuthenticatedContext = async () => {
   };
 };
 
-const insertSpatialFeature = async ({ projectId, userId, lon, lat, status = 'approved', collectedAt }) => {
+const insertSpatialFeature = async ({
+  projectId,
+  userId,
+  lon,
+  lat,
+  status = 'approved',
+  collectedAt,
+}) => {
   const reviewedByUserId = ['approved', 'rejected'].includes(status) ? userId : null;
   const reviewedAt = ['approved', 'rejected'].includes(status) ? collectedAt : null;
 
@@ -154,7 +164,7 @@ const insertSpatialFeature = async ({ projectId, userId, lon, lat, status = 'app
       collectedAt,
       reviewedByUserId,
       reviewedAt,
-    ]
+    ],
   );
 };
 
@@ -298,7 +308,7 @@ describe('Phase 3 geospatial integration', () => {
          $2,
          NOW() - ((gs % 30) || ' hours')::interval
        FROM generate_series(1, 400) AS gs`,
-      [projectId, userId]
+      [projectId, userId],
     );
     await pool.query('ANALYZE spatial_feature');
 
@@ -314,7 +324,7 @@ describe('Phase 3 geospatial integration', () => {
            AND sf.status = 'approved'
          ORDER BY sf.collected_at DESC
          LIMIT 100 OFFSET 0`,
-        [35.0, 33.0, 36.0, 34.5]
+        [35.0, 33.0, 36.0, 34.5],
       );
       await client.query('COMMIT');
 
@@ -323,7 +333,9 @@ describe('Phase 3 geospatial integration', () => {
       const indexNode = nodes.find((node) => typeof node['Index Name'] === 'string');
       const indexName = indexNode?.['Index Name'] ?? '';
 
-      expect(indexName).toMatch(/idx_spatial_feature_geom|idx_spatial_feature_geom_project_status/i);
+      expect(indexName).toMatch(
+        /idx_spatial_feature_geom|idx_spatial_feature_geom_project_status/i,
+      );
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;

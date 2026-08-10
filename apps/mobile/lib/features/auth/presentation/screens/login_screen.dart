@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../../core/config/app_branding.dart';
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
@@ -11,11 +10,11 @@ import '../../../../core/web/input_autofill_patch.dart';
 import '../../../../core/widgets/animated_reveal.dart';
 import '../../../../core/widgets/app_button.dart';
 import '../../../../core/widgets/app_card.dart';
-import '../../../../core/widgets/app_logo.dart';
 import '../../../../core/widgets/app_scaffold.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/widgets/loading_overlay.dart';
+import '../../../../core/widgets/terraleb_logo.dart';
 import '../controllers/auth_controller.dart';
 import '../utils/auth_form_validators.dart';
 import '../utils/auth_input_formatters.dart';
@@ -128,6 +127,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       return;
     }
 
+    if (authState.errorCode == 'contact_verification_required') {
+      context.go(AppRoutes.verifyContact);
+      return;
+    }
+
     if (authState.errorCode == 'deactivated_contributor') {
       await _promptForReactivation();
       return;
@@ -231,21 +235,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   AnimatedReveal(
                     child: Column(
                       children: <Widget>[
-                        const Center(child: AppLogo(size: 84)),
-                        const SizedBox(height: AppSpacing.sm),
-                        Text(
-                          AppBranding.shortName,
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.headlineSmall,
+                        const Center(
+                          child: TerraLebLogo(width: 240, height: 84),
                         ),
-                        if (AppBranding.tagline.isNotEmpty) ...<Widget>[
-                          const SizedBox(height: AppSpacing.xs),
-                          Text(
-                            AppBranding.tagline,
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                        ],
                       ],
                     ),
                   ),

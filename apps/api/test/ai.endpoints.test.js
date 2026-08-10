@@ -1810,6 +1810,24 @@ describe('AI backend endpoints phase B', () => {
         }),
       }),
     );
+    const completedRunNotification = await pool.query(
+      `SELECT title, metadata
+       FROM notification
+       WHERE user_id = $1
+         AND type = 'ai_event'
+         AND metadata->>'event_key' = $2`,
+      [admin.user.id, `ai_run:${startedRunId}:ready_for_review`],
+    );
+    expect(completedRunNotification.rows).toEqual([
+      expect.objectContaining({
+        title: 'AI run ready for review',
+        metadata: expect.objectContaining({
+          project_id: project.id,
+          ai_run_id: startedRunId,
+          ai_run_status: 'completed',
+        }),
+      }),
+    ]);
 
     const regionalClassificationResponse = await request(app)
       .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
@@ -2603,11 +2621,29 @@ describe('AI backend endpoints phase B', () => {
       .send({ validation_result: 'correct' })
       .expect(403);
 
-    await request(app)
+    const firstValidationResponse = await request(app)
       .post(`${API_PREFIX}/projects/${project.id}/ai/predictions/${predictionId}/validations`)
       .set(authHeader(contributor.token))
       .send({ validation_result: 'correct' })
       .expect(201);
+    const directSubmissionNotification = await pool.query(
+      `SELECT title, metadata
+       FROM notification
+       WHERE user_id = $1
+         AND type = 'ai_event'
+         AND metadata->>'ai_validation_submission_id' = $2`,
+      [admin.user.id, firstValidationResponse.body.data.my_validation.id],
+    );
+    expect(directSubmissionNotification.rows).toEqual([
+      expect.objectContaining({
+        title: 'AI validation awaiting review',
+        metadata: expect.objectContaining({
+          project_id: project.id,
+          ai_prediction_feature_id: predictionId,
+          submitted_by_user_id: contributor.user.id,
+        }),
+      }),
+    ]);
     await request(app)
       .post(`${API_PREFIX}/projects/${project.id}/ai/predictions/${predictionId}/validations`)
       .set(authHeader(contributor.token))
@@ -2646,8 +2682,7 @@ describe('AI backend endpoints phase B', () => {
         admin_note: 'Admin field review accepted contributor correction.',
       })
       .expect(200);
-    const promotedFeatureId =
-      reviewResponse.body.data.admin_review.promoted_spatial_feature_id;
+    const promotedFeatureId = reviewResponse.body.data.admin_review.promoted_spatial_feature_id;
     expect(promotedFeatureId).toEqual(expect.any(String));
 
     await request(app)
@@ -2658,6 +2693,29 @@ describe('AI backend endpoints phase B', () => {
         approved_class: 'citrus fruit trees',
       })
       .expect(200);
+
+    const contributorOutcomeNotifications = await pool.query(
+      `SELECT user_id, title, metadata
+       FROM notification
+       WHERE type = 'ai_event'
+         AND metadata->>'ai_prediction_feature_id' = $1
+         AND metadata->>'review_status' = 'approved'
+       ORDER BY user_id`,
+      [predictionId],
+    );
+    expect(contributorOutcomeNotifications.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          user_id: contributor.user.id,
+          title: 'AI prediction validation approved',
+        }),
+        expect.objectContaining({
+          user_id: secondContributor.user.id,
+          title: 'AI prediction validation approved',
+        }),
+      ]),
+    );
+    expect(contributorOutcomeNotifications.rows).toHaveLength(2);
 
     const promotedResult = await pool.query(
       `SELECT id,
@@ -2821,10 +2879,9 @@ describe('AI backend endpoints phase B', () => {
           released_path: expect.stringMatching(/\.jpg$/),
         }),
       );
-      const releasedLocation = storageAdapter.resolve(
-        releasedRecord.rows[0].released_path,
-        ['uploads'],
-      );
+      const releasedLocation = storageAdapter.resolve(releasedRecord.rows[0].released_path, [
+        'uploads',
+      ]);
       expect(releasedLocation).not.toBeNull();
       cleanupPaths.push(releasedRecord.rows[0].storage_path, releasedLocation.localPath);
       await expect(sharp(releasedLocation.localPath).metadata()).resolves.toEqual(
@@ -3002,6 +3059,30 @@ describe('AI backend endpoints phase B', () => {
       .set(authHeader(admin.token))
       .send({ assigned_to: contributor.user.id })
       .expect(200);
+    await request(app)
+      .patch(`${API_PREFIX}/ai/prediction-validation-tasks/${assignedTaskId}/assign`)
+      .set(authHeader(admin.token))
+      .send({ assigned_to: contributor.user.id })
+      .expect(200);
+
+    const taskAssignmentNotifications = await pool.query(
+      `SELECT n.title
+       FROM notification n
+       WHERE n.user_id = $1
+         AND n.type = 'ai_event'
+         AND n.metadata->>'event_key' = $2`,
+      [contributor.user.id, `ai_validation_task:${assignedTaskId}:assigned:${contributor.user.id}`],
+    );
+    expect(taskAssignmentNotifications.rows).toEqual([{ title: 'AI validation task assigned' }]);
+    const taskAssignmentEmails = await pool.query(
+      `SELECT nd.id
+       FROM notification_delivery nd
+       JOIN notification n ON n.id = nd.notification_id
+       WHERE n.user_id = $1
+         AND n.metadata->>'event_key' = $2`,
+      [contributor.user.id, `ai_validation_task:${assignedTaskId}:assigned:${contributor.user.id}`],
+    );
+    expect(taskAssignmentEmails.rows).toHaveLength(0);
 
     await request(app)
       .get(`${API_PREFIX}/projects/${project.id}/ai/prediction-validation-tasks`)
@@ -3206,6 +3287,24 @@ describe('AI backend endpoints phase B', () => {
         }),
       }),
     );
+    const adminSubmissionNotification = await pool.query(
+      `SELECT title, metadata
+       FROM notification
+       WHERE user_id = $1
+         AND type = 'ai_event'
+         AND metadata->>'ai_validation_submission_id' = $2`,
+      [admin.user.id, submitResponse.body.data.submission_id],
+    );
+    expect(adminSubmissionNotification.rows).toEqual([
+      expect.objectContaining({
+        title: 'AI validation awaiting review',
+        metadata: expect.objectContaining({
+          project_id: project.id,
+          ai_validation_task_id: reviewedTaskId,
+          ai_prediction_feature_id: firstPredictionId,
+        }),
+      }),
+    ]);
 
     await request(app)
       .post(`${API_PREFIX}/ai/prediction-validation-tasks/${reviewedTaskId}/submissions`)
@@ -3256,6 +3355,23 @@ describe('AI backend endpoints phase B', () => {
         no_auto_approval: false,
       }),
     );
+    const contributorReviewNotification = await pool.query(
+      `SELECT title, metadata
+       FROM notification
+       WHERE user_id = $1
+         AND type = 'ai_event'
+         AND metadata->>'event_key' = $2`,
+      [
+        contributor.user.id,
+        `ai_validation_submission:${submitResponse.body.data.submission_id}:reviewed`,
+      ],
+    );
+    expect(contributorReviewNotification.rows).toEqual([
+      expect.objectContaining({
+        title: 'AI validation accepted',
+        metadata: expect.objectContaining({ review_status: 'accepted' }),
+      }),
+    ]);
 
     await request(app)
       .post(`${API_PREFIX}/ai/prediction-validation-tasks/${notTargetTaskId}/submissions`)
@@ -3377,6 +3493,15 @@ describe('AI backend endpoints phase B', () => {
       withPrediction: true,
     });
     const viewer = await createViewerToken();
+    const contributor = await createContributorToken({
+      adminToken: admin.token,
+      emailPrefix: 'ai-layer-publication-contributor',
+    });
+    await assignContributorToProject({
+      projectId: project.id,
+      userId: contributor.user.id,
+      approvedBy: admin.user.id,
+    });
     const beforeFeatureCount = await pool.query(
       'SELECT COUNT(*)::int AS count FROM spatial_feature',
     );
@@ -3409,6 +3534,24 @@ describe('AI backend endpoints phase B', () => {
       }),
     );
     expect(publishResponse.body.data.published_at).toBeTruthy();
+    const publishedNotification = await pool.query(
+      `SELECT title, metadata
+       FROM notification
+       WHERE user_id = $1
+         AND type = 'ai_event'
+         AND metadata->>'event_key' = $2`,
+      [contributor.user.id, `ai_layer:${layerId}:published`],
+    );
+    expect(publishedNotification.rows).toEqual([
+      expect.objectContaining({
+        title: 'AI map layer published',
+        metadata: expect.objectContaining({
+          project_id: project.id,
+          ai_run_id: runId,
+          publication_status: 'published',
+        }),
+      }),
+    ]);
 
     const publishedLayersResponse = await request(app)
       .get(`${API_PREFIX}/projects/${project.id}/ai/published-layers`)
@@ -3473,6 +3616,20 @@ describe('AI backend endpoints phase B', () => {
         storage_path: null,
       }),
     );
+    const unpublishedNotification = await pool.query(
+      `SELECT title, metadata
+       FROM notification
+       WHERE user_id = $1
+         AND type = 'ai_event'
+         AND metadata->>'event_key' = $2`,
+      [contributor.user.id, `ai_layer:${layerId}:unpublished`],
+    );
+    expect(unpublishedNotification.rows).toEqual([
+      expect.objectContaining({
+        title: 'AI map layer unpublished',
+        metadata: expect.objectContaining({ publication_status: 'unpublished' }),
+      }),
+    ]);
 
     await request(app)
       .get(`${API_PREFIX}/projects/${project.id}/ai/published-layers`)
@@ -3643,7 +3800,7 @@ describe('AI backend endpoints phase B', () => {
       .get(`${API_PREFIX}/ai/runs/${runResponse.body.data.id}`)
       .set(authHeader(assignedProjectAdmin.token))
       .expect(403);
-  });
+  }, 15_000);
 });
 
 describe('AI result review phase I', () => {

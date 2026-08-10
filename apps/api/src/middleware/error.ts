@@ -11,6 +11,7 @@ class AppError extends Error {
   disposition?: string;
   retryable?: boolean;
   currentVersion?: number;
+  retryAfterSeconds?: number;
 
   constructor(
     message: string,
@@ -20,6 +21,7 @@ class AppError extends Error {
       disposition?: string;
       retryable?: boolean;
       currentVersion?: number;
+      retryAfterSeconds?: number;
     } = {},
   ) {
     super(message);
@@ -29,6 +31,7 @@ class AppError extends Error {
     this.disposition = options.disposition;
     this.retryable = options.retryable;
     this.currentVersion = options.currentVersion;
+    this.retryAfterSeconds = options.retryAfterSeconds;
     Error.captureStackTrace(this, this.constructor);
   }
 }
@@ -80,7 +83,9 @@ const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunc
     disposition?: string;
     retryable?: boolean;
     currentVersion?: number;
+    retryAfterSeconds?: number;
     type?: string;
+    constraint?: string;
   };
   let statusCode = error.statusCode ?? 500;
   let message = error.message ?? 'Internal Server Error';
@@ -110,6 +115,16 @@ const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunc
       case '23502': // Not null violation
         statusCode = 400;
         message = 'Required field is missing';
+        break;
+      case '23514': // Check/trigger constraint violation
+        if (error.constraint === 'user_phone_account_limit') {
+          statusCode = 409;
+          message =
+            'This mobile number is already used by the maximum of 3 accounts. Use another Lebanese mobile number.';
+          responseErrorCode = 'PHONE_ACCOUNT_LIMIT_REACHED';
+          responseDisposition = 'permanent_rejection';
+          responseRetryable = false;
+        }
         break;
       case '22P02': // Invalid text representation
         statusCode = 400;
@@ -172,10 +187,7 @@ const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunc
   // keeps rejected unsafe payloads out of normal logs.
   const logMethod = statusCode >= 500 ? 'error' : 'warn';
   logger[logMethod]('Request failed', {
-    message:
-      process.env.NODE_ENV === 'production'
-        ? 'Request processing failed'
-        : error.message,
+    message: process.env.NODE_ENV === 'production' ? 'Request processing failed' : error.message,
     errorName: error.name,
     statusCode,
     stack: process.env.NODE_ENV === 'production' ? undefined : error.stack,
@@ -186,6 +198,15 @@ const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunc
     userId: req.user?.id,
     errorCode: responseErrorCode,
   });
+
+  if (
+    statusCode === 429 &&
+    typeof error.retryAfterSeconds === 'number' &&
+    Number.isSafeInteger(error.retryAfterSeconds) &&
+    error.retryAfterSeconds > 0
+  ) {
+    res.setHeader('Retry-After', String(error.retryAfterSeconds));
+  }
 
   // Send response
   res.status(statusCode).json({
@@ -198,6 +219,9 @@ const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunc
             code: responseErrorCode,
             disposition: responseDisposition,
             retryable: responseRetryable === true,
+            ...(typeof error.retryAfterSeconds === 'number'
+              ? { retry_after_seconds: error.retryAfterSeconds }
+              : {}),
             ...(typeof error.currentVersion === 'number' &&
             Number.isSafeInteger(error.currentVersion) &&
             error.currentVersion > 0

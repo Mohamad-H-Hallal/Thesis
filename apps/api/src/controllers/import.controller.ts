@@ -2622,6 +2622,7 @@ const mapImportCommentRow = (row: ImportCommentRow) => ({
 
 const mapImportMapProjectFeatureRow = (row: any) => ({
   id: row.id,
+  project_id: row.project_id,
   status: row.status,
   geometry: row.geometry ? JSON.parse(row.geometry) : null,
   attributes: sanitizeManagedFeatureAttributes(row.attributes),
@@ -3708,6 +3709,7 @@ const fetchImportMapLayerData = async ({
       ? await query(
           `WITH visible AS (
              SELECT sf.id,
+                    sf.project_id,
                     sf.status,
                     GeometryType(sf.geom) AS source_geometry_type,
                     sf.attributes,
@@ -3751,6 +3753,7 @@ const fetchImportMapLayerData = async ({
                     WHEN COUNT(*) = 1 THEN (ARRAY_AGG(id::text ORDER BY reviewed_at DESC NULLS LAST, submitted_at DESC NULLS LAST, id ASC))[1]
                     ELSE CONCAT('project-context-cluster:', lat_bucket::text, ':', lon_bucket::text)
                   END AS id,
+                  MIN(project_id::text) AS project_id,
                   'approved'::text AS status,
                   CASE
                     WHEN COUNT(DISTINCT source_geometry_type) = 1 THEN MIN(source_geometry_type)
@@ -3796,6 +3799,7 @@ const fetchImportMapLayerData = async ({
         )
       : await query(
           `SELECT sf.id,
+                  sf.project_id,
                   sf.status,
                   GeometryType(sf.geom) AS source_geometry_type,
                   ${projectGeometrySql} AS geometry,

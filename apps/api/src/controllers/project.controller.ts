@@ -11,6 +11,7 @@ import {
 } from '../lib/projectLifecycle';
 import { normalizeCollectionFormSchema } from '../lib/projectSchema';
 import { serializePhotoForClient } from '../lib/photoMedia';
+import { notifyProjectStatusChanged } from '../lib/workflowNotifications';
 
 const projectAccessScopes = ['public', 'assigned', 'all'] as const;
 type ProjectAccessScope = (typeof projectAccessScopes)[number];
@@ -555,7 +556,7 @@ const createProject = async (req, res) => {
     ],
   );
   const createdProject = createdProjectResult.rows[0];
-  await synchronizeProjectStatuses(createdProject.id);
+  await synchronizeProjectStatuses(createdProject.id, req.user.id);
   const synchronizedProjectResult = await query('SELECT * FROM project WHERE id = $1', [
     createdProject.id,
   ]);
@@ -592,14 +593,14 @@ const updateProject = async (req, res) => {
     visible_to_contributors,
   } = req.body;
 
-  await synchronizeProjectStatuses(projectId);
+  await synchronizeProjectStatuses(projectId, req.user.id);
   // Build dynamic update query
   const updates: string[] = [];
   const params: unknown[] = [];
   let paramIndex = 1;
 
   const currentProjectResult = await query(
-    'SELECT id, status, category_id, start_date, end_date FROM project WHERE id = $1',
+    'SELECT id, name, status, category_id, start_date, end_date FROM project WHERE id = $1',
     [projectId],
   );
   if (currentProjectResult.rows.length === 0) {
@@ -713,9 +714,20 @@ const updateProject = async (req, res) => {
   `;
 
   const result = await query(queryText, params);
-  await synchronizeProjectStatuses(projectId);
+  await synchronizeProjectStatuses(projectId, req.user.id);
   const synchronizedProjectResult = await query('SELECT * FROM project WHERE id = $1', [projectId]);
   const synchronizedProject = synchronizedProjectResult.rows[0] ?? result.rows[0];
+
+  if (currentProject.status !== synchronizedProject.status) {
+    await notifyProjectStatusChanged(query, {
+      projectId,
+      projectName: synchronizedProject.name,
+      previousStatus: currentProject.status,
+      status: synchronizedProject.status,
+      actorUserId: req.user.id,
+      eventKey: `project_status:manual:${projectId}:${currentProject.status}:${synchronizedProject.status}:${Date.now()}`,
+    });
+  }
 
   logger.info('Project updated:', { projectId, userId: req.user.id });
 
@@ -820,8 +832,9 @@ const getProjectFeatures = async (req, res) => {
   const offset = (page - 1) * limit;
   await synchronizeProjectStatuses(projectId);
 
+  // Keep project_id explicit in every row so clients can fail closed on scope mismatches.
   let queryText = `
-    SELECT sf.id, sf.status, sf.attributes,
+    SELECT sf.id, sf.project_id, sf.status, sf.attributes,
            sf.collected_at, sf.submitted_at, sf.reviewed_at,
            sf.review_notes,
            ST_AsGeoJSON(sf.geom) as geometry,

@@ -80,11 +80,11 @@ dart format lib test
 
 ## Branding assets
 - App name in UI and platform labels: `TerraLeb`
-- Tagline: `Field GIS and AI land intelligence`
-- Primary light logo: `assets/branding/terraleb_mark_light.svg`
-- Primary dark logo: `assets/branding/terraleb_mark_dark.svg`
-- Icon-only logo: `assets/branding/terraleb_icon.svg`
-- Horizontal logos: `assets/branding/terraleb_horizontal_light.svg`, `assets/branding/terraleb_horizontal_dark.svg`
+- Theme-aware light logo: `assets/branding/terraleb_logo_light.png`
+- Theme-aware dark logo: `assets/branding/terraleb_logo_dark.png`
+- Launcher-icon master: `assets/branding/terraleb_launcher_master.png`
+- Transparent adaptive/splash mark: `assets/branding/terraleb_mark_transparent.png`
+- In-app branding uses `TerraLebLogo`, which follows the active Flutter theme and supports an explicit brightness override.
 
 ## Notes
 - Auth flow is wired to real backend endpoints by default (`/api/v1/auth/*`).

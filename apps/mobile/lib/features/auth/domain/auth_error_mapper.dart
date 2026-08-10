@@ -7,6 +7,7 @@ AuthFailure mapAuthDioException(
 }) {
   final statusCode = error.response?.statusCode;
   final responseMessage = _extractMessage(error.response?.data);
+  final responseCode = _extractCode(error.response?.data);
 
   if (error.type == DioExceptionType.connectionTimeout ||
       error.type == DioExceptionType.receiveTimeout ||
@@ -32,6 +33,13 @@ AuthFailure mapAuthDioException(
         code: 'invalid_credentials',
       );
     case 403:
+      if (responseCode == 'CONTACT_VERIFICATION_REQUIRED') {
+        return AuthFailure(
+          responseMessage ?? 'Contact verification is required.',
+          statusCode: 403,
+          code: 'contact_verification_required',
+        );
+      }
       final normalized = (responseMessage ?? '').toLowerCase();
       if (normalized.contains('blocked')) {
         return const AuthFailure(
@@ -80,12 +88,40 @@ AuthFailure mapAuthDioException(
         code: 'account_not_found',
       );
     case 409:
+      if (responseCode == 'EMAIL_ALREADY_IN_USE') {
+        return AuthFailure(
+          responseMessage ?? 'An account already uses this email address.',
+          statusCode: statusCode,
+          code: 'duplicate_email',
+        );
+      }
+      if (responseCode == 'PHONE_ALREADY_IN_USE') {
+        return AuthFailure(
+          responseMessage ?? 'An account already uses this mobile number.',
+          statusCode: statusCode,
+          code: 'duplicate_phone',
+        );
+      }
+      if (responseCode == 'PHONE_ACCOUNT_LIMIT_REACHED') {
+        return AuthFailure(
+          responseMessage ??
+              'This mobile number is already used by the maximum of 3 accounts. Use another Lebanese mobile number.',
+          statusCode: statusCode,
+          code: 'phone_account_limit',
+        );
+      }
+      if (responseCode == 'CONTACT_ALREADY_IN_USE') {
+        return AuthFailure(
+          responseMessage ??
+              'An account already uses this email address and mobile number.',
+          statusCode: statusCode,
+          code: 'duplicate_contact',
+        );
+      }
       return AuthFailure(
-        responseMessage == 'Email already registered'
-            ? 'This email is already registered.'
-            : (responseMessage ?? 'This email is already registered.'),
+        responseMessage ?? 'The request conflicts with existing account data.',
         statusCode: statusCode,
-        code: 'duplicate_email',
+        code: 'conflict',
       );
     case 400:
     case 422:
@@ -115,6 +151,14 @@ AuthFailure mapAuthDioException(
         code: 'unknown_auth_error',
       );
   }
+}
+
+String? _extractCode(Object? data) {
+  if (data is! Map) return null;
+  final error = data['error'];
+  return error is Map && error['code'] is String
+      ? error['code'] as String
+      : null;
 }
 
 String _localAndroidDevHint() {

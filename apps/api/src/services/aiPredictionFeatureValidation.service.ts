@@ -1,6 +1,10 @@
 import type { PoolClient } from 'pg';
 import { query, transaction } from '../config/database';
 import { AppError } from '../middleware/error';
+import {
+  notifyAiPredictionReviewed,
+  notifyAiPredictionValidationSubmitted,
+} from '../lib/aiNotifications';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -80,9 +84,7 @@ const normalizePhotoMediaIds = (value: unknown): string[] => {
     .filter((item): item is string => item !== null);
 };
 
-const normalizeGpsLocation = (
-  value: unknown,
-): { lon: number | null; lat: number | null } => {
+const normalizeGpsLocation = (value: unknown): { lon: number | null; lat: number | null } => {
   const record = toJsonRecord(value);
   const lon = toOptionalNumber(record.lon ?? record.lng ?? record.longitude);
   const lat = toOptionalNumber(record.lat ?? record.latitude);
@@ -178,7 +180,10 @@ const assertClassEligibleIfKnown = async ({
   }
   const normalizedAllowed = new Set(labels.map(normalizeClassLabel));
   if (!normalizedAllowed.has(normalizeClassLabel(classLabel))) {
-    throw new AppError('approved_class/corrected_class must match a known AI class for this run.', 400);
+    throw new AppError(
+      'approved_class/corrected_class must match a known AI class for this run.',
+      400,
+    );
   }
 };
 
@@ -251,10 +256,7 @@ const loadPredictionForProject = async ({
 const isPredictionPublished = (prediction: any): boolean =>
   prediction.layer_status === 'published' && prediction.layer_published_at !== null;
 
-const validationSummaryForPrediction = async (
-  predictionId: string,
-  client?: PoolClient,
-) => {
+const validationSummaryForPrediction = async (predictionId: string, client?: PoolClient) => {
   const executor = client ?? { query };
   const result = await executor.query(
     `SELECT COUNT(*)::int AS total,
@@ -301,10 +303,7 @@ const normalizeValidationRow = (row: any) => ({
   updated_at: row.updated_at,
 });
 
-const listValidationsForPrediction = async (
-  predictionId: string,
-  client?: PoolClient,
-) => {
+const listValidationsForPrediction = async (predictionId: string, client?: PoolClient) => {
   const executor = client ?? { query };
   const result = await executor.query(
     `SELECT v.id,
@@ -498,7 +497,10 @@ const createPredictionFeatureValidation = async (
     throw new AppError('Only assigned contributors can validate AI prediction features.', 403);
   }
   if (!validationResults.has(input.result)) {
-    throw new AppError('validation_result must be correct, incorrect, unsure, or cannot_verify.', 400);
+    throw new AppError(
+      'validation_result must be correct, incorrect, unsure, or cannot_verify.',
+      400,
+    );
   }
 
   const correctedClass = normalizeOptionalString(input.correctedClass);
@@ -517,7 +519,10 @@ const createPredictionFeatureValidation = async (
       forUpdate: true,
     });
     if (!isPredictionPublished(prediction)) {
-      throw new AppError('AI prediction features can be validated only after the AI layer is published.', 403);
+      throw new AppError(
+        'AI prediction features can be validated only after the AI layer is published.',
+        403,
+      );
     }
     const assignedContributor = await contributorHasAssignedProjectAccess({
       projectId: input.projectId,
@@ -607,6 +612,11 @@ const createPredictionFeatureValidation = async (
       projectId: input.projectId,
       predictionId: input.predictionId,
       client,
+    });
+    await notifyAiPredictionValidationSubmitted(client, {
+      projectId: input.projectId,
+      predictionId: input.predictionId,
+      submittedBy: input.submittedBy,
     });
     return predictionDetailsPayload({ prediction: refreshed, user, client });
   });
@@ -786,7 +796,10 @@ const reviewPredictionFeature = async (
     throw new AppError('Only admins can review AI prediction validations.', 403);
   }
   if (!adminReviewStatuses.has(input.approvalStatus)) {
-    throw new AppError('approval_status must be approved, rejected, or needs_more_validation.', 400);
+    throw new AppError(
+      'approval_status must be approved, rejected, or needs_more_validation.',
+      400,
+    );
   }
 
   return transaction(async (client: PoolClient) => {
@@ -797,13 +810,16 @@ const reviewPredictionFeature = async (
       forUpdate: true,
     });
     if (!isPredictionPublished(prediction)) {
-      throw new AppError('AI predictions can be admin-reviewed only after the AI layer is published.', 409);
+      throw new AppError(
+        'AI predictions can be admin-reviewed only after the AI layer is published.',
+        409,
+      );
     }
 
     const approvedClass =
       input.approvalStatus === 'approved'
-        ? normalizeOptionalString(input.approvedClass) ??
-          normalizeOptionalString(prediction.predicted_class)
+        ? (normalizeOptionalString(input.approvedClass) ??
+          normalizeOptionalString(prediction.predicted_class))
         : normalizeOptionalString(input.approvedClass);
     if (input.approvalStatus === 'approved' && !approvedClass) {
       throw new AppError('approved_class is required when approving an AI prediction.', 400);
@@ -871,7 +887,8 @@ const reviewPredictionFeature = async (
                 ? 'admin_rejected'
                 : 'needs_more_validation',
           approved_class: approvedClass ?? null,
-          linked_spatial_feature_id: promotedSpatialFeatureId ?? prediction.promoted_spatial_feature_id ?? null,
+          linked_spatial_feature_id:
+            promotedSpatialFeatureId ?? prediction.promoted_spatial_feature_id ?? null,
           admin_reviewed_by: input.reviewedBy,
           admin_reviewed_at: new Date().toISOString(),
           use_for_future_training: input.approvalStatus === 'approved',
@@ -884,6 +901,11 @@ const reviewPredictionFeature = async (
       projectId: input.projectId,
       predictionId: input.predictionId,
       client,
+    });
+    await notifyAiPredictionReviewed(client, {
+      projectId: input.projectId,
+      predictionId: input.predictionId,
+      reviewStatus: input.approvalStatus,
     });
     return predictionDetailsPayload({ prediction: refreshed, user, client });
   });

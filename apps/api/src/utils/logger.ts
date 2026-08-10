@@ -8,17 +8,14 @@ const logToFile = process.env.LOG_TO_FILE === 'true';
 const REDACTED = '[REDACTED]';
 
 const sensitiveKeyPattern =
-  /(?:authorization|cookie|password|passphrase|token|secret|private[_-]?key|credential|smtp[_-]?pass|database[_-]?url|redis[_-]?url|service[_-]?account|body|payload|geometry|coordinates|geojson|latitude|longitude|bbox|attributes|feature[_-]?collection|storage[_-]?path|file[_-]?(?:buffer|path|name)|raw[_-]?content|email|phone)/i;
+  /(?:authorization|cookie|password|passphrase|token|otp|verification[_-]?code|secret|private[_-]?key|credential|smtp[_-]?pass|database[_-]?url|redis[_-]?url|service[_-]?account|body|payload|geometry|coordinates|geojson|latitude|longitude|bbox|attributes|feature[_-]?collection|storage[_-]?path|file[_-]?(?:buffer|path|name)|raw[_-]?content|email|phone)/i;
 
 const sanitizeLogString = (value: string): string =>
   value
     .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/gi, REDACTED)
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, `Bearer ${REDACTED}`)
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, REDACTED)
-    .replace(
-      /\b([a-z][a-z0-9+.-]*:\/\/)([^/\s:@]+):([^@\s/]+)@/gi,
-      `$1${REDACTED}:${REDACTED}@`,
-    )
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)([^/\s:@]+):([^@\s/]+)@/gi, `$1${REDACTED}:${REDACTED}@`)
     .replace(
       /\b(password|passphrase|token|secret|private[_-]?key|smtp[_-]?pass)\s*[:=]\s*([^\s,;]+)/gi,
       `$1=${REDACTED}`,
@@ -83,7 +80,7 @@ const jsonFormat = winston.format.combine(
   winston.format.errors({ stack: true }),
   winston.format.splat(),
   redactionFormat,
-  winston.format.json()
+  winston.format.json(),
 );
 
 const prettyFormat = winston.format.combine(
@@ -96,7 +93,7 @@ const prettyFormat = winston.format.combine(
       msg += ` ${JSON.stringify(meta)}`;
     }
     return msg;
-  })
+  }),
 );
 
 const transports = [
@@ -124,7 +121,7 @@ if (logToFile) {
       maxsize: 5242880,
       maxFiles: 5,
       format: jsonFormat,
-    })
+    }),
   );
 }
 

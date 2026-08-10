@@ -10,6 +10,7 @@ class AppTextField extends StatelessWidget {
     this.keyboardType,
     this.obscureText = false,
     this.suffix,
+    this.prefix,
     this.autofillHints,
     this.textInputAction,
     this.focusNode,
@@ -32,6 +33,7 @@ class AppTextField extends StatelessWidget {
   final TextInputType? keyboardType;
   final bool obscureText;
   final Widget? suffix;
+  final Widget? prefix;
   final Iterable<String>? autofillHints;
   final TextInputAction? textInputAction;
   final FocusNode? focusNode;
@@ -71,6 +73,7 @@ class AppTextField extends StatelessWidget {
         labelText: label,
         hintText: hint,
         suffixIcon: suffix,
+        prefixIcon: prefix,
         alignLabelWithHint: (minLines ?? maxLines ?? 1) > 1,
       ),
     );

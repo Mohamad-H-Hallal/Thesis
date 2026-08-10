@@ -18,10 +18,7 @@ const positiveInteger = (value: string | undefined, fallback: number): number =>
 };
 
 const workerId = `${os.hostname()}:${process.pid}:${crypto.randomUUID()}`;
-const concurrency = Math.min(
-  16,
-  positiveInteger(process.env.WORKLOAD_WORKER_CONCURRENCY, 2),
-);
+const concurrency = Math.min(16, positiveInteger(process.env.WORKLOAD_WORKER_CONCURRENCY, 2));
 const pollIntervalMs = positiveInteger(process.env.WORKLOAD_POLL_INTERVAL_MS, 1000);
 const leaseMs = positiveInteger(process.env.WORKLOAD_LEASE_MS, 5 * 60 * 1000);
 const jobTimeoutMs = positiveInteger(process.env.WORKLOAD_JOB_TIMEOUT_MS, 30 * 60 * 1000);
@@ -71,16 +68,41 @@ const processWorkloadJob = async (job: WorkloadJob): Promise<void> => {
 const finalizeDeadLetterEntity = async (job: WorkloadJob, error: unknown): Promise<void> => {
   const message = String(error instanceof Error ? error.message : error).slice(0, 4000);
   if (job.kind === 'gis_import') {
-    await query(
-      `UPDATE gis_import_job
-       SET status = 'failed',
-           processed_at = CURRENT_TIMESTAMP,
-           processing_heartbeat_at = CURRENT_TIMESTAMP,
-           processing_message = $2
-       WHERE id = $1
-         AND status IN ('uploaded', 'processing')`,
-      [job.entity_id, `Import moved to the dead-letter queue after bounded retries: ${message}`],
-    );
+    await transaction(async (client) => {
+      const result = await client.query(
+        `UPDATE gis_import_job
+         SET status = 'failed',
+             processed_at = CURRENT_TIMESTAMP,
+             processing_heartbeat_at = CURRENT_TIMESTAMP,
+             processing_message = $2
+         WHERE id = $1
+           AND status IN ('uploaded', 'processing')
+         RETURNING uploaded_by_user_id, project_id`,
+        [job.entity_id, `Import moved to the dead-letter queue after bounded retries: ${message}`],
+      );
+      if (result.rowCount === 0) {
+        return;
+      }
+      const projectResult = await client.query(`SELECT name FROM project WHERE id = $1`, [
+        result.rows[0].project_id,
+      ]);
+      const projectName = projectResult.rows[0]?.name ?? 'Project';
+      await client.query(
+        `INSERT INTO notification (user_id, type, title, message, metadata)
+         VALUES ($1, 'import_event', 'Import failed', $2, $3::jsonb)`,
+        [
+          result.rows[0].uploaded_by_user_id,
+          `${projectName} import failed after bounded retries.`,
+          JSON.stringify({
+            import_job_id: job.entity_id,
+            project_id: result.rows[0].project_id,
+            project_name: projectName,
+            status: 'failed',
+            dead_letter: true,
+          }),
+        ],
+      );
+    });
     return;
   }
 
@@ -136,14 +158,17 @@ const executeClaimedJob = async (job: WorkloadJob): Promise<void> => {
   }, jobTimeoutMs);
   hardTimeout.unref();
 
-  const heartbeat = setInterval(() => {
-    void renewWorkloadLease({ jobId: job.id, workerId, leaseMs }).catch((error) => {
-      logger.error('Failed to renew workload lease', {
-        jobId: job.id,
-        error: error instanceof Error ? error.message : String(error),
+  const heartbeat = setInterval(
+    () => {
+      void renewWorkloadLease({ jobId: job.id, workerId, leaseMs }).catch((error) => {
+        logger.error('Failed to renew workload lease', {
+          jobId: job.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
-    });
-  }, Math.max(1000, Math.floor(leaseMs / 3)));
+    },
+    Math.max(1000, Math.floor(leaseMs / 3)),
+  );
   heartbeat.unref();
 
   try {
@@ -237,6 +262,7 @@ const waitForWorkloadWorkerIdle = async (): Promise<void> => {
 
 export {
   drainWorkloadQueue,
+  finalizeDeadLetterEntity,
   runWorkloadWorkerOnce,
   startWorkloadWorker,
   stopWorkloadWorker,

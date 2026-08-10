@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:math';
+
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -5,11 +9,28 @@ import '../../../core/network/api_client.dart';
 import '../domain/auth_models.dart';
 import '../domain/auth_repository.dart';
 
+class _FakePasswordResetChallenge {
+  _FakePasswordResetChallenge({
+    required this.codeHash,
+    required this.expiresAt,
+  });
+
+  final String codeHash;
+  final DateTime expiresAt;
+  int attemptCount = 0;
+}
+
 class FakeAuthRepository implements AuthRepository {
-  FakeAuthRepository(this._storage, this._apiClient);
+  FakeAuthRepository(this._storage, this._apiClient)
+    : _passwordResetHmacKey = _secureRandomToken();
 
   final FlutterSecureStorage _storage;
   final ApiClient _apiClient;
+  final String _passwordResetHmacKey;
+  final Map<String, _FakePasswordResetChallenge> _passwordResetChallenges = {};
+  final Map<String, DateTime> _passwordResetSessions = {};
+
+  static final Random _secureRandom = Random.secure();
 
   static const _accessKey = 'access_token';
   static const _refreshKey = 'refresh_token';
@@ -18,6 +39,22 @@ class FakeAuthRepository implements AuthRepository {
   static const _emailKey = 'user_email';
   static const _phoneKey = 'user_phone';
   static const _superAdminKey = 'is_protected_super_admin';
+
+  static String _secureRandomToken([int byteLength = 32]) {
+    final bytes = List<int>.generate(
+      byteLength,
+      (_) => _secureRandom.nextInt(256),
+      growable: false,
+    );
+    return base64UrlEncode(bytes).replaceAll('=', '');
+  }
+
+  String _passwordResetCodeHash(String email, String code) {
+    return Hmac(
+      sha256,
+      utf8.encode(_passwordResetHmacKey),
+    ).convert(utf8.encode('${email.toLowerCase()}:$code')).toString();
+  }
 
   @override
   Future<AuthSession?> restoreSession() async {
@@ -217,10 +254,17 @@ class FakeAuthRepository implements AuthRepository {
         message: 'Please enter a valid email.',
       );
     }
+    final normalizedEmail = email.trim().toLowerCase();
+    final code = _secureRandom.nextInt(1000000).toString().padLeft(6, '0');
+    final expiresAt = DateTime.now().add(const Duration(minutes: 5));
+    _passwordResetChallenges[normalizedEmail] = _FakePasswordResetChallenge(
+      codeHash: _passwordResetCodeHash(normalizedEmail, code),
+      expiresAt: expiresAt,
+    );
     return PasswordResetRequestResult(
       message: 'A verification code has been sent to your email.',
       email: email,
-      expiresAt: DateTime.now().add(const Duration(minutes: 15)),
+      expiresAt: expiresAt,
     );
   }
 
@@ -230,15 +274,34 @@ class FakeAuthRepository implements AuthRepository {
     required String otp,
   }) async {
     await Future<void>.delayed(const Duration(milliseconds: 400));
-    if (!email.contains('@') || otp != '123456') {
+    final normalizedEmail = email.trim().toLowerCase();
+    final challenge = _passwordResetChallenges[normalizedEmail];
+    final valid =
+        challenge != null &&
+        challenge.expiresAt.isAfter(DateTime.now()) &&
+        challenge.attemptCount < 5 &&
+        challenge.codeHash == _passwordResetCodeHash(normalizedEmail, otp);
+    if (!valid) {
+      if (challenge != null) {
+        challenge.attemptCount += 1;
+        if (challenge.attemptCount >= 5 ||
+            !challenge.expiresAt.isAfter(DateTime.now())) {
+          _passwordResetChallenges.remove(normalizedEmail);
+        }
+      }
       throw DioException(
         requestOptions: RequestOptions(path: '/api/auth/verify-reset-otp'),
         message: 'Verification code is invalid or expired.',
       );
     }
+    _passwordResetChallenges.remove(normalizedEmail);
+    final resetToken = _secureRandomToken();
+    _passwordResetSessions[resetToken] = DateTime.now().add(
+      const Duration(minutes: 5),
+    );
     return PasswordResetOtpVerificationResult(
       message: 'Verification code confirmed.',
-      resetToken: 'fake-reset-session-token',
+      resetToken: resetToken,
       email: email,
     );
   }
@@ -249,7 +312,10 @@ class FakeAuthRepository implements AuthRepository {
     required String newPassword,
   }) async {
     await Future<void>.delayed(const Duration(milliseconds: 500));
-    if (resetToken.isEmpty || newPassword.length < 8) {
+    final expiresAt = _passwordResetSessions.remove(resetToken);
+    if (expiresAt == null ||
+        !expiresAt.isAfter(DateTime.now()) ||
+        newPassword.length < 8) {
       throw DioException(
         requestOptions: RequestOptions(path: '/api/auth/reset-password'),
         message: 'Reset password failed.',

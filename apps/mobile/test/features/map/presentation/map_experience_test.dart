@@ -735,7 +735,9 @@ void main() {
         find.widgetWithText(TextField, 'Search this project\'s features'),
         'Karim',
       );
-      await tester.pumpAndSettle();
+      // The live map keeps scheduling frames; advance past the search debounce
+      // without waiting for an animation-free frame that never arrives.
+      await tester.pump(const Duration(milliseconds: 500));
 
       expect(find.textContaining('Karim'), findsWidgets);
 

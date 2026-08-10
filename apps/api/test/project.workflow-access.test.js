@@ -354,6 +354,7 @@ describe('Project workflow access and feature visibility', () => {
 
     expect(viewerResponse.status).toBe(200);
     expect(viewerResponse.body.data.map((item) => item.id)).toEqual([approvedId]);
+    expect(viewerResponse.body.data.every((item) => item.project_id === project.id)).toBe(true);
 
     expect(contributorResponse.status).toBe(200);
     expect(contributorResponse.body.data.map((item) => item.id)).toEqual(
@@ -361,6 +362,9 @@ describe('Project workflow access and feature visibility', () => {
     );
     expect(contributorResponse.body.data.map((item) => item.id)).not.toEqual(
       expect.arrayContaining([pendingOtherId, rejectedOtherId, draftOtherId]),
+    );
+    expect(contributorResponse.body.data.every((item) => item.project_id === project.id)).toBe(
+      true,
     );
     expect(contributorGlobalResponse.status).toBe(200);
     expect(contributorGlobalResponse.body.data.map((item) => item.id)).toEqual(
@@ -393,6 +397,7 @@ describe('Project workflow access and feature visibility', () => {
 
     expect(adminResponse.status).toBe(200);
     expect(adminResponse.body.data).toHaveLength(6);
+    expect(adminResponse.body.data.every((item) => item.project_id === project.id)).toBe(true);
   });
 
   test('offline project packages are available only to assigned contributors', async () => {

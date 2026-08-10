@@ -33,6 +33,11 @@ import {
 } from '../services/aiPredictionFeatureValidation.service';
 import { publicVisibleStatuses, synchronizeProjectStatuses } from '../lib/projectLifecycle';
 import { isProtectedSuperAdminEmail } from '../lib/userWorkflow';
+import {
+  notifyAiRunReviewed,
+  notifyAiRunStatus,
+  notifyProjectAiPublication,
+} from '../lib/aiNotifications';
 import { privateAiValidationPhotosDir } from '../config/upload';
 import { type MemoryPhotoFile } from '../services/featurePhotoSecurity.service';
 import {
@@ -2356,6 +2361,7 @@ const updateAiRunFromServerPayload = async (
       Number.isFinite(predictionsInserted) ? predictionsInserted : 0,
     ],
   );
+  await notifyAiRunStatus(runId);
   return result.rows[0];
 };
 
@@ -2435,6 +2441,7 @@ const failAiRunFromDispatchError = async (
       }),
     ],
   );
+  await notifyAiRunStatus(runId);
   return result.rows[0];
 };
 
@@ -6389,6 +6396,12 @@ const reviewAiRun = async (req: Request, res: Response): Promise<void> => {
       ],
     );
 
+    await notifyAiRunReviewed(client, {
+      runId: lockedRun.id,
+      action,
+      actorUserId: currentUser.id,
+    });
+
     return {
       decision: decisionResult.rows[0],
       run: updatedRunResult.rows[0],
@@ -6667,6 +6680,14 @@ const publishProjectAiRun = async (req: Request, res: Response): Promise<void> =
       ],
     );
 
+    await notifyProjectAiPublication(client, {
+      projectId: run.project_id,
+      runId: run.id,
+      layerId: layer.id,
+      published: true,
+      actorUserId: currentUser.id,
+    });
+
     return {
       run: normalizeRunRow(runUpdate.rows[0]),
       layer: layerUpdate.rows[0],
@@ -6808,6 +6829,15 @@ const unpublishProjectAiRun = async (req: Request, res: Response): Promise<void>
         }),
       ],
     );
+    for (const layer of layerResult.rows) {
+      await notifyProjectAiPublication(client, {
+        projectId: run.project_id,
+        runId: run.id,
+        layerId: layer.id,
+        published: false,
+        actorUserId: currentUser.id,
+      });
+    }
     return {
       run: normalizeRunRow(runUpdate.rows[0]),
       layers: layerResult.rows,
@@ -7034,6 +7064,14 @@ const publishAiLayer = async (req: Request, res: Response): Promise<void> => {
       ],
     );
 
+    await notifyProjectAiPublication(client, {
+      projectId: layer.project_id,
+      runId: layer.ai_run_id,
+      layerId: layer.id,
+      published: true,
+      actorUserId: currentUser.id,
+    });
+
     return updated.rows[0];
   });
 
@@ -7151,6 +7189,14 @@ const unpublishAiLayer = async (req: Request, res: Response): Promise<void> => {
         }),
       ],
     );
+
+    await notifyProjectAiPublication(client, {
+      projectId: layer.project_id,
+      runId: layer.ai_run_id,
+      layerId: layer.id,
+      published: false,
+      actorUserId: currentUser.id,
+    });
 
     return updated.rows[0];
   });

@@ -58,7 +58,7 @@ Recommended demo path:
 2. Deploy with Docker Compose.
 3. Use a real subdomain such as `gis-demo.ncrs.example`.
 4. Put Nginx/Caddy/Traefik in front for HTTPS.
-5. Configure SMTP for email notifications/password workflows.
+5. Configure SMTP for transactional authentication and password workflows.
 6. Bootstrap only `ncrsadmin@gmail.com`.
 7. Let the NCRS admin create real demo categories/projects/users during the meeting.
 
@@ -280,17 +280,17 @@ Serve `build/web` over HTTPS. HTTPS is required for a production-like browser de
 
 These are realistic estimates, not guaranteed prices. Confirm prices at purchase time.
 
-| Item | Recommended demo option | Estimated cost | Notes |
-| --- | --- | ---: | --- |
-| Local laptop demo | Existing machine | $0 | Best for private presentation, no hosting needed. |
-| Low-cost VPS staging | DigitalOcean basic droplet or equivalent | about $6-$24/month | DigitalOcean lists Droplets from $4/month and common small plans around $6/month+. Choose 2GB+ if imports/maps feel heavy. |
-| Domain | Namecheap/Porkbun/Cloudflare Registrar | about $10-$20/year | Namecheap `.com` examples are around low-teens first year, renewals can be higher. |
-| HTTPS | Let's Encrypt | $0 | Free TLS certificates. |
-| SMTP | Brevo free tier or similar | $0 to about $10/month | Brevo free plan includes 300 daily email sends; paid plans start higher if needed. |
-| Firebase App Distribution | Firebase | $0 | Firebase lists App Distribution as a no-cost Firebase tool. |
-| Google Play | Play Console | $25 one-time | Not needed for the doctor/team demo. |
-| Apple Developer | Apple Developer Program | $99/year | Needed for TestFlight/App Store distribution; iOS also requires macOS/Xcode. |
-| Production pilot | VPS + domain + backups + SMTP | about $20-$80/month | Depends on upload volume, backup storage, monitoring, and traffic. |
+| Item                      | Recommended demo option                  |        Estimated cost | Notes                                                                                                                      |
+| ------------------------- | ---------------------------------------- | --------------------: | -------------------------------------------------------------------------------------------------------------------------- |
+| Local laptop demo         | Existing machine                         |                    $0 | Best for private presentation, no hosting needed.                                                                          |
+| Low-cost VPS staging      | DigitalOcean basic droplet or equivalent |    about $6-$24/month | DigitalOcean lists Droplets from $4/month and common small plans around $6/month+. Choose 2GB+ if imports/maps feel heavy. |
+| Domain                    | Namecheap/Porkbun/Cloudflare Registrar   |    about $10-$20/year | Namecheap `.com` examples are around low-teens first year, renewals can be higher.                                         |
+| HTTPS                     | Let's Encrypt                            |                    $0 | Free TLS certificates.                                                                                                     |
+| SMTP                      | Brevo free tier or similar               | $0 to about $10/month | Brevo free plan includes 300 daily email sends; paid plans start higher if needed.                                         |
+| Firebase App Distribution | Firebase                                 |                    $0 | Firebase lists App Distribution as a no-cost Firebase tool.                                                                |
+| Google Play               | Play Console                             |          $25 one-time | Not needed for the doctor/team demo.                                                                                       |
+| Apple Developer           | Apple Developer Program                  |              $99/year | Needed for TestFlight/App Store distribution; iOS also requires macOS/Xcode.                                               |
+| Production pilot          | VPS + domain + backups + SMTP            |   about $20-$80/month | Depends on upload volume, backup storage, monitoring, and traffic.                                                         |
 
 Reference sources:
 

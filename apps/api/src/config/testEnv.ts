@@ -64,6 +64,16 @@ const applyTestEnvDefaults = (): TestDbConfig => {
   process.env.DB_USER = user;
   process.env.DB_PASSWORD = password;
   process.env.MIGRATIONS_DIR = migrationsDir;
+  // Automated tests must never contact production email infrastructure.
+  process.env.MAIL_TRANSPORT = 'mailpit';
+  process.env.PASSWORD_RESET_REQUIRE_REAL_DELIVERY = 'false';
+  process.env.SMTP_HOST = process.env.TEST_SMTP_HOST?.trim() || 'localhost';
+  process.env.SMTP_PORT = process.env.TEST_SMTP_PORT?.trim() || '1025';
+  process.env.SMTP_SECURE = 'false';
+  process.env.SMTP_USER = '';
+  process.env.SMTP_PASS = '';
+  process.env.SMTP_FROM_EMAIL = 'no-reply@gis.local';
+  process.env.SMTP_FROM_NAME = 'TerraLeb';
 
   setDefault('JWT_SECRET', 'phase10-test-jwt-secret-12345678901234567890');
   setDefault('JWT_SECRET_CURRENT', process.env.JWT_SECRET as string);
@@ -91,6 +101,24 @@ const applyTestEnvDefaults = (): TestDbConfig => {
   setDefault('RATE_LIMIT_MAP_MAX_REQUESTS', '10000');
   setDefault('RATE_LIMIT_NOTIFICATION_MAX_REQUESTS', '10000');
   setDefault('RATE_LIMIT_PASSWORD_RESET_MAX_REQUESTS', '10000');
+  // Verification tests must be isolated from any developer or production
+  // provider configuration loaded from .env. No real message may be sent.
+  process.env.RATE_LIMIT_VERIFICATION_MAX_REQUESTS = '10000';
+  process.env.VERIFICATION_HMAC_SECRET = 'test-contact-verification-hmac-secret-0123456789';
+  process.env.CONTACT_VERIFICATION_TOKEN_EXPIRY_MINUTES = '30';
+  process.env.VERIFICATION_CODE_EXPIRY_MINUTES = '5';
+  process.env.VERIFICATION_RESEND_COOLDOWN_SECONDS = '10';
+  process.env.VERIFICATION_MAX_ATTEMPTS = '5';
+  process.env.VERIFICATION_BLOCK_MINUTES = '1';
+  process.env.VERIFICATION_DAILY_TARGET_CAP = '100';
+  process.env.VERIFICATION_DAILY_ACCOUNT_CAP = '200';
+  process.env.VERIFICATION_DAILY_IP_CAP = '1000';
+  process.env.VERIFICATION_DAILY_DEVICE_CAP = '1000';
+  process.env.VERIFICATION_PROVIDER_TIMEOUT_MS = '5000';
+  process.env.PHONE_ACCOUNT_REUSE_LIMIT = '3';
+  process.env.PHONE_ASSURANCE_MODE = 'sms_otp';
+  process.env.PHONE_FORMAT_VALIDATION_PROVIDER = 'libphonenumber';
+  process.env.PHONE_VERIFICATION_PROVIDER = 'mock';
   setDefault('WORKLOAD_WORKER_MODE', 'inline');
   setDefault('WORKLOAD_WORKER_CONCURRENCY', '2');
   setDefault('WORKLOAD_POLL_INTERVAL_MS', '100');
@@ -103,13 +131,6 @@ const applyTestEnvDefaults = (): TestDbConfig => {
   setDefault('OFFLINE_SYNC_INGRESS_RATE_LIMIT_MAX_REQUESTS', '10000');
   setDefault('AUDIT_LOG_ENABLED', 'true');
   setDefault('METRICS_ENABLED', 'false');
-  setDefault('MAIL_TRANSPORT', 'mailpit');
-  setDefault('PASSWORD_RESET_REQUIRE_REAL_DELIVERY', 'false');
-  setDefault('SMTP_HOST', 'mailpit');
-  setDefault('SMTP_PORT', '1025');
-  setDefault('SMTP_SECURE', 'false');
-  setDefault('SMTP_FROM_EMAIL', 'no-reply@gis.local');
-  setDefault('SMTP_FROM_NAME', 'Lebanese GIS Collector');
   setDefault('AI_PIPELINE_ENABLED', 'false');
   setDefault('AI_PIPELINE_ROOT', '');
   setDefault('AI_PIPELINE_OUTPUT_ROOT', '');

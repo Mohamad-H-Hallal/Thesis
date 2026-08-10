@@ -4,10 +4,13 @@
 ![API Coverage Threshold](https://img.shields.io/badge/coverage%20threshold-lines%20%E2%89%A5%2025%25-blue)
 
 ## Local Setup
+
 1. Use Node LTS 22:
+
 ```bash
 nvm use
 ```
+
 2. Copy `.env.example` to `.env` and fill secrets.
    - Default local DB connection is `localhost:54329`, which matches the official root Docker compose stack.
    - Official app runtime uses the root Docker compose stack from the repo root; `infra/db/docker-compose.yml` is maintenance tooling only, not normal app runtime.
@@ -15,18 +18,25 @@ nvm use
    - Default test DB connection is `localhost:54329`, database `gis_app_test`.
    - Test commands do not reuse the normal runtime database.
 4. Install dependencies:
+
 ```bash
 npm ci
 ```
+
 5. Run migrations:
+
 ```bash
 npm run migrate
 ```
+
 6. Seed development data (optional but recommended):
+
 ```bash
 npm run seed
 ```
+
 6b. Seed realistic staging profile (phase 11):
+
 ```bash
 ALLOW_DESTRUCTIVE_STAGING_RESET=true
 npm run seed:staging
@@ -34,39 +44,51 @@ npm run staging:verify
 ```
 
 6c. Reset runtime/business data for a clean retest:
+
 ```bash
 ALLOW_RUNTIME_RESET=true
 npm run reset:runtime
 ```
+
 - This is destructive.
 - It keeps the migrated schema, extensions, enums, and migration tracking intact.
 - It clears ordinary runtime data (users, categories, projects, assignments, features, photos, exports, notifications, audit logs, offline map rows, password reset requests, dev seed markers).
 - It then re-ensures the protected super admin from `SUPER_ADMIN_*` and resets the singleton `app_support_settings` row to defaults.
 - For the compose-backed app runtime, prefer running it inside the API container so it targets the same database as mobile:
   - `docker compose exec api sh -lc "ALLOW_RUNTIME_RESET=true npm run reset:runtime"`
+
 7. Start API (TypeScript dev runner):
+
 ```bash
 npm run dev
 ```
 
 Docker dev runtime note:
+
 - The repo-root compose dev stack runs the API with `npm run dev:docker`.
 - That command uses `nodemon --legacy-watch` so backend source changes reliably reload on Windows bind-mounted Docker workspaces.
 - If you are developing inside Docker, prefer the compose API service instead of starting a second host-side `npm run dev` process.
 
 ## API Test Runtime
+
 - Start the shared PostGIS service for local backend tests:
+
 ```bash
 docker compose up -d db
 ```
+
 - Prepare the isolated test database explicitly if needed:
+
 ```bash
 npm run test:db:prepare
 ```
+
 - Run the CI-equivalent backend suite:
+
 ```bash
 npm run test:ci
 ```
+
 - The backend test commands now:
   - use `TEST_DB_*` settings instead of the normal runtime DB
   - default to `localhost:54329` / `gis_app_test`
@@ -74,6 +96,7 @@ npm run test:ci
   - apply migrations before the API test suites run
 
 ## Password Reset Email
+
 - Forgot-password uses:
   - `POST /api/v1/auth/forgot-password`
   - `POST /api/v1/auth/verify-reset-otp`
@@ -124,6 +147,7 @@ npm run test:ci
   - optional `PASSWORD_RESET_TOKEN_EXPIRY_MINUTES`
 
 ### Gmail SMTP runtime
+
 - For Gmail SMTP use:
   - `MAIL_TRANSPORT=smtp`
   - `PASSWORD_RESET_REQUIRE_REAL_DELIVERY=true`
@@ -139,6 +163,7 @@ npm run test:ci
 - For host-side `npm --prefix apps/api ...` commands, `apps/api/.env` controls the host API process.
 
 ## Notification delivery runtime
+
 - Android push is supported when all of these are true:
   - `PUSH_NOTIFICATIONS_ENABLED=true`
   - `ANDROID_PUSH_NOTIFICATIONS_ENABLED=true`
@@ -147,11 +172,13 @@ npm run test:ci
 - iOS push remains intentionally disabled until APNs is configured:
   - `IOS_PUSH_NOTIFICATIONS_ENABLED=false`
   - the API reports this through `GET /api/v1/settings/support`
-- When iOS push is disabled or unavailable, the fallback is:
-  - persisted in-app notifications
-  - notification email delivery through SMTP
+- Workflow alerts are persisted in the in-app notification inbox. Push is an
+  additional delivery channel when configured; workflow notification emails
+  are disabled. SMTP remains required only for transactional authentication
+  and account-security messages such as verification and password reset.
 
 ## Remaining manual configuration
+
 - Android real-device push:
   - connect a physical Android phone
   - grant notification permission
@@ -170,6 +197,7 @@ npm run test:ci
     - allow only the Firebase APIs actually required by the app
 
 ## Quality Gate
+
 - Lint: `npm run lint`
 - Typecheck: `npm run typecheck`
 - Build: `npm run build`
@@ -195,21 +223,25 @@ npm run test:ci
   - branches `>= 15%`
 
 ## Documentation
+
 - OpenAPI: `docs/openapi.yaml`
 - Deployment runbook: `docs/deployment-runbook.md`
 - Geospatial performance checks: `docs/phase3-query-plan.sql`
 
 ## Phase 3 Geospatial Endpoints
+
 - `GET /api/v1/features/bbox?minLon=...&minLat=...&maxLon=...&maxLat=...&page=1&limit=50`
 - `GET /api/v1/features/nearby?lon=...&lat=...&radius=1000&limit=50`
 
 ## Phase 9 Operations Endpoints
+
 - `GET /health` (liveness)
 - `GET /ready` (readiness + DB check)
 - `GET /metrics` (basic app metrics; token-protected when `METRICS_TOKEN` is set)
 - `GET /api/v1` (API metadata)
 
 ## Phase 9 Security/Ops Notes
+
 - Strict CORS and HTTPS enforcement are configurable via `.env`.
 - JWT secret rotation supports current + previous secrets.
 - Sensitive routes write sanitized entries to `audit_log`.
@@ -219,6 +251,7 @@ npm run test:ci
   - these now target the official compose-backed DB on `localhost:54329` by default
 
 ## Phase 10 Quality Engineering Notes
+
 - New tests:
   - `test/phase10.e2e.workflow.test.js`
   - `test/phase10.performance.bbox.test.js`

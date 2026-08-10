@@ -9,6 +9,15 @@ const { closePool } = require('../../src/config/database');
 const { validateEnv } = require('../../src/config/env');
 const { storageAdapter } = require('../../src/services/storageAdapter.service');
 const {
+  clearVerificationTestOutboxes,
+  getMockEmailVerificationCodeForTest,
+} = require('../../src/services/contactVerification.service');
+const {
+  getMockPhoneVerificationCodeForTest,
+  resetPhoneVerificationProviderForTest,
+} = require('../../src/services/phoneVerificationProvider.service');
+const { normalizeLebaneseMobile } = require('../../src/services/contactIdentity.service');
+const {
   stopImportProcessingLoop,
   waitForImportProcessingIdle,
 } = require('../../src/controllers/import.controller');
@@ -52,8 +61,15 @@ const authHeader = (token) => ({ Authorization: `Bearer ${token}` });
 
 const uniqueEmail = (prefix = 'phase10-user') =>
   `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}@example.com`;
+let phoneSequence = Math.floor(Math.random() * 900000);
+const uniquePhone = () => {
+  phoneSequence = (phoneSequence + 1) % 1000000;
+  return `71${String(phoneSequence).padStart(6, '0')}`;
+};
 
 const resetDb = async () => {
+  clearVerificationTestOutboxes();
+  resetPhoneVerificationProviderForTest();
   stopWorkloadWorker();
   await waitForWorkloadWorkerIdle();
   stopImportProcessingLoop();
@@ -129,6 +145,8 @@ const resetDb = async () => {
 
   await pool.query(`
     TRUNCATE TABLE
+      contact_verification_audit_event,
+      contact_verification_challenge,
       workload_job,
       feature_media_cleanup_job,
       notification_push_delivery,
@@ -180,15 +198,16 @@ const registerUser = async ({
   role = 'contributor',
   fullName = 'Phase10 User',
   password = 'Passw0rd!123',
-  phone = '70123456',
+  phone,
   emailPrefix = 'phase10-user',
 } = {}) => {
   const email = uniqueEmail(emailPrefix);
+  const resolvedPhone = phone ?? uniquePhone();
   const payload = {
     email,
     password,
     full_name: fullName,
-    phone,
+    phone: resolvedPhone,
   };
   if (role) {
     payload.role = role;
@@ -200,29 +219,66 @@ const registerUser = async ({
     throw new Error(`registerUser failed (${response.status}): ${JSON.stringify(response.body)}`);
   }
 
+  let verificationToken = response.body.data.verification_token;
+  const emailCode = getMockEmailVerificationCodeForTest(email, 'signup');
+  const emailConfirmation = await request(app)
+    .post(`${API_PREFIX}/auth/verification/email/confirm`)
+    .set(authHeader(verificationToken))
+    .send({ code: emailCode });
+  if (emailConfirmation.status !== 200) {
+    throw new Error(
+      `email verification failed (${emailConfirmation.status}): ${JSON.stringify(emailConfirmation.body)}`,
+    );
+  }
+  verificationToken = emailConfirmation.body.data.verification_token;
+
+  const smsSend = await request(app)
+    .post(`${API_PREFIX}/auth/verification/phone/send`)
+    .set(authHeader(verificationToken))
+    .send({});
+  if (smsSend.status !== 200) {
+    throw new Error(`SMS send failed (${smsSend.status}): ${JSON.stringify(smsSend.body)}`);
+  }
+  const phoneE164 = normalizeLebaneseMobile(resolvedPhone).e164;
+  const smsCode = getMockPhoneVerificationCodeForTest(phoneE164, 'signup');
+  const phoneConfirmation = await request(app)
+    .post(`${API_PREFIX}/auth/verification/phone/confirm`)
+    .set(authHeader(verificationToken))
+    .send({ code: smsCode });
+  if (phoneConfirmation.status !== 200) {
+    throw new Error(
+      `phone verification failed (${phoneConfirmation.status}): ${JSON.stringify(phoneConfirmation.body)}`,
+    );
+  }
+
   return {
     email,
     password,
-    message: response.body.message,
-    user: response.body.data.user,
+    message: phoneConfirmation.body.message,
+    user: phoneConfirmation.body.data.user,
   };
 };
 
 const createAdminUser = async ({
   fullName = 'Phase10 Admin',
   password = 'Passw0rd!123',
-  phone = '70123456',
+  phone,
   emailPrefix = 'phase10-admin',
   email,
 } = {}) => {
   const resolvedEmail = email ?? uniqueEmail(emailPrefix);
+  const resolvedPhone = phone ?? uniquePhone();
+  const phoneE164 = normalizeLebaneseMobile(resolvedPhone).e164;
   const passwordHash = await bcrypt.hash(password, 12);
 
   const insertResult = await pool.query(
-    `INSERT INTO "user" (email, password_hash, full_name, phone, role)
-     VALUES ($1, $2, $3, $4, 'admin')
+    `INSERT INTO "user"
+       (email, email_original, email_canonical, email_verified_at, password_hash,
+        full_name, phone, phone_e164, phone_verified_at, role, is_active, account_status)
+     VALUES ($1, $1, LOWER($1), CURRENT_TIMESTAMP, $2, $3, $4, $4,
+             CURRENT_TIMESTAMP, 'admin', TRUE, 'active')
      RETURNING id, email, full_name, phone, role, created_at`,
-    [resolvedEmail, passwordHash, fullName, phone],
+    [resolvedEmail, passwordHash, fullName, phoneE164],
   );
 
   const loginData = await loginUser({ email: resolvedEmail, password });

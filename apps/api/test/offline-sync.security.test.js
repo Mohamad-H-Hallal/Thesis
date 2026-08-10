@@ -309,6 +309,62 @@ describe('Offline synchronization security boundary', () => {
     }
   });
 
+  test('validates and normalizes third-party contact fields without claiming ownership', () => {
+    const fieldSchema = {
+      fields: [
+        { key: 'owner_email', type: 'email' },
+        { key: 'owner_phone', type: 'phone' },
+      ],
+    };
+    expect(
+      validateAttributesAgainstSchema(
+        {
+          owner_email: ' Farmer@EXAMPLE.COM ',
+          owner_phone: '٠٣ ١٢٣ ٤٥٦',
+        },
+        fieldSchema,
+        { strictOffline: true },
+      ),
+    ).toEqual({
+      owner_email: 'Farmer@example.com',
+      owner_phone: '+9613123456',
+    });
+
+    const nestedSchema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        contact: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['email', 'mobile'],
+          properties: {
+            email: { type: 'string', format: 'email' },
+            mobile: { type: 'string', format: 'lebanese-mobile' },
+          },
+        },
+      },
+    };
+    expect(
+      validateAttributesAgainstSchema(
+        { contact: { email: 'Owner@EXAMPLE.COM', mobile: '70-123-456' } },
+        nestedSchema,
+        { strictOffline: true },
+      ),
+    ).toEqual({
+      contact: { email: 'Owner@example.com', mobile: '+96170123456' },
+    });
+
+    for (const attributes of [
+      { owner_email: 'not-an-email', owner_phone: '70 123 456' },
+      { owner_email: 'owner@example.com', owner_phone: '12 345 678' },
+    ]) {
+      expect(() =>
+        validateAttributesAgainstSchema(attributes, fieldSchema, { strictOffline: true }),
+      ).toThrow('Offline submission attribute format is invalid.');
+    }
+  });
+
   test('revalidates current role, project window, account, assignment, and deleted-account state', async () => {
     const fixture = await createFixture();
     const { contributorA, loginA, projectA, assignmentA } = fixture;

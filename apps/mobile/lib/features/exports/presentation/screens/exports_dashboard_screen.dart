@@ -194,6 +194,7 @@ class _ExportsDashboardScreenState
               processing: 0,
               completed: 0,
               failed: 0,
+              expired: 0,
             );
 
         return ListView(
@@ -261,6 +262,12 @@ class _ExportsDashboardScreenState
                       label: 'Failed',
                       value: '${scopedMetrics.failed}',
                       icon: Icons.error_outline,
+                    ),
+                    _MetricCard(
+                      width: cardWidth,
+                      label: 'Expired',
+                      value: '${scopedMetrics.expired}',
+                      icon: Icons.schedule_outlined,
                     ),
                   ],
                 );
@@ -1878,7 +1885,8 @@ class _ExportJobCard extends StatelessWidget {
                 ),
             ],
           ),
-          if ((job.displayMessage ?? job.errorMessage)?.trim().isNotEmpty == true) ...[
+          if ((job.displayMessage ?? job.errorMessage)?.trim().isNotEmpty ==
+              true) ...[
             const SizedBox(height: AppSpacing.sm),
             Text(
               (job.displayMessage ?? job.errorMessage)!,

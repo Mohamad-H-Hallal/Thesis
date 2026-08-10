@@ -108,6 +108,8 @@ class ApiMapRepository {
                 renderZoom: zoom,
                 featureType: featureType,
               );
+            } on StateError {
+              rethrow;
             } catch (error) {
               firstError ??= error;
               return null;
@@ -348,10 +350,13 @@ class ApiMapRepository {
       final row = Map<String, dynamic>.from(
         payload['data'] as Map? ?? const <String, dynamic>{},
       );
-      final feature = _toProjectFeature(row, expectedProjectId: projectId);
-      if (feature.projectId != projectId) {
-        throw StateError('The feature does not belong to the active project.');
+      final responseProjectId = row['project_id'];
+      if (responseProjectId is! String || responseProjectId != projectId) {
+        throw StateError(
+          'The project feature response did not match the active project.',
+        );
       }
+      final feature = _toProjectFeature(row, expectedProjectId: projectId);
       return feature;
     } on DioException catch (error) {
       throw userFacingDioMessage(

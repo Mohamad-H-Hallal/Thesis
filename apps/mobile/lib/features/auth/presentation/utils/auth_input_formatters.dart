@@ -38,11 +38,7 @@ class LebanesePhoneFormatter extends TextInputFormatter {
     TextEditingValue oldValue,
     TextEditingValue newValue,
   ) {
-    final normalized = LebanesePhone.normalize(newValue.text);
-    final truncated = normalized.length > 8
-        ? normalized.substring(0, 8)
-        : normalized;
-    final formatted = LebanesePhone.format(truncated);
+    final formatted = LebanesePhone.formatPartial(newValue.text);
 
     return TextEditingValue(
       text: formatted,

@@ -17,7 +17,6 @@ dependencies:
   dio: ^5.9.0
   flutter_secure_storage: 10.3.1
   flutter_map: ^8.3.1
-  flutter_svg: ^2.0.17
   image_picker: ^1.1.2
   latlong2: ^0.9.1
   path: ^1.9.1
@@ -32,6 +31,8 @@ dependencies:
   timezone: ^0.11.0
   connectivity_plus: ^7.1.1
   flutter_foreground_task: ^9.2.2
+  phone_numbers_parser: 9.0.25
+  email_validator: 3.0.0
 
 dev_dependencies:
   flutter_test:
@@ -43,4 +44,6 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/branding/
+    - assets/branding/terraleb_logo_light.png
+    - assets/branding/terraleb_logo_dark.png
+    - assets/branding/terraleb_mark_transparent.png

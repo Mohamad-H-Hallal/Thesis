@@ -30,12 +30,54 @@ void main() {
     expect(failure.message, 'Wrong email or password.');
   });
 
-  test('maps 409 to duplicate email message', () {
+  test('maps a coded email conflict to duplicate email guidance', () {
     final failure = mapAuthDioException(
-      dioError(type: DioExceptionType.badResponse, statusCode: 409),
+      dioError(
+        type: DioExceptionType.badResponse,
+        statusCode: 409,
+        data: <String, dynamic>{
+          'message': 'An account already uses this email address.',
+          'error': <String, dynamic>{'code': 'EMAIL_ALREADY_IN_USE'},
+        },
+      ),
       fallbackMessage: 'fallback',
     );
-    expect(failure.message, 'This email is already registered.');
+    expect(failure.message, 'An account already uses this email address.');
+    expect(failure.code, 'duplicate_email');
+  });
+
+  test('maps a coded phone conflict to duplicate phone guidance', () {
+    final failure = mapAuthDioException(
+      dioError(
+        type: DioExceptionType.badResponse,
+        statusCode: 409,
+        data: <String, dynamic>{
+          'message': 'An account already uses this mobile number.',
+          'error': <String, dynamic>{'code': 'PHONE_ALREADY_IN_USE'},
+        },
+      ),
+      fallbackMessage: 'fallback',
+    );
+    expect(failure.message, 'An account already uses this mobile number.');
+    expect(failure.code, 'duplicate_phone');
+  });
+
+  test('maps the three-account phone cap to the phone field', () {
+    final failure = mapAuthDioException(
+      dioError(
+        type: DioExceptionType.badResponse,
+        statusCode: 409,
+        data: <String, dynamic>{
+          'message':
+              'This mobile number is already used by the maximum of 3 accounts. Use another Lebanese mobile number.',
+          'error': <String, dynamic>{'code': 'PHONE_ACCOUNT_LIMIT_REACHED'},
+        },
+      ),
+      fallbackMessage: 'fallback',
+    );
+
+    expect(failure.code, 'phone_account_limit');
+    expect(failure.message, contains('maximum of 3 accounts'));
   });
 
   test('maps blocked account message from backend', () {

@@ -915,6 +915,10 @@ String _fieldTypeLabel(CollectionFieldType type) {
       return 'Yes / No';
     case CollectionFieldType.date:
       return 'Date';
+    case CollectionFieldType.email:
+      return 'Email address';
+    case CollectionFieldType.lebaneseMobile:
+      return 'Lebanese mobile';
   }
 }
 

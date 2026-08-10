@@ -57,7 +57,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                     final summary = Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.mark_email_unread_outlined),
+                        const Icon(Icons.notifications_active_outlined),
                         const SizedBox(width: AppSpacing.sm),
                         Flexible(
                           child: Text(
@@ -150,9 +150,9 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
             if (filtered.isEmpty)
               AppEmptyState(
                 icon: _filter == _NotificationFilter.unread
-                    ? Icons.mark_email_read_outlined
+                    ? Icons.notifications_paused_outlined
                     : _filter == _NotificationFilter.read
-                    ? Icons.drafts_outlined
+                    ? Icons.notifications_none_outlined
                     : Icons.notifications_off_outlined,
                 title: _filter == _NotificationFilter.unread
                     ? 'No unread notifications'
@@ -163,7 +163,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                     ? 'You have no unread updates right now.'
                     : _filter == _NotificationFilter.read
                     ? 'You have no read notifications right now.'
-                    : 'Contributor requests, project requests, review outcomes, and export updates will appear here.',
+                    : 'AI processing, validation tasks, project requests, review outcomes, imports, and export updates will appear here.',
               )
             else
               LayoutBuilder(
@@ -264,8 +264,8 @@ class _NotificationCard extends ConsumerWidget {
                 radius: 18,
                 child: Icon(
                   item.isRead
-                      ? Icons.mark_email_read_outlined
-                      : Icons.mark_email_unread_outlined,
+                      ? Icons.notifications_none_outlined
+                      : Icons.notifications_active_outlined,
                   size: 18,
                 ),
               ),
@@ -352,7 +352,7 @@ class _NotificationActionButton extends StatelessWidget {
     return OutlinedButton.icon(
       onPressed: onPressed,
       icon: Icon(
-        item.isRead ? Icons.mark_email_unread_outlined : Icons.done_outlined,
+        item.isRead ? Icons.notifications_active_outlined : Icons.done_outlined,
         size: 18,
       ),
       label: Text(item.isRead ? 'Mark unread' : 'Mark read'),

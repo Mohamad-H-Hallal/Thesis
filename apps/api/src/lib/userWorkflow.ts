@@ -2,12 +2,12 @@ import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
 import bcrypt from 'bcryptjs';
 import type { EnvConfig } from '../config/env';
 import { query } from '../config/database';
+import { isPhoneAssuranceSatisfied } from '../services/phoneAssurance.service';
 const logger = require('../utils/logger');
 
 type QueryExecutor = Pick<PoolClient, 'query'> | typeof query;
 
-const passwordStrengthPattern =
-  /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
+const passwordStrengthPattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
 
 const normalizeEmail = (value: string): string => value.trim().toLowerCase();
 
@@ -28,7 +28,7 @@ const isProtectedSuperAdminEmail = (email?: string | null): boolean => {
 const assertStrongPassword = (password: string, label = 'Password'): void => {
   if (!passwordStrengthPattern.test(password)) {
     throw new Error(
-      `${label} must be at least 8 characters and include uppercase, lowercase, number, and special character`
+      `${label} must be at least 8 characters and include uppercase, lowercase, number, and special character`,
     );
   }
 };
@@ -36,7 +36,7 @@ const assertStrongPassword = (password: string, label = 'Password'): void => {
 const runQuery = async <T extends QueryResultRow = QueryResultRow>(
   executor: QueryExecutor,
   text: string,
-  params: unknown[] = []
+  params: unknown[] = [],
 ): Promise<QueryResult<T>> => {
   if (typeof executor === 'function') {
     return executor<T>(text, params);
@@ -58,25 +58,25 @@ const createNotification = async (
     title: string;
     message: string;
     metadata: Record<string, unknown>;
-  }
+  },
 ): Promise<void> => {
   await runQuery(
     executor,
     `INSERT INTO notification (user_id, type, title, message, metadata)
      VALUES ($1, $2::notification_type, $3, $4, $5::jsonb)`,
-    [userId, type, title, message, JSON.stringify(metadata)]
+    [userId, type, title, message, JSON.stringify(metadata)],
   );
 };
 
 const getActiveAdminUsers = async (
-  executor: QueryExecutor
+  executor: QueryExecutor,
 ): Promise<Array<{ id: string; email: string; full_name: string }>> => {
   const result = await runQuery<{ id: string; email: string; full_name: string }>(
     executor,
     `SELECT id, email, full_name
      FROM "user"
      WHERE role = 'admin' AND is_active = TRUE
-     ORDER BY created_at ASC`
+     ORDER BY created_at ASC`,
   );
   return result.rows;
 };
@@ -91,7 +91,7 @@ const notifyActiveAdminsAboutContributorRequest = async (
     userId: string;
     fullName: string;
     email: string;
-  }
+  },
 ): Promise<void> => {
   const admins = await getActiveAdminUsers(executor);
   for (const admin of admins) {
@@ -119,7 +119,7 @@ const notifyContributorRequestSubmitted = async (
     userId: string;
     fullName: string;
     email: string;
-  }
+  },
 ): Promise<void> => {
   await createNotification(executor, {
     userId,
@@ -138,7 +138,7 @@ const notifyContributorRequestSubmitted = async (
 
 const getContributorAccessState = async (
   executor: QueryExecutor,
-  userId: string
+  userId: string,
 ): Promise<'pending' | 'rejected'> => {
   const result = await runQuery<{ type: string }>(
     executor,
@@ -148,7 +148,7 @@ const getContributorAccessState = async (
        AND type IN ('contributor_request', 'contributor_rejected', 'contributor_approved')
      ORDER BY created_at DESC
      LIMIT 1`,
-    [userId]
+    [userId],
   );
 
   const latest = result.rows[0]?.type;
@@ -160,7 +160,7 @@ const getContributorAccessState = async (
 
 const getLatestAccountState = async (
   executor: QueryExecutor,
-  userId: string
+  userId: string,
 ): Promise<'blocked' | 'active' | 'inactive' | null> => {
   const result = await runQuery<{ account_state: string | null }>(
     executor,
@@ -172,7 +172,7 @@ const getLatestAccountState = async (
        AND new_values ? 'account_state'
      ORDER BY created_at DESC
      LIMIT 1`,
-    [userId]
+    [userId],
   );
 
   const state = result.rows[0]?.account_state;
@@ -192,7 +192,7 @@ const getUserAccessState = async (
     userId: string;
     role: string;
     isActive: boolean;
-  }
+  },
 ): Promise<'active' | 'pending' | 'rejected' | 'blocked' | 'inactive'> => {
   if (isActive) {
     return 'active';
@@ -221,7 +221,9 @@ const ensureSuperAdminExists = async (env: EnvConfig): Promise<void> => {
 
   if (!email || !password || !fullName) {
     if (env.NODE_ENV !== 'production') {
-      logger.warn('Super admin bootstrap skipped: SUPER_ADMIN_* variables are not fully configured');
+      logger.warn(
+        'Super admin bootstrap skipped: SUPER_ADMIN_* variables are not fully configured',
+      );
       return;
     }
     throw new Error('SUPER_ADMIN_* variables must be configured in production');
@@ -235,46 +237,64 @@ const ensureSuperAdminExists = async (env: EnvConfig): Promise<void> => {
     password_hash: string | null;
     role: string;
     is_active: boolean;
+    email_verified_at: Date | null;
+    phone_verified_at: Date | null;
+    phone_format_validated_at: Date | null;
   }>(
-    `SELECT id, email, password_hash, role, is_active
+    `SELECT id, email, password_hash, role, is_active,
+            email_verified_at, phone_verified_at, phone_format_validated_at
      FROM "user"
-     WHERE LOWER(email) = $1`,
-    [email]
+     WHERE email_canonical = $1 OR LOWER(email) = $1`,
+    [email],
   );
 
   if (existing.rows.length === 0) {
     const passwordHash = await bcrypt.hash(password, 12);
     await query(
-      `INSERT INTO "user" (email, password_hash, full_name, role, is_active)
-       VALUES ($1, $2, $3, 'admin', TRUE)`,
-      [email, passwordHash, fullName]
+      `INSERT INTO "user"
+         (email, email_original, email_canonical, password_hash, full_name,
+          role, is_active, account_status, verification_required_at)
+       VALUES ($1, $1, $1, $2, $3, 'admin', FALSE,
+               'verification_required', CURRENT_TIMESTAMP)`,
+      [email, passwordHash, fullName],
     );
-    logger.info('Super admin bootstrap user created', { email });
+    logger.info('Super admin bootstrap user created pending contact verification', { email });
     return;
   }
 
   const current = existing.rows[0];
+  const contactsSatisfied = Boolean(
+    current.email_verified_at && isPhoneAssuranceSatisfied(current),
+  );
   const passwordMatchesEnv = current.password_hash
     ? await bcrypt.compare(password, current.password_hash)
     : false;
 
-  if (current.role !== 'admin' || !current.is_active || !passwordMatchesEnv) {
+  if (current.role !== 'admin' || current.is_active !== contactsSatisfied || !passwordMatchesEnv) {
     const passwordHash =
-      passwordMatchesEnv && current.password_hash ? current.password_hash : await bcrypt.hash(password, 12);
+      passwordMatchesEnv && current.password_hash
+        ? current.password_hash
+        : await bcrypt.hash(password, 12);
     await query(
       `UPDATE "user"
        SET role = 'admin',
-           is_active = TRUE,
-           password_hash = $1,
-           full_name = COALESCE(NULLIF($2, ''), full_name)
-       WHERE id = $3`,
-      [passwordHash, fullName, current.id]
+           is_active = $1,
+           account_status = CASE WHEN $1 THEN 'active' ELSE 'verification_required' END,
+           verification_required_at = CASE
+             WHEN $1 THEN verification_required_at
+             ELSE COALESCE(verification_required_at, CURRENT_TIMESTAMP)
+           END,
+           password_hash = $2,
+           full_name = COALESCE(NULLIF($3, ''), full_name)
+       WHERE id = $4`,
+      [contactsSatisfied, passwordHash, fullName, current.id],
     );
     logger.warn('Super admin bootstrap user corrected from configured environment', {
       email,
       roleCorrected: current.role !== 'admin',
-      activeCorrected: !current.is_active,
+      activeCorrected: current.is_active !== contactsSatisfied,
       passwordHashSynced: !passwordMatchesEnv,
+      contactVerificationRequired: !contactsSatisfied,
     });
     return;
   }

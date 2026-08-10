@@ -17,7 +17,7 @@ const AndroidNotificationChannel _fieldAlertsChannel =
       'fieldops_alerts',
       'Field alerts',
       description:
-          'Project reminders, reviews, exports, and workflow notifications.',
+          'AI, project, review, import, export, and workflow notifications.',
       importance: Importance.high,
     );
 
@@ -94,12 +94,11 @@ class PushNotificationService {
     await _initializeLocalNotifications();
     await _requestPermissions();
 
-    _tokenRefreshSubscription = FirebaseMessaging.instance.onTokenRefresh.listen((
-      token,
-    ) async {
-      await _storage.write(key: storedPushDeviceTokenKey, value: token);
-      await _registerCurrentSessionToken(token);
-    });
+    _tokenRefreshSubscription = FirebaseMessaging.instance.onTokenRefresh
+        .listen((token) async {
+          await _storage.write(key: storedPushDeviceTokenKey, value: token);
+          await _registerCurrentSessionToken(token);
+        });
 
     _foregroundSubscription = FirebaseMessaging.onMessage.listen((
       message,
@@ -198,9 +197,7 @@ class PushNotificationService {
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
         >();
-    await androidImplementation?.createNotificationChannel(
-      _fieldAlertsChannel,
-    );
+    await androidImplementation?.createNotificationChannel(_fieldAlertsChannel);
   }
 
   Future<NotificationSettings> _requestPermissions() async {
@@ -283,7 +280,7 @@ class PushNotificationService {
           'fieldops_alerts',
           'Field alerts',
           channelDescription:
-              'Project reminders, reviews, exports, and workflow notifications.',
+              'AI, project, review, import, export, and workflow notifications.',
           icon: 'ic_stat_fieldops',
           importance: Importance.high,
           priority: Priority.high,

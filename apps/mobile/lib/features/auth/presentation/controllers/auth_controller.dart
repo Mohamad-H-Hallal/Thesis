@@ -167,6 +167,11 @@ class AuthController extends StateNotifier<AuthState> {
     await _finishLogout();
   }
 
+  void completeContactVerification(AuthSession session) {
+    if (!mounted) return;
+    state = AuthState.authenticated(session);
+  }
+
   Future<void> forceLogout({String? message, String? code}) async {
     if (!mounted) {
       return;

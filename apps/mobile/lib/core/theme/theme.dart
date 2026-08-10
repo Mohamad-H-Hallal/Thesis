@@ -19,6 +19,7 @@ class AppTheme {
     final scheme = ColorScheme.fromSeed(
       seedColor: _seed,
       brightness: Brightness.dark,
+      surface: const Color(0xFF101714),
     );
     return _buildTheme(scheme);
   }

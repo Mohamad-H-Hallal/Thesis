@@ -2,6 +2,11 @@ import type { PoolClient } from 'pg';
 import { query, transaction } from '../config/database';
 import { AppError } from '../middleware/error';
 import { isProtectedSuperAdminEmail } from '../lib/userWorkflow';
+import {
+  notifyAdminsAboutAiValidationSubmission,
+  notifyAiValidationTaskAssigned,
+  notifyAiValidationTaskReviewed,
+} from '../lib/aiNotifications';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -902,7 +907,9 @@ const assignPredictionValidationTask = async ({
        WHERE id = $1`,
       [taskId, assignedTo],
     );
-    return getTaskById(taskId, client);
+    const updatedTask = await getTaskById(taskId, client);
+    await notifyAiValidationTaskAssigned(client, updatedTask);
+    return updatedTask;
   });
 
 const updatePredictionValidationTaskStatus = async ({
@@ -1129,7 +1136,7 @@ const createPredictionValidationSubmission = async (input: SubmitValidationInput
       throw new AppError('This AI validation task is no longer accepting submissions.', 409);
     }
     const duplicateSubmission = await client.query(
-      `SELECT id
+      `SELECT id, submitted_by
        FROM ai_prediction_validation_submission
        WHERE validation_task_id = $1
          AND submitted_by = $2
@@ -1195,9 +1202,18 @@ const createPredictionValidationSubmission = async (input: SubmitValidationInput
       [input.taskId],
     );
 
+    const updatedTask = await getTaskById(input.taskId, client);
+    await notifyAdminsAboutAiValidationSubmission(client, {
+      projectId: task.project_id,
+      taskId: task.id,
+      predictionId: updatedTask.ai_prediction_feature_id,
+      submissionId: submissionResult.rows[0].id,
+      submittedBy: input.submittedBy,
+    });
+
     return {
       submission_id: submissionResult.rows[0].id,
-      task: await getTaskById(input.taskId, client),
+      task: updatedTask,
       no_spatial_feature_writes: true,
       no_auto_approval: true,
     };
@@ -1442,7 +1458,7 @@ const reviewPredictionValidationTask = async (input: ReviewValidationInput) => {
       submissionConditions.push(`id = $${submissionParams.length}`);
     }
     const submissionResult = await client.query(
-      `SELECT id
+      `SELECT id, submitted_by
        FROM ai_prediction_validation_submission
        WHERE ${submissionConditions.join(' AND ')}
        ORDER BY created_at DESC
@@ -1454,6 +1470,7 @@ const reviewPredictionValidationTask = async (input: ReviewValidationInput) => {
       throw new AppError('Submitted AI validation evidence was not found.', 409);
     }
     const reviewedSubmissionId = submissionResult.rows[0].id;
+    const reviewedContributorId = submissionResult.rows[0].submitted_by;
 
     await client.query(
       `UPDATE ai_prediction_validation_submission
@@ -1506,9 +1523,17 @@ const reviewPredictionValidationTask = async (input: ReviewValidationInput) => {
       );
     }
 
+    const updatedTask = await getTaskById(input.taskId, client);
+    await notifyAiValidationTaskReviewed(
+      client,
+      updatedTask,
+      reviewedSubmissionId,
+      reviewedContributorId,
+    );
+
     return {
       submission_id: reviewedSubmissionId,
-      task: await getTaskById(input.taskId, client),
+      task: updatedTask,
       linked_spatial_feature_id: linkedSpatialFeatureId,
       no_spatial_feature_writes: linkedSpatialFeatureId === null,
       no_auto_approval: input.decision !== 'accepted',

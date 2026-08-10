@@ -118,6 +118,7 @@ class ApiExportsRepository implements ExportsRepository {
         processing: _toInt(summary['processing']) ?? 0,
         completed: _toInt(summary['completed']) ?? 0,
         failed: _toInt(summary['failed']) ?? 0,
+        expired: _toInt(summary['expired']) ?? 0,
       );
     } on DioException catch (error) {
       throw userFacingDioMessage(

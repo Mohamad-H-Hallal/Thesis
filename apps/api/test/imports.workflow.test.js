@@ -2231,6 +2231,36 @@ describe('GIS import workflow', () => {
       status: 'approved',
     });
 
+    const contextFeatureResponse = await request(app)
+      .post(`${API_PREFIX}/features`)
+      .set(authHeader(contributorLogin.token))
+      .send({
+        project_id: project.id,
+        geom: {
+          type: 'Point',
+          coordinates: [35.51, 33.91],
+        },
+        attributes: {
+          feature_type: 'pine',
+          name: 'Existing project context feature',
+        },
+      })
+      .expect(201);
+    const contextFeatureId = contextFeatureResponse.body.data.id;
+    await request(app)
+      .post(`${API_PREFIX}/features/${contextFeatureId}/submit`)
+      .set(authHeader(contributorLogin.token))
+      .send()
+      .expect(200);
+    await request(app)
+      .post(`${API_PREFIX}/features/${contextFeatureId}/review`)
+      .set(authHeader(admin.token))
+      .send({
+        status: 'approved',
+        review_notes: 'Approved project context for import map testing.',
+      })
+      .expect(200);
+
     const geojsonPath = await createTempGeoJsonFile('import-map-separation', {
       type: 'FeatureCollection',
       features: [
@@ -2287,23 +2317,31 @@ describe('GIS import workflow', () => {
     expect(importMapResponse.body.data.staged_features.map((item) => item.status)).toEqual(
       expect.arrayContaining(['pending_review', 'approved']),
     );
-    expect(importMapResponse.body.data.approved_project_features).toHaveLength(0);
+    expect(importMapResponse.body.data.approved_project_features).toHaveLength(1);
+    expect(importMapResponse.body.data.approved_project_features[0]).toEqual(
+      expect.objectContaining({
+        id: contextFeatureId,
+        project_id: project.id,
+      }),
+    );
 
     const projectMapResponse = await request(app)
       .get(`${API_PREFIX}/projects/${project.id}/features?limit=100`)
       .set(authHeader(admin.token))
       .expect(200);
 
-    expect(projectMapResponse.body.data).toHaveLength(1);
-    expect(projectMapResponse.body.data[0].status).toBe('approved');
+    expect(projectMapResponse.body.data).toHaveLength(2);
+    expect(projectMapResponse.body.data.every((item) => item.status === 'approved')).toBe(true);
+    expect(projectMapResponse.body.data.every((item) => item.project_id === project.id)).toBe(true);
 
     const importContextProjectFeaturesResponse = await request(app)
       .get(`${API_PREFIX}/projects/${project.id}/features?limit=100&exclude_import_id=${importId}`)
       .set(authHeader(admin.token))
       .expect(200);
 
-    expect(importContextProjectFeaturesResponse.body.data).toHaveLength(0);
-    expect(importContextProjectFeaturesResponse.body.pagination.total).toBe(0);
+    expect(importContextProjectFeaturesResponse.body.data).toHaveLength(1);
+    expect(importContextProjectFeaturesResponse.body.data[0].id).toBe(contextFeatureId);
+    expect(importContextProjectFeaturesResponse.body.pagination.total).toBe(1);
   });
 
   test('approved staged features can be rejected later and are removed from official project features', async () => {

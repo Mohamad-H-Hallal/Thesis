@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/constants/design_tokens.dart';
@@ -13,6 +14,7 @@ import '../../../admin/domain/admin_models.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../../auth/presentation/utils/auth_input_formatters.dart';
 import '../../../auth/presentation/utils/auth_form_validators.dart';
+import '../../../auth/presentation/widgets/lebanese_mobile_field.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({
@@ -126,16 +128,18 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   Future<void> _showEditPhoneDialog() async {
-    final result = await showDialog<String>(
+    final result = await showDialog<AuthSession>(
       context: context,
-      builder: (_) => _EditPhoneDialog(initialPhone: widget.phone),
+      builder: (_) => _ChangeContactDialog.phone(initialValue: widget.phone),
     );
 
     if (!mounted || result == null) {
       return;
     }
-
-    AppSnackbar.showSuccess(context, 'Phone number updated successfully.');
+    ref
+        .read(authControllerProvider.notifier)
+        .completeContactVerification(result);
+    AppSnackbar.showSuccess(context, 'Mobile number changed successfully.');
   }
 
   @override
@@ -171,7 +175,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           softWrap: true,
                         ),
                         const SizedBox(height: 4),
-                        Text(widget.email, softWrap: true),
+                        Row(
+                          children: [
+                            const Icon(Icons.email_outlined, size: 18),
+                            const SizedBox(width: AppSpacing.xs),
+                            Expanded(child: Text(widget.email, softWrap: true)),
+                          ],
+                        ),
                         const SizedBox(height: 6),
                         Row(
                           children: [
@@ -383,33 +393,39 @@ enum _ChangePasswordDialogResult { success }
 
 enum _SupportSettingsDialogResult { success }
 
-class _EditPhoneDialog extends ConsumerStatefulWidget {
-  const _EditPhoneDialog({required this.initialPhone});
+class _ChangeContactDialog extends ConsumerStatefulWidget {
+  const _ChangeContactDialog.phone({required this.initialValue});
 
-  final String? initialPhone;
+  final String? initialValue;
 
   @override
-  ConsumerState<_EditPhoneDialog> createState() => _EditPhoneDialogState();
+  ConsumerState<_ChangeContactDialog> createState() =>
+      _ChangeContactDialogState();
 }
 
-class _EditPhoneDialogState extends ConsumerState<_EditPhoneDialog> {
+class _ChangeContactDialogState extends ConsumerState<_ChangeContactDialog> {
   final _formKey = GlobalKey<FormState>();
-  final _phoneController = TextEditingController();
-  final _phoneFormatter = LebanesePhoneFormatter();
+  final _contactController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _codeController = TextEditingController();
   bool _isSubmitting = false;
+  bool _codeSent = false;
+  bool _obscurePassword = true;
   String? _dialogError;
 
   @override
   void initState() {
     super.initState();
-    _phoneController.text = AuthFormValidators.formatLebanesePhone(
-      widget.initialPhone,
+    _contactController.text = AuthFormValidators.formatLebanesePhone(
+      widget.initialValue,
     );
   }
 
   @override
   void dispose() {
-    _phoneController.dispose();
+    _contactController.dispose();
+    _passwordController.dispose();
+    _codeController.dispose();
     super.dispose();
   }
 
@@ -424,17 +440,31 @@ class _EditPhoneDialogState extends ConsumerState<_EditPhoneDialog> {
 
     setState(() => _isSubmitting = true);
     try {
-      await ref
-          .read(authControllerProvider.notifier)
-          .updateProfile(
-            phone: AuthFormValidators.normalizeLebanesePhone(
-              _phoneController.text,
-            ),
-          );
+      final repository = ref.read(contactVerificationRepositoryProvider);
+      if (!_codeSent) {
+        final session = await repository.requestPhoneChange(
+          phone: AuthFormValidators.normalizeLebanesePhone(
+            _contactController.text,
+          ),
+          currentPassword: _passwordController.text,
+        );
+        if (!mounted) return;
+        if (session != null) {
+          Navigator.of(context).pop(session);
+          return;
+        }
+        if (!mounted) return;
+        setState(() {
+          _codeSent = true;
+          _isSubmitting = false;
+        });
+        return;
+      }
+      final session = await repository.confirmPhoneChange(_codeController.text);
       if (!mounted) {
         return;
       }
-      Navigator.of(context).pop(_phoneController.text.trim());
+      Navigator.of(context).pop(session);
     } catch (error) {
       if (!mounted) {
         return;
@@ -442,7 +472,7 @@ class _EditPhoneDialogState extends ConsumerState<_EditPhoneDialog> {
       setState(() {
         _dialogError = userFacingErrorMessage(
           error,
-          fallback: 'Unable to update your phone number right now.',
+          fallback: 'Unable to verify the contact change right now.',
         );
       });
     } finally {
@@ -455,7 +485,7 @@ class _EditPhoneDialogState extends ConsumerState<_EditPhoneDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Edit phone number'),
+      title: const Text('Change mobile number'),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 520),
         child: SingleChildScrollView(
@@ -474,14 +504,44 @@ class _EditPhoneDialogState extends ConsumerState<_EditPhoneDialog> {
                   ),
                   const SizedBox(height: AppSpacing.sm),
                 ],
-                AppTextField(
-                  label: 'Phone number',
-                  hint: 'Phone number',
-                  controller: _phoneController,
-                  keyboardType: TextInputType.phone,
-                  inputFormatters: [_phoneFormatter],
-                  validator: AuthFormValidators.phoneRequired,
-                ),
+                if (!_codeSent) ...[
+                  LebaneseMobileField(controller: _contactController),
+                  const SizedBox(height: AppSpacing.sm),
+                  AppTextField(
+                    label: 'Current password',
+                    controller: _passwordController,
+                    obscureText: _obscurePassword,
+                    validator: AuthFormValidators.loginPassword,
+                    suffix: IconButton(
+                      onPressed: () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility
+                            : Icons.visibility_off,
+                      ),
+                    ),
+                  ),
+                ] else ...[
+                  Text(
+                    'Your current verified contact remains active until this code is confirmed.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  AppTextField(
+                    label: '6-digit verification code',
+                    controller: _codeController,
+                    keyboardType: TextInputType.number,
+                    autofillHints: const [AutofillHints.oneTimeCode],
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(6),
+                    ],
+                    validator: (value) => (value?.trim().length == 6)
+                        ? null
+                        : 'Enter the 6-digit verification code.',
+                  ),
+                ],
               ],
             ),
           ),
@@ -495,7 +555,13 @@ class _EditPhoneDialogState extends ConsumerState<_EditPhoneDialog> {
           ),
           confirm: FilledButton(
             onPressed: _isSubmitting ? null : _submit,
-            child: Text(_isSubmitting ? 'Saving...' : 'Save'),
+            child: Text(
+              _isSubmitting
+                  ? 'Please wait…'
+                  : _codeSent
+                  ? 'Verify change'
+                  : 'Continue',
+            ),
           ),
         ),
       ],

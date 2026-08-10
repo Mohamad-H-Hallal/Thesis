@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -53,6 +55,8 @@ class ApiClient {
   static const _refreshKey = 'refresh_token';
   static const _skipAuthRefreshKey = 'skip_auth_refresh';
   static const _sessionBindingKey = 'api_session_binding';
+  static const _deviceFingerprintKey = 'verification_device_fingerprint';
+  Future<String?>? _deviceFingerprintFuture;
 
   ApiSessionBinding? get currentSessionBinding => _session;
 
@@ -228,7 +232,11 @@ class ApiClient {
   void _installTokenRefreshInterceptor() {
     dio.interceptors.add(
       InterceptorsWrapper(
-        onRequest: (request, handler) {
+        onRequest: (request, handler) async {
+          final fingerprint = await _getOrCreateDeviceFingerprint();
+          if (fingerprint != null) {
+            request.headers['X-Device-Fingerprint'] = fingerprint;
+          }
           final binding = request.extra[_sessionBindingKey];
           if (binding is ApiSessionBinding) {
             if (!_isCurrentGeneration(binding)) {
@@ -306,6 +314,28 @@ class ApiClient {
         },
       ),
     );
+  }
+
+  Future<String?> _getOrCreateDeviceFingerprint() {
+    final existing = _deviceFingerprintFuture;
+    if (existing != null) return existing;
+    final future = () async {
+      final storage = _storage;
+      if (storage == null) return null;
+      try {
+        final stored = await storage.read(key: _deviceFingerprintKey);
+        if (stored?.trim().isNotEmpty == true) return stored!.trim();
+        final random = Random.secure();
+        final bytes = List<int>.generate(32, (_) => random.nextInt(256));
+        final generated = base64UrlEncode(bytes).replaceAll('=', '');
+        await storage.write(key: _deviceFingerprintKey, value: generated);
+        return generated;
+      } catch (_) {
+        return null;
+      }
+    }();
+    _deviceFingerprintFuture = future;
+    return future;
   }
 
   ApiSessionBinding? _refreshBindingFor(DioException error) {

@@ -6,6 +6,8 @@ const {
   resetDb,
   shutdown,
   createAdminUser,
+  registerUser,
+  approveContributorRequest,
   createCategory,
   pool,
 } = require('./helpers/api-test-helpers');
@@ -76,7 +78,7 @@ describe('Project provisioning and lifecycle reminders', () => {
     expect(validResponse.body.data.collection_form_schema.maxGpsAccuracyMeters).toBe(25);
   });
 
-  test('project start, active end, and paused end reminders are created, queued, and cleaned up', async () => {
+  test('project reminders stay in-app/push only and are cleaned up with schedule changes', async () => {
     const admin = await createAdminUser({
       fullName: 'Schedule Admin',
       emailPrefix: 'schedule-admin',
@@ -91,7 +93,7 @@ describe('Project provisioning and lifecycle reminders', () => {
       `SELECT
          TO_CHAR(CURRENT_DATE, 'YYYY-MM-DD') AS today,
          TO_CHAR(CURRENT_DATE + INTERVAL '1 day', 'YYYY-MM-DD') AS tomorrow,
-         TO_CHAR(CURRENT_DATE + INTERVAL '2 day', 'YYYY-MM-DD') AS day_after`
+         TO_CHAR(CURRENT_DATE + INTERVAL '2 day', 'YYYY-MM-DD') AS day_after`,
     );
     const { today, tomorrow, day_after } = datesResult.rows[0];
 
@@ -140,13 +142,15 @@ describe('Project provisioning and lifecycle reminders', () => {
          AND n.metadata->>'schedule_reminder_kind' = 'starts_tomorrow'`,
       [admin.user.id, projectId],
     );
-    expect(startReminderDelivery.rows).toHaveLength(1);
-    expect(startReminderDelivery.rows[0].status).toBe('pending');
-    expect(startReminderDelivery.rows[0].recipient_email).toBe(admin.email);
+    expect(startReminderDelivery.rows).toHaveLength(0);
 
     const startDeliveryRun = await deliverPendingNotificationEmails();
-    expect(startDeliveryRun.attempted).toBeGreaterThanOrEqual(1);
-    expect(startDeliveryRun.delivered).toBeGreaterThanOrEqual(1);
+    expect(startDeliveryRun).toEqual({
+      attempted: 0,
+      delivered: 0,
+      failed: 0,
+      skipped: 0,
+    });
 
     await request(app)
       .put(`${API_PREFIX}/projects/${projectId}`)
@@ -204,9 +208,7 @@ describe('Project provisioning and lifecycle reminders', () => {
       [admin.user.id, projectId],
     );
     expect(pausedReminder.rows).toHaveLength(1);
-    expect(pausedReminder.rows[0].title).toBe(
-      'Paused project reaches its end date tomorrow',
-    );
+    expect(pausedReminder.rows[0].title).toBe('Paused project reaches its end date tomorrow');
     expect(pausedReminder.rows[0].message).toContain('is paused');
 
     const activeReminderAfterPause = await pool.query(
@@ -218,5 +220,88 @@ describe('Project provisioning and lifecycle reminders', () => {
       [admin.user.id, projectId],
     );
     expect(activeReminderAfterPause.rows[0].value).toBe(0);
+  });
+
+  test('assigned contributors receive project status changes without email delivery', async () => {
+    const admin = await createAdminUser({
+      fullName: 'Project Status Admin',
+      emailPrefix: 'project-status-admin',
+    });
+    const contributor = await registerUser({
+      role: 'contributor',
+      fullName: 'Project Status Contributor',
+      emailPrefix: 'project-status-contributor',
+    });
+    await approveContributorRequest({
+      token: admin.token,
+      userId: contributor.user.id,
+    });
+    const category = await createCategory({
+      token: admin.token,
+      name: `Project Status Category ${Date.now()}`,
+    });
+    const projectResponse = await request(app)
+      .post(`${API_PREFIX}/projects`)
+      .set(authHeader(admin.token))
+      .send({
+        category_id: category.id,
+        name: `Project Status ${Date.now()}`,
+        collection_form_schema: {
+          fields: [
+            {
+              key: 'feature_type',
+              label: 'Feature type',
+              type: 'select',
+              required: true,
+              options: ['Olive'],
+            },
+          ],
+        },
+      })
+      .expect(201);
+    const project = projectResponse.body.data;
+    await pool.query(
+      `INSERT INTO project_assignment
+         (project_id, user_id, role, status, approved_date, approved_by_user_id)
+       VALUES ($1, $2, 'contributor', 'approved', CURRENT_DATE, $3)`,
+      [project.id, contributor.user.id, admin.user.id],
+    );
+
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}`)
+      .set(authHeader(admin.token))
+      .send({ status: 'active' })
+      .expect(200);
+    await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}`)
+      .set(authHeader(admin.token))
+      .send({ status: 'paused' })
+      .expect(200);
+
+    const notifications = await pool.query(
+      `SELECT title,
+              metadata->>'previous_status' AS previous_status,
+              metadata->>'status' AS status
+       FROM notification
+       WHERE user_id = $1
+         AND type = 'project_event'
+         AND metadata->>'project_id' = $2
+       ORDER BY created_at ASC`,
+      [contributor.user.id, project.id],
+    );
+    expect(notifications.rows).toEqual([
+      { title: 'Project active', previous_status: 'draft', status: 'active' },
+      { title: 'Project paused', previous_status: 'active', status: 'paused' },
+    ]);
+
+    const emailDeliveries = await pool.query(
+      `SELECT nd.id
+       FROM notification_delivery nd
+       JOIN notification n ON n.id = nd.notification_id
+       WHERE n.user_id = $1
+         AND n.type = 'project_event'`,
+      [contributor.user.id],
+    );
+    expect(emailDeliveries.rows).toHaveLength(0);
   });
 });
