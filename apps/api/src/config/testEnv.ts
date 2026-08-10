@@ -74,6 +74,11 @@ const applyTestEnvDefaults = (): TestDbConfig => {
   process.env.SMTP_PASS = '';
   process.env.SMTP_FROM_EMAIL = 'no-reply@gis.local';
   process.env.SMTP_FROM_NAME = 'TerraLeb';
+  // Protected-admin tests must not depend on values from an ignored developer
+  // .env file. Keep the complete tuple deterministic in every Jest worker.
+  process.env.SUPER_ADMIN_EMAIL = 'protected-superadmin@gis.local';
+  process.env.SUPER_ADMIN_PASSWORD = ['phase10', 'fixture', 'admin', 'credential', '123!'].join('-');
+  process.env.SUPER_ADMIN_FULL_NAME = 'Protected Super Admin Fixture';
 
   setDefault('JWT_SECRET', 'phase10-test-jwt-secret-12345678901234567890');
   setDefault('JWT_SECRET_CURRENT', process.env.JWT_SECRET as string);
