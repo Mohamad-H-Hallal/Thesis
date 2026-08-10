@@ -94,7 +94,6 @@ const buildTransport = (hostOverride?: string, portOverride?: number): nodemaile
           mailTransport: env.MAIL_TRANSPORT,
           smtpHost: env.SMTP_HOST.trim().length > 0 ? env.SMTP_HOST : 'mailpit',
           smtpPort: env.SMTP_PORT,
-          realDeliveryRequired: env.PASSWORD_RESET_REQUIRE_REAL_DELIVERY,
           effectiveDeliveryMode: 'local_capture',
         },
       );
@@ -153,7 +152,6 @@ const getTransporter = (): nodemailer.Transporter => {
           : env.SMTP_HOST,
       smtpPort: env.SMTP_PORT,
       smtpSecure: env.SMTP_SECURE,
-      realDeliveryRequired: env.PASSWORD_RESET_REQUIRE_REAL_DELIVERY,
       effectiveDeliveryMode,
       fromEmail:
         env.MAIL_TRANSPORT === 'mailpit' && env.SMTP_FROM_EMAIL.trim().length === 0
@@ -167,7 +165,6 @@ const getTransporter = (): nodemailer.Transporter => {
           mailTransport: env.MAIL_TRANSPORT,
           smtpHost: env.SMTP_HOST.trim().length > 0 ? env.SMTP_HOST : 'mailpit',
           smtpPort: env.SMTP_PORT,
-          realDeliveryRequired: env.PASSWORD_RESET_REQUIRE_REAL_DELIVERY,
           effectiveDeliveryMode,
         },
       );
