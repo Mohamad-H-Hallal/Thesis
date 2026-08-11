@@ -489,7 +489,7 @@ const syncOfflineFeatureBundle = async (req: Request, res: Response): Promise<vo
     projectId: payload.projectId,
     userId,
   });
-  const files = ((req.files as MemoryPhotoFile[]) ?? []).slice();
+  const files = Array.isArray(req.files) ? (req.files.slice() as MemoryPhotoFile[]) : [];
   const payloadHash = sha256Json({
     draft_id: payload.draftId,
     offline_owner_user_id: userId,

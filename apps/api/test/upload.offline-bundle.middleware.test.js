@@ -10,7 +10,7 @@ const { errorHandler } = require('../src/middleware/error');
 const buildApp = () => {
   const app = express();
   app.post('/bundle', uploadOfflineFeatureBundle, (req, res) => {
-    const files = req.files ?? [];
+    const files = Array.isArray(req.files) ? req.files : [];
     res.json({
       payload: req.body.payload,
       fileCount: files.length,

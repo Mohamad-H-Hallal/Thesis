@@ -11,6 +11,7 @@ const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
 import { validateEnv } from '../config/env';
+import { quarantineImportsDir } from '../config/upload';
 import { sanitizeManagedFeatureAttributes } from '../lib/featureAttributes';
 import { createNotification, isProtectedSuperAdminEmail } from '../lib/userWorkflow';
 import { synchronizeProjectStatuses } from '../lib/projectLifecycle';
@@ -4095,7 +4096,16 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
   }
 
   const fileType = inferImportFileType(req.file.originalname);
-  const quarantinePath = path.resolve(req.file.path);
+  const quarantineFilename = path.basename(req.file.filename);
+  if (
+    quarantineFilename !== req.file.filename ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:geojson|json|zip|kml|kmz|csv|xlsx)$/i.test(
+      quarantineFilename,
+    )
+  ) {
+    throw new AppError('The quarantined import file reference is invalid.', 400);
+  }
+  const quarantinePath = path.join(quarantineImportsDir, quarantineFilename);
   const fileBuffer = await fs.readFile(quarantinePath);
   const fileChecksum = crypto.createHash('sha256').update(fileBuffer).digest('hex');
   const quarantineId = await recordQuarantinedUpload({

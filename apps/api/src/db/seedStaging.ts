@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import bcrypt from 'bcryptjs';
+import { randomInt as cryptoRandomInt } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { pool } from '../config/database';
 import { validateEnv } from '../config/env';
@@ -103,7 +104,7 @@ const assertResetIsSafe = (config: SeedConfig): void => {
   );
 };
 
-const randomInt = (maxExclusive: number): number => Math.floor(Math.random() * maxExclusive);
+const randomInt = (maxExclusive: number): number => cryptoRandomInt(maxExclusive);
 
 const pickRandom = <T>(items: T[]): T => items[randomInt(items.length)];
 
@@ -781,8 +782,8 @@ const run = async (): Promise<void> => {
       elapsedMs,
       summary,
       credentialsHint: {
-        password: config.defaultPassword,
         adminPattern: `admin.1.${seedTag}@gis.gov.lb`,
+        passwordSource: 'STAGING_SEED_DEFAULT_PASSWORD',
       },
     });
   } catch (error: unknown) {

@@ -44,11 +44,22 @@ const normalizeNumeric = (value: unknown): number | undefined => {
 };
 
 const slugifyFieldKey = (label: string, fallbackIndex: number): string => {
-  const normalized = label
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .replace(/_+/g, '_');
+  let normalized = '';
+  let separatorPending = false;
+  for (const character of label.toLowerCase()) {
+    const code = character.charCodeAt(0);
+    const isAsciiLetter = code >= 97 && code <= 122;
+    const isDigit = code >= 48 && code <= 57;
+    if (isAsciiLetter || isDigit) {
+      if (separatorPending && normalized.length > 0) {
+        normalized += '_';
+      }
+      normalized += character;
+      separatorPending = false;
+    } else {
+      separatorPending = normalized.length > 0;
+    }
+  }
   return normalized || `field_${fallbackIndex + 1}`;
 };
 

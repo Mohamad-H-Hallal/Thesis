@@ -1,4 +1,5 @@
 const bcrypt = require('bcryptjs');
+const { randomInt } = require('node:crypto');
 const request = require('supertest');
 const { Pool } = require('pg');
 const { applyTestEnvDefaults } = require('../../src/config/testEnv');
@@ -60,8 +61,8 @@ const pool = new Pool({
 const authHeader = (token) => ({ Authorization: `Bearer ${token}` });
 
 const uniqueEmail = (prefix = 'phase10-user') =>
-  `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}@example.com`;
-let phoneSequence = Math.floor(Math.random() * 900000);
+  `${prefix}-${Date.now()}-${randomInt(100000)}@example.com`;
+let phoneSequence = randomInt(900000);
 const uniquePhone = () => {
   phoneSequence = (phoneSequence + 1) % 1000000;
   return `71${String(phoneSequence).padStart(6, '0')}`;
