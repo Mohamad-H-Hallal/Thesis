@@ -255,7 +255,7 @@ Smoke-only auth/project values:
 - `TEST_AUTH_TOKEN` is an optional JWT access token returned by the normal
   backend login endpoint (`POST /api/v1/auth/login`). For AI run creation it
   must belong to the protected super-admin. Its lifetime follows the backend
-  JWT config (`JWT_EXPIRE`, commonly 7 days in local dev). It is only for
+  JWT config (`JWT_EXPIRE`, 15 minutes by default). It is only for
   command-line smoke scripts; the Flutter app gets its token from normal login.
 - `TEST_PROJECT_ID` is an optional project UUID from the backend `project`
   table/API. For AI smoke runs, the project must have AI enabled, a label field,
@@ -321,10 +321,12 @@ Health:
 - `http://localhost:3000/health`
 - `http://localhost:3000/ready`
 - `http://localhost:3000/api/v1`
+- `http://localhost:3000/docs/` (interactive Swagger UI)
 - `http://localhost:3000/docs/openapi.yaml`
 
 OpenAPI testing:
-- Load `http://localhost:3000/docs/openapi.yaml` into Swagger Editor, Postman, or Insomnia for request testing.
+- Open `http://localhost:3000/docs/`, select **Authorize**, and enter a valid JWT bearer token to test protected routes.
+- The raw contract remains available at `/docs/openapi.yaml`; the executable, runtime-adjusted contract is at `/docs/openapi.json`.
 - Validate the contract from the repo with `cd apps/api && npm run openapi:check`.
 
 Super admin bootstrap:

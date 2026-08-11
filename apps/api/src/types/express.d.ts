@@ -18,6 +18,8 @@ declare global {
       requestId?: string;
       startTimeMs?: number;
       verificationUserId?: string;
+      authSessionId?: string;
+      authTokenExpiresAt?: number;
     }
   }
 }

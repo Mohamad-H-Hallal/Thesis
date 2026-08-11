@@ -33,7 +33,27 @@ describe('API smoke tests', () => {
         const response = await request(app).get(API_PREFIX);
         expect(response.status).toBe(200);
         expect(response.body.success).toBe(true);
-        expect(response.body.documentation).toBe('/docs/openapi.yaml');
+        expect(response.body.documentation).toBe('/docs/');
+        expect(response.body.openapi).toBe('/docs/openapi.json');
+    });
+    test('GET /docs/ serves interactive Swagger UI', async () => {
+        const response = await request(app).get('/docs/');
+        expect(response.status).toBe(200);
+        expect(response.headers['content-type']).toContain('text/html');
+        expect(response.text).toContain('TerraLeb API Documentation');
+        expect(response.headers['content-security-policy']).toContain("default-src 'self'");
+    });
+    test('GET /docs/openapi.json serves the executable API contract', async () => {
+        const response = await request(app).get('/docs/openapi.json');
+        expect(response.status).toBe(200);
+        expect(response.body.openapi).toBe('3.0.3');
+        expect(response.body.servers).toEqual([expect.objectContaining({ url: '/' })]);
+        expect(response.body.components.securitySchemes.bearerAuth).toEqual(
+            expect.objectContaining({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }),
+        );
+        expect(response.body.paths[`${API_PREFIX}/projects`].get.security).toEqual([
+            { bearerAuth: [] },
+        ]);
     });
     test('GET /docs/openapi.yaml serves OpenAPI spec', async () => {
         const response = await request(app).get('/docs/openapi.yaml');
@@ -45,8 +65,12 @@ describe('API smoke tests', () => {
             ...testEnv,
             API_DOCS_ENABLED: false,
         });
-        const response = await request(docsDisabledApp).get('/docs/openapi.yaml');
-        expect(response.status).toBe(404);
+        const [uiResponse, specResponse] = await Promise.all([
+            request(docsDisabledApp).get('/docs/'),
+            request(docsDisabledApp).get('/docs/openapi.yaml'),
+        ]);
+        expect(uiResponse.status).toBe(404);
+        expect(specResponse.status).toBe(404);
     });
     test('protects and serves Prometheus metrics without sensitive route queries', async () => {
         const metricsApp = buildApp({

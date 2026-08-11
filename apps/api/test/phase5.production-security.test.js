@@ -101,6 +101,15 @@ describe('Phase 5 production security controls', () => {
     [{ CORS_ORIGIN: 'https://collector.example' }, 'HTTPS CORS origins'],
     [{ CORS_ORIGIN: 'https://collector.example.gov.lb' }, 'HTTPS CORS origins'],
     [{ ENABLE_LEGACY_API_PREFIX: 'true' }, 'ENABLE_LEGACY_API_PREFIX=false'],
+    [{ JWT_EXPIRE: '2h' }, 'access tokens must expire within 1 hour'],
+    [{ JWT_REFRESH_EXPIRE: '31d' }, 'refresh tokens must expire within 30 days'],
+    [
+      {
+        JWT_REFRESH_SECRET: validProductionEnv().JWT_SECRET,
+        JWT_REFRESH_SECRET_CURRENT: validProductionEnv().JWT_SECRET_CURRENT,
+      },
+      'access-token and refresh-token secrets must be distinct',
+    ],
     [{ METRICS_ENABLED: 'false' }, 'protected metrics'],
     [{ LOG_PRETTY: 'true' }, 'redacted JSON logs'],
     [

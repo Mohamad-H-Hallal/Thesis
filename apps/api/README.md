@@ -224,9 +224,20 @@ npm run test:ci
 
 ## Documentation
 
-- OpenAPI: `docs/openapi.yaml`
+- Interactive Swagger UI: `http://localhost:3000/docs/`
+- OpenAPI source: `docs/openapi.yaml`
+- Runtime OpenAPI JSON: `http://localhost:3000/docs/openapi.json`
+- Protected endpoints use the Swagger **Authorize** control with a valid JWT bearer token.
+- API docs are controlled by `API_DOCS_ENABLED`; production docs also require the existing `API_DOCS_TOKEN` guard.
 - Deployment runbook: `docs/deployment-runbook.md`
 - Geospatial performance checks: `docs/phase3-query-plan.sql`
+
+## Application logs
+
+- Console output remains the default container logging target.
+- Set `LOG_TO_FILE=true` to also write daily `application-YYYY-MM-DD.log` and `error-YYYY-MM-DD.log` files.
+- `LOG_DIR` defaults to `./logs/api`; `LOG_MAX_SIZE` defaults to `10m`; `LOG_RETENTION_DAYS` defaults to `14`.
+- Rotated files are compressed and expired automatically. Sensitive keys, bearer tokens, credentials, contact details, request bodies, and geospatial payloads are redacted.
 
 ## Phase 3 Geospatial Endpoints
 

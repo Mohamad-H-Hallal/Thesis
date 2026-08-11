@@ -86,9 +86,11 @@ const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunc
     retryAfterSeconds?: number;
     type?: string;
     constraint?: string;
+    isOperational?: boolean;
   };
   let statusCode = error.statusCode ?? 500;
   let message = error.message ?? 'Internal Server Error';
+  const internalMessage = error.message ?? 'Internal Server Error';
   let responseErrorCode = error.errorCode;
   let responseDisposition = error.disposition;
   let responseRetryable = error.retryable;
@@ -183,20 +185,30 @@ const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunc
     responseRetryable = true;
   }
 
+  if (
+    process.env.NODE_ENV === 'production' &&
+    statusCode >= 500 &&
+    error.isOperational !== true &&
+    !responseErrorCode
+  ) {
+    message = 'Internal Server Error';
+  }
+
   // Request bodies and file contents are intentionally excluded. This also
   // keeps rejected unsafe payloads out of normal logs.
   const logMethod = statusCode >= 500 ? 'error' : 'warn';
   logger[logMethod]('Request failed', {
-    message: process.env.NODE_ENV === 'production' ? 'Request processing failed' : error.message,
-    errorName: error.name,
+    component: 'http',
+    errorMessage: internalMessage,
+    exceptionType: error.name ?? 'Error',
     statusCode,
-    stack: process.env.NODE_ENV === 'production' ? undefined : error.stack,
+    stack: statusCode >= 500 ? error.stack : undefined,
     requestId: req.requestId,
     path: normalizeRequestPath(req.originalUrl),
     method: req.method,
-    ip: req.ip,
     userId: req.user?.id,
     errorCode: responseErrorCode,
+    operational: error.isOperational === true,
   });
 
   if (

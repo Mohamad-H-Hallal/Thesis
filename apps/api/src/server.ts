@@ -7,9 +7,7 @@ const { testConnection, closePool } = require('./config/database');
 const { validateEnv } = require('./config/env');
 const { applyPendingMigrations, getPendingMigrations } = require('./db/migrationRunner');
 const { ensureExportDir, cleanupOldExports } = require('./controllers/export.controller');
-const {
-  stopImportProcessingLoop,
-} = require('./controllers/import.controller');
+const { stopImportProcessingLoop } = require('./controllers/import.controller');
 const { runNotificationMaintenance } = require('./jobs/notificationMaintenance');
 const { buildApp } = require('./app');
 import { ensureSuperAdminExists } from './lib/userWorkflow';
@@ -202,7 +200,7 @@ const startServer = async () => {
       logger.info(`API root: http://${env.HOST}:${env.PORT}${apiPrefix}`);
       logger.info(
         env.API_DOCS_ENABLED
-          ? `API documentation endpoint enabled at /docs/openapi.yaml`
+          ? `Interactive API documentation enabled at /docs/`
           : 'API documentation endpoint disabled',
       );
       logAiServerRuntimeConfig();

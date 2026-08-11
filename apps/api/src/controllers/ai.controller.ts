@@ -5,6 +5,7 @@ import type { PoolClient } from 'pg';
 import type { Request, Response } from 'express';
 const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
+import { safeTokenEqual } from '../middleware/operationalAccess';
 const { createAiPipelineService } = require('../services/aiPipeline.service');
 const logger = require('../utils/logger');
 import {
@@ -3967,7 +3968,7 @@ const handleAiRunCallback = async (req: Request, res: Response): Promise<void> =
   const providedSecret =
     normalizeOptionalString(req.header('x-ai-callback-secret')) ??
     normalizeOptionalString(req.body?.callback_secret);
-  if (!expectedSecret || providedSecret !== expectedSecret) {
+  if (!expectedSecret || !safeTokenEqual(providedSecret ?? '', expectedSecret)) {
     await query(
       `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
        SELECT $1, 'warning', 'Rejected AI server callback with invalid secret.', $2::jsonb

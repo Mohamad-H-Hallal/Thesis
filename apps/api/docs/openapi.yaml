@@ -6,10 +6,8 @@ info:
     Government field data collection API for projects, assignments, geospatial features,
     exports, notifications, and administration.
 servers:
-  - url: http://localhost:3000/api/v1
-    description: Local development (primary)
-  - url: http://localhost:3000/api
-    description: Legacy compatibility prefix (optional)
+  - url: /
+    description: Current TerraLeb API host (same origin as Swagger UI)
 tags:
   - name: System
   - name: Auth
@@ -22,6 +20,8 @@ tags:
   - name: Notifications
   - name: Exports
   - name: Imports
+  - name: Offline / Sync
+  - name: Settings
   - name: Users
 paths:
   /health:
@@ -43,6 +43,8 @@ paths:
   /metrics:
     get:
       tags: [System]
+      security:
+        - metricsToken: []
       summary: Metrics snapshot (token protected in production)
       responses:
         '200':
@@ -185,7 +187,8 @@ paths:
   /api/v1/auth/refresh-token:
     post:
       tags: [Auth]
-      summary: Refresh access token
+      summary: Rotate a single-use refresh token and renew the authenticated session
+      description: A successful request invalidates the presented refresh token. Replaying an already-rotated token revokes the affected account sessions.
       requestBody:
         required: true
         content:
@@ -198,7 +201,7 @@ paths:
                   type: string
       responses:
         '200':
-          description: Token refreshed
+          description: Access and refresh tokens rotated successfully
         '400':
           description: Validation failed
         '401':
@@ -256,9 +259,10 @@ paths:
       security:
         - bearerAuth: []
       summary: Change own password
+      description: Revokes every other authenticated session and returns replacement credentials for the current device.
       responses:
         '200':
-          description: Password changed
+          description: Password changed and current-session credentials rotated
         '400':
           description: Validation failed
         '401':
@@ -268,7 +272,7 @@ paths:
       tags: [Auth]
       security:
         - bearerAuth: []
-      summary: Logout (client token disposal event)
+      summary: Logout and revoke the current server-side session
       responses:
         '200':
           description: Logout acknowledged
@@ -1786,6 +1790,24 @@ paths:
           description: Forbidden
         '409':
           description: Duplicate request
+    delete:
+      tags: [Assignments]
+      security:
+        - bearerAuth: []
+      summary: Cancel the current contributor's pending join request
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+      responses:
+        '200':
+          description: Pending join request cancelled
+        '401':
+          description: Unauthorized
+        '403':
+          description: Contributor role required
+        '404':
+          description: Join request not found
+        '409':
+          description: Existing assignment is not pending
   /api/v1/assignments/{assignmentId}:
     put:
       tags: [Assignments]
@@ -2352,12 +2374,882 @@ paths:
         '404':
           description: Not found
 
+  /api/v1/auth/reactivate-login:
+    post:
+      tags: [Auth]
+      summary: Reactivate an eligible inactive contributor and sign in
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Contributor reactivated when needed and authenticated
+        '400':
+          description: Validation failed
+        '401':
+          description: Wrong email or password
+        '403':
+          description: Verification, role, approval, or account policy forbids reactivation
+  /api/v1/auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Request a password-reset verification code
+      description: Always returns a generic acknowledgement to prevent account enumeration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetEmailRequest'
+      responses:
+        '200':
+          description: Generic delivery acknowledgement
+        '400':
+          description: Validation failed
+        '429':
+          description: Password-reset rate limit reached
+  /api/v1/auth/verify-reset-otp:
+    post:
+      tags: [Auth]
+      summary: Verify a password-reset email code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyResetOtpRequest'
+      responses:
+        '200':
+          description: Code verified and short-lived reset session returned
+        '400':
+          description: Code invalid, expired, used, or replaced
+        '429':
+          description: Password-reset rate limit reached
+  /api/v1/auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Complete password reset with a verified reset session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        '200':
+          description: Password changed and existing authentication sessions invalidated
+        '400':
+          description: Validation failed or reset session invalid or expired
+        '429':
+          description: Password-reset rate limit reached
+  /api/v1/auth/self-deactivate:
+    post:
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      summary: Deactivate the current contributor account
+      responses:
+        '200':
+          description: Contributor account deactivated
+        '401':
+          description: Unauthorized
+        '403':
+          description: Current role cannot use contributor self-deactivation
+        '409':
+          description: Active project assignments prevent deactivation
+
+  /api/v1/projects/{projectId}/offline-package:
+    get:
+      tags: [Offline / Sync]
+      security:
+        - bearerAuth: []
+      summary: Get the project-scoped offline package manifest
+      description: Available only to contributors with an approved contributor assignment for the project.
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+      responses:
+        '200':
+          description: Project schema, workflow counts, base-map manifest, and package version
+        '401':
+          description: Unauthorized
+        '403':
+          description: Contributor assignment required
+        '404':
+          description: Project not found
+  /api/v1/projects/{projectId}/ai/predictions/{predictionId}/validation-photos:
+    post:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Upload evidence photos for an AI prediction validation
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - $ref: '#/components/parameters/predictionId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [photos]
+              properties:
+                photos:
+                  type: array
+                  maxItems: 10
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        '201':
+          description: Validation photos securely processed and stored
+        '400':
+          description: No usable photos supplied
+        '401':
+          description: Unauthorized
+        '403':
+          description: Current role cannot attach validation photos
+        '409':
+          description: Prediction is not open for this contributor's validation
+        '422':
+          description: Attachment type, filename, or size rejected
+  /api/v1/projects/{projectId}/ai/runs/{runId}:
+    get:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Get a project AI run
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - $ref: '#/components/parameters/runId'
+      responses:
+        '200':
+          description: AI run detail
+        '401':
+          description: Unauthorized
+        '403':
+          description: Protected super-administrator access required
+        '404':
+          description: Project or AI run not found
+  /api/v1/projects/{projectId}/ai/runs/{runId}/status:
+    get:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Refresh and return a project AI run status
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - $ref: '#/components/parameters/runId'
+      responses:
+        '200':
+          description: Current AI run status
+        '401':
+          description: Unauthorized
+        '403':
+          description: Protected super-administrator access required
+        '404':
+          description: Project or AI run not found
+        '503':
+          description: AI server unavailable
+  /api/v1/projects/{projectId}/ai/runs/{runId}/cancel:
+    post:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Cancel an active project AI run
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - $ref: '#/components/parameters/runId'
+      responses:
+        '200':
+          description: Cancellation completed or requested
+        '401':
+          description: Unauthorized
+        '403':
+          description: Protected super-administrator access required
+        '404':
+          description: Project or AI run not found
+        '409':
+          description: AI run is not in a cancellable state
+        '503':
+          description: AI server unavailable
+  /api/v1/projects/{projectId}/ai/runs/{runId}/resume:
+    post:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Resume a failed, cancelled, or paused project AI run
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - $ref: '#/components/parameters/runId'
+      responses:
+        '200':
+          description: AI run resume requested
+        '401':
+          description: Unauthorized
+        '403':
+          description: Protected super-administrator access required
+        '404':
+          description: Project or AI run not found
+        '409':
+          description: AI run cannot be resumed or another run is active
+        '503':
+          description: AI server unavailable
+  /api/v1/projects/{projectId}/ai/runs/{runId}/retrain-check:
+    post:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Check retraining eligibility for one project AI run
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - $ref: '#/components/parameters/runId'
+      responses:
+        '200':
+          description: Retraining eligibility and validation summary
+        '401':
+          description: Unauthorized
+        '403':
+          description: Protected super-administrator access required
+        '404':
+          description: Project or AI run not found
+        '503':
+          description: AI server unavailable
+  /api/v1/projects/{projectId}/ai/retrain-check:
+    post:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Check project-wide AI retraining eligibility
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+      responses:
+        '200':
+          description: Retraining eligibility and project validation summary
+        '401':
+          description: Unauthorized
+        '403':
+          description: Protected super-administrator access required
+        '404':
+          description: Project not found
+        '503':
+          description: AI server unavailable
+  /api/v1/ai/runs/{runId}/callback:
+    post:
+      tags: [AI]
+      security:
+        - aiCallbackSecret: []
+      summary: Receive a run-state callback from the trusted AI server
+      description: The callback secret belongs in the x-ai-callback-secret header. The body fallback exists for legacy AI-server compatibility but is discouraged.
+      parameters:
+        - $ref: '#/components/parameters/runId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiRunCallbackRequest'
+      responses:
+        '200':
+          description: Callback accepted and run state updated
+        '400':
+          description: Route and payload identifiers do not match
+        '401':
+          description: Callback secret invalid
+        '404':
+          description: AI run not found
+  /api/v1/features/tiles/{z}/{x}/{y}:
+    get:
+      tags: [Features]
+      security:
+        - bearerAuth: []
+      summary: Query visible features for an XYZ map tile
+      parameters:
+        - $ref: '#/components/parameters/tileZ'
+        - $ref: '#/components/parameters/tileX'
+        - $ref: '#/components/parameters/tileY'
+        - in: query
+          name: project_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: zoom
+          schema:
+            type: number
+            minimum: 0
+            maximum: 24
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [draft, pending_review, approved, rejected]
+        - in: query
+          name: feature_type
+          schema:
+            type: string
+            maxLength: 100
+      responses:
+        '200':
+          description: Tile-scoped feature collection
+        '400':
+          description: Invalid tile or query parameters
+        '401':
+          description: Unauthorized
+        '429':
+          description: Map aggregation rate limit reached
+
+  /api/v1/imports/{importId}/map:
+    get:
+      tags: [Imports]
+      security:
+        - bearerAuth: []
+      summary: Get viewport-scoped staged and approved import map data
+      parameters:
+        - $ref: '#/components/parameters/importId'
+        - $ref: '#/components/parameters/minLon'
+        - $ref: '#/components/parameters/minLat'
+        - $ref: '#/components/parameters/maxLon'
+        - $ref: '#/components/parameters/maxLat'
+        - in: query
+          name: zoom
+          schema:
+            type: number
+            minimum: 0
+            maximum: 24
+      responses:
+        '200':
+          description: Import map layer data for the requested viewport
+        '400':
+          description: Invalid viewport parameters
+        '401':
+          description: Unauthorized
+        '403':
+          description: Import access denied
+        '404':
+          description: Import not found
+        '429':
+          description: Map aggregation rate limit reached
+  /api/v1/imports/{importId}/tiles/{z}/{x}/{y}:
+    get:
+      tags: [Imports]
+      security:
+        - bearerAuth: []
+      summary: Get import map data for an XYZ tile
+      parameters:
+        - $ref: '#/components/parameters/importId'
+        - $ref: '#/components/parameters/tileZ'
+        - $ref: '#/components/parameters/tileX'
+        - $ref: '#/components/parameters/tileY'
+        - in: query
+          name: zoom
+          schema:
+            type: number
+            minimum: 0
+            maximum: 24
+      responses:
+        '200':
+          description: Tile-scoped staged and approved import map data
+        '400':
+          description: Invalid tile parameters
+        '401':
+          description: Unauthorized
+        '403':
+          description: Import access denied
+        '404':
+          description: Import not found
+        '429':
+          description: Map aggregation rate limit reached
+  /api/v1/imports/{importId}/download:
+    get:
+      tags: [Imports]
+      security:
+        - bearerAuth: []
+      summary: Download the original GIS import file
+      parameters:
+        - $ref: '#/components/parameters/importId'
+      responses:
+        '200':
+          description: Original uploaded GIS file
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: Unauthorized
+        '403':
+          description: Download access denied
+        '404':
+          description: Import or stored source file not found
+  /api/v1/imports/{importId}/comments:
+    get:
+      tags: [Imports]
+      security:
+        - bearerAuth: []
+      summary: List comments attached to an import
+      parameters:
+        - $ref: '#/components/parameters/importId'
+      responses:
+        '200':
+          description: Ordered import comments
+        '401':
+          description: Unauthorized
+        '403':
+          description: Import access denied
+        '404':
+          description: Import not found
+    post:
+      tags: [Imports]
+      security:
+        - bearerAuth: []
+      summary: Add a comment to an import or one staged feature
+      parameters:
+        - $ref: '#/components/parameters/importId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportCommentRequest'
+      responses:
+        '201':
+          description: Import comment created
+        '400':
+          description: Validation failed
+        '401':
+          description: Unauthorized
+        '403':
+          description: Comment access denied
+        '404':
+          description: Import or linked staged feature not found
+  /api/v1/imports/{importId}/features/{featureId}:
+    get:
+      tags: [Imports]
+      security:
+        - bearerAuth: []
+      summary: Get one staged imported feature
+      parameters:
+        - $ref: '#/components/parameters/importId'
+        - $ref: '#/components/parameters/featureId'
+      responses:
+        '200':
+          description: Staged imported feature details
+        '401':
+          description: Unauthorized
+        '403':
+          description: Import access denied
+        '404':
+          description: Import or staged feature not found
+
+  /api/v1/assignments/managed:
+    get:
+      tags: [Assignments]
+      security:
+        - bearerAuth: []
+      summary: List contributor assignments managed by an administrator
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [pending, approved, rejected]
+        - in: query
+          name: q
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: Paginated managed assignments
+        '401':
+          description: Unauthorized
+        '403':
+          description: Administrator access required
+  /api/v1/assignments/project/{projectId}/available-contributors:
+    get:
+      tags: [Assignments]
+      security:
+        - bearerAuth: []
+      summary: List contributors eligible for assignment to a project
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+        - in: query
+          name: q
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: Paginated available contributors
+        '401':
+          description: Unauthorized
+        '403':
+          description: Project-administrator access required
+        '404':
+          description: Project not found
+  /api/v1/categories/icon:
+    post:
+      tags: [Categories]
+      security:
+        - bearerAuth: []
+      summary: Upload a category icon (admin only)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [icon]
+              properties:
+                icon:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Category icon securely processed and stored
+        '400':
+          description: Icon is missing
+        '401':
+          description: Unauthorized
+        '403':
+          description: Administrator access required
+        '422':
+          description: File type, filename, or size rejected
+  /api/v1/notifications/{notificationId}/unread:
+    put:
+      tags: [Notifications]
+      security:
+        - bearerAuth: []
+      summary: Mark one notification as unread
+      parameters:
+        - $ref: '#/components/parameters/notificationId'
+      responses:
+        '200':
+          description: Notification marked unread
+        '401':
+          description: Unauthorized
+        '404':
+          description: Notification not found for the current user
+        '429':
+          description: Notification mutation rate limit reached
+  /api/v1/notifications/devices/register:
+    post:
+      tags: [Notifications]
+      security:
+        - bearerAuth: []
+      summary: Register or refresh a push-notification device
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushDeviceRegistrationRequest'
+      responses:
+        '201':
+          description: Device registration enabled
+        '400':
+          description: Validation failed
+        '401':
+          description: Unauthorized
+        '429':
+          description: Notification mutation rate limit reached
+  /api/v1/notifications/devices/unregister:
+    post:
+      tags: [Notifications]
+      security:
+        - bearerAuth: []
+      summary: Disable push notifications for a device token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushDeviceUnregistrationRequest'
+      responses:
+        '200':
+          description: Device registration disabled or already disconnected
+        '400':
+          description: Validation failed
+        '401':
+          description: Unauthorized
+        '429':
+          description: Notification mutation rate limit reached
+  /api/v1/settings/support:
+    get:
+      tags: [Settings]
+      security:
+        - bearerAuth: []
+      summary: Get application support contact settings and delivery capabilities
+      responses:
+        '200':
+          description: Support settings and notification capability metadata
+        '401':
+          description: Unauthorized
+    put:
+      tags: [Settings]
+      security:
+        - bearerAuth: []
+      summary: Update support contact settings (protected super admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportSettingsRequest'
+      responses:
+        '200':
+          description: Support settings updated
+        '400':
+          description: Validation failed
+        '401':
+          description: Unauthorized
+        '403':
+          description: Protected super-administrator access required
+  /api/v1/offline-map/current:
+    get:
+      tags: [Offline / Sync]
+      security:
+        - bearerAuth: []
+      summary: Get the currently published offline base-map manifest
+      responses:
+        '200':
+          description: Current offline map version, source, size, checksum, and download metadata
+        '401':
+          description: Unauthorized
+  /uploads/ai-validation/{storageName}:
+    get:
+      tags: [Photos]
+      security:
+        - bearerAuth: []
+      summary: Download protected AI validation media
+      parameters:
+        - $ref: '#/components/parameters/storageName'
+      responses:
+        '200':
+          description: Authorized validation image
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: Unauthorized
+        '403':
+          description: Media access denied
+        '404':
+          description: Media not found
+  /uploads/photos/{storageName}:
+    get:
+      tags: [Photos]
+      security:
+        - bearerAuth: []
+      summary: Download protected legacy validation media
+      parameters:
+        - $ref: '#/components/parameters/storageName'
+      responses:
+        '200':
+          description: Authorized validation image
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: Unauthorized
+        '403':
+          description: Media access denied
+        '404':
+          description: Media not found
+
+  /api/v1/users/contributor-requests:
+    get:
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      summary: List pending or rejected contributor account requests
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [pending, rejected]
+            default: pending
+        - in: query
+          name: q
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: Paginated contributor requests
+        '400':
+          description: Invalid status filter
+        '401':
+          description: Unauthorized
+        '403':
+          description: Administrator access required
+  /api/v1/users/dashboard-summary:
+    get:
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      summary: Get administrative account and assignment summary counts
+      responses:
+        '200':
+          description: Administrative dashboard summary
+        '401':
+          description: Unauthorized
+        '403':
+          description: Administrator access required
+  /api/v1/users/admin:
+    post:
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      summary: Create an active administrator (protected super admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAdminRequest'
+      responses:
+        '201':
+          description: Administrator account created
+        '400':
+          description: Validation failed
+        '401':
+          description: Unauthorized
+        '403':
+          description: Protected super-administrator access required
+        '409':
+          description: Email or mobile number cannot be reused
+  /api/v1/users/{userId}/toggle-admin-role:
+    post:
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      summary: Promote or revert administrator access (protected super admin only)
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ToggleAdminRoleRequest'
+      responses:
+        '200':
+          description: User role changed
+        '400':
+          description: Role transition is invalid
+        '401':
+          description: Unauthorized
+        '403':
+          description: Protected super-administrator access required
+        '404':
+          description: User not found
+        '409':
+          description: Account state or assignments prevent the role transition
+  /api/v1/users/{userId}/block:
+    post:
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      summary: Block an active user account
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      responses:
+        '200':
+          description: User blocked
+        '401':
+          description: Unauthorized
+        '403':
+          description: Administrator policy forbids the change
+        '404':
+          description: User not found
+        '409':
+          description: User is already blocked or is not active
+  /api/v1/users/{userId}/unblock:
+    post:
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      summary: Restore a blocked user account
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      responses:
+        '200':
+          description: User unblocked
+        '401':
+          description: Unauthorized
+        '403':
+          description: Administrator policy forbids the change
+        '404':
+          description: User not found
+        '409':
+          description: User is not blocked or lacks required contact assurance
+  /api/v1/users/{userId}/approve-contributor:
+    post:
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      summary: Approve a pending contributor account
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      responses:
+        '200':
+          description: Contributor request approved
+        '401':
+          description: Unauthorized
+        '403':
+          description: Administrator access required
+        '404':
+          description: User not found
+        '409':
+          description: User is not eligible for approval
+  /api/v1/users/{userId}/reject-contributor:
+    post:
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      summary: Reject a pending contributor account
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      responses:
+        '200':
+          description: Contributor request rejected
+        '401':
+          description: Unauthorized
+        '403':
+          description: Administrator access required
+        '404':
+          description: User not found
+        '409':
+          description: User is not eligible for rejection
+
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: Paste a valid TerraLeb access token. Swagger UI adds the Bearer prefix.
+    aiCallbackSecret:
+      type: apiKey
+      in: header
+      name: x-ai-callback-secret
+      description: Service-to-service callback credential used only by the trusted AI server.
+    metricsToken:
+      type: http
+      scheme: bearer
+      description: Operational metrics token when METRICS_TOKEN is configured.
   parameters:
     projectId:
       in: path
@@ -2450,10 +3342,85 @@ components:
       schema:
         type: string
         format: uuid
+    tileZ:
+      in: path
+      name: z
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 22
+    tileX:
+      in: path
+      name: x
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+    tileY:
+      in: path
+      name: y
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+    minLon:
+      in: query
+      name: minLon
+      required: true
+      schema:
+        type: number
+        minimum: -180
+        maximum: 180
+    minLat:
+      in: query
+      name: minLat
+      required: true
+      schema:
+        type: number
+        minimum: -90
+        maximum: 90
+    maxLon:
+      in: query
+      name: maxLon
+      required: true
+      schema:
+        type: number
+        minimum: -180
+        maximum: 180
+    maxLat:
+      in: query
+      name: maxLat
+      required: true
+      schema:
+        type: number
+        minimum: -90
+        maximum: 90
+    page:
+      in: query
+      name: page
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    limit:
+      in: query
+      name: limit
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+    storageName:
+      in: path
+      name: storageName
+      required: true
+      schema:
+        type: string
+        pattern: '^[0-9a-fA-F-]+\.(?:jpe?g|png|gif|hei[cf]s?)$'
   schemas:
     RegisterRequest:
       type: object
-      required: [email, password, full_name]
+      required: [email, password, full_name, phone, role]
       properties:
         email:
           type: string
@@ -2461,6 +3428,7 @@ components:
         password:
           type: string
           minLength: 8
+          writeOnly: true
         full_name:
           type: string
         phone:
@@ -2477,6 +3445,155 @@ components:
           format: email
         password:
           type: string
+          writeOnly: true
+    PasswordResetEmailRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+    VerifyResetOtpRequest:
+      type: object
+      required: [email, otp]
+      properties:
+        email:
+          type: string
+          format: email
+        otp:
+          type: string
+          pattern: '^\d{6}$'
+          writeOnly: true
+    ResetPasswordRequest:
+      type: object
+      required: [reset_token, new_password]
+      properties:
+        reset_token:
+          type: string
+          writeOnly: true
+        new_password:
+          type: string
+          minLength: 8
+          writeOnly: true
+    ImportCommentRequest:
+      type: object
+      required: [comment]
+      properties:
+        comment:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        feature_id:
+          type: string
+          format: uuid
+          nullable: true
+    PushDeviceRegistrationRequest:
+      type: object
+      required: [token, platform]
+      properties:
+        token:
+          type: string
+          minLength: 16
+          maxLength: 4096
+          writeOnly: true
+        platform:
+          type: string
+          enum: [android, ios]
+        device_label:
+          type: string
+          maxLength: 120
+        app_version:
+          type: string
+          maxLength: 60
+    PushDeviceUnregistrationRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          minLength: 16
+          maxLength: 4096
+          writeOnly: true
+    SupportSettingsRequest:
+      type: object
+      properties:
+        support_email:
+          type: string
+          format: email
+          nullable: true
+        support_phone:
+          type: string
+          nullable: true
+          description: Lebanese mobile number; normalized to E.164 by the API.
+        office_hours:
+          type: string
+          nullable: true
+        help_text:
+          type: string
+          nullable: true
+    CreateAdminRequest:
+      type: object
+      required: [email, password, full_name]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+          writeOnly: true
+        full_name:
+          type: string
+          minLength: 1
+        phone:
+          type: string
+          nullable: true
+    ToggleAdminRoleRequest:
+      type: object
+      properties:
+        force_unassign:
+          type: boolean
+          default: false
+    AiRunCallbackRequest:
+      type: object
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [accepted, created, starting, running, completed, failed, cancelling, cancelled, paused, queued]
+        stage:
+          type: string
+          nullable: true
+        progress:
+          type: number
+          minimum: 0
+          maximum: 100
+          nullable: true
+        message:
+          type: string
+          nullable: true
+        metrics:
+          type: object
+        artifacts:
+          type: object
+        counts:
+          type: object
+        settings:
+          type: object
+        error:
+          nullable: true
+        dry_run:
+          type: boolean
+        callback_secret:
+          type: string
+          writeOnly: true
+          deprecated: true
+          description: Legacy body fallback. Prefer the x-ai-callback-secret header.
     AiProjectSettingsRequest:
       type: object
       properties:

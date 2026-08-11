@@ -6,6 +6,7 @@
 !.env.staging.example
 !.env.prod.example
 *.log
+logs/
 !docs/handover/evidence/*.log
 secrets/*.txt
 secrets/**/*.txt

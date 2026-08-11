@@ -10,7 +10,7 @@ import '../domain/auth_models.dart';
 import '../domain/auth_repository.dart';
 import 'contact_verification_repository.dart';
 
-class RealAuthRepository implements AuthRepository {
+class RealAuthRepository implements AuthRepository, AuthTokenRotationSource {
   RealAuthRepository(this._storage, this._apiClient);
 
   final FlutterSecureStorage _storage;
@@ -24,6 +24,7 @@ class RealAuthRepository implements AuthRepository {
   static const _userIdKey = 'user_id';
   static const _phoneKey = 'user_phone';
   static const _superAdminKey = 'is_protected_super_admin';
+  RotatedAuthTokens? _rotatedAuthTokens;
   String get _authBasePath => '${AppEnv.apiVersionPrefix}/auth';
   Options get _publicAuthRequestOptions =>
       Options(headers: const <String, dynamic>{'Authorization': null});
@@ -289,13 +290,35 @@ class RealAuthRepository implements AuthRepository {
     required String currentPassword,
     required String newPassword,
   }) async {
+    _rotatedAuthTokens = null;
     try {
-      await _apiClient.dio.post<Map<String, dynamic>>(
+      final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '$_authBasePath/change-password',
         data: <String, dynamic>{
           'current_password': currentPassword,
           'new_password': newPassword,
         },
+      );
+      final payload = response.data ?? const <String, dynamic>{};
+      final data = Map<String, dynamic>.from(
+        payload['data'] as Map? ?? const <String, dynamic>{},
+      );
+      final accessToken = (data['token'] as String?)?.trim() ?? '';
+      final refreshToken = (data['refreshToken'] as String?)?.trim() ?? '';
+      if (accessToken.isEmpty || refreshToken.isEmpty) {
+        throw DioException(
+          requestOptions: response.requestOptions,
+          response: response,
+          message: 'Password change response is missing rotated credentials.',
+        );
+      }
+      await _apiClient.replaceCurrentSessionTokens(
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+      );
+      _rotatedAuthTokens = RotatedAuthTokens(
+        accessToken: accessToken,
+        refreshToken: refreshToken,
       );
     } on DioException catch (error) {
       throw mapAuthDioException(
@@ -303,6 +326,13 @@ class RealAuthRepository implements AuthRepository {
         fallbackMessage: 'Password change failed.',
       );
     }
+  }
+
+  @override
+  RotatedAuthTokens? takeRotatedAuthTokens() {
+    final tokens = _rotatedAuthTokens;
+    _rotatedAuthTokens = null;
+    return tokens;
   }
 
   @override

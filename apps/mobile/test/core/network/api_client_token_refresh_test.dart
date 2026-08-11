@@ -536,4 +536,55 @@ void main() {
       expect(await storage.read(key: 'refresh_token'), 'b-refresh');
     },
   );
+
+  test(
+    'security-event rotation updates memory and remembered credentials',
+    () async {
+      final storage = _MemorySecureStorage();
+      final client = ApiClient(dio: Dio(), storage: storage);
+      await client.establishAuthenticatedSession(
+        accessToken: 'old-access',
+        refreshToken: 'old-refresh',
+        ownerUserId: 'user-1',
+        persistTokens: true,
+      );
+
+      await client.replaceCurrentSessionTokens(
+        accessToken: 'rotated-access',
+        refreshToken: 'rotated-refresh',
+      );
+
+      expect(client.currentSessionBinding?.accessToken, 'rotated-access');
+      expect(client.currentSessionBinding?.refreshToken, 'rotated-refresh');
+      expect(
+        client.dio.options.headers['Authorization'],
+        'Bearer rotated-access',
+      );
+      expect(await storage.read(key: 'access_token'), 'rotated-access');
+      expect(await storage.read(key: 'refresh_token'), 'rotated-refresh');
+    },
+  );
+
+  test(
+    'security-event rotation does not persist a memory-only session',
+    () async {
+      final storage = _MemorySecureStorage();
+      final client = ApiClient(dio: Dio(), storage: storage);
+      await client.establishAuthenticatedSession(
+        accessToken: 'old-access',
+        refreshToken: 'old-refresh',
+        ownerUserId: 'user-1',
+        persistTokens: false,
+      );
+
+      await client.replaceCurrentSessionTokens(
+        accessToken: 'rotated-access',
+        refreshToken: 'rotated-refresh',
+      );
+
+      expect(client.currentSessionBinding?.accessToken, 'rotated-access');
+      expect(await storage.read(key: 'access_token'), isNull);
+      expect(await storage.read(key: 'refresh_token'), isNull);
+    },
+  );
 }

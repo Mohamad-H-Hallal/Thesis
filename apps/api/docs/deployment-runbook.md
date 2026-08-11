@@ -32,9 +32,13 @@ This runbook covers production deployment and operations for the GIS API.
 | JWT_SECRET | local only | strong secret | strong secret | Minimum 32 chars |
 | JWT_SECRET_CURRENT | optional | current secret | current secret | Signing secret |
 | JWT_SECRET_PREVIOUS | optional | previous secret(s) | previous secret(s) | Graceful rotation |
+| JWT_EXPIRE | 15m | 15m | 15m | Production maximum is 1 hour |
+| JWT_ISSUER | terraleb-api | deployment identifier | deployment identifier | Verified on every JWT |
+| JWT_AUDIENCE | terraleb-mobile | client identifier | client identifier | Verified on every JWT |
 | JWT_REFRESH_SECRET | local only | strong secret | strong secret | Minimum 32 chars |
 | JWT_REFRESH_SECRET_CURRENT | optional | current refresh secret | current refresh secret | Signing secret |
 | JWT_REFRESH_SECRET_PREVIOUS | optional | previous refresh secret(s) | previous refresh secret(s) | Graceful rotation |
+| JWT_REFRESH_EXPIRE | 30d | 30d | 30d | Production maximum is 30 days; tokens are single-use |
 | CORS_ORIGIN | local web URLs | staging frontend URLs | production frontend URLs | Comma-separated |
 | CORS_STRICT | false/true | true | true | Require explicit allow-list |
 | RATE_LIMIT_MAX_REQUESTS | 100 | 200 | tune by traffic | Anti-abuse |

@@ -3,6 +3,7 @@ import jwt, { type JwtPayload } from 'jsonwebtoken';
 import type { PoolClient } from 'pg';
 import { query, transaction } from '../config/database';
 import { AppError } from '../middleware/error';
+import { tokenAlgorithm, tokenAudience, tokenIssuer } from './authToken.service';
 import { sendContactVerificationCodeEmail } from '../lib/mailer';
 import {
   maskEmail,
@@ -41,6 +42,7 @@ export interface VerificationRequestContext {
 }
 
 interface VerificationTokenPayload extends JwtPayload {
+  sub?: string;
   purpose: 'contact_verification';
   userId: string;
   authVersion: number;
@@ -145,15 +147,26 @@ const createVerificationSessionToken = (
       authVersion: user.auth_version,
     },
     getVerificationSessionSecret(),
-    { expiresIn: `${integerSetting('CONTACT_VERIFICATION_TOKEN_EXPIRY_MINUTES', 30)}m` },
+    {
+      algorithm: tokenAlgorithm,
+      expiresIn: `${integerSetting('CONTACT_VERIFICATION_TOKEN_EXPIRY_MINUTES', 30)}m`,
+      issuer: tokenIssuer(),
+      audience: `${tokenAudience()}:contact-verification`,
+      subject: user.id,
+    },
   );
 
 const verifyVerificationSessionToken = (token: string): VerificationTokenPayload => {
   try {
-    const decoded = jwt.verify(token, getVerificationSessionSecret()) as VerificationTokenPayload;
+    const decoded = jwt.verify(token, getVerificationSessionSecret(), {
+      algorithms: [tokenAlgorithm],
+      issuer: tokenIssuer(),
+      audience: `${tokenAudience()}:contact-verification`,
+    }) as VerificationTokenPayload;
     if (
       decoded.purpose !== 'contact_verification' ||
       typeof decoded.userId !== 'string' ||
+      decoded.sub !== decoded.userId ||
       !Number.isSafeInteger(decoded.authVersion)
     ) {
       throw new Error('Invalid verification token scope');

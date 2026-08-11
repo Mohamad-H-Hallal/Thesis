@@ -259,10 +259,26 @@ class AuthController extends StateNotifier<AuthState> {
   Future<void> changePassword({
     required String currentPassword,
     required String newPassword,
-  }) {
-    return _repository.changePassword(
+  }) async {
+    await _repository.changePassword(
       currentPassword: currentPassword,
       newPassword: newPassword,
+    );
+    final currentSession = state.session;
+    if (currentSession == null || _repository is! AuthTokenRotationSource) {
+      return;
+    }
+    final rotated = (_repository as AuthTokenRotationSource)
+        .takeRotatedAuthTokens();
+    if (rotated == null) {
+      return;
+    }
+    state = AuthState.authenticated(
+      AuthSession(
+        accessToken: rotated.accessToken,
+        refreshToken: rotated.refreshToken,
+        user: currentSession.user,
+      ),
     );
   }
 

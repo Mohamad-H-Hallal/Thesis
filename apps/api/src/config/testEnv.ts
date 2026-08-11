@@ -86,8 +86,10 @@ const applyTestEnvDefaults = (): TestDbConfig => {
   setDefault('JWT_REFRESH_SECRET_CURRENT', process.env.JWT_REFRESH_SECRET as string);
   setDefault('JWT_SECRET_PREVIOUS', '');
   setDefault('JWT_REFRESH_SECRET_PREVIOUS', '');
-  setDefault('JWT_EXPIRE', '7d');
+  process.env.JWT_EXPIRE = '15m';
   setDefault('JWT_REFRESH_EXPIRE', '30d');
+  process.env.JWT_ISSUER = 'terraleb-api-test';
+  process.env.JWT_AUDIENCE = 'terraleb-test-client';
   setDefault('CORS_ORIGIN', '');
   setDefault('CORS_STRICT', 'false');
   setDefault('CORS_CREDENTIALS', 'true');

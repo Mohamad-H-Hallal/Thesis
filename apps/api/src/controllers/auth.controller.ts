@@ -2,9 +2,16 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { query, transaction } = require('../config/database');
-const { generateToken, generateRefreshToken } = require('../middleware/auth');
 const { AppError, permanentOfflineSyncError } = require('../middleware/error');
 const logger = require('../utils/logger');
+import {
+  createAuthenticatedSession,
+  replaceCurrentSessionAfterSecurityChange,
+  revokeAllUserSessions,
+  revokeSession,
+  rotateRefreshToken,
+} from '../services/authSession.service';
+import { tokenAlgorithm, tokenAudience, tokenIssuer } from '../services/authToken.service';
 import {
   getUserAccessState,
   isProtectedSuperAdminEmail,
@@ -94,7 +101,13 @@ const generatePasswordResetSessionToken = ({
       email,
     },
     getPasswordResetSessionSecret(),
-    { expiresIn: `${passwordResetSessionExpiryMinutes}m` },
+    {
+      algorithm: tokenAlgorithm,
+      expiresIn: `${passwordResetSessionExpiryMinutes}m`,
+      issuer: tokenIssuer(),
+      audience: `${tokenAudience()}:password-reset`,
+      subject: userId,
+    },
   );
 
 const verifyPasswordResetSessionToken = (
@@ -102,7 +115,11 @@ const verifyPasswordResetSessionToken = (
 ): { resetRequestId: string; userId: string; email: string } => {
   let decoded: any;
   try {
-    decoded = jwt.verify(resetToken, getPasswordResetSessionSecret());
+    decoded = jwt.verify(resetToken, getPasswordResetSessionSecret(), {
+      algorithms: [tokenAlgorithm],
+      issuer: tokenIssuer(),
+      audience: `${tokenAudience()}:password-reset`,
+    });
   } catch (_error) {
     throw new AppError(
       'Password reset session is invalid or expired. Please request a new verification code.',
@@ -116,7 +133,8 @@ const verifyPasswordResetSessionToken = (
     decoded.purpose !== 'password_reset' ||
     typeof decoded.resetRequestId !== 'string' ||
     typeof decoded.userId !== 'string' ||
-    typeof decoded.email !== 'string'
+    typeof decoded.email !== 'string' ||
+    decoded.sub !== decoded.userId
   ) {
     throw new AppError(
       'Password reset session is invalid or expired. Please request a new verification code.',
@@ -317,9 +335,7 @@ const login = async (req, res) => {
   // Update last login
   await query('UPDATE "user" SET last_login = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
 
-  // Generate tokens
-  const token = generateToken(user.id, user.role, Number(user.auth_version));
-  const refreshToken = generateRefreshToken(user.id, Number(user.auth_version));
+  const { token, refreshToken } = await createAuthenticatedSession(user);
 
   logger.info('User logged in', { userId: user.id });
 
@@ -399,31 +415,48 @@ const updateMe = async (req, res) => {
 // Change password
 const changePassword = async (req, res) => {
   const { current_password, new_password } = req.body;
-
-  // Get user with password
-  const result = await query('SELECT password_hash FROM "user" WHERE id = $1', [req.user.id]);
-
-  const user = result.rows[0];
-
-  // Verify current password
-  const isMatch = await bcrypt.compare(current_password, user.password_hash);
-
-  if (!isMatch) {
-    throw new AppError('Current password is incorrect', 401);
-  }
-
-  // Hash new password
   const salt = await bcrypt.genSalt(12);
   const password_hash = await bcrypt.hash(new_password, salt);
+  const tokens = await transaction(async (client) => {
+    const current = await client.query(
+      `SELECT password_hash
+       FROM "user"
+       WHERE id = $1
+       FOR UPDATE`,
+      [req.user.id],
+    );
+    const user = current.rows[0];
+    if (!user || !(await bcrypt.compare(current_password, user.password_hash))) {
+      throw new AppError('Current password is incorrect', 401);
+    }
 
-  // Update password
-  await query('UPDATE "user" SET password_hash = $1 WHERE id = $2', [password_hash, req.user.id]);
+    const updated = await client.query(
+      `UPDATE "user"
+       SET password_hash = $1, auth_version = auth_version + 1
+       WHERE id = $2
+       RETURNING id, email, email_original, email_canonical, email_verified_at,
+                 full_name, phone, phone_e164, phone_verified_at,
+                 phone_format_validated_at, contact_verification_exempted_at,
+                 role, is_active, account_status, auth_version`,
+      [password_hash, req.user.id],
+    );
+    return replaceCurrentSessionAfterSecurityChange(
+      client,
+      updated.rows[0],
+      req.authSessionId,
+      'password_changed',
+    );
+  });
 
   logger.info('Password changed:', { userId: req.user.id });
 
   res.json({
     success: true,
     message: 'Password changed successfully',
+    data: {
+      token: tokens.token,
+      refreshToken: tokens.refreshToken,
+    },
   });
 };
 
@@ -662,6 +695,14 @@ const requestMyPhoneChange = async (req, res) => {
   });
   if (result.mode === 'format_only') {
     const user = result.user;
+    const tokens = await transaction((client) =>
+      replaceCurrentSessionAfterSecurityChange(
+        client,
+        user,
+        req.authSessionId,
+        'phone_changed',
+      ),
+    );
     return res.json({
       success: true,
       message:
@@ -669,8 +710,8 @@ const requestMyPhoneChange = async (req, res) => {
       data: {
         completed: true,
         user: publicUser(user),
-        token: generateToken(user.id, user.role, Number(user.auth_version)),
-        refreshToken: generateRefreshToken(user.id, Number(user.auth_version)),
+        token: tokens.token,
+        refreshToken: tokens.refreshToken,
       },
     });
   }
@@ -693,13 +734,21 @@ const confirmMyPhoneChange = async (req, res) => {
     code: req.body.code,
     context: verificationContext(req),
   });
+  const tokens = await transaction((client) =>
+    replaceCurrentSessionAfterSecurityChange(
+      client,
+      user,
+      req.authSessionId,
+      'phone_changed',
+    ),
+  );
   res.json({
     success: true,
     message: 'Your mobile number was changed and verified.',
     data: {
       user: publicUser(user),
-      token: generateToken(user.id, user.role, Number(user.auth_version)),
-      refreshToken: generateRefreshToken(user.id, Number(user.auth_version)),
+      token: tokens.token,
+      refreshToken: tokens.refreshToken,
     },
   });
 };
@@ -786,8 +835,7 @@ const reactivateContributorLogin = async (req, res) => {
     await query('UPDATE "user" SET last_login = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
   }
 
-  const token = generateToken(user.id, user.role, Number(user.auth_version));
-  const refreshToken = generateRefreshToken(user.id, Number(user.auth_version));
+  const { token, refreshToken } = await createAuthenticatedSession(user);
 
   logger.info('Contributor account reactivated through login flow', {
     userId: user.id,
@@ -948,6 +996,8 @@ const resetPassword = async (req, res) => {
       [password_hash, resetRequest.user_id],
     );
 
+    await revokeAllUserSessions(resetRequest.user_id, 'password_reset', client);
+
     await client.query(
       `UPDATE password_reset_request
        SET used_at = CURRENT_TIMESTAMP
@@ -967,8 +1017,8 @@ const resetPassword = async (req, res) => {
   });
 };
 
-// Logout (client-side token deletion, but we log it)
 const logout = async (req, res) => {
+  await revokeSession(req.authSessionId, req.user.id, 'logout');
   logger.info('User logged out:', { userId: req.user.id });
 
   res.json({
@@ -980,64 +1030,32 @@ const logout = async (req, res) => {
 // Refresh token
 const refreshToken = async (req, res) => {
   const { refresh_token } = req.body;
-
-  let decoded: any;
-  const refreshSecrets = [
-    process.env.JWT_REFRESH_SECRET_CURRENT || process.env.JWT_REFRESH_SECRET,
-    ...(process.env.JWT_REFRESH_SECRET_PREVIOUS || '')
-      .split(',')
-      .map((value: string) => value.trim())
-      .filter(Boolean),
-  ].filter(Boolean) as string[];
-
+  let refreshResult;
   try {
-    let lastError: unknown = null;
-    for (const secret of refreshSecrets) {
-      try {
-        decoded = jwt.verify(refresh_token, secret);
-        break;
-      } catch (error) {
-        lastError = error;
-      }
-    }
-    if (!decoded) {
-      throw lastError ?? new Error('refresh token verification failed');
-    }
+    refreshResult = await rotateRefreshToken(refresh_token);
   } catch (_error) {
     throw new AppError('Invalid or expired refresh token', 401);
   }
-
-  const result = await query(
-    `SELECT id, email, email_original, email_canonical, email_verified_at,
-            full_name, phone, phone_e164, phone_verified_at,
-            phone_format_validated_at, contact_verification_exempted_at,
-            role, is_active,
-            account_status, auth_version
-     FROM "user" WHERE id = $1`,
-    [decoded.userId],
-  );
-
-  if (result.rows.length === 0) {
-    throw permanentOfflineSyncError(
-      'This account is no longer available.',
-      'OFFLINE_SYNC_ACCOUNT_INACTIVE',
-    );
-  }
-
-  const user = result.rows[0];
-  if (
-    !user.is_active ||
-    !isContactAssuranceSatisfied(user) ||
-    (typeof decoded.authVersion === 'number' && decoded.authVersion !== Number(user.auth_version))
-  ) {
+  if (refreshResult.status === 'inactive') {
     throw permanentOfflineSyncError(
       'This account is no longer active.',
       'OFFLINE_SYNC_ACCOUNT_INACTIVE',
     );
   }
+  if (refreshResult.status === 'replayed') {
+    logger.warn('Refresh token replay detected; user sessions revoked');
+    throw new AppError('Invalid or expired refresh token', 401, {
+      code: 'AUTH_REFRESH_REPLAYED',
+      disposition: 'retry',
+      retryable: false,
+    });
+  }
+  if (refreshResult.status !== 'ok') {
+    throw new AppError('Invalid or expired refresh token', 401);
+  }
 
-  const token = generateToken(user.id, user.role, Number(user.auth_version));
-  const newRefreshToken = generateRefreshToken(user.id, Number(user.auth_version));
+  const { token, refreshToken: newRefreshToken } = refreshResult.tokens;
+  const user = refreshResult.user;
 
   logger.info('Token refreshed:', { userId: user.id });
 
@@ -1083,12 +1101,15 @@ const selfDeactivate = async (req, res) => {
     );
   }
 
-  await query(
-    `UPDATE "user"
-     SET is_active = FALSE
-     WHERE id = $1`,
-    [req.user.id],
-  );
+  await transaction(async (client) => {
+    await client.query(
+      `UPDATE "user"
+       SET is_active = FALSE
+       WHERE id = $1`,
+      [req.user.id],
+    );
+    await revokeAllUserSessions(req.user.id, 'self_deactivated', client);
+  });
 
   logger.info('User self-deactivated account', { userId: req.user.id });
 

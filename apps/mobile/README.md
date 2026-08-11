@@ -28,6 +28,12 @@ Optional UI-only mock mode (dev only):
 flutter run -d chrome --dart-define=APP_FLAVOR=dev --dart-define=USE_MOCK_AUTH=true --dart-define=USE_MOCK_DATA=true
 ```
 
+## Diagnostics
+
+- Unexpected Flutter, asynchronous, platform, API transport, server, and offline-sync failures are sent to the platform diagnostic stream with sensitive values redacted.
+- Use `--dart-define=APP_LOG_LEVEL=debug|info|warning|error` to control verbosity. Development defaults to `debug`; other flavors default to `info`.
+- Persistent device log files are intentionally not created because the app has no user-consent/support-upload workflow for collecting and protecting them.
+
 ## Android JDK Requirement
 - Use **JDK 17** for Android Gradle builds/imports.
 - Verify active Gradle JVM:

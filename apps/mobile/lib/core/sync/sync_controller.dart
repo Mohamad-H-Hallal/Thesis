@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../logging/app_logger.dart';
 import '../network/network_availability_base.dart';
 import '../offline/local_store.dart';
 import 'sync_engine.dart';
@@ -117,7 +118,14 @@ class SyncController extends StateNotifier<SyncState>
         return;
       }
       state = state.copyWith(lastError: state.lastError);
-    } catch (error) {
+    } catch (error, stackTrace) {
+      AppLogger.warning(
+        'Offline synchronization status could not be refreshed',
+        component: 'offline-sync',
+        error: error,
+        stackTrace: stackTrace,
+        context: <String, Object?>{'userId': ownerUserId},
+      );
       if (!mounted) {
         return;
       }
@@ -249,7 +257,47 @@ class SyncController extends StateNotifier<SyncState>
         lastSyncAt: DateTime.now(),
         lastError: statusParts.isEmpty ? null : statusParts.join(' | '),
       );
-    } catch (error) {
+      if (summary.failed > 0 ||
+          summary.conflicts > 0 ||
+          summary.discarded > 0 ||
+          summary.deadLettered > 0 ||
+          summary.authenticationFailures > 0) {
+        AppLogger.warning(
+          'Offline synchronization completed with unresolved items',
+          component: 'offline-sync',
+          context: <String, Object?>{
+            'userId': ownerUserId,
+            'background': background,
+            'processed': summary.processed,
+            'failed': summary.failed,
+            'conflicts': summary.conflicts,
+            'discarded': summary.discarded,
+            'deadLettered': summary.deadLettered,
+            'authenticationFailures': summary.authenticationFailures,
+          },
+        );
+      } else if (summary.processed > 0) {
+        AppLogger.info(
+          'Offline synchronization completed',
+          component: 'offline-sync',
+          context: <String, Object?>{
+            'userId': ownerUserId,
+            'background': background,
+            'processed': summary.processed,
+          },
+        );
+      }
+    } catch (error, stackTrace) {
+      AppLogger.error(
+        'Offline synchronization failed unexpectedly',
+        component: 'offline-sync',
+        error: error,
+        stackTrace: stackTrace,
+        context: <String, Object?>{
+          'userId': ownerUserId,
+          'background': background,
+        },
+      );
       await _refreshPendingCount();
       if (!mounted) {
         return;
@@ -295,7 +343,14 @@ class SyncController extends StateNotifier<SyncState>
         lastError: null,
       );
       unawaited(checkForPendingSync(background: true));
-    } catch (error) {
+    } catch (error, stackTrace) {
+      AppLogger.error(
+        'Offline synchronization could not initialize',
+        component: 'offline-sync',
+        error: error,
+        stackTrace: stackTrace,
+        context: <String, Object?>{'userId': ownerUserId},
+      );
       if (!mounted) {
         return;
       }

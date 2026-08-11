@@ -23,6 +23,7 @@ import {
 } from '../services/contactIdentity.service';
 import { assertPhoneAccountCapacity } from '../services/phoneAccountLimit.service';
 import { isContactAssuranceSatisfied } from '../services/contactAssurancePolicy.service';
+import { revokeAllUserSessions } from '../services/authSession.service';
 
 const getSupportSettingsRow = async () => {
   await query(`
@@ -1003,10 +1004,16 @@ const userController = {
     }
 
     params.push(userId);
-    const result = await query(
-      `UPDATE "user" SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING id, email, full_name, phone, role, is_active`,
-      params,
-    );
+    const result = await transaction(async (client) => {
+      const updated = await client.query(
+        `UPDATE "user" SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING id, email, full_name, phone, role, is_active`,
+        params,
+      );
+      if (is_active === false && updated.rows.length === 1) {
+        await revokeAllUserSessions(userId, 'admin_deactivated', client);
+      }
+      return updated;
+    });
 
     if (result.rows.length === 0) {
       throw new AppError('User not found', 404);
@@ -1047,13 +1054,17 @@ const userController = {
       nextIsActive: false,
     });
 
-    const result = await query(
-      `UPDATE "user"
-       SET is_active = FALSE
-       WHERE id = $1
-       RETURNING id, email, full_name, phone, role, is_active`,
-      [userId],
-    );
+    const result = await transaction(async (client) => {
+      const updated = await client.query(
+        `UPDATE "user"
+         SET is_active = FALSE
+         WHERE id = $1
+         RETURNING id, email, full_name, phone, role, is_active`,
+        [userId],
+      );
+      await revokeAllUserSessions(userId, 'admin_blocked', client);
+      return updated;
+    });
 
     await notifyAccountAccessChanged(query, {
       userId,
@@ -1319,9 +1330,14 @@ const userController = {
       nextIsActive: false,
     });
 
-    const result = await query('UPDATE "user" SET is_active = false WHERE id = $1 RETURNING id', [
-      userId,
-    ]);
+    const result = await transaction(async (client) => {
+      const updated = await client.query(
+        'UPDATE "user" SET is_active = false WHERE id = $1 RETURNING id',
+        [userId],
+      );
+      await revokeAllUserSessions(userId, 'admin_deactivated', client);
+      return updated;
+    });
 
     if (result.rows.length === 0) {
       throw new AppError('User not found', 404);

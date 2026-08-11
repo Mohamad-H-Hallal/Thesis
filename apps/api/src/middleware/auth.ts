@@ -1,4 +1,4 @@
-import jwt, { type JwtPayload, type SignOptions } from 'jsonwebtoken';
+import jwt from 'jsonwebtoken';
 import type { NextFunction, Request, Response } from 'express';
 import { query } from '../config/database';
 const logger = require('../utils/logger');
@@ -12,12 +12,11 @@ import {
   verifyVerificationSessionToken,
 } from '../services/contactVerification.service';
 import { isContactAssuranceSatisfied } from '../services/contactAssurancePolicy.service';
-
-interface TokenPayload extends JwtPayload {
-  userId: string;
-  role?: user_role;
-  authVersion?: number;
-}
+import {
+  generateRefreshToken,
+  generateToken,
+  verifyAccessToken,
+} from '../services/authToken.service';
 
 const isOfflineSyncRequest = (req: Request): boolean => {
   const requestPath = req.originalUrl.toLowerCase();
@@ -26,40 +25,6 @@ const isOfflineSyncRequest = (req: Request): boolean => {
   const isFeaturePhotoUpload =
     req.method === 'POST' && /\/photos\/feature\/[^/?]+(?:[/?]|$)/.test(requestPath);
   return isFeatureMutation || isFeaturePhotoUpload || requestHasOfflineSyncSignal(req);
-};
-
-const getSecrets = (current: string, previousRaw?: string): string[] => {
-  const previous = (previousRaw ?? '')
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean);
-  return [current, ...previous];
-};
-
-const verifyWithSecrets = (token: string, secrets: string[]): TokenPayload => {
-  let lastError: unknown = null;
-  for (const secret of secrets) {
-    try {
-      return jwt.verify(token, secret) as TokenPayload;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError ?? new Error('Token verification failed');
-};
-
-// Generate JWT token
-const generateToken = (userId: string, role: user_role, authVersion = 0): string => {
-  const signingSecret = process.env.JWT_SECRET_CURRENT || process.env.JWT_SECRET;
-  const expiresIn = (process.env.JWT_EXPIRE || '7d') as SignOptions['expiresIn'];
-  return jwt.sign({ userId, role, authVersion }, signingSecret as string, { expiresIn });
-};
-
-// Generate refresh token
-const generateRefreshToken = (userId: string, authVersion = 0): string => {
-  const signingSecret = process.env.JWT_REFRESH_SECRET_CURRENT || process.env.JWT_REFRESH_SECRET;
-  const expiresIn = (process.env.JWT_REFRESH_EXPIRE || '30d') as SignOptions['expiresIn'];
-  return jwt.sign({ userId, authVersion }, signingSecret as string, { expiresIn });
 };
 
 const authenticateVerificationSession = async (
@@ -115,19 +80,20 @@ const authenticate = async (
     }
 
     // Verify token
-    const accessSecrets = getSecrets(
-      process.env.JWT_SECRET_CURRENT || process.env.JWT_SECRET || '',
-      process.env.JWT_SECRET_PREVIOUS,
-    );
-    const decoded = verifyWithSecrets(token, accessSecrets);
+    const decoded = verifyAccessToken(token);
 
     // Get user from database
     const result = await query(
-      `SELECT id, email, full_name, role, is_active, account_status, auth_version,
-              email_verified_at, phone_verified_at, phone_format_validated_at,
-              contact_verification_exempted_at
-       FROM "user" WHERE id = $1`,
-      [decoded.userId],
+      `SELECT u.id, u.email, u.full_name, u.role, u.is_active, u.account_status,
+              u.auth_version, u.email_verified_at, u.phone_verified_at,
+              u.phone_format_validated_at, u.contact_verification_exempted_at,
+              s.id AS session_id, s.auth_version AS session_auth_version,
+              s.refresh_expires_at, s.revoked_at
+       FROM "user" u
+       LEFT JOIN auth_session s
+         ON s.id = $2 AND s.user_id = u.id
+       WHERE u.id = $1`,
+      [decoded.userId, decoded.sessionId],
     );
 
     if (result.rows.length === 0) {
@@ -147,10 +113,7 @@ const authenticate = async (
 
     const user = result.rows[0];
 
-    if (
-      typeof decoded.authVersion === 'number' &&
-      decoded.authVersion !== Number(user.auth_version ?? 0)
-    ) {
+    if (decoded.authVersion !== Number(user.auth_version ?? 0)) {
       return res.status(401).json({
         success: false,
         message: 'Your session is no longer current. Please sign in again.',
@@ -178,8 +141,27 @@ const authenticate = async (
       });
     }
 
+    if (
+      !user.session_id ||
+      user.revoked_at != null ||
+      new Date(user.refresh_expires_at).getTime() <= Date.now() ||
+      Number(user.session_auth_version) !== Number(user.auth_version)
+    ) {
+      return res.status(401).json({
+        success: false,
+        message: 'Your session is no longer active. Please sign in again.',
+        error: {
+          code: 'AUTH_SESSION_REVOKED',
+          disposition: 'retry',
+          retryable: false,
+        },
+      });
+    }
+
     // Add user to request object
     req.user = user;
+    req.authSessionId = decoded.sessionId;
+    req.authTokenExpiresAt = typeof decoded.exp === 'number' ? decoded.exp * 1000 : undefined;
     next();
   } catch (error: unknown) {
     if (error instanceof jwt.TokenExpiredError) {

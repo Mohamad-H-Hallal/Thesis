@@ -18,6 +18,8 @@ export interface EnvConfig {
   JWT_SECRET_CURRENT: string;
   JWT_SECRET_PREVIOUS: string;
   JWT_EXPIRE: string;
+  JWT_ISSUER: string;
+  JWT_AUDIENCE: string;
   JWT_REFRESH_SECRET: string;
   JWT_REFRESH_SECRET_CURRENT: string;
   JWT_REFRESH_SECRET_PREVIOUS: string;
@@ -55,6 +57,9 @@ export interface EnvConfig {
   LOG_LEVEL: 'error' | 'warn' | 'info' | 'http' | 'verbose' | 'debug' | 'silly';
   LOG_PRETTY: boolean;
   LOG_TO_FILE: boolean;
+  LOG_DIR: string;
+  LOG_MAX_SIZE: string;
+  LOG_RETENTION_DAYS: number;
   AUDIT_LOG_ENABLED: boolean;
   API_DOCS_ENABLED: boolean;
   API_DOCS_TOKEN: string;
@@ -151,6 +156,9 @@ export interface WorkloadWorkerEnvConfig {
   WORKLOAD_HARD_EXIT_ON_TIMEOUT: boolean;
   LOG_PRETTY: boolean;
   LOG_TO_FILE: boolean;
+  LOG_DIR: string;
+  LOG_MAX_SIZE: string;
+  LOG_RETENTION_DAYS: number;
 }
 
 const envSchema = Joi.object({
@@ -172,11 +180,13 @@ const envSchema = Joi.object({
   JWT_SECRET: Joi.string().min(32).required(),
   JWT_SECRET_CURRENT: Joi.string().min(32).optional(),
   JWT_SECRET_PREVIOUS: Joi.string().allow('').default(''),
-  JWT_EXPIRE: Joi.string().default('7d'),
+  JWT_EXPIRE: Joi.string().pattern(/^\d+[smhd]$/).default('15m'),
+  JWT_ISSUER: Joi.string().trim().min(3).max(200).default('terraleb-api'),
+  JWT_AUDIENCE: Joi.string().trim().min(3).max(200).default('terraleb-mobile'),
   JWT_REFRESH_SECRET: Joi.string().min(32).required(),
   JWT_REFRESH_SECRET_CURRENT: Joi.string().min(32).optional(),
   JWT_REFRESH_SECRET_PREVIOUS: Joi.string().allow('').default(''),
-  JWT_REFRESH_EXPIRE: Joi.string().default('30d'),
+  JWT_REFRESH_EXPIRE: Joi.string().pattern(/^\d+[smhd]$/).default('30d'),
 
   CORS_ORIGIN: Joi.string().allow('').default(''),
   CORS_STRICT: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(true),
@@ -235,6 +245,13 @@ const envSchema = Joi.object({
     .default('info'),
   LOG_PRETTY: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(true),
   LOG_TO_FILE: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(false),
+  LOG_DIR: Joi.string().trim().min(1).default('./logs/api'),
+  LOG_MAX_SIZE: Joi.string()
+    .trim()
+    .lowercase()
+    .pattern(/^\d+(?:k|m|g)?$/)
+    .default('10m'),
+  LOG_RETENTION_DAYS: Joi.number().integer().min(1).max(365).default(14),
   AUDIT_LOG_ENABLED: Joi.boolean()
     .truthy('true')
     .truthy('1')
@@ -440,6 +457,28 @@ const validateProductionOrigin = (origin: string): boolean => {
   }
 };
 
+const durationSeconds = (value: string): number => {
+  const match = value.match(/^(\d+)([smhd])$/);
+  if (!match) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const unitSeconds = ({ s: 1, m: 60, h: 3600, d: 86400 } as Record<string, number>)[
+    match[2]
+  ];
+  if (!unitSeconds) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Number(match[1]) * unitSeconds;
+};
+
+const rotationSecrets = (current: string, previousRaw: string): string[] => [
+  current,
+  ...previousRaw
+    .split(',')
+    .map((secret) => secret.trim())
+    .filter(Boolean),
+];
+
 const validateEnv = (source: NodeJS.ProcessEnv = process.env): EnvConfig => {
   const { error, value } = envSchema.validate(source, { abortEarly: false });
   if (error) {
@@ -452,6 +491,26 @@ const validateEnv = (source: NodeJS.ProcessEnv = process.env): EnvConfig => {
   }
   if (!value.JWT_REFRESH_SECRET_CURRENT) {
     value.JWT_REFRESH_SECRET_CURRENT = value.JWT_REFRESH_SECRET;
+  }
+
+  const configuredAccessSecrets = rotationSecrets(
+    value.JWT_SECRET_CURRENT,
+    value.JWT_SECRET_PREVIOUS,
+  );
+  const configuredRefreshSecrets = rotationSecrets(
+    value.JWT_REFRESH_SECRET_CURRENT,
+    value.JWT_REFRESH_SECRET_PREVIOUS,
+  );
+  if ([...configuredAccessSecrets, ...configuredRefreshSecrets].some((secret) => secret.length < 32)) {
+    throw new Error(
+      'Environment validation failed: every current and previous JWT secret must be at least 32 characters',
+    );
+  }
+  const accessSecretSet = new Set(configuredAccessSecrets);
+  if (configuredRefreshSecrets.some((secret) => accessSecretSet.has(secret))) {
+    throw new Error(
+      'Environment validation failed: access-token and refresh-token secrets must be distinct',
+    );
   }
 
   const hasSuperAdminConfig = [
@@ -500,6 +559,16 @@ const validateEnv = (source: NodeJS.ProcessEnv = process.env): EnvConfig => {
   }
 
   if (value.NODE_ENV === 'production') {
+    if (durationSeconds(value.JWT_EXPIRE) > 60 * 60) {
+      throw new Error(
+        'Environment validation failed: production access tokens must expire within 1 hour',
+      );
+    }
+    if (durationSeconds(value.JWT_REFRESH_EXPIRE) > 30 * 24 * 60 * 60) {
+      throw new Error(
+        'Environment validation failed: production refresh tokens must expire within 30 days',
+      );
+    }
     if (!value.TRUST_PROXY || !value.ENFORCE_HTTPS) {
       throw new Error(
         'Environment validation failed: production requires TRUST_PROXY=true and ENFORCE_HTTPS=true',
@@ -538,9 +607,9 @@ const validateEnv = (source: NodeJS.ProcessEnv = process.env): EnvConfig => {
       );
     }
 
-    if (value.LOG_PRETTY || value.LOG_TO_FILE) {
+    if (value.LOG_PRETTY) {
       throw new Error(
-        'Environment validation failed: production requires redacted JSON logs on stdout (LOG_PRETTY=false, LOG_TO_FILE=false)',
+        'Environment validation failed: production requires redacted JSON logs (LOG_PRETTY=false)',
       );
     }
 
@@ -710,6 +779,13 @@ const workloadWorkerEnvSchema = Joi.object({
     .default(false),
   LOG_PRETTY: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(true),
   LOG_TO_FILE: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(false),
+  LOG_DIR: Joi.string().trim().min(1).default('./logs/api'),
+  LOG_MAX_SIZE: Joi.string()
+    .trim()
+    .lowercase()
+    .pattern(/^\d+(?:k|m|g)?$/)
+    .default('10m'),
+  LOG_RETENTION_DAYS: Joi.number().integer().min(1).max(365).default(14),
 }).unknown(true);
 
 const validateWorkloadWorkerEnv = (
@@ -732,9 +808,9 @@ const validateWorkloadWorkerEnv = (
         'Workload worker environment validation failed: production requires an external worker with hard timeout exit',
       );
     }
-    if (value.LOG_PRETTY || value.LOG_TO_FILE) {
+    if (value.LOG_PRETTY) {
       throw new Error(
-        'Workload worker environment validation failed: production requires redacted JSON stdout logs',
+        'Workload worker environment validation failed: production requires redacted JSON logs',
       );
     }
   }
