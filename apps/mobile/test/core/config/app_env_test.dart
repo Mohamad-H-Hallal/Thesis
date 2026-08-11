@@ -6,7 +6,19 @@ void main() {
     expect(() => AppEnv.flavor, returnsNormally);
     expect(() => AppEnv.apiBaseUrl, returnsNormally);
     expect(() => AppEnv.apiVersionPrefix, returnsNormally);
-    expect(() => AppEnv.useMockAuth, returnsNormally);
+    const mockAuthRaw = String.fromEnvironment(
+      'USE_MOCK_AUTH',
+      defaultValue: '',
+    );
+    final mockAuthEnabled = switch (mockAuthRaw.trim().toLowerCase()) {
+      '1' || 'true' || 'yes' => true,
+      _ => false,
+    };
+    if (AppEnv.flavor == AppFlavor.prod && mockAuthEnabled) {
+      expect(() => AppEnv.useMockAuth, throwsStateError);
+    } else {
+      expect(() => AppEnv.useMockAuth, returnsNormally);
+    }
     expect(() => AppEnv.useMockData, returnsNormally);
     expect(() => AppEnv.pushNotificationsRequested, returnsNormally);
     expect(() => AppEnv.androidPushNotificationsRequested, returnsNormally);

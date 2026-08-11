@@ -7,16 +7,23 @@ import {
   getLatestAccountState,
   getProtectedSuperAdminEmail,
   isProtectedSuperAdminEmail,
-  normalizeEmail,
   getUserAccessState,
 } from '../lib/userWorkflow';
 import { isPlatformPushEnabled, isPushDeliveryConfigured } from '../lib/firebasePush';
+import { notifyAccountAccessChanged } from '../lib/workflowNotifications';
 import { categoryIconsDir } from '../config/upload';
 import { type MemoryPhotoFile } from '../services/featurePhotoSecurity.service';
 import {
   prepareQuarantinedImage,
   releaseQuarantinedImages,
 } from '../services/secureImageIntake.service';
+import {
+  normalizeEmailAddress,
+  normalizeLebaneseMobile,
+} from '../services/contactIdentity.service';
+import { assertPhoneAccountCapacity } from '../services/phoneAccountLimit.service';
+import { isContactAssuranceSatisfied } from '../services/contactAssurancePolicy.service';
+import { revokeAllUserSessions } from '../services/authSession.service';
 
 const getSupportSettingsRow = async () => {
   await query(`
@@ -316,7 +323,7 @@ const settingsController = {
         push_notifications: isPushDeliveryConfigured(),
         push_notifications_android: isPlatformPushEnabled('android'),
         push_notifications_ios: isPlatformPushEnabled('ios'),
-        email_notifications: true,
+        email_notifications: false,
         persisted_in_app_notifications: true,
       },
     });
@@ -952,9 +959,15 @@ const userController = {
       paramIndex++;
     }
     if (phone !== undefined) {
-      updates.push(`phone = $${paramIndex}`);
-      params.push(phone);
-      paramIndex++;
+      throw new AppError(
+        "An administrator cannot mark another user's mobile number as verified. The user must change and verify it through their account.",
+        400,
+        {
+          code: 'CONTACT_CHANGE_VERIFICATION_REQUIRED',
+          disposition: 'permanent_rejection',
+          retryable: false,
+        },
+      );
     }
     if (role) {
       updates.push(`role = $${paramIndex}`);
@@ -962,6 +975,25 @@ const userController = {
       paramIndex++;
     }
     if (is_active !== undefined) {
+      if (is_active === true) {
+        const verification = await query(
+          `SELECT role, email_verified_at, phone_verified_at, phone_format_validated_at,
+                  contact_verification_exempted_at
+           FROM "user" WHERE id = $1`,
+          [userId],
+        );
+        if (!verification.rows[0] || !isContactAssuranceSatisfied(verification.rows[0])) {
+          throw new AppError(
+            'Required contact assurance must be completed before activation.',
+            409,
+            {
+              code: 'CONTACT_VERIFICATION_REQUIRED',
+              disposition: 'permanent_rejection',
+              retryable: false,
+            },
+          );
+        }
+      }
       updates.push(`is_active = $${paramIndex}`);
       params.push(is_active);
       paramIndex++;
@@ -972,10 +1004,16 @@ const userController = {
     }
 
     params.push(userId);
-    const result = await query(
-      `UPDATE "user" SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING id, email, full_name, phone, role, is_active`,
-      params,
-    );
+    const result = await transaction(async (client) => {
+      const updated = await client.query(
+        `UPDATE "user" SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING id, email, full_name, phone, role, is_active`,
+        params,
+      );
+      if (is_active === false && updated.rows.length === 1) {
+        await revokeAllUserSessions(userId, 'admin_deactivated', client);
+      }
+      return updated;
+    });
 
     if (result.rows.length === 0) {
       throw new AppError('User not found', 404);
@@ -1016,13 +1054,28 @@ const userController = {
       nextIsActive: false,
     });
 
-    const result = await query(
-      `UPDATE "user"
-       SET is_active = FALSE
-       WHERE id = $1
-       RETURNING id, email, full_name, phone, role, is_active`,
-      [userId],
-    );
+    const result = await transaction(async (client) => {
+      const updated = await client.query(
+        `UPDATE "user"
+         SET is_active = FALSE
+         WHERE id = $1
+         RETURNING id, email, full_name, phone, role, is_active`,
+        [userId],
+      );
+      await revokeAllUserSessions(userId, 'admin_blocked', client);
+      return updated;
+    });
+
+    await notifyAccountAccessChanged(query, {
+      userId,
+      eventKey: `account:${userId}:blocked:${Date.now()}`,
+      title: 'Account access blocked',
+      message:
+        'An administrator blocked your TerraLeb account. Contact support if you believe this was unexpected.',
+      accountState: 'blocked',
+      role: targetUser.role,
+      changedByUserId: req.user?.id,
+    });
 
     res.json({
       success: true,
@@ -1051,13 +1104,42 @@ const userController = {
       nextIsActive: true,
     });
 
+    const verification = await query(
+      `SELECT role, email_verified_at, phone_verified_at, phone_format_validated_at,
+              contact_verification_exempted_at
+       FROM "user"
+       WHERE id = $1`,
+      [userId],
+    );
+    if (!verification.rows[0] || !isContactAssuranceSatisfied(verification.rows[0])) {
+      throw new AppError(
+        'Required contact assurance must be completed before the account can be unblocked.',
+        409,
+        {
+          code: 'CONTACT_VERIFICATION_REQUIRED',
+          disposition: 'permanent_rejection',
+          retryable: false,
+        },
+      );
+    }
+
     const result = await query(
       `UPDATE "user"
-       SET is_active = TRUE
+       SET is_active = TRUE, account_status = 'active'
        WHERE id = $1
        RETURNING id, email, full_name, phone, role, is_active`,
       [userId],
     );
+
+    await notifyAccountAccessChanged(query, {
+      userId,
+      eventKey: `account:${userId}:unblocked:${Date.now()}`,
+      title: 'Account access restored',
+      message: 'An administrator restored access to your TerraLeb account.',
+      accountState: 'active',
+      role: targetUser.role,
+      changedByUserId: req.user?.id,
+    });
 
     res.json({
       success: true,
@@ -1202,6 +1284,16 @@ const userController = {
         ],
       );
 
+      await notifyAccountAccessChanged(client, {
+        userId,
+        eventKey: `account:${userId}:role:${currentUser.role}:${nextRole}:${Date.now()}`,
+        title: 'Account role changed',
+        message: `Your TerraLeb account role changed from ${currentUser.role} to ${nextRole}.`,
+        accountState: 'active',
+        role: nextRole,
+        changedByUserId: req.user?.id,
+      });
+
       return {
         ...updated.rows[0],
         approved_assignment_count: 0,
@@ -1238,13 +1330,28 @@ const userController = {
       nextIsActive: false,
     });
 
-    const result = await query('UPDATE "user" SET is_active = false WHERE id = $1 RETURNING id', [
-      userId,
-    ]);
+    const result = await transaction(async (client) => {
+      const updated = await client.query(
+        'UPDATE "user" SET is_active = false WHERE id = $1 RETURNING id',
+        [userId],
+      );
+      await revokeAllUserSessions(userId, 'admin_deactivated', client);
+      return updated;
+    });
 
     if (result.rows.length === 0) {
       throw new AppError('User not found', 404);
     }
+
+    await notifyAccountAccessChanged(query, {
+      userId,
+      eventKey: `account:${userId}:deactivated:${Date.now()}`,
+      title: 'Account deactivated',
+      message: 'An administrator deactivated your TerraLeb account.',
+      accountState: 'inactive',
+      role: targetUser.role,
+      changedByUserId: req.user?.id,
+    });
 
     logger.info('User deactivated:', { userId, deactivatedBy: req.user.id });
 
@@ -1361,22 +1468,55 @@ const userController = {
     }
 
     const { email, password, full_name, phone } = req.body;
-    const normalizedEmail = normalizeEmail(email);
+    const normalizedEmail = normalizeEmailAddress(email);
+    const normalizedPhone = phone == null ? null : normalizeLebaneseMobile(phone);
+    if (!normalizedEmail || (phone != null && !normalizedPhone)) {
+      throw new AppError('Enter valid account contact details.', 400);
+    }
 
-    const existing = await query('SELECT id FROM "user" WHERE LOWER(email) = $1', [
-      normalizedEmail,
-    ]);
+    const existing = await query(
+      `SELECT id FROM "user"
+       WHERE email_canonical = $1
+       LIMIT 1`,
+      [normalizedEmail.canonical],
+    );
     if (existing.rows.length > 0) {
-      throw new AppError('Email already registered', 409);
+      throw new AppError('An account already uses this email address.', 409, {
+        code: 'EMAIL_ALREADY_IN_USE',
+        disposition: 'permanent_rejection',
+        retryable: false,
+      });
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
-    const result = await query(
-      `INSERT INTO "user" (email, password_hash, full_name, phone, role, is_active)
-       VALUES ($1, $2, $3, $4, 'admin', TRUE)
-       RETURNING id, email, full_name, phone, role, is_active, created_at`,
-      [normalizedEmail, passwordHash, full_name, phone ?? null],
-    );
+    const result = await transaction(async (client) => {
+      if (normalizedPhone) {
+        await assertPhoneAccountCapacity(client, normalizedPhone.e164);
+      }
+      return client.query(
+        `INSERT INTO "user"
+           (email, email_original, email_canonical, password_hash, full_name,
+            phone, phone_e164, phone_format_validated_at, phone_validation_method,
+            role, is_active, account_status, verification_required_at,
+            contact_verification_exempted_at, contact_verification_exempted_by)
+         VALUES ($1, $1, $2, $3, $4, $5::text, $5::text,
+                 CASE WHEN $5::text IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END,
+                 CASE WHEN $5::text IS NULL THEN NULL ELSE 'libphonenumber_max' END,
+                 'admin', TRUE, 'active', NULL, CURRENT_TIMESTAMP, $6)
+         RETURNING id, email, email_original, email_canonical, email_verified_at,
+                   full_name, phone, phone_e164, phone_verified_at, role, is_active,
+                   account_status, auth_version, created_at,
+                   contact_verification_exempted_at, contact_verification_exempted_by`,
+        [
+          normalizedEmail.original,
+          normalizedEmail.canonical,
+          passwordHash,
+          full_name,
+          normalizedPhone?.e164 ?? null,
+          req.user.id,
+        ],
+      );
+    });
 
     logger.info('Admin user created by protected super administrator', {
       createdUserId: result.rows[0].id,
@@ -1385,7 +1525,7 @@ const userController = {
 
     res.status(201).json({
       success: true,
-      message: 'Admin user created successfully',
+      message: 'Admin account created and activated.',
       data: {
         ...result.rows[0],
         is_protected_super_admin: false,
@@ -1404,10 +1544,28 @@ const userController = {
       throw new AppError('Contributor account is already active.', 409);
     }
 
+    const verification = await query(
+      `SELECT role, email_verified_at, phone_verified_at, phone_format_validated_at,
+              contact_verification_exempted_at
+       FROM "user" WHERE id = $1`,
+      [userId],
+    );
+    if (!verification.rows[0] || !isContactAssuranceSatisfied(verification.rows[0])) {
+      throw new AppError(
+        'The contributor must complete the configured contact assurance before approval.',
+        409,
+        {
+          code: 'CONTACT_VERIFICATION_REQUIRED',
+          disposition: 'permanent_rejection',
+          retryable: false,
+        },
+      );
+    }
+
     const approvedUser = await transaction(async (client) => {
       const result = await client.query(
         `UPDATE "user"
-         SET is_active = TRUE
+         SET is_active = TRUE, account_status = 'active'
          WHERE id = $1
          RETURNING id, email, full_name, phone, role, is_active, created_at`,
         [userId],

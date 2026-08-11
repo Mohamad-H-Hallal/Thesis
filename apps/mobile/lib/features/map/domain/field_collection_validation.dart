@@ -1,4 +1,6 @@
 import '../../projects/domain/project.dart';
+import '../../auth/presentation/utils/auth_form_validators.dart';
+import '../../../core/utils/lebanese_phone.dart';
 import 'package:latlong2/latlong.dart';
 
 class Phase6Validation {
@@ -42,8 +44,7 @@ class Phase6Validation {
       }
     }
 
-    if (gpsAccuracyMeters != null &&
-        gpsAccuracyMeters > maxGpsAccuracyMeters) {
+    if (gpsAccuracyMeters != null && gpsAccuracyMeters > maxGpsAccuracyMeters) {
       return 'GPS accuracy (${gpsAccuracyMeters.toStringAsFixed(1)}m) is above allowed threshold (${maxGpsAccuracyMeters.toStringAsFixed(1)}m).';
     }
 
@@ -88,6 +89,19 @@ class Phase6Validation {
           field.options.isNotEmpty &&
           !field.options.contains('$value')) {
         errors[field.key] = '${field.label} has an invalid option.';
+      }
+
+      if (field.type == CollectionFieldType.email && value is String) {
+        final emailError = AuthFormValidators.email(value);
+        if (emailError != null) {
+          errors[field.key] = 'Enter a valid email address.';
+        }
+      }
+
+      if (field.type == CollectionFieldType.lebaneseMobile &&
+          value is String &&
+          !LebanesePhone.isValid(value)) {
+        errors[field.key] = 'Enter a valid Lebanese mobile number.';
       }
     }
 

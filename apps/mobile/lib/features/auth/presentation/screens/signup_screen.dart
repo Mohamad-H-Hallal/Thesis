@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/config/app_env.dart';
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
@@ -10,17 +11,18 @@ import '../../../../core/web/input_autofill_patch.dart';
 import '../../../../core/widgets/animated_reveal.dart';
 import '../../../../core/widgets/app_button.dart';
 import '../../../../core/widgets/app_card.dart';
-import '../../../../core/widgets/app_logo.dart';
 import '../../../../core/widgets/app_scaffold.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/widgets/loading_overlay.dart';
+import '../../../../core/widgets/terraleb_logo.dart';
 import '../../domain/auth_models.dart';
 import '../controllers/auth_controller.dart';
 import '../utils/auth_form_validators.dart';
 import '../utils/auth_input_formatters.dart';
 import '../widgets/auth_viewport.dart';
 import '../widgets/auth_error_banner.dart';
+import '../widgets/lebanese_mobile_field.dart';
 
 class SignupScreen extends ConsumerStatefulWidget {
   const SignupScreen({super.key});
@@ -42,7 +44,6 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
   final _passwordFocus = FocusNode();
   final _confirmFocus = FocusNode();
   final _noLeadingSpaceFormatter = NoLeadingSpaceFormatter();
-  final _phoneFormatter = LebanesePhoneFormatter();
 
   UserRole _selectedRole = UserRole.contributor;
   bool _obscurePassword = true;
@@ -70,10 +71,15 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
 
       setState(() {
         _formLevelError = nextError;
-        _emailFieldError = nextError == 'This email is already registered.'
+        _emailFieldError =
+            next.errorCode == 'duplicate_email' ||
+                next.errorCode == 'duplicate_contact'
             ? nextError
             : null;
-        _phoneFieldError = nextError == 'Enter a valid phone number.'
+        _phoneFieldError =
+            next.errorCode == 'duplicate_phone' ||
+                next.errorCode == 'duplicate_contact' ||
+                next.errorCode == 'phone_account_limit'
             ? nextError
             : null;
       });
@@ -143,12 +149,11 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
     final authState = ref.read(authControllerProvider);
     if (successMessage != null &&
         (authState.error == null || authState.error!.trim().isEmpty)) {
-      final notice = Uri.encodeComponent(
-        successMessage == 'Account created successfully. You can log in now.'
-            ? 'Account has been created successfully.'
-            : successMessage,
+      // Mock authentication is an explicit local UI-fixture mode and has no
+      // delivery provider. Real builds always verify contact ownership.
+      context.go(
+        AppEnv.useMockAuth ? AppRoutes.login : AppRoutes.verifyContact,
       );
-      context.go('${AppRoutes.login}?notice=$notice&success=true');
       return;
     }
 
@@ -157,10 +162,15 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
         : 'Signup failed. Please review the form and try again.';
     setState(() {
       _formLevelError = failureMessage;
-      _emailFieldError = failureMessage == 'This email is already registered.'
+      _emailFieldError =
+          authState.errorCode == 'duplicate_email' ||
+              authState.errorCode == 'duplicate_contact'
           ? failureMessage
           : null;
-      _phoneFieldError = failureMessage == 'Enter a valid phone number.'
+      _phoneFieldError =
+          authState.errorCode == 'duplicate_phone' ||
+              authState.errorCode == 'duplicate_contact' ||
+              authState.errorCode == 'phone_account_limit'
           ? failureMessage
           : null;
     });
@@ -241,17 +251,13 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                   AnimatedReveal(
                     child: Column(
                       children: <Widget>[
-                        const Center(child: AppLogo(size: 72)),
+                        const Center(
+                          child: TerraLebLogo(width: 220, height: 76),
+                        ),
                         const SizedBox(height: AppSpacing.sm),
                         Text(
                           'Create your account',
                           style: Theme.of(context).textTheme.headlineSmall,
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: AppSpacing.xs),
-                        Text(
-                          'Choose viewer access for immediate login or request contributor access for field collection.',
-                          style: Theme.of(context).textTheme.bodyMedium,
                           textAlign: TextAlign.center,
                         ),
                       ],
@@ -278,7 +284,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                           Text(
                             _selectedRole == UserRole.contributor
                                 ? 'Contributor accounts require admin approval before first login.'
-                                : 'Viewer accounts are active immediately.',
+                                : 'Viewer accounts activate after email verification.',
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                           const SizedBox(height: AppSpacing.sm),
@@ -304,22 +310,13 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                                 ),
                           ),
                           const SizedBox(height: AppSpacing.sm),
-                          AppTextField(
-                            label: 'Phone number',
-                            hint: 'Phone number',
+                          LebaneseMobileField(
                             controller: _phoneController,
-                            keyboardType: TextInputType.phone,
                             textInputAction: TextInputAction.next,
                             focusNode: _phoneFocus,
                             onFieldSubmitted: (_) => FocusScope.of(
                               context,
                             ).requestFocus(_emailFocus),
-                            inputFormatters: <TextInputFormatter>[
-                              _phoneFormatter,
-                            ],
-                            autofillHints: const <String>[
-                              AutofillHints.telephoneNumber,
-                            ],
                             onChanged: (_) {
                               if (_formLevelError == null &&
                                   _phoneFieldError == null) {

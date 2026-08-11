@@ -32,6 +32,14 @@
         "fdbcc6e1254555f47bf0d7e89ff8d65087c2a7a7d0c201d23ca1692acd6046cb"
       ],
       "reason": "The pre-release development database applied an earlier working-copy revision; migration 0040 reapplies the final cleanup functions and indexes."
+    },
+    {
+      "filename": "0054_in_app_push_notifications_only.sql",
+      "sourceChecksum": "aeb96176d2cfc37a9a0ec958b73c1bd1b7d3c3835875768ed3d90584a092b174",
+      "acceptedChecksums": [
+        "9b78cedc65491950be7bb69684e7bcc28128fb603c23f98ca0531d339b28d4e5"
+      ],
+      "reason": "The pre-release development database applied an earlier working-copy revision; migration 0055 reconciles the final workflow notification types, delivery policy, and idempotency index."
     }
   ]
 }

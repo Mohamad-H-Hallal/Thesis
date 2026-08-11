@@ -14,10 +14,7 @@ const normalizeRequestPath = (originalUrl: string): string => {
 };
 
 const normalizeRequestId = (incoming: unknown): string => {
-  if (
-    typeof incoming === 'string' &&
-    /^[A-Za-z0-9._-]{1,128}$/.test(incoming.trim())
-  ) {
+  if (typeof incoming === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(incoming.trim())) {
     return incoming.trim();
   }
   return randomUUID();
@@ -33,13 +30,13 @@ const attachRequestContext = (req: Request, res: Response, next: NextFunction): 
   res.on('finish', () => {
     const durationMs = req.startTimeMs ? Date.now() - req.startTimeMs : undefined;
     logger.info('HTTP request completed', {
+      component: 'http',
       requestId,
       method: req.method,
       path: normalizeRequestPath(req.originalUrl),
       statusCode: res.statusCode,
       durationMs,
       userId: req.user?.id,
-      ip: req.ip,
     });
   });
 

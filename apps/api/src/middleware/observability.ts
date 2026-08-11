@@ -409,16 +409,20 @@ const readinessHandler = async (req: Request, res: Response): Promise<void> => {
   }
   const rateLimitBackend = await getRateLimitBackendReadiness();
   const ready = databaseCheck.status === 'up' && rateLimitBackend.status !== 'down';
+  const diagnosticChecks =
+    process.env.NODE_ENV === 'production'
+      ? undefined
+      : {
+          database: databaseCheck,
+          rateLimitBackend,
+        };
 
   if (ready) {
     res.json({
       success: true,
       status: 'ready',
       requestId: req.requestId,
-      checks: {
-        database: databaseCheck,
-        rateLimitBackend,
-      },
+      ...(diagnosticChecks ? { checks: diagnosticChecks } : {}),
       timestamp: new Date().toISOString(),
     });
     return;
@@ -432,10 +436,7 @@ const readinessHandler = async (req: Request, res: Response): Promise<void> => {
     success: false,
     status: 'not_ready',
     requestId: req.requestId,
-    checks: {
-      database: databaseCheck,
-      rateLimitBackend,
-    },
+    ...(diagnosticChecks ? { checks: diagnosticChecks } : {}),
     timestamp: new Date().toISOString(),
   });
 };

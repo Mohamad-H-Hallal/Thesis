@@ -9,6 +9,7 @@ import '../../features/auth/presentation/screens/forgot_password_screen.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/auth/presentation/screens/reset_password_screen.dart';
 import '../../features/auth/presentation/screens/signup_screen.dart';
+import '../../features/auth/presentation/screens/contact_verification_screen.dart';
 import '../../features/auth/presentation/screens/splash_screen.dart';
 import '../../features/admin/presentation/screens/category_form_screen.dart';
 import '../../features/admin/presentation/screens/project_assignments_screen.dart';
@@ -46,6 +47,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
       final isAuthRoute =
           path == AppRoutes.login ||
           path == AppRoutes.signup ||
+          path == AppRoutes.verifyContact ||
           path == AppRoutes.forgotPassword ||
           path == AppRoutes.resetPassword;
       final isSplash = path == AppRoutes.splash;
@@ -116,6 +118,11 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
       GoRoute(
         path: AppRoutes.signup,
         pageBuilder: (_, state) => _buildPage(state, const SignupScreen()),
+      ),
+      GoRoute(
+        path: AppRoutes.verifyContact,
+        pageBuilder: (_, state) =>
+            _buildPage(state, const ContactVerificationScreen()),
       ),
       GoRoute(
         path: AppRoutes.forgotPassword,
@@ -539,6 +546,7 @@ String _postAuthRedirectTarget({
 
   if (currentUri.path == AppRoutes.login ||
       currentUri.path == AppRoutes.signup ||
+      currentUri.path == AppRoutes.verifyContact ||
       currentUri.path == AppRoutes.splash ||
       currentUri.path == AppRoutes.forgotPassword ||
       currentUri.path == AppRoutes.resetPassword) {
@@ -559,6 +567,7 @@ String? _requestedTargetFromUri(Uri currentUri) {
       currentPath == AppRoutes.app ||
       currentPath == AppRoutes.login ||
       currentPath == AppRoutes.signup ||
+      currentPath == AppRoutes.verifyContact ||
       currentPath == AppRoutes.forgotPassword ||
       currentPath == AppRoutes.resetPassword) {
     return null;

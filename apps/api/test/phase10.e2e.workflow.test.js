@@ -21,7 +21,6 @@ const AdmZip = require('adm-zip');
 const fs = require('fs').promises;
 const path = require('path');
 const sharp = require('sharp');
-const jwt = require('jsonwebtoken');
 const { cleanupOldExports } = require('../src/controllers/export.controller');
 const { storageAdapter } = require('../src/services/storageAdapter.service');
 
@@ -416,11 +415,7 @@ describe('Phase 10 E2E workflow', () => {
       fullName: 'Retention Admin',
       emailPrefix: 'retention-admin',
     });
-    const token = jwt.sign(
-      { userId: admin.user.id, role: 'admin' },
-      process.env.JWT_SECRET_CURRENT || process.env.JWT_SECRET,
-      { expiresIn: '1h' },
-    );
+    const token = admin.token;
     const category = await pool.query(
       `INSERT INTO project_category (name, description)
        VALUES ($1, $2)

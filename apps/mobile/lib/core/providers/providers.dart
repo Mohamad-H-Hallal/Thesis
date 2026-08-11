@@ -14,6 +14,7 @@ import '../../features/admin/domain/admin_models.dart';
 import '../../features/admin/domain/admin_repository.dart';
 import '../../features/auth/data/fake_auth_repository.dart';
 import '../../features/auth/data/real_auth_repository.dart';
+import '../../features/auth/data/contact_verification_repository.dart';
 import '../../features/auth/domain/auth_models.dart';
 import '../../features/auth/domain/auth_repository.dart';
 import '../../features/auth/presentation/controllers/auth_controller.dart';
@@ -118,6 +119,14 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
     ref.watch(apiClientProvider),
   );
 });
+
+final contactVerificationRepositoryProvider =
+    Provider<ContactVerificationRepository>((ref) {
+      return ContactVerificationRepository(
+        ref.watch(secureStorageProvider),
+        ref.watch(apiClientProvider),
+      );
+    });
 
 final projectsRepositoryProvider = Provider<ProjectsRepository>((ref) {
   if (AppEnv.useMockData) {
@@ -1487,6 +1496,7 @@ final exportJobsSummaryProvider =
           processing: 0,
           completed: 0,
           failed: 0,
+          expired: 0,
         );
       }
       ref.watch(workflowRefreshTickProvider);

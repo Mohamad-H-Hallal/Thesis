@@ -129,6 +129,7 @@ class ExportDashboardMetrics {
     required this.processing,
     required this.completed,
     required this.failed,
+    required this.expired,
   });
 
   final int total;
@@ -136,12 +137,14 @@ class ExportDashboardMetrics {
   final int processing;
   final int completed;
   final int failed;
+  final int expired;
 
   static ExportDashboardMetrics fromJobs(List<ExportJob> jobs) {
     var pending = 0;
     var processing = 0;
     var completed = 0;
     var failed = 0;
+    var expired = 0;
 
     for (final job in jobs) {
       switch (job.status) {
@@ -158,7 +161,7 @@ class ExportDashboardMetrics {
           failed += 1;
           break;
         case ExportJobStatus.expired:
-          completed += 1;
+          expired += 1;
           break;
       }
     }
@@ -169,6 +172,7 @@ class ExportDashboardMetrics {
       processing: processing,
       completed: completed,
       failed: failed,
+      expired: expired,
     );
   }
 }

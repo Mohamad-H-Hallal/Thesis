@@ -1,4 +1,4 @@
-import { RedisStore } from 'rate-limit-redis';
+import { RedisStore, type RedisReply } from 'rate-limit-redis';
 import { createClient, type RedisClientType } from 'redis';
 import type { Store } from 'express-rate-limit';
 const logger = require('../utils/logger');
@@ -33,6 +33,9 @@ let configuredConnectTimeoutMs = Math.max(
   Number.parseInt(process.env.REDIS_CONNECT_TIMEOUT_MS ?? '5000', 10) || 5000,
 );
 let redisClient: RedisClientType | null = null;
+let redisConnectionPromise: Promise<void> | null = null;
+let rateLimitBackendClosed = false;
+const pendingRedisCommands = new Set<Promise<unknown>>();
 
 const configureRateLimitBackend = (config: RateLimitBackendConfig): void => {
   const nextMode = config.RATE_LIMIT_STORE === 'redis' ? 'redis' : 'memory';
@@ -42,11 +45,9 @@ const configureRateLimitBackend = (config: RateLimitBackendConfig): void => {
 
   if (
     redisClient &&
-    (
-      nextMode !== configuredMode ||
+    (nextMode !== configuredMode ||
       nextUrl !== configuredRedisUrl ||
-      nextPassword !== configuredRedisPassword
-    )
+      nextPassword !== configuredRedisPassword)
   ) {
     throw new Error('Rate-limit backend cannot be reconfigured after its client is created');
   }
@@ -86,33 +87,74 @@ const getOrCreateRedisClient = (): RedisClientType => {
   return redisClient;
 };
 
+const ensureRedisClientReady = async (client: RedisClientType): Promise<void> => {
+  if (client.isReady) {
+    return;
+  }
+
+  if (!redisConnectionPromise) {
+    redisConnectionPromise = (async () => {
+      if (!client.isOpen) {
+        await client.connect();
+      }
+      await client.ping();
+    })().finally(() => {
+      redisConnectionPromise = null;
+    });
+  }
+
+  await redisConnectionPromise;
+  if (!client.isReady) {
+    throw new RateLimitBackendUnavailableError();
+  }
+};
+
 const createSharedRateLimitStore = (policyName: string): Store | undefined => {
   if (configuredMode !== 'redis') {
     return undefined;
+  }
+  if (rateLimitBackendClosed) {
+    return {
+      increment: async () => {
+        throw new RateLimitBackendUnavailableError();
+      },
+      decrement: async () => undefined,
+      resetKey: async () => undefined,
+    };
   }
 
   const client = getOrCreateRedisClient();
   return new RedisStore({
     prefix: `gis-rate-limit:${policyName}:`,
     sendCommand: async (...args: string[]) => {
-      if (!client.isReady) {
+      if (rateLimitBackendClosed) {
         throw new RateLimitBackendUnavailableError();
       }
+      const command: Promise<RedisReply> = (async () => {
+        await ensureRedisClientReady(client);
+        const reply = await client.sendCommand(args as never);
+        if (reply === null) {
+          throw new RateLimitBackendUnavailableError('Redis returned an empty rate-limit reply.');
+        }
+        return reply as unknown as RedisReply;
+      })();
+      pendingRedisCommands.add(command);
       try {
-        return await client.sendCommand(args as never);
+        return await command;
       } catch (error) {
         throw new RateLimitBackendUnavailableError(
           error instanceof Error ? error.message : undefined,
         );
+      } finally {
+        pendingRedisCommands.delete(command);
       }
     },
   });
 };
 
-const initializeRateLimitBackend = async (
-  config: RateLimitBackendConfig,
-): Promise<void> => {
+const initializeRateLimitBackend = async (config: RateLimitBackendConfig): Promise<void> => {
   configureRateLimitBackend(config);
+  rateLimitBackendClosed = false;
   if (configuredMode !== 'redis') {
     logger.warn('Using process-local rate limiting', {
       mode: configuredMode,
@@ -122,9 +164,7 @@ const initializeRateLimitBackend = async (
   }
 
   const client = getOrCreateRedisClient();
-  if (!client.isOpen) {
-    await client.connect();
-  }
+  await ensureRedisClientReady(client);
   await client.ping();
   logger.info('Shared rate-limit backend is ready', { mode: configuredMode });
 };
@@ -159,11 +199,18 @@ const getRateLimitBackendReadiness = async (): Promise<{
 };
 
 const closeRateLimitBackend = async (): Promise<void> => {
+  rateLimitBackendClosed = true;
   if (!redisClient) {
     return;
   }
   const client = redisClient;
   redisClient = null;
+  if (redisConnectionPromise) {
+    await redisConnectionPromise.catch(() => undefined);
+  }
+  if (pendingRedisCommands.size > 0) {
+    await Promise.allSettled([...pendingRedisCommands]);
+  }
   if (client.isOpen) {
     await client.quit();
   }

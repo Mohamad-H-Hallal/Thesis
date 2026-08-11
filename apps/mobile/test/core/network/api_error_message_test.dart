@@ -109,5 +109,17 @@ void main() {
         'Feature submission failed.',
       );
     });
+
+    test('does not expose internal state diagnostics', () {
+      expect(
+        userFacingErrorMessage(
+          StateError(
+            'The project feature response did not match the active project.',
+          ),
+          fallback: 'Unable to load the project preview map right now.',
+        ),
+        'Unable to load the project preview map right now.',
+      );
+    });
   });
 }

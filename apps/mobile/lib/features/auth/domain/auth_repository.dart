@@ -1,5 +1,19 @@
 import 'auth_models.dart';
 
+class RotatedAuthTokens {
+  const RotatedAuthTokens({
+    required this.accessToken,
+    required this.refreshToken,
+  });
+
+  final String accessToken;
+  final String refreshToken;
+}
+
+abstract interface class AuthTokenRotationSource {
+  RotatedAuthTokens? takeRotatedAuthTokens();
+}
+
 abstract class AuthRepository {
   Future<AuthSession?> restoreSession();
 

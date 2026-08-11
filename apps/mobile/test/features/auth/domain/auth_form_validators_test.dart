@@ -10,6 +10,13 @@ void main() {
     test('returns null for valid email', () {
       expect(AuthFormValidators.email('collector@gov.lb'), isNull);
     });
+
+    test('accepts plus tags and surrounding whitespace', () {
+      expect(
+        AuthFormValidators.email('  User.Name+field@Example.COM  '),
+        isNull,
+      );
+    });
   });
 
   group('AuthFormValidators.password', () {
@@ -43,6 +50,24 @@ void main() {
       expect(AuthFormValidators.phoneOptional(''), isNull);
       expect(AuthFormValidators.phoneOptional('03123456'), isNull);
       expect(AuthFormValidators.phoneOptional('12ab'), isNotNull);
+    });
+
+    test('normalizes Lebanese formats and Eastern Arabic digits', () {
+      expect(AuthFormValidators.phoneOptional('70 123 456'), isNull);
+      expect(AuthFormValidators.phoneOptional('+961-3-123-456'), isNull);
+      expect(AuthFormValidators.phoneOptional('78 712 345'), isNull);
+      expect(AuthFormValidators.phoneOptional('79 012 345'), isNull);
+      expect(AuthFormValidators.phoneOptional('81 123 456'), isNull);
+      expect(
+        AuthFormValidators.normalizeLebanesePhone('٠٣ ١٢٣ ٤٥٦'),
+        '+9613123456',
+      );
+    });
+
+    test('rejects invalid prefixes, landlines, and foreign numbers', () {
+      expect(AuthFormValidators.phoneOptional('12 345 678'), isNotNull);
+      expect(AuthFormValidators.phoneOptional('01 234 567'), isNotNull);
+      expect(AuthFormValidators.phoneOptional('+33 6 12 34 56 78'), isNotNull);
     });
   });
 }

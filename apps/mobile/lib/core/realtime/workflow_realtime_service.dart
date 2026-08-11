@@ -29,11 +29,13 @@ class WorkflowRealtimeService {
   Timer? _reconnectTimer;
   bool _stopped = true;
   String? _accessToken;
+  AccessTokenProvider? _accessTokenProvider;
   ValueChanged<WorkflowRealtimeEvent>? _onWorkflowChanged;
   int _reconnectAttempt = 0;
 
   void connect({
     required String accessToken,
+    AccessTokenProvider? accessTokenProvider,
     required ValueChanged<WorkflowRealtimeEvent> onWorkflowChanged,
   }) {
     final normalizedToken = accessToken.trim();
@@ -43,6 +45,7 @@ class WorkflowRealtimeService {
     }
 
     _onWorkflowChanged = onWorkflowChanged;
+    _accessTokenProvider = accessTokenProvider;
     if (!_stopped && _accessToken == normalizedToken && _channel != null) {
       return;
     }
@@ -55,6 +58,7 @@ class WorkflowRealtimeService {
   void disconnect() {
     _stopped = true;
     _accessToken = null;
+    _accessTokenProvider = null;
     _onWorkflowChanged = null;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
@@ -69,10 +73,11 @@ class WorkflowRealtimeService {
   }
 
   void _openSocket() {
-    final token = _accessToken;
-    if (_stopped || token == null || token.isEmpty) {
+    final token = (_accessTokenProvider?.call() ?? _accessToken ?? '').trim();
+    if (_stopped || token.isEmpty) {
       return;
     }
+    _accessToken = token;
 
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
@@ -80,7 +85,7 @@ class WorkflowRealtimeService {
     _channel?.sink.close();
 
     try {
-      final channel = WebSocketChannel.connect(_workflowRealtimeUri(token));
+      final channel = WebSocketChannel.connect(_workflowRealtimeUri());
       _channel = channel;
       _subscription = channel.stream.listen(
         _handleMessage,
@@ -92,6 +97,12 @@ class WorkflowRealtimeService {
         channel.ready
             .then<void>((_) {
               if (_channel == channel && !_stopped) {
+                channel.sink.add(
+                  jsonEncode(<String, String>{
+                    'type': 'authenticate',
+                    'token': token,
+                  }),
+                );
                 _reconnectAttempt = 0;
               }
             })
@@ -156,7 +167,7 @@ class WorkflowRealtimeService {
     _reconnectTimer = Timer(Duration(seconds: seconds), _openSocket);
   }
 
-  Uri _workflowRealtimeUri(String token) {
+  Uri _workflowRealtimeUri() {
     final base = Uri.parse(AppEnv.apiBaseUrl);
     final scheme = base.scheme == 'https' ? 'wss' : 'ws';
     final basePath = base.path.endsWith('/')
@@ -169,9 +180,9 @@ class WorkflowRealtimeService {
     return base.replace(
       scheme: scheme,
       path: '$basePath$versionPrefix/realtime/workflow',
-      queryParameters: <String, String>{'token': token},
     );
   }
 }
 
 typedef ValueChanged<T> = void Function(T value);
+typedef AccessTokenProvider = String Function();

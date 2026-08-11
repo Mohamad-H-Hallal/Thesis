@@ -86,6 +86,17 @@ class _WorkflowRealtimeCoordinatorState
     _connectedRealtimeToken = token;
     _workflowRealtimeService.connect(
       accessToken: token,
+      accessTokenProvider: () {
+        final currentSession = ref.read(authControllerProvider).session;
+        if (currentSession == null) {
+          return '';
+        }
+        return ref
+                .read(apiClientProvider)
+                .captureSessionForOwner(currentSession.user.id)
+                ?.accessToken ??
+            currentSession.accessToken;
+      },
       onWorkflowChanged: _handleWorkflowChange,
     );
   }

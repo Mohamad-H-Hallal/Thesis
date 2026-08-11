@@ -5,6 +5,7 @@ import {
   shouldStripManagedFeatureAttributeKey,
 } from '../lib/featureAttributes';
 import { AppError, permanentOfflineSyncError } from '../middleware/error';
+import { normalizeEmailAddress, normalizeLebaneseMobile } from './contactIdentity.service';
 
 export type GeometryType = 'Point' | 'LineString' | 'Polygon';
 
@@ -654,6 +655,12 @@ const validateType = (value: unknown, expectedType: string): boolean => {
     case 'textarea':
     case 'select':
     case 'date':
+    case 'email':
+    case 'phone':
+    case 'mobile':
+    case 'telephone':
+    case 'lebaneseMobile':
+    case 'lebanese_mobile':
       return typeof value === 'string';
     case 'number':
       return typeof value === 'number' && Number.isFinite(value);
@@ -726,7 +733,9 @@ const assertSupportedJsonSchemaProperty = (
     }
     if (
       propertySchema.format !== undefined &&
-      !['date', 'date-time', 'uuid', 'email'].includes(String(propertySchema.format))
+      !['date', 'date-time', 'uuid', 'email', 'lebanese-mobile'].includes(
+        String(propertySchema.format),
+      )
     ) {
       throw schemaConfigurationError();
     }
@@ -845,10 +854,41 @@ const stringMatchesFormat = (value: string, format: unknown): boolean => {
     case 'uuid':
       return UUID_PATTERN.test(value);
     case 'email':
-      return /^[^\s@]{1,64}@[^\s@.]{1,190}\.[^\s@]{2,63}$/.test(value);
+      return normalizeEmailAddress(value) != null;
+    case 'lebanese-mobile':
+      return normalizeLebaneseMobile(value) != null;
     default:
       return false;
   }
+};
+
+const normalizeSchemaContactValue = (
+  value: unknown,
+  propertySchema: Record<string, unknown>,
+): unknown => {
+  if (typeof value === 'string' && propertySchema.format === 'email') {
+    return normalizeEmailAddress(value)?.delivery ?? value;
+  }
+  if (typeof value === 'string' && propertySchema.format === 'lebanese-mobile') {
+    return normalizeLebaneseMobile(value)?.e164 ?? value;
+  }
+  if (Array.isArray(value) && isSchemaRecord(propertySchema.items)) {
+    return value.map((item) =>
+      normalizeSchemaContactValue(item, propertySchema.items as Record<string, unknown>),
+    );
+  }
+  if (isSchemaRecord(value) && isSchemaRecord(propertySchema.properties)) {
+    const properties = propertySchema.properties as Record<string, Record<string, unknown>>;
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nestedValue]) => [
+        key,
+        properties[key] == null
+          ? nestedValue
+          : normalizeSchemaContactValue(nestedValue, properties[key]),
+      ]),
+    );
+  }
+  return value;
 };
 
 const jsonValuesEqual = (left: unknown, right: unknown): boolean =>
@@ -1047,8 +1087,13 @@ export const validateAttributesAgainstSchema = (
     if (attributes[key] === undefined) {
       continue;
     }
+    if (attributes[key] === '' && !jsonSchemaRequired.includes(key)) {
+      delete attributes[key];
+      continue;
+    }
     if (strictOffline) {
       validateStrictJsonSchemaValue(attributes[key], propSchema);
+      attributes[key] = normalizeSchemaContactValue(attributes[key], propSchema);
       continue;
     }
     const expectedType = typeof propSchema?.type === 'string' ? propSchema.type : null;
@@ -1058,6 +1103,13 @@ export const validateAttributesAgainstSchema = (
       }
       throw new AppError(`Invalid type for attribute "${key}"`, 422);
     }
+    if (
+      typeof attributes[key] === 'string' &&
+      !stringMatchesFormat(attributes[key] as string, propSchema?.format)
+    ) {
+      throw new AppError(`Invalid format for attribute "${key}"`, 422);
+    }
+    attributes[key] = normalizeSchemaContactValue(attributes[key], propSchema);
   }
 
   for (const field of fields) {
@@ -1069,9 +1121,22 @@ export const validateAttributesAgainstSchema = (
     if (
       strictOffline &&
       field.type !== undefined &&
-      !['string', 'text', 'textarea', 'select', 'date', 'number', 'integer', 'boolean'].includes(
-        field.type,
-      )
+      ![
+        'string',
+        'text',
+        'textarea',
+        'select',
+        'date',
+        'number',
+        'integer',
+        'boolean',
+        'email',
+        'phone',
+        'mobile',
+        'telephone',
+        'lebaneseMobile',
+        'lebanese_mobile',
+      ].includes(field.type)
     ) {
       throw schemaConfigurationError();
     }
@@ -1084,11 +1149,41 @@ export const validateAttributesAgainstSchema = (
       throw new AppError(`Missing required attribute: ${fieldKey}`, 422);
     }
 
+    if (!field.required && value === '') {
+      delete attributes[fieldKey];
+      continue;
+    }
+
     if (field.type && !validateType(value, field.type)) {
       if (strictOffline) {
         throw offlinePayloadRejected('Offline submission attribute type is invalid.');
       }
       throw new AppError(`Invalid type for attribute "${fieldKey}"`, 422);
+    }
+
+    if (field.type === 'email' && typeof value === 'string') {
+      const normalized = normalizeEmailAddress(value);
+      if (!normalized) {
+        throw strictOffline
+          ? offlinePayloadRejected('Offline submission attribute format is invalid.')
+          : new AppError(`Invalid email for attribute "${fieldKey}"`, 422);
+      }
+      attributes[fieldKey] = normalized.delivery;
+    }
+
+    if (
+      ['phone', 'mobile', 'telephone', 'lebaneseMobile', 'lebanese_mobile'].includes(
+        field.type ?? '',
+      ) &&
+      typeof value === 'string'
+    ) {
+      const normalized = normalizeLebaneseMobile(value);
+      if (!normalized) {
+        throw strictOffline
+          ? offlinePayloadRejected('Offline submission attribute format is invalid.')
+          : new AppError(`Invalid Lebanese mobile number for attribute "${fieldKey}"`, 422);
+      }
+      attributes[fieldKey] = normalized.e164;
     }
 
     const allowedValues =

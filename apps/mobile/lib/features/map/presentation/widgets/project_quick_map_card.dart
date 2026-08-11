@@ -36,7 +36,9 @@ class _ProjectQuickMapCardState extends ConsumerState<ProjectQuickMapCard> {
       projectMapFeaturesProvider(widget.projectId),
     );
     final featureCount = featuresAsync.valueOrNull?.length;
-    final featureCountLabel = featureCount == null
+    final featureCountLabel = featuresAsync.hasError
+        ? 'Map unavailable'
+        : featureCount == null
         ? 'Loading map'
         : featureCount == 1
         ? '1 mapped feature'

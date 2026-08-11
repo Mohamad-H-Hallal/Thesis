@@ -102,7 +102,7 @@ describe('Notification push device registration', () => {
       [
         admin.user.id,
         'No push expected',
-        'This notification should stay in-app/email only.',
+        'This notification should stay in-app only.',
         JSON.stringify({ project_id: 'project-2' }),
       ],
     );

@@ -6,7 +6,7 @@ import 'package:lebanese_gis_mobile/features/auth/domain/auth_models.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_repository.dart';
 import 'package:lebanese_gis_mobile/features/auth/presentation/controllers/auth_controller.dart';
 
-class _TestAuthRepository implements AuthRepository {
+class _TestAuthRepository implements AuthRepository, AuthTokenRotationSource {
   AuthSession? restoredSession;
   AuthSession? loginSession;
   Object? loginError;
@@ -14,6 +14,7 @@ class _TestAuthRepository implements AuthRepository {
   bool logoutCalled = false;
   int loginCallCount = 0;
   Completer<void>? logoutCompleter;
+  RotatedAuthTokens? rotatedAuthTokens;
 
   @override
   Future<AuthSession?> restoreSession() async => restoredSession;
@@ -86,6 +87,13 @@ class _TestAuthRepository implements AuthRepository {
     required String currentPassword,
     required String newPassword,
   }) async {}
+
+  @override
+  RotatedAuthTokens? takeRotatedAuthTokens() {
+    final tokens = rotatedAuthTokens;
+    rotatedAuthTokens = null;
+    return tokens;
+  }
 
   @override
   Future<AppUser> updateProfile({String? fullName, String? phone}) async {
@@ -204,6 +212,33 @@ void main() {
       expect(repository.logoutCalled, isTrue);
       expect(controller.state.status, AuthStatus.unauthenticated);
     });
+
+    test(
+      'password change installs the server-rotated current session',
+      () async {
+        final repository = _TestAuthRepository();
+        final controller = AuthController(repository);
+        await controller.login(
+          email: 'collector@example.com',
+          password: 'Passw0rd!123',
+          rememberMe: true,
+        );
+        repository.rotatedAuthTokens = const RotatedAuthTokens(
+          accessToken: 'rotated-access',
+          refreshToken: 'rotated-refresh',
+        );
+
+        await controller.changePassword(
+          currentPassword: 'Passw0rd!123',
+          newPassword: 'N3w-Password!456',
+        );
+
+        expect(controller.state.status, AuthStatus.authenticated);
+        expect(controller.state.session?.accessToken, 'rotated-access');
+        expect(controller.state.session?.refreshToken, 'rotated-refresh');
+        expect(controller.state.session?.user.id, 'u1');
+      },
+    );
 
     test('a new login waits for pending logout cleanup', () async {
       final repository = _TestAuthRepository();

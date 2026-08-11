@@ -9,10 +9,10 @@ import '../../../../core/router/route_paths.dart';
 import '../../../../core/web/input_autofill_patch.dart';
 import '../../../../core/widgets/app_button.dart';
 import '../../../../core/widgets/app_card.dart';
-import '../../../../core/widgets/app_logo.dart';
 import '../../../../core/widgets/app_scaffold.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
+import '../../../../core/widgets/terraleb_logo.dart';
 import '../utils/auth_form_validators.dart';
 import '../widgets/auth_viewport.dart';
 import '../widgets/auth_error_banner.dart';
@@ -378,7 +378,7 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            const AppLogo(size: 64),
+            const TerraLebLogo(width: 200, height: 72),
             const SizedBox(height: AppSpacing.sm),
             Text(
               _step == _ResetPasswordStep.otp

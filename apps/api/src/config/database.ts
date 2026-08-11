@@ -14,31 +14,41 @@ const pool = new Pool({
 
 // Test database connection
 pool.on('connect', () => {
-  logger.info('Database connected successfully');
+  logger.info('Database connected successfully', { component: 'database' });
 });
 
 pool.on('error', (err: Error) => {
-  logger.error('Unexpected database error:', err);
+  logger.error('Unexpected database pool error', { component: 'database', error: err });
 });
 
 // Query helper with logging
 const query = async <T extends QueryResultRow = QueryResultRow>(
   text: string,
-  params: unknown[] = []
+  params: unknown[] = [],
 ): Promise<QueryResult<T>> => {
   const start = Date.now();
   const operation = text.trim().split(/\s+/, 1)[0]?.toUpperCase() || 'UNKNOWN';
   try {
     const result = await pool.query<T>(text, params);
     const duration = Date.now() - start;
-    logger.debug('Executed database query', { operation, duration, rows: result.rowCount });
+    logger.debug('Executed database query', {
+      component: 'database',
+      operation,
+      duration,
+      rows: result.rowCount,
+    });
     return result;
   } catch (error: unknown) {
     const errorCode =
       typeof error === 'object' && error !== null && 'code' in error
         ? String((error as { code?: unknown }).code ?? '')
         : '';
-    logger.error('Database query failed', { operation, errorCode });
+    logger.error('Database query failed', {
+      component: 'database',
+      operation,
+      errorCode,
+      error,
+    });
     throw error;
   }
 };
@@ -52,7 +62,24 @@ const transaction = async <T>(callback: (client: PoolClient) => Promise<T>): Pro
     await client.query('COMMIT');
     return result;
   } catch (error: unknown) {
-    await client.query('ROLLBACK');
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError: unknown) {
+      logger.error('Database transaction rollback failed', {
+        component: 'database',
+        error: rollbackError,
+      });
+    }
+    const isOperational =
+      typeof error === 'object' &&
+      error !== null &&
+      'isOperational' in error &&
+      (error as { isOperational?: unknown }).isOperational === true;
+    logger[isOperational ? 'warn' : 'error']('Database transaction failed', {
+      component: 'database',
+      error,
+      operational: isOperational,
+    });
     throw error;
   } finally {
     client.release();

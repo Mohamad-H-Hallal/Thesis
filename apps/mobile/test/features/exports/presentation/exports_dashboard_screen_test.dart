@@ -203,6 +203,7 @@ class _FailingExportsRepository implements ExportsRepository {
       processing: 0,
       completed: 0,
       failed: 0,
+      expired: 0,
     );
   }
 
@@ -247,8 +248,9 @@ class _StaticExportsRepository implements ExportsRepository {
   final List<ExportJob> jobs;
 
   @override
-  Future<List<ExportJob>> fetchJobs({required String requestedByUserId}) async =>
-      jobs;
+  Future<List<ExportJob>> fetchJobs({
+    required String requestedByUserId,
+  }) async => jobs;
 
   @override
   Future<PaginatedResult<ExportJob>> fetchJobsPage({
@@ -260,13 +262,14 @@ class _StaticExportsRepository implements ExportsRepository {
     int page = 1,
     int limit = 20,
   }) async {
-    final filtered = jobs
-        .where((job) => job.requestedByUserId == requestedByUserId)
-        .where((job) => projectId == null || job.projectId == projectId)
-        .where((job) => format == null || job.format == format)
-        .where((job) => status == null || job.status == status)
-        .toList(growable: false)
-      ..sort((a, b) => b.requestedAt.compareTo(a.requestedAt));
+    final filtered =
+        jobs
+            .where((job) => job.requestedByUserId == requestedByUserId)
+            .where((job) => projectId == null || job.projectId == projectId)
+            .where((job) => format == null || job.format == format)
+            .where((job) => status == null || job.status == status)
+            .toList(growable: false)
+          ..sort((a, b) => b.requestedAt.compareTo(a.requestedAt));
     final start = (page - 1) * limit;
     final end = (start + limit).clamp(0, filtered.length);
     return PaginatedResult<ExportJob>(
@@ -336,12 +339,12 @@ class _StaticExportsRepository implements ExportsRepository {
     required String requestedByUserId,
     required String exportId,
   }) async => requestExport(
-        requestedByUserId: requestedByUserId,
-        projectId: jobs.first.projectId,
-        projectName: jobs.first.projectName,
-        format: jobs.first.format,
-        exportParameters: jobs.first.exportParameters,
-      );
+    requestedByUserId: requestedByUserId,
+    projectId: jobs.first.projectId,
+    projectName: jobs.first.projectName,
+    format: jobs.first.format,
+    exportParameters: jobs.first.exportParameters,
+  );
 }
 
 void main() {
@@ -744,12 +747,22 @@ void main() {
       exportsRepository: _StaticExportsRepository(<ExportJob>[expiredJob]),
     );
 
+    expect(find.text('Expired'), findsOneWidget);
+    expect(find.text('Completed'), findsOneWidget);
+    expect(
+      ExportDashboardMetrics.fromJobs(<ExportJob>[expiredJob]).completed,
+      0,
+    );
+    expect(ExportDashboardMetrics.fromJobs(<ExportJob>[expiredJob]).expired, 1);
+
     await tester.drag(find.byType(ListView), const Offset(0, -900));
     await tester.pumpAndSettle();
 
     expect(find.text('File expired'), findsOneWidget);
     expect(
-      find.text('Export completed, but the file expired. Regenerate it to download again.'),
+      find.text(
+        'Export completed, but the file expired. Regenerate it to download again.',
+      ),
       findsOneWidget,
     );
     expect(find.text('Regenerate'), findsOneWidget);

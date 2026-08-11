@@ -1,4 +1,5 @@
 const winston = require('winston');
+const DailyRotateFile = require('winston-daily-rotate-file');
 const path = require('path');
 const fs = require('fs');
 
@@ -6,22 +7,40 @@ const isProduction = process.env.NODE_ENV === 'production';
 const prettyConsole = !isProduction && process.env.LOG_PRETTY !== 'false';
 const logToFile = process.env.LOG_TO_FILE === 'true';
 const REDACTED = '[REDACTED]';
+const SPLAT = Symbol.for('splat');
+
+const positiveIntegerSetting = (value: string | undefined, fallback: number): number => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const logRetentionDays = Math.min(positiveIntegerSetting(process.env.LOG_RETENTION_DAYS, 14), 365);
+const configuredMaxSize = String(process.env.LOG_MAX_SIZE ?? '10m')
+  .trim()
+  .toLowerCase();
+const logMaxSize = /^\d+(?:k|m|g)?$/.test(configuredMaxSize) ? configuredMaxSize : '10m';
+const logsDir = path.resolve(
+  String(process.env.LOG_DIR ?? '').trim() || path.join(process.cwd(), 'logs', 'api'),
+);
 
 const sensitiveKeyPattern =
-  /(?:authorization|cookie|password|passphrase|token|secret|private[_-]?key|credential|smtp[_-]?pass|database[_-]?url|redis[_-]?url|service[_-]?account|body|payload|geometry|coordinates|geojson|latitude|longitude|bbox|attributes|feature[_-]?collection|storage[_-]?path|file[_-]?(?:buffer|path|name)|raw[_-]?content|email|phone)/i;
+  /(?:authorization|cookie|password|passphrase|token|otp|verification[_-]?code|secret|private[_-]?key|credential|smtp[_-]?pass|database[_-]?url|redis[_-]?url|service[_-]?account|body|payload|geometry|coordinates|geojson|latitude|longitude|bbox|attributes|feature[_-]?collection|storage[_-]?path|file[_-]?(?:buffer|path|name)|raw[_-]?content|email|phone)/i;
 
 const sanitizeLogString = (value: string): string =>
   value
     .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/gi, REDACTED)
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, `Bearer ${REDACTED}`)
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, REDACTED)
-    .replace(
-      /\b([a-z][a-z0-9+.-]*:\/\/)([^/\s:@]+):([^@\s/]+)@/gi,
-      `$1${REDACTED}:${REDACTED}@`,
-    )
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, REDACTED)
+    .replace(/\b(?:\+?961|0)?(?:3|70|71|76|78|79|81)\d{6}\b/g, REDACTED)
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)([^/\s:@]+):([^@\s/]+)@/gi, `$1${REDACTED}:${REDACTED}@`)
     .replace(
       /\b(password|passphrase|token|secret|private[_-]?key|smtp[_-]?pass)\s*[:=]\s*([^\s,;]+)/gi,
       `$1=${REDACTED}`,
+    )
+    .replace(
+      /(["']?(?:authorization|password|passphrase|access[_-]?token|refresh[_-]?token|otp|verification[_-]?code|secret|private[_-]?key|credential)["']?\s*:\s*)["'][^"']*["']/gi,
+      `$1"${REDACTED}"`,
     );
 
 const redactSensitive = (
@@ -78,17 +97,35 @@ const redactionFormat = winston.format((info) => {
   return info;
 })();
 
+// Winston call sites commonly pass an Error as a second argument. Preserve it
+// as structured metadata so its type, message, and stack are retained before
+// the normal redaction pass sanitizes the values.
+const captureErrorArguments = winston.format((info) => {
+  const values = info[SPLAT];
+  if (Array.isArray(values)) {
+    const errors = values.filter((value: unknown) => value instanceof Error);
+    if (errors.length === 1 && info.error === undefined) {
+      info.error = errors[0];
+    } else if (errors.length > 1 && info.errors === undefined) {
+      info.errors = errors;
+    }
+  }
+  return info;
+})();
+
 const jsonFormat = winston.format.combine(
   winston.format.timestamp(),
+  captureErrorArguments,
   winston.format.errors({ stack: true }),
   winston.format.splat(),
   redactionFormat,
-  winston.format.json()
+  winston.format.json(),
 );
 
 const prettyFormat = winston.format.combine(
   winston.format.colorize(),
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+  captureErrorArguments,
   redactionFormat,
   winston.format.printf(({ timestamp, level, message, ...meta }) => {
     let msg = `${timestamp} [${level}]: ${message}`;
@@ -96,7 +133,7 @@ const prettyFormat = winston.format.combine(
       msg += ` ${JSON.stringify(meta)}`;
     }
     return msg;
-  })
+  }),
 );
 
 const transports = [
@@ -106,25 +143,30 @@ const transports = [
 ];
 
 if (logToFile) {
-  const logsDir = path.join(process.cwd(), 'logs');
   if (!fs.existsSync(logsDir)) {
     fs.mkdirSync(logsDir, { recursive: true });
   }
 
   transports.push(
-    new winston.transports.File({
-      filename: path.join(logsDir, 'error.log'),
+    new DailyRotateFile({
+      filename: path.join(logsDir, 'error-%DATE%.log'),
+      datePattern: 'YYYY-MM-DD',
       level: 'error',
-      maxsize: 5242880,
-      maxFiles: 5,
+      maxSize: logMaxSize,
+      maxFiles: `${logRetentionDays}d`,
+      zippedArchive: true,
+      auditFile: path.join(logsDir, '.error-rotate-audit.json'),
       format: jsonFormat,
     }),
-    new winston.transports.File({
-      filename: path.join(logsDir, 'combined.log'),
-      maxsize: 5242880,
-      maxFiles: 5,
+    new DailyRotateFile({
+      filename: path.join(logsDir, 'application-%DATE%.log'),
+      datePattern: 'YYYY-MM-DD',
+      maxSize: logMaxSize,
+      maxFiles: `${logRetentionDays}d`,
+      zippedArchive: true,
+      auditFile: path.join(logsDir, '.application-rotate-audit.json'),
       format: jsonFormat,
-    })
+    }),
   );
 }
 
@@ -132,6 +174,7 @@ const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || 'info',
   defaultMeta: {
     service: process.env.SERVICE_NAME || 'gis-api',
+    component: 'application',
     environment: process.env.NODE_ENV || 'development',
   },
   transports,

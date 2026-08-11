@@ -29,8 +29,10 @@ const retryableHandler =
     });
   };
 
-const userKey = (scope: string) => (req: Request): string =>
-  `${scope}:${req.user?.id ?? req.ip ?? 'unknown'}`;
+const userKey =
+  (scope: string) =>
+  (req: Request): string =>
+    `${scope}:${req.user?.id ?? req.ip ?? 'unknown'}`;
 
 const buildWorkloadLimiter = ({
   policy,
@@ -107,6 +109,15 @@ const passwordResetRateLimit = buildWorkloadLimiter({
   authenticated: false,
 });
 
+const contactVerificationRateLimit = buildWorkloadLimiter({
+  policy: 'contact-verification',
+  maxSetting: 'RATE_LIMIT_VERIFICATION_MAX_REQUESTS',
+  fallback: 20,
+  code: 'VERIFICATION_RATE_LIMITED',
+  message: 'Verification requests are temporarily rate limited. Please retry later.',
+  authenticated: false,
+});
+
 export {
   aiJobRateLimit,
   exportCreateRateLimit,
@@ -114,4 +125,5 @@ export {
   mapAggregationRateLimit,
   notificationMutationRateLimit,
   passwordResetRateLimit,
+  contactVerificationRateLimit,
 };

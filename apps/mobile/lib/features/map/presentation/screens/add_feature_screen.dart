@@ -16,6 +16,7 @@ import '../../../../core/offline/local_models.dart';
 import '../../../../core/offline/local_store.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/utils/lebanon_time.dart';
+import '../../../../core/utils/lebanese_phone.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
@@ -23,6 +24,7 @@ import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/widgets/section_header.dart';
+import '../../../auth/presentation/widgets/lebanese_mobile_field.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/app_tile_provider.dart';
 import '../../domain/current_location_service.dart';
@@ -330,6 +332,8 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
         case CollectionFieldType.text:
         case CollectionFieldType.multiline:
         case CollectionFieldType.number:
+        case CollectionFieldType.email:
+        case CollectionFieldType.lebaneseMobile:
           _attributeControllers[field.key] = TextEditingController(
             text: value?.toString() ?? '',
           );
@@ -644,6 +648,16 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
         case CollectionFieldType.text:
         case CollectionFieldType.multiline:
           payload[field.key] = _attributeControllers[field.key]?.text.trim();
+          break;
+        case CollectionFieldType.email:
+          final raw = _attributeControllers[field.key]?.text.trim() ?? '';
+          payload[field.key] = raw.isEmpty ? null : raw;
+          break;
+        case CollectionFieldType.lebaneseMobile:
+          final raw = _attributeControllers[field.key]?.text.trim() ?? '';
+          payload[field.key] = raw.isEmpty
+              ? null
+              : LebanesePhone.normalize(raw);
           break;
         case CollectionFieldType.number:
           final raw = _attributeControllers[field.key]?.text.trim() ?? '';
@@ -1148,6 +1162,34 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
           hint: field.hint,
           minLines: field.type == CollectionFieldType.multiline ? 3 : null,
           maxLines: field.type == CollectionFieldType.multiline ? 6 : 1,
+          validator: (_) => errorText,
+          onChanged: (_) {
+            if (_fieldErrors.remove(fieldKey) != null) {
+              setState(() {});
+            }
+          },
+        );
+      case CollectionFieldType.email:
+        return AppTextField(
+          label: field.required ? '$label *' : label,
+          controller: _textControllerForField(field),
+          hint: field.hint ?? 'name@example.com',
+          keyboardType: TextInputType.emailAddress,
+          autofillHints: const <String>[AutofillHints.email],
+          validator: (_) => errorText,
+          onChanged: (_) {
+            if (_fieldErrors.remove(fieldKey) != null) {
+              setState(() {});
+            }
+          },
+        );
+      case CollectionFieldType.lebaneseMobile:
+        return LebaneseMobileField(
+          controller: _textControllerForField(field),
+          label: field.required ? '$label *' : label,
+          hint: field.hint ?? '70 123 456',
+          semanticLabel:
+              '$label, Lebanese mobile number, country code plus nine six one',
           validator: (_) => errorText,
           onChanged: (_) {
             if (_fieldErrors.remove(fieldKey) != null) {

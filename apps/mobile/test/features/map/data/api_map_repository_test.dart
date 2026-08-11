@@ -180,6 +180,46 @@ void main() {
       });
     }
 
+    for (final testCase in <({String name, Map<String, dynamic> row})>[
+      (
+        name: 'missing project id',
+        row: _featureRow('feature-missing-project', includeProjectId: false),
+      ),
+      (
+        name: 'mismatched project id',
+        row: _featureRow('feature-other-project', projectId: 'project-2'),
+      ),
+    ]) {
+      test('fetchProjectFeatureById rejects ${testCase.name}', () async {
+        final dio = Dio(BaseOptions(baseUrl: 'http://localhost:3000'));
+        dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              handler.resolve(
+                Response<Map<String, dynamic>>(
+                  requestOptions: options,
+                  statusCode: 200,
+                  data: <String, dynamic>{
+                    'success': true,
+                    'data': testCase.row,
+                  },
+                ),
+              );
+            },
+          ),
+        );
+        final repository = ApiMapRepository(ApiClient(dio: dio));
+
+        await expectLater(
+          repository.fetchProjectFeatureById(
+            projectId: 'project-1',
+            featureId: 'feature-1',
+          ),
+          throwsA(isA<StateError>()),
+        );
+      });
+    }
+
     for (final testCase in <({String name, Map<String, dynamic> properties})>[
       (
         name: 'missing project id',

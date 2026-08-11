@@ -77,7 +77,16 @@ class ProjectAssignment {
   }
 }
 
-enum CollectionFieldType { text, multiline, number, select, boolean, date }
+enum CollectionFieldType {
+  text,
+  multiline,
+  number,
+  select,
+  boolean,
+  date,
+  email,
+  lebaneseMobile,
+}
 
 const List<String> defaultProjectGeometryTypes = <String>[
   'Point',
@@ -129,6 +138,15 @@ class CollectionFormFieldSchema {
     final normalizedType = CollectionFieldType.values.firstWhere(
       (candidate) => candidate.name == rawType,
       orElse: () {
+        if (rawType == 'email') {
+          return CollectionFieldType.email;
+        }
+        if (rawType == 'phone' ||
+            rawType == 'mobile' ||
+            rawType == 'telephone' ||
+            rawType == 'lebanese_mobile') {
+          return CollectionFieldType.lebaneseMobile;
+        }
         if (rawType == 'textarea') {
           return CollectionFieldType.multiline;
         }

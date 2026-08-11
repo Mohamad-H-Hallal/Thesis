@@ -4,15 +4,6 @@ on:
   pull_request:
     branches:
       - handover-ready
-    paths:
-      - ".github/workflows/release-candidate.yml"
-      - "apps/api/Dockerfile"
-      - "apps/mobile/android/app/build.gradle.kts"
-      - "scripts/release-candidate.js"
-      - "scripts/release-candidate.test.js"
-      - "release/evidence/**"
-      - "docs/predeployment/phase-7-release-candidate-pilot.md"
-      - "CHANGELOG.md"
   push:
     branches:
       - handover-ready

@@ -18,6 +18,8 @@ export interface EnvConfig {
   JWT_SECRET_CURRENT: string;
   JWT_SECRET_PREVIOUS: string;
   JWT_EXPIRE: string;
+  JWT_ISSUER: string;
+  JWT_AUDIENCE: string;
   JWT_REFRESH_SECRET: string;
   JWT_REFRESH_SECRET_CURRENT: string;
   JWT_REFRESH_SECRET_PREVIOUS: string;
@@ -41,6 +43,7 @@ export interface EnvConfig {
   RATE_LIMIT_MAP_MAX_REQUESTS: number;
   RATE_LIMIT_NOTIFICATION_MAX_REQUESTS: number;
   RATE_LIMIT_PASSWORD_RESET_MAX_REQUESTS: number;
+  RATE_LIMIT_VERIFICATION_MAX_REQUESTS: number;
   WORKLOAD_WORKER_MODE: 'inline' | 'external' | 'disabled';
   WORKLOAD_WORKER_CONCURRENCY: number;
   WORKLOAD_POLL_INTERVAL_MS: number;
@@ -54,6 +57,9 @@ export interface EnvConfig {
   LOG_LEVEL: 'error' | 'warn' | 'info' | 'http' | 'verbose' | 'debug' | 'silly';
   LOG_PRETTY: boolean;
   LOG_TO_FILE: boolean;
+  LOG_DIR: string;
+  LOG_MAX_SIZE: string;
+  LOG_RETENTION_DAYS: number;
   AUDIT_LOG_ENABLED: boolean;
   API_DOCS_ENABLED: boolean;
   API_DOCS_TOKEN: string;
@@ -79,8 +85,6 @@ export interface EnvConfig {
   EXPORT_RETENTION_DAYS: number;
   EXPORT_CLEANUP_INTERVAL_HOURS: number;
   NOTIFICATION_MAINTENANCE_INTERVAL_MINUTES: number;
-  NOTIFICATION_EMAIL_BATCH_SIZE: number;
-  NOTIFICATION_EMAIL_MAX_ATTEMPTS: number;
   PUSH_NOTIFICATIONS_ENABLED: boolean;
   ANDROID_PUSH_NOTIFICATIONS_ENABLED: boolean;
   IOS_PUSH_NOTIFICATIONS_ENABLED: boolean;
@@ -91,6 +95,24 @@ export interface EnvConfig {
   FIREBASE_SERVICE_ACCOUNT_PATH: string;
   PASSWORD_RESET_TOKEN_EXPIRY_MINUTES: number;
   PASSWORD_RESET_REQUIRE_REAL_DELIVERY: boolean;
+  VERIFICATION_HMAC_SECRET: string;
+  CONTACT_VERIFICATION_TOKEN_EXPIRY_MINUTES: number;
+  VERIFICATION_CODE_EXPIRY_MINUTES: number;
+  VERIFICATION_RESEND_COOLDOWN_SECONDS: number;
+  VERIFICATION_MAX_ATTEMPTS: number;
+  VERIFICATION_BLOCK_MINUTES: number;
+  VERIFICATION_DAILY_TARGET_CAP: number;
+  VERIFICATION_DAILY_ACCOUNT_CAP: number;
+  VERIFICATION_DAILY_IP_CAP: number;
+  VERIFICATION_DAILY_DEVICE_CAP: number;
+  VERIFICATION_PROVIDER_TIMEOUT_MS: number;
+  PHONE_ACCOUNT_REUSE_LIMIT: number;
+  PHONE_ASSURANCE_MODE: 'format_only' | 'sms_otp';
+  PHONE_FORMAT_VALIDATION_PROVIDER: 'libphonenumber' | 'twilio_lookup_basic';
+  PHONE_VERIFICATION_PROVIDER: 'mock' | 'twilio_verify';
+  TWILIO_ACCOUNT_SID: string;
+  TWILIO_AUTH_TOKEN: string;
+  TWILIO_VERIFY_SERVICE_SID: string;
   SMTP_HOST: string;
   SMTP_PORT: number;
   SMTP_SECURE: boolean;
@@ -134,6 +156,9 @@ export interface WorkloadWorkerEnvConfig {
   WORKLOAD_HARD_EXIT_ON_TIMEOUT: boolean;
   LOG_PRETTY: boolean;
   LOG_TO_FILE: boolean;
+  LOG_DIR: string;
+  LOG_MAX_SIZE: string;
+  LOG_RETENTION_DAYS: number;
 }
 
 const envSchema = Joi.object({
@@ -155,11 +180,13 @@ const envSchema = Joi.object({
   JWT_SECRET: Joi.string().min(32).required(),
   JWT_SECRET_CURRENT: Joi.string().min(32).optional(),
   JWT_SECRET_PREVIOUS: Joi.string().allow('').default(''),
-  JWT_EXPIRE: Joi.string().default('7d'),
+  JWT_EXPIRE: Joi.string().pattern(/^\d+[smhd]$/).default('15m'),
+  JWT_ISSUER: Joi.string().trim().min(3).max(200).default('terraleb-api'),
+  JWT_AUDIENCE: Joi.string().trim().min(3).max(200).default('terraleb-mobile'),
   JWT_REFRESH_SECRET: Joi.string().min(32).required(),
   JWT_REFRESH_SECRET_CURRENT: Joi.string().min(32).optional(),
   JWT_REFRESH_SECRET_PREVIOUS: Joi.string().allow('').default(''),
-  JWT_REFRESH_EXPIRE: Joi.string().default('30d'),
+  JWT_REFRESH_EXPIRE: Joi.string().pattern(/^\d+[smhd]$/).default('30d'),
 
   CORS_ORIGIN: Joi.string().allow('').default(''),
   CORS_STRICT: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(true),
@@ -196,6 +223,7 @@ const envSchema = Joi.object({
   RATE_LIMIT_MAP_MAX_REQUESTS: Joi.number().integer().min(1).default(60),
   RATE_LIMIT_NOTIFICATION_MAX_REQUESTS: Joi.number().integer().min(1).default(30),
   RATE_LIMIT_PASSWORD_RESET_MAX_REQUESTS: Joi.number().integer().min(1).default(5),
+  RATE_LIMIT_VERIFICATION_MAX_REQUESTS: Joi.number().integer().min(1).default(20),
   WORKLOAD_WORKER_MODE: Joi.string().valid('inline', 'external', 'disabled').default('inline'),
   WORKLOAD_WORKER_CONCURRENCY: Joi.number().integer().min(1).max(16).default(2),
   WORKLOAD_POLL_INTERVAL_MS: Joi.number().integer().min(100).max(60000).default(1000),
@@ -215,18 +243,15 @@ const envSchema = Joi.object({
   LOG_LEVEL: Joi.string()
     .valid('error', 'warn', 'info', 'http', 'verbose', 'debug', 'silly')
     .default('info'),
-  LOG_PRETTY: Joi.boolean()
-    .truthy('true')
-    .truthy('1')
-    .falsy('false')
-    .falsy('0')
-    .default(true),
-  LOG_TO_FILE: Joi.boolean()
-    .truthy('true')
-    .truthy('1')
-    .falsy('false')
-    .falsy('0')
-    .default(false),
+  LOG_PRETTY: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(true),
+  LOG_TO_FILE: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(false),
+  LOG_DIR: Joi.string().trim().min(1).default('./logs/api'),
+  LOG_MAX_SIZE: Joi.string()
+    .trim()
+    .lowercase()
+    .pattern(/^\d+(?:k|m|g)?$/)
+    .default('10m'),
+  LOG_RETENTION_DAYS: Joi.number().integer().min(1).max(365).default(14),
   AUDIT_LOG_ENABLED: Joi.boolean()
     .truthy('true')
     .truthy('1')
@@ -284,8 +309,6 @@ const envSchema = Joi.object({
   EXPORT_RETENTION_DAYS: Joi.number().integer().min(1).default(7),
   EXPORT_CLEANUP_INTERVAL_HOURS: Joi.number().integer().min(1).default(24),
   NOTIFICATION_MAINTENANCE_INTERVAL_MINUTES: Joi.number().integer().min(1).default(60),
-  NOTIFICATION_EMAIL_BATCH_SIZE: Joi.number().integer().min(1).max(500).default(50),
-  NOTIFICATION_EMAIL_MAX_ATTEMPTS: Joi.number().integer().min(1).max(20).default(5),
   PUSH_NOTIFICATIONS_ENABLED: Joi.boolean()
     .truthy('true')
     .truthy('1')
@@ -316,6 +339,28 @@ const envSchema = Joi.object({
     .falsy('false')
     .falsy('0')
     .default(false),
+  VERIFICATION_HMAC_SECRET: Joi.string()
+    .min(32)
+    .default('development-verification-hmac-secret-change-me'),
+  CONTACT_VERIFICATION_TOKEN_EXPIRY_MINUTES: Joi.number().integer().min(5).max(1440).default(30),
+  VERIFICATION_CODE_EXPIRY_MINUTES: Joi.number().integer().min(2).max(30).default(5),
+  VERIFICATION_RESEND_COOLDOWN_SECONDS: Joi.number().integer().min(10).max(3600).default(60),
+  VERIFICATION_MAX_ATTEMPTS: Joi.number().integer().min(3).max(10).default(5),
+  VERIFICATION_BLOCK_MINUTES: Joi.number().integer().min(1).max(1440).default(15),
+  VERIFICATION_DAILY_TARGET_CAP: Joi.number().integer().min(1).max(100).default(10),
+  VERIFICATION_DAILY_ACCOUNT_CAP: Joi.number().integer().min(1).max(200).default(20),
+  VERIFICATION_DAILY_IP_CAP: Joi.number().integer().min(1).max(1000).default(50),
+  VERIFICATION_DAILY_DEVICE_CAP: Joi.number().integer().min(1).max(1000).default(30),
+  VERIFICATION_PROVIDER_TIMEOUT_MS: Joi.number().integer().min(1000).max(60000).default(10000),
+  PHONE_ACCOUNT_REUSE_LIMIT: Joi.number().integer().min(1).max(3).default(3),
+  PHONE_ASSURANCE_MODE: Joi.string().valid('format_only', 'sms_otp').default('format_only'),
+  PHONE_FORMAT_VALIDATION_PROVIDER: Joi.string()
+    .valid('libphonenumber', 'twilio_lookup_basic')
+    .default('libphonenumber'),
+  PHONE_VERIFICATION_PROVIDER: Joi.string().valid('mock', 'twilio_verify').default('mock'),
+  TWILIO_ACCOUNT_SID: Joi.string().allow('').default(''),
+  TWILIO_AUTH_TOKEN: Joi.string().allow('').default(''),
+  TWILIO_VERIFY_SERVICE_SID: Joi.string().allow('').default(''),
 
   SMTP_HOST: Joi.string().allow('').default(''),
   SMTP_PORT: Joi.number().port().default(1025),
@@ -361,24 +406,21 @@ const envSchema = Joi.object({
 }).unknown(true);
 
 const unsafeProductionSecret = (value: unknown): boolean => {
-  const normalized = String(value ?? '').trim().toLowerCase();
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase();
   return (
     normalized.length < 16 ||
-    [
-      'change_me',
-      'changeme',
-      'password',
-      'replace-',
-      'replace_',
-      'example',
-      'dev-',
-      'test-',
-    ].some((marker) => normalized.includes(marker))
+    ['change_me', 'changeme', 'password', 'replace-', 'replace_', 'example', 'dev-', 'test-'].some(
+      (marker) => normalized.includes(marker),
+    )
   );
 };
 
 const unsafeProductionIdentifier = (value: unknown): boolean => {
-  const normalized = String(value ?? '').trim().toLowerCase();
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase();
   return (
     normalized.length === 0 ||
     ['change_me', 'changeme', 'replace-', 'replace_', 'example'].some((marker) =>
@@ -415,6 +457,28 @@ const validateProductionOrigin = (origin: string): boolean => {
   }
 };
 
+const durationSeconds = (value: string): number => {
+  const match = value.match(/^(\d+)([smhd])$/);
+  if (!match) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const unitSeconds = ({ s: 1, m: 60, h: 3600, d: 86400 } as Record<string, number>)[
+    match[2]
+  ];
+  if (!unitSeconds) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Number(match[1]) * unitSeconds;
+};
+
+const rotationSecrets = (current: string, previousRaw: string): string[] => [
+  current,
+  ...previousRaw
+    .split(',')
+    .map((secret) => secret.trim())
+    .filter(Boolean),
+];
+
 const validateEnv = (source: NodeJS.ProcessEnv = process.env): EnvConfig => {
   const { error, value } = envSchema.validate(source, { abortEarly: false });
   if (error) {
@@ -427,6 +491,26 @@ const validateEnv = (source: NodeJS.ProcessEnv = process.env): EnvConfig => {
   }
   if (!value.JWT_REFRESH_SECRET_CURRENT) {
     value.JWT_REFRESH_SECRET_CURRENT = value.JWT_REFRESH_SECRET;
+  }
+
+  const configuredAccessSecrets = rotationSecrets(
+    value.JWT_SECRET_CURRENT,
+    value.JWT_SECRET_PREVIOUS,
+  );
+  const configuredRefreshSecrets = rotationSecrets(
+    value.JWT_REFRESH_SECRET_CURRENT,
+    value.JWT_REFRESH_SECRET_PREVIOUS,
+  );
+  if ([...configuredAccessSecrets, ...configuredRefreshSecrets].some((secret) => secret.length < 32)) {
+    throw new Error(
+      'Environment validation failed: every current and previous JWT secret must be at least 32 characters',
+    );
+  }
+  const accessSecretSet = new Set(configuredAccessSecrets);
+  if (configuredRefreshSecrets.some((secret) => accessSecretSet.has(secret))) {
+    throw new Error(
+      'Environment validation failed: access-token and refresh-token secrets must be distinct',
+    );
   }
 
   const hasSuperAdminConfig = [
@@ -475,6 +559,16 @@ const validateEnv = (source: NodeJS.ProcessEnv = process.env): EnvConfig => {
   }
 
   if (value.NODE_ENV === 'production') {
+    if (durationSeconds(value.JWT_EXPIRE) > 60 * 60) {
+      throw new Error(
+        'Environment validation failed: production access tokens must expire within 1 hour',
+      );
+    }
+    if (durationSeconds(value.JWT_REFRESH_EXPIRE) > 30 * 24 * 60 * 60) {
+      throw new Error(
+        'Environment validation failed: production refresh tokens must expire within 30 days',
+      );
+    }
     if (!value.TRUST_PROXY || !value.ENFORCE_HTTPS) {
       throw new Error(
         'Environment validation failed: production requires TRUST_PROXY=true and ENFORCE_HTTPS=true',
@@ -513,9 +607,9 @@ const validateEnv = (source: NodeJS.ProcessEnv = process.env): EnvConfig => {
       );
     }
 
-    if (value.LOG_PRETTY || value.LOG_TO_FILE) {
+    if (value.LOG_PRETTY) {
       throw new Error(
-        'Environment validation failed: production requires redacted JSON logs on stdout (LOG_PRETTY=false, LOG_TO_FILE=false)',
+        'Environment validation failed: production requires redacted JSON logs (LOG_PRETTY=false)',
       );
     }
 
@@ -523,6 +617,38 @@ const validateEnv = (source: NodeJS.ProcessEnv = process.env): EnvConfig => {
       throw new Error(
         'Environment validation failed: production requires PASSWORD_RESET_REQUIRE_REAL_DELIVERY=true',
       );
+    }
+
+    if (unsafeProductionSecret(value.VERIFICATION_HMAC_SECRET)) {
+      throw new Error(
+        'Environment validation failed: production requires a non-placeholder VERIFICATION_HMAC_SECRET',
+      );
+    }
+
+    const twilioCredentialsRequired =
+      value.PHONE_ASSURANCE_MODE === 'sms_otp' ||
+      value.PHONE_FORMAT_VALIDATION_PROVIDER === 'twilio_lookup_basic';
+    if (
+      twilioCredentialsRequired &&
+      [value.TWILIO_ACCOUNT_SID, value.TWILIO_AUTH_TOKEN].some((item: string) =>
+        unsafeProductionIdentifier(item),
+      )
+    ) {
+      throw new Error(
+        'Environment validation failed: configured Twilio provider requires safe account credentials',
+      );
+    }
+    if (value.PHONE_ASSURANCE_MODE === 'sms_otp') {
+      if (value.PHONE_VERIFICATION_PROVIDER !== 'twilio_verify') {
+        throw new Error(
+          'Environment validation failed: SMS ownership assurance requires PHONE_VERIFICATION_PROVIDER=twilio_verify',
+        );
+      }
+      if (unsafeProductionIdentifier(value.TWILIO_VERIFY_SERVICE_SID)) {
+        throw new Error(
+          'Environment validation failed: production Twilio Verify Service SID is incomplete or unsafe',
+        );
+      }
     }
 
     let publicApiUrl: URL;
@@ -594,15 +720,11 @@ const validateEnv = (source: NodeJS.ProcessEnv = process.env): EnvConfig => {
   }
 
   if (value.RATE_LIMIT_STORE === 'redis' && !String(value.REDIS_URL).trim()) {
-    throw new Error(
-      'Environment validation failed: RATE_LIMIT_STORE=redis requires REDIS_URL',
-    );
+    throw new Error('Environment validation failed: RATE_LIMIT_STORE=redis requires REDIS_URL');
   }
 
   if (value.NODE_ENV === 'production' && value.RATE_LIMIT_STORE !== 'redis') {
-    throw new Error(
-      'Environment validation failed: production requires RATE_LIMIT_STORE=redis',
-    );
+    throw new Error('Environment validation failed: production requires RATE_LIMIT_STORE=redis');
   }
 
   if (value.NODE_ENV === 'production' && value.WORKLOAD_WORKER_MODE !== 'external') {
@@ -655,18 +777,15 @@ const workloadWorkerEnvSchema = Joi.object({
     .falsy('false')
     .falsy('0')
     .default(false),
-  LOG_PRETTY: Joi.boolean()
-    .truthy('true')
-    .truthy('1')
-    .falsy('false')
-    .falsy('0')
-    .default(true),
-  LOG_TO_FILE: Joi.boolean()
-    .truthy('true')
-    .truthy('1')
-    .falsy('false')
-    .falsy('0')
-    .default(false),
+  LOG_PRETTY: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(true),
+  LOG_TO_FILE: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(false),
+  LOG_DIR: Joi.string().trim().min(1).default('./logs/api'),
+  LOG_MAX_SIZE: Joi.string()
+    .trim()
+    .lowercase()
+    .pattern(/^\d+(?:k|m|g)?$/)
+    .default('10m'),
+  LOG_RETENTION_DAYS: Joi.number().integer().min(1).max(365).default(14),
 }).unknown(true);
 
 const validateWorkloadWorkerEnv = (
@@ -689,9 +808,9 @@ const validateWorkloadWorkerEnv = (
         'Workload worker environment validation failed: production requires an external worker with hard timeout exit',
       );
     }
-    if (value.LOG_PRETTY || value.LOG_TO_FILE) {
+    if (value.LOG_PRETTY) {
       throw new Error(
-        'Workload worker environment validation failed: production requires redacted JSON stdout logs',
+        'Workload worker environment validation failed: production requires redacted JSON logs',
       );
     }
   }

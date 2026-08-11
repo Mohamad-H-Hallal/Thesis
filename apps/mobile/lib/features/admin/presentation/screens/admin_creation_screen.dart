@@ -11,7 +11,7 @@ import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/widgets/loading_overlay.dart';
 import '../../../auth/presentation/utils/auth_form_validators.dart';
-import '../../../auth/presentation/utils/auth_input_formatters.dart';
+import '../../../auth/presentation/widgets/lebanese_mobile_field.dart';
 
 class AdminCreationScreen extends ConsumerStatefulWidget {
   const AdminCreationScreen({super.key});
@@ -28,7 +28,6 @@ class _AdminCreationScreenState extends ConsumerState<AdminCreationScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmController = TextEditingController();
-  final _phoneFormatter = LebanesePhoneFormatter();
   bool _isSubmitting = false;
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
@@ -67,7 +66,7 @@ class _AdminCreationScreenState extends ConsumerState<AdminCreationScreen> {
       if (!mounted) {
         return;
       }
-      AppSnackbar.showSuccess(context, 'Admin account created successfully.');
+      AppSnackbar.showSuccess(context, 'Admin account created and activated.');
       context.go(AppRoutes.users);
     } catch (error) {
       if (!mounted) {
@@ -108,13 +107,9 @@ class _AdminCreationScreenState extends ConsumerState<AdminCreationScreen> {
                         ),
                       ),
                       const SizedBox(height: AppSpacing.sm),
-                      AppTextField(
-                        label: 'Phone number',
-                        hint: 'Phone number',
+                      LebaneseMobileField(
                         controller: _phoneController,
-                        keyboardType: TextInputType.phone,
-                        inputFormatters: [_phoneFormatter],
-                        validator: AuthFormValidators.phoneOptional,
+                        validator: AuthFormValidators.phoneRequired,
                       ),
                       const SizedBox(height: AppSpacing.sm),
                       AppTextField(

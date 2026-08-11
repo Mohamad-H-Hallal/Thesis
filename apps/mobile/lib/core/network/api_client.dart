@@ -1,9 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:uuid/uuid.dart';
 
 import '../config/app_env.dart';
+import '../logging/app_logger.dart';
 
 /// Immutable proof that a request was created for one authenticated session.
 ///
@@ -38,6 +42,7 @@ class ApiClient {
             ),
           ) {
     _installTokenRefreshInterceptor();
+    _installUnexpectedFailureLoggingInterceptor();
   }
 
   final Dio dio;
@@ -48,13 +53,61 @@ class ApiClient {
   Future<void> _tokenStorageTail = Future<void>.value();
   ApiSessionBinding? _session;
   int _sessionGeneration = 0;
+  final Uuid _requestIdGenerator = const Uuid();
 
   static const _accessKey = 'access_token';
   static const _refreshKey = 'refresh_token';
   static const _skipAuthRefreshKey = 'skip_auth_refresh';
   static const _sessionBindingKey = 'api_session_binding';
+  static const _deviceFingerprintKey = 'verification_device_fingerprint';
+  Future<String?>? _deviceFingerprintFuture;
 
   ApiSessionBinding? get currentSessionBinding => _session;
+
+  /// Replaces credentials for the current authenticated generation after a
+  /// server-side security event such as password or contact change.
+  Future<void> replaceCurrentSessionTokens({
+    required String accessToken,
+    required String refreshToken,
+  }) async {
+    final binding = _session;
+    final normalizedAccess = accessToken.trim();
+    final normalizedRefresh = refreshToken.trim();
+    if (binding == null ||
+        normalizedAccess.isEmpty ||
+        normalizedRefresh.isEmpty) {
+      throw StateError('An active session and rotated tokens are required.');
+    }
+
+    await _runTokenStorageMutation(() async {
+      if (!_isCurrentGeneration(binding)) {
+        throw StateError(
+          'Authentication session changed while rotating tokens.',
+        );
+      }
+      final storage = _storage;
+      if (storage == null) {
+        return;
+      }
+      final persistedRefresh = await storage.read(key: _refreshKey);
+      if (persistedRefresh == null || persistedRefresh.trim().isEmpty) {
+        return;
+      }
+      await storage.write(key: _accessKey, value: normalizedAccess);
+      await storage.write(key: _refreshKey, value: normalizedRefresh);
+    });
+    if (!_isCurrentGeneration(binding)) {
+      throw StateError('Authentication session changed while rotating tokens.');
+    }
+
+    _session = ApiSessionBinding._(
+      ownerUserId: binding.ownerUserId,
+      generation: binding.generation,
+      accessToken: normalizedAccess,
+      refreshToken: normalizedRefresh,
+    );
+    dio.options.headers['Authorization'] = 'Bearer $normalizedAccess';
+  }
 
   /// Starts a new authentication generation after all refreshes from the old
   /// generation have settled. Token persistence is serialized with refreshes
@@ -228,7 +281,15 @@ class ApiClient {
   void _installTokenRefreshInterceptor() {
     dio.interceptors.add(
       InterceptorsWrapper(
-        onRequest: (request, handler) {
+        onRequest: (request, handler) async {
+          request.headers.putIfAbsent(
+            'X-Request-ID',
+            () => _requestIdGenerator.v4(),
+          );
+          final fingerprint = await _getOrCreateDeviceFingerprint();
+          if (fingerprint != null) {
+            request.headers['X-Device-Fingerprint'] = fingerprint;
+          }
           final binding = request.extra[_sessionBindingKey];
           if (binding is ApiSessionBinding) {
             if (!_isCurrentGeneration(binding)) {
@@ -306,6 +367,71 @@ class ApiClient {
         },
       ),
     );
+  }
+
+  void _installUnexpectedFailureLoggingInterceptor() {
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onError: (error, handler) {
+          final statusCode = error.response?.statusCode;
+          final isServerFailure = statusCode != null && statusCode >= 500;
+          final isTransportFailure =
+              statusCode == null && error.type != DioExceptionType.cancel;
+          if (isServerFailure || isTransportFailure) {
+            final requestId =
+                error.response?.headers.value('x-request-id') ??
+                error.requestOptions.headers['X-Request-ID']?.toString();
+            final context = <String, Object?>{
+              'method': error.requestOptions.method,
+              'path': error.requestOptions.uri.path,
+              'statusCode': statusCode,
+              'requestId': requestId,
+              'failureType': error.type.name,
+            };
+            if (isServerFailure) {
+              AppLogger.error(
+                'Backend API request failed unexpectedly',
+                component: 'api-client',
+                error: error.error ?? error.type.name,
+                stackTrace: error.stackTrace,
+                context: context,
+              );
+            } else {
+              AppLogger.warning(
+                'Backend API request could not be completed',
+                component: 'api-client',
+                error: error.error ?? error.type.name,
+                stackTrace: error.stackTrace,
+                context: context,
+              );
+            }
+          }
+          handler.next(error);
+        },
+      ),
+    );
+  }
+
+  Future<String?> _getOrCreateDeviceFingerprint() {
+    final existing = _deviceFingerprintFuture;
+    if (existing != null) return existing;
+    final future = () async {
+      final storage = _storage;
+      if (storage == null) return null;
+      try {
+        final stored = await storage.read(key: _deviceFingerprintKey);
+        if (stored?.trim().isNotEmpty == true) return stored!.trim();
+        final random = Random.secure();
+        final bytes = List<int>.generate(32, (_) => random.nextInt(256));
+        final generated = base64UrlEncode(bytes).replaceAll('=', '');
+        await storage.write(key: _deviceFingerprintKey, value: generated);
+        return generated;
+      } catch (_) {
+        return null;
+      }
+    }();
+    _deviceFingerprintFuture = future;
+    return future;
   }
 
   ApiSessionBinding? _refreshBindingFor(DioException error) {

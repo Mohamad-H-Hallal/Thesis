@@ -3,14 +3,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../core/config/app_branding.dart';
 import '../../../core/constants/design_tokens.dart';
 import '../../../core/providers/providers.dart';
 import '../../../core/router/route_paths.dart';
 import '../../../core/sync/sync_controller.dart';
 import '../../../core/widgets/app_dialog_actions.dart';
-import '../../../core/widgets/app_logo.dart';
 import '../../../core/widgets/app_scaffold.dart';
+import '../../../core/widgets/terraleb_logo.dart';
 import '../../admin/presentation/screens/admin_creation_screen.dart';
 import '../../admin/presentation/screens/admin_dashboard_screen.dart';
 import '../../admin/presentation/screens/assignments_screen.dart';
@@ -104,12 +103,13 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
                     width: 340,
                     child: Column(
                       children: [
-                        const SizedBox(height: 16),
-                        const AppLogo(size: 58),
-                        const SizedBox(height: 8),
-                        Text(
-                          AppBranding.shortName,
-                          style: Theme.of(context).textTheme.titleSmall,
+                        const Padding(
+                          padding: EdgeInsets.fromLTRB(24, 16, 24, 4),
+                          child: TerraLebLogo(
+                            key: ValueKey<String>('side-navigation-brand-logo'),
+                            width: 220,
+                            height: 76,
+                          ),
                         ),
                         Text(
                           '${session.user.fullName} • ${session.user.roleLabel}',
@@ -160,14 +160,21 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
           drawer: Drawer(
             child: ListView(
               children: [
-                const DrawerHeader(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      AppLogo(size: 52),
-                      SizedBox(height: 10),
-                      Text(AppBranding.shortName),
-                    ],
+                DrawerHeader(
+                  margin: EdgeInsets.zero,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerLow,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 16,
+                  ),
+                  child: const Center(
+                    child: TerraLebLogo(
+                      key: ValueKey<String>('drawer-brand-logo'),
+                      width: 196,
+                      height: 68,
+                    ),
                   ),
                 ),
                 ListTile(

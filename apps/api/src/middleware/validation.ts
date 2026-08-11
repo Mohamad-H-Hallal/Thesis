@@ -7,10 +7,16 @@ import {
 } from 'express-validator';
 import type { NextFunction, Request, Response } from 'express';
 import { requestHasOfflineSyncSignal } from '../services/offlineSyncSecurity.service';
+import {
+  normalizeEmailAddress,
+  normalizeLebaneseMobile,
+} from '../services/contactIdentity.service';
 
 const strongPasswordPattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
-const phonePattern = /^\d{8}$/;
-const digitsOnly = (value: unknown): string => String(value ?? '').replace(/\D/g, '');
+const validEmailAddress = (value: unknown): boolean =>
+  typeof value === 'string' && normalizeEmailAddress(value) != null;
+const validLebaneseMobile = (value: unknown): boolean =>
+  typeof value === 'string' && normalizeLebaneseMobile(value) != null;
 
 // Validation error handler
 const validate = (req: Request, res: Response, next: NextFunction): Response | void => {
@@ -45,7 +51,7 @@ const validate = (req: Request, res: Response, next: NextFunction): Response | v
 // User validation rules
 const userValidation = {
   register: [
-    body('email').trim().isEmail().normalizeEmail().withMessage('Valid email is required'),
+    body('email').trim().custom(validEmailAddress).withMessage('Valid email is required'),
     body('password')
       .isString()
       .withMessage('Password must be a string')
@@ -55,16 +61,15 @@ const userValidation = {
       .withMessage('Password must include uppercase, lowercase, number, and special character'),
     body('full_name').trim().notEmpty().withMessage('Full name is required'),
     body('phone')
-      .customSanitizer(digitsOnly)
       .trim()
       .notEmpty()
-      .withMessage('Enter a valid phone number.')
-      .matches(phonePattern)
-      .withMessage('Enter a valid phone number.'),
+      .withMessage('Enter a valid Lebanese mobile number.')
+      .custom(validLebaneseMobile)
+      .withMessage('Enter a valid Lebanese mobile number.'),
     body('role').isIn(['contributor', 'viewer']).withMessage('Role must be contributor or viewer'),
   ] as ValidationChain[],
   login: [
-    body('email').trim().isEmail().normalizeEmail().withMessage('Valid email is required'),
+    body('email').trim().custom(validEmailAddress).withMessage('Valid email is required'),
     body('password')
       .isString()
       .withMessage('Password is required')
@@ -75,10 +80,9 @@ const userValidation = {
     body('full_name').optional().trim().notEmpty(),
     body('phone')
       .optional()
-      .customSanitizer(digitsOnly)
-      .matches(phonePattern)
-      .withMessage('Enter a valid phone number.'),
-    body('email').optional().isEmail().normalizeEmail(),
+      .custom(validLebaneseMobile)
+      .withMessage('Enter a valid Lebanese mobile number.'),
+    body('email').optional().custom(validEmailAddress).withMessage('Valid email is required'),
   ] as ValidationChain[],
   changePassword: [
     body('current_password')
@@ -97,7 +101,7 @@ const userValidation = {
       .withMessage('New password must be different from current password'),
   ] as ValidationChain[],
   createAdmin: [
-    body('email').trim().isEmail().normalizeEmail().withMessage('Valid email is required'),
+    body('email').trim().custom(validEmailAddress).withMessage('Valid email is required'),
     body('password')
       .isString()
       .withMessage('Password must be a string')
@@ -108,17 +112,15 @@ const userValidation = {
     body('full_name').trim().notEmpty().withMessage('Full name is required'),
     body('phone')
       .optional()
-      .customSanitizer(digitsOnly)
-      .matches(phonePattern)
-      .withMessage('Enter a valid phone number.'),
+      .custom(validLebaneseMobile)
+      .withMessage('Enter a valid Lebanese mobile number.'),
   ] as ValidationChain[],
   adminUpdate: [
     body('full_name').optional().trim().notEmpty().withMessage('Full name cannot be empty'),
     body('phone')
       .optional()
-      .customSanitizer(digitsOnly)
-      .matches(phonePattern)
-      .withMessage('Enter a valid phone number.'),
+      .custom(validLebaneseMobile)
+      .withMessage('Enter a valid Lebanese mobile number.'),
     body('role')
       .optional()
       .isIn(['admin', 'contributor', 'viewer'])
@@ -138,10 +140,10 @@ const userValidation = {
       .withMessage('Refresh token format is invalid'),
   ] as ValidationChain[],
   forgotPassword: [
-    body('email').trim().isEmail().normalizeEmail().withMessage('Valid email is required'),
+    body('email').trim().custom(validEmailAddress).withMessage('Valid email is required'),
   ] as ValidationChain[],
   verifyResetOtp: [
-    body('email').trim().isEmail().normalizeEmail().withMessage('Valid email is required'),
+    body('email').trim().custom(validEmailAddress).withMessage('Valid email is required'),
     body('otp')
       .trim()
       .matches(/^\d{6}$/)
@@ -160,6 +162,29 @@ const userValidation = {
       .withMessage('New password must be at least 8 characters')
       .matches(strongPasswordPattern)
       .withMessage('New password must include uppercase, lowercase, number, and special character'),
+  ] as ValidationChain[],
+  verificationSendEmail: [
+    body('email')
+      .optional()
+      .trim()
+      .custom(validEmailAddress)
+      .withMessage('Valid email is required'),
+  ] as ValidationChain[],
+  verificationSendPhone: [
+    body('phone')
+      .optional()
+      .custom(validLebaneseMobile)
+      .withMessage('Enter a valid Lebanese mobile number.'),
+  ] as ValidationChain[],
+  verificationCode: [
+    body('code')
+      .trim()
+      .matches(/^\d{6}$/)
+      .withMessage('Enter the 6-digit verification code'),
+  ] as ValidationChain[],
+  requestPhoneChange: [
+    body('phone').custom(validLebaneseMobile).withMessage('Enter a valid Lebanese mobile number.'),
+    body('current_password').isString().notEmpty().withMessage('Current password is required'),
   ] as ValidationChain[],
 };
 
@@ -329,9 +354,12 @@ const settingsValidation = {
           return value;
         }
         const normalized = String(value).trim();
-        return normalized.length === 0 ? null : normalized;
+        if (normalized.length === 0) {
+          return null;
+        }
+        return normalizeEmailAddress(normalized)?.delivery ?? normalized;
       })
-      .isEmail()
+      .custom((value) => value == null || validEmailAddress(value))
       .withMessage('Valid email is required'),
     body('support_phone')
       .optional({ nullable: true })
@@ -339,11 +367,14 @@ const settingsValidation = {
         if (value === null || value === undefined) {
           return value;
         }
-        const normalized = digitsOnly(value);
-        return normalized.length === 0 ? null : normalized;
+        const normalized = String(value).trim();
+        if (normalized.length === 0) {
+          return null;
+        }
+        return normalizeLebaneseMobile(normalized)?.e164 ?? normalized;
       })
-      .matches(phonePattern)
-      .withMessage('Enter a valid phone number.'),
+      .custom((value) => value == null || validLebaneseMobile(value))
+      .withMessage('Enter a valid Lebanese mobile number.'),
     body('office_hours').optional({ nullable: true }).trim(),
     body('help_text').optional({ nullable: true }).trim(),
   ] as ValidationChain[],

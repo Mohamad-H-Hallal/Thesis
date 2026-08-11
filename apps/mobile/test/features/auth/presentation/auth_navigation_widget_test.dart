@@ -2,6 +2,7 @@
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lebanese_gis_mobile/core/network/api_client.dart';
@@ -14,10 +15,13 @@ import 'package:lebanese_gis_mobile/core/router/route_paths.dart';
 import 'package:lebanese_gis_mobile/core/sync/sync_controller.dart';
 import 'package:lebanese_gis_mobile/core/sync/sync_engine.dart';
 import 'package:lebanese_gis_mobile/features/admin/domain/admin_models.dart';
+import 'package:lebanese_gis_mobile/features/auth/data/contact_verification_repository.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_failure.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_models.dart';
 import 'package:lebanese_gis_mobile/features/auth/domain/auth_repository.dart';
+import 'package:lebanese_gis_mobile/features/auth/domain/contact_verification_models.dart';
 import 'package:lebanese_gis_mobile/features/auth/presentation/controllers/auth_controller.dart';
+import 'package:lebanese_gis_mobile/features/auth/presentation/screens/contact_verification_screen.dart';
 import 'package:lebanese_gis_mobile/features/auth/presentation/screens/login_screen.dart';
 import 'package:lebanese_gis_mobile/features/projects/domain/project.dart';
 import 'package:lebanese_gis_mobile/features/projects/domain/projects_repository.dart';
@@ -154,6 +158,68 @@ class _UnauthenticatedAuthController extends AuthController {
   _UnauthenticatedAuthController(AuthRepository repository)
     : super(repository) {
     state = const AuthState.unauthenticated();
+  }
+}
+
+class _TestContactVerificationRepository extends ContactVerificationRepository {
+  _TestContactVerificationRepository({ContactVerificationState? state})
+    : _state = state ?? _pendingEmail,
+      super(const FlutterSecureStorage(), ApiClient());
+
+  final ContactVerificationState _state;
+  int formatValidationCalls = 0;
+  int cancellationCalls = 0;
+
+  static final _pendingEmail = ContactVerificationState(
+    accountStatus: 'pending_verification',
+    emailVerified: false,
+    phoneVerified: false,
+    phoneFormatValidated: false,
+    phoneAssuranceMode: 'format_only',
+    phoneAssuranceLevel: 'unvalidated',
+    phoneOwnershipRequired: false,
+    nextStep: ContactVerificationStep.email,
+    maskedEmail: 'v***@example.com',
+    maskedPhone: '+961 3 *** ***',
+    expiresAt: DateTime.now().add(const Duration(minutes: 5)),
+    resendAfterSeconds: 60,
+  );
+
+  @override
+  Future<bool> hasPendingSession() async => true;
+
+  @override
+  Future<ContactVerificationState> status() async => _state;
+
+  @override
+  Future<ContactVerificationState> sendEmail({String? correctedEmail}) async =>
+      _state;
+
+  @override
+  Future<ContactVerificationResult> validatePhone({
+    String? correctedPhone,
+  }) async {
+    formatValidationCalls += 1;
+    return const ContactVerificationResult(
+      message: 'Email verified. Signup is complete.',
+      state: ContactVerificationState(
+        accountStatus: 'active',
+        emailVerified: true,
+        phoneVerified: false,
+        phoneFormatValidated: true,
+        phoneAssuranceMode: 'format_only',
+        phoneAssuranceLevel: 'format_validated',
+        phoneOwnershipRequired: false,
+        nextStep: ContactVerificationStep.complete,
+        maskedEmail: 'v***@example.com',
+        maskedPhone: '+961 70 *** ***',
+      ),
+    );
+  }
+
+  @override
+  Future<void> cancelPendingSignup() async {
+    cancellationCalls += 1;
   }
 }
 
@@ -693,20 +759,96 @@ void main() {
     expect(find.text('Requests'), findsWidgets);
   });
 
+  testWidgets('viewer signup continues to contact ownership verification', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final repository = const _TestAuthRepository(
+      signupMessage: 'Account created successfully. You can log in now.',
+    );
+    final container = ProviderContainer(
+      overrides: <Override>[
+        authRepositoryProvider.overrideWithValue(repository),
+        authControllerProvider.overrideWith(
+          (ref) => _UnauthenticatedAuthController(repository),
+        ),
+        contactVerificationRepositoryProvider.overrideWithValue(
+          _TestContactVerificationRepository(),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(_buildRoutedApp(container));
+    await tester.pumpAndSettle();
+
+    final router = container.read(routerProvider);
+    router.go(AppRoutes.signup);
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Viewer User');
+    await tester.enterText(find.byType(TextFormField).at(1), '03123456');
+    await tester.enterText(
+      find.byType(TextFormField).at(2),
+      'viewer@example.com',
+    );
+    await tester.enterText(find.byType(TextFormField).at(3), 'Passw0rd!123');
+    await tester.enterText(find.byType(TextFormField).at(4), 'Passw0rd!123');
+
+    final segmented = find.byType(SegmentedButton<UserRole>);
+    final viewerSegment = find.descendant(
+      of: segmented,
+      matching: find.text('Viewer'),
+    );
+    await tester.ensureVisible(viewerSegment);
+    await tester.tap(viewerSegment, warnIfMissed: false);
+    await tester.pumpAndSettle();
+
+    final submitButton = find.widgetWithText(
+      FilledButton,
+      'Create viewer account',
+    );
+    await tester.ensureVisible(submitButton);
+    tester.widget<FilledButton>(submitButton).onPressed!.call();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.text('Verify your email'), findsOneWidget);
+    expect(find.byType(ContactVerificationScreen), findsOneWidget);
+  });
+
   testWidgets(
-    'viewer signup shows immediate-access message and returns to login',
+    'provider-free phone-format fallback completes without showing a phone form',
     (tester) async {
-      await tester.binding.setSurfaceSize(const Size(1440, 1400));
+      await tester.binding.setSurfaceSize(const Size(800, 1000));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
-      final repository = const _TestAuthRepository(
-        signupMessage: 'Account created successfully. You can log in now.',
+      final authRepository = const _TestAuthRepository();
+      final formatState = ContactVerificationState(
+        accountStatus: 'pending_verification',
+        emailVerified: true,
+        phoneVerified: false,
+        phoneFormatValidated: false,
+        phoneAssuranceMode: 'format_only',
+        phoneAssuranceLevel: 'unvalidated',
+        phoneOwnershipRequired: false,
+        nextStep: ContactVerificationStep.phoneFormat,
+        maskedEmail: 'v***@example.com',
+        maskedPhone: '+961 70 *** ***',
+      );
+      final contactRepository = _TestContactVerificationRepository(
+        state: formatState,
       );
       final container = ProviderContainer(
         overrides: <Override>[
-          authRepositoryProvider.overrideWithValue(repository),
+          authRepositoryProvider.overrideWithValue(authRepository),
           authControllerProvider.overrideWith(
-            (ref) => _UnauthenticatedAuthController(repository),
+            (ref) => _UnauthenticatedAuthController(authRepository),
+          ),
+          contactVerificationRepositoryProvider.overrideWithValue(
+            contactRepository,
           ),
         ],
       );
@@ -714,93 +856,72 @@ void main() {
 
       await tester.pumpWidget(_buildRoutedApp(container));
       await tester.pumpAndSettle();
-
-      final router = container.read(routerProvider);
-      router.go(AppRoutes.signup);
+      container.read(routerProvider).go(AppRoutes.verifyContact);
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextFormField).at(0), 'Viewer User');
-      await tester.enterText(find.byType(TextFormField).at(1), '03123456');
-      await tester.enterText(
-        find.byType(TextFormField).at(2),
-        'viewer@example.com',
-      );
-      await tester.enterText(find.byType(TextFormField).at(3), 'Passw0rd!123');
-      await tester.enterText(find.byType(TextFormField).at(4), 'Passw0rd!123');
-
-      final segmented = find.byType(SegmentedButton<UserRole>);
-      final viewerSegment = find.descendant(
-        of: segmented,
-        matching: find.text('Viewer'),
-      );
-      await tester.ensureVisible(viewerSegment);
-      await tester.tap(viewerSegment, warnIfMissed: false);
-      await tester.pumpAndSettle();
-
-      final submitButton = find.widgetWithText(
-        FilledButton,
-        'Create viewer account',
-      );
-      await tester.ensureVisible(submitButton);
-      tester.widget<FilledButton>(submitButton).onPressed!.call();
-      await tester.pumpAndSettle();
-
+      expect(contactRepository.formatValidationCalls, 1);
+      expect(find.text('Validate your mobile number'), findsNothing);
+      expect(find.text('Validate number'), findsNothing);
+      expect(find.text('6-digit code'), findsNothing);
+      expect(find.text('Resend code'), findsNothing);
       expect(find.text('Sign in'), findsOneWidget);
-      expect(find.byType(LoginScreen), findsOneWidget);
     },
   );
 
-  testWidgets(
-    'contributor signup shows pending-approval message and returns to login',
-    (tester) async {
-      await tester.binding.setSurfaceSize(const Size(1440, 1400));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
+  testWidgets('contributor signup verifies contacts before approval can begin', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1440, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
 
-      final repository = const _TestAuthRepository(
-        signupMessage:
-            'Account created successfully. Your contributor request is pending admin approval.',
-      );
-      final container = ProviderContainer(
-        overrides: <Override>[
-          authRepositoryProvider.overrideWithValue(repository),
-          authControllerProvider.overrideWith(
-            (ref) => _UnauthenticatedAuthController(repository),
-          ),
-        ],
-      );
-      addTearDown(container.dispose);
+    final repository = const _TestAuthRepository(
+      signupMessage:
+          'Account created successfully. Your contributor request is pending admin approval.',
+    );
+    final container = ProviderContainer(
+      overrides: <Override>[
+        authRepositoryProvider.overrideWithValue(repository),
+        authControllerProvider.overrideWith(
+          (ref) => _UnauthenticatedAuthController(repository),
+        ),
+        contactVerificationRepositoryProvider.overrideWithValue(
+          _TestContactVerificationRepository(),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
 
-      await tester.pumpWidget(_buildRoutedApp(container));
-      await tester.pumpAndSettle();
+    await tester.pumpWidget(_buildRoutedApp(container));
+    await tester.pumpAndSettle();
 
-      final router = container.read(routerProvider);
-      router.go(AppRoutes.signup);
-      await tester.pumpAndSettle();
+    final router = container.read(routerProvider);
+    router.go(AppRoutes.signup);
+    await tester.pumpAndSettle();
 
-      await tester.enterText(
-        find.byType(TextFormField).at(0),
-        'Contributor User',
-      );
-      await tester.enterText(find.byType(TextFormField).at(1), '03123456');
-      await tester.enterText(
-        find.byType(TextFormField).at(2),
-        'contributor@example.com',
-      );
-      await tester.enterText(find.byType(TextFormField).at(3), 'Passw0rd!123');
-      await tester.enterText(find.byType(TextFormField).at(4), 'Passw0rd!123');
+    await tester.enterText(
+      find.byType(TextFormField).at(0),
+      'Contributor User',
+    );
+    await tester.enterText(find.byType(TextFormField).at(1), '03123456');
+    await tester.enterText(
+      find.byType(TextFormField).at(2),
+      'contributor@example.com',
+    );
+    await tester.enterText(find.byType(TextFormField).at(3), 'Passw0rd!123');
+    await tester.enterText(find.byType(TextFormField).at(4), 'Passw0rd!123');
 
-      final submitButton = find.widgetWithText(
-        FilledButton,
-        'Request contributor access',
-      );
-      await tester.ensureVisible(submitButton);
-      tester.widget<FilledButton>(submitButton).onPressed!.call();
-      await tester.pumpAndSettle();
+    final submitButton = find.widgetWithText(
+      FilledButton,
+      'Request contributor access',
+    );
+    await tester.ensureVisible(submitButton);
+    tester.widget<FilledButton>(submitButton).onPressed!.call();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
 
-      expect(find.text('Sign in'), findsOneWidget);
-      expect(find.byType(LoginScreen), findsOneWidget);
-    },
-  );
+    expect(find.text('Verify your email'), findsOneWidget);
+    expect(find.byType(ContactVerificationScreen), findsOneWidget);
+  });
 
   testWidgets(
     'duplicate email signup stays on signup and highlights the email field',
@@ -855,6 +976,60 @@ void main() {
       expect(find.byType(LoginScreen), findsNothing);
       expect(find.text('This email is already registered.'), findsWidgets);
       expect(find.text('duplicate@example.com'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'phone account cap stays on signup and highlights the phone field',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1440, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      const limitMessage =
+          'This mobile number is already used by the maximum of 3 accounts. Use another Lebanese mobile number.';
+      final repository = const _TestAuthRepository(
+        signupFailure: AuthFailure(
+          limitMessage,
+          statusCode: 409,
+          code: 'phone_account_limit',
+        ),
+      );
+      final container = ProviderContainer(
+        overrides: <Override>[
+          authRepositoryProvider.overrideWithValue(repository),
+          authControllerProvider.overrideWith(
+            (ref) => _UnauthenticatedAuthController(repository),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(_buildRoutedApp(container));
+      await tester.pumpAndSettle();
+
+      container.read(routerProvider).go(AppRoutes.signup);
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextFormField).at(0), 'Fourth User');
+      await tester.enterText(find.byType(TextFormField).at(1), '70123456');
+      await tester.enterText(
+        find.byType(TextFormField).at(2),
+        'fourth@example.com',
+      );
+      await tester.enterText(find.byType(TextFormField).at(3), 'Passw0rd!123');
+      await tester.enterText(find.byType(TextFormField).at(4), 'Passw0rd!123');
+
+      final submitButton = find.widgetWithText(
+        FilledButton,
+        'Request contributor access',
+      );
+      await tester.ensureVisible(submitButton);
+      tester.widget<FilledButton>(submitButton).onPressed!.call();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(LoginScreen), findsNothing);
+      expect(find.text(limitMessage), findsWidgets);
+      expect(find.text('70 123 456'), findsWidgets);
     },
   );
 }

@@ -1,10 +1,10 @@
-const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
+const swaggerUi = require('swagger-ui-express');
 
 const { notFound, errorHandler } = require('./middleware/error');
 import { attachRequestContext } from './middleware/requestContext';
@@ -19,6 +19,7 @@ import { broadcastWorkflowMutations } from './middleware/workflowBroadcast';
 import { offlineSyncIngressRateLimit } from './middleware/offlineSyncRateLimit';
 import { categoryIconsDir } from './config/upload';
 import { privateMediaRouter } from './routes/privateMedia.routes';
+import { loadOpenApiDocument, openApiYamlPath } from './docs/openapi';
 import {
   configureRateLimitBackend,
   createSharedRateLimitStore,
@@ -141,13 +142,13 @@ const buildApp = (env) => {
           }
         : false,
       crossOriginEmbedderPolicy: false,
-    })
+    }),
   );
   app.use(
     cors({
       origin: corsOriginHandler,
       credentials: env.CORS_CREDENTIALS,
-    })
+    }),
   );
   // Bound request-body parsing and authentication work for every feature/photo
   // synchronization ingress, including requests with invalid or stale tokens.
@@ -166,14 +167,34 @@ const buildApp = (env) => {
         }),
       );
     }
-    app.use(
-      '/docs',
-      express.static(path.join(__dirname, '..', 'docs'), {
-        dotfiles: 'deny',
-        index: false,
-        redirect: false,
+    const openApiDocument = loadOpenApiDocument(normalizedApiPrefix);
+    const docsRouter = express.Router();
+    docsRouter.use((_req, res, next) => {
+      res.setHeader(
+        'Content-Security-Policy',
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'",
+      );
+      next();
+    });
+    docsRouter.get('/openapi.yaml', (_req, res) => {
+      res.type('application/yaml').sendFile(openApiYamlPath);
+    });
+    docsRouter.get('/openapi.json', (_req, res) => {
+      res.json(openApiDocument);
+    });
+    docsRouter.use(
+      '/',
+      swaggerUi.serve,
+      swaggerUi.setup(openApiDocument, {
+        customSiteTitle: 'TerraLeb API Documentation',
+        swaggerOptions: {
+          displayRequestDuration: true,
+          persistAuthorization: false,
+          tryItOutEnabled: true,
+        },
       }),
     );
+    app.use('/docs', docsRouter);
   }
   app.use(
     '/uploads/category-icons',
@@ -268,7 +289,8 @@ const buildApp = (env) => {
         settings: `${normalizedApiPrefix}/settings`,
         users: `${normalizedApiPrefix}/users (admin only)`,
       },
-      documentation: env.API_DOCS_ENABLED ? '/docs/openapi.yaml' : 'disabled',
+      documentation: env.API_DOCS_ENABLED ? '/docs/' : 'disabled',
+      openapi: env.API_DOCS_ENABLED ? '/docs/openapi.json' : 'disabled',
       operations: {
         health: '/health',
         readiness: '/ready',

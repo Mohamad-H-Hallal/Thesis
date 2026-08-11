@@ -1,12 +1,10 @@
+import 'package:email_validator/email_validator.dart';
+
 import '../../../../core/utils/lebanese_phone.dart';
 
 class AuthFormValidators {
   const AuthFormValidators._();
 
-  static final RegExp _emailPattern = RegExp(
-    r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$",
-    caseSensitive: false,
-  );
   static final RegExp _uppercasePattern = RegExp(r'[A-Z]');
   static final RegExp _lowercasePattern = RegExp(r'[a-z]');
   static final RegExp _numberPattern = RegExp(r'\d');
@@ -45,7 +43,7 @@ class AuthFormValidators {
     if (normalized.isEmpty) {
       return 'Email is required';
     }
-    if (!_emailPattern.hasMatch(normalized)) {
+    if (!EmailValidator.validate(normalized, true, true)) {
       return 'Enter a valid email address';
     }
     return null;
@@ -100,7 +98,7 @@ class AuthFormValidators {
       return null;
     }
     if (!LebanesePhone.isValid(normalized)) {
-      return 'Enter a valid phone number.';
+      return 'Enter a valid Lebanese mobile number.';
     }
     return null;
   }
@@ -108,10 +106,10 @@ class AuthFormValidators {
   static String? phoneRequired(String? value) {
     final normalized = LebanesePhone.normalize(value ?? '');
     if (normalized.isEmpty) {
-      return 'Enter a valid phone number.';
+      return 'Enter a valid Lebanese mobile number.';
     }
     if (!LebanesePhone.isValid(normalized)) {
-      return 'Enter a valid phone number.';
+      return 'Enter a valid Lebanese mobile number.';
     }
     return null;
   }

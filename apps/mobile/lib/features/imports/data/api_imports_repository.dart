@@ -24,6 +24,7 @@ class ApiImportsRepository implements ImportsRepository {
   static const int _importTileCacheMaxEntries = 192;
   static const int _importTileBatchSize = 4;
   int _importTileCacheRevision = 0;
+  String? _importTileCacheSessionScope;
 
   String get _basePath => '${AppEnv.apiVersionPrefix}/imports';
 
@@ -171,6 +172,8 @@ class ApiImportsRepository implements ImportsRepository {
     required double zoom,
     int cacheRevision = 0,
   }) async {
+    _ensureImportTileCacheSessionScope();
+    final requestSessionScope = _currentSessionCacheScope;
     if (_importTileCacheRevision != cacheRevision) {
       _importTileCacheRevision = cacheRevision;
       _importTileCache.clear();
@@ -200,6 +203,8 @@ class ApiImportsRepository implements ImportsRepository {
                 y: tile.y,
                 renderZoom: zoom,
               );
+            } on StateError {
+              rethrow;
             } catch (error) {
               firstError ??= error;
               return null;
@@ -211,6 +216,7 @@ class ApiImportsRepository implements ImportsRepository {
             tileResults.add(result);
           }
         }
+        _assertImportRequestSessionScope(requestSessionScope);
       }
       if (tileResults.isEmpty && firstError != null) {
         throw firstError!;
@@ -225,6 +231,7 @@ class ApiImportsRepository implements ImportsRepository {
           approvedRows.putIfAbsent(feature.id, () => feature);
         }
       }
+      _assertImportRequestSessionScope(requestSessionScope);
       return ImportMapData(
         stagedFeatures: stagedRows.values.toList(growable: false),
         approvedProjectFeatures: approvedRows.values.toList(growable: false),
@@ -245,8 +252,11 @@ class ApiImportsRepository implements ImportsRepository {
     required int y,
     required double renderZoom,
   }) async {
+    _ensureImportTileCacheSessionScope();
+    final requestSessionScope = _currentSessionCacheScope;
     final zoomKey = renderZoom.toStringAsFixed(2);
-    final cacheKey = '$importId:$projectId:$z:$x:$y:$zoomKey';
+    final cacheKey =
+        '$requestSessionScope:$importId:$projectId:$z:$x:$y:$zoomKey';
     final cached = _importTileCache.remove(cacheKey);
     if (cached != null) {
       _importTileCache[cacheKey] = cached;
@@ -263,21 +273,36 @@ class ApiImportsRepository implements ImportsRepository {
       response.data?['data'] as Map? ?? const <String, dynamic>{},
     );
     final stagedRows = (data['staged_features'] as List? ?? const <dynamic>[])
-        .map((row) => _toImportedFeature(Map<String, dynamic>.from(row as Map)))
+        .map((row) {
+          final item = Map<String, dynamic>.from(row as Map);
+          final responseImportId = item['import_job_id'];
+          if (responseImportId is! String || responseImportId != importId) {
+            throw StateError(
+              'The import map response did not match the active import.',
+            );
+          }
+          return _toImportedFeature(item);
+        })
         .toList(growable: false);
     final approvedRows =
         (data['approved_project_features'] as List? ?? const <dynamic>[])
-            .map(
-              (row) => _toProjectFeature(
-                Map<String, dynamic>.from(row as Map),
-                expectedProjectId: projectId,
-              ),
-            )
+            .map((row) {
+              final item = Map<String, dynamic>.from(row as Map);
+              final responseProjectId = item['project_id'];
+              if (responseProjectId is! String ||
+                  responseProjectId != projectId) {
+                throw StateError(
+                  'The import map response did not match the active project.',
+                );
+              }
+              return _toProjectFeature(item, expectedProjectId: projectId);
+            })
             .toList(growable: false);
     final tileData = ImportMapData(
       stagedFeatures: stagedRows,
       approvedProjectFeatures: approvedRows,
     );
+    _assertImportRequestSessionScope(requestSessionScope);
     _rememberImportTile(cacheKey, tileData);
     return tileData;
   }
@@ -787,6 +812,30 @@ class ApiImportsRepository implements ImportsRepository {
     _importTileCache[cacheKey] = data;
     while (_importTileCache.length > _importTileCacheMaxEntries) {
       _importTileCache.remove(_importTileCache.keys.first);
+    }
+  }
+
+  String get _currentSessionCacheScope {
+    final session = _apiClient.currentSessionBinding;
+    return session == null
+        ? 'unauthenticated'
+        : '${session.ownerUserId}:${session.generation}';
+  }
+
+  void _ensureImportTileCacheSessionScope() {
+    final currentScope = _currentSessionCacheScope;
+    if (_importTileCacheSessionScope == currentScope) {
+      return;
+    }
+    _importTileCacheSessionScope = currentScope;
+    _importTileCache.clear();
+  }
+
+  void _assertImportRequestSessionScope(String expectedScope) {
+    if (_currentSessionCacheScope != expectedScope) {
+      throw StateError(
+        'The authenticated session changed while import map features were loading.',
+      );
     }
   }
 }

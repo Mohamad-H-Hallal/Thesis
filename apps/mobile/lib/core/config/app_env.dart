@@ -64,9 +64,26 @@ class AppEnv {
     return '/$value';
   }
 
+  static String get appLogLevel {
+    const value = String.fromEnvironment('APP_LOG_LEVEL', defaultValue: '');
+    final normalized = value.trim().toLowerCase();
+    if (normalized == 'debug' ||
+        normalized == 'info' ||
+        normalized == 'warning' ||
+        normalized == 'warn' ||
+        normalized == 'error') {
+      return normalized;
+    }
+    return flavor == AppFlavor.dev ? 'debug' : 'info';
+  }
+
   static bool get useMockAuth {
     const raw = String.fromEnvironment('USE_MOCK_AUTH', defaultValue: '');
-    return _parseBool(raw, fallback: false);
+    final enabled = _parseBool(raw, fallback: false);
+    if (flavor == AppFlavor.prod && enabled) {
+      throw StateError('Mock authentication cannot be enabled in production.');
+    }
+    return enabled;
   }
 
   static bool get useMockData {

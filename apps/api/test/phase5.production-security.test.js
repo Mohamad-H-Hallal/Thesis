@@ -3,6 +3,8 @@ const { safeTokenEqual } = require('../src/middleware/operationalAccess');
 const { normalizeRequestId, normalizeRequestPath } = require('../src/middleware/requestContext');
 const { redactSensitive, sanitizeLogString } = require('../src/utils/logger');
 
+const validFixtureCredential = (label) => `${label}-${'x'.repeat(40)}`;
+
 const validProductionEnv = (overrides = {}) => ({
   NODE_ENV: 'production',
   MAIL_TRANSPORT: 'smtp',
@@ -36,6 +38,13 @@ const validProductionEnv = (overrides = {}) => ({
   METRICS_TOKEN: 'M9x4Q7v2K8s5P1d6R3t0W4y7',
   MALWARE_SCANNER_MODE: 'clamav',
   PASSWORD_RESET_REQUIRE_REAL_DELIVERY: 'true',
+  VERIFICATION_HMAC_SECRET: validFixtureCredential('hmac-fixture'),
+  PHONE_ASSURANCE_MODE: 'sms_otp',
+  PHONE_FORMAT_VALIDATION_PROVIDER: 'libphonenumber',
+  PHONE_VERIFICATION_PROVIDER: 'twilio_verify',
+  TWILIO_ACCOUNT_SID: 'AC1234567890abcdef1234567890abcd',
+  TWILIO_AUTH_TOKEN: validFixtureCredential('twilio-fixture'),
+  TWILIO_VERIFY_SERVICE_SID: 'VA1234567890abcdef1234567890abcd',
   SMTP_HOST: 'smtp.gis.gov.lb',
   SMTP_PORT: '587',
   SMTP_USER: 'gis-mailer',
@@ -58,17 +67,59 @@ describe('Phase 5 production security controls', () => {
     expect(env.METRICS_ENABLED).toBe(true);
   });
 
+  test('accepts provider-free format assurance without Twilio credentials', () => {
+    const env = validateEnv(
+      validProductionEnv({
+        PHONE_ASSURANCE_MODE: 'format_only',
+        PHONE_FORMAT_VALIDATION_PROVIDER: 'libphonenumber',
+        PHONE_VERIFICATION_PROVIDER: 'mock',
+        TWILIO_ACCOUNT_SID: '',
+        TWILIO_AUTH_TOKEN: '',
+        TWILIO_VERIFY_SERVICE_SID: '',
+      }),
+    );
+    expect(env.PHONE_ASSURANCE_MODE).toBe('format_only');
+    expect(env.PHONE_FORMAT_VALIDATION_PROVIDER).toBe('libphonenumber');
+    expect(env.TWILIO_VERIFY_SERVICE_SID).toBe('');
+  });
+
+  test('optional Twilio Lookup provider still requires Twilio account credentials', () => {
+    expect(() =>
+      validateEnv(
+        validProductionEnv({
+          PHONE_ASSURANCE_MODE: 'format_only',
+          PHONE_FORMAT_VALIDATION_PROVIDER: 'twilio_lookup_basic',
+          TWILIO_ACCOUNT_SID: '',
+        }),
+      ),
+    ).toThrow('Twilio provider requires safe account credentials');
+  });
+
   test.each([
     [{ ENFORCE_HTTPS: 'false' }, 'ENFORCE_HTTPS=true'],
     [{ CORS_ORIGIN: 'http://collector.gis.gov.lb' }, 'HTTPS CORS origins'],
     [{ CORS_ORIGIN: 'https://collector.example' }, 'HTTPS CORS origins'],
     [{ CORS_ORIGIN: 'https://collector.example.gov.lb' }, 'HTTPS CORS origins'],
     [{ ENABLE_LEGACY_API_PREFIX: 'true' }, 'ENABLE_LEGACY_API_PREFIX=false'],
+    [{ JWT_EXPIRE: '2h' }, 'access tokens must expire within 1 hour'],
+    [{ JWT_REFRESH_EXPIRE: '31d' }, 'refresh tokens must expire within 30 days'],
+    [
+      {
+        JWT_REFRESH_SECRET: validProductionEnv().JWT_SECRET,
+        JWT_REFRESH_SECRET_CURRENT: validProductionEnv().JWT_SECRET_CURRENT,
+      },
+      'access-token and refresh-token secrets must be distinct',
+    ],
     [{ METRICS_ENABLED: 'false' }, 'protected metrics'],
     [{ LOG_PRETTY: 'true' }, 'redacted JSON logs'],
-    [{ PASSWORD_RESET_REQUIRE_REAL_DELIVERY: 'false' }, 'PASSWORD_RESET_REQUIRE_REAL_DELIVERY=true'],
+    [
+      { PASSWORD_RESET_REQUIRE_REAL_DELIVERY: 'false' },
+      'PASSWORD_RESET_REQUIRE_REAL_DELIVERY=true',
+    ],
     [{ DB_PASSWORD: 'replace-with-password' }, 'DB_PASSWORD'],
     [{ SMTP_USER: 'replace-with-smtp-username' }, 'SMTP_USER'],
+    [{ PHONE_VERIFICATION_PROVIDER: 'mock' }, 'PHONE_VERIFICATION_PROVIDER=twilio_verify'],
+    [{ VERIFICATION_HMAC_SECRET: 'replace-with-secret' }, 'VERIFICATION_HMAC_SECRET'],
   ])('rejects insecure production override %j', (override, expectedMessage) => {
     expect(() => validateEnv(validProductionEnv(override))).toThrow(expectedMessage);
   });

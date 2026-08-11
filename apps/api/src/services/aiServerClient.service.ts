@@ -1,4 +1,5 @@
 type JsonRecord = Record<string, unknown>;
+const logger = require('../utils/logger');
 
 export type AiServerRunStatus =
   | 'accepted'
@@ -153,6 +154,8 @@ class AiServerClient {
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
+    const startedAt = Date.now();
+    let responseStatus: number | undefined;
     try {
       const response = await fetch(`${this.config.baseUrl}${path}`, {
         method,
@@ -163,6 +166,7 @@ class AiServerClient {
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
       });
+      responseStatus = response.status;
       const text = await response.text();
       const payload = text.trim().length > 0 ? JSON.parse(text) : {};
       if (!response.ok) {
@@ -176,8 +180,21 @@ class AiServerClient {
       }
       return toJsonRecord(payload) as T;
     } catch (error) {
+      const reportedError =
+        error instanceof Error && error.name === 'AbortError'
+          ? new Error('AI server request timed out.')
+          : error;
+      const logMethod = responseStatus !== undefined && responseStatus < 500 ? 'warn' : 'error';
+      logger[logMethod]('AI server request failed', {
+        component: 'ai-server-client',
+        method,
+        path,
+        statusCode: responseStatus,
+        durationMs: Date.now() - startedAt,
+        error: reportedError,
+      });
       if (error instanceof Error && error.name === 'AbortError') {
-        throw new Error('AI server request timed out.');
+        throw reportedError;
       }
       throw error;
     } finally {

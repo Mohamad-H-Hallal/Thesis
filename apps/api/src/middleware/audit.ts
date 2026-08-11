@@ -2,33 +2,34 @@ import type { NextFunction, Request, Response } from 'express';
 import { query } from '../config/database';
 const logger = require('../utils/logger');
 
-type AuditActionType =
-  | 'create'
-  | 'update'
-  | 'delete'
-  | 'approve'
-  | 'reject'
-  | 'export'
-  | 'comment';
+type AuditActionType = 'create' | 'update' | 'delete' | 'approve' | 'reject' | 'export' | 'comment';
 
 interface AuditActionOptions {
   actionType: AuditActionType;
   entityType: string;
   resolveEntityId: (req: Request, res: Response, responseBody: any) => string | null | undefined;
-  resolveOldValues?: (req: Request, res: Response, responseBody: any) => Record<string, unknown> | null;
-  resolveNewValues?: (req: Request, res: Response, responseBody: any) => Record<string, unknown> | null;
+  resolveOldValues?: (
+    req: Request,
+    res: Response,
+    responseBody: any,
+  ) => Record<string, unknown> | null;
+  resolveNewValues?: (
+    req: Request,
+    res: Response,
+    responseBody: any,
+  ) => Record<string, unknown> | null;
 }
 
 interface DynamicAuditActionOptions extends Omit<AuditActionOptions, 'actionType'> {
   resolveActionType: (
     req: Request,
     res: Response,
-    responseBody: any
+    responseBody: any,
   ) => AuditActionType | null | undefined;
 }
 
 const SENSITIVE_KEY_PATTERN =
-  /^(?:password|password_hash|token|refresh_token|refreshToken|authorization|cookie|secret|private_?key|geometry|coordinates|feature_collection|file_buffer|raw_content)$/i;
+  /^(?:password|password_hash|.*_?token|otp|verification_?code|authorization|cookie|secret|private_?key|geometry|coordinates|feature_collection|file_buffer|raw_content)$/i;
 
 const sanitizeObject = (input: unknown): unknown => {
   if (Array.isArray(input)) {
@@ -60,7 +61,7 @@ const writeAuditLog = async (
   res: Response,
   options: AuditActionOptions,
   entityId: string,
-  responseBody: any
+  responseBody: any,
 ): Promise<void> => {
   try {
     if (process.env.AUDIT_LOG_ENABLED === 'false') {
@@ -89,7 +90,7 @@ const writeAuditLog = async (
         oldValues ? JSON.stringify(oldValues) : null,
         newValues ? JSON.stringify(newValues) : null,
         req.ip ?? null,
-      ]
+      ],
     );
   } catch (error) {
     logger.warn('Failed to write audit log', {
@@ -107,7 +108,7 @@ const sendJsonAfterAudit = (
   originalJson: Response['json'],
   body: any,
   options: AuditActionOptions,
-  entityId: string
+  entityId: string,
 ): Response => {
   void (async () => {
     await writeAuditLog(req, res, options, entityId, body);
@@ -145,7 +146,14 @@ const auditDynamicAction = (options: DynamicAuditActionOptions) => {
         const actionType = options.resolveActionType(req, res, body);
         const entityId = options.resolveEntityId(req, res, body);
         if (actionType && entityId) {
-          return sendJsonAfterAudit(req, res, originalJson, body, { ...options, actionType }, entityId);
+          return sendJsonAfterAudit(
+            req,
+            res,
+            originalJson,
+            body,
+            { ...options, actionType },
+            entityId,
+          );
         }
       }
 

@@ -6,6 +6,7 @@
 !.env.staging.example
 !.env.prod.example
 *.log
+logs/
 !docs/handover/evidence/*.log
 secrets/*.txt
 secrets/**/*.txt
@@ -13,6 +14,7 @@ secrets/*.json
 secrets/**/*.json
 !secrets/README.md
 backups/
+tmp/
 device_offline_*.db
 *.sqlite
 *.sqlite3

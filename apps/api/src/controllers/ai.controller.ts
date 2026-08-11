@@ -5,6 +5,7 @@ import type { PoolClient } from 'pg';
 import type { Request, Response } from 'express';
 const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
+import { safeTokenEqual } from '../middleware/operationalAccess';
 const { createAiPipelineService } = require('../services/aiPipeline.service');
 const logger = require('../utils/logger');
 import {
@@ -33,6 +34,11 @@ import {
 } from '../services/aiPredictionFeatureValidation.service';
 import { publicVisibleStatuses, synchronizeProjectStatuses } from '../lib/projectLifecycle';
 import { isProtectedSuperAdminEmail } from '../lib/userWorkflow';
+import {
+  notifyAiRunReviewed,
+  notifyAiRunStatus,
+  notifyProjectAiPublication,
+} from '../lib/aiNotifications';
 import { privateAiValidationPhotosDir } from '../config/upload';
 import { type MemoryPhotoFile } from '../services/featurePhotoSecurity.service';
 import {
@@ -2356,6 +2362,7 @@ const updateAiRunFromServerPayload = async (
       Number.isFinite(predictionsInserted) ? predictionsInserted : 0,
     ],
   );
+  await notifyAiRunStatus(runId);
   return result.rows[0];
 };
 
@@ -2435,6 +2442,7 @@ const failAiRunFromDispatchError = async (
       }),
     ],
   );
+  await notifyAiRunStatus(runId);
   return result.rows[0];
 };
 
@@ -3960,7 +3968,7 @@ const handleAiRunCallback = async (req: Request, res: Response): Promise<void> =
   const providedSecret =
     normalizeOptionalString(req.header('x-ai-callback-secret')) ??
     normalizeOptionalString(req.body?.callback_secret);
-  if (!expectedSecret || providedSecret !== expectedSecret) {
+  if (!expectedSecret || !safeTokenEqual(providedSecret ?? '', expectedSecret)) {
     await query(
       `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
        SELECT $1, 'warning', 'Rejected AI server callback with invalid secret.', $2::jsonb
@@ -6389,6 +6397,12 @@ const reviewAiRun = async (req: Request, res: Response): Promise<void> => {
       ],
     );
 
+    await notifyAiRunReviewed(client, {
+      runId: lockedRun.id,
+      action,
+      actorUserId: currentUser.id,
+    });
+
     return {
       decision: decisionResult.rows[0],
       run: updatedRunResult.rows[0],
@@ -6667,6 +6681,14 @@ const publishProjectAiRun = async (req: Request, res: Response): Promise<void> =
       ],
     );
 
+    await notifyProjectAiPublication(client, {
+      projectId: run.project_id,
+      runId: run.id,
+      layerId: layer.id,
+      published: true,
+      actorUserId: currentUser.id,
+    });
+
     return {
       run: normalizeRunRow(runUpdate.rows[0]),
       layer: layerUpdate.rows[0],
@@ -6808,6 +6830,15 @@ const unpublishProjectAiRun = async (req: Request, res: Response): Promise<void>
         }),
       ],
     );
+    for (const layer of layerResult.rows) {
+      await notifyProjectAiPublication(client, {
+        projectId: run.project_id,
+        runId: run.id,
+        layerId: layer.id,
+        published: false,
+        actorUserId: currentUser.id,
+      });
+    }
     return {
       run: normalizeRunRow(runUpdate.rows[0]),
       layers: layerResult.rows,
@@ -7034,6 +7065,14 @@ const publishAiLayer = async (req: Request, res: Response): Promise<void> => {
       ],
     );
 
+    await notifyProjectAiPublication(client, {
+      projectId: layer.project_id,
+      runId: layer.ai_run_id,
+      layerId: layer.id,
+      published: true,
+      actorUserId: currentUser.id,
+    });
+
     return updated.rows[0];
   });
 
@@ -7151,6 +7190,14 @@ const unpublishAiLayer = async (req: Request, res: Response): Promise<void> => {
         }),
       ],
     );
+
+    await notifyProjectAiPublication(client, {
+      projectId: layer.project_id,
+      runId: layer.ai_run_id,
+      layerId: layer.id,
+      published: false,
+      actorUserId: currentUser.id,
+    });
 
     return updated.rows[0];
   });

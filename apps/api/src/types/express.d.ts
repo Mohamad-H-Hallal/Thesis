@@ -8,6 +8,8 @@ declare global {
       full_name: string;
       role: user_role;
       is_active: boolean;
+      account_status?: string;
+      auth_version?: number;
     }
 
     interface Request {
@@ -15,6 +17,9 @@ declare global {
       projectRole?: 'admin' | 'contributor';
       requestId?: string;
       startTimeMs?: number;
+      verificationUserId?: string;
+      authSessionId?: string;
+      authTokenExpiresAt?: number;
     }
   }
 }
