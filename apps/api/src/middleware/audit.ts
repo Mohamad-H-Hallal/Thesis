@@ -40,16 +40,12 @@ const sanitizeObject = (input: unknown): unknown => {
     return input;
   }
 
-  const obj = input as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    if (SENSITIVE_KEY_PATTERN.test(key)) {
-      out[key] = '[REDACTED]';
-      continue;
-    }
-    out[key] = sanitizeObject(value);
-  }
-  return out;
+  return Object.fromEntries(
+    Object.entries(input as Record<string, unknown>).map(([key, value]) => [
+      key,
+      SENSITIVE_KEY_PATTERN.test(key) ? '[REDACTED]' : sanitizeObject(value),
+    ]),
+  );
 };
 
 const isUuid = (value: string): boolean => {

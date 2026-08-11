@@ -103,7 +103,7 @@ const preauthorizePhotoUpload = async (
 // Upload photo(s) to feature
 const uploadPhotos = async (req: Request, res: Response): Promise<void> => {
   const { featureId } = req.params;
-  const files = ((req.files as MemoryPhotoFile[]) || []).slice();
+  const files = Array.isArray(req.files) ? (req.files.slice() as MemoryPhotoFile[]) : [];
 
   if (files.length === 0) {
     throw attachmentRejected(req, 'No attachments were uploaded.', 400);

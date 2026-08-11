@@ -1,4 +1,5 @@
 import fsSync from 'node:fs';
+import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { PoolClient } from 'pg';
@@ -6103,24 +6104,32 @@ const getAiLayerFeatures = async (req: Request, res: Response): Promise<void> =>
     outputRoot: resolveConfiguredAiOutputRoot(pipelineConfig.root),
   });
 
-  let stat;
+  let artifactHandle;
   try {
-    stat = await fs.stat(artifactPath);
+    artifactHandle = await fs.open(artifactPath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
   } catch {
     throw new AppError('AI output layer preview output file was not found.', 404);
-  }
-  if (!stat.isFile()) {
-    throw new AppError('AI output layer preview output is not a file.', 400);
-  }
-  if (stat.size > MAX_AI_LAYER_GEOJSON_BYTES) {
-    throw new AppError('AI output layer preview output is too large to load directly.', 413);
   }
 
   let parsed: any;
   try {
-    parsed = JSON.parse(await fs.readFile(artifactPath, 'utf8'));
-  } catch {
-    throw new AppError('AI output layer preview output is not valid GeoJSON.', 422);
+    const stat = await artifactHandle.stat();
+    if (!stat.isFile()) {
+      throw new AppError('AI output layer preview output is not a file.', 400);
+    }
+    if (stat.size > MAX_AI_LAYER_GEOJSON_BYTES) {
+      throw new AppError('AI output layer preview output is too large to load directly.', 413);
+    }
+    try {
+      parsed = JSON.parse(await artifactHandle.readFile('utf8'));
+    } catch (error: unknown) {
+      if (error instanceof SyntaxError) {
+        throw new AppError('AI output layer preview output is not valid GeoJSON.', 422);
+      }
+      throw error;
+    }
+  } finally {
+    await artifactHandle.close();
   }
 
   if (!parsed || parsed.type !== 'FeatureCollection' || !Array.isArray(parsed.features)) {

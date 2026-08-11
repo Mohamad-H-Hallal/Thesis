@@ -31,6 +31,7 @@ class PushDeliveryError extends Error {
 }
 
 const pushScope = 'https://www.googleapis.com/auth/firebase.messaging';
+const firebaseProjectIdPattern = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
 
 let authClientPromise: Promise<AuthClient> | null = null;
 let projectIdPromise: Promise<string | null> | null = null;
@@ -188,7 +189,7 @@ const sendPushNotification = async (
   }
 
   const projectId = await getPushProjectId();
-  if (!projectId) {
+  if (!projectId || !firebaseProjectIdPattern.test(projectId)) {
     throw new PushDeliveryError(
       'Firebase project id could not be resolved for push delivery.',
       'messaging/configuration-error',
@@ -205,8 +206,10 @@ const sendPushNotification = async (
     });
   }
 
+  const endpoint = new URL('https://fcm.googleapis.com');
+  endpoint.pathname = `/v1/projects/${encodeURIComponent(projectId)}/messages:send`;
   const response = await fetch(
-    `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`,
+    endpoint,
     {
       method: 'POST',
       headers: {

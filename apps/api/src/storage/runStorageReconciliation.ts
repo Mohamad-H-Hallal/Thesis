@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { closePool, query, transaction } from '../config/database';
@@ -68,11 +69,16 @@ const parseArguments = (): {
 };
 
 const readManifest = async (manifestPath: string): Promise<unknown> => {
-  const stat = await fs.lstat(manifestPath);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 2 || stat.size > 5 * 1024 * 1024) {
-    throw new Error('Manifest must be a regular JSON file no larger than 5 MiB.');
+  const handle = await fs.open(manifestPath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size < 2 || stat.size > 5 * 1024 * 1024) {
+      throw new Error('Manifest must be a regular JSON file no larger than 5 MiB.');
+    }
+    return JSON.parse(await handle.readFile('utf8'));
+  } finally {
+    await handle.close();
   }
-  return JSON.parse(await fs.readFile(manifestPath, 'utf8'));
 };
 
 const database = { query, transaction };
