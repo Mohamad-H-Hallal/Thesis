@@ -152,6 +152,24 @@ describe('Security: authenticated session lifecycle and realtime event privacy',
     }
   });
 
+  test('rejects valid JWTs presented outside the exact Bearer authorization envelope', async () => {
+    const account = await registerUser({ role: 'viewer', emailPrefix: 'bearer-envelope' });
+    const session = await loginUser(account);
+
+    for (const authorization of [
+      session.token,
+      `Basic ${session.token}`,
+      `Bearer  ${session.token}`,
+      `Bearer ${session.token} trailing-value`,
+    ]) {
+      const response = await request(app)
+        .get(`${API_PREFIX}/auth/me`)
+        .set('Authorization', authorization);
+      expect(response.status).toBe(401);
+      expect(response.body.message).toBe('No token provided');
+    }
+  });
+
   test('removes identifiers from realtime paths and limits user-target metadata', () => {
     const projectId = '11111111-1111-4111-8111-111111111111';
     expect(coarseWorkflowPath(`/api/v1/projects/${projectId}/assignments?include=user`)).toBe(

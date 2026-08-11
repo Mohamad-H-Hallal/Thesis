@@ -61,26 +61,14 @@ const authenticate = async (
   res: Response,
   next: NextFunction,
 ): Promise<Response | void> => {
+  const bearerToken =
+    /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/.exec(
+      req.headers.authorization ?? '',
+    )?.[1] ?? '';
+
   try {
-    // Get token from header
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({
-        success: false,
-        message: 'No token provided',
-      });
-    }
-
-    const token = authHeader.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'No token provided',
-      });
-    }
-
     // Verify token
-    const decoded = verifyAccessToken(token);
+    const decoded = verifyAccessToken(bearerToken);
 
     // Get user from database
     const result = await query(
@@ -173,7 +161,7 @@ const authenticate = async (
     if (error instanceof jwt.JsonWebTokenError) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid token',
+        message: bearerToken ? 'Invalid token' : 'No token provided',
       });
     }
     logger.error('Authentication error:', error);
