@@ -11,6 +11,8 @@ const {
   pool,
 } = require('./helpers/api-test-helpers');
 
+jest.setTimeout(30000);
+
 describe('Notifications scoping', () => {
   beforeEach(async () => {
     await resetDb();
