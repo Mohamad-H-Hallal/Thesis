@@ -11,6 +11,10 @@ import 'package:lebanese_gis_mobile/core/offline/local_models.dart';
 import 'package:lebanese_gis_mobile/core/offline/local_store.dart';
 import 'package:lebanese_gis_mobile/core/pagination/paginated_result.dart';
 import 'package:lebanese_gis_mobile/core/providers/providers.dart';
+import 'package:lebanese_gis_mobile/core/realtime/realtime_models.dart';
+import 'package:lebanese_gis_mobile/core/realtime/realtime_scope_registry.dart';
+import 'package:lebanese_gis_mobile/core/realtime/workflow_realtime_coordinator.dart';
+import 'package:lebanese_gis_mobile/core/realtime/workflow_realtime_service.dart';
 import 'package:lebanese_gis_mobile/core/router/route_paths.dart';
 import 'package:lebanese_gis_mobile/core/sync/sync_controller.dart';
 import 'package:lebanese_gis_mobile/core/sync/sync_engine.dart';
@@ -23,6 +27,9 @@ import 'package:lebanese_gis_mobile/features/auth/domain/contact_verification_mo
 import 'package:lebanese_gis_mobile/features/auth/presentation/controllers/auth_controller.dart';
 import 'package:lebanese_gis_mobile/features/auth/presentation/screens/contact_verification_screen.dart';
 import 'package:lebanese_gis_mobile/features/auth/presentation/screens/login_screen.dart';
+import 'package:lebanese_gis_mobile/features/legal/domain/legal_models.dart';
+import 'package:lebanese_gis_mobile/features/legal/domain/legal_repository.dart';
+import 'package:lebanese_gis_mobile/features/legal/presentation/legal_providers.dart';
 import 'package:lebanese_gis_mobile/features/projects/domain/project.dart';
 import 'package:lebanese_gis_mobile/features/projects/domain/projects_repository.dart';
 
@@ -145,6 +152,130 @@ class _TestAuthRepository implements AuthRepository {
   }
 }
 
+class _CountingSignupRepository extends _TestAuthRepository {
+  int signupCalls = 0;
+
+  @override
+  Future<String> signup({
+    required String fullName,
+    required String email,
+    required String password,
+    required UserRole role,
+    String? phone,
+  }) async {
+    signupCalls += 1;
+    return super.signup(
+      fullName: fullName,
+      email: email,
+      password: password,
+      role: role,
+      phone: phone,
+    );
+  }
+}
+
+class _TestRealtimeService extends WorkflowRealtimeService {
+  void Function(RealtimeConnectionState state)? _onStateChanged;
+
+  @override
+  void connect({
+    required String accessToken,
+    required RealtimeAccessTokenProvider accessTokenProvider,
+    required RealtimeScopeRegistry scopeRegistry,
+    required void Function(RealtimeDomainEvent value) onDomainChanged,
+    required void Function(List<RealtimeKnownRevision> value) onStaleScopes,
+    void Function(WorkflowRealtimeEvent value)? onLegacyWorkflowChanged,
+    void Function(RealtimeConnectionState value)? onStateChanged,
+  }) {
+    _onStateChanged = onStateChanged;
+    onStateChanged?.call(RealtimeConnectionState.connected);
+  }
+
+  @override
+  void disconnect({bool offline = false}) {
+    _onStateChanged?.call(
+      offline
+          ? RealtimeConnectionState.offline
+          : RealtimeConnectionState.disconnected,
+    );
+  }
+}
+
+class _TestLegalRepository extends LegalRepository {
+  _TestLegalRepository();
+
+  final AccountDeletionEligibility eligibility =
+      const AccountDeletionEligibility(
+        canRequest: true,
+        operationallyEligible: true,
+        protectedAccount: false,
+        role: 'viewer',
+        blockers: <AccountDeletionBlocker>[],
+        manualReviewRequired: true,
+        notice: 'Verified review required.',
+      );
+  int deletionRequests = 0;
+  String? submittedPassword;
+
+  @override
+  Future<AccountDeletionEligibility> fetchAccountDeletionEligibility() async =>
+      eligibility;
+
+  @override
+  Future<PrivacyRequestRecord> createPrivacyRequest({
+    required PrivacyRequestType type,
+    String? currentPassword,
+    Map<String, dynamic>? details,
+  }) async {
+    if (type == PrivacyRequestType.deletion) {
+      deletionRequests += 1;
+      submittedPassword = currentPassword;
+    }
+    return PrivacyRequestRecord(
+      id: 'privacy-request-1',
+      type: type,
+      status: 'open',
+      requestedAt: DateTime(2026, 8, 13),
+      internalTargetAt: DateTime(2026, 8, 23),
+    );
+  }
+
+  @override
+  Future<void> acceptCurrentDocuments(List<LegalDocument> documents) async {}
+
+  @override
+  Future<PrivacyRequestRecord> cancelPrivacyRequest(String requestId) =>
+      throw UnimplementedError();
+
+  @override
+  Future<LegalAcceptanceStatus> fetchAcceptanceStatus() =>
+      throw UnimplementedError();
+
+  @override
+  Future<LegalDocument> fetchDocument(
+    String slug, {
+    String locale = 'en',
+    String? version,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<List<LegalDocument>> fetchDocuments({String locale = 'en'}) async =>
+      const <LegalDocument>[];
+
+  @override
+  Future<List<PrivacyRequestRecord>> fetchMyPrivacyRequests() async =>
+      const <PrivacyRequestRecord>[];
+
+  @override
+  Future<void> reportContent({
+    required String projectId,
+    required String entityType,
+    required String entityId,
+    required String reasonCode,
+    String? description,
+  }) async {}
+}
+
 class _AuthenticatedAuthController extends AuthController {
   _AuthenticatedAuthController({
     required AuthRepository repository,
@@ -169,6 +300,7 @@ class _TestContactVerificationRepository extends ContactVerificationRepository {
   final ContactVerificationState _state;
   int formatValidationCalls = 0;
   int cancellationCalls = 0;
+  int clearSessionCalls = 0;
 
   static final _pendingEmail = ContactVerificationState(
     accountStatus: 'pending_verification',
@@ -220,6 +352,11 @@ class _TestContactVerificationRepository extends ContactVerificationRepository {
   @override
   Future<void> cancelPendingSignup() async {
     cancellationCalls += 1;
+  }
+
+  @override
+  Future<void> clearPendingSession() async {
+    clearSessionCalls += 1;
   }
 }
 
@@ -505,18 +642,301 @@ Widget _buildRoutedApp(ProviderContainer container) {
   );
 }
 
+Widget _buildRoutedAppWithRealtime(ProviderContainer container) {
+  return UncontrolledProviderScope(
+    container: container,
+    child: Consumer(
+      builder: (context, ref, _) {
+        final router = ref.watch(routerProvider);
+        return MaterialApp.router(
+          routerConfig: router,
+          builder: (context, child) => WorkflowRealtimeCoordinator(
+            child: child ?? const SizedBox.shrink(),
+          ),
+        );
+      },
+    ),
+  );
+}
+
 Future<void> _pumpRoutedShell(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 500));
   await tester.pump();
 }
 
+Future<void> _acceptSignupPolicies(WidgetTester tester) async {
+  final checkbox = find.byKey(const ValueKey('signup-policy-acceptance'));
+  await tester.ensureVisible(checkbox);
+  await tester.tap(checkbox);
+  await tester.pump();
+}
+
 void main() {
+  testWidgets(
+    'unverified login back clears the local verification attempt and returns to an empty login',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(360, 820));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      const authRepository = _TestAuthRepository(
+        loginFailure: AuthFailure(
+          'Contact verification is required before you can enter TerraLeb.',
+          statusCode: 403,
+          code: 'contact_verification_required',
+        ),
+      );
+      final contactRepository = _TestContactVerificationRepository();
+      final container = ProviderContainer(
+        overrides: <Override>[
+          authRepositoryProvider.overrideWithValue(authRepository),
+          authControllerProvider.overrideWith(
+            (ref) => _UnauthenticatedAuthController(authRepository),
+          ),
+          contactVerificationRepositoryProvider.overrideWithValue(
+            contactRepository,
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(_buildRoutedApp(container));
+      await tester.pumpAndSettle();
+      container.read(routerProvider).go(AppRoutes.login);
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byType(TextFormField).at(0),
+        'pending@example.com',
+      );
+      await tester.enterText(find.byType(TextFormField).at(1), 'Passw0rd!123');
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Login'))
+          .onPressed!();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ContactVerificationScreen), findsOneWidget);
+      expect(find.text('Back to login'), findsOneWidget);
+      expect(find.text('Back to signup'), findsNothing);
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Leave verification?'), findsOneWidget);
+      expect(
+        find.text('Return to login? Your verification progress will be saved.'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('removes the unfinished account'),
+        findsNothing,
+      );
+
+      final stayButton = find.widgetWithText(TextButton, 'Stay');
+      final returnButton = find.widgetWithText(FilledButton, 'Login');
+      final stayRect = tester.getRect(stayButton);
+      final returnRect = tester.getRect(returnButton);
+      expect(stayRect.width, closeTo(returnRect.width, 0.1));
+      expect(stayRect.top, closeTo(returnRect.top, 0.1));
+      expect(returnRect.left, greaterThan(stayRect.right));
+
+      await tester.tap(returnButton);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(LoginScreen), findsOneWidget);
+      expect(contactRepository.clearSessionCalls, 1);
+      expect(contactRepository.cancellationCalls, 0);
+      expect(container.read(authControllerProvider).error, isNull);
+      expect(container.read(authControllerProvider).errorCode, isNull);
+      for (final field in tester.widgetList<TextFormField>(
+        find.byType(TextFormField),
+      )) {
+        expect(field.controller?.text ?? '', isEmpty);
+      }
+    },
+  );
+
+  testWidgets('signup verification back keeps the account-removal warning', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(800, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    const authRepository = _TestAuthRepository();
+    final contactRepository = _TestContactVerificationRepository();
+    final container = ProviderContainer(
+      overrides: <Override>[
+        authRepositoryProvider.overrideWithValue(authRepository),
+        authControllerProvider.overrideWith(
+          (ref) => _UnauthenticatedAuthController(authRepository),
+        ),
+        contactVerificationRepositoryProvider.overrideWithValue(
+          contactRepository,
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(_buildRoutedApp(container));
+    await tester.pumpAndSettle();
+    container
+        .read(routerProvider)
+        .go(AppRoutes.contactVerification(fromLogin: false));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Back to signup'));
+    await tester.pumpAndSettle();
+    expect(find.text('Return to signup?'), findsOneWidget);
+    expect(
+      find.textContaining('remove the unfinished account'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
+    await tester.pumpAndSettle();
+    expect(contactRepository.cancellationCalls, 1);
+    expect(find.byType(LoginScreen), findsNothing);
+    expect(find.text('Create account'), findsWidgets);
+  });
+
+  testWidgets('login opens Privacy and Terms while unauthenticated', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    const repository = _TestAuthRepository();
+    final container = ProviderContainer(
+      overrides: <Override>[
+        authRepositoryProvider.overrideWithValue(repository),
+        authControllerProvider.overrideWith(
+          (ref) => _UnauthenticatedAuthController(repository),
+        ),
+        legalDocumentProvider.overrideWith(
+          (ref, slug) async => LegalDocument(
+            type: slug,
+            slug: slug,
+            locale: 'en',
+            version: 'draft-test',
+            title: slug == 'privacy' ? 'Privacy Notice' : 'Terms of Use',
+            status: 'draft',
+            summary: 'Public legal document available before login.',
+            sections: const <LegalSection>[],
+            contentSha256: List<String>.filled(64, 'a').join(),
+          ),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(_buildRoutedApp(container));
+    await tester.pumpAndSettle();
+    container.read(routerProvider).go(AppRoutes.login);
+    await tester.pumpAndSettle();
+
+    final accountLine = tester
+        .getRect(find.text('No account yet?'))
+        .expandToInclude(tester.getRect(find.text('Create account')));
+    final legalLine = tester
+        .getRect(find.text('Read our'))
+        .expandToInclude(tester.getRect(find.text('Privacy Notice')))
+        .expandToInclude(tester.getRect(find.text('and')))
+        .expandToInclude(tester.getRect(find.text('Terms of Use')));
+    expect(accountLine.center.dx, closeTo(450, 1));
+    expect(legalLine.center.dx, closeTo(450, 1));
+
+    await tester.tap(find.text('Privacy Notice'));
+    await tester.pumpAndSettle();
+    expect(find.text('Privacy Notice'), findsOneWidget);
+
+    container.read(routerProvider).go(AppRoutes.login);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Terms of Use'));
+    await tester.pumpAndSettle();
+    expect(find.text('Terms of Use'), findsOneWidget);
+  });
+
+  testWidgets(
+    'signup policies are not prechecked and optional purposes stay separate',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(900, 1200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      const repository = _TestAuthRepository();
+      final container = ProviderContainer(
+        overrides: <Override>[
+          authRepositoryProvider.overrideWithValue(repository),
+          authControllerProvider.overrideWith(
+            (ref) => _UnauthenticatedAuthController(repository),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(_buildRoutedApp(container));
+      await tester.pumpAndSettle();
+      container.read(routerProvider).go(AppRoutes.signup);
+      await tester.pumpAndSettle();
+
+      final checkbox = tester.widget<Checkbox>(
+        find.byKey(const ValueKey('signup-policy-acceptance')),
+      );
+      expect(checkbox.value, isFalse);
+      expect(
+        find.textContaining('does not grant permission for optional marketing'),
+        findsNothing,
+      );
+      expect(find.text('Privacy Notice'), findsOneWidget);
+      expect(find.text('Acceptable Use Policy'), findsOneWidget);
+    },
+  );
+
+  testWidgets('signup stays disabled until required policies are accepted', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final repository = _CountingSignupRepository();
+    final container = ProviderContainer(
+      overrides: <Override>[
+        authRepositoryProvider.overrideWithValue(repository),
+        authControllerProvider.overrideWith(
+          (ref) => _UnauthenticatedAuthController(repository),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(_buildRoutedApp(container));
+    await tester.pumpAndSettle();
+    container.read(routerProvider).go(AppRoutes.signup);
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextFormField).at(0), 'Policy User');
+    await tester.enterText(find.byType(TextFormField).at(1), '03123456');
+    await tester.enterText(
+      find.byType(TextFormField).at(2),
+      'policy@example.com',
+    );
+    await tester.enterText(find.byType(TextFormField).at(3), 'Passw0rd!123');
+    await tester.enterText(find.byType(TextFormField).at(4), 'Passw0rd!123');
+
+    final submitButton = find.widgetWithText(
+      FilledButton,
+      'Request contributor access',
+    );
+    await tester.ensureVisible(submitButton);
+    expect(tester.widget<FilledButton>(submitButton).onPressed, isNull);
+    await _acceptSignupPolicies(tester);
+    await tester.ensureVisible(submitButton);
+
+    expect(repository.signupCalls, 0);
+    expect(tester.widget<FilledButton>(submitButton).onPressed, isNotNull);
+    expect(find.text('Agreement required'), findsNothing);
+  });
+
   testWidgets('logout clears session and routes back to login', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1440, 1200));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     final repository = const _TestAuthRepository();
+    final realtimeService = _TestRealtimeService();
     final container = ProviderContainer(
       overrides: <Override>[
         authRepositoryProvider.overrideWithValue(repository),
@@ -526,12 +946,14 @@ void main() {
             session: _sessionForRole(UserRole.viewer),
           ),
         ),
+        workflowRealtimeServiceProvider.overrideWithValue(realtimeService),
+        networkOnlineProvider.overrideWith((ref) => Stream.value(true)),
         ..._routedShellOverrides(),
       ],
     );
     addTearDown(container.dispose);
 
-    await tester.pumpWidget(_buildRoutedApp(container));
+    await tester.pumpWidget(_buildRoutedAppWithRealtime(container));
     await _pumpRoutedShell(tester);
 
     final router = container.read(routerProvider);
@@ -539,6 +961,7 @@ void main() {
     await _pumpRoutedShell(tester);
 
     expect(find.text('Profile'), findsWidgets);
+    expect(find.text('Request account deletion'), findsOneWidget);
 
     await tester.tap(find.byIcon(Icons.logout).first);
     await _pumpRoutedShell(tester);
@@ -557,6 +980,56 @@ void main() {
       container.read(authControllerProvider).status,
       AuthStatus.unauthenticated,
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('viewer can submit an account deletion request from Profile', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    const authRepository = _TestAuthRepository();
+    final legalRepository = _TestLegalRepository();
+    final container = ProviderContainer(
+      overrides: <Override>[
+        authRepositoryProvider.overrideWithValue(authRepository),
+        authControllerProvider.overrideWith(
+          (ref) => _AuthenticatedAuthController(
+            repository: authRepository,
+            session: _sessionForRole(UserRole.viewer),
+          ),
+        ),
+        legalRepositoryProvider.overrideWithValue(legalRepository),
+        ..._routedShellOverrides(),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(_buildRoutedApp(container));
+    await _pumpRoutedShell(tester);
+    container.read(routerProvider).go(AppRoutes.profile);
+    await _pumpRoutedShell(tester);
+
+    final deletionButton = find.widgetWithText(
+      OutlinedButton,
+      'Request account deletion',
+    );
+    await tester.ensureVisible(deletionButton);
+    await tester.tap(deletionButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Request account deletion'), findsWidgets);
+    expect(find.textContaining('No current project-assignment'), findsNothing);
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Current password'),
+      'Passw0rd!123',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Send'));
+    await tester.pumpAndSettle();
+
+    expect(legalRepository.deletionRequests, 1);
+    expect(legalRepository.submittedPassword, 'Passw0rd!123');
   });
 
   testWidgets('self deactivation routes back to login with a success notice', (
@@ -796,6 +1269,7 @@ void main() {
     );
     await tester.enterText(find.byType(TextFormField).at(3), 'Passw0rd!123');
     await tester.enterText(find.byType(TextFormField).at(4), 'Passw0rd!123');
+    await _acceptSignupPolicies(tester);
 
     final segmented = find.byType(SegmentedButton<UserRole>);
     final viewerSegment = find.descendant(
@@ -909,6 +1383,7 @@ void main() {
     );
     await tester.enterText(find.byType(TextFormField).at(3), 'Passw0rd!123');
     await tester.enterText(find.byType(TextFormField).at(4), 'Passw0rd!123');
+    await _acceptSignupPolicies(tester);
 
     final submitButton = find.widgetWithText(
       FilledButton,
@@ -963,6 +1438,7 @@ void main() {
       );
       await tester.enterText(find.byType(TextFormField).at(3), 'Passw0rd!123');
       await tester.enterText(find.byType(TextFormField).at(4), 'Passw0rd!123');
+      await _acceptSignupPolicies(tester);
 
       final submitButton = find.widgetWithText(
         FilledButton,
@@ -1018,6 +1494,7 @@ void main() {
       );
       await tester.enterText(find.byType(TextFormField).at(3), 'Passw0rd!123');
       await tester.enterText(find.byType(TextFormField).at(4), 'Passw0rd!123');
+      await _acceptSignupPolicies(tester);
 
       final submitButton = find.widgetWithText(
         FilledButton,

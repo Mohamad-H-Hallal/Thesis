@@ -2,14 +2,25 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/pagination/paginated_list_controller.dart';
 import '../../../core/providers/providers.dart';
+import '../../auth/domain/auth_models.dart';
 import '../domain/import_models.dart';
+
+RealtimeScope importsListRealtimeScope(AuthSession? session) {
+  return RealtimeScope(
+    'imports',
+    session?.user.role == UserRole.admin ? 'all' : (session?.user.id ?? 'none'),
+  );
+}
 
 final importJobsProvider =
     FutureProvider.family<List<GisImportJob>, GisImportListQuery>((
       ref,
       query,
     ) async {
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(
+        ref,
+        importsListRealtimeScope(ref.watch(authControllerProvider).session),
+      );
       return ref
           .read(importsRepositoryProvider)
           .fetchImports(status: query.status, projectId: query.projectId);
@@ -17,7 +28,7 @@ final importJobsProvider =
 
 final importDetailsProvider = FutureProvider.autoDispose
     .family<GisImportDetails, String>((ref, importId) async {
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('import', importId));
       return ref.read(importsRepositoryProvider).fetchImportDetails(importId);
     });
 
@@ -27,19 +38,25 @@ final paginatedImportJobsProvider = StateNotifierProvider.autoDispose
       AsyncValue<PaginatedListState<GisImportJob>>,
       GisImportListQuery
     >((ref, query) {
-      ref.watch(workflowRefreshTickProvider);
-      return PaginatedListController<GisImportJob>(
-        loadPage: ({required page, required limit}) {
-          return ref
-              .read(importsRepositoryProvider)
-              .fetchImportsPage(
-                status: query.status,
-                projectId: query.projectId,
-                categoryId: query.categoryId,
-                page: page,
-                limit: limit,
-              );
-        },
+      final scope = importsListRealtimeScope(
+        ref.watch(authControllerProvider).session,
+      );
+      return bindRealtimePaginated(
+        ref,
+        scope,
+        PaginatedListController<GisImportJob>(
+          loadPage: ({required page, required limit}) {
+            return ref
+                .read(importsRepositoryProvider)
+                .fetchImportsPage(
+                  status: query.status,
+                  projectId: query.projectId,
+                  categoryId: query.categoryId,
+                  page: page,
+                  limit: limit,
+                );
+          },
+        ),
       );
     });
 
@@ -49,28 +66,34 @@ final paginatedImportFeaturesProvider = StateNotifierProvider.autoDispose
       AsyncValue<PaginatedListState<ImportedFeature>>,
       ImportedFeatureListQuery
     >((ref, query) {
-      ref.watch(workflowRefreshTickProvider);
-      return PaginatedListController<ImportedFeature>(
-        loadPage: ({required page, required limit}) {
-          return ref
-              .read(importsRepositoryProvider)
-              .fetchImportFeaturesPage(
-                importId: query.importId,
-                status: query.status,
-                issue: query.issue,
-                search: query.search,
-                geometryType: query.geometryType,
-                featureType: query.featureType,
-                page: page,
-                limit: limit,
-              );
-        },
+      final scope = RealtimeScope('import', query.importId);
+      return bindRealtimePaginated(
+        ref,
+        scope,
+        PaginatedListController<ImportedFeature>(
+          loadPage: ({required page, required limit}) {
+            return ref
+                .read(importsRepositoryProvider)
+                .fetchImportFeaturesPage(
+                  importId: query.importId,
+                  status: query.status,
+                  issue: query.issue,
+                  search: query.search,
+                  geometryType: query.geometryType,
+                  featureType: query.featureType,
+                  page: page,
+                  limit: limit,
+                );
+          },
+        ),
       );
     });
 
 final importMapDataProvider = FutureProvider.autoDispose
     .family<ImportMapData, ImportMapQuery>((ref, query) async {
-      final refreshTick = ref.watch(workflowRefreshTickProvider);
+      final scope = RealtimeScope('import', query.importId);
+      watchRealtimeScope(ref, scope);
+      final refreshTick = ref.watch(realtimeScopeRevisionProvider(scope));
       return ref
           .read(importsRepositoryProvider)
           .fetchImportMapData(
@@ -87,7 +110,7 @@ final importMapDataProvider = FutureProvider.autoDispose
 
 final importQuickMapPreviewProvider = FutureProvider.autoDispose
     .family<ImportQuickMapPreview, String>((ref, importId) async {
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('import', importId));
       return ref
           .read(importsRepositoryProvider)
           .fetchImportQuickMapPreview(importId: importId);
@@ -95,7 +118,7 @@ final importQuickMapPreviewProvider = FutureProvider.autoDispose
 
 final importFeatureProvider = FutureProvider.autoDispose
     .family<ImportedFeature, ImportFeatureQuery>((ref, query) async {
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('import', query.importId));
       return ref
           .read(importsRepositoryProvider)
           .fetchImportFeatureById(

@@ -9,6 +9,11 @@ class MockExportsRepository implements ExportsRepository {
   final List<ExportJob> _jobs = <ExportJob>[];
 
   @override
+  Future<List<ExportCollector>> fetchProjectCollectors({
+    required String projectId,
+  }) async => const <ExportCollector>[];
+
+  @override
   Future<List<ExportJob>> fetchJobs({required String requestedByUserId}) async {
     final page = await fetchJobsPage(
       requestedByUserId: requestedByUserId,
@@ -29,13 +34,14 @@ class MockExportsRepository implements ExportsRepository {
   }) async {
     await Future<void>.delayed(const Duration(milliseconds: 240));
     _seedIfEmpty(requestedByUserId);
-    final filtered = _jobs
-        .where((job) => job.requestedByUserId == requestedByUserId)
-        .where((job) => projectId == null || job.projectId == projectId)
-        .where((job) => format == null || job.format == format)
-        .where((job) => status == null || job.status == status)
-        .toList(growable: false)
-      ..sort((a, b) => b.requestedAt.compareTo(a.requestedAt));
+    final filtered =
+        _jobs
+            .where((job) => job.requestedByUserId == requestedByUserId)
+            .where((job) => projectId == null || job.projectId == projectId)
+            .where((job) => format == null || job.format == format)
+            .where((job) => status == null || job.status == status)
+            .toList(growable: false)
+          ..sort((a, b) => b.requestedAt.compareTo(a.requestedAt));
     final start = (page - 1) * limit;
     final end = (start + limit).clamp(0, filtered.length);
     final items = start >= filtered.length

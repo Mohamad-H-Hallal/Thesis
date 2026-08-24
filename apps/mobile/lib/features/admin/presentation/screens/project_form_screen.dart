@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
+import '../../../../core/realtime/realtime_edit_guard.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_button.dart';
@@ -45,9 +46,22 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
   bool _visibleToViewers = false;
   bool _visibleToContributors = true;
   String? _categoryId;
+  String? _categoryLabel;
+  int _projectVersion = 1;
   String _status = 'draft';
   DateTime? _startDate;
   DateTime? _endDate;
+  late final RealtimeEditGuardRegistry _editGuardRegistry;
+
+  @override
+  void initState() {
+    super.initState();
+    _editGuardRegistry = ref.read(realtimeEditGuardRegistryProvider);
+    final projectId = widget.projectId;
+    if (projectId != null && projectId.isNotEmpty) {
+      _editGuardRegistry.register('project', projectId);
+    }
+  }
 
   void _returnToProjects() {
     if (context.canPop()) {
@@ -59,6 +73,10 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
 
   @override
   void dispose() {
+    final projectId = widget.projectId;
+    if (projectId != null && projectId.isNotEmpty) {
+      _editGuardRegistry.unregister('project', projectId);
+    }
     _nameController.dispose();
     _descriptionController.dispose();
     _objectivesController.dispose();
@@ -90,6 +108,8 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
       _visibleToViewers = project.visibleToViewers;
       _visibleToContributors = project.visibleToContributors;
       _categoryId = project.categoryId;
+      _categoryLabel = project.category;
+      _projectVersion = project.version;
       _status = project.status;
       _startDate = project.startDate;
       _endDate = project.endDate;
@@ -246,12 +266,13 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
         await repository.updateProject(
           projectId: widget.projectId!,
           input: input,
+          expectedVersion: _projectVersion,
         );
       } else {
         await repository.createProject(input);
       }
 
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, const RealtimeScope('projects', 'all'));
 
       if (!mounted) {
         return;
@@ -375,6 +396,10 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
           data: (project) {
             _initializeForProject(project);
             _categoryId ??= categories.first.id;
+            _categoryLabel ??= categories.first.name;
+            final selectedCategoryAvailable = categories.any(
+              (category) => category.id == _categoryId,
+            );
             final statusOptions = _statusOptions();
 
             return LoadingOverlay(
@@ -415,17 +440,42 @@ class _ProjectFormScreenState extends ConsumerState<ProjectFormScreen> {
                                 decoration: const InputDecoration(
                                   labelText: 'Category',
                                 ),
-                                items: categories
-                                    .map(
-                                      (category) => DropdownMenuItem(
-                                        value: category.id,
-                                        child: Text(category.name),
+                                items:
+                                    categories
+                                        .map(
+                                          (category) => DropdownMenuItem(
+                                            value: category.id,
+                                            child: Text(category.name),
+                                          ),
+                                        )
+                                        .toList(growable: true)
+                                      ..insertAll(
+                                        0,
+                                        !selectedCategoryAvailable &&
+                                                _categoryId != null
+                                            ? <DropdownMenuItem<String>>[
+                                                DropdownMenuItem<String>(
+                                                  value: _categoryId,
+                                                  enabled: false,
+                                                  child: Text(
+                                                    '${_categoryLabel ?? 'Previous category'} (unavailable)',
+                                                  ),
+                                                ),
+                                              ]
+                                            : const <
+                                                DropdownMenuItem<String>
+                                              >[],
                                       ),
-                                    )
-                                    .toList(growable: false),
+                                validator: (_) => selectedCategoryAvailable
+                                    ? null
+                                    : 'The selected category is no longer available.',
                                 onChanged: (value) {
                                   setState(() {
                                     _categoryId = value;
+                                    _categoryLabel = categories
+                                        .where((item) => item.id == value)
+                                        .map((item) => item.name)
+                                        .firstOrNull;
                                   });
                                 },
                               ),

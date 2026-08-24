@@ -68,6 +68,11 @@ class PushNotificationService {
   AuthSession? _session;
   bool _initialized = false;
   bool _runtimeUnavailable = false;
+  bool _showSensitivePreview = false;
+  bool _notificationsEnabled = false;
+
+  static const _previewPreferenceKey = 'push_sensitive_preview_enabled';
+  static const _enabledPreferenceKey = 'push_notifications_enabled';
 
   Stream<PushNotificationEvent> get events => _events.stream;
 
@@ -76,10 +81,23 @@ class PushNotificationService {
       _platformPushRequested &&
       FirebasePushOptions.isConfigured;
 
+  bool get showSensitivePreview => _showSensitivePreview;
+  bool get notificationsEnabled => _notificationsEnabled;
+
   Future<void> initialize() async {
     if (_initialized || !isAvailable) {
       return;
     }
+
+    final enabledPreference = await _storage.read(key: _enabledPreferenceKey);
+    final existingToken = await _storage.read(key: storedPushDeviceTokenKey);
+    _notificationsEnabled =
+        enabledPreference == 'true' ||
+        (enabledPreference == null &&
+            existingToken != null &&
+            existingToken.trim().isNotEmpty);
+    _showSensitivePreview =
+        (await _storage.read(key: _previewPreferenceKey)) == 'true';
 
     try {
       if (Firebase.apps.isEmpty) {
@@ -92,10 +110,10 @@ class PushNotificationService {
 
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
     await _initializeLocalNotifications();
-    await _requestPermissions();
 
     _tokenRefreshSubscription = FirebaseMessaging.instance.onTokenRefresh
         .listen((token) async {
+          if (!_notificationsEnabled) return;
           await _storage.write(key: storedPushDeviceTokenKey, value: token);
           await _registerCurrentSessionToken(token);
         });
@@ -134,9 +152,56 @@ class PushNotificationService {
     _initialized = true;
   }
 
+  Future<AuthorizationStatus?> permissionStatus() async {
+    await initialize();
+    if (!_initialized) {
+      return null;
+    }
+    return (await FirebaseMessaging.instance.getNotificationSettings())
+        .authorizationStatus;
+  }
+
+  Future<bool> requestPermissionAndSync() async {
+    await initialize();
+    if (!_initialized) {
+      return false;
+    }
+    final settings = await _requestPermissions();
+    if (!_isPermissionGranted(settings)) {
+      await _setNotificationsEnabled(false);
+      await _unregisterStoredToken();
+      return false;
+    }
+    await _setNotificationsEnabled(true);
+    await syncSession(_session);
+    return true;
+  }
+
+  Future<bool> notificationsEnabledForCurrentDevice() async {
+    await initialize();
+    if (!_initialized || !_notificationsEnabled) return false;
+    final settings = await FirebaseMessaging.instance.getNotificationSettings();
+    return _isPermissionGranted(settings);
+  }
+
+  Future<void> setShowSensitivePreview(bool enabled) async {
+    _showSensitivePreview = enabled;
+    await _storage.write(
+      key: _previewPreferenceKey,
+      value: enabled ? 'true' : 'false',
+    );
+    if (_session != null) {
+      await syncSession(_session);
+    }
+  }
+
   Future<void> syncSession(AuthSession? session) async {
     _session = session;
     if (!_initialized || session == null) {
+      return;
+    }
+    if (!_notificationsEnabled) {
+      await _unregisterStoredToken();
       return;
     }
 
@@ -161,6 +226,7 @@ class PushNotificationService {
   }
 
   Future<void> unregisterCurrentDevice() async {
+    await _setNotificationsEnabled(false);
     if (!_initialized) {
       await _storage.delete(key: storedPushDeviceTokenKey);
       return;
@@ -231,7 +297,7 @@ class PushNotificationService {
 
   Future<void> _registerCurrentSessionToken(String token) async {
     final session = _session;
-    if (session == null || token.trim().isEmpty) {
+    if (!_notificationsEnabled || session == null || token.trim().isEmpty) {
       return;
     }
 
@@ -240,6 +306,7 @@ class PushNotificationService {
         token: token,
         platform: _platformName,
         deviceLabel: '$_platformName-${AppEnv.flavorName}',
+        showSensitivePreview: _showSensitivePreview,
       );
     } catch (_) {
       // Best effort. Notification delivery will succeed after the next token sync.
@@ -261,8 +328,16 @@ class PushNotificationService {
     }
   }
 
+  Future<void> _setNotificationsEnabled(bool enabled) async {
+    _notificationsEnabled = enabled;
+    await _storage.write(
+      key: _enabledPreferenceKey,
+      value: enabled ? 'true' : 'false',
+    );
+  }
+
   Future<void> _showForegroundNotification(RemoteMessage message) async {
-    if (defaultTargetPlatform == TargetPlatform.iOS) {
+    if (!_notificationsEnabled || defaultTargetPlatform == TargetPlatform.iOS) {
       return;
     }
 

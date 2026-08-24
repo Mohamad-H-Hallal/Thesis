@@ -38,6 +38,17 @@ const routeFiles = [
     mounts: { router: `${expectedPrefix}/me` },
   },
   {
+    file: 'src/routes/legal.routes.ts',
+    mounts: {
+      publicLegalRouter: '/legal',
+      legalApiRouter: `${expectedPrefix}/legal`,
+    },
+  },
+  {
+    file: 'src/routes/privacy.routes.ts',
+    mounts: { privacyRouter: `${expectedPrefix}/privacy` },
+  },
+  {
     file: 'src/routes/privateMedia.routes.ts',
     mounts: { router: '/uploads' },
   },
@@ -172,6 +183,13 @@ const main = async () => {
     `POST ${expectedPrefix}/auth/verify-reset-otp`,
     `POST ${expectedPrefix}/auth/reset-password`,
     `POST ${expectedPrefix}/auth/refresh-token`,
+    'GET /legal',
+    'GET /legal/{slug}',
+    'GET /legal/account-deletion/request',
+    'POST /legal/account-deletion/request',
+    `GET ${expectedPrefix}/legal/documents`,
+    `GET ${expectedPrefix}/legal/documents/{slug}`,
+    `GET ${expectedPrefix}/legal/documents/{slug}/versions/{version}`,
   ]);
   const securityFailures = [];
   for (const operationKey of documentedOperations) {

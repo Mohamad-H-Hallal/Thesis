@@ -50,7 +50,7 @@ class _ProjectsManagementScreenState
             ),
             confirm: FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: Text(dialogTitle),
+              child: Text(dialogTitle.replaceFirst(RegExp(r' project$'), '')),
             ),
           ),
         ],
@@ -69,7 +69,7 @@ class _ProjectsManagementScreenState
             .read(adminRepositoryProvider)
             .updateProjectStatus(projectId: project.id, status: nextStatus);
       }
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, const RealtimeScope('projects', 'all'));
       if (!mounted) {
         return;
       }

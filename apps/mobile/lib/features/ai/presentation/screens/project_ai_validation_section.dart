@@ -108,7 +108,7 @@ class _ProjectAiValidationSectionState
       final result = await ref
           .read(aiRepositoryProvider)
           .generateValidationTasks(projectId: widget.project.id);
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('ai', widget.project.id));
       ref.invalidate(
         projectAiValidationTasksProvider(
           AiPredictionValidationTasksQuery(projectId: widget.project.id),

@@ -323,7 +323,14 @@ void main() {
     expect(find.byType(NavigationBar), findsOneWidget);
     expect(find.byType(NavigationDrawer), findsNothing);
     expect(find.text('Admin Panel'), findsWidgets);
-    expect(tester.takeException(), isNull);
+    final layoutException = tester.takeException();
+    expect(
+      layoutException,
+      isNull,
+      reason: layoutException is FlutterError
+          ? layoutException.toStringDeep()
+          : null,
+    );
   });
 
   testWidgets('app shell uses side navigation on tablet widths', (
@@ -339,7 +346,14 @@ void main() {
     expect(find.byType(NavigationBar), findsNothing);
     expect(find.text('Users'), findsWidgets);
     expect(find.text('Projects'), findsWidgets);
-    expect(tester.takeException(), isNull);
+    final layoutException = tester.takeException();
+    expect(
+      layoutException,
+      isNull,
+      reason: layoutException is FlutterError
+          ? layoutException.toStringDeep()
+          : null,
+    );
   });
 
   testWidgets('hamburger drawer centers the TerraLeb brand in its header', (

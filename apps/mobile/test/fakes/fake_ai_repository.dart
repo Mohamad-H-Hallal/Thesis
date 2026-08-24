@@ -3,6 +3,17 @@ import 'package:lebanese_gis_mobile/features/ai/domain/ai_models.dart';
 import 'package:lebanese_gis_mobile/features/ai/domain/ai_repository.dart';
 
 class FakeAiRepository implements AiRepository {
+  @override
+  Future<void> saveGovernance({
+    required String projectId,
+    required bool trainingDataUseAuthorized,
+    String? trainingAuthorityBasis,
+    String? trainingApprovalReference,
+    required bool publicationAuthorized,
+    String? publicationAuthorityBasis,
+    String? publicationApprovalReference,
+  }) async {}
+
   FakeAiRepository({
     AiProjectSettings? settings,
     AiReadinessResult? readiness,

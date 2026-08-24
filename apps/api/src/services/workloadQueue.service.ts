@@ -1,7 +1,11 @@
 import type { PoolClient, QueryResult } from 'pg';
 import { query, transaction } from '../config/database';
 
-type WorkloadJobKind = 'gis_import' | 'project_export';
+type WorkloadJobKind =
+  | 'gis_import'
+  | 'project_export'
+  | 'privacy_access_export'
+  | 'account_deletion';
 type WorkloadJobStatus = 'queued' | 'running' | 'succeeded' | 'dead_letter';
 
 interface WorkloadJob {

@@ -55,6 +55,24 @@ const createProjectFixture = async (name = 'AI Worker Project') => {
     visibleToContributors: true,
   });
   await activateProject({ token: admin.token, projectId: project.id });
+  await pool.query(
+    `INSERT INTO project_ai_governance (
+       project_id,
+       training_data_use_authorized,
+       training_authority_basis,
+       training_approval_reference,
+       training_authorized_at,
+       training_authorized_by,
+       publication_authorized,
+       publication_authority_basis,
+       publication_approval_reference,
+       publication_authorized_at,
+       publication_authorized_by
+     )
+     VALUES ($1, TRUE, 'test_fixture', 'AI-WORKER-TEST', CURRENT_TIMESTAMP, $2,
+             TRUE, 'test_fixture', 'AI-WORKER-PUBLICATION-TEST', CURRENT_TIMESTAMP, $2)`,
+    [project.id, admin.user.id],
+  );
 
   return {
     admin,

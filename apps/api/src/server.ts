@@ -205,7 +205,7 @@ const startServer = async () => {
       );
       logAiServerRuntimeConfig();
     });
-    closeWorkflowSocket = attachWorkflowSocket(server, apiPrefix);
+    closeWorkflowSocket = attachWorkflowSocket(server, apiPrefix, env);
   } catch (error) {
     logger.error('Failed to start server:', error);
     process.exit(1);

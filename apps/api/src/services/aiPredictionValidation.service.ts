@@ -7,6 +7,65 @@ import {
   notifyAiValidationTaskAssigned,
   notifyAiValidationTaskReviewed,
 } from '../lib/aiNotifications';
+import { publishRealtimeChanges } from '../realtime/realtimeEvents';
+
+const publishAiValidationChange = async (
+  client: PoolClient,
+  {
+    projectId,
+    runId,
+    entityId,
+    action,
+    featureId,
+  }: {
+    projectId: string;
+    runId?: string | null;
+    entityId?: string | null;
+    action: string;
+    featureId?: string | null;
+  },
+): Promise<void> => {
+  await publishRealtimeChanges(
+    [
+      {
+        scopeType: 'ai',
+        scopeId: projectId,
+        action,
+        entityType: 'ai_validation',
+        entityId,
+        projectId,
+        audience: { kind: 'project', projectId, access: 'members' },
+      },
+      ...(runId
+        ? [
+            {
+              scopeType: 'ai_run',
+              scopeId: runId,
+              action,
+              entityType: 'ai_validation',
+              entityId,
+              projectId,
+              audience: { kind: 'project' as const, projectId, access: 'members' as const },
+            },
+          ]
+        : []),
+      ...(featureId
+        ? [
+            {
+              scopeType: 'features',
+              scopeId: projectId,
+              action: 'ai_validation_feature_changed',
+              entityType: 'feature',
+              entityId: featureId,
+              projectId,
+              audience: { kind: 'project' as const, projectId, access: 'readers' as const },
+            },
+          ]
+        : []),
+    ],
+    client,
+  );
+};
 
 type JsonRecord = Record<string, unknown>;
 
@@ -330,11 +389,11 @@ const taskSelectSql = `
          t.ai_prediction_feature_id,
          t.status,
          t.assigned_to,
-         assigned_user.full_name AS assigned_to_name,
+         COALESCE(assigned_user.full_name, assigned_user.masked_contributor_label, 'Former contributor') AS assigned_to_name,
          t.created_by,
-         created_user.full_name AS created_by_name,
+         COALESCE(created_user.full_name, created_user.masked_contributor_label, 'Former contributor') AS created_by_name,
          t.reviewed_by,
-         reviewed_user.full_name AS reviewed_by_name,
+         COALESCE(reviewed_user.full_name, reviewed_user.masked_contributor_label, 'Former reviewer') AS reviewed_by_name,
          t.review_decision,
          t.review_reason,
          t.priority,
@@ -589,7 +648,8 @@ const generatePredictionValidationTasks = async (input: GenerateTasksInput) => {
     not_official_field_data: true,
   };
 
-  const insertResult = await query(
+  const insertResult = await transaction(async (client: PoolClient) => {
+    const inserted = await client.query(
     `INSERT INTO ai_prediction_validation_task (
        project_id,
        ai_run_id,
@@ -644,7 +704,16 @@ const generatePredictionValidationTasks = async (input: GenerateTasksInput) => {
       ACTIVE_TASK_STATUSES,
       limit,
     ],
-  );
+    );
+    if ((inserted.rowCount ?? 0) > 0) {
+      await publishAiValidationChange(client, {
+        projectId: input.projectId,
+        runId: input.aiRunId,
+        action: 'tasks_generated',
+      });
+    }
+    return inserted;
+  });
 
   return {
     created_count: insertResult.rowCount ?? 0,
@@ -909,6 +978,12 @@ const assignPredictionValidationTask = async ({
     );
     const updatedTask = await getTaskById(taskId, client);
     await notifyAiValidationTaskAssigned(client, updatedTask);
+    await publishAiValidationChange(client, {
+      projectId: updatedTask.project_id,
+      runId: updatedTask.ai_run_id,
+      entityId: updatedTask.id,
+      action: 'task_assigned',
+    });
     return updatedTask;
   });
 
@@ -956,7 +1031,14 @@ const updatePredictionValidationTaskStatus = async ({
        WHERE id = $1`,
       [taskId, status],
     );
-    return getTaskById(taskId, client);
+    const updatedTask = await getTaskById(taskId, client);
+    await publishAiValidationChange(client, {
+      projectId: updatedTask.project_id,
+      runId: updatedTask.ai_run_id,
+      entityId: updatedTask.id,
+      action: 'task_status_changed',
+    });
+    return updatedTask;
   });
 };
 
@@ -1209,6 +1291,12 @@ const createPredictionValidationSubmission = async (input: SubmitValidationInput
       predictionId: updatedTask.ai_prediction_feature_id,
       submissionId: submissionResult.rows[0].id,
       submittedBy: input.submittedBy,
+    });
+    await publishAiValidationChange(client, {
+      projectId: task.project_id,
+      runId: task.ai_run_id,
+      entityId: task.id,
+      action: 'validation_submitted',
     });
 
     return {
@@ -1530,6 +1618,13 @@ const reviewPredictionValidationTask = async (input: ReviewValidationInput) => {
       reviewedSubmissionId,
       reviewedContributorId,
     );
+    await publishAiValidationChange(client, {
+      projectId: updatedTask.project_id,
+      runId: updatedTask.ai_run_id,
+      entityId: updatedTask.id,
+      action: 'validation_reviewed',
+      featureId: linkedSpatialFeatureId,
+    });
 
     return {
       submission_id: reviewedSubmissionId,

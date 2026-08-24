@@ -51,16 +51,26 @@ class ApiFeatureWorkflowRepository implements FeatureWorkflowRepository {
   }
 
   @override
-  Future<void> updateDraft({
+  Future<int> updateDraft({
     required String featureId,
     required Map<String, dynamic> geometry,
     required Map<String, dynamic> attributes,
+    required int expectedVersion,
   }) async {
     try {
-      await _apiClient.dio.put<Map<String, dynamic>>(
+      final response = await _apiClient.dio.put<Map<String, dynamic>>(
         '$_featuresBasePath/$featureId',
-        data: <String, dynamic>{'geom': geometry, 'attributes': attributes},
+        data: <String, dynamic>{
+          'geom': geometry,
+          'attributes': attributes,
+          'expected_version': expectedVersion,
+        },
       );
+      final data = Map<String, dynamic>.from(
+        (response.data ?? const <String, dynamic>{})['data'] as Map? ??
+            const <String, dynamic>{},
+      );
+      return (data['version'] as num?)?.toInt() ?? expectedVersion + 1;
     } on DioException catch (error) {
       throw Exception(_messageFrom(error, 'Feature draft update failed.'));
     }

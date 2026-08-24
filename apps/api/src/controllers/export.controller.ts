@@ -9,6 +9,8 @@ import { isProtectedSuperAdminEmail } from '../lib/userWorkflow';
 import { resolveStoredPhotoPath } from '../services/featurePhotoSecurity.service';
 import { storageAdapter } from '../services/storageAdapter.service';
 import { enqueueWorkloadJob } from '../services/workloadQueue.service';
+import { publishRealtimeChanges } from '../realtime/realtimeEvents';
+import type { RealtimePublishInput } from '../realtime/realtimeProtocol';
 
 // For shapefile generation
 const shpwrite = require('@mapbox/shp-write');
@@ -18,6 +20,67 @@ const EXPORT_DIR = process.env.EXPORT_DIR ?? './exports';
 const RETENTION_DAYS = Number.parseInt(process.env.EXPORT_RETENTION_DAYS ?? '7', 10);
 const EXPORT_FILE_EXPIRED_MESSAGE =
   'This export completed successfully, but the download file was removed after the retention period to save storage. Regenerate the export to download it again.';
+
+const exportRealtimeInputs = ({
+  exportId,
+  projectId,
+  requestedByUserId,
+  action,
+  originSessionId,
+  notificationChanged = false,
+}: {
+  exportId: string;
+  projectId: string;
+  requestedByUserId: string;
+  action: string;
+  originSessionId?: string | null;
+  notificationChanged?: boolean;
+}): RealtimePublishInput[] => [
+  {
+    scopeType: 'export',
+    scopeId: exportId,
+    action,
+    entityType: 'export',
+    entityId: exportId,
+    projectId,
+    originSessionId,
+    audience: { kind: 'scope_subscribers' },
+  },
+  {
+    scopeType: 'exports',
+    scopeId: requestedByUserId,
+    action,
+    entityType: 'export',
+    entityId: exportId,
+    projectId,
+    originSessionId,
+    audience: { kind: 'user', userId: requestedByUserId },
+  },
+  {
+    scopeType: 'exports',
+    scopeId: 'all',
+    action,
+    entityType: 'export',
+    entityId: exportId,
+    projectId,
+    originSessionId,
+    audience: { kind: 'admins' },
+  },
+  ...(notificationChanged
+    ? [
+        {
+          scopeType: 'notifications',
+          scopeId: requestedByUserId,
+          action: 'created',
+          entityType: 'notification',
+          entityId: exportId,
+          projectId,
+          originSessionId,
+          audience: { kind: 'user' as const, userId: requestedByUserId },
+        },
+      ]
+    : []),
+];
 
 // Ensure export directory exists
 const ensureExportDir = async () => {
@@ -65,18 +128,32 @@ const exportLifecycleFields = `
 `;
 
 const markExportFileExpired = async (exportId: string, fileDeletedAt = new Date()) => {
-  await query(
-    `UPDATE shapefile_export
-     SET file_status = 'expired',
-         file_path = NULL,
-         file_deleted_at = COALESCE(file_deleted_at, $2),
-         retention_expired_at = COALESCE(retention_expired_at, $2),
-         retention_expires_at = COALESCE(retention_expires_at, $2),
-         error_message = $3
-     WHERE id = $1
-       AND status = 'completed'`,
-    [exportId, fileDeletedAt, 'Export completed, but the file expired. Regenerate it to download again.'],
-  );
+  await transaction(async (client) => {
+    const result = await client.query(
+      `UPDATE shapefile_export
+       SET file_status = 'expired',
+           file_path = NULL,
+           file_deleted_at = COALESCE(file_deleted_at, $2),
+           retention_expired_at = COALESCE(retention_expired_at, $2),
+           retention_expires_at = COALESCE(retention_expires_at, $2),
+           error_message = $3
+       WHERE id = $1
+         AND status = 'completed'
+       RETURNING requested_by_user_id, project_id`,
+      [exportId, fileDeletedAt, 'Export completed, but the file expired. Regenerate it to download again.'],
+    );
+    if (result.rowCount === 1) {
+      await publishRealtimeChanges(
+        exportRealtimeInputs({
+          exportId,
+          projectId: result.rows[0].project_id,
+          requestedByUserId: result.rows[0].requested_by_user_id,
+          action: 'expired',
+        }),
+        client,
+      );
+    }
+  });
 };
 
 const parseBbox = (value: unknown) => {
@@ -216,6 +293,11 @@ const appendExportFilters = ({ sql, params, paramIndex, filters, tableAlias = 's
     params.push(filters.feature_type);
     nextParamIndex++;
   }
+  if (filters.collector_user_id) {
+    queryText += ` AND ${tableAlias}.collected_by_user_id = $${nextParamIndex}::uuid`;
+    params.push(filters.collector_user_id);
+    nextParamIndex++;
+  }
   if (filters.geometry_types && filters.geometry_types.length > 0) {
     const geomTypes = filters.geometry_types.map((t) => `ST_${t}`);
     queryText += ` AND ST_GeometryType(${tableAlias}.geom) = ANY($${nextParamIndex}::text[])`;
@@ -290,6 +372,33 @@ const getPagination = (pageRaw: unknown, limitRaw: unknown) => {
   return { page, limit, offset };
 };
 
+// List only people who have approved contributions in this project.
+const getProjectExportCollectors = async (req, res) => {
+  const { projectId } = req.params;
+  const result = await query(
+    `SELECT sf.collected_by_user_id AS user_id,
+            COALESCE(
+              NULLIF(BTRIM(u.full_name), ''),
+              NULLIF(BTRIM(u.masked_contributor_label), ''),
+              'Former contributor'
+            ) AS display_name,
+            COUNT(*)::INT AS contribution_count
+     FROM spatial_feature sf
+     JOIN "user" u ON u.id = sf.collected_by_user_id
+     WHERE sf.project_id = $1
+       AND sf.status = 'approved'
+     GROUP BY sf.collected_by_user_id, u.full_name, u.masked_contributor_label
+     ORDER BY LOWER(COALESCE(
+                NULLIF(BTRIM(u.full_name), ''),
+                NULLIF(BTRIM(u.masked_contributor_label), ''),
+                'Former contributor'
+              )), sf.collected_by_user_id`,
+    [projectId],
+  );
+
+  res.json({ success: true, data: result.rows });
+};
+
 // Request export for a project
 const requestExport = async (req, res) => {
   const { projectId } = req.params;
@@ -305,6 +414,7 @@ const requestExport = async (req, res) => {
     coordinate_system = 'EPSG:4326',
     format = 'geojson', // Default to geojson
     category_id,
+    collector_user_id,
     export_ai_predictions,
     regenerated_from_export_id,
   } = req.body;
@@ -344,12 +454,40 @@ const requestExport = async (req, res) => {
   const normalizedBbox = parseBbox(bbox);
   const normalizedPolygon = parsePolygonFilter(export_polygon);
   const normalizedFeatureType = normalizeFeatureType(feature_type);
+  const normalizedCollectorUserId = normalizeOptionalString(collector_user_id);
   const publishedAiLayer = useAiPredictions ? await findPublishedAiLayerForExport(projectId) : null;
   if (useAiPredictions && !publishedAiLayer) {
     throw new AppError(
       'This project does not have a published AI prediction layer to export.',
       409,
     );
+  }
+  if (useAiPredictions && normalizedCollectorUserId) {
+    throw new AppError('Collector filtering is only available for collected project data.', 400);
+  }
+  let selectedCollector: { display_name: string } | null = null;
+  if (normalizedCollectorUserId) {
+    const collectorResult = await query(
+      `SELECT COALESCE(
+                NULLIF(BTRIM(u.full_name), ''),
+                NULLIF(BTRIM(u.masked_contributor_label), ''),
+                'Former contributor'
+              ) AS display_name
+       FROM spatial_feature sf
+       JOIN "user" u ON u.id = sf.collected_by_user_id
+       WHERE sf.project_id = $1
+         AND sf.collected_by_user_id = $2::uuid
+         AND sf.status = 'approved'
+       LIMIT 1`,
+      [projectId, normalizedCollectorUserId],
+    );
+    selectedCollector = collectorResult.rows[0] ?? null;
+    if (!selectedCollector) {
+      throw new AppError(
+        'The selected collector has no approved contributions in this project.',
+        409,
+      );
+    }
   }
 
   // Build export parameters
@@ -361,6 +499,8 @@ const requestExport = async (req, res) => {
     bbox: normalizedBbox,
     export_polygon: normalizedPolygon,
     feature_type: useAiPredictions ? undefined : normalizedFeatureType,
+    collector_user_id: useAiPredictions ? undefined : normalizedCollectorUserId,
+    collector_display_name: selectedCollector?.display_name,
     geometry_types,
     include_photos: useAiPredictions ? false : include_photos,
     coordinate_system,
@@ -442,6 +582,16 @@ const requestExport = async (req, res) => {
         Number.parseInt(process.env.WORKLOAD_MAX_ATTEMPTS ?? '3', 10) || 3,
       ),
     });
+    await publishRealtimeChanges(
+      exportRealtimeInputs({
+        exportId: inserted.rows[0].id,
+        projectId,
+        requestedByUserId: req.user.id,
+        action: 'created',
+        originSessionId: req.authSessionId,
+      }),
+      client,
+    );
     return inserted;
   });
 
@@ -474,15 +624,29 @@ const processExport = async (exportId, projectName) => {
   let publishedExportReference: string | null = null;
   try {
     // Update status to processing
-    await query(
-      `UPDATE shapefile_export
-       SET status = 'processing',
-           file_status = 'missing',
-           file_deleted_at = NULL,
-           retention_expired_at = NULL
-       WHERE id = $1`,
-      [exportId],
-    );
+    await transaction(async (client) => {
+      const result = await client.query(
+        `UPDATE shapefile_export
+         SET status = 'processing',
+             file_status = 'missing',
+             file_deleted_at = NULL,
+             retention_expired_at = NULL
+         WHERE id = $1
+         RETURNING requested_by_user_id, project_id`,
+        [exportId],
+      );
+      if (result.rowCount === 1) {
+        await publishRealtimeChanges(
+          exportRealtimeInputs({
+            exportId,
+            projectId: result.rows[0].project_id,
+            requestedByUserId: result.rows[0].requested_by_user_id,
+            action: 'processing',
+          }),
+          client,
+        );
+      }
+    });
 
     logger.info('Starting export processing:', { exportId });
 
@@ -565,9 +729,11 @@ const processExport = async (exportId, projectName) => {
           sf.id,
           ST_AsGeoJSON(sf.geom) as geojson_geometry,
           ST_GeometryType(sf.geom) as geometry_type,
-          sf.attributes,
-          sf.collected_at,
-          u.full_name as collected_by,
+           sf.attributes,
+           sf.source,
+           sf.source_provenance,
+           sf.collected_at,
+          COALESCE(u.full_name, u.masked_contributor_label, 'Former contributor') as collected_by,
           COALESCE(photo_rollup.photo_count, 0)::int AS photo_count,
           COALESCE(photo_rollup.photos, '[]'::json) AS photos,
           'project_features' AS export_source
@@ -695,6 +861,18 @@ const processExport = async (exportId, projectName) => {
       }
     }
 
+    const sourceProvenance = Array.from(
+      new Map(
+        features.rows
+          .map((feature: any) => feature.source_provenance)
+          .filter(
+            (item: unknown) =>
+              item && typeof item === 'object' && !Array.isArray(item) && Object.keys(item).length > 0,
+          )
+          .map((item: unknown) => [JSON.stringify(item), item]),
+      ).values(),
+    );
+
     // Create metadata file
     const metadata = {
       project_name: projectName,
@@ -718,6 +896,11 @@ const processExport = async (exportId, projectName) => {
       ai_run_id: params.ai_run_id ?? null,
       files: generatedFiles,
       photo_manifest: photoManifest.length > 0 ? 'photos_manifest.json' : null,
+      source_provenance: sourceProvenance,
+      important_notices: [
+        'This export is not a cadastral record, land-title authority, professional legal survey, emergency-navigation product, or guarantee of GPS, imagery, source-data, or AI accuracy.',
+        'Recipients must preserve required source attribution and comply with the recorded redistribution rules.',
+      ],
       notes:
         exportSource === 'ai_predictions'
           ? 'AI-derived polygons are post-processed from satellite classification. Raw pixel geometry is retained for audit when available; default exports use processed polygons.'
@@ -806,7 +989,17 @@ const processExport = async (exportId, projectName) => {
             format: format,
             status: 'completed',
           }),
-        ],
+          ],
+      );
+      await publishRealtimeChanges(
+        exportRealtimeInputs({
+          exportId,
+          projectId,
+          requestedByUserId: exportData.requested_by_user_id,
+          action: 'completed',
+          notificationChanged: true,
+        }),
+        client,
       );
     });
     publishedExportReference = null;
@@ -898,6 +1091,9 @@ const createShapefile = async (outputDir, fileName, features, _geometryType) => 
         Array.isArray(f.photo_paths) && f.photo_paths.length > 0
           ? String(f.photo_paths[0]).substring(0, 254)
           : '',
+      src_kind: String(f.source ?? 'field').substring(0, 32),
+      src_name: String(f.source_provenance?.dataset_name ?? '').substring(0, 80),
+      src_attr: String(f.source_provenance?.attribution ?? '').substring(0, 254),
     };
 
     const sanitizedAttributes = sanitizeManagedFeatureAttributes(f.attributes);
@@ -1016,6 +1212,11 @@ const createGeoJSON = (features, projectName, geometryType) => {
             Array.isArray(f.photo_paths) && f.photo_paths.length > 0 ? f.photo_paths[0] : null,
           photo_paths: Array.isArray(f.photo_paths) ? f.photo_paths : [],
           photo_manifest_ref: Number(f.photo_count ?? 0) > 0 ? 'photos_manifest.json' : null,
+          source: f.source ?? 'field',
+          source_provenance:
+            f.source_provenance && typeof f.source_provenance === 'object'
+              ? f.source_provenance
+              : {},
         },
       };
     }),
@@ -1213,6 +1414,16 @@ Filters Applied:
 
 Files Included:
 ${metadata.files.map((f) => `  - ${f.name} (${f.count} features)`).join('\n')}
+
+Source and Redistribution:
+==========================
+- metadata.json contains source_provenance records carried from governed GIS imports.
+- Preserve every recorded attribution and follow the corresponding redistribution rules.
+- Missing historical provenance is not proof that unrestricted reuse is allowed.
+
+Important Notices:
+==================
+${metadata.important_notices.map((notice) => `- ${notice}`).join('\n')}
 
 ${formatSpecificInfo}
 
@@ -1684,7 +1895,7 @@ const cleanupOldExports = async () => {
     }
 
     const oldExports = await query(
-      `SELECT id, file_path FROM shapefile_export 
+      `SELECT id, file_path, requested_by_user_id, project_id FROM shapefile_export
        WHERE completed_at < $1
          AND status = 'completed'
          AND file_status = 'available'`,
@@ -1698,17 +1909,28 @@ const cleanupOldExports = async () => {
         });
       }
 
-      await query(
-        `UPDATE shapefile_export 
-         SET file_status = 'expired',
-             file_path = NULL,
-             file_deleted_at = CURRENT_TIMESTAMP,
-             retention_expired_at = CURRENT_TIMESTAMP,
-             retention_expires_at = COALESCE(retention_expires_at, completed_at + ($2::int * INTERVAL '1 day')),
-             error_message = 'Export completed, but the file expired. Regenerate it to download again.'
-         WHERE id = $1`,
-        [exp.id, RETENTION_DAYS],
-      );
+      await transaction(async (client) => {
+        await client.query(
+          `UPDATE shapefile_export
+           SET file_status = 'expired',
+               file_path = NULL,
+               file_deleted_at = CURRENT_TIMESTAMP,
+               retention_expired_at = CURRENT_TIMESTAMP,
+               retention_expires_at = COALESCE(retention_expires_at, completed_at + ($2::int * INTERVAL '1 day')),
+               error_message = 'Export completed, but the file expired. Regenerate it to download again.'
+           WHERE id = $1`,
+          [exp.id, RETENTION_DAYS],
+        );
+        await publishRealtimeChanges(
+          exportRealtimeInputs({
+            exportId: exp.id,
+            projectId: exp.project_id,
+            requestedByUserId: exp.requested_by_user_id,
+            action: 'expired',
+          }),
+          client,
+        );
+      });
     }
 
     logger.info('Old exports cleaned up:', { count: oldExports.rows.length });
@@ -1718,6 +1940,7 @@ const cleanupOldExports = async () => {
 };
 
 module.exports = {
+  getProjectExportCollectors,
   requestExport,
   getMyExports,
   getExportStatus,

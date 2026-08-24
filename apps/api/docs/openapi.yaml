@@ -23,6 +23,8 @@ tags:
   - name: Offline / Sync
   - name: Settings
   - name: Users
+  - name: Legal
+  - name: Privacy
 paths:
   /health:
     get:
@@ -58,6 +60,425 @@ paths:
       responses:
         '200':
           description: Metadata response
+
+  /legal:
+    get:
+      tags: [Legal]
+      summary: Public legal document index
+      security: []
+      responses:
+        '200':
+          description: Stable public index of approved documents, or marked drafts outside production
+          content:
+            text/html:
+              schema:
+                type: string
+        '503':
+          description: No approved production documents are available
+  /legal/{slug}:
+    get:
+      tags: [Legal]
+      summary: Public versioned legal document page
+      security: []
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema:
+            type: string
+            enum: [privacy, terms, acceptable-use, important-notices, account-deletion, subprocessors, open-source]
+      responses:
+        '200':
+          description: Approved document, or clearly marked non-production draft outside production
+          content:
+            text/html:
+              schema:
+                type: string
+        '503':
+          description: No approved production document is available
+  /legal/account-deletion/request:
+    get:
+      tags: [Legal]
+      summary: Public non-enumerating account-deletion request form
+      security: []
+      responses:
+        '200':
+          description: Accessible account-deletion request form
+          content:
+            text/html:
+              schema:
+                type: string
+        '429':
+          description: Request rate limited
+    post:
+      tags: [Legal]
+      summary: Submit a public deletion request for identity verification
+      description: Always returns the same acknowledgement whether or not the supplied account exists.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  maxLength: 320
+      responses:
+        '202':
+          description: Generic non-enumerating acknowledgement
+          content:
+            text/html:
+              schema:
+                type: string
+        '429':
+          description: Request rate limited
+  /api/v1/legal/documents:
+    get:
+      tags: [Legal]
+      summary: List current legal documents and mandatory acceptance types
+      security: []
+      responses:
+        '200':
+          description: Versioned documents with content digests and approval state
+        '503':
+          description: Approved production documents are unavailable
+  /api/v1/legal/documents/{slug}:
+    get:
+      tags: [Legal]
+      summary: Retrieve the current document by stable slug
+      security: []
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Versioned document with exact content digest
+        '503':
+          description: Approved production document unavailable
+  /api/v1/legal/documents/{slug}/versions/{version}:
+    get:
+      tags: [Legal]
+      summary: Retrieve a specific published document version
+      security: []
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: version
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Exact document version
+        '503':
+          description: Approved production document unavailable
+  /api/v1/legal/acceptance/status:
+    get:
+      tags: [Legal]
+      security:
+        - bearerAuth: []
+      summary: Check whether the current mandatory documents were accepted
+      responses:
+        '200':
+          description: Current and missing acceptance versions
+  /api/v1/legal/acceptance:
+    post:
+      tags: [Legal]
+      security:
+        - bearerAuth: []
+      summary: Affirmatively accept current Terms and Acceptable Use
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [acceptances]
+              properties:
+                acceptances:
+                  type: array
+                  minItems: 2
+                  items:
+                    $ref: '#/components/schemas/LegalAcceptance'
+      responses:
+        '201':
+          description: Exact document versions recorded
+        '422':
+          description: Missing, obsolete, non-affirmative, or bundled privacy consent
+
+  /api/v1/privacy/account-deletion/eligibility:
+    get:
+      tags: [Privacy]
+      security:
+        - bearerAuth: []
+      summary: Check role-specific operational conditions for account deletion
+      description: The protected super administrator cannot initiate deletion. Contributors may initiate a request at any time, but completion waits until project assignments and pending contribution reviews are resolved.
+      responses:
+        '200':
+          description: Current deletion-request and operational-eligibility state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/AccountDeletionEligibility'
+  /api/v1/privacy/requests:
+    get:
+      tags: [Privacy]
+      security:
+        - bearerAuth: []
+      summary: List only the current user's privacy requests
+      responses:
+        '200':
+          description: User-scoped request list
+    post:
+      tags: [Privacy]
+      security:
+        - bearerAuth: []
+      summary: Initiate access/export, correction, deletion, restriction, or objection request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrivacyRequestInput'
+      responses:
+        '201':
+          description: Verified request created; deletion does not deactivate the account
+        '403':
+          description: Reauthentication failed
+        '409':
+          description: An equivalent open request already exists
+  /api/v1/privacy/requests/{requestId}/cancel:
+    post:
+      tags: [Privacy]
+      security:
+        - bearerAuth: []
+      summary: Cancel the current user's eligible open request
+      parameters:
+        - in: path
+          name: requestId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Request cancelled
+        '409':
+          description: Request is not owned by the user or cannot be cancelled
+  /api/v1/privacy/requests/{requestId}:
+    get:
+      tags: [Privacy]
+      security:
+        - bearerAuth: []
+      summary: Get one privacy request owned by the current user
+      parameters:
+        - $ref: '#/components/parameters/privacyRequestId'
+      responses:
+        '200':
+          description: User-safe request status and execution metadata
+        '404':
+          description: Request not found for the current user
+  /api/v1/privacy/requests/{requestId}/export-grant:
+    post:
+      tags: [Privacy]
+      security:
+        - bearerAuth: []
+      summary: Reauthenticate and create a session-bound single-use export grant
+      parameters:
+        - $ref: '#/components/parameters/privacyRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password]
+              properties:
+                current_password:
+                  type: string
+                  format: password
+      responses:
+        '201':
+          description: Short-lived download grant created
+        '403':
+          description: Reauthentication failed
+        '409':
+          description: Export artifact is not ready
+  /api/v1/privacy/exports/{artifactId}/download:
+    get:
+      tags: [Privacy]
+      security:
+        - bearerAuth: []
+      summary: Download and consume an authenticated encrypted-export grant
+      parameters:
+        - in: path
+          name: artifactId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: X-Privacy-Export-Grant
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Decrypted user-isolated personal-data report. New reports are self-contained HTML; older retained artifacts may remain JSON.
+          content:
+            text/html:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: object
+        '403':
+          description: Grant invalid, expired, consumed, wrong-session, or wrong-user
+        '410':
+          description: Artifact expired or deleted
+  /api/v1/privacy/admin/requests:
+    get:
+      tags: [Privacy]
+      security:
+        - bearerAuth: []
+      summary: Protected privacy-request queue
+      responses:
+        '200':
+          description: Deadline-ordered privacy queue
+        '403':
+          description: Protected super-admin required
+  /api/v1/privacy/admin/requests/{requestId}:
+    get:
+      tags: [Privacy]
+      security:
+        - bearerAuth: []
+      summary: Get protected request details and status history
+      parameters:
+        - $ref: '#/components/parameters/privacyRequestId'
+      responses:
+        '200':
+          description: Protected request detail
+        '403':
+          description: Protected super-admin required
+        '404':
+          description: Request not found
+    patch:
+      tags: [Privacy]
+      security:
+        - bearerAuth: []
+      summary: Update a privacy-request review state
+      description: Correction applies through the profile service. Access export and deletion schedule background execution and cannot be manually marked completed.
+      parameters:
+        - in: path
+          name: requestId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Review state updated
+        '409':
+          description: Completion is blocked or the request is closed
+  /api/v1/privacy/admin/requests/{requestId}/retry:
+    post:
+      tags: [Privacy]
+      security:
+        - bearerAuth: []
+      summary: Retry a failed access-export or deletion workload after remediation
+      parameters:
+        - $ref: '#/components/parameters/privacyRequestId'
+      responses:
+        '202':
+          description: Failed execution rescheduled
+        '403':
+          description: Protected super-admin required
+        '409':
+          description: Request is not eligible for retry
+  /api/v1/privacy/admin/queue-counts:
+    get:
+      tags: [Privacy]
+      security:
+        - bearerAuth: []
+      summary: Get low-cardinality protected privacy and moderation queue counts
+      responses:
+        '200':
+          description: Open and overdue counts for both queues
+        '403':
+          description: Protected super-admin required
+  /api/v1/privacy/content-reports:
+    get:
+      tags: [Privacy]
+      security:
+        - bearerAuth: []
+      summary: List only the current user's submitted content reports
+      responses:
+        '200':
+          description: Reporter-safe report status list
+    post:
+      tags: [Privacy]
+      security:
+        - bearerAuth: []
+      summary: Report authorized project content for privacy, safety, accuracy, or license review
+      responses:
+        '201':
+          description: Moderation report created
+        '403':
+          description: Caller lacks project access
+  /api/v1/privacy/admin/content-reports:
+    get:
+      tags: [Privacy]
+      security:
+        - bearerAuth: []
+      summary: Protected moderation and takedown queue
+      responses:
+        '200':
+          description: Moderation queue
+        '403':
+          description: Protected super-admin required
+  /api/v1/privacy/admin/content-reports/{reportId}:
+    get:
+      tags: [Privacy]
+      security:
+        - bearerAuth: []
+      summary: Get protected content-report detail and status history
+      parameters:
+        - $ref: '#/components/parameters/contentReportId'
+      responses:
+        '200':
+          description: Protected report detail
+        '403':
+          description: Protected super-admin required
+        '404':
+          description: Report not found
+    patch:
+      tags: [Privacy]
+      security:
+        - bearerAuth: []
+      summary: Review or resolve a content report with an auditable reporter message
+      parameters:
+        - $ref: '#/components/parameters/contentReportId'
+      responses:
+        '200':
+          description: Moderation state updated
+        '409':
+          description: Report is already final or was not found
 
   /api/v1/auth/register:
     post:
@@ -712,6 +1133,28 @@ paths:
           description: Forbidden
         '404':
           description: Project not found
+  /api/v1/projects/{projectId}/ai/governance:
+    put:
+      tags: [AI]
+      security:
+        - bearerAuth: []
+      summary: Record or revoke separate AI training and publication authority
+      description: Protected super-admin only. Enabling either purpose requires a documented basis and approval reference; ordinary AI enablement is insufficient.
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiGovernanceRequest'
+      responses:
+        '200':
+          description: Governance authority record updated
+        '403':
+          description: Protected administrator required
+        '422':
+          description: Enabled purpose lacks a basis or approval reference
   /api/v1/projects/{projectId}/ai/runs:
     get:
       tags: [AI]
@@ -2122,6 +2565,10 @@ paths:
                 feature_type:
                   type: string
                   description: Feature type value stored in feature_type, type, or class attributes.
+                collector_user_id:
+                  type: string
+                  format: uuid
+                  description: Limit the export to one collector who has approved contributions in the project. Omit for all collectors.
                 include_photos:
                   type: boolean
                   default: true
@@ -2135,6 +2582,23 @@ paths:
           description: Export queued
         '400':
           description: Validation failed
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '409':
+          description: No approved features match the selected filters
+  /api/v1/exports/project/{projectId}/collectors:
+    get:
+      tags: [Exports]
+      security:
+        - bearerAuth: []
+      summary: List collectors with approved contributions in a project
+      parameters:
+        - $ref: '#/components/parameters/projectId'
+      responses:
+        '200':
+          description: Contributing collectors with their approved feature counts
         '401':
           description: Unauthorized
         '403':
@@ -2202,11 +2666,46 @@ paths:
           multipart/form-data:
             schema:
               type: object
-              required: [file]
+              required:
+                - file
+                - source_provider
+                - source_dataset_name
+                - source_license_or_authority
+                - source_redistribution_rules
+                - provenance_confirmed
               properties:
                 file:
                   type: string
                   format: binary
+                source_provider:
+                  type: string
+                  maxLength: 240
+                source_dataset_name:
+                  type: string
+                  maxLength: 240
+                source_dataset_date:
+                  type: string
+                  format: date
+                source_accuracy_statement:
+                  type: string
+                  maxLength: 1000
+                source_license_or_authority:
+                  type: string
+                  maxLength: 1000
+                source_attribution:
+                  type: string
+                  maxLength: 1000
+                source_terms_url:
+                  type: string
+                  format: uri
+                  maxLength: 2048
+                source_redistribution_rules:
+                  type: string
+                  maxLength: 1000
+                provenance_confirmed:
+                  type: boolean
+                  enum: [true]
+                  description: Uploader attestation; not a substitute for legal/license approval.
       responses:
         '202':
           description: Import accepted and processed
@@ -2844,6 +3343,33 @@ paths:
           description: Import access denied
         '404':
           description: Import or staged feature not found
+  /api/v1/imports/{importId}/provenance:
+    put:
+      tags: [Imports]
+      security:
+        - bearerAuth: []
+      summary: Add or correct source and redistribution metadata before approval
+      parameters:
+        - $ref: '#/components/parameters/importId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportSourceProvenance'
+      responses:
+        '200':
+          description: Provenance attestation saved
+        '400':
+          description: Required provenance is incomplete or invalid
+        '401':
+          description: Unauthorized
+        '403':
+          description: Provenance update access denied
+        '404':
+          description: Import not found
+        '409':
+          description: Provenance is locked because imported features are already approved
 
   /api/v1/assignments/managed:
     get:
@@ -3342,6 +3868,20 @@ components:
       schema:
         type: string
         format: uuid
+    privacyRequestId:
+      in: path
+      name: requestId
+      required: true
+      schema:
+        type: string
+        format: uuid
+    contentReportId:
+      in: path
+      name: reportId
+      required: true
+      schema:
+        type: string
+        format: uuid
     tileZ:
       in: path
       name: z
@@ -3436,6 +3976,98 @@ components:
         role:
           type: string
           enum: [contributor, viewer]
+        legal_acceptances:
+          type: array
+          minItems: 2
+          maxItems: 4
+          items:
+            $ref: '#/components/schemas/LegalAcceptance'
+    LegalAcceptance:
+      type: object
+      required: [document_type, version, locale, affirmative]
+      properties:
+        document_type:
+          type: string
+          enum: [terms, acceptable_use]
+        version:
+          type: string
+        locale:
+          type: string
+          example: en
+        affirmative:
+          type: boolean
+          enum: [true]
+    PrivacyRequestInput:
+      type: object
+      required: [request_type]
+      properties:
+        request_type:
+          type: string
+          enum: [access_export, correction, deletion, restriction, objection]
+        current_password:
+          type: string
+          writeOnly: true
+          description: Required for deletion and access/export requests
+        details:
+          type: object
+          additionalProperties: true
+    AccountDeletionEligibility:
+      type: object
+      required: [can_request, operationally_eligible, protected_account, role, blockers, manual_review_required, notice]
+      properties:
+        can_request:
+          type: boolean
+        operationally_eligible:
+          type: boolean
+          description: Whether the user's current role-specific operational blockers are resolved; this is not confirmation that the reviewed deletion has completed.
+        protected_account:
+          type: boolean
+        role:
+          type: string
+          enum: [admin, contributor, viewer]
+        blockers:
+          type: array
+          items:
+            type: object
+            required: [code, count, message]
+            properties:
+              code:
+                type: string
+                enum: [ACTIVE_PROJECT_ASSIGNMENTS, PENDING_CONTRIBUTION_REVIEWS]
+              count:
+                type: integer
+                minimum: 1
+              message:
+                type: string
+        manual_review_required:
+          type: boolean
+          enum: [true]
+        notice:
+          type: string
+    AiGovernanceRequest:
+      type: object
+      required: [training_data_use_authorized, publication_authorized]
+      properties:
+        training_data_use_authorized:
+          type: boolean
+        training_authority_basis:
+          type: string
+          maxLength: 2000
+          nullable: true
+        training_approval_reference:
+          type: string
+          maxLength: 500
+          nullable: true
+        publication_authorized:
+          type: boolean
+        publication_authority_basis:
+          type: string
+          maxLength: 2000
+          nullable: true
+        publication_approval_reference:
+          type: string
+          maxLength: 500
+          nullable: true
     LoginRequest:
       type: object
       required: [email, password]
@@ -3487,6 +4119,51 @@ components:
           type: string
           format: uuid
           nullable: true
+    ImportSourceProvenance:
+      type: object
+      required:
+        - source_provider
+        - source_dataset_name
+        - source_license_or_authority
+        - source_redistribution_rules
+        - provenance_confirmed
+      properties:
+        source_provider:
+          type: string
+          minLength: 1
+          maxLength: 240
+        source_dataset_name:
+          type: string
+          minLength: 1
+          maxLength: 240
+        source_dataset_date:
+          type: string
+          format: date
+          nullable: true
+        source_accuracy_statement:
+          type: string
+          maxLength: 1000
+          nullable: true
+        source_license_or_authority:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        source_attribution:
+          type: string
+          maxLength: 1000
+          nullable: true
+        source_terms_url:
+          type: string
+          format: uri
+          maxLength: 2048
+          nullable: true
+        source_redistribution_rules:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        provenance_confirmed:
+          type: boolean
+          enum: [true]
     PushDeviceRegistrationRequest:
       type: object
       required: [token, platform]
@@ -3505,6 +4182,10 @@ components:
         app_version:
           type: string
           maxLength: 60
+        show_sensitive_preview:
+          type: boolean
+          default: false
+          description: Explicit per-device opt-in to detailed lock-screen content
     PushDeviceUnregistrationRequest:
       type: object
       required: [token]

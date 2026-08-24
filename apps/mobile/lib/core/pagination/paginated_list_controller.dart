@@ -84,17 +84,22 @@ class PaginatedListController<T>
     if (silently && current != null) {
       state = AsyncData(current.copyWith(isRefreshing: true));
       try {
-        final page = await _loadPage(page: 1, limit: current.pageSize);
+        // Re-fetch the loaded window in one request so realtime invalidations do
+        // not collapse a multi-page list or trigger one request per loaded page.
+        final loadedWindowSize = current.items.isEmpty
+            ? current.pageSize
+            : current.items.length;
+        final page = await _loadPage(page: 1, limit: loadedWindowSize);
         if (!_canPublish(generation)) {
           return;
         }
         state = AsyncData(
           PaginatedListState<T>(
             items: page.items,
-            page: page.page,
-            pageSize: page.limit,
+            page: current.page,
+            pageSize: current.pageSize,
             total: page.total,
-            hasMore: page.hasMore,
+            hasMore: page.items.length < page.total,
             isLoadingMore: false,
             isRefreshing: false,
           ),

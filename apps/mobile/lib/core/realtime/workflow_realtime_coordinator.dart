@@ -1,13 +1,15 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/auth/domain/auth_models.dart';
-import '../../features/imports/presentation/import_providers.dart';
 import '../config/app_env.dart';
 import '../providers/providers.dart';
+import 'realtime_edit_guard.dart';
+import 'realtime_models.dart';
+import 'realtime_scope_coalescer.dart';
+import 'realtime_scope_registry.dart';
 import 'workflow_realtime_service.dart';
 
 class WorkflowRealtimeCoordinator extends ConsumerStatefulWidget {
@@ -24,19 +26,36 @@ class _WorkflowRealtimeCoordinatorState
     extends ConsumerState<WorkflowRealtimeCoordinator>
     with WidgetsBindingObserver {
   String? _connectedRealtimeToken;
+  String? _registeredUserId;
   late final WorkflowRealtimeService _workflowRealtimeService;
+  late final RealtimeScopeRegistry _scopeRegistry;
+  late final RealtimeEditGuardRegistry _editGuardRegistry;
+  final Set<RealtimeScope> _baseScopes = <RealtimeScope>{};
   final Set<String> _handledRealtimeEvents = <String>{};
+  late final RealtimeScopeCoalescer _scopeCoalescer;
+  AuthSession? _desiredSession;
+  bool? _desiredOnline;
+  bool _syncScheduled = false;
+  bool _disposing = false;
 
   @override
   void initState() {
     super.initState();
     _workflowRealtimeService = ref.read(workflowRealtimeServiceProvider);
+    ref.read(deletedAccountApiBindingProvider);
+    _scopeRegistry = ref.read(realtimeScopeRegistryProvider);
+    _editGuardRegistry = ref.read(realtimeEditGuardRegistryProvider);
+    _scopeCoalescer = RealtimeScopeCoalescer(onRefresh: _refreshScope);
     WidgetsBinding.instance.addObserver(this);
+    unawaited(_resumeDeletedAccountCleanup());
   }
 
   @override
   void dispose() {
+    _disposing = true;
     WidgetsBinding.instance.removeObserver(this);
+    _unregisterBaseScopes();
+    _scopeCoalescer.dispose();
     _workflowRealtimeService.disconnect();
     super.dispose();
   }
@@ -44,8 +63,6 @@ class _WorkflowRealtimeCoordinatorState
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // Reconnect only. Foreground updates are delivered as targeted socket
-      // events; unsolicited refreshes make active screens feel unstable.
       _syncRealtime(
         ref.read(authControllerProvider).session,
         isOnline: ref.read(networkOnlineProvider).valueOrNull,
@@ -67,168 +84,268 @@ class _WorkflowRealtimeCoordinatorState
       authControllerProvider.select((state) => state.session),
     );
     final isOnline = ref.watch(networkOnlineProvider).valueOrNull;
-    _syncRealtime(session, isOnline: isOnline);
+    _scheduleRealtimeSync(session, isOnline: isOnline);
     return widget.child;
   }
 
+  void _scheduleRealtimeSync(AuthSession? session, {bool? isOnline}) {
+    _desiredSession = session;
+    _desiredOnline = isOnline;
+    if (_syncScheduled) return;
+
+    _syncScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _syncScheduled = false;
+      if (!mounted || _disposing) return;
+      _syncRealtime(_desiredSession, isOnline: _desiredOnline);
+    });
+  }
+
   void _syncRealtime(AuthSession? session, {bool? isOnline}) {
-    if (AppEnv.useMockData || session == null || isOnline != true) {
+    if (!AppEnv.realtimeV2Enabled || AppEnv.useMockData || session == null) {
       _connectedRealtimeToken = null;
+      _unregisterBaseScopes();
       _workflowRealtimeService.disconnect();
+      return;
+    }
+    _registerBaseScopes(session);
+    if (isOnline != true) {
+      _connectedRealtimeToken = null;
+      _workflowRealtimeService.disconnect(offline: true);
       return;
     }
 
     final token = session.accessToken.trim();
-    if (_connectedRealtimeToken == token) {
+    if (_connectedRealtimeToken == token &&
+        _workflowRealtimeService.state !=
+            RealtimeConnectionState.disconnected &&
+        _workflowRealtimeService.state != RealtimeConnectionState.offline) {
       return;
     }
 
     _connectedRealtimeToken = token;
     _workflowRealtimeService.connect(
       accessToken: token,
-      accessTokenProvider: () {
+      accessTokenProvider: (forceRefresh) async {
         final currentSession = ref.read(authControllerProvider).session;
         if (currentSession == null) {
           return '';
         }
-        return ref
-                .read(apiClientProvider)
+        final apiClient = ref.read(apiClientProvider);
+        if (forceRefresh) {
+          return await apiClient.refreshAccessTokenForOwner(
+                currentSession.user.id,
+              ) ??
+              '';
+        }
+        return apiClient
                 .captureSessionForOwner(currentSession.user.id)
                 ?.accessToken ??
             currentSession.accessToken;
       },
-      onWorkflowChanged: _handleWorkflowChange,
+      scopeRegistry: _scopeRegistry,
+      onDomainChanged: _handleDomainChange,
+      onStaleScopes: _handleStaleScopes,
+      onLegacyWorkflowChanged: _handleLegacyWorkflowChange,
+      onStateChanged: (state) {
+        if (mounted && !_disposing) {
+          ref.read(realtimeConnectionStateProvider.notifier).state = state;
+        }
+      },
     );
   }
 
-  void _handleWorkflowChange(WorkflowRealtimeEvent event) {
-    if (!mounted) {
+  void _registerBaseScopes(AuthSession session) {
+    if (_registeredUserId == session.user.id) {
       return;
     }
-    if (!_handledRealtimeEvents.add(event.id)) {
+    _unregisterBaseScopes();
+    _registeredUserId = session.user.id;
+    final scopes = <RealtimeScope>{
+      const RealtimeScope('projects', 'all'),
+      const RealtimeScope('categories', 'all'),
+      const RealtimeScope('offline_map', 'all'),
+      const RealtimeScope('settings', 'support'),
+      RealtimeScope('notifications', session.user.id),
+      RealtimeScope('user', session.user.id),
+      RealtimeScope('assignments', session.user.id),
+      RealtimeScope('imports', session.user.id),
+      RealtimeScope('exports', session.user.id),
+      RealtimeScope('privacy_requests', session.user.id),
+      RealtimeScope('content_reports', session.user.id),
+      if (session.user.role == UserRole.admin) ...<RealtimeScope>{
+        const RealtimeScope('users', 'all'),
+        const RealtimeScope('assignments', 'all'),
+        const RealtimeScope('imports', 'all'),
+        const RealtimeScope('exports', 'all'),
+        const RealtimeScope('reviews', 'all'),
+        if (session.user.isSuperAdmin) ...<RealtimeScope>{
+          const RealtimeScope('privacy_admin_queue', 'all'),
+          const RealtimeScope('moderation_admin_queue', 'all'),
+        },
+      },
+    };
+    for (final scope in scopes) {
+      _scopeRegistry.register(scope);
+      _baseScopes.add(scope);
+    }
+  }
+
+  void _unregisterBaseScopes() {
+    if (_baseScopes.isEmpty) {
+      _registeredUserId = null;
+      return;
+    }
+    for (final scope in _baseScopes) {
+      _scopeRegistry.unregister(scope);
+    }
+    _baseScopes.clear();
+    _registeredUserId = null;
+  }
+
+  void _handleDomainChange(RealtimeDomainEvent event) {
+    if (!mounted || !_handledRealtimeEvents.add(event.eventId)) {
       return;
     }
     unawaited(
       Future<void>.delayed(const Duration(minutes: 1), () {
-        _handledRealtimeEvents.remove(event.id);
+        _handledRealtimeEvents.remove(event.eventId);
       }),
     );
 
     final session = ref.read(authControllerProvider).session;
-    if (event.targetUserId == session?.user.id &&
-        (event.targetAction == 'block' || event.targetAction == 'deactivate')) {
+    if (event.entityType == 'user' &&
+        event.entityId == session?.user.id &&
+        event.action == 'account_deletion_completed') {
+      unawaited(_handleDeletedAccount(session!.user.id));
+      return;
+    }
+    if (event.entityType == 'user' &&
+        event.entityId == session?.user.id &&
+        (event.action == 'blocked' ||
+            event.action == 'deactivated' ||
+            event.action == 'role_changed' ||
+            (event.action == 'session_revoked' &&
+                !event.originatedByCurrentSession))) {
       ref
           .read(authControllerProvider.notifier)
           .forceLogout(
-            message: event.targetAction == 'block'
+            message: event.action == 'blocked'
                 ? 'Your account has been blocked.'
-                : 'Your account has been deactivated.',
-            code: event.targetAction == 'block'
+                : event.action == 'deactivated'
+                ? 'Your account has been deactivated.'
+                : 'Your account access changed. Please sign in again.',
+            code: event.action == 'blocked'
                 ? 'account_blocked'
-                : 'self_deactivated',
+                : event.action == 'deactivated'
+                ? 'self_deactivated'
+                : 'session_changed',
           );
       return;
     }
 
-    if (event.actorUserId == session?.user.id) {
+    if (event.originatedByCurrentSession) {
       return;
     }
-
-    _invalidateForWorkflowPath(event.path);
+    final entityId = event.entityId;
+    if (entityId != null &&
+        _editGuardRegistry.isEditing(event.entityType, entityId)) {
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      messenger
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: const Text(
+              'This item was updated elsewhere. Your unsaved changes are preserved.',
+            ),
+            action: SnackBarAction(
+              label: 'Review',
+              onPressed: () => _scheduleScopeRefresh(event.scope),
+            ),
+          ),
+        );
+      return;
+    }
+    _scheduleScopeRefresh(event.scope);
   }
 
-  void _invalidateForWorkflowPath(String rawPath) {
-    final path = rawPath.toLowerCase();
-    if (kIsWeb) {
-      // Flutter web can assert if an EditableText is removed while its DOM
-      // input is still active. Remote workflow updates rebuild list/filter
-      // screens, so clear focus first and then invalidate providers.
-      FocusManager.instance.primaryFocus?.unfocus();
+  Future<void> _handleDeletedAccount(String ownerUserId) async {
+    final cleanup = ref.read(deletedAccountLocalCleanupProvider);
+    final authController = ref.read(authControllerProvider.notifier);
+    try {
+      await cleanup.markAndPurge(ownerUserId);
+    } catch (_) {
+      // The durable marker remains and cleanup resumes on the next launch.
+    } finally {
+      await authController.forceLogout(
+        message: 'Your TerraLeb account has been deleted.',
+        code: 'account_deleted',
+      );
     }
+  }
 
+  Future<void> _resumeDeletedAccountCleanup() async {
+    final cleanup = ref.read(deletedAccountLocalCleanupProvider);
+    final authController = ref.read(authControllerProvider.notifier);
+    final currentOwner = ref.read(authControllerProvider).session?.user.id;
+    final completed = await cleanup.resumePending();
+    if (currentOwner != null && completed.contains(currentOwner)) {
+      await authController.forceLogout(
+        message: 'Your TerraLeb account has been deleted.',
+        code: 'account_deleted',
+      );
+    }
+  }
+
+  void _handleStaleScopes(List<RealtimeKnownRevision> staleScopes) {
+    for (final stale in staleScopes) {
+      _scheduleScopeRefresh(stale.scope);
+    }
+  }
+
+  void _scheduleScopeRefresh(RealtimeScope scope) {
+    _scopeCoalescer.schedule(scope);
+  }
+
+  void _refreshScope(RealtimeScope scope) {
+    if (!mounted) {
+      return;
+    }
+    ref.read(realtimeScopeRevisionProvider(scope).notifier).state++;
+    if (scope.scopeType == 'notifications') {
+      unawaited(
+        ref.read(notificationsControllerProvider.notifier).refreshSilently(),
+      );
+    }
+  }
+
+  void _handleLegacyWorkflowChange(WorkflowRealtimeEvent event) {
+    if (!AppEnv.realtimeLegacyBroadcastEnabled ||
+        !_handledRealtimeEvents.add(event.id)) {
+      return;
+    }
+    final path = event.path.toLowerCase();
     if (path.contains('/notifications')) {
-      ref.invalidate(notificationsControllerProvider);
-      unawaited(ref.read(notificationsControllerProvider.notifier).load());
-      return;
-    }
-
-    if (path.contains('/categories')) {
-      ref.invalidate(projectCategoriesProvider);
-      ref.invalidate(paginatedProjectCategoriesProvider);
-      ref.invalidate(projectsProvider);
-      ref.invalidate(projectListProvider);
-      ref.invalidate(mapProjectsProvider);
-      ref.invalidate(paginatedProjectListProvider);
-      ref.invalidate(paginatedProjectsProvider);
-      return;
-    }
-
-    if (path.contains('/projects') || path.contains('/assignments')) {
-      ref.invalidate(projectsProvider);
-      ref.invalidate(projectListProvider);
-      ref.invalidate(mapProjectsProvider);
-      ref.invalidate(projectByIdProvider);
-      ref.invalidate(paginatedProjectListProvider);
-      ref.invalidate(paginatedProjectsProvider);
-      ref.invalidate(projectAssignmentsProvider);
-      ref.invalidate(paginatedProjectAssignmentsProvider);
-      ref.invalidate(paginatedAvailableContributorsProvider);
-      ref.invalidate(paginatedManagedAssignmentsProvider);
-      ref.invalidate(managedAssignmentsProvider);
-      return;
-    }
-
-    if (path.contains('/users')) {
-      ref.invalidate(managedUsersProvider);
-      ref.invalidate(paginatedManagedUsersProvider);
-      ref.invalidate(contributorRequestsProvider);
-      ref.invalidate(paginatedContributorRequestsProvider);
-      ref.invalidate(projectAssignmentsProvider);
-      ref.invalidate(paginatedProjectAssignmentsProvider);
-      ref.invalidate(paginatedAvailableContributorsProvider);
-      return;
-    }
-
-    if (path.contains('/imports')) {
-      ref.invalidate(importJobsProvider);
-      ref.invalidate(importDetailsProvider);
-      ref.invalidate(paginatedImportJobsProvider);
-      ref.invalidate(paginatedImportFeaturesProvider);
-      ref.invalidate(importMapDataProvider);
-      ref.invalidate(importFeatureProvider);
-      ref.invalidate(projectMapFeaturesProvider);
-      ref.invalidate(projectMapViewportFeaturesProvider);
-      return;
-    }
-
-    if (path.contains('/exports')) {
-      ref.invalidate(paginatedExportJobsProvider);
-      ref.invalidate(exportJobsSummaryProvider);
-      return;
-    }
-
-    if (path.contains('/features') || path.contains('/photos')) {
-      ref.invalidate(projectMapFeaturesProvider);
-      ref.invalidate(projectMapViewportFeaturesProvider);
-      ref.invalidate(projectFeatureDetailsProvider);
-      ref.invalidate(paginatedProjectFeatureBrowserProvider);
-      ref.invalidate(reviewQueueProvider);
-      ref.invalidate(rejectedReviewQueueProvider);
-      ref.invalidate(projectReviewQueueProvider);
-      ref.invalidate(projectRejectedReviewQueueProvider);
-      ref.invalidate(projectApprovedReviewQueueProvider);
-      ref.invalidate(paginatedReviewQueueProvider);
-      ref.invalidate(projectByIdProvider);
-      return;
-    }
-
-    if (path.contains('/settings')) {
-      ref.invalidate(supportSettingsProvider);
-      return;
-    }
-
-    if (path.contains('/offline-map')) {
-      ref.invalidate(offlineMapPackageProvider);
+      final userId = ref.read(authControllerProvider).session?.user.id;
+      if (userId != null) {
+        _scheduleScopeRefresh(RealtimeScope('notifications', userId));
+      }
+    } else if (path.contains('/categories')) {
+      _scheduleScopeRefresh(const RealtimeScope('categories', 'all'));
+    } else if (path.contains('/projects')) {
+      _scheduleScopeRefresh(const RealtimeScope('projects', 'all'));
+    } else if (path.contains('/users')) {
+      _scheduleScopeRefresh(const RealtimeScope('users', 'all'));
+    } else if (path.contains('/assignments')) {
+      _scheduleScopeRefresh(const RealtimeScope('assignments', 'all'));
+    } else if (path.contains('/imports')) {
+      _scheduleScopeRefresh(const RealtimeScope('imports', 'all'));
+    } else if (path.contains('/exports')) {
+      _scheduleScopeRefresh(const RealtimeScope('exports', 'all'));
+    } else if (path.contains('/settings')) {
+      _scheduleScopeRefresh(const RealtimeScope('settings', 'support'));
+    } else if (path.contains('/offline-map')) {
+      _scheduleScopeRefresh(const RealtimeScope('offline_map', 'all'));
     }
   }
 }

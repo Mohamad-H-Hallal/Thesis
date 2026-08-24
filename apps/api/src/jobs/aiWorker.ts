@@ -877,10 +877,17 @@ const summarizeRunReadiness = async (
   labelField: string,
   minSamplesPerClass: number,
 ): Promise<{ projectExists: boolean; projectName: string | null; summary: AiRunSafetySummary }> => {
-  const projectResult = await query<{ id: string; name: string }>(
-    `SELECT id, name
+  const projectResult = await query<{
+    id: string;
+    name: string;
+    training_data_use_authorized: boolean;
+  }>(
+    `SELECT project.id,
+            project.name,
+            COALESCE(governance.training_data_use_authorized, FALSE) AS training_data_use_authorized
      FROM project
-     WHERE id = $1`,
+     LEFT JOIN project_ai_governance governance ON governance.project_id = project.id
+     WHERE project.id = $1`,
     [projectId],
   );
   const projectExists = projectResult.rows.length > 0;
@@ -993,6 +1000,11 @@ const summarizeRunReadiness = async (
       : null;
   const warnings: string[] = [];
   const blockers: string[] = [];
+  if (projectResult.rows[0]?.training_data_use_authorized !== true) {
+    blockers.push(
+      'Project data is not authorized for AI training under a recorded governance approval.',
+    );
+  }
 
   if (!projectExists) {
     blockers.push('AI run project does not exist.');

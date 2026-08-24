@@ -445,7 +445,12 @@ const createStagedImportJob = async ({
 
 describe('GIS import workflow', () => {
   beforeEach(async () => {
+    delete process.env.IMPORT_PROVENANCE_ENFORCEMENT_ENABLED;
     await resetDb();
+  });
+
+  afterEach(() => {
+    delete process.env.IMPORT_PROVENANCE_ENFORCEMENT_ENABLED;
   });
 
   afterAll(async () => {
@@ -457,6 +462,67 @@ describe('GIS import workflow', () => {
       }
     }
     await shutdown();
+  });
+
+  test('production provenance enforcement blocks approval until source rights are attested', async () => {
+    process.env.IMPORT_PROVENANCE_ENFORCEMENT_ENABLED = 'true';
+    const { admin, contributorLogin, contributorRegistration, project } =
+      await createActiveImportProject('provenance-enforcement');
+    const importId = await createStagedImportJob({
+      projectId: project.id,
+      uploadedByUserId: contributorRegistration.user.id,
+      features: [
+        {
+          displayTitle: 'Governed source feature',
+          geometryType: 'Point',
+          geometry: { type: 'Point', coordinates: [35.5, 33.9] },
+          attributes: { name: 'Governed source feature' },
+        },
+      ],
+    });
+
+    const blocked = await request(app)
+      .post(`${API_PREFIX}/imports/${importId}/review`)
+      .set(authHeader(admin.token))
+      .send({ status: 'approved' });
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.error.code).toBe('IMPORT_PROVENANCE_REQUIRED');
+
+    await request(app)
+      .put(`${API_PREFIX}/imports/${importId}/provenance`)
+      .set(authHeader(contributorLogin.token))
+      .send({
+        source_provider: 'Dataset owner',
+        source_dataset_name: 'Authorized field inventory',
+        source_dataset_date: '2026-08-01',
+        source_accuracy_statement: 'Accuracy documented by the source owner.',
+        source_license_or_authority: 'Written project authorization REF-001',
+        source_attribution: 'Source: Dataset owner',
+        source_terms_url: 'https://example.invalid/terms',
+        source_redistribution_rules: 'Project-approved redistribution with attribution.',
+        provenance_confirmed: true,
+      })
+      .expect(200);
+
+    await request(app)
+      .post(`${API_PREFIX}/imports/${importId}/review`)
+      .set(authHeader(admin.token))
+      .send({ status: 'approved' })
+      .expect(200);
+
+    const approved = await pool.query(
+      `SELECT source, source_provenance
+       FROM spatial_feature
+       WHERE project_id = $1`,
+      [project.id],
+    );
+    expect(approved.rows).toHaveLength(1);
+    expect(approved.rows[0].source).toBe('import');
+    expect(approved.rows[0].source_provenance).toMatchObject({
+      provider: 'Dataset owner',
+      dataset_name: 'Authorized field inventory',
+      attribution: 'Source: Dataset owner',
+    });
   });
 
   test('stages CSV latitude and longitude imports for review', async () => {

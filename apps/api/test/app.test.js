@@ -60,6 +60,47 @@ describe('API smoke tests', () => {
         expect(response.status).toBe(200);
         expect(response.text).toContain('openapi: 3.0.3');
     });
+    test.each([
+        'privacy',
+        'terms',
+        'acceptable-use',
+        'important-notices',
+        'account-deletion',
+        'subprocessors',
+        'open-source',
+    ])('GET /legal/%s serves a stable public legal page without authentication', async (slug) => {
+        const response = await request(app).get(`/legal/${slug}`);
+        expect(response.status).toBe(200);
+        expect(response.headers['content-type']).toContain('text/html');
+        expect(response.headers['content-security-policy']).toContain("default-src 'none'");
+        expect(response.text).toContain('Version');
+        expect(response.text).toContain('Legal-review draft');
+    });
+    test('GET /legal/account-deletion/request serves an accessible non-enumerating form', async () => {
+        const response = await request(app).get('/legal/account-deletion/request');
+        expect(response.status).toBe(200);
+        expect(response.headers['cache-control']).toBe('no-store');
+        expect(response.text).toContain('<label for="account-email">');
+        expect(response.text).toContain('does not delete an account without identity verification');
+        expect(response.text).not.toContain('checked');
+    });
+    test(`GET ${API_PREFIX}/legal/documents returns versioned mandatory policies without treating privacy as consent`, async () => {
+        const response = await request(app)
+            .get(`${API_PREFIX}/legal/documents`)
+            .query({ format: 'json', locale: 'en' });
+        expect(response.status).toBe(200);
+        expect(response.body.data.mandatory_acceptance_types).toEqual([
+            'terms',
+            'acceptable_use',
+        ]);
+        expect(response.body.data.mandatory_acceptance_types).not.toContain('privacy');
+        expect(response.body.data.documents).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ type: 'terms', status: 'draft' }),
+                expect.objectContaining({ type: 'privacy', status: 'draft' }),
+            ]),
+        );
+    });
     test('can hide API documentation completely', async () => {
         const docsDisabledApp = buildApp({
             ...testEnv,

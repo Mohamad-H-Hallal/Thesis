@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { NextFunction, Request, Response } from 'express';
 import { query } from '../config/database';
 import { getRateLimitBackendReadiness } from '../services/sharedRateLimit.service';
+import { getRealtimeMetricsSnapshot } from '../realtime/realtimeMetrics';
 import { normalizeRequestPath } from './requestContext';
 const logger = require('../utils/logger');
 
@@ -106,6 +107,7 @@ const getMetricsSnapshot = () => ({
         count,
       })),
   },
+  realtime: getRealtimeMetricsSnapshot(),
 });
 
 const assertMetricsConfig = (env: {
@@ -144,7 +146,7 @@ const appendMetricHeader = (
   lines: string[],
   name: string,
   help: string,
-  type: 'counter' | 'gauge' | 'histogram',
+  type: 'counter' | 'gauge' | 'histogram' | 'summary',
 ): void => {
   lines.push(`# HELP ${name} ${help}`, `# TYPE ${name} ${type}`);
 };
@@ -214,6 +216,7 @@ const renderPrometheusMetrics = async ({
 }): Promise<string> => {
   const lines: string[] = [];
   const memory = process.memoryUsage();
+  const realtime = getRealtimeMetricsSnapshot();
   const completedRequests = Object.values(requestMetrics.statusCounts).reduce(
     (total, count) => total + count,
     0,
@@ -232,6 +235,159 @@ const renderPrometheusMetrics = async ({
       environment: process.env.NODE_ENV ?? 'unknown',
     }),
   );
+
+  appendMetricHeader(
+    lines,
+    'gis_api_realtime_connections',
+    'Authenticated foreground realtime connections.',
+    'gauge',
+  );
+  lines.push(metricLine('gis_api_realtime_connections', realtime.connections));
+  appendMetricHeader(
+    lines,
+    'gis_api_realtime_connection_attempts_total',
+    'Realtime WebSocket connection attempts.',
+    'counter',
+  );
+  lines.push(
+    metricLine('gis_api_realtime_connection_attempts_total', realtime.connectionAttempts),
+  );
+  appendMetricHeader(
+    lines,
+    'gis_api_realtime_reconnects_total',
+    'Authenticated reconnects carrying previously known scope revisions.',
+    'counter',
+  );
+  lines.push(metricLine('gis_api_realtime_reconnects_total', realtime.reconnects));
+  appendMetricHeader(
+    lines,
+    'gis_api_realtime_buffered_sockets',
+    'Connected sockets with queued outbound bytes at the last heartbeat.',
+    'gauge',
+  );
+  lines.push(metricLine('gis_api_realtime_buffered_sockets', realtime.bufferedSockets));
+  appendMetricHeader(
+    lines,
+    'gis_api_realtime_authentication_failures_total',
+    'Realtime authentication failures.',
+    'counter',
+  );
+  lines.push(
+    metricLine(
+      'gis_api_realtime_authentication_failures_total',
+      realtime.authenticationFailures,
+    ),
+  );
+  appendMetricHeader(
+    lines,
+    'gis_api_realtime_events_published_total',
+    'Realtime domain events published by bounded entity type.',
+    'counter',
+  );
+  for (const [entityType, count] of Object.entries(realtime.eventCounts)) {
+    lines.push(
+      metricLine('gis_api_realtime_events_published_total', Number(count), {
+        entity_type: entityType,
+      }),
+    );
+  }
+  appendMetricHeader(
+    lines,
+    'gis_api_realtime_events_delivered_total',
+    'Realtime domain event deliveries to clients.',
+    'counter',
+  );
+  lines.push(metricLine('gis_api_realtime_events_delivered_total', realtime.eventsDelivered));
+  appendMetricHeader(
+    lines,
+    'gis_api_realtime_events_dropped_total',
+    'Realtime messages dropped before delivery.',
+    'counter',
+  );
+  lines.push(metricLine('gis_api_realtime_events_dropped_total', realtime.eventsDropped));
+  appendMetricHeader(
+    lines,
+    'gis_api_realtime_events_coalesced_total',
+    'Duplicate realtime invalidations coalesced before publication.',
+    'counter',
+  );
+  lines.push(metricLine('gis_api_realtime_events_coalesced_total', realtime.eventsCoalesced));
+  appendMetricHeader(
+    lines,
+    'gis_api_realtime_slow_client_closures_total',
+    'Connections closed because buffered output exceeded the configured bound.',
+    'counter',
+  );
+  lines.push(
+    metricLine('gis_api_realtime_slow_client_closures_total', realtime.slowClientClosures),
+  );
+  appendMetricHeader(
+    lines,
+    'gis_api_realtime_revision_reconciliations_total',
+    'Stale scopes discovered by durable revision reconciliation.',
+    'counter',
+  );
+  lines.push(
+    metricLine(
+      'gis_api_realtime_revision_reconciliations_total',
+      realtime.revisionReconciliations,
+    ),
+  );
+  appendMetricHeader(
+    lines,
+    'gis_api_realtime_listener_ready',
+    'Whether the PostgreSQL realtime notification listener is attached.',
+    'gauge',
+  );
+  lines.push(metricLine('gis_api_realtime_listener_ready', realtime.listenerReady ? 1 : 0));
+  appendMetricHeader(
+    lines,
+    'gis_api_realtime_payload_bytes_total',
+    'Bytes published in validated realtime domain payloads.',
+    'counter',
+  );
+  lines.push(metricLine('gis_api_realtime_payload_bytes_total', realtime.payloadBytesTotal));
+  appendMetricHeader(
+    lines,
+    'gis_api_realtime_payload_bytes',
+    'Validated realtime payload size distribution.',
+    'histogram',
+  );
+  realtime.payloadBucketBounds.forEach((bound, index) => {
+    lines.push(metricLine('gis_api_realtime_payload_bytes_bucket', realtime.payloadBucketCounts[index], {
+      le: String(bound),
+    }));
+  });
+  lines.push(
+    metricLine('gis_api_realtime_payload_bytes_bucket', realtime.payloadCount, { le: '+Inf' }),
+    metricLine('gis_api_realtime_payload_bytes_sum', realtime.payloadBytesTotal),
+    metricLine('gis_api_realtime_payload_bytes_count', realtime.payloadCount),
+  );
+  appendMetricHeader(
+    lines,
+    'gis_api_realtime_publish_to_delivery_milliseconds',
+    'Aggregate publish-to-socket-delivery latency.',
+    'summary',
+  );
+  lines.push(
+    metricLine(
+      'gis_api_realtime_publish_to_delivery_milliseconds_sum',
+      realtime.deliveryLatencyMsTotal,
+    ),
+    metricLine(
+      'gis_api_realtime_publish_to_delivery_milliseconds_count',
+      realtime.deliveryLatencyCount,
+    ),
+  );
+  appendMetricHeader(
+    lines,
+    'gis_api_realtime_disconnects_total',
+    'Realtime disconnects by bounded reason.',
+    'counter',
+  );
+  for (const [reason, count] of Object.entries(realtime.disconnectCounts)) {
+    lines.push(metricLine('gis_api_realtime_disconnects_total', Number(count), { reason }));
+  }
   appendMetricHeader(lines, 'gis_api_uptime_seconds', 'API process uptime in seconds.', 'gauge');
   lines.push(metricLine('gis_api_uptime_seconds', process.uptime()));
   appendMetricHeader(

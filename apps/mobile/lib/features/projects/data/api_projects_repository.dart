@@ -221,6 +221,7 @@ class ApiProjectsRepository implements ProjectsRepository {
       name: (row['name'] as String?) ?? 'Unnamed project',
       category: (row['category_name'] as String?) ?? 'Uncategorized',
       categoryId: row['category_id'] as String?,
+      version: _toInt(row['version']) ?? 1,
       status: (row['status'] as String?) ?? 'draft',
       approvedFeatures:
           _toInt(row['approved_features']) ??

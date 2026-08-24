@@ -154,6 +154,12 @@ abstract class LocalStore {
     return items.length;
   }
 
+  /// Idempotently removes only data owned by one deleted account. Other
+  /// accounts on the same device must remain untouched.
+  Future<void> purgeAccountData(String ownerUserId) async {
+    await discardRejectedSyncItemsForOwner(ownerUserId);
+  }
+
   Future<void> markSyncFailure(
     SyncQueueItem item, {
     required String error,

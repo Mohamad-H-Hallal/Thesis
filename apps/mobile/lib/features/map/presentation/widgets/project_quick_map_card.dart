@@ -11,6 +11,7 @@ import '../../domain/app_tile_provider.dart';
 import '../../domain/lebanon_map.dart';
 import '../../domain/map_feature.dart';
 import '../../domain/map_geometry.dart';
+import 'basemap_attribution.dart';
 
 class ProjectQuickMapCard extends ConsumerStatefulWidget {
   const ProjectQuickMapCard({
@@ -184,6 +185,9 @@ class _ProjectQuickMapCardState extends ConsumerState<ProjectQuickMapCard> {
                                     ),
                                     MarkerLayer(
                                       markers: _markerOverlays(features),
+                                    ),
+                                    BasemapAttribution(
+                                      style: _previewBasemapStyle,
                                     ),
                                   ],
                                 ),

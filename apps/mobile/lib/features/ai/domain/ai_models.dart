@@ -23,6 +23,8 @@ class AiProjectSettings {
     this.confidenceThreshold = 0.6,
     this.modelPreferences = const <String, dynamic>{},
     this.persisted = false,
+    this.trainingDataUseAuthorized = false,
+    this.publicationAuthorized = false,
   });
 
   final String? id;
@@ -35,6 +37,8 @@ class AiProjectSettings {
   final double confidenceThreshold;
   final Map<String, dynamic> modelPreferences;
   final bool persisted;
+  final bool trainingDataUseAuthorized;
+  final bool publicationAuthorized;
 
   static AiProjectSettings defaults(String projectId) => AiProjectSettings(
     projectId: projectId,
@@ -54,6 +58,8 @@ class AiProjectSettings {
     double? confidenceThreshold,
     Map<String, dynamic>? modelPreferences,
     bool? persisted,
+    bool? trainingDataUseAuthorized,
+    bool? publicationAuthorized,
   }) {
     return AiProjectSettings(
       id: id ?? this.id,
@@ -66,6 +72,10 @@ class AiProjectSettings {
       confidenceThreshold: confidenceThreshold ?? this.confidenceThreshold,
       modelPreferences: modelPreferences ?? this.modelPreferences,
       persisted: persisted ?? this.persisted,
+      trainingDataUseAuthorized:
+          trainingDataUseAuthorized ?? this.trainingDataUseAuthorized,
+      publicationAuthorized:
+          publicationAuthorized ?? this.publicationAuthorized,
     );
   }
 
@@ -96,6 +106,9 @@ class AiProjectSettings {
       confidenceThreshold: _toDouble(map['confidence_threshold']) ?? 0.6,
       modelPreferences: _toMap(map['model_preferences']),
       persisted: _toBool(map['persisted']) ?? map['id'] != null,
+      trainingDataUseAuthorized:
+          _toBool(map['training_data_use_authorized']) ?? false,
+      publicationAuthorized: _toBool(map['publication_authorized']) ?? false,
     );
   }
 }

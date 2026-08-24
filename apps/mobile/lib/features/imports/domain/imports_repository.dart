@@ -21,9 +21,15 @@ abstract class ImportsRepository {
   Future<GisImportJob> uploadImport({
     required String projectId,
     required PlatformFile file,
+    ImportSourceProvenance? provenance,
   });
 
   Future<GisImportDetails> fetchImportDetails(String importId);
+
+  Future<GisImportJob> updateImportProvenance({
+    required String importId,
+    required ImportSourceProvenance provenance,
+  });
 
   Future<ImportMapData> fetchImportMapData({
     required String importId,

@@ -28,6 +28,9 @@ const userTargetForRequest = (
 };
 
 const shouldBroadcastWorkflowChange = (req: Request, res: Response): boolean => {
+  if (!/^(1|true)$/i.test(String(process.env.REALTIME_LEGACY_BROADCAST_ENABLED ?? 'true'))) {
+    return false;
+  }
   if (!mutationMethods.has(req.method.toUpperCase())) {
     return false;
   }

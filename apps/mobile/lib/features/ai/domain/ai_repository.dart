@@ -23,6 +23,16 @@ abstract class AiRepository {
     required AiProjectSettings settings,
   });
 
+  Future<void> saveGovernance({
+    required String projectId,
+    required bool trainingDataUseAuthorized,
+    String? trainingAuthorityBasis,
+    String? trainingApprovalReference,
+    required bool publicationAuthorized,
+    String? publicationAuthorityBasis,
+    String? publicationApprovalReference,
+  });
+
   Future<PaginatedResult<AiRun>> fetchRunsPage({
     required String projectId,
     String? status,

@@ -15,6 +15,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.net.Uri
+import android.os.Environment
+import android.provider.DocumentsContract
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
@@ -62,6 +64,7 @@ class MainActivity : FlutterActivity() {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "openFile" -> handleOpenFile(call.arguments as? Map<*, *>, result)
+                "revealFile" -> handleRevealFile(call.arguments as? Map<*, *>, result)
                 "shareFile" -> handleShareFile(call.arguments as? Map<*, *>, result)
                 else -> result.notImplemented()
             }
@@ -279,6 +282,77 @@ class MainActivity : FlutterActivity() {
         grantUriPermissions(uri, intent)
         startActivity(intent)
         result.success(null)
+    }
+
+    private fun handleRevealFile(arguments: Map<*, *>?, result: MethodChannel.Result) {
+        val file = resolveExportFile(arguments, result) ?: return
+        val parent = file.parentFile?.canonicalFile
+        val storageRoot = Environment.getExternalStorageDirectory().canonicalFile
+        val storageRootPrefix = storageRoot.path.trimEnd(File.separatorChar) + File.separator
+        if (parent == null ||
+            (parent.path != storageRoot.path && !parent.path.startsWith(storageRootPrefix))
+        ) {
+            result.error(
+                "FOLDER_NOT_AVAILABLE",
+                "The folder containing this export is not available.",
+                null
+            )
+            return
+        }
+
+        val relativeFolder = if (parent.path == storageRoot.path) {
+            ""
+        } else {
+            parent.path
+                .removePrefix(storageRootPrefix)
+                .replace(File.separatorChar, '/')
+        }
+        val folderUri = DocumentsContract.buildDocumentUri(
+            "com.android.externalstorage.documents",
+            "primary:$relativeFolder"
+        )
+        val viewFolder = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(folderUri, DocumentsContract.Document.MIME_TYPE_DIR)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+        if (viewFolder.resolveActivity(packageManager) != null) {
+            try {
+                startActivity(viewFolder)
+                result.success(null)
+                return
+            } catch (_: Exception) {
+                // Fall through to the system folder browser below.
+            }
+        }
+
+        val browseFolder = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, folderUri)
+            }
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (browseFolder.resolveActivity(packageManager) == null) {
+            result.error(
+                "NO_FILE_MANAGER",
+                "No file manager is available to show the export folder.",
+                null
+            )
+            return
+        }
+
+        try {
+            startActivity(browseFolder)
+            result.success(null)
+        } catch (_: Exception) {
+            result.error(
+                "FOLDER_OPEN_FAILED",
+                "The export folder could not be opened on this device.",
+                null
+            )
+        }
     }
 
     private fun handleShareFile(arguments: Map<*, *>?, result: MethodChannel.Result) {

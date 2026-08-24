@@ -118,6 +118,31 @@ const contactVerificationRateLimit = buildWorkloadLimiter({
   authenticated: false,
 });
 
+const privacyRequestRateLimit = buildWorkloadLimiter({
+  policy: 'privacy-requests',
+  maxSetting: 'RATE_LIMIT_PRIVACY_REQUEST_MAX_REQUESTS',
+  fallback: 6,
+  code: 'PRIVACY_REQUEST_RATE_LIMITED',
+  message: 'Privacy requests are temporarily rate limited. Please retry later.',
+});
+
+const publicPrivacyRequestRateLimit = buildWorkloadLimiter({
+  policy: 'public-privacy-requests',
+  maxSetting: 'RATE_LIMIT_PUBLIC_PRIVACY_REQUEST_MAX_REQUESTS',
+  fallback: 5,
+  code: 'PUBLIC_PRIVACY_REQUEST_RATE_LIMITED',
+  message: 'Privacy requests are temporarily rate limited. Please retry later.',
+  authenticated: false,
+});
+
+const contentReportRateLimit = buildWorkloadLimiter({
+  policy: 'content-reports',
+  maxSetting: 'RATE_LIMIT_CONTENT_REPORT_MAX_REQUESTS',
+  fallback: 8,
+  code: 'CONTENT_REPORT_RATE_LIMITED',
+  message: 'Content reports are temporarily rate limited. Please retry later.',
+});
+
 export {
   aiJobRateLimit,
   exportCreateRateLimit,
@@ -126,4 +151,7 @@ export {
   notificationMutationRateLimit,
   passwordResetRateLimit,
   contactVerificationRateLimit,
+  privacyRequestRateLimit,
+  publicPrivacyRequestRateLimit,
+  contentReportRateLimit,
 };

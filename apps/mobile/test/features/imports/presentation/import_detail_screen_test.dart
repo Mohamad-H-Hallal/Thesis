@@ -281,6 +281,15 @@ class _FakeImportsRepository implements ImportsRepository {
   Future<GisImportJob> uploadImport({
     required String projectId,
     required PlatformFile file,
+    ImportSourceProvenance? provenance,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<GisImportJob> updateImportProvenance({
+    required String importId,
+    required ImportSourceProvenance provenance,
   }) {
     throw UnimplementedError();
   }

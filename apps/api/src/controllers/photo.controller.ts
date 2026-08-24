@@ -27,6 +27,43 @@ import {
   reserveFeatureMediaCleanupJobs,
   withReservedFeatureMediaJobs,
 } from '../services/featureMediaCleanup.service';
+import { publishRealtimeChanges } from '../realtime/realtimeEvents';
+import type { RealtimePublishInput } from '../realtime/realtimeProtocol';
+
+const photoRealtimeInputs = ({
+  projectId,
+  featureId,
+  photoId,
+  action,
+  originSessionId,
+}: {
+  projectId: string;
+  featureId: string;
+  photoId?: string | null;
+  action: string;
+  originSessionId?: string | null;
+}): RealtimePublishInput[] => [
+  {
+    scopeType: 'features',
+    scopeId: projectId,
+    action: 'photo_changed',
+    entityType: 'photo',
+    entityId: photoId,
+    projectId,
+    originSessionId,
+    audience: { kind: 'project', projectId, access: 'readers' },
+  },
+  {
+    scopeType: 'feature',
+    scopeId: featureId,
+    action,
+    entityType: 'photo',
+    entityId: photoId,
+    projectId,
+    originSessionId,
+    audience: { kind: 'project', projectId, access: 'readers' },
+  },
+];
 
 interface PlannedPhoto extends PreparedPhoto {
   photoId: string;
@@ -379,6 +416,18 @@ const uploadPhotos = async (req: Request, res: Response): Promise<void> => {
           );
         }
 
+        if (insertedPhotos.length > 0) {
+          await publishRealtimeChanges(
+            photoRealtimeInputs({
+              projectId: parent.projectId,
+              featureId,
+              action: 'uploaded',
+              originSessionId: req.authSessionId,
+            }),
+            client,
+          );
+        }
+
         return {
           photos: uploadedPhotos,
           replayed: deduplicateOfflineOrigin && photosToInsert.length === 0,
@@ -514,6 +563,7 @@ const deletePhoto = async (req: Request, res: Response): Promise<void> => {
   const photo = await transaction(async (client: QueryExecutor) => {
     const photoCheck = await client.query(
       `SELECT p.id,
+              p.feature_id,
               p.file_path,
               p.thumbnail_path,
               sf.project_id,
@@ -548,6 +598,16 @@ const deletePhoto = async (req: Request, res: Response): Promise<void> => {
     }
 
     await client.query('DELETE FROM photo WHERE id = $1', [photoId]);
+    await publishRealtimeChanges(
+      photoRealtimeInputs({
+        projectId: lockedPhoto.project_id,
+        featureId: lockedPhoto.feature_id,
+        photoId,
+        action: 'deleted',
+        originSessionId: req.authSessionId,
+      }),
+      client,
+    );
     return lockedPhoto;
   });
 
@@ -585,6 +645,7 @@ const updatePhotoOrder = async (req: Request, res: Response): Promise<void> => {
   await transaction(async (client: QueryExecutor) => {
     const photoCheck = await client.query(
       `SELECT p.id,
+              p.feature_id,
               sf.project_id,
               sf.collected_by_user_id,
               sf.collected_offline
@@ -620,6 +681,16 @@ const updatePhotoOrder = async (req: Request, res: Response): Promise<void> => {
       display_order,
       photoId,
     ]);
+    await publishRealtimeChanges(
+      photoRealtimeInputs({
+        projectId: lockedPhoto.project_id,
+        featureId: lockedPhoto.feature_id,
+        photoId,
+        action: 'reordered',
+        originSessionId: req.authSessionId,
+      }),
+      client,
+    );
   });
 
   res.json({

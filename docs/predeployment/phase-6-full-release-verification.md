@@ -1,4 +1,4 @@
-# Phase 6 — Full Release Verification
+# Phase 6 - Full Release Verification
 
 Status: repository implementation and local verification complete on
 `codex/phase-6-full-release-verification`. This phase does not deploy or modify

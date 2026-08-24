@@ -4,6 +4,8 @@ const {
   findMigrationIntegrityIssues,
   resolveMigrationChecksumCompatibility,
 } = require('../src/db/migrationIntegrity');
+const fs = require('node:fs');
+const path = require('node:path');
 
 describe('migration integrity', () => {
   test('uses stable SHA-256 checksums', () => {
@@ -99,5 +101,40 @@ describe('migration integrity', () => {
         source,
       ),
     ).toThrow('Compatibility entry source checksum is stale: 0001_example.sql');
+  });
+
+  test('accepts the documented pre-release 0059 checksum', () => {
+    const migrationsDir = path.resolve(__dirname, '../../../infra/migrations');
+    const filename = '0059_compliance_governance.sql';
+    const sql = fs.readFileSync(path.join(migrationsDir, filename), 'utf8');
+    const source = [{ filename, checksum: calculateMigrationChecksum(sql) }];
+    const fullConfig = JSON.parse(
+      fs.readFileSync(path.join(migrationsDir, 'checksum-compatibility.json'), 'utf8'),
+    );
+    const config = {
+      version: 1,
+      migrations: fullConfig.migrations.filter((entry) => entry.filename === filename),
+    };
+    const compatibility = resolveMigrationChecksumCompatibility(config, source);
+
+    expect(source[0].checksum).toBe(
+      'c2a69755d125e883850b4f74c5e783e17074bb67261e7454fc66e7d880d554a0',
+    );
+    expect(
+      findMigrationIntegrityIssues(
+        [
+          {
+            ...source[0],
+            compatibleChecksums: compatibility.get(filename),
+          },
+        ],
+        [
+          {
+            filename,
+            checksum: 'b10c0a3eda8b1114d4544edc25ea389c48ed1f57738c2ab7126617668ce424ae',
+          },
+        ],
+      ),
+    ).toEqual([]);
   });
 });

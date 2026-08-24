@@ -2,6 +2,8 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../../core/config/app_env.dart';
+
 enum LebanonBasemapStyle { street, satellite }
 
 class LebanonMapConfig {
@@ -64,7 +66,7 @@ class LebanonMapConfig {
   static String basemapUrlTemplate(LebanonBasemapStyle style) {
     switch (style) {
       case LebanonBasemapStyle.street:
-        return 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+        return AppEnv.streetTileUrlTemplate;
       case LebanonBasemapStyle.satellite:
         return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
     }
@@ -94,6 +96,24 @@ class LebanonMapConfig {
         return 'Familiar OSM landmarks and place names';
       case LebanonBasemapStyle.satellite:
         return 'Imagery with place labels';
+    }
+  }
+
+  static String attributionText(LebanonBasemapStyle style) {
+    switch (style) {
+      case LebanonBasemapStyle.street:
+        return '© OpenStreetMap contributors';
+      case LebanonBasemapStyle.satellite:
+        return 'Source: Esri and imagery providers';
+    }
+  }
+
+  static String compactAttributionText(LebanonBasemapStyle style) {
+    switch (style) {
+      case LebanonBasemapStyle.street:
+        return '© OpenStreetMap';
+      case LebanonBasemapStyle.satellite:
+        return '© Esri & providers';
     }
   }
 }

@@ -14,15 +14,18 @@ import '../../../../core/router/route_paths.dart';
 import '../../../../core/utils/lebanon_time.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_button.dart';
+import '../../../../core/widgets/app_dialog_controller_host.dart';
 import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
+import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../map/domain/app_tile_provider.dart';
 import '../../../map/domain/lebanon_map.dart';
 import '../../../map/domain/map_geometry.dart';
+import '../../../map/presentation/widgets/basemap_attribution.dart';
 import '../../../exports/presentation/screens/exports_dashboard_screen.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/ai_models.dart';
@@ -615,6 +618,13 @@ class _ProjectAiSettingsSectionState
         onAction: () => ref.invalidate(aiSettingsProvider(widget.project.id)),
       ),
       data: (settings) {
+        final canRecordGovernance =
+            ref
+                .watch(authControllerProvider)
+                .session
+                ?.user
+                .isProtectedSuperAdmin ==
+            true;
         _initializeFromSettings(settings);
         final minSamples =
             int.tryParse(_minSamplesController.text.trim()) ?? 50;
@@ -888,6 +898,51 @@ class _ProjectAiSettingsSectionState
               const _NoticeRow(
                 icon: Icons.info_outline,
                 text: 'Saving settings does not run AI.',
+              ),
+              const SizedBox(height: AppSpacing.md),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Theme.of(context).dividerColor),
+                  borderRadius: AppRadii.md,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.sm),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'AI data authority',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(
+                        settings.trainingDataUseAuthorized
+                            ? 'Training use: documented authority recorded'
+                            : 'Training use: blocked until authority is recorded',
+                      ),
+                      Text(
+                        settings.publicationAuthorized
+                            ? 'Public layer publication: separate authority recorded'
+                            : 'Public layer publication: blocked until separate authority is recorded',
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      const Text(
+                        'Enabling AI settings does not authorize reuse of private contributions, photos, or locations. Training and publication require separate evidence records.',
+                      ),
+                      if (canRecordGovernance) ...[
+                        const SizedBox(height: AppSpacing.sm),
+                        OutlinedButton.icon(
+                          key: const Key('edit-ai-governance'),
+                          onPressed: _saving
+                              ? null
+                              : () => _editAiGovernance(settings),
+                          icon: const Icon(Icons.verified_user_outlined),
+                          label: const Text('Record or revoke authority'),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
               if (validationMessage != null) ...[
                 const SizedBox(height: AppSpacing.sm),
@@ -1864,7 +1919,7 @@ class _ProjectAiSettingsSectionState
               },
             ),
           );
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('ai', widget.project.id));
       if (mounted) {
         if (skippedFeatureInputs.isNotEmpty) {
           AppSnackbar.showWarning(
@@ -1896,6 +1951,173 @@ class _ProjectAiSettingsSectionState
       if (mounted) {
         setState(() => _saving = false);
       }
+    }
+  }
+
+  Future<void> _editAiGovernance(AiProjectSettings settings) async {
+    var trainingAuthorized = settings.trainingDataUseAuthorized;
+    var publicationAuthorized = settings.publicationAuthorized;
+    final governance =
+        await showDialog<
+          ({
+            bool trainingAuthorized,
+            String trainingBasis,
+            String trainingReference,
+            bool publicationAuthorized,
+            String publicationBasis,
+            String publicationReference,
+          })
+        >(
+          context: context,
+          builder: (dialogContext) => AppDialogControllerHost(
+            initialValues: const ['', '', '', ''],
+            builder: (dialogContext, controllers) => StatefulBuilder(
+              builder: (dialogContext, setDialogState) {
+                final trainingBasis = controllers[0];
+                final trainingReference = controllers[1];
+                final publicationBasis = controllers[2];
+                final publicationReference = controllers[3];
+                final trainingComplete =
+                    !trainingAuthorized ||
+                    (trainingBasis.text.trim().isNotEmpty &&
+                        trainingReference.text.trim().isNotEmpty);
+                final publicationComplete =
+                    !publicationAuthorized ||
+                    (publicationBasis.text.trim().isNotEmpty &&
+                        publicationReference.text.trim().isNotEmpty);
+                return AlertDialog(
+                  title: const Text('AI authority evidence'),
+                  content: SizedBox(
+                    width: 600,
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Record only an approved legal, contractual, institutional, public-interest, or data-owner authority. Do not use a generic Terms clause as permission for private training data.',
+                          ),
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            value: trainingAuthorized,
+                            onChanged: (value) => setDialogState(() {
+                              trainingAuthorized = value;
+                            }),
+                            title: const Text(
+                              'Authorize project data for AI training',
+                            ),
+                          ),
+                          if (trainingAuthorized) ...[
+                            AppTextField(
+                              label: 'Training authority basis *',
+                              controller: trainingBasis,
+                              onChanged: (_) => setDialogState(() {}),
+                              minLines: 2,
+                              maxLines: 4,
+                            ),
+                            const SizedBox(height: AppSpacing.sm),
+                            AppTextField(
+                              label: 'Training approval reference *',
+                              controller: trainingReference,
+                              onChanged: (_) => setDialogState(() {}),
+                            ),
+                          ],
+                          const Divider(height: AppSpacing.lg),
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            value: publicationAuthorized,
+                            onChanged: (value) => setDialogState(() {
+                              publicationAuthorized = value;
+                            }),
+                            title: const Text(
+                              'Authorize viewer-facing AI publication',
+                            ),
+                          ),
+                          if (publicationAuthorized) ...[
+                            AppTextField(
+                              label: 'Publication authority basis *',
+                              controller: publicationBasis,
+                              onChanged: (_) => setDialogState(() {}),
+                              minLines: 2,
+                              maxLines: 4,
+                            ),
+                            const SizedBox(height: AppSpacing.sm),
+                            AppTextField(
+                              label: 'Publication approval reference *',
+                              controller: publicationReference,
+                              onChanged: (_) => setDialogState(() {}),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                  actions: [
+                    AppDialogActions(
+                      buttonWidth: 180,
+                      cancel: TextButton(
+                        onPressed: () => Navigator.of(dialogContext).pop(false),
+                        child: const Text('Cancel'),
+                      ),
+                      confirm: FilledButton(
+                        onPressed: trainingComplete && publicationComplete
+                            ? () => Navigator.of(dialogContext).pop((
+                                trainingAuthorized: trainingAuthorized,
+                                trainingBasis: trainingBasis.text,
+                                trainingReference: trainingReference.text,
+                                publicationAuthorized: publicationAuthorized,
+                                publicationBasis: publicationBasis.text,
+                                publicationReference: publicationReference.text,
+                              ))
+                            : null,
+                        child: const Text('Save'),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        );
+    if (governance == null || !mounted) return;
+    setState(() => _saving = true);
+    try {
+      await ref
+          .read(aiRepositoryProvider)
+          .saveGovernance(
+            projectId: widget.project.id,
+            trainingDataUseAuthorized: governance.trainingAuthorized,
+            trainingAuthorityBasis: governance.trainingBasis,
+            trainingApprovalReference: governance.trainingReference,
+            publicationAuthorized: governance.publicationAuthorized,
+            publicationAuthorityBasis: governance.publicationBasis,
+            publicationApprovalReference: governance.publicationReference,
+          );
+      if (!mounted) return;
+      ref.invalidate(aiSettingsProvider(widget.project.id));
+      ref.invalidate(
+        aiReadinessProvider(
+          AiReadinessQuery(
+            projectId: widget.project.id,
+            labelField: _labelField,
+            minSamplesPerClass:
+                int.tryParse(_minSamplesController.text.trim()) ?? 50,
+            scopeType: _scopeType,
+          ),
+        ),
+      );
+      AppSnackbar.showSuccess(context, 'AI authority record updated.');
+    } catch (error) {
+      if (!mounted) return;
+      AppSnackbar.showError(
+        context,
+        userFacingErrorMessage(
+          error,
+          fallback: 'Unable to update AI authority records.',
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 }
@@ -4299,7 +4521,7 @@ class _ProjectAiPreviewMapScreenState
             ),
             Positioned(
               right: 14,
-              bottom: 18,
+              bottom: 48,
               child: _AiPreviewMapControls(
                 basemapStyle: _basemapStyle,
                 featureCount: loadSummary?.totalFeatureCount ?? features.length,
@@ -5380,6 +5602,7 @@ class _AiPreviewMap extends StatelessWidget {
         _polygonLayer(),
         _polylineLayer(),
         MarkerLayer(markers: _markers(context)),
+        BasemapAttribution(style: basemapStyle),
       ],
     );
   }

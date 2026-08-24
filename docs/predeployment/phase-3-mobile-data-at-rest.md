@@ -1,4 +1,4 @@
-# Phase 3 — Mobile Data at Rest
+# Phase 3 - Mobile Data at Rest
 
 Status: repository gate complete. PR #10 merged into protected
 `handover-ready` as `dea30d4d6fa811169b145eb899ae7581d7f1573d`.

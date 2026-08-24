@@ -1,4 +1,4 @@
-# Phase 4 — Shared Rate Limits and Durable Workers
+# Phase 4 - Shared Rate Limits and Durable Workers
 
 Status: repository gate complete. PR
 [#11](https://github.com/Mohamad-H-Hallal/Thesis/pull/11) merged into protected

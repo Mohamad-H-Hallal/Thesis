@@ -21,6 +21,7 @@ import '../../auth/domain/auth_models.dart';
 import '../../drafts/presentation/screens/drafts_screen.dart';
 import '../../exports/presentation/screens/exports_dashboard_screen.dart';
 import '../../imports/presentation/screens/imports_screen.dart';
+import '../../legal/presentation/screens/privacy_moderation_admin_screen.dart';
 import '../../notifications/presentation/screens/notifications_screen.dart';
 import '../../profile/presentation/screens/profile_screen.dart';
 import '../../projects/domain/project.dart';
@@ -67,7 +68,15 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
               (item) => NavigationDrawerDestination(
                 icon: Icon(item.icon),
                 selectedIcon: Icon(item.selectedIcon ?? item.icon),
-                label: Text(item.label, style: const TextStyle(fontSize: 13)),
+                label: SizedBox(
+                  width: 220,
+                  child: Text(
+                    item.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
               ),
             )
             .toList(growable: false);
@@ -373,6 +382,9 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
     if (path == AppRoutes.adminCreation && user.isSuperAdmin) {
       return const AdminCreationScreen();
     }
+    if (path == AppRoutes.privacyModeration && user.isSuperAdmin) {
+      return const PrivacyModerationAdminScreen();
+    }
     if (path == AppRoutes.contributorRequests && user.role == UserRole.admin) {
       return const ContributorRequestsScreen();
     }
@@ -520,6 +532,13 @@ class _AppShellScreenState extends ConsumerState<AppShellScreen> {
           path: AppRoutes.adminCreation,
           icon: Icons.admin_panel_settings_outlined,
           selectedIcon: Icons.admin_panel_settings,
+        ),
+        const _ShellItem(
+          label: 'Privacy & moderation',
+          mobileLabel: 'Privacy',
+          path: AppRoutes.privacyModeration,
+          icon: Icons.policy_outlined,
+          selectedIcon: Icons.policy,
         ),
         const _ShellItem(
           label: 'Requests',

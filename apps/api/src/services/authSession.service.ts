@@ -3,6 +3,7 @@ import type { QueryResult, QueryResultRow } from 'pg';
 import { query, transaction } from '../config/database';
 import type { user_role } from '../types/roles';
 import { isContactAssuranceSatisfied } from './contactAssurancePolicy.service';
+import { publishRealtimeChange } from '../realtime/realtimeEvents';
 import {
   generateRefreshToken,
   generateToken,
@@ -111,31 +112,70 @@ const revokeSession = async (
   sessionId: string,
   userId: string,
   reason: string,
-  executor: QueryExecutor = { query },
+  executor?: QueryExecutor,
 ): Promise<void> => {
-  await executor.query(
+  if (!executor) {
+    await transaction((client) => revokeSession(sessionId, userId, reason, client));
+    return;
+  }
+  const result = await executor.query(
     `UPDATE auth_session
      SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP),
          revocation_reason = COALESCE(revocation_reason, $3)
-     WHERE id = $1 AND user_id = $2`,
+     WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL`,
     [sessionId, userId, reason],
   );
+  if (result.rowCount === 1) {
+    await publishRealtimeChange(
+      {
+        scopeType: 'session',
+        scopeId: sessionId,
+        action: 'session_revoked',
+        entityType: 'user',
+        entityId: userId,
+        originSessionId: null,
+        audience: { kind: 'session', sessionId },
+      },
+      executor,
+    );
+  }
 };
 
 const revokeAllUserSessions = async (
   userId: string,
   reason: string,
-  executor: QueryExecutor = { query },
+  executor?: QueryExecutor,
   exceptSessionId?: string,
 ): Promise<void> => {
-  await executor.query(
+  if (!executor) {
+    await transaction((client) =>
+      revokeAllUserSessions(userId, reason, client, exceptSessionId),
+    );
+    return;
+  }
+  const result = await executor.query(
     `UPDATE auth_session
      SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP),
          revocation_reason = COALESCE(revocation_reason, $2)
      WHERE user_id = $1
+       AND revoked_at IS NULL
        AND ($3::uuid IS NULL OR id <> $3::uuid)`,
     [userId, reason, exceptSessionId ?? null],
   );
+  if ((result.rowCount ?? 0) > 0) {
+    await publishRealtimeChange(
+      {
+        scopeType: 'user',
+        scopeId: userId,
+        action: 'session_revoked',
+        entityType: 'user',
+        entityId: userId,
+        originSessionId: exceptSessionId ?? null,
+        audience: { kind: 'user', userId },
+      },
+      executor,
+    );
+  }
 };
 
 const replaceCurrentSessionAfterSecurityChange = async (

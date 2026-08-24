@@ -93,6 +93,7 @@ class MockNotificationsRepository implements NotificationsRepository {
     required String platform,
     String? deviceLabel,
     String? appVersion,
+    bool showSensitivePreview = false,
   }) async {
     await Future<void>.delayed(const Duration(milliseconds: 60));
   }

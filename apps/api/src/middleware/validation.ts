@@ -67,6 +67,28 @@ const userValidation = {
       .custom(validLebaneseMobile)
       .withMessage('Enter a valid Lebanese mobile number.'),
     body('role').isIn(['contributor', 'viewer']).withMessage('Role must be contributor or viewer'),
+    body('legal_acceptances')
+      .optional()
+      .isArray({ min: 2, max: 4 })
+      .withMessage('Legal acceptances must contain the current required documents'),
+    body('legal_acceptances.*.document_type')
+      .optional()
+      .isIn(['terms', 'acceptable_use'])
+      .withMessage('Only Terms and Acceptable Use may be accepted during signup'),
+    body('legal_acceptances.*.version')
+      .optional()
+      .isString()
+      .matches(/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/)
+      .withMessage('Legal document version is invalid'),
+    body('legal_acceptances.*.locale')
+      .optional()
+      .isString()
+      .matches(/^[a-z]{2}(?:-[A-Z]{2})?$/)
+      .withMessage('Legal document locale is invalid'),
+    body('legal_acceptances.*.affirmative')
+      .optional()
+      .custom((value) => value === true)
+      .withMessage('Legal acceptance must be affirmative'),
   ] as ValidationChain[],
   login: [
     body('email').trim().custom(validEmailAddress).withMessage('Valid email is required'),
@@ -77,7 +99,7 @@ const userValidation = {
       .withMessage('Password is required'),
   ] as ValidationChain[],
   update: [
-    body('full_name').optional().trim().notEmpty(),
+    body('full_name').optional().trim().notEmpty().isLength({ max: 200 }),
     body('phone')
       .optional()
       .custom(validLebaneseMobile)
@@ -203,6 +225,10 @@ const projectValidation = {
     body('max_photos').optional().isInt({ min: 0 }),
     body('visible_to_viewers').optional().isBoolean(),
     body('visible_to_contributors').optional().isBoolean(),
+    body('expected_version')
+      .optional()
+      .custom((value) => typeof value === 'number' && Number.isSafeInteger(value) && value > 0)
+      .withMessage('expected_version must be a positive integer'),
     body('start_date')
       .optional({ nullable: true })
       .isISO8601()
@@ -336,6 +362,10 @@ const categoryValidation = {
     body('name').trim().notEmpty().withMessage('Category name is required'),
     body('description').optional().trim(),
     body('icon_url').optional().isString(),
+    body('expected_version')
+      .optional()
+      .custom((value) => typeof value === 'number' && Number.isSafeInteger(value) && value > 0)
+      .withMessage('expected_version must be a positive integer'),
   ] as ValidationChain[],
   update: [
     param('categoryId').isUUID().withMessage('Valid category ID is required'),
@@ -391,6 +421,7 @@ const notificationValidation = {
     body('platform').trim().isIn(['android', 'ios']).withMessage('platform must be android or ios'),
     body('device_label').optional().trim().isLength({ max: 120 }),
     body('app_version').optional().trim().isLength({ max: 60 }),
+    body('show_sensitive_preview').optional().isBoolean(),
   ] as ValidationChain[],
   unregisterDevice: [
     body('token')
@@ -923,6 +954,10 @@ const exportValidation = {
     body('include_photos').optional().isBoolean(),
     body('export_ai_predictions').optional().isBoolean(),
     body('category_id').optional({ values: 'falsy' }).isUUID(),
+    body('collector_user_id')
+      .optional({ values: 'falsy' })
+      .isUUID()
+      .withMessage('collector_user_id must be a valid UUID'),
     body('feature_type')
       .optional({ values: 'falsy' })
       .trim()

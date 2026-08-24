@@ -17,6 +17,7 @@ const {
   uuidValidation,
 } = require('../middleware/validation');
 const { asyncHandler } = require('../middleware/error');
+const { body } = require('express-validator');
 const { uploadMultiple } = require('../config/upload');
 import { auditAction } from '../middleware/audit';
 import {
@@ -259,6 +260,25 @@ router.patch(
   validate,
   requireProtectedSuperAdmin,
   asyncHandler(aiController.upsertProjectAiSettings),
+);
+
+router.put(
+  '/:projectId/ai/governance',
+  uuidValidation('projectId'),
+  body('training_data_use_authorized').isBoolean(),
+  body('training_authority_basis').optional({ nullable: true }).isString().isLength({ max: 2000 }),
+  body('training_approval_reference').optional({ nullable: true }).isString().isLength({ max: 500 }),
+  body('publication_authorized').isBoolean(),
+  body('publication_authority_basis').optional({ nullable: true }).isString().isLength({ max: 2000 }),
+  body('publication_approval_reference').optional({ nullable: true }).isString().isLength({ max: 500 }),
+  validate,
+  requireProtectedSuperAdmin,
+  auditAction({
+    actionType: 'update',
+    entityType: 'project_ai_governance',
+    resolveEntityId: (req) => req.params.projectId,
+  }),
+  asyncHandler(aiController.updateProjectAiGovernance),
 );
 
 router.post(

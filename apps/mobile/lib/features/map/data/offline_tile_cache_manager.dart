@@ -8,6 +8,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../../../core/config/app_env.dart';
 import '../../../core/offline/local_models.dart';
 import '../../../core/offline/local_store.dart';
 import '../domain/lebanon_map.dart';
@@ -59,6 +60,15 @@ class OfflineTileDownloadInterruptedException implements Exception {
       'Offline map download paused because the network connection was interrupted. Saved map images remain on this phone. Try again to resume.';
 }
 
+class OfflineBasemapLicenseRequiredException implements Exception {
+  const OfflineBasemapLicenseRequiredException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class OfflineDownloadCancelToken {
   static const String _cancelMessage = 'Offline download canceled.';
 
@@ -102,19 +112,28 @@ class OfflineDownloadCancelToken {
 }
 
 class OfflineTileCacheManager {
-  OfflineTileCacheManager({required LocalStore localStore})
-    : _localStore = localStore,
-      _dio = Dio(
-        BaseOptions(
-          responseType: ResponseType.bytes,
-          connectTimeout: const Duration(seconds: 12),
-          receiveTimeout: const Duration(seconds: 18),
-          headers: const <String, String>{'User-Agent': 'lb.gov.gis_collector'},
-        ),
-      );
+  OfflineTileCacheManager({
+    required LocalStore localStore,
+    bool? licensedEsriOfflineBasemapEnabled,
+  }) : _licensedEsriOfflineBasemapEnabled =
+           licensedEsriOfflineBasemapEnabled ??
+           AppEnv.licensedEsriOfflineBasemapEnabled,
+       _localStore = localStore,
+       _dio = Dio(
+         BaseOptions(
+           responseType: ResponseType.bytes,
+           connectTimeout: const Duration(seconds: 12),
+           receiveTimeout: const Duration(seconds: 18),
+           headers: <String, String>{'User-Agent': AppEnv.mapProviderUserAgent},
+         ),
+       );
 
   final LocalStore _localStore;
   final Dio _dio;
+  final bool _licensedEsriOfflineBasemapEnabled;
+
+  bool get licensedEsriOfflineBasemapEnabled =>
+      _licensedEsriOfflineBasemapEnabled;
   static const int _tileDownloadConcurrency = 8;
   static const int _tileNetworkFailureAbortThreshold =
       _tileDownloadConcurrency * 3;
@@ -321,6 +340,7 @@ class OfflineTileCacheManager {
     void Function(OfflineTileDownloadProgress progress)? onProgress,
     OfflineDownloadCancelToken? cancelToken,
   }) async {
+    _assertOfflineDownloadLicensed(basemapStyle);
     await initialize();
     cancelToken?.throwIfCanceled();
 
@@ -474,6 +494,19 @@ class OfflineTileCacheManager {
       failedTiles: failed,
       sizeBytes: sizeBytes,
     );
+  }
+
+  void _assertOfflineDownloadLicensed(LebanonBasemapStyle basemapStyle) {
+    if (basemapStyle == LebanonBasemapStyle.street) {
+      throw const OfflineBasemapLicenseRequiredException(
+        'Bulk offline download from the public OpenStreetMap tile service is disabled. Use an organization-owned or explicitly licensed offline tile source.',
+      );
+    }
+    if (!_licensedEsriOfflineBasemapEnabled) {
+      throw const OfflineBasemapLicenseRequiredException(
+        'Satellite basemap download is disabled until documented offline-use rights are approved and LICENSED_ESRI_OFFLINE_BASEMAP_ENABLED is enabled.',
+      );
+    }
   }
 
   Future<OfflineMapPackage> refreshStats(

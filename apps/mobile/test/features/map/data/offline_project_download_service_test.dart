@@ -100,7 +100,8 @@ class _RecordingProjectsRepository implements ProjectsRepository {
 }
 
 class _FakeTileCacheManager extends OfflineTileCacheManager {
-  _FakeTileCacheManager({required this.store}) : super(localStore: store);
+  _FakeTileCacheManager({required this.store})
+    : super(localStore: store, licensedEsriOfflineBasemapEnabled: true);
 
   final LocalStore store;
   final Set<String> completeVersions = <String>{};
@@ -159,6 +160,51 @@ ProjectSummary _project(String id) => ProjectSummary(
 );
 
 void main() {
+  test(
+    'keeps the project package usable when offline imagery rights are not approved',
+    () async {
+      final store = MemoryLocalStore();
+      await store.initialize();
+      addTearDown(store.dispose);
+      final repository = _RecordingProjectsRepository(<String, ProjectSummary>{
+        'project-a': _project('project-a'),
+      });
+      final service = OfflineProjectDownloadService(
+        projectsRepository: repository,
+        localStore: store,
+        tileCacheManager: OfflineTileCacheManager(
+          localStore: store,
+          licensedEsriOfflineBasemapEnabled: false,
+        ),
+        networkAvailability: const _AlwaysOnline(),
+      );
+
+      final result = await service.downloadProject(
+        project: repository.projects['project-a']!,
+        mapPackage: OfflineMapPackage(
+          ownerUserId: '',
+          version: 'shared-base-v1',
+          zoomLevelMin: 7,
+          zoomLevelMax: 15,
+          lastUpdatedAt: DateTime.utc(2026, 8, 12),
+          isCurrent: true,
+        ),
+        ownerUserId: 'contributor-1',
+      );
+
+      expect(result.projectPackageChanged, isTrue);
+      expect(result.baseMapDownloaded, isFalse);
+      expect(result.baseMapUnavailableReason, contains('offline-use rights'));
+      expect(
+        await store.getOfflineProjectPackage(
+          ownerUserId: 'contributor-1',
+          projectId: 'project-a',
+        ),
+        isNotNull,
+      );
+    },
+  );
+
   test(
     'downloads only the selected project and reuses a valid shared base map',
     () async {

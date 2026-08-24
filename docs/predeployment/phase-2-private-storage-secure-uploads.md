@@ -1,4 +1,4 @@
-# Phase 2 — Private Storage and Secure Uploads
+# Phase 2 - Private Storage and Secure Uploads
 
 This phase removes public delivery paths for sensitive media before adding
 quarantine, malware scanning, or storage migration. It is intentionally split
@@ -18,7 +18,7 @@ into independently reviewable slices.
   `X-Content-Type-Options: nosniff`.
 - A filename alone never grants access.
 
-## Slice 2A — delivery boundary
+## Slice 2A - delivery boundary
 
 Status: complete. PR
 [#7](https://github.com/Mohamad-H-Hallal/Thesis/pull/7) merged into protected
@@ -41,7 +41,7 @@ the current bearer token when loading these URLs.
 
 No database row or stored file is deleted, moved, or rewritten by this slice.
 
-## Slice 2B — intake quarantine and content safety
+## Slice 2B - intake quarantine and content safety
 
 Status: complete. PR
 [#8](https://github.com/Mohamad-H-Hallal/Thesis/pull/8) merged into
@@ -129,7 +129,7 @@ rejected and retained in quarantine, and stopping ClamAV causes uploads to fail
 closed with `503`. The ClamAV TCP port must remain internal because the clamd
 protocol does not provide transport encryption or authentication.
 
-## Slice 2C — storage migration and orphan reconciliation
+## Slice 2C - storage migration and orphan reconciliation
 
 Status: complete. PR
 [#9](https://github.com/Mohamad-H-Hallal/Thesis/pull/9) merged into

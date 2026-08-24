@@ -54,6 +54,9 @@ class ApiClient {
   ApiSessionBinding? _session;
   int _sessionGeneration = 0;
   final Uuid _requestIdGenerator = const Uuid();
+  Future<void> Function(String ownerUserId)? onAccountDeleted;
+  final Map<String, Future<void>> _accountDeletionCleanups =
+      <String, Future<void>>{};
 
   static const _accessKey = 'access_token';
   static const _refreshKey = 'refresh_token';
@@ -223,6 +226,17 @@ class ApiClient {
     return current;
   }
 
+  /// Refreshes through the centralized authenticated client without exposing
+  /// the refresh token to real-time or feature code.
+  Future<String?> refreshAccessTokenForOwner(String ownerUserId) async {
+    final binding = captureSessionForOwner(ownerUserId);
+    if (binding == null) {
+      return null;
+    }
+    final result = await _refreshAccessToken(binding);
+    return result.accessToken;
+  }
+
   Options bindAuthenticatedRequest({
     required ApiSessionBinding session,
     Map<String, dynamic> headers = const <String, dynamic>{},
@@ -309,6 +323,29 @@ class ApiClient {
           handler.next(request);
         },
         onError: (error, handler) async {
+          if (_isDeletedAccountError(error)) {
+            final binding = _currentBindingFor(error.requestOptions);
+            if (binding != null) {
+              final cleanup = _accountDeletionCleanups.putIfAbsent(
+                binding.ownerUserId,
+                () => _handleDeletedAccount(binding),
+              );
+              try {
+                await cleanup;
+              } catch (_) {
+                // Cleanup is durably marked and resumes on the next launch.
+              } finally {
+                if (identical(
+                  _accountDeletionCleanups[binding.ownerUserId],
+                  cleanup,
+                )) {
+                  _accountDeletionCleanups.remove(binding.ownerUserId);
+                }
+              }
+            }
+            handler.next(error);
+            return;
+          }
           final binding = _refreshBindingFor(error);
           if (binding == null) {
             handler.next(error);
@@ -439,6 +476,10 @@ class ApiClient {
       return null;
     }
     final request = error.requestOptions;
+    return _currentBindingFor(request);
+  }
+
+  ApiSessionBinding? _currentBindingFor(RequestOptions request) {
     final explicitBinding = request.extra[_sessionBindingKey];
     if (explicitBinding is ApiSessionBinding) {
       return _isCurrentGeneration(explicitBinding) ? explicitBinding : null;
@@ -648,6 +689,25 @@ class ApiClient {
         errorData['code'] == 'OFFLINE_SYNC_ACCOUNT_INACTIVE' &&
         errorData['disposition'] == 'permanent_rejection' &&
         errorData['retryable'] == false;
+  }
+
+  bool _isDeletedAccountError(DioException error) {
+    final responseData = error.response?.data;
+    if (error.response?.statusCode != 401 || responseData is! Map) {
+      return false;
+    }
+    final errorData = responseData['error'];
+    return errorData is Map &&
+        errorData['code'] == 'ACCOUNT_DELETED' &&
+        errorData['disposition'] == 'permanent_rejection';
+  }
+
+  Future<void> _handleDeletedAccount(ApiSessionBinding binding) async {
+    final invalidationGeneration = _invalidateIfCurrent(binding);
+    if (invalidationGeneration != null) {
+      await _clearInvalidatedTokens(invalidationGeneration);
+    }
+    await onAccountDeleted?.call(binding.ownerUserId);
   }
 
   dynamic _cloneRetryBody(dynamic data) {

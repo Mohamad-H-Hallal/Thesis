@@ -9,12 +9,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/design_tokens.dart';
+import '../../../../core/config/app_env.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/utils/lebanon_time.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_dialog_controller_host.dart';
 import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
@@ -26,6 +28,7 @@ import '../../../exports/presentation/export_file_actions.dart';
 import '../../../map/domain/app_tile_provider.dart';
 import '../../../map/domain/lebanon_map.dart';
 import '../../../map/domain/map_geometry.dart';
+import '../../../map/presentation/widgets/basemap_attribution.dart';
 import '../../domain/import_models.dart';
 import '../import_providers.dart';
 
@@ -188,6 +191,15 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _ImportSummaryCard(job: details.job),
+          const SizedBox(height: AppSpacing.md),
+          _buildProvenanceCard(
+            context,
+            job: details.job,
+            canEdit:
+                details.job.approvedFeatureCount == 0 &&
+                (details.job.uploadedByUserId == session.user.id ||
+                    canModerateImport),
+          ),
           const SizedBox(height: AppSpacing.md),
           _ImportSectionNavCard(
             commentsCount: details.comments.length,
@@ -467,7 +479,230 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
     );
   }
 
+  Widget _buildProvenanceCard(
+    BuildContext context, {
+    required GisImportJob job,
+    required bool canEdit,
+  }) {
+    final theme = Theme.of(context);
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Source and reuse rights',
+                  style: theme.textTheme.titleMedium,
+                ),
+              ),
+              StatusChip(
+                status: job.provenanceComplete ? 'approved' : 'pending',
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            job.provenanceComplete
+                ? '${job.sourceProvider} · ${job.sourceDatasetName}. Approval still requires license review.'
+                : 'Approval is blocked in production until source authority and redistribution metadata are attested.',
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Wrap(
+            spacing: AppSpacing.sm,
+            runSpacing: AppSpacing.sm,
+            children: [
+              if (canEdit)
+                OutlinedButton.icon(
+                  key: const Key('edit-import-provenance'),
+                  onPressed: _isSubmitting
+                      ? null
+                      : () => _editImportProvenance(job),
+                  icon: const Icon(Icons.edit_document),
+                  label: Text(
+                    job.provenanceComplete
+                        ? 'Correct metadata'
+                        : 'Add metadata',
+                  ),
+                ),
+              TextButton(
+                onPressed: () =>
+                    context.push(AppRoutes.legalDocument('important-notices')),
+                child: const Text('Important GIS notices'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _editImportProvenance(GisImportJob job) async {
+    var confirmed = false;
+    final provenance = await showDialog<ImportSourceProvenance>(
+      context: context,
+      builder: (dialogContext) => AppDialogControllerHost(
+        initialValues: [
+          job.sourceProvider ?? '',
+          job.sourceDatasetName ?? '',
+          job.sourceDatasetDate?.toIso8601String().substring(0, 10) ?? '',
+          job.sourceAccuracyStatement ?? '',
+          job.sourceLicenseOrAuthority ?? '',
+          job.sourceAttribution ?? '',
+          job.sourceTermsUrl ?? '',
+          job.sourceRedistributionRules ?? '',
+        ],
+        builder: (dialogContext, controllers) {
+          final provider = controllers[0];
+          final dataset = controllers[1];
+          final datasetDate = controllers[2];
+          final accuracy = controllers[3];
+          final authority = controllers[4];
+          final attribution = controllers[5];
+          final termsUrl = controllers[6];
+          final redistribution = controllers[7];
+          return StatefulBuilder(
+            builder: (dialogContext, setDialogState) => AlertDialog(
+              title: const Text('Dataset source and reuse rights'),
+              content: SizedBox(
+                width: 560,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AppTextField(
+                        label: 'Source provider or owner *',
+                        controller: provider,
+                        onChanged: (_) => setDialogState(() {}),
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      AppTextField(
+                        label: 'Dataset name *',
+                        controller: dataset,
+                        onChanged: (_) => setDialogState(() {}),
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      AppTextField(
+                        label: 'Dataset date (YYYY-MM-DD)',
+                        controller: datasetDate,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      AppTextField(
+                        label: 'Accuracy or quality statement',
+                        controller: accuracy,
+                        minLines: 2,
+                        maxLines: 4,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      AppTextField(
+                        label: 'License, permission, or other authority *',
+                        controller: authority,
+                        onChanged: (_) => setDialogState(() {}),
+                        minLines: 2,
+                        maxLines: 4,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      AppTextField(
+                        label: 'Required attribution',
+                        controller: attribution,
+                        minLines: 2,
+                        maxLines: 4,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      AppTextField(
+                        label: 'License or terms URL',
+                        controller: termsUrl,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      AppTextField(
+                        label: 'Redistribution and publication rules *',
+                        controller: redistribution,
+                        onChanged: (_) => setDialogState(() {}),
+                        minLines: 2,
+                        maxLines: 4,
+                      ),
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: confirmed,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        onChanged: (value) => setDialogState(() {
+                          confirmed = value ?? false;
+                        }),
+                        title: const Text(
+                          'I confirm this source information is complete.',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                AppDialogActions(
+                  buttonWidth: 168,
+                  cancel: TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  confirm: FilledButton(
+                    onPressed:
+                        !confirmed ||
+                            provider.text.trim().isEmpty ||
+                            dataset.text.trim().isEmpty ||
+                            authority.text.trim().isEmpty ||
+                            redistribution.text.trim().isEmpty
+                        ? null
+                        : () => Navigator.of(dialogContext).pop(
+                            ImportSourceProvenance(
+                              provider: provider.text,
+                              datasetName: dataset.text,
+                              datasetDate: datasetDate.text,
+                              accuracyStatement: accuracy.text,
+                              licenseOrAuthority: authority.text,
+                              attribution: attribution.text,
+                              termsUrl: termsUrl.text,
+                              redistributionRules: redistribution.text,
+                            ),
+                          ),
+                    child: const Text('Save'),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+    if (provenance == null || !mounted) {
+      return;
+    }
+    setState(() => _isSubmitting = true);
+    try {
+      final updated = await ref
+          .read(importsRepositoryProvider)
+          .updateImportProvenance(importId: job.id, provenance: provenance);
+      if (!mounted) return;
+      setState(() {
+        _isSubmitting = false;
+        _mergeReviewedJobIntoLiveDetails(updated);
+      });
+      ref.invalidate(importDetailsProvider(widget.importId));
+      AppSnackbar.showSuccess(context, 'Import source metadata saved.');
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _isSubmitting = false);
+      AppSnackbar.showError(
+        context,
+        userFacingErrorMessage(
+          error,
+          fallback: 'Unable to save source metadata.',
+        ),
+      );
+    }
+  }
+
   void _configureAutoRefresh(bool enabled) {
+    enabled = enabled && AppEnv.realtimePollingFallbackEnabled;
     if (!enabled) {
       _refreshTimer?.cancel();
       _refreshTimer = null;
@@ -1069,7 +1304,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
       if (!mounted) {
         return;
       }
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('import', widget.importId));
       AppSnackbar.showSuccess(
         this.context,
         feature == null
@@ -1159,7 +1394,7 @@ class _ImportDetailScreenState extends ConsumerState<ImportDetailScreen> {
         _reviewProgressLabel = null;
         _selectedFeatureIds.clear();
       });
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('import', widget.importId));
       AppSnackbar.showSuccess(
         context,
         status == 'approved'
@@ -2739,6 +2974,7 @@ class _ImportPreviewMapCardState extends ConsumerState<_ImportPreviewMapCard> {
                               PolygonLayer(polygons: _polygons(drawable)),
                               PolylineLayer(polylines: _polylines(drawable)),
                               MarkerLayer(markers: _markers(drawable)),
+                              BasemapAttribution(style: _style),
                             ],
                           ),
                         ),

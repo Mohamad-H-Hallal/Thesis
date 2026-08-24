@@ -49,6 +49,7 @@ class _FakeNotificationsRepository implements NotificationsRepository {
     required String platform,
     String? deviceLabel,
     String? appVersion,
+    bool showSensitivePreview = false,
   }) async {}
 
   @override

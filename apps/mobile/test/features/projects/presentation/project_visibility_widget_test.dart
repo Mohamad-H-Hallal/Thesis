@@ -443,7 +443,9 @@ Widget _wrapWithScope({
         );
       }),
       projectListProvider.overrideWith((ref, scope) {
-        ref.watch(workflowRefreshTickProvider);
+        ref.watch(
+          realtimeScopeRevisionProvider(const RealtimeScope('projects', 'all')),
+        );
         return fakeRepository.fetchProjects(
           userId: session.user.id,
           role: session.user.role,
@@ -451,7 +453,7 @@ Widget _wrapWithScope({
         );
       }),
       projectByIdProvider.overrideWith((ref, id) {
-        ref.watch(workflowRefreshTickProvider);
+        ref.watch(realtimeScopeRevisionProvider(RealtimeScope('project', id)));
         return fakeRepository.byId(
           id: id,
           userId: session.user.id,

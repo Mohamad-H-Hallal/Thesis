@@ -43,7 +43,7 @@ class _ContributorRequestsScreenState
   }
 
   void _invalidate() {
-    bumpWorkflowRefresh(ref);
+    bumpRealtimeScope(ref, const RealtimeScope('users', 'all'));
   }
 
   Future<void> _approveContributor(String userId) async {

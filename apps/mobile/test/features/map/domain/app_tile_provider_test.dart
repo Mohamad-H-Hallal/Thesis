@@ -11,5 +11,10 @@ void main() {
     final networkProvider = provider as NetworkTileProvider;
     expect(networkProvider.silenceExceptions, isFalse);
     expect(networkProvider.abortObsoleteRequests, isTrue);
+    expect(
+      networkProvider.headers['User-Agent'],
+      isNot('flutter_map (unknown)'),
+    );
+    expect(networkProvider.headers['User-Agent'], isNotEmpty);
   });
 }

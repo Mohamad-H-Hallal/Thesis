@@ -114,6 +114,18 @@ router.post(
   asyncHandler(importController.addImportComment),
 );
 
+router.put(
+  '/:importId/provenance',
+  uuidValidation('importId'),
+  auditAction({
+    actionType: 'update',
+    entityType: 'gis_import_job_provenance',
+    resolveEntityId: (req) => req.params.importId ?? null,
+  }),
+  validate,
+  asyncHandler(importController.updateImportProvenance),
+);
+
 router.get(
   '/:importId/features',
   uuidValidation('importId'),

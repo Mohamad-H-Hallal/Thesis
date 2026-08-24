@@ -15,6 +15,15 @@ import { exportCreateRateLimit } from '../middleware/workloadRateLimit';
 // All routes require authentication
 router.use(authenticate);
 
+// Collectors shown in export filters must have approved project contributions.
+router.get(
+  '/project/:projectId/collectors',
+  uuidValidation('projectId'),
+  checkProjectAccess,
+  validate,
+  asyncHandler(exportController.getProjectExportCollectors)
+);
+
 // Request new export for a project
 router.post(
   '/project/:projectId',

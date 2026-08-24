@@ -42,6 +42,67 @@ import {
   type GeoJsonGeometry,
   type QueryExecutor,
 } from '../services/offlineSyncSecurity.service';
+import { publishRealtimeChanges } from '../realtime/realtimeEvents';
+import type { RealtimePublishInput } from '../realtime/realtimeProtocol';
+
+const offlineBundleRealtimeInputs = ({
+  projectId,
+  featureId,
+  action,
+  submitted,
+  originSessionId,
+}: {
+  projectId: string;
+  featureId: string;
+  action: string;
+  submitted: boolean;
+  originSessionId?: string | null;
+}): RealtimePublishInput[] => [
+  {
+    scopeType: 'features',
+    scopeId: projectId,
+    action,
+    entityType: 'feature',
+    entityId: featureId,
+    projectId,
+    originSessionId,
+    audience: { kind: 'project', projectId, access: 'readers' },
+  },
+  {
+    scopeType: 'feature',
+    scopeId: featureId,
+    action,
+    entityType: 'feature',
+    entityId: featureId,
+    projectId,
+    originSessionId,
+    audience: { kind: 'project', projectId, access: 'readers' },
+  },
+  ...(submitted
+    ? [
+        {
+          scopeType: 'reviews',
+          scopeId: projectId,
+          action: 'submitted',
+          entityType: 'feature',
+          entityId: featureId,
+          projectId,
+          originSessionId,
+          audience: { kind: 'project' as const, projectId, access: 'members' as const },
+        },
+        {
+          scopeType: 'reviews',
+          scopeId: 'all',
+          action: 'submitted',
+          entityType: 'feature',
+          entityId: featureId,
+          projectId,
+          originSessionId,
+          audience: { kind: 'admins' as const },
+        },
+      ]
+    : []),
+];
 
 type OfflineBundleOperation = 'create' | 'update';
 
@@ -451,9 +512,10 @@ const submitForReview = async ({
     `SELECT id FROM "user" WHERE role = 'admin' AND is_active = TRUE`,
   );
   for (const admin of admins.rows) {
-    await client.query(
+    const notification = await client.query(
       `INSERT INTO notification (user_id, type, title, message, metadata)
-       VALUES ($1, 'review_completed', 'Feature review pending', $2, $3::jsonb)`,
+       VALUES ($1, 'review_completed', 'Feature review pending', $2, $3::jsonb)
+       RETURNING id`,
       [
         admin.id,
         `A submitted feature in ${projectName} is waiting for review.`,
@@ -464,6 +526,20 @@ const submitForReview = async ({
           status: 'pending_review',
         }),
       ],
+    );
+    await publishRealtimeChanges(
+      [
+        {
+          scopeType: 'notifications',
+          scopeId: admin.id,
+          action: 'created',
+          entityType: 'notification',
+          entityId: notification.rows[0].id,
+          projectId,
+          audience: { kind: 'user', userId: admin.id },
+        },
+      ],
+      client,
     );
   }
 };
@@ -775,6 +851,18 @@ const syncOfflineFeatureBundle = async (req: Request, res: Response): Promise<vo
               `SELECT id, status, version, ST_AsGeoJSON(geom) AS geometry, attributes
          FROM spatial_feature WHERE id = $1`,
               [payload.draftId],
+            );
+            await publishRealtimeChanges(
+              offlineBundleRealtimeInputs({
+                projectId: payload.projectId,
+                featureId: payload.draftId,
+                action: payload.submitForReview
+                  ? 'offline_bundle_submitted'
+                  : 'offline_bundle_synchronized',
+                submitted: payload.submitForReview,
+                originSessionId: req.authSessionId,
+              }),
+              client,
             );
             return { row: saved.rows[0], alreadySynchronized: false };
           }),

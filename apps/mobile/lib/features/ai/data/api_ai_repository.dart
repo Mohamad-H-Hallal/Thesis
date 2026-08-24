@@ -95,6 +95,36 @@ class ApiAiRepository implements AiRepository {
   }
 
   @override
+  Future<void> saveGovernance({
+    required String projectId,
+    required bool trainingDataUseAuthorized,
+    String? trainingAuthorityBasis,
+    String? trainingApprovalReference,
+    required bool publicationAuthorized,
+    String? publicationAuthorityBasis,
+    String? publicationApprovalReference,
+  }) async {
+    try {
+      await _apiClient.dio.put<Map<String, dynamic>>(
+        '$_projectsBasePath/$projectId/ai/governance',
+        data: <String, dynamic>{
+          'training_data_use_authorized': trainingDataUseAuthorized,
+          'training_authority_basis': trainingAuthorityBasis,
+          'training_approval_reference': trainingApprovalReference,
+          'publication_authorized': publicationAuthorized,
+          'publication_authority_basis': publicationAuthorityBasis,
+          'publication_approval_reference': publicationApprovalReference,
+        },
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to save AI authority records right now.',
+      );
+    }
+  }
+
+  @override
   Future<PaginatedResult<AiRun>> fetchRunsPage({
     required String projectId,
     String? status,

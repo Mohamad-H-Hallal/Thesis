@@ -22,7 +22,9 @@ class _FakeNotificationsRepository implements NotificationsRepository {
         ? _items
         : _items.where((item) => item.isRead == isRead).toList(growable: false);
     final start = (page - 1) * limit;
-    final end = start + limit > filtered.length ? filtered.length : start + limit;
+    final end = start + limit > filtered.length
+        ? filtered.length
+        : start + limit;
     final items = start >= filtered.length
         ? const <AppNotification>[]
         : filtered.sublist(start, end);
@@ -60,6 +62,7 @@ class _FakeNotificationsRepository implements NotificationsRepository {
     required String platform,
     String? deviceLabel,
     String? appVersion,
+    bool showSensitivePreview = false,
   }) async {}
 
   @override
@@ -133,30 +136,33 @@ void main() {
     expect(repository.markAllInvoked, isTrue);
   });
 
-  test('removes notifications from filtered views when read state changes', () async {
-    final repository = _FakeNotificationsRepository(_buildNotifications(6));
-    final controller = NotificationsController.empty(repository);
+  test(
+    'removes notifications from filtered views when read state changes',
+    () async {
+      final repository = _FakeNotificationsRepository(_buildNotifications(6));
+      final controller = NotificationsController.empty(repository);
 
-    await controller.load(isReadFilter: false);
-    expect(_currentValue(controller).total, 3);
+      await controller.load(isReadFilter: false);
+      expect(_currentValue(controller).total, 3);
 
-    await controller.markAsRead('n1');
-    expect(_currentValue(controller).total, 2);
-    expect(
-      _currentValue(controller).items.any((item) => item.id == 'n1'),
-      isFalse,
-    );
+      await controller.markAsRead('n1');
+      expect(_currentValue(controller).total, 2);
+      expect(
+        _currentValue(controller).items.any((item) => item.id == 'n1'),
+        isFalse,
+      );
 
-    await controller.load(isReadFilter: true);
-    expect(_currentValue(controller).total, 3);
+      await controller.load(isReadFilter: true);
+      expect(_currentValue(controller).total, 3);
 
-    await controller.markAsUnread('n0');
-    expect(_currentValue(controller).total, 2);
-    expect(
-      _currentValue(controller).items.any((item) => item.id == 'n0'),
-      isFalse,
-    );
-  });
+      await controller.markAsUnread('n0');
+      expect(_currentValue(controller).total, 2);
+      expect(
+        _currentValue(controller).items.any((item) => item.id == 'n0'),
+        isFalse,
+      );
+    },
+  );
 
   test('mark all as read clears the unread filtered view', () async {
     final repository = _FakeNotificationsRepository(_buildNotifications(5));

@@ -62,11 +62,14 @@ class _AdminCreationScreenState extends ConsumerState<AdminCreationScreen> {
               _phoneController.text,
             ),
           );
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, const RealtimeScope('users', 'all'));
       if (!mounted) {
         return;
       }
-      AppSnackbar.showSuccess(context, 'Admin account created and activated.');
+      AppSnackbar.showSuccess(
+        context,
+        'Admin account created. Verification is required before sign-in.',
+      );
       context.go(AppRoutes.users);
     } catch (error) {
       if (!mounted) {

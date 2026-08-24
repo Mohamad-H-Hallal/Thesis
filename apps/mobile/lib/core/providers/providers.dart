@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -59,11 +60,17 @@ import '../offline/local_store.dart';
 import '../offline/local_store_factory.dart';
 import '../pagination/paginated_list_controller.dart';
 import '../pagination/paginated_result.dart';
+import '../privacy/deleted_account_local_cleanup.dart';
 import '../security/secure_string_store.dart';
 import '../realtime/workflow_realtime_service.dart';
+import '../realtime/realtime_models.dart';
+import '../realtime/realtime_edit_guard.dart';
+import '../realtime/realtime_scope_registry.dart';
 import '../router/app_router.dart';
 import '../sync/sync_controller.dart';
 import '../sync/sync_engine.dart';
+
+export '../realtime/realtime_models.dart' show RealtimeScope;
 
 final secureStorageProvider = Provider<FlutterSecureStorage>((ref) {
   return const FlutterSecureStorage(
@@ -93,32 +100,53 @@ final localPhotoKeyManagerProvider = Provider<LocalPhotoKeyManager>((ref) {
   );
 });
 
-final apiClientProvider = Provider<ApiClient>((ref) {
+final Provider<ApiClient> apiClientProvider = Provider<ApiClient>((ref) {
   return ApiClient(storage: ref.watch(secureStorageProvider));
+});
+
+final Provider<void> deletedAccountApiBindingProvider = Provider<void>((ref) {
+  final client = ref.watch(apiClientProvider);
+  client.onAccountDeleted = (ownerUserId) async {
+    try {
+      await ref
+          .read(deletedAccountLocalCleanupProvider)
+          .markAndPurge(ownerUserId);
+    } finally {
+      await ref
+          .read(authControllerProvider.notifier)
+          .forceLogout(
+            message: 'Your TerraLeb account has been deleted.',
+            code: 'account_deleted',
+          );
+    }
+  };
+  ref.onDispose(() => client.onAccountDeleted = null);
 });
 
 final networkAvailabilityServiceProvider = Provider<NetworkAvailabilityService>(
   (ref) => createNetworkAvailabilityService(),
 );
 
-final networkOnlineProvider = FutureProvider<bool>((ref) async {
-  ref.watch(workflowRefreshTickProvider);
-  return ref.watch(networkAvailabilityServiceProvider).isOnline();
+final networkOnlineProvider = StreamProvider<bool>((ref) async* {
+  final service = ref.watch(networkAvailabilityServiceProvider);
+  yield await service.isOnline();
+  yield* service.onOnlineStatusChanged;
 });
 
-final authRepositoryProvider = Provider<AuthRepository>((ref) {
-  if (AppEnv.useMockAuth) {
-    return FakeAuthRepository(
-      ref.watch(secureStorageProvider),
-      ref.watch(apiClientProvider),
-    );
-  }
+final Provider<AuthRepository> authRepositoryProvider =
+    Provider<AuthRepository>((ref) {
+      if (AppEnv.useMockAuth) {
+        return FakeAuthRepository(
+          ref.watch(secureStorageProvider),
+          ref.watch(apiClientProvider),
+        );
+      }
 
-  return RealAuthRepository(
-    ref.watch(secureStorageProvider),
-    ref.watch(apiClientProvider),
-  );
-});
+      return RealAuthRepository(
+        ref.watch(secureStorageProvider),
+        ref.watch(apiClientProvider),
+      );
+    });
 
 final contactVerificationRepositoryProvider =
     Provider<ContactVerificationRepository>((ref) {
@@ -176,6 +204,16 @@ final exportsRepositoryProvider = Provider<ExportsRepository>((ref) {
   return ApiExportsRepository(ref.watch(apiClientProvider));
 });
 
+final exportCollectorsProvider = FutureProvider.autoDispose
+    .family<List<ExportCollector>, String>((ref, projectId) async {
+      if (projectId.trim().isEmpty) {
+        return const <ExportCollector>[];
+      }
+      return ref
+          .watch(exportsRepositoryProvider)
+          .fetchProjectCollectors(projectId: projectId);
+    });
+
 final importsRepositoryProvider = Provider<ImportsRepository>((ref) {
   if (AppEnv.useMockData) {
     return MockImportsRepository();
@@ -205,16 +243,64 @@ final pushNotificationServiceProvider = Provider<PushNotificationService>((
   return service;
 });
 
-final authControllerProvider = StateNotifierProvider<AuthController, AuthState>(
-  (ref) {
-    return AuthController(ref.watch(authRepositoryProvider));
-  },
+final StateNotifierProvider<AuthController, AuthState> authControllerProvider =
+    StateNotifierProvider<AuthController, AuthState>((ref) {
+      return AuthController(ref.watch(authRepositoryProvider));
+    });
+
+final localDataRevisionProvider = StateProvider<int>((ref) => 0);
+
+final realtimeScopeRegistryProvider = Provider<RealtimeScopeRegistry>((ref) {
+  final registry = RealtimeScopeRegistry();
+  ref.onDispose(() => unawaited(registry.dispose()));
+  return registry;
+});
+
+final realtimeScopeRevisionProvider = StateProvider.family<int, RealtimeScope>(
+  (ref, scope) => 0,
 );
 
-final workflowRefreshTickProvider = StateProvider<int>((ref) => 0);
+final realtimeConnectionStateProvider = StateProvider<RealtimeConnectionState>(
+  (ref) => RealtimeConnectionState.disconnected,
+);
 
-void bumpWorkflowRefresh(WidgetRef ref) {
-  ref.read(workflowRefreshTickProvider.notifier).state++;
+final realtimeEditGuardRegistryProvider = Provider<RealtimeEditGuardRegistry>(
+  (ref) => RealtimeEditGuardRegistry(),
+);
+
+void registerRealtimeScope(Ref ref, RealtimeScope scope) {
+  final registry = ref.read(realtimeScopeRegistryProvider);
+  registry.register(scope);
+  ref.onDispose(() => registry.unregister(scope));
+}
+
+void watchRealtimeScope(Ref ref, RealtimeScope scope) {
+  registerRealtimeScope(ref, scope);
+  ref.watch(realtimeScopeRevisionProvider(scope));
+}
+
+void listenRealtimeScope(
+  Ref ref,
+  RealtimeScope scope,
+  void Function() onChanged,
+) {
+  registerRealtimeScope(ref, scope);
+  ref.listen<int>(realtimeScopeRevisionProvider(scope), (_, _) => onChanged());
+}
+
+PaginatedListController<T> bindRealtimePaginated<T>(
+  Ref ref,
+  RealtimeScope scope,
+  PaginatedListController<T> controller,
+) {
+  listenRealtimeScope(ref, scope, () {
+    unawaited(controller.refreshSilently());
+  });
+  return controller;
+}
+
+void bumpRealtimeScope(WidgetRef ref, RealtimeScope scope) {
+  ref.read(realtimeScopeRevisionProvider(scope).notifier).state++;
 }
 
 final workflowRealtimeServiceProvider = Provider<WorkflowRealtimeService>((
@@ -239,6 +325,13 @@ final localStoreProvider = Provider<LocalStore>((ref) {
   });
   return store;
 });
+
+final deletedAccountLocalCleanupProvider = Provider<DeletedAccountLocalCleanup>(
+  (ref) => DeletedAccountLocalCleanup(
+    storage: ref.watch(secureStorageProvider),
+    localStore: ref.watch(localStoreProvider),
+  ),
+);
 
 List<ProjectSummary> _filterCachedProjectsForScope(
   List<ProjectSummary> cachedProjects, {
@@ -535,7 +628,7 @@ final projectListProvider =
       scope,
     ) async {
       await ref.watch(offlineBootstrapProvider.future);
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, const RealtimeScope('projects', 'all'));
       final authState = ref.watch(authControllerProvider);
       final session = authState.session;
       if (session == null) {
@@ -568,7 +661,7 @@ final projectListProvider =
 
 final mapProjectsProvider = FutureProvider<List<ProjectSummary>>((ref) async {
   await ref.watch(offlineBootstrapProvider.future);
-  ref.watch(workflowRefreshTickProvider);
+  watchRealtimeScope(ref, const RealtimeScope('projects', 'all'));
   final localStore = ref.watch(localStoreProvider);
   final authState = ref.watch(authControllerProvider);
   final session = authState.session;
@@ -658,7 +751,7 @@ final projectMapFeaturesProvider =
       ref,
       projectId,
     ) async {
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('features', projectId));
       if (projectId.isEmpty) {
         return const <MapFeatureSummary>[];
       }
@@ -696,7 +789,11 @@ final projectMapViewportFeaturesProvider = FutureProvider.autoDispose
       ref,
       query,
     ) async {
-      final refreshTick = ref.watch(workflowRefreshTickProvider);
+      final refreshScope = RealtimeScope('features', query.projectId);
+      watchRealtimeScope(ref, refreshScope);
+      final refreshTick = ref.watch(
+        realtimeScopeRevisionProvider(refreshScope),
+      );
       if (query.projectId.isEmpty) {
         return const <MapFeatureSummary>[];
       }
@@ -759,7 +856,7 @@ final projectMapViewportFeaturesProvider = FutureProvider.autoDispose
 
 final projectFeatureCountProvider = FutureProvider.autoDispose
     .family<int, ProjectFeatureCountQuery>((ref, query) async {
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('features', query.projectId));
       if (query.projectId.isEmpty) {
         return 0;
       }
@@ -819,7 +916,7 @@ final projectFeatureCountProvider = FutureProvider.autoDispose
 
 final projectFeatureDetailsProvider = FutureProvider.autoDispose
     .family<MapFeatureSummary, ProjectFeatureIdentity>((ref, identity) async {
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('feature', identity.featureId));
       return ref
           .read(mapRepositoryProvider)
           .fetchProjectFeatureById(
@@ -834,64 +931,68 @@ final paginatedProjectFeatureBrowserProvider = StateNotifierProvider.autoDispose
       AsyncValue<PaginatedListState<MapFeatureSummary>>,
       ProjectFeatureBrowserQuery
     >((ref, query) {
-      ref.watch(workflowRefreshTickProvider);
-      return PaginatedListController<MapFeatureSummary>(
-        loadPage: ({required page, required limit}) async {
-          final shouldUseOfflineOnly = await _shouldUseOfflineProjectOnly(
-            ref,
-            query.projectId,
-          );
-          if (shouldUseOfflineOnly) {
-            final drafts = await ref.read(localDraftFeaturesProvider.future);
-            final items = drafts
-                .where((draft) => draft.projectId == query.projectId)
-                .map(_mapFeatureFromLocalDraft)
-                .where((feature) {
-                  final status = query.status?.trim();
-                  if (status != null &&
-                      status.isNotEmpty &&
-                      feature.status != status) {
-                    return false;
-                  }
-                  final geometryType = query.geometryType?.trim();
-                  if (geometryType != null && geometryType.isNotEmpty) {
-                    final actual =
-                        feature.sourceGeometryType ??
-                        feature.geometry['type']?.toString() ??
-                        '';
-                    if (actual.toLowerCase() != geometryType.toLowerCase()) {
+      final scope = RealtimeScope('features', query.projectId);
+      return bindRealtimePaginated(
+        ref,
+        scope,
+        PaginatedListController<MapFeatureSummary>(
+          loadPage: ({required page, required limit}) async {
+            final shouldUseOfflineOnly = await _shouldUseOfflineProjectOnly(
+              ref,
+              query.projectId,
+            );
+            if (shouldUseOfflineOnly) {
+              final drafts = await ref.read(localDraftFeaturesProvider.future);
+              final items = drafts
+                  .where((draft) => draft.projectId == query.projectId)
+                  .map(_mapFeatureFromLocalDraft)
+                  .where((feature) {
+                    final status = query.status?.trim();
+                    if (status != null &&
+                        status.isNotEmpty &&
+                        feature.status != status) {
                       return false;
                     }
-                  }
-                  return true;
-                })
-                .toList(growable: false);
-            final start = (page - 1) * limit;
-            final end = (start + limit).clamp(0, items.length);
-            return PaginatedResult<MapFeatureSummary>(
-              items: start >= items.length
-                  ? const <MapFeatureSummary>[]
-                  : items.sublist(start, end),
-              page: page,
-              limit: limit,
-              total: items.length,
-              hasMore: end < items.length,
-            );
-          }
-
-          return ref
-              .read(mapRepositoryProvider)
-              .fetchProjectFeaturesPage(
-                projectId: query.projectId,
-                search: query.search,
-                status: query.status,
-                geometryType: query.geometryType,
-                featureType: query.featureType,
-                excludeImportId: query.excludeImportId,
+                    final geometryType = query.geometryType?.trim();
+                    if (geometryType != null && geometryType.isNotEmpty) {
+                      final actual =
+                          feature.sourceGeometryType ??
+                          feature.geometry['type']?.toString() ??
+                          '';
+                      if (actual.toLowerCase() != geometryType.toLowerCase()) {
+                        return false;
+                      }
+                    }
+                    return true;
+                  })
+                  .toList(growable: false);
+              final start = (page - 1) * limit;
+              final end = (start + limit).clamp(0, items.length);
+              return PaginatedResult<MapFeatureSummary>(
+                items: start >= items.length
+                    ? const <MapFeatureSummary>[]
+                    : items.sublist(start, end),
                 page: page,
                 limit: limit,
+                total: items.length,
+                hasMore: end < items.length,
               );
-        },
+            }
+
+            return ref
+                .read(mapRepositoryProvider)
+                .fetchProjectFeaturesPage(
+                  projectId: query.projectId,
+                  search: query.search,
+                  status: query.status,
+                  geometryType: query.geometryType,
+                  featureType: query.featureType,
+                  excludeImportId: query.excludeImportId,
+                  page: page,
+                  limit: limit,
+                );
+          },
+        ),
       );
     });
 
@@ -899,6 +1000,7 @@ final offlineMapPackageProvider = FutureProvider<OfflineMapPackage?>((
   ref,
 ) async {
   await ref.watch(offlineBootstrapProvider.future);
+  watchRealtimeScope(ref, const RealtimeScope('offline_map', 'all'));
   final ownerUserId = ref.watch(
     authControllerProvider.select((state) => state.session?.user.id),
   );
@@ -974,7 +1076,7 @@ final projectByIdProvider = FutureProvider.family<ProjectSummary?, String>((
   id,
 ) async {
   await ref.watch(offlineBootstrapProvider.future);
-  ref.watch(workflowRefreshTickProvider);
+  watchRealtimeScope(ref, RealtimeScope('project', id));
   final authState = ref.watch(authControllerProvider);
   final session = authState.session;
   if (session == null) {
@@ -1034,7 +1136,7 @@ final localDraftFeaturesProvider = FutureProvider<List<LocalDraftFeature>>((
   ref,
 ) async {
   await ref.watch(offlineBootstrapProvider.future);
-  ref.watch(workflowRefreshTickProvider);
+  ref.watch(localDataRevisionProvider);
   final localStore = ref.watch(localStoreProvider);
   final session = ref.watch(authControllerProvider).session;
   if (session == null) {
@@ -1077,7 +1179,7 @@ final syncControllerProvider = StateNotifierProvider<SyncController, SyncState>(
       networkAvailability: ref.watch(networkAvailabilityServiceProvider),
       ownerUserId: ownerUserId,
       onLocalDataChanged: () {
-        ref.read(workflowRefreshTickProvider.notifier).state++;
+        ref.read(localDataRevisionProvider.notifier).state++;
       },
     );
 
@@ -1131,51 +1233,55 @@ final paginatedProjectListProvider = StateNotifierProvider.autoDispose
         );
       }
 
-      ref.watch(workflowRefreshTickProvider);
+      const realtimeScope = RealtimeScope('projects', 'all');
       final effectiveScope = _effectiveProjectScopeForRole(
         role: session.user.role,
         requestedScope: scope,
       );
-      return PaginatedListController<ProjectSummary>(
-        loadPage: ({required page, required limit}) async {
-          final isOnline = await ref
-              .read(networkAvailabilityServiceProvider)
-              .isOnline();
-          if (!isOnline) {
-            return _localProjectsPageForScope(
-              ref,
-              session: session,
-              scope: effectiveScope,
-              page: page,
-              limit: limit,
-            );
-          }
-
-          try {
-            final pageResult = await ref
-                .read(projectsRepositoryProvider)
-                .fetchProjectsPage(
-                  userId: session.user.id,
-                  role: session.user.role,
-                  scope: effectiveScope,
-                  page: page,
-                  limit: limit,
-                );
-            await _mergeProjectsIntoCache(ref, pageResult.items);
-            return pageResult;
-          } catch (error) {
-            if (!_isOfflineFeatureFetchError(error)) {
-              rethrow;
+      return bindRealtimePaginated(
+        ref,
+        realtimeScope,
+        PaginatedListController<ProjectSummary>(
+          loadPage: ({required page, required limit}) async {
+            final isOnline = await ref
+                .read(networkAvailabilityServiceProvider)
+                .isOnline();
+            if (!isOnline) {
+              return _localProjectsPageForScope(
+                ref,
+                session: session,
+                scope: effectiveScope,
+                page: page,
+                limit: limit,
+              );
             }
-            return _localProjectsPageForScope(
-              ref,
-              session: session,
-              scope: effectiveScope,
-              page: page,
-              limit: limit,
-            );
-          }
-        },
+
+            try {
+              final pageResult = await ref
+                  .read(projectsRepositoryProvider)
+                  .fetchProjectsPage(
+                    userId: session.user.id,
+                    role: session.user.role,
+                    scope: effectiveScope,
+                    page: page,
+                    limit: limit,
+                  );
+              await _mergeProjectsIntoCache(ref, pageResult.items);
+              return pageResult;
+            } catch (error) {
+              if (!_isOfflineFeatureFetchError(error)) {
+                rethrow;
+              }
+              return _localProjectsPageForScope(
+                ref,
+                session: session,
+                scope: effectiveScope,
+                page: page,
+                limit: limit,
+              );
+            }
+          },
+        ),
       );
     });
 
@@ -1202,60 +1308,64 @@ final paginatedProjectsProvider = StateNotifierProvider.autoDispose
         );
       }
 
-      ref.watch(workflowRefreshTickProvider);
+      const realtimeScope = RealtimeScope('projects', 'all');
       final effectiveScope = _effectiveProjectScopeForRole(
         role: session.user.role,
         requestedScope: query.scope,
       );
-      return PaginatedListController<ProjectSummary>(
-        loadPage: ({required page, required limit}) async {
-          final isOnline = await ref
-              .read(networkAvailabilityServiceProvider)
-              .isOnline();
-          if (!isOnline) {
-            return _localProjectsPageForScope(
-              ref,
-              session: session,
-              scope: effectiveScope,
-              query: query.query,
-              status: query.status,
-              categoryId: query.categoryId,
-              page: page,
-              limit: limit,
-            );
-          }
-
-          try {
-            final pageResult = await ref
-                .read(projectsRepositoryProvider)
-                .fetchProjectsPage(
-                  userId: session.user.id,
-                  role: session.user.role,
-                  scope: effectiveScope,
-                  query: query.query,
-                  status: query.status,
-                  categoryId: query.categoryId,
-                  page: page,
-                  limit: limit,
-                );
-            await _mergeProjectsIntoCache(ref, pageResult.items);
-            return pageResult;
-          } catch (error) {
-            if (!_isOfflineFeatureFetchError(error)) {
-              rethrow;
+      return bindRealtimePaginated(
+        ref,
+        realtimeScope,
+        PaginatedListController<ProjectSummary>(
+          loadPage: ({required page, required limit}) async {
+            final isOnline = await ref
+                .read(networkAvailabilityServiceProvider)
+                .isOnline();
+            if (!isOnline) {
+              return _localProjectsPageForScope(
+                ref,
+                session: session,
+                scope: effectiveScope,
+                query: query.query,
+                status: query.status,
+                categoryId: query.categoryId,
+                page: page,
+                limit: limit,
+              );
             }
-            return _localProjectsPageForScope(
-              ref,
-              session: session,
-              scope: effectiveScope,
-              query: query.query,
-              status: query.status,
-              categoryId: query.categoryId,
-              page: page,
-              limit: limit,
-            );
-          }
-        },
+
+            try {
+              final pageResult = await ref
+                  .read(projectsRepositoryProvider)
+                  .fetchProjectsPage(
+                    userId: session.user.id,
+                    role: session.user.role,
+                    scope: effectiveScope,
+                    query: query.query,
+                    status: query.status,
+                    categoryId: query.categoryId,
+                    page: page,
+                    limit: limit,
+                  );
+              await _mergeProjectsIntoCache(ref, pageResult.items);
+              return pageResult;
+            } catch (error) {
+              if (!_isOfflineFeatureFetchError(error)) {
+                rethrow;
+              }
+              return _localProjectsPageForScope(
+                ref,
+                session: session,
+                scope: effectiveScope,
+                query: query.query,
+                status: query.status,
+                categoryId: query.categoryId,
+                page: page,
+                limit: limit,
+              );
+            }
+          },
+        ),
       );
     });
 
@@ -1268,20 +1378,24 @@ final paginatedManagedUsersProvider = StateNotifierProvider.autoDispose
       ref.watch(
         authControllerProvider.select((state) => state.session?.user.id),
       );
-      ref.watch(workflowRefreshTickProvider);
-      return PaginatedListController<ManagedUserSummary>(
-        loadPage: ({required page, required limit}) {
-          return ref
-              .read(adminRepositoryProvider)
-              .fetchUsersPage(
-                query: query.query,
-                role: query.role,
-                state: query.state,
-                isActive: query.isActive,
-                page: page,
-                limit: limit,
-              );
-        },
+      const scope = RealtimeScope('users', 'all');
+      return bindRealtimePaginated(
+        ref,
+        scope,
+        PaginatedListController<ManagedUserSummary>(
+          loadPage: ({required page, required limit}) {
+            return ref
+                .read(adminRepositoryProvider)
+                .fetchUsersPage(
+                  query: query.query,
+                  role: query.role,
+                  state: query.state,
+                  isActive: query.isActive,
+                  page: page,
+                  limit: limit,
+                );
+          },
+        ),
       );
     });
 
@@ -1294,18 +1408,22 @@ final paginatedContributorRequestsProvider = StateNotifierProvider.autoDispose
       ref.watch(
         authControllerProvider.select((state) => state.session?.user.id),
       );
-      ref.watch(workflowRefreshTickProvider);
-      return PaginatedListController<ManagedUserSummary>(
-        loadPage: ({required page, required limit}) {
-          return ref
-              .read(adminRepositoryProvider)
-              .fetchContributorRequestsPage(
-                status: query.status,
-                query: query.query,
-                page: page,
-                limit: limit,
-              );
-        },
+      const scope = RealtimeScope('users', 'all');
+      return bindRealtimePaginated(
+        ref,
+        scope,
+        PaginatedListController<ManagedUserSummary>(
+          loadPage: ({required page, required limit}) {
+            return ref
+                .read(adminRepositoryProvider)
+                .fetchContributorRequestsPage(
+                  status: query.status,
+                  query: query.query,
+                  page: page,
+                  limit: limit,
+                );
+          },
+        ),
       );
     });
 
@@ -1318,18 +1436,22 @@ final paginatedManagedAssignmentsProvider = StateNotifierProvider.autoDispose
       ref.watch(
         authControllerProvider.select((state) => state.session?.user.id),
       );
-      ref.watch(workflowRefreshTickProvider);
-      return PaginatedListController<ManagedAssignmentSummary>(
-        loadPage: ({required page, required limit}) {
-          return ref
-              .read(adminRepositoryProvider)
-              .fetchManagedAssignmentsPage(
-                status: query.status,
-                query: query.query,
-                page: page,
-                limit: limit,
-              );
-        },
+      const scope = RealtimeScope('assignments', 'all');
+      return bindRealtimePaginated(
+        ref,
+        scope,
+        PaginatedListController<ManagedAssignmentSummary>(
+          loadPage: ({required page, required limit}) {
+            return ref
+                .read(adminRepositoryProvider)
+                .fetchManagedAssignmentsPage(
+                  status: query.status,
+                  query: query.query,
+                  page: page,
+                  limit: limit,
+                );
+          },
+        ),
       );
     });
 
@@ -1342,19 +1464,23 @@ final paginatedProjectAssignmentsProvider = StateNotifierProvider.autoDispose
       ref.watch(
         authControllerProvider.select((state) => state.session?.user.id),
       );
-      ref.watch(workflowRefreshTickProvider);
-      return PaginatedListController<ManagedAssignmentSummary>(
-        loadPage: ({required page, required limit}) {
-          return ref
-              .read(adminRepositoryProvider)
-              .fetchProjectAssignmentsPage(
-                projectId: query.projectId,
-                status: query.status,
-                query: query.query,
-                page: page,
-                limit: limit,
-              );
-        },
+      final scope = RealtimeScope('project', query.projectId);
+      return bindRealtimePaginated(
+        ref,
+        scope,
+        PaginatedListController<ManagedAssignmentSummary>(
+          loadPage: ({required page, required limit}) {
+            return ref
+                .read(adminRepositoryProvider)
+                .fetchProjectAssignmentsPage(
+                  projectId: query.projectId,
+                  status: query.status,
+                  query: query.query,
+                  page: page,
+                  limit: limit,
+                );
+          },
+        ),
       );
     });
 
@@ -1367,18 +1493,22 @@ final paginatedAvailableContributorsProvider = StateNotifierProvider.autoDispose
       ref.watch(
         authControllerProvider.select((state) => state.session?.user.id),
       );
-      ref.watch(workflowRefreshTickProvider);
-      return PaginatedListController<ManagedUserSummary>(
-        loadPage: ({required page, required limit}) {
-          return ref
-              .read(adminRepositoryProvider)
-              .fetchAvailableContributorsPage(
-                projectId: query.projectId,
-                query: query.query,
-                page: page,
-                limit: limit,
-              );
-        },
+      final scope = RealtimeScope('project', query.projectId);
+      return bindRealtimePaginated(
+        ref,
+        scope,
+        PaginatedListController<ManagedUserSummary>(
+          loadPage: ({required page, required limit}) {
+            return ref
+                .read(adminRepositoryProvider)
+                .fetchAvailableContributorsPage(
+                  projectId: query.projectId,
+                  query: query.query,
+                  page: page,
+                  limit: limit,
+                );
+          },
+        ),
       );
     });
 
@@ -1391,17 +1521,21 @@ final paginatedProjectCategoriesProvider = StateNotifierProvider.autoDispose
       ref.watch(
         authControllerProvider.select((state) => state.session?.user.id),
       );
-      ref.watch(workflowRefreshTickProvider);
-      return PaginatedListController<ProjectCategorySummary>(
-        loadPage: ({required page, required limit}) {
-          return ref
-              .read(adminRepositoryProvider)
-              .fetchCategoriesPage(
-                query: query.query,
-                page: page,
-                limit: limit,
-              );
-        },
+      const scope = RealtimeScope('categories', 'all');
+      return bindRealtimePaginated(
+        ref,
+        scope,
+        PaginatedListController<ProjectCategorySummary>(
+          loadPage: ({required page, required limit}) {
+            return ref
+                .read(adminRepositoryProvider)
+                .fetchCategoriesPage(
+                  query: query.query,
+                  page: page,
+                  limit: limit,
+                );
+          },
+        ),
       );
     });
 
@@ -1414,19 +1548,23 @@ final paginatedReviewQueueProvider = StateNotifierProvider.autoDispose
       ref.watch(
         authControllerProvider.select((state) => state.session?.user.id),
       );
-      ref.watch(workflowRefreshTickProvider);
-      return PaginatedListController<ReviewQueueItem>(
-        loadPage: ({required page, required limit}) {
-          return ref
-              .read(reviewRepositoryProvider)
-              .fetchReviewItemsPage(
-                status: query.status,
-                projectId: query.projectId,
-                search: query.search,
-                page: page,
-                limit: limit,
-              );
-        },
+      const scope = RealtimeScope('reviews', 'all');
+      return bindRealtimePaginated(
+        ref,
+        scope,
+        PaginatedListController<ReviewQueueItem>(
+          loadPage: ({required page, required limit}) {
+            return ref
+                .read(reviewRepositoryProvider)
+                .fetchReviewItemsPage(
+                  status: query.status,
+                  projectId: query.projectId,
+                  search: query.search,
+                  page: page,
+                  limit: limit,
+                );
+          },
+        ),
       );
     });
 
@@ -1465,21 +1603,25 @@ final paginatedExportJobsProvider = StateNotifierProvider.autoDispose
           autoLoad: false,
         );
       }
-      ref.watch(workflowRefreshTickProvider);
-      return PaginatedListController<ExportJob>(
-        loadPage: ({required page, required limit}) {
-          return ref
-              .read(exportsRepositoryProvider)
-              .fetchJobsPage(
-                requestedByUserId: session.user.id,
-                categoryId: query.categoryId,
-                projectId: query.projectId,
-                status: query.status,
-                format: query.format,
-                page: page,
-                limit: limit,
-              );
-        },
+      final scope = RealtimeScope('exports', session.user.id);
+      return bindRealtimePaginated(
+        ref,
+        scope,
+        PaginatedListController<ExportJob>(
+          loadPage: ({required page, required limit}) {
+            return ref
+                .read(exportsRepositoryProvider)
+                .fetchJobsPage(
+                  requestedByUserId: session.user.id,
+                  categoryId: query.categoryId,
+                  projectId: query.projectId,
+                  status: query.status,
+                  format: query.format,
+                  page: page,
+                  limit: limit,
+                );
+          },
+        ),
       );
     });
 
@@ -1499,7 +1641,7 @@ final exportJobsSummaryProvider =
           expired: 0,
         );
       }
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('exports', session.user.id));
       return ref
           .read(exportsRepositoryProvider)
           .fetchSummary(
@@ -1549,7 +1691,7 @@ final adminDashboardProvider = FutureProvider<AdminDashboardSummary>((
   ref,
 ) async {
   ref.watch(authControllerProvider.select((state) => state.session?.user.id));
-  ref.watch(workflowRefreshTickProvider);
+  watchRealtimeScope(ref, const RealtimeScope('users', 'all'));
   return ref.read(adminRepositoryProvider).fetchDashboardSummary();
 });
 
@@ -1561,7 +1703,7 @@ final contributorRequestsProvider =
       ref.watch(
         authControllerProvider.select((state) => state.session?.user.id),
       );
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, const RealtimeScope('users', 'all'));
       return ref
           .read(adminRepositoryProvider)
           .fetchContributorRequests(status: status);
@@ -1571,7 +1713,7 @@ final managedUsersProvider = FutureProvider<List<ManagedUserSummary>>((
   ref,
 ) async {
   ref.watch(authControllerProvider.select((state) => state.session?.user.id));
-  ref.watch(workflowRefreshTickProvider);
+  watchRealtimeScope(ref, const RealtimeScope('users', 'all'));
   return ref.read(adminRepositoryProvider).fetchUsers();
 });
 
@@ -1580,7 +1722,7 @@ final managedAssignmentsProvider =
       ref.watch(
         authControllerProvider.select((state) => state.session?.user.id),
       );
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, const RealtimeScope('assignments', 'all'));
       return ref.read(adminRepositoryProvider).fetchManagedAssignments();
     });
 
@@ -1588,7 +1730,7 @@ final projectCategoriesProvider = FutureProvider<List<ProjectCategorySummary>>((
   ref,
 ) async {
   ref.watch(authControllerProvider.select((state) => state.session?.user.id));
-  ref.watch(workflowRefreshTickProvider);
+  watchRealtimeScope(ref, const RealtimeScope('categories', 'all'));
   return ref.read(adminRepositoryProvider).fetchCategories();
 });
 
@@ -1600,7 +1742,7 @@ final projectAssignmentsProvider =
       ref.watch(
         authControllerProvider.select((state) => state.session?.user.id),
       );
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('project', projectId));
       return ref
           .read(adminRepositoryProvider)
           .fetchProjectAssignments(projectId);
@@ -1610,13 +1752,13 @@ final supportSettingsProvider = FutureProvider<SupportContactSettings>((
   ref,
 ) async {
   ref.watch(authControllerProvider.select((state) => state.session?.user.id));
-  ref.watch(workflowRefreshTickProvider);
+  watchRealtimeScope(ref, const RealtimeScope('settings', 'support'));
   return ref.read(adminRepositoryProvider).fetchSupportSettings();
 });
 
 final reviewQueueProvider = FutureProvider<List<ReviewQueueItem>>((ref) async {
   ref.watch(authControllerProvider.select((state) => state.session?.user.id));
-  ref.watch(workflowRefreshTickProvider);
+  watchRealtimeScope(ref, const RealtimeScope('reviews', 'all'));
   return ref
       .read(reviewRepositoryProvider)
       .fetchReviewItems(status: 'pending_review');
@@ -1626,7 +1768,7 @@ final rejectedReviewQueueProvider = FutureProvider<List<ReviewQueueItem>>((
   ref,
 ) async {
   ref.watch(authControllerProvider.select((state) => state.session?.user.id));
-  ref.watch(workflowRefreshTickProvider);
+  watchRealtimeScope(ref, const RealtimeScope('reviews', 'all'));
   return ref
       .read(reviewRepositoryProvider)
       .fetchReviewItems(status: 'rejected');
@@ -1640,7 +1782,7 @@ final projectReviewQueueProvider =
       ref.watch(
         authControllerProvider.select((state) => state.session?.user.id),
       );
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('reviews', projectId));
       if (projectId.trim().isEmpty) {
         return const <ReviewQueueItem>[];
       }
@@ -1657,7 +1799,7 @@ final projectRejectedReviewQueueProvider =
       ref.watch(
         authControllerProvider.select((state) => state.session?.user.id),
       );
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('reviews', projectId));
       if (projectId.trim().isEmpty) {
         return const <ReviewQueueItem>[];
       }
@@ -1674,7 +1816,7 @@ final projectApprovedReviewQueueProvider =
       ref.watch(
         authControllerProvider.select((state) => state.session?.user.id),
       );
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('reviews', projectId));
       if (projectId.trim().isEmpty) {
         return const <ReviewQueueItem>[];
       }

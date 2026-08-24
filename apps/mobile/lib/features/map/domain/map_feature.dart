@@ -38,6 +38,7 @@ class MapFeatureSummary {
     this.isSummary = false,
     this.isAggregate = false,
     this.clusterCount = 1,
+    this.version = 1,
   });
 
   final String id;
@@ -58,6 +59,7 @@ class MapFeatureSummary {
   final bool isSummary;
   final bool isAggregate;
   final int clusterCount;
+  final int version;
 }
 
 class ProjectFeatureIdentity {

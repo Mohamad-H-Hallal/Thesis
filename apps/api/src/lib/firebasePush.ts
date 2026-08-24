@@ -16,6 +16,7 @@ type PushNotificationMessage = {
   title: string;
   message: string;
   notificationId: string;
+  showSensitivePreview?: boolean;
 };
 
 class PushDeliveryError extends Error {
@@ -177,6 +178,44 @@ const extractPushErrorCode = (payload: unknown, status: number): string => {
   return 'messaging/unknown-error';
 };
 
+const buildFirebaseMessage = (payload: PushNotificationMessage) => {
+  const showSensitivePreview = payload.showSensitivePreview === true;
+  return {
+    message: {
+      token: payload.token,
+      notification: {
+        title: showSensitivePreview ? payload.title : 'TerraLeb',
+        body: showSensitivePreview
+          ? payload.message
+          : 'You have a new TerraLeb notification. Open the app to view it securely.',
+      },
+      data: {
+        notificationId: payload.notificationId,
+        route: '/app/notifications',
+        previewMode: showSensitivePreview ? 'detailed' : 'private',
+        ...(showSensitivePreview ? { title: payload.title, message: payload.message } : {}),
+      },
+      android: {
+        priority: 'high',
+        notification: {
+          channelId: 'fieldops_alerts',
+          clickAction: 'FLUTTER_NOTIFICATION_CLICK',
+        },
+      },
+      apns: {
+        headers: {
+          'apns-priority': '10',
+        },
+        payload: {
+          aps: {
+            sound: 'default',
+          },
+        },
+      },
+    },
+  };
+};
+
 const sendPushNotification = async (
   platform: PushPlatform,
   payload: PushNotificationMessage,
@@ -216,38 +255,7 @@ const sendPushNotification = async (
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        message: {
-          token: payload.token,
-          notification: {
-            title: payload.title,
-            body: payload.message,
-          },
-          data: {
-            notificationId: payload.notificationId,
-            route: '/app/notifications',
-            title: payload.title,
-            message: payload.message,
-          },
-          android: {
-            priority: 'high',
-            notification: {
-              channelId: 'fieldops_alerts',
-              clickAction: 'FLUTTER_NOTIFICATION_CLICK',
-            },
-          },
-          apns: {
-            headers: {
-              'apns-priority': '10',
-            },
-            payload: {
-              aps: {
-                sound: 'default',
-              },
-            },
-          },
-        },
-      }),
+      body: JSON.stringify(buildFirebaseMessage(payload)),
     },
   );
 
@@ -284,4 +292,5 @@ export {
   sendPushNotification,
   isPlatformPushEnabled,
   isPushDeliveryConfigured,
+  buildFirebaseMessage,
 };

@@ -3,6 +3,68 @@ const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
 import { createNotification, getActiveAdminUsers } from '../lib/userWorkflow';
 import { synchronizeProjectStatuses } from '../lib/projectLifecycle';
+import { publishRealtimeChanges } from '../realtime/realtimeEvents';
+import type { RealtimePublishInput } from '../realtime/realtimeProtocol';
+
+const assignmentRealtimeInputs = ({
+  assignmentId,
+  projectId,
+  userId,
+  action,
+  originSessionId,
+  notifyUser = true,
+}: {
+  assignmentId: string;
+  projectId: string;
+  userId: string;
+  action: string;
+  originSessionId?: string | null;
+  notifyUser?: boolean;
+}): RealtimePublishInput[] => [
+  {
+    scopeType: 'assignments',
+    scopeId: 'all',
+    action,
+    entityType: 'assignment',
+    entityId: assignmentId,
+    projectId,
+    originSessionId,
+    audience: { kind: 'admins' },
+  },
+  {
+    scopeType: 'assignments',
+    scopeId: userId,
+    action,
+    entityType: 'assignment',
+    entityId: assignmentId,
+    projectId,
+    originSessionId,
+    audience: { kind: 'user', userId },
+  },
+  {
+    scopeType: 'project',
+    scopeId: projectId,
+    action: 'assignment_changed',
+    entityType: 'assignment',
+    entityId: assignmentId,
+    projectId,
+    originSessionId,
+    audience: { kind: 'project', projectId, access: 'readers' },
+  },
+  ...(notifyUser
+    ? [
+        {
+          scopeType: 'notifications',
+          scopeId: userId,
+          action: 'created',
+          entityType: 'notification',
+          projectId,
+          originSessionId,
+          audience: { kind: 'user' as const, userId },
+        },
+      ]
+    : []),
+];
 
 const getProjectOrFail = async (projectId: string) => {
   await synchronizeProjectStatuses(projectId);
@@ -57,7 +119,9 @@ const getContributorOrFail = async (userId: string) => {
 
 const loadAssignmentOrFail = async (assignmentId: string) => {
   const assignmentResult = await query(
-    `SELECT pa.*, p.name AS project_name, p.status AS project_status, u.full_name, u.email, u.phone
+    `SELECT pa.*, p.name AS project_name, p.status AS project_status,
+            COALESCE(u.full_name, u.masked_contributor_label, 'Former contributor') AS full_name,
+            u.email, u.phone
      FROM project_assignment pa
      JOIN project p ON p.id = pa.project_id
      JOIN "user" u ON u.id = pa.user_id
@@ -184,7 +248,7 @@ const getProjectAssignments = async (req, res) => {
         WHEN 'pending' THEN 1
         ELSE 2
       END,
-      u.full_name ASC,
+      COALESCE(u.full_name, u.masked_contributor_label, 'Former contributor') ASC,
       pa.created_at DESC
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
   params.push(limit, offset);
@@ -305,7 +369,7 @@ const getAvailableContributorsForProject = async (req, res) => {
     paramIndex += 1;
   }
 
-  queryText += ` ORDER BY u.full_name ASC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+  queryText += ` ORDER BY COALESCE(u.full_name, u.masked_contributor_label, 'Former contributor') ASC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
   params.push(limit, offset);
 
   const result = await query(queryText, params);
@@ -436,6 +500,17 @@ const createAssignment = async (req, res) => {
         assignment_status: 'approved',
       },
     });
+
+    await publishRealtimeChanges(
+      assignmentRealtimeInputs({
+        assignmentId: row.id,
+        projectId: project_id,
+        userId: user_id,
+        action: 'approved',
+        originSessionId: req.authSessionId,
+      }),
+      client,
+    );
 
     return row;
   });
@@ -634,6 +709,28 @@ const requestJoinProject = async (req, res) => {
       },
     });
 
+    await publishRealtimeChanges(
+      [
+        ...assignmentRealtimeInputs({
+          assignmentId: result.rows[0].id,
+          projectId,
+          userId: req.user.id,
+          action: 'requested',
+          originSessionId: req.authSessionId,
+        }),
+        ...admins.map((admin) => ({
+          scopeType: 'notifications',
+          scopeId: admin.id,
+          action: 'created',
+          entityType: 'notification',
+          projectId,
+          originSessionId: req.authSessionId,
+          audience: { kind: 'user' as const, userId: admin.id },
+        })),
+      ],
+      client,
+    );
+
     return result.rows[0];
   });
 
@@ -677,7 +774,20 @@ const cancelJoinProjectRequest = async (req, res) => {
     throw new AppError('Only pending project access requests can be cancelled.', 409);
   }
 
-  await query('DELETE FROM project_assignment WHERE id = $1', [assignment.id]);
+  await transaction(async (client) => {
+    await client.query('DELETE FROM project_assignment WHERE id = $1', [assignment.id]);
+    await publishRealtimeChanges(
+      assignmentRealtimeInputs({
+        assignmentId: assignment.id,
+        projectId,
+        userId: req.user.id,
+        action: 'request_cancelled',
+        originSessionId: req.authSessionId,
+        notifyUser: false,
+      }),
+      client,
+    );
+  });
 
   logger.info('Contributor project access request cancelled', {
     assignmentId: assignment.id,
@@ -752,6 +862,17 @@ const updateAssignmentStatus = async (req, res) => {
       },
     });
 
+    await publishRealtimeChanges(
+      assignmentRealtimeInputs({
+        assignmentId,
+        projectId: existingAssignment.project_id,
+        userId: existingAssignment.user_id,
+        action: status,
+        originSessionId: req.authSessionId,
+      }),
+      client,
+    );
+
     return result.rows[0];
   });
 
@@ -795,6 +916,17 @@ const removeAssignment = async (req, res) => {
         assignment_status: 'removed',
       },
     });
+
+    await publishRealtimeChanges(
+      assignmentRealtimeInputs({
+        assignmentId,
+        projectId: assignment.project_id,
+        userId: assignment.user_id,
+        action: 'removed',
+        originSessionId: req.authSessionId,
+      }),
+      client,
+    );
   });
 
   logger.info('Contributor unassigned from project', {

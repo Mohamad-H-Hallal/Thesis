@@ -58,6 +58,7 @@ class _MemorySecureStorage extends FlutterSecureStorage {
 
 enum _RefreshMode {
   success,
+  deletedAccount,
   inactiveAccount,
   invalidRefreshToken,
   unstructuredForbidden,
@@ -159,6 +160,20 @@ class _RefreshAdapter implements HttpClientAdapter {
       featureAttempts += 1;
       featureHeaders.add(Map<String, dynamic>.from(options.headers));
       featureBodies.add(requestBytes.takeBytes());
+      if (refreshMode == _RefreshMode.deletedAccount) {
+        return ResponseBody.fromString(
+          jsonEncode(const <String, dynamic>{
+            'message': 'Account was deleted.',
+            'error': <String, dynamic>{
+              'code': 'ACCOUNT_DELETED',
+              'disposition': 'permanent_rejection',
+              'retryable': false,
+            },
+          }),
+          401,
+          headers: responseHeaders,
+        );
+      }
       final expired =
           options.headers['Authorization'] == 'Bearer expired-access';
       return ResponseBody.fromString(
@@ -353,6 +368,39 @@ void main() {
       expect(adapter.featureAttempts, 1);
       expect(adapter.refreshAttempts, 1);
       expect(await storage.read(key: 'refresh_token'), isNull);
+    },
+  );
+
+  test(
+    'deleted-account response clears only the bound session and runs cleanup once',
+    () async {
+      final storage = _MemorySecureStorage();
+      final adapter = _RefreshAdapter(refreshMode: _RefreshMode.deletedAccount);
+      final dio = Dio()..httpClientAdapter = adapter;
+      final client = ApiClient(dio: dio, storage: storage);
+      final cleanedOwners = <String>[];
+      client.onAccountDeleted = (owner) async => cleanedOwners.add(owner);
+      await client.establishAuthenticatedSession(
+        accessToken: 'deleted-access',
+        refreshToken: 'deleted-refresh',
+        ownerUserId: 'deleted-owner',
+        persistTokens: true,
+      );
+
+      for (var attempt = 0; attempt < 2; attempt += 1) {
+        await expectLater(
+          client.dio.get<Map<String, dynamic>>(
+            '${AppEnv.apiVersionPrefix}/features',
+          ),
+          throwsA(isA<DioException>()),
+        );
+      }
+
+      expect(cleanedOwners, <String>['deleted-owner']);
+      expect(client.currentSessionBinding, isNull);
+      expect(await storage.read(key: 'access_token'), isNull);
+      expect(await storage.read(key: 'refresh_token'), isNull);
+      expect(adapter.refreshAttempts, 0);
     },
   );
 

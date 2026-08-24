@@ -131,3 +131,51 @@ groups:
           severity: critical
         annotations:
           summary: No verified database backup has been reported in 26 hours
+
+      - alert: GisRealtimeListenerUnavailable
+        expr: gis_api_realtime_listener_ready == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: PostgreSQL realtime event listener is unavailable
+
+      - alert: GisRealtimeAuthenticationFailures
+        expr: rate(gis_api_realtime_authentication_failures_total[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Realtime authentication failures are elevated
+
+      - alert: GisRealtimeSlowClients
+        expr: rate(gis_api_realtime_slow_client_closures_total[5m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Realtime clients are being disconnected for backpressure
+
+      - alert: GisRealtimeEventDrops
+        expr: rate(gis_api_realtime_events_dropped_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Realtime invalidation events are being dropped
+
+      - alert: GisRealtimeReconnectStorm
+        expr: rate(gis_api_realtime_reconnects_total[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Realtime clients are reconnecting at an abnormal rate
+
+      - alert: GisRealtimeBufferedSocketsHigh
+        expr: gis_api_realtime_buffered_sockets > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Too many realtime sockets have queued outbound data

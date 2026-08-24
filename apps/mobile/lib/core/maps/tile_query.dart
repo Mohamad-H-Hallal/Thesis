@@ -1,11 +1,7 @@
 import 'dart:math' as math;
 
 class GeoTileQuery {
-  const GeoTileQuery({
-    required this.z,
-    required this.x,
-    required this.y,
-  });
+  const GeoTileQuery({required this.z, required this.x, required this.y});
 
   final int z;
   final int x;

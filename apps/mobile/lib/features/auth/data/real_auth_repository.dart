@@ -24,6 +24,7 @@ class RealAuthRepository implements AuthRepository, AuthTokenRotationSource {
   static const _userIdKey = 'user_id';
   static const _phoneKey = 'user_phone';
   static const _superAdminKey = 'is_protected_super_admin';
+  static const _legalAcceptanceRequiredKey = 'legal_acceptance_required';
   RotatedAuthTokens? _rotatedAuthTokens;
   String get _authBasePath => '${AppEnv.apiVersionPrefix}/auth';
   Options get _publicAuthRequestOptions =>
@@ -51,6 +52,12 @@ class RealAuthRepository implements AuthRepository, AuthTokenRotationSource {
       final user = _parseUserFromMeResponse(
         meResponse.data ?? const <String, dynamic>{},
       );
+      final legalAcceptanceRequired =
+          (Map<String, dynamic>.from(
+                meResponse.data?['data'] as Map? ?? const <String, dynamic>{},
+              )['legal_acceptance_required']
+              as bool?) ??
+          false;
       var binding = _apiClient.currentSessionBinding;
       if (binding == null) {
         throw const AuthFailure('Authentication session expired.');
@@ -63,11 +70,15 @@ class RealAuthRepository implements AuthRepository, AuthTokenRotationSource {
         );
         binding = _apiClient.currentSessionBinding;
       }
-      await _persistUserMetadata(user);
+      await _persistUserMetadata(
+        user,
+        legalAcceptanceRequired: legalAcceptanceRequired,
+      );
       return AuthSession(
         accessToken: binding?.accessToken ?? access,
         refreshToken: binding?.refreshToken ?? refresh,
         user: user,
+        legalAcceptanceRequired: legalAcceptanceRequired,
       );
     } on DioException catch (error) {
       if (error.response?.statusCode == 401) {
@@ -87,6 +98,8 @@ class RealAuthRepository implements AuthRepository, AuthTokenRotationSource {
               accessToken: binding?.accessToken ?? access,
               refreshToken: binding?.refreshToken ?? refresh,
               user: fallbackUser,
+              legalAcceptanceRequired:
+                  await _readStoredLegalAcceptanceRequired(),
             );
           }
 
@@ -108,6 +121,7 @@ class RealAuthRepository implements AuthRepository, AuthTokenRotationSource {
         accessToken: binding?.accessToken ?? access,
         refreshToken: binding?.refreshToken ?? refresh,
         user: fallbackUser,
+        legalAcceptanceRequired: await _readStoredLegalAcceptanceRequired(),
       );
     }
   }
@@ -169,11 +183,13 @@ class RealAuthRepository implements AuthRepository, AuthTokenRotationSource {
     String? phone,
   }) async {
     try {
+      final legalAcceptances = await _currentMandatorySignupAcceptances();
       final payload = <String, dynamic>{
         'full_name': fullName,
         'email': email,
         'password': password,
         'role': role.name,
+        'legal_acceptances': legalAcceptances,
       };
       final normalizedPhone = phone?.trim() ?? '';
       if (normalizedPhone.isNotEmpty) {
@@ -194,6 +210,49 @@ class RealAuthRepository implements AuthRepository, AuthTokenRotationSource {
     } on DioException catch (error) {
       throw mapAuthDioException(error, fallbackMessage: 'Signup failed.');
     }
+  }
+
+  Future<List<Map<String, dynamic>>>
+  _currentMandatorySignupAcceptances() async {
+    final response = await _apiClient.dio.get<Map<String, dynamic>>(
+      '${AppEnv.apiVersionPrefix}/legal/documents',
+      queryParameters: const <String, dynamic>{
+        'format': 'json',
+        'locale': 'en',
+      },
+      options: _publicAuthRequestOptions,
+    );
+    final data = Map<String, dynamic>.from(
+      response.data?['data'] as Map? ?? const <String, dynamic>{},
+    );
+    final mandatoryTypes =
+        (data['mandatory_acceptance_types'] as List? ?? const <dynamic>[])
+            .whereType<String>()
+            .toSet();
+    final documents = (data['documents'] as List? ?? const <dynamic>[])
+        .whereType<Map>()
+        .map((document) => Map<String, dynamic>.from(document))
+        .where((document) => mandatoryTypes.contains(document['type']))
+        .map(
+          (document) => <String, dynamic>{
+            'document_type': document['type'],
+            'version': document['version'],
+            'locale': document['locale'],
+            'affirmative': true,
+          },
+        )
+        .toList(growable: false);
+    if (!mandatoryTypes.containsAll(const <String>{
+          'terms',
+          'acceptable_use',
+        }) ||
+        documents.length != mandatoryTypes.length) {
+      throw const AuthFailure(
+        'Registration is temporarily unavailable because the current Terms of Use are unavailable.',
+        code: 'legal_documents_not_ready',
+      );
+    }
+    return documents;
   }
 
   @override
@@ -396,7 +455,10 @@ class RealAuthRepository implements AuthRepository, AuthTokenRotationSource {
     }
   }
 
-  Future<void> _persistUserMetadata(AppUser user) async {
+  Future<void> _persistUserMetadata(
+    AppUser user, {
+    bool? legalAcceptanceRequired,
+  }) async {
     await _storage.write(key: _userIdKey, value: user.id);
     await _storage.write(key: _nameKey, value: user.fullName);
     await _storage.write(key: _emailKey, value: user.email);
@@ -406,7 +468,16 @@ class RealAuthRepository implements AuthRepository, AuthTokenRotationSource {
       key: _superAdminKey,
       value: user.isProtectedSuperAdmin.toString(),
     );
+    if (legalAcceptanceRequired != null) {
+      await _storage.write(
+        key: _legalAcceptanceRequiredKey,
+        value: legalAcceptanceRequired.toString(),
+      );
+    }
   }
+
+  Future<bool> _readStoredLegalAcceptanceRequired() async =>
+      await _storage.read(key: _legalAcceptanceRequiredKey) == 'true';
 
   bool _isContactVerificationRequired(DioException error) {
     final payload = error.response?.data;
@@ -460,6 +531,7 @@ class RealAuthRepository implements AuthRepository, AuthTokenRotationSource {
     await _storage.delete(key: _phoneKey);
     await _storage.delete(key: _userIdKey);
     await _storage.delete(key: _superAdminKey);
+    await _storage.delete(key: _legalAcceptanceRequiredKey);
   }
 
   Future<void> _bestEffortUnregisterPushDevice(
@@ -573,6 +645,7 @@ class RealAuthRepository implements AuthRepository, AuthTokenRotationSource {
       data['user'] as Map? ?? const <String, dynamic>{},
     );
     final user = _parseUser(userMap);
+    final legalAcceptanceRequired = data['legal_acceptance_required'] == true;
 
     if (accessToken.isEmpty || refreshToken.isEmpty) {
       throw const AuthFailure('Authentication response is missing tokens.');
@@ -586,7 +659,10 @@ class RealAuthRepository implements AuthRepository, AuthTokenRotationSource {
     );
 
     if (rememberMe) {
-      await _persistUserMetadata(user);
+      await _persistUserMetadata(
+        user,
+        legalAcceptanceRequired: legalAcceptanceRequired,
+      );
     } else {
       await _clearStoredSession();
     }
@@ -595,6 +671,7 @@ class RealAuthRepository implements AuthRepository, AuthTokenRotationSource {
       accessToken: accessToken,
       refreshToken: refreshToken,
       user: user,
+      legalAcceptanceRequired: legalAcceptanceRequired,
     );
   }
 }

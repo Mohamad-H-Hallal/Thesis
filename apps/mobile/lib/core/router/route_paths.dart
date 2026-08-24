@@ -11,14 +11,22 @@ class AppRoutes {
   static const login = '/login';
   static const signup = '/signup';
   static const verifyContact = '/verify-contact';
+  static String contactVerification({required bool fromLogin}) => Uri(
+    path: verifyContact,
+    queryParameters: <String, String>{'source': fromLogin ? 'login' : 'signup'},
+  ).toString();
   static const forgotPassword = '/forgot-password';
   static const resetPassword = '/reset-password';
+  static const privacyCenter = '/app/privacy';
+  static const legalAcceptance = '/legal-acceptance';
+  static String legalDocument(String slug) => '/legal/$slug';
 
   static const app = '/app';
   static const dashboard = '/app/dashboard';
   static const users = '/app/users';
   static const categories = '/app/categories';
   static const adminCreation = '/app/admin-create';
+  static const privacyModeration = '/app/privacy-moderation';
   static const contributorRequests = '/app/contributor-requests';
   static const projects = '/app/projects';
   static const assignedProjects = '/app/assigned-projects';

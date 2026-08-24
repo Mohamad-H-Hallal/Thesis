@@ -213,7 +213,7 @@ class _ReviewQueueScreenState extends ConsumerState<ReviewQueueScreen> {
             status: status,
             reviewNotes: note.trim().isEmpty ? null : note.trim(),
           );
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, const RealtimeScope('reviews', 'all'));
       if (context.mounted) {
         AppSnackbar.showSuccess(
           context,

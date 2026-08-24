@@ -20,10 +20,11 @@ abstract class FeatureWorkflowRepository {
     required bool collectedOffline,
   });
 
-  Future<void> updateDraft({
+  Future<int> updateDraft({
     required String featureId,
     required Map<String, dynamic> geometry,
     required Map<String, dynamic> attributes,
+    required int expectedVersion,
   });
 
   Future<void> deleteDraft(String featureId);

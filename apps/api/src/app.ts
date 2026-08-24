@@ -19,6 +19,8 @@ import { broadcastWorkflowMutations } from './middleware/workflowBroadcast';
 import { offlineSyncIngressRateLimit } from './middleware/offlineSyncRateLimit';
 import { categoryIconsDir } from './config/upload';
 import { privateMediaRouter } from './routes/privateMedia.routes';
+import { legalApiRouter, publicLegalRouter } from './routes/legal.routes';
+import { privacyRouter } from './routes/privacy.routes';
 import { loadOpenApiDocument, openApiYamlPath } from './docs/openapi';
 import {
   configureRateLimitBackend,
@@ -205,6 +207,9 @@ const buildApp = (env) => {
     }),
   );
   app.use('/uploads', privateMediaRouter);
+  // Legal pages are intentionally public and mounted outside the versioned API
+  // so store listings and account-deletion links remain stable across API versions.
+  app.use('/legal', publicLegalRouter);
 
   if (env.NODE_ENV === 'development') {
     app.use(morgan('dev'));
@@ -221,6 +226,7 @@ const buildApp = (env) => {
     skip: (req) => Boolean(req.headers.authorization),
   });
   for (const prefix of apiPrefixes) {
+    app.use(`${prefix}/legal`, legalApiRouter);
     app.use(`${prefix}/`, limiter);
   }
 
@@ -287,6 +293,8 @@ const buildApp = (env) => {
         notifications: `${normalizedApiPrefix}/notifications`,
         offlineMap: `${normalizedApiPrefix}/offline-map`,
         settings: `${normalizedApiPrefix}/settings`,
+        legal: `${normalizedApiPrefix}/legal`,
+        privacy: `${normalizedApiPrefix}/privacy`,
         users: `${normalizedApiPrefix}/users (admin only)`,
       },
       documentation: env.API_DOCS_ENABLED ? '/docs/' : 'disabled',
@@ -307,6 +315,7 @@ const buildApp = (env) => {
     app.use(`${prefix}/exports`, exportRoutes);
     app.use(`${prefix}/ai`, aiRoutes);
     app.use(`${prefix}/me`, meRoutes);
+    app.use(`${prefix}/privacy`, privacyRouter);
     app.use(`${prefix}/assignments`, assignmentRouter);
     app.use(`${prefix}/photos`, photoRouter);
     app.use(`${prefix}/categories`, categoryRouter);

@@ -2239,6 +2239,28 @@ class SqliteLocalStore
     return discardedCount;
   }
 
+  @override
+  Future<void> purgeAccountData(String ownerUserId) async {
+    if (ownerUserId.trim().isEmpty) {
+      throw ArgumentError.value(ownerUserId, 'ownerUserId');
+    }
+    await discardRejectedSyncItemsForOwner(ownerUserId);
+    final db = await _database;
+    await db.transaction((txn) async {
+      for (final table in <String>[
+        'projects_cache',
+        'offline_map_packages',
+        'offline_project_packages',
+      ]) {
+        await txn.delete(
+          table,
+          where: 'owner_user_id = ?',
+          whereArgs: <Object?>[ownerUserId],
+        );
+      }
+    });
+  }
+
   Future<void> _removeProjectDraftBundle(
     Database db, {
     required String ownerUserId,

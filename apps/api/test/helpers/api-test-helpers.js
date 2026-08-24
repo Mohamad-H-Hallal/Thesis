@@ -146,6 +146,7 @@ const resetDb = async () => {
 
   await pool.query(`
     TRUNCATE TABLE
+      realtime_scope_revision,
       contact_verification_audit_event,
       contact_verification_challenge,
       workload_job,

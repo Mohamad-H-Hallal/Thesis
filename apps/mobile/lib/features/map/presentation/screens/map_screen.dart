@@ -45,6 +45,7 @@ import '../../domain/map_feature.dart';
 import '../../domain/map_geometry.dart';
 import 'add_feature_screen.dart';
 import '../widgets/feature_photo_gallery.dart';
+import '../widgets/basemap_attribution.dart';
 
 enum _OfflineMapAction { downloadProject, refreshResources, deleteProject }
 
@@ -1362,7 +1363,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     OutlinedButton.icon(
                       onPressed: () {
                         _lastViewportFeatures = null;
-                        bumpWorkflowRefresh(ref);
+                        bumpRealtimeScope(
+                          ref,
+                          RealtimeScope('features', project.id),
+                        );
                       },
                       icon: const Icon(Icons.refresh),
                       label: const Text('Refresh'),
@@ -1626,7 +1630,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           'Unable to load project features right now. Please try again.',
                     ),
                     actionLabel: 'Retry',
-                    onAction: () => bumpWorkflowRefresh(ref),
+                    onAction: () => bumpRealtimeScope(
+                      ref,
+                      RealtimeScope('features', project.id),
+                    ),
                   ),
             data: buildLoadedWorkspace,
           );
@@ -2046,12 +2053,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
     final suppressFloatingToolsForSearch =
         _projectMapSearchOpen || keyboardVisible;
-    final addFeatureBottom = _isProjectMapCaptureMode ? 102.0 : 18.0;
+    final addFeatureBottom = _isProjectMapCaptureMode ? 102.0 : 48.0;
     final rightRailBottom = _isProjectMapCaptureMode
         ? 188.0
         : hasCollectionAccess
         ? addFeatureBottom + 68
-        : 22.0;
+        : 50.0;
 
     return Stack(
       children: [
@@ -2697,6 +2704,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   canReview: canReviewAiValidation,
                 ),
               ),
+            BasemapAttribution(
+              style: effectiveBasemapStyle,
+              bottomInset: _isProjectMapCaptureMode ? 92 : 0,
+            ),
           ],
         );
       },
@@ -2884,6 +2895,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           canReview: canReviewAiValidation,
                         ),
                       ),
+                    BasemapAttribution(style: effectiveBasemapStyle),
                   ],
                 ),
               );
@@ -3036,7 +3048,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           ),
           Positioned(
             right: 12,
-            bottom: 12,
+            bottom: 46,
             child: Column(
               children: [
                 FloatingActionButton.small(
@@ -3695,7 +3707,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         return;
       }
       final summary = result.tileSummary;
-      final tileMessage = summary == null
+      final tileMessage = result.baseMapUnavailableReason != null
+          ? '${result.baseMapUnavailableReason} Project forms and existing offline work remain available.'
+          : summary == null
           ? 'Shared Satellite base map is already up to date.'
           : '${summary.downloadedTiles} new satellite map image(s), ${summary.skippedTiles} already available${summary.failedTiles > 0 ? ', ${summary.failedTiles} failed' : ''}.';
       final projectMessage = result.projectPackageChanged
@@ -4013,7 +4027,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             status: status,
             reviewNotes: note.trim().isEmpty ? null : note.trim(),
           );
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('reviews', feature.projectId));
       if (mounted) {
         onSuccess?.call();
         AppSnackbar.showSuccess(
@@ -4091,7 +4105,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             .read(featureWorkflowRepositoryProvider)
             .submitForReview(feature.id);
       }
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('features', project.id));
       if (mounted) {
         onSuccess?.call();
         AppSnackbar.showSuccess(
@@ -4170,7 +4184,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             .read(featureWorkflowRepositoryProvider)
             .deleteDraft(feature.id);
       }
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('features', project.id));
       if (mounted) {
         onSuccess?.call();
         AppSnackbar.showSuccess(context, 'Draft deleted successfully.');
@@ -6548,7 +6562,7 @@ class _AiPredictionValidationDialogState
             Padding(
               padding: const EdgeInsets.all(AppSpacing.md),
               child: Align(
-                alignment: Alignment.centerRight,
+                alignment: Alignment.center,
                 child: AppDialogActions(
                   cancel: TextButton(
                     onPressed: _submitting
@@ -6608,7 +6622,13 @@ class _AiPredictionValidationDialogState
             note: _noteController.text.trim(),
             photoMediaIds: photoMediaIds,
           );
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(
+        ref,
+        RealtimeScope(
+          'ai',
+          prediction.projectId ?? widget.details.layer.projectId ?? '',
+        ),
+      );
       if (mounted) {
         AppSnackbar.showSuccess(context, 'AI validation submitted.');
         Navigator.of(context).pop();
@@ -6820,7 +6840,13 @@ class _AiPredictionAdminReviewDialogState
             approvedClass: _status == 'approved' ? approvedClass : null,
             adminNote: _noteController.text.trim(),
           );
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(
+        ref,
+        RealtimeScope(
+          'ai',
+          prediction.projectId ?? widget.details.layer.projectId ?? '',
+        ),
+      );
       if (mounted) {
         AppSnackbar.showSuccess(context, 'AI prediction review saved.');
         Navigator.of(context).pop();

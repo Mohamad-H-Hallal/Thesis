@@ -109,6 +109,43 @@ class NotificationsController
     }
   }
 
+  Future<void> refreshSilently() async {
+    final generation = ++_loadGeneration;
+    final current = state.valueOrNull;
+    if (current == null) {
+      await load(isReadFilter: _currentIsReadFilter);
+      return;
+    }
+    try {
+      final results = await Future.wait<dynamic>([
+        _repository.fetchNotifications(
+          limit: current.pageSize,
+          isRead: _currentIsReadFilter,
+        ),
+        _repository.fetchUnreadCount(),
+      ]);
+      if (!_canPublish(generation)) {
+        return;
+      }
+      final page = results[0] as NotificationPage;
+      state = AsyncData(
+        NotificationsViewState(
+          items: page.items,
+          page: page.page,
+          pageSize: page.limit,
+          total: page.total,
+          unreadCount: results[1] as int,
+          isReadFilter: _currentIsReadFilter,
+          hasMore: page.hasMore,
+          isLoadingMore: false,
+        ),
+      );
+    } catch (_) {
+      // Keep the last visible notification state. Reconnect reconciliation or
+      // manual refresh will retry without flashing an error over cached data.
+    }
+  }
+
   Future<void> loadMore() async {
     final generation = ++_loadGeneration;
     final current = state.valueOrNull;

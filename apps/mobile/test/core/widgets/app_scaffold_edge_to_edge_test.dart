@@ -43,7 +43,10 @@ void main() {
         ),
         bottomNavigationBar: NavigationBar(
           destinations: const [
-            NavigationDestination(icon: Icon(Icons.home_outlined), label: 'One'),
+            NavigationDestination(
+              icon: Icon(Icons.home_outlined),
+              label: 'One',
+            ),
             NavigationDestination(
               icon: Icon(Icons.folder_outlined),
               label: 'Two',

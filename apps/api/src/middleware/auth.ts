@@ -101,6 +101,18 @@ const authenticate = async (
 
     const user = result.rows[0];
 
+    if (user.account_status === 'deleted') {
+      return res.status(401).json({
+        success: false,
+        message: 'This account has been deleted.',
+        error: {
+          code: 'ACCOUNT_DELETED',
+          disposition: 'permanent_rejection',
+          retryable: false,
+        },
+      });
+    }
+
     if (decoded.authVersion !== Number(user.auth_version ?? 0)) {
       return res.status(401).json({
         success: false,
@@ -209,7 +221,7 @@ const requireProtectedSuperAdmin = (
   if (req.user.role !== 'admin' || !isProtectedSuperAdminEmail(req.user.email)) {
     return res.status(403).json({
       success: false,
-      message: 'Only the protected super administrator can manage project AI.',
+      message: 'Only the protected super administrator can perform this action.',
     });
   }
 

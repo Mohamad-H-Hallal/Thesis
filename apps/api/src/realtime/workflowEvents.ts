@@ -1,6 +1,11 @@
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 import { pool, query } from '../config/database';
+import {
+  handleRealtimeNotification,
+} from './realtimeEvents';
+import { realtimeMetrics } from './realtimeMetrics';
+import { realtimeNotificationChannel } from './realtimeProtocol';
 const logger = require('../utils/logger');
 
 export interface WorkflowChangeEvent {
@@ -76,9 +81,19 @@ export const subscribeWorkflowChanges = (listener: WorkflowChangeListener): (() 
 export const startWorkflowChangeListener = async (): Promise<() => void> => {
   const client = await pool.connect();
   await client.query('LISTEN workflow_changed');
+  await client.query(`LISTEN ${realtimeNotificationChannel}`);
 
   const onNotification = (message): void => {
-    if (message.channel !== 'workflow_changed' || !message.payload) {
+    if (!message.payload) {
+      return;
+    }
+
+    if (message.channel === realtimeNotificationChannel) {
+      handleRealtimeNotification(message.payload);
+      return;
+    }
+
+    if (message.channel !== 'workflow_changed') {
       return;
     }
 
@@ -107,12 +122,14 @@ export const startWorkflowChangeListener = async (): Promise<() => void> => {
   };
 
   client.on('notification', onNotification);
+  realtimeMetrics.listenerState(true);
   logger.info('Workflow realtime database listener attached');
 
   return () => {
     client.off('notification', onNotification);
+    realtimeMetrics.listenerState(false);
     client
-      .query('UNLISTEN workflow_changed')
+      .query('UNLISTEN *')
       .catch((error) =>
         logger.warn('Unable to unlisten workflow realtime channel', {
           message: error instanceof Error ? error.message : String(error),
