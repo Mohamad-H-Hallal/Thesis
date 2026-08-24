@@ -166,6 +166,11 @@ class _FailingExportsRepository implements ExportsRepository {
   const _FailingExportsRepository();
 
   @override
+  Future<List<ExportCollector>> fetchProjectCollectors({
+    required String projectId,
+  }) async => const <ExportCollector>[];
+
+  @override
   Future<List<ExportJob>> fetchJobs({required String requestedByUserId}) async {
     return const <ExportJob>[];
   }
@@ -243,9 +248,19 @@ class _FailingExportsRepository implements ExportsRepository {
 }
 
 class _StaticExportsRepository implements ExportsRepository {
-  const _StaticExportsRepository(this.jobs);
+  _StaticExportsRepository(
+    this.jobs, {
+    this.collectors = const <ExportCollector>[],
+  });
 
   final List<ExportJob> jobs;
+  final List<ExportCollector> collectors;
+  Map<String, dynamic>? lastExportParameters;
+
+  @override
+  Future<List<ExportCollector>> fetchProjectCollectors({
+    required String projectId,
+  }) async => collectors;
 
   @override
   Future<List<ExportJob>> fetchJobs({
@@ -311,6 +326,7 @@ class _StaticExportsRepository implements ExportsRepository {
     required ExportFormat format,
     required Map<String, dynamic> exportParameters,
   }) async {
+    lastExportParameters = Map<String, dynamic>.from(exportParameters);
     return ExportJob(
       id: 'regenerated-export',
       projectId: projectId,
@@ -678,6 +694,36 @@ void main() {
       findsNothing,
     );
     await tester.pump(const Duration(milliseconds: 300));
+  });
+
+  testWidgets('collector filter lists and submits only real contributors', (
+    tester,
+  ) async {
+    final repository = _StaticExportsRepository(
+      const <ExportJob>[],
+      collectors: const <ExportCollector>[
+        ExportCollector(
+          userId: 'collector-1',
+          displayName: 'Field Collector',
+          contributionCount: 3,
+        ),
+      ],
+    );
+    await pumpDashboard(tester, exportsRepository: repository);
+
+    await tester.ensureVisible(find.text('Collector'));
+    await tester.tap(find.text('All collectors'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Field Collector (3)').last);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Request Export'));
+    await tester.tap(find.text('Request Export'));
+    await tester.pumpAndSettle();
+
+    expect(
+      repository.lastExportParameters?['collector_user_id'],
+      'collector-1',
+    );
   });
 
   testWidgets('reset filters keeps project and clears optional export state', (

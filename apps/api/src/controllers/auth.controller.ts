@@ -23,6 +23,7 @@ import {
   normalizeEmailAddress,
   normalizeLebaneseMobile,
 } from '../services/contactIdentity.service';
+import { normalizePersonName } from '../services/privacyIdentity.service';
 import {
   confirmEmailChallenge,
   confirmPhoneChallenge,
@@ -39,6 +40,37 @@ import {
 import { getPhoneAssuranceMode } from '../services/phoneAssurance.service';
 import { assertPhoneAccountCapacity } from '../services/phoneAccountLimit.service';
 import { isContactAssuranceSatisfied } from '../services/contactAssurancePolicy.service';
+import { publishRealtimeChanges } from '../realtime/realtimeEvents';
+import {
+  getExistingUserAcceptanceStatus,
+  recordLegalAcceptances,
+  validateSignupAcceptances,
+} from '../legal/legalDocuments';
+
+const authUserRealtimeInputs = (
+  userId: string,
+  action: string,
+  originSessionId?: string | null,
+) => [
+  {
+    scopeType: 'users',
+    scopeId: 'all',
+    action,
+    entityType: 'user',
+    entityId: userId,
+    originSessionId,
+    audience: { kind: 'admins' as const },
+  },
+  {
+    scopeType: 'user',
+    scopeId: userId,
+    action,
+    entityType: 'user',
+    entityId: userId,
+    originSessionId,
+    audience: { kind: 'user' as const, userId },
+  },
+];
 
 const verificationContext = (req: any) => ({
   ip: req.ip ?? null,
@@ -152,6 +184,7 @@ const verifyPasswordResetSessionToken = (
 // Register new user
 const register = async (req, res) => {
   const { email, password, full_name, phone, role } = req.body;
+  const legalAcceptances = validateSignupAcceptances(req.body.legal_acceptances);
   const normalizedEmail = normalizeEmailAddress(email);
   const normalizedPhone = normalizeLebaneseMobile(phone);
   if (!normalizedEmail) {
@@ -213,6 +246,15 @@ const register = async (req, res) => {
         publicRole,
       ],
     );
+
+    await recordLegalAcceptances({
+      executor: client,
+      userId: result.rows[0].id,
+      sessionId: null,
+      requestId: req.requestId ?? null,
+      acceptances: legalAcceptances,
+      source: 'signup',
+    });
 
     return result.rows[0];
   });
@@ -336,6 +378,10 @@ const login = async (req, res) => {
   await query('UPDATE "user" SET last_login = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
 
   const { token, refreshToken } = await createAuthenticatedSession(user);
+  const legalAcceptance = await getExistingUserAcceptanceStatus({
+    executor: { query },
+    userId: user.id,
+  });
 
   logger.info('User logged in', { userId: user.id });
 
@@ -346,6 +392,7 @@ const login = async (req, res) => {
       user: publicUser(user),
       token,
       refreshToken,
+      legal_acceptance_required: legalAcceptance.required,
     },
   });
 };
@@ -360,12 +407,17 @@ const getMe = async (req, res) => {
      FROM "user" WHERE id = $1`,
     [req.user.id],
   );
+  const legalAcceptance = await getExistingUserAcceptanceStatus({
+    executor: { query },
+    userId: req.user.id,
+  });
 
   res.json({
     success: true,
     data: {
       ...result.rows[0],
       is_protected_super_admin: isProtectedSuperAdminEmail(req.user?.email),
+      legal_acceptance_required: legalAcceptance.required,
     },
   });
 };
@@ -373,6 +425,16 @@ const getMe = async (req, res) => {
 // Update current user profile
 const updateMe = async (req, res) => {
   const { full_name } = req.body;
+  let normalizedFullName: string | undefined;
+  if (full_name != null) {
+    try {
+      normalizedFullName = normalizePersonName(full_name);
+    } catch {
+      throw new AppError('Enter a valid name between 1 and 200 characters.', 422, {
+        code: 'INVALID_FULL_NAME',
+      });
+    }
+  }
 
   if (req.body.email != null) {
     throw new AppError('Your account email address is fixed after registration.', 400, {
@@ -390,15 +452,22 @@ const updateMe = async (req, res) => {
     });
   }
 
-  const result = await query(
-    `UPDATE "user" 
-     SET full_name = COALESCE($1, full_name)
-     WHERE id = $2
-     RETURNING id, email, email_original, email_verified_at, full_name, phone,
-               phone_e164, phone_verified_at, phone_format_validated_at,
-               role, account_status, profile_picture_url`,
-    [full_name, req.user.id],
-  );
+  const result = await transaction(async (client) => {
+    const updated = await client.query(
+      `UPDATE "user"
+       SET full_name = COALESCE($1, full_name)
+       WHERE id = $2
+       RETURNING id, email, email_original, email_verified_at, full_name, phone,
+                 phone_e164, phone_verified_at, phone_format_validated_at,
+                 role, account_status, profile_picture_url`,
+      [normalizedFullName, req.user.id],
+    );
+    await publishRealtimeChanges(
+      authUserRealtimeInputs(req.user.id, 'profile_updated', req.authSessionId),
+      client,
+    );
+    return updated;
+  });
 
   logger.info('User profile updated:', { userId: req.user.id });
 
@@ -774,7 +843,7 @@ const reactivateContributorLogin = async (req, res) => {
     throw new AppError('Wrong email or password.', 401);
   }
 
-  const user = result.rows[0];
+  let user = result.rows[0];
   const isMatch = await bcrypt.compare(password, user.password_hash);
 
   if (!isMatch) {
@@ -824,18 +893,31 @@ const reactivateContributorLogin = async (req, res) => {
   }
 
   if (accessState === 'inactive') {
-    await query(
-      `UPDATE "user"
-       SET is_active = TRUE,
-           last_login = CURRENT_TIMESTAMP
-       WHERE id = $1`,
-      [user.id],
-    );
+    user = await transaction(async (client) => {
+      const updated = await client.query(
+        `UPDATE "user"
+         SET is_active = TRUE,
+             account_status = 'active',
+             last_login = CURRENT_TIMESTAMP
+         WHERE id = $1
+         RETURNING id, email, email_original, email_canonical, email_verified_at,
+                   password_hash, full_name, phone, phone_e164, phone_verified_at,
+                   phone_format_validated_at, contact_verification_exempted_at,
+                   role, is_active, account_status, auth_version`,
+        [user.id],
+      );
+      await publishRealtimeChanges(authUserRealtimeInputs(user.id, 'reactivated'), client);
+      return updated.rows[0];
+    });
   } else {
     await query('UPDATE "user" SET last_login = CURRENT_TIMESTAMP WHERE id = $1', [user.id]);
   }
 
   const { token, refreshToken } = await createAuthenticatedSession(user);
+  const legalAcceptance = await getExistingUserAcceptanceStatus({
+    executor: { query },
+    userId: user.id,
+  });
 
   logger.info('Contributor account reactivated through login flow', {
     userId: user.id,
@@ -850,6 +932,7 @@ const reactivateContributorLogin = async (req, res) => {
       user: publicUser(user),
       token,
       refreshToken,
+      legal_acceptance_required: legalAcceptance.required,
     },
   });
 };
@@ -1056,6 +1139,10 @@ const refreshToken = async (req, res) => {
 
   const { token, refreshToken: newRefreshToken } = refreshResult.tokens;
   const user = refreshResult.user;
+  const legalAcceptance = await getExistingUserAcceptanceStatus({
+    executor: { query },
+    userId: user.id,
+  });
 
   logger.info('Token refreshed:', { userId: user.id });
 
@@ -1066,6 +1153,7 @@ const refreshToken = async (req, res) => {
       token,
       refreshToken: newRefreshToken,
       user: publicUser(user),
+      legal_acceptance_required: legalAcceptance.required,
     },
   });
 };
@@ -1109,6 +1197,10 @@ const selfDeactivate = async (req, res) => {
       [req.user.id],
     );
     await revokeAllUserSessions(req.user.id, 'self_deactivated', client);
+    await publishRealtimeChanges(
+      authUserRealtimeInputs(req.user.id, 'deactivated', req.authSessionId),
+      client,
+    );
   });
 
   logger.info('User self-deactivated account', { userId: req.user.id });

@@ -148,6 +148,7 @@ class ApiNotificationsRepository implements NotificationsRepository {
     required String platform,
     String? deviceLabel,
     String? appVersion,
+    bool showSensitivePreview = false,
   }) async {
     try {
       await _apiClient.dio.post<void>(
@@ -159,6 +160,7 @@ class ApiNotificationsRepository implements NotificationsRepository {
             'device_label': deviceLabel.trim(),
           if (appVersion != null && appVersion.trim().isNotEmpty)
             'app_version': appVersion.trim(),
+          'show_sensitive_preview': showSensitivePreview,
         },
       );
     } on DioException catch (error) {

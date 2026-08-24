@@ -2,6 +2,18 @@ enum ExportFormat { shapefile, geojson }
 
 enum ExportJobStatus { pending, processing, completed, failed, expired }
 
+class ExportCollector {
+  const ExportCollector({
+    required this.userId,
+    required this.displayName,
+    required this.contributionCount,
+  });
+
+  final String userId;
+  final String displayName;
+  final int contributionCount;
+}
+
 class ExportJobsQuery {
   const ExportJobsQuery({
     this.categoryId,

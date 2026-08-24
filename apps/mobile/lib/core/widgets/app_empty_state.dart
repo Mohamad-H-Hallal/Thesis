@@ -22,7 +22,8 @@ class AppEmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final mediaQuery = MediaQuery.maybeOf(context);
-    final compact = (mediaQuery?.size.height ?? 0) > 0 &&
+    final compact =
+        (mediaQuery?.size.height ?? 0) > 0 &&
         (mediaQuery!.size.height < 760 || mediaQuery.size.width < 380);
     final illustrationWidth = compact ? 96.0 : 124.0;
     final illustrationHeight = compact ? 84.0 : 104.0;
@@ -56,7 +57,9 @@ class AppEmptyState extends StatelessWidget {
                         width: primaryCircleSize,
                         height: primaryCircleSize,
                         decoration: BoxDecoration(
-                          color: scheme.primaryContainer.withValues(alpha: 0.55),
+                          color: scheme.primaryContainer.withValues(
+                            alpha: 0.55,
+                          ),
                           shape: BoxShape.circle,
                         ),
                       ),
@@ -68,7 +71,9 @@ class AppEmptyState extends StatelessWidget {
                         width: secondaryCircleSize,
                         height: secondaryCircleSize,
                         decoration: BoxDecoration(
-                          color: scheme.tertiaryContainer.withValues(alpha: 0.6),
+                          color: scheme.tertiaryContainer.withValues(
+                            alpha: 0.6,
+                          ),
                           shape: BoxShape.circle,
                         ),
                       ),

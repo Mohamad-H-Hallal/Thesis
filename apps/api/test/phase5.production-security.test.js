@@ -53,6 +53,10 @@ const validProductionEnv = (overrides = {}) => ({
   SUPER_ADMIN_EMAIL: 'superadmin@gis.gov.lb',
   SUPER_ADMIN_PASSWORD: 'A7m3Q9v5K1x8R4d2',
   SUPER_ADMIN_FULL_NAME: 'GIS Super Administrator',
+  PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64: Buffer.alloc(32, 7).toString('base64'),
+  PRIVACY_EXPORT_TTL_HOURS: '24',
+  PRIVACY_EXPORT_RETENTION_APPROVAL_REFERENCE: 'approved-retention-policy-2026',
+  LEGAL_DRAFTS_PUBLIC_ENABLED: 'false',
   APP_PUBLIC_API_URL: 'https://collector.gis.gov.lb',
   AI_CALLBACK_SECRET: 'C9v3N7m1Q5x8K2d6R4t0W9y7',
   ...overrides,
@@ -139,6 +143,24 @@ describe('Phase 5 production security controls', () => {
     ).toBe(true);
   });
 
+  test('requires explicit policy evidence before enabling account deletion', () => {
+    expect(() =>
+      validateEnv(
+        validProductionEnv({ ACCOUNT_DELETION_EXECUTION_ENABLED: 'true' }),
+      ),
+    ).toThrow('enabled account deletion requires');
+
+    const env = validateEnv(
+      validProductionEnv({
+        ACCOUNT_DELETION_EXECUTION_ENABLED: 'true',
+        ACCOUNT_DELETION_POLICY_APPROVAL_REFERENCE: 'deletion-policy-2026',
+        ACCOUNT_DELETION_RETENTION_APPROVAL_REFERENCE: 'retention-policy-2026',
+        MASKED_CONTRIBUTOR_POLICY_APPROVAL_REFERENCE: 'masked-label-policy-2026',
+      }),
+    );
+    expect(env.ACCOUNT_DELETION_EXECUTION_ENABLED).toBe(true);
+  });
+
   test('workload worker validates only its required credential boundary', () => {
     const workerEnv = validateWorkloadWorkerEnv({
       NODE_ENV: 'production',
@@ -149,6 +171,9 @@ describe('Phase 5 production security controls', () => {
       DB_PASSWORD: 'G7m4Q2v9N8s6K3x1',
       WORKLOAD_WORKER_MODE: 'external',
       WORKLOAD_HARD_EXIT_ON_TIMEOUT: 'true',
+      PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64: Buffer.alloc(32, 7).toString('base64'),
+      PRIVACY_EXPORT_TTL_HOURS: '24',
+      PRIVACY_EXPORT_RETENTION_APPROVAL_REFERENCE: 'approved-retention-policy-2026',
       LOG_PRETTY: 'false',
       LOG_TO_FILE: 'false',
     });

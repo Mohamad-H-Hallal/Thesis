@@ -25,6 +25,7 @@ import '../../../map/domain/current_location_service.dart';
 import '../../../map/domain/lebanon_map.dart';
 import '../../../map/domain/map_feature.dart';
 import '../../../map/domain/map_geometry.dart';
+import '../../../map/presentation/widgets/basemap_attribution.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/import_models.dart';
 import '../import_providers.dart';
@@ -460,6 +461,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
                         markerPlacements.stagedPoints,
                       ),
                     ),
+                  BasemapAttribution(style: _basemapStyle),
                 ],
               ),
             ),
@@ -616,7 +618,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
           ),
         Positioned(
           right: AppSpacing.md,
-          bottom: AppSpacing.lg,
+          bottom: 48,
           child: _ImportMapControlRail(
             featureCount: totalVisibleImportedFeatureCount,
             approvedContextCount: approvedProjectContextCount,
@@ -1653,7 +1655,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
             featureId: feature.id,
           );
       ref.invalidate(importDetailsProvider(widget.importId));
-      ref.read(workflowRefreshTickProvider.notifier).state++;
+      bumpRealtimeScope(ref, RealtimeScope('import', widget.importId));
       if (!mounted) {
         return;
       }
@@ -1696,7 +1698,7 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
             reason: reason?.trim(),
             featureIds: <String>[feature.id],
           );
-      ref.read(workflowRefreshTickProvider.notifier).state++;
+      bumpRealtimeScope(ref, RealtimeScope('import', widget.importId));
       if (!mounted || !sheetContext.mounted) {
         return;
       }
@@ -5209,20 +5211,20 @@ String _normalizedImportAttributeValue(Object? value) =>
 
 String _formatAttributeValue(Object? value) {
   if (value == null) {
-    return '—';
+    return 'Not provided';
   }
   if (value is bool) {
     return value ? 'Yes' : 'No';
   }
   if (value is List) {
     if (value.isEmpty) {
-      return '—';
+      return 'Not provided';
     }
     return value.map(_formatAttributeValue).join(', ');
   }
   if (value is Map) {
     if (value.isEmpty) {
-      return '—';
+      return 'Not provided';
     }
     return value.entries
         .map(
@@ -5232,5 +5234,5 @@ String _formatAttributeValue(Object? value) {
         .join(', ');
   }
   final text = '$value'.trim();
-  return text.isEmpty ? '—' : text;
+  return text.isEmpty ? 'Not provided' : text;
 }

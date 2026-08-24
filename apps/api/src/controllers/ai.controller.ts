@@ -48,6 +48,63 @@ import {
   releaseQuarantinedImages,
   type QuarantinedPreparedImage,
 } from '../services/secureImageIntake.service';
+import { publishRealtimeChanges } from '../realtime/realtimeEvents';
+import type { RealtimePublishInput } from '../realtime/realtimeProtocol';
+
+const aiRealtimeInputs = ({
+  projectId,
+  runId,
+  layerId,
+  action,
+  originSessionId,
+  publicationChanged = false,
+}: {
+  projectId: string;
+  runId?: string | null;
+  layerId?: string | null;
+  action: string;
+  originSessionId?: string | null;
+  publicationChanged?: boolean;
+}): RealtimePublishInput[] => [
+  {
+    scopeType: 'ai',
+    scopeId: projectId,
+    action,
+    entityType: layerId ? 'ai_layer' : 'ai_run',
+    entityId: layerId ?? runId,
+    projectId,
+    originSessionId,
+    audience: { kind: 'project', projectId, access: 'readers' },
+  },
+  ...(runId
+    ? [
+        {
+          scopeType: 'ai_run',
+          scopeId: runId,
+          action,
+          entityType: layerId ? 'ai_layer' : 'ai_run',
+          entityId: layerId ?? runId,
+          projectId,
+          originSessionId,
+          audience: { kind: 'project' as const, projectId, access: 'readers' as const },
+        },
+      ]
+    : []),
+  ...(publicationChanged
+    ? [
+        {
+          scopeType: 'features',
+          scopeId: projectId,
+          action: 'ai_map_layer_changed',
+          entityType: 'ai_layer',
+          entityId: layerId ?? runId,
+          projectId,
+          originSessionId,
+          audience: { kind: 'project' as const, projectId, access: 'readers' as const },
+        },
+      ]
+    : []),
+];
 
 const allowedRunStatuses = [
   'draft',
@@ -1266,6 +1323,16 @@ const getAiSettingsRow = async (projectId: string) => {
             min_samples_per_class,
             confidence_threshold,
             model_preferences,
+            COALESCE((
+              SELECT governance.training_data_use_authorized
+              FROM project_ai_governance governance
+              WHERE governance.project_id = ai_project_settings.project_id
+            ), FALSE) AS training_data_use_authorized,
+            COALESCE((
+              SELECT governance.publication_authorized
+              FROM project_ai_governance governance
+              WHERE governance.project_id = ai_project_settings.project_id
+            ), FALSE) AS publication_authorized,
             created_by,
             updated_by,
             created_at,
@@ -1280,6 +1347,16 @@ const getAiSettingsRow = async (projectId: string) => {
 
 const getEffectiveAiSettings = async (projectId: string) => {
   const existing = await getAiSettingsRow(projectId);
+  const governance = existing
+    ? null
+    : (
+        await query(
+          `SELECT training_data_use_authorized, publication_authorized
+           FROM project_ai_governance
+           WHERE project_id = $1`,
+          [projectId],
+        )
+      ).rows[0];
   return {
     id: existing?.id ?? null,
     project_id: projectId,
@@ -1292,6 +1369,11 @@ const getEffectiveAiSettings = async (projectId: string) => {
     model_preferences: normalizeAiModelPreferences(
       existing?.model_preferences ?? defaultSettings.model_preferences,
     ),
+    training_data_use_authorized:
+      existing?.training_data_use_authorized === true ||
+      governance?.training_data_use_authorized === true,
+    publication_authorized:
+      existing?.publication_authorized === true || governance?.publication_authorized === true,
     created_by: existing?.created_by ?? null,
     updated_by: existing?.updated_by ?? null,
     created_at: existing?.created_at ?? null,
@@ -2263,30 +2345,34 @@ const updateAiRunFromServerPayload = async (
     runJsonRecord(payload.metrics).dry_run === true ||
     runJsonRecord(payload.settings).dry_run === true;
   const timestampPatch = statusTimestampPatch(status);
-  const existingResult = await query(`SELECT metadata FROM ai_run WHERE id = $1`, [runId]);
-  const existingMetadata = runJsonRecord(existingResult.rows[0]?.metadata);
-  const aiServerMetadata = runJsonRecord(existingMetadata.ai_server);
-  const metadata = {
-    ...existingMetadata,
-    ai_server: {
-      ...aiServerMetadata,
-      run_id: payload.run_id ?? runId,
-      project_id: payload.project_id ?? aiServerMetadata.project_id ?? null,
-      status,
-      stage,
-      progress,
-      message,
-      dry_run: payloadDryRun,
-      updated_at: payload.updated_at ?? new Date().toISOString(),
-      last_log_at: payload.last_log_at ?? null,
-      last_log_message: payload.last_log_message ?? null,
-      artifacts,
-      counts,
-      error: Object.keys(errorDetails).length > 0 ? errorDetails : null,
-    },
-  };
-  const result = await query(
-    `UPDATE ai_run
+  return transaction(async (client: PoolClient) => {
+    const existingResult = await client.query(
+      `SELECT metadata FROM ai_run WHERE id = $1 FOR UPDATE`,
+      [runId],
+    );
+    const existingMetadata = runJsonRecord(existingResult.rows[0]?.metadata);
+    const aiServerMetadata = runJsonRecord(existingMetadata.ai_server);
+    const metadata = {
+      ...existingMetadata,
+      ai_server: {
+        ...aiServerMetadata,
+        run_id: payload.run_id ?? runId,
+        project_id: payload.project_id ?? aiServerMetadata.project_id ?? null,
+        status,
+        stage,
+        progress,
+        message,
+        dry_run: payloadDryRun,
+        updated_at: payload.updated_at ?? new Date().toISOString(),
+        last_log_at: payload.last_log_at ?? null,
+        last_log_message: payload.last_log_message ?? null,
+        artifacts,
+        counts,
+        error: Object.keys(errorDetails).length > 0 ? errorDetails : null,
+      },
+    };
+    const result = await client.query(
+      `UPDATE ai_run
      SET status = $2::ai_run_status,
          stage = $3,
          progress = $4,
@@ -2346,25 +2432,38 @@ const updateAiRunFromServerPayload = async (
                metadata,
                created_at,
                updated_at`,
-    [
-      runId,
-      status,
-      stage,
-      progress,
-      message,
-      payload.run_id ?? runId,
-      JSON.stringify(artifacts),
-      JSON.stringify(counts),
-      JSON.stringify(errorDetails),
-      failureReason,
-      JSON.stringify(metadata),
-      true,
-      payloadDryRun,
-      Number.isFinite(predictionsInserted) ? predictionsInserted : 0,
-    ],
-  );
-  await notifyAiRunStatus(runId);
-  return result.rows[0];
+      [
+        runId,
+        status,
+        stage,
+        progress,
+        message,
+        payload.run_id ?? runId,
+        JSON.stringify(artifacts),
+        JSON.stringify(counts),
+        JSON.stringify(errorDetails),
+        failureReason,
+        JSON.stringify(metadata),
+        true,
+        payloadDryRun,
+        Number.isFinite(predictionsInserted) ? predictionsInserted : 0,
+      ],
+    );
+    const updated = result.rows[0];
+    if (!updated) {
+      throw new AppError('AI run not found', 404);
+    }
+    await notifyAiRunStatus(runId, client);
+    await publishRealtimeChanges(
+      aiRealtimeInputs({
+        projectId: updated.project_id,
+        runId,
+        action: status,
+      }),
+      client,
+    );
+    return updated;
+  });
 };
 
 const failAiRunFromDispatchError = async (
@@ -2375,8 +2474,9 @@ const failAiRunFromDispatchError = async (
   const errorDetails = errorRecordFrom(error);
   const failureReason =
     normalizeOptionalString((errorDetails as { message?: unknown }).message) ?? message;
-  const result = await query(
-    `UPDATE ai_run
+  return transaction(async (client: PoolClient) => {
+    const result = await client.query(
+      `UPDATE ai_run
      SET status = 'failed',
          stage = COALESCE(stage, 'dispatch'),
          progress = 0,
@@ -2416,35 +2516,48 @@ const failAiRunFromDispatchError = async (
                metadata,
                created_at,
                updated_at`,
-    [
-      runId,
-      message,
-      failureReason,
-      JSON.stringify(errorDetails),
-      JSON.stringify({
-        ai_server: {
-          status: 'unavailable',
-          error: errorDetails,
-          updated_at: new Date().toISOString(),
-        },
-      }),
-    ],
-  );
-  await query(
-    `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
+      [
+        runId,
+        message,
+        failureReason,
+        JSON.stringify(errorDetails),
+        JSON.stringify({
+          ai_server: {
+            status: 'unavailable',
+            error: errorDetails,
+            updated_at: new Date().toISOString(),
+          },
+        }),
+      ],
+    );
+    await client.query(
+      `INSERT INTO ai_run_log (ai_run_id, level, message, metadata)
      VALUES ($1, 'error', $2, $3::jsonb)`,
-    [
-      runId,
-      message,
-      JSON.stringify({
-        phase: 'ai_server_dispatch',
-        ai_server_unavailable: true,
-        error: errorDetails,
+      [
+        runId,
+        message,
+        JSON.stringify({
+          phase: 'ai_server_dispatch',
+          ai_server_unavailable: true,
+          error: errorDetails,
+        }),
+      ],
+    );
+    const failed = result.rows[0];
+    if (!failed) {
+      throw new AppError('AI run not found', 404);
+    }
+    await notifyAiRunStatus(runId, client);
+    await publishRealtimeChanges(
+      aiRealtimeInputs({
+        projectId: failed.project_id,
+        runId,
+        action: 'failed',
       }),
-    ],
-  );
-  await notifyAiRunStatus(runId);
-  return result.rows[0];
+      client,
+    );
+    return failed;
+  });
 };
 
 const buildProjectAreaScopePayload = ({
@@ -2812,6 +2925,15 @@ const getProjectAiReadiness = async (req: Request, res: Response): Promise<void>
       readinessWithAiServer.status = 'not_ready';
     }
   }
+  if (settings.training_data_use_authorized !== true) {
+    readinessWithAiServer.blockers = Array.from(
+      new Set([
+        ...(readinessWithAiServer.blockers ?? []),
+        'Project data is not authorized for AI training under a recorded governance approval.',
+      ]),
+    );
+    readinessWithAiServer.status = 'not_ready';
+  }
   const candidateLabelFields = await getCandidateLabelFieldSummary({
     projectId,
     collectionFormSchema: project.collection_form_schema,
@@ -2832,6 +2954,8 @@ const getProjectAiReadiness = async (req: Request, res: Response): Promise<void>
         min_samples_per_class: settings.min_samples_per_class,
         confidence_threshold: settings.confidence_threshold,
         model_preferences: settings.model_preferences,
+        training_data_use_authorized: settings.training_data_use_authorized,
+        publication_authorized: settings.publication_authorized,
       },
       readiness: {
         ...readinessWithAiServer,
@@ -2922,8 +3046,9 @@ const upsertProjectAiSettings = async (req: Request, res: Response): Promise<voi
     }
   }
 
-  const result = await query(
-    `INSERT INTO ai_project_settings (
+  const result = await transaction(async (client: PoolClient) => {
+    const saved = await client.query(
+      `INSERT INTO ai_project_settings (
        project_id,
        is_enabled,
        label_field,
@@ -2973,18 +3098,28 @@ const upsertProjectAiSettings = async (req: Request, res: Response): Promise<voi
                updated_by,
                created_at,
                updated_at`,
-    [
-      projectId,
-      nextSettings.is_enabled,
-      nextSettings.label_field,
-      nextSettings.scope_type,
-      serializeGeometry(nextSettings.scope_geometry),
-      nextSettings.min_samples_per_class,
-      nextSettings.confidence_threshold,
-      JSON.stringify(nextSettings.model_preferences),
-      (req.user as Express.UserContext).id,
-    ],
-  );
+      [
+        projectId,
+        nextSettings.is_enabled,
+        nextSettings.label_field,
+        nextSettings.scope_type,
+        serializeGeometry(nextSettings.scope_geometry),
+        nextSettings.min_samples_per_class,
+        nextSettings.confidence_threshold,
+        JSON.stringify(nextSettings.model_preferences),
+        (req.user as Express.UserContext).id,
+      ],
+    );
+    await publishRealtimeChanges(
+      aiRealtimeInputs({
+        projectId,
+        action: 'settings_updated',
+        originSessionId: req.authSessionId,
+      }),
+      client,
+    );
+    return saved;
+  });
 
   res.json({
     success: true,
@@ -2993,6 +3128,106 @@ const upsertProjectAiSettings = async (req: Request, res: Response): Promise<voi
       ...result.rows[0],
       model_preferences: normalizeAiModelPreferences(result.rows[0].model_preferences),
     },
+  });
+};
+
+const updateProjectAiGovernance = async (req: Request, res: Response): Promise<void> => {
+  const { projectId } = req.params;
+  await getProjectOrFail(projectId);
+  const currentUser = req.user as Express.UserContext;
+  const trainingAuthorized = req.body?.training_data_use_authorized === true;
+  const publicationAuthorized = req.body?.publication_authorized === true;
+  const trainingBasis = normalizeOptionalString(req.body?.training_authority_basis);
+  const trainingReference = normalizeOptionalString(req.body?.training_approval_reference);
+  const publicationBasis = normalizeOptionalString(req.body?.publication_authority_basis);
+  const publicationReference = normalizeOptionalString(req.body?.publication_approval_reference);
+
+  if (trainingAuthorized && (!trainingBasis || !trainingReference)) {
+    throw new AppError(
+      'Training authorization requires a documented authority basis and approval reference.',
+      422,
+    );
+  }
+  if (publicationAuthorized && (!publicationBasis || !publicationReference)) {
+    throw new AppError(
+      'Publication authorization requires a documented authority basis and approval reference.',
+      422,
+    );
+  }
+
+  const saved = await transaction(async (client: PoolClient) => {
+    const result = await client.query(
+      `INSERT INTO project_ai_governance (
+         project_id,
+         training_data_use_authorized,
+         training_authority_basis,
+         training_approval_reference,
+         training_authorized_at,
+         training_authorized_by,
+         publication_authorized,
+         publication_authority_basis,
+         publication_approval_reference,
+         publication_authorized_at,
+         publication_authorized_by
+       )
+       VALUES (
+         $1, $2, $3, $4,
+         CASE WHEN $2 THEN CURRENT_TIMESTAMP ELSE NULL END,
+         CASE WHEN $2 THEN $7::uuid ELSE NULL END,
+         $5, $6, $8,
+         CASE WHEN $5 THEN CURRENT_TIMESTAMP ELSE NULL END,
+         CASE WHEN $5 THEN $7::uuid ELSE NULL END
+       )
+       ON CONFLICT (project_id) DO UPDATE SET
+         training_data_use_authorized = EXCLUDED.training_data_use_authorized,
+         training_authority_basis = EXCLUDED.training_authority_basis,
+         training_approval_reference = EXCLUDED.training_approval_reference,
+         training_authorized_at = EXCLUDED.training_authorized_at,
+         training_authorized_by = EXCLUDED.training_authorized_by,
+         publication_authorized = EXCLUDED.publication_authorized,
+         publication_authority_basis = EXCLUDED.publication_authority_basis,
+         publication_approval_reference = EXCLUDED.publication_approval_reference,
+         publication_authorized_at = EXCLUDED.publication_authorized_at,
+         publication_authorized_by = EXCLUDED.publication_authorized_by,
+         updated_at = CURRENT_TIMESTAMP
+       RETURNING project_id,
+                 training_data_use_authorized,
+                 training_authority_basis,
+                 training_approval_reference,
+                 training_authorized_at,
+                 training_authorized_by,
+                 publication_authorized,
+                 publication_authority_basis,
+                 publication_approval_reference,
+                 publication_authorized_at,
+                 publication_authorized_by,
+                 updated_at`,
+      [
+        projectId,
+        trainingAuthorized,
+        trainingAuthorized ? trainingBasis : null,
+        trainingAuthorized ? trainingReference : null,
+        publicationAuthorized,
+        publicationAuthorized ? publicationBasis : null,
+        currentUser.id,
+        publicationAuthorized ? publicationReference : null,
+      ],
+    );
+    await publishRealtimeChanges(
+      aiRealtimeInputs({
+        projectId,
+        action: 'governance_updated',
+        originSessionId: req.authSessionId,
+      }),
+      client,
+    );
+    return result.rows[0];
+  });
+
+  res.json({
+    success: true,
+    message: 'AI data-use and publication authority settings updated.',
+    data: saved,
   });
 };
 
@@ -3052,6 +3287,18 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
 
   if (shouldStart && !settings.is_enabled) {
     throw new AppError('AI must be enabled for this project before starting a run.', 400);
+  }
+
+  if (shouldStart && settings.training_data_use_authorized !== true) {
+    throw new AppError(
+      'AI training is blocked until a protected administrator records the project data authority and approval reference.',
+      409,
+      {
+        code: 'AI_TRAINING_AUTHORIZATION_REQUIRED',
+        disposition: 'permanent_rejection',
+        retryable: false,
+      },
+    );
   }
 
   if (shouldStart && readiness.status === 'not_ready') {
@@ -3355,6 +3602,16 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
           real_ai_execution: shouldStart,
         }),
       ],
+    );
+
+    await publishRealtimeChanges(
+      aiRealtimeInputs({
+        projectId,
+        runId: runResult.rows[0].id,
+        action: shouldStart ? 'starting' : 'draft_created',
+        originSessionId: req.authSessionId,
+      }),
+      client,
     );
 
     return runResult.rows[0];
@@ -4040,6 +4297,13 @@ const handleAiRunCallback = async (req: Request, res: Response): Promise<void> =
         metrics_registered: metricsRegistered,
       }),
     ],
+  );
+  await publishRealtimeChanges(
+    aiRealtimeInputs({
+      projectId: run.project_id,
+      runId,
+      action: metricsRegistered > 0 ? 'callback_metrics_updated' : 'callback_received',
+    }),
   );
 
   res.json({
@@ -6412,6 +6676,16 @@ const reviewAiRun = async (req: Request, res: Response): Promise<void> => {
       actorUserId: currentUser.id,
     });
 
+    await publishRealtimeChanges(
+      aiRealtimeInputs({
+        projectId: lockedRun.project_id,
+        runId: lockedRun.id,
+        action: `review_${action}`,
+        originSessionId: req.authSessionId,
+      }),
+      client,
+    );
+
     return {
       decision: decisionResult.rows[0],
       run: updatedRunResult.rows[0],
@@ -6445,10 +6719,12 @@ const publishProjectAiRun = async (req: Request, res: Response): Promise<void> =
               ar.published_at,
               ar.display_name,
               ar.is_dry_run,
-              COALESCE(aps.is_enabled, project_aps.is_enabled) AS is_enabled
+              COALESCE(aps.is_enabled, project_aps.is_enabled) AS is_enabled,
+              COALESCE(governance.publication_authorized, FALSE) AS publication_authorized
        FROM ai_run ar
        LEFT JOIN ai_project_settings aps ON aps.id = ar.settings_id
        LEFT JOIN ai_project_settings project_aps ON project_aps.project_id = ar.project_id
+       LEFT JOIN project_ai_governance governance ON governance.project_id = ar.project_id
        WHERE ar.id = $1
          AND ar.project_id = $2
        FOR UPDATE OF ar`,
@@ -6698,6 +6974,18 @@ const publishProjectAiRun = async (req: Request, res: Response): Promise<void> =
       actorUserId: currentUser.id,
     });
 
+    await publishRealtimeChanges(
+      aiRealtimeInputs({
+        projectId: run.project_id,
+        runId: run.id,
+        layerId: layer.id,
+        action: 'published',
+        originSessionId: req.authSessionId,
+        publicationChanged: true,
+      }),
+      client,
+    );
+
     return {
       run: normalizeRunRow(runUpdate.rows[0]),
       layer: layerUpdate.rows[0],
@@ -6848,6 +7136,28 @@ const unpublishProjectAiRun = async (req: Request, res: Response): Promise<void>
         actorUserId: currentUser.id,
       });
     }
+    if (run.publication_authorized !== true) {
+      throw new AppError(
+        'AI publication is blocked until separate publication authority and an approval reference are recorded.',
+        409,
+        {
+          code: 'AI_PUBLICATION_AUTHORIZATION_REQUIRED',
+          disposition: 'permanent_rejection',
+          retryable: false,
+        },
+      );
+    }
+    await publishRealtimeChanges(
+      aiRealtimeInputs({
+        projectId: run.project_id,
+        runId: run.id,
+        layerId: layerResult.rows[0]?.id ?? null,
+        action: 'unpublished',
+        originSessionId: req.authSessionId,
+        publicationChanged: true,
+      }),
+      client,
+    );
     return {
       run: normalizeRunRow(runUpdate.rows[0]),
       layers: layerResult.rows,
@@ -6911,13 +7221,27 @@ const publishAiLayer = async (req: Request, res: Response): Promise<void> => {
       throw new AppError('Only completed AI runs with predictions can be published.', 409);
     }
     const settingsResult = await client.query(
-      `SELECT is_enabled
-       FROM ai_project_settings
-       WHERE project_id = $1`,
+      `SELECT settings.is_enabled,
+              COALESCE(governance.publication_authorized, FALSE) AS publication_authorized
+       FROM ai_project_settings settings
+       LEFT JOIN project_ai_governance governance
+         ON governance.project_id = settings.project_id
+       WHERE settings.project_id = $1`,
       [layer.project_id],
     );
     if (settingsResult.rows[0]?.is_enabled !== true) {
       throw new AppError('AI must be enabled for this project before publishing layers.', 409);
+    }
+    if (settingsResult.rows[0]?.publication_authorized !== true) {
+      throw new AppError(
+        'AI publication is blocked until separate publication authority and an approval reference are recorded.',
+        409,
+        {
+          code: 'AI_PUBLICATION_AUTHORIZATION_REQUIRED',
+          disposition: 'permanent_rejection',
+          retryable: false,
+        },
+      );
     }
     const predictionCountResult = await client.query(
       `SELECT COUNT(*)::int AS count
@@ -7082,6 +7406,18 @@ const publishAiLayer = async (req: Request, res: Response): Promise<void> => {
       actorUserId: currentUser.id,
     });
 
+    await publishRealtimeChanges(
+      aiRealtimeInputs({
+        projectId: layer.project_id,
+        runId: layer.ai_run_id,
+        layerId: layer.id,
+        action: 'layer_published',
+        originSessionId: req.authSessionId,
+        publicationChanged: true,
+      }),
+      client,
+    );
+
     return updated.rows[0];
   });
 
@@ -7208,6 +7544,18 @@ const unpublishAiLayer = async (req: Request, res: Response): Promise<void> => {
       actorUserId: currentUser.id,
     });
 
+    await publishRealtimeChanges(
+      aiRealtimeInputs({
+        projectId: layer.project_id,
+        runId: layer.ai_run_id,
+        layerId: layer.id,
+        action: 'layer_unpublished',
+        originSessionId: req.authSessionId,
+        publicationChanged: true,
+      }),
+      client,
+    );
+
     return updated.rows[0];
   });
 
@@ -7221,6 +7569,7 @@ const unpublishAiLayer = async (req: Request, res: Response): Promise<void> => {
 module.exports = {
   getProjectAiReadiness,
   getProjectAiSettings,
+  updateProjectAiGovernance,
   upsertProjectAiSettings,
   createProjectAiRun,
   listProjectAiRuns,

@@ -10,6 +10,7 @@ import '../../../../core/web/input_autofill_patch.dart';
 import '../../../../core/widgets/animated_reveal.dart';
 import '../../../../core/widgets/app_button.dart';
 import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_scaffold.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
@@ -20,6 +21,7 @@ import '../utils/auth_form_validators.dart';
 import '../utils/auth_input_formatters.dart';
 import '../widgets/auth_viewport.dart';
 import '../widgets/auth_error_banner.dart';
+import '../widgets/auth_legal_links.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({
@@ -58,6 +60,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final nextError = next.error?.trim();
       if (!mounted ||
           next.status != AuthStatus.unauthenticated ||
+          next.errorCode == 'contact_verification_required' ||
           nextError == null ||
           nextError.isEmpty ||
           nextError == previous?.error) {
@@ -108,8 +111,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
 
     FocusScope.of(context).unfocus();
-    TextInput.finishAutofillContext();
-
     await ref
         .read(authControllerProvider.notifier)
         .login(
@@ -124,11 +125,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     final authState = ref.read(authControllerProvider);
     if (authState.status == AuthStatus.authenticated) {
+      TextInput.finishAutofillContext(shouldSave: true);
       return;
     }
 
     if (authState.errorCode == 'contact_verification_required') {
-      context.go(AppRoutes.verifyContact);
+      TextInput.finishAutofillContext(shouldSave: false);
+      _emailController.clear();
+      _passwordController.clear();
+      context.go(AppRoutes.contactVerification(fromLogin: true));
       return;
     }
 
@@ -136,6 +141,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       await _promptForReactivation();
       return;
     }
+
+    TextInput.finishAutofillContext(shouldSave: false);
 
     final failureMessage = authState.error?.trim().isNotEmpty == true
         ? authState.error!.trim()
@@ -160,13 +167,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         title: const Text('Activate account'),
         content: const Text('Do you want to activate your account to login?'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('No'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Yes'),
+          AppDialogActions(
+            cancel: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('No'),
+            ),
+            confirm: FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Yes'),
+            ),
           ),
         ],
       ),
@@ -199,12 +208,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     final authState = ref.read(authControllerProvider);
     if (authState.status == AuthStatus.authenticated) {
+      TextInput.finishAutofillContext(shouldSave: true);
       AppSnackbar.showSuccess(
         context,
         'Account reactivated successfully. You are now logged in.',
       );
       return;
     }
+
+    TextInput.finishAutofillContext(shouldSave: false);
 
     final failureMessage = authState.error?.trim().isNotEmpty == true
         ? authState.error!.trim()
@@ -351,19 +363,33 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: AppSpacing.xs),
-                  Wrap(
-                    alignment: WrapAlignment.center,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: AppSpacing.xxs,
-                    children: <Widget>[
-                      const Text('No account yet?'),
-                      TextButton(
-                        onPressed: isLoading
-                            ? null
-                            : () => context.go(AppRoutes.signup),
-                        child: const Text('Create account'),
-                      ),
-                    ],
+                  SizedBox(
+                    width: double.infinity,
+                    child: Wrap(
+                      alignment: WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: AppSpacing.xxs,
+                      children: <Widget>[
+                        const Text(
+                          'No account yet?',
+                          textAlign: TextAlign.center,
+                        ),
+                        TextButton(
+                          style: TextButton.styleFrom(
+                            minimumSize: const Size(0, 48),
+                            padding: EdgeInsets.zero,
+                          ),
+                          onPressed: isLoading
+                              ? null
+                              : () => context.go(AppRoutes.signup),
+                          child: const Text('Create account'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  AuthLegalFooter(
+                    onOpenDocument: (slug) =>
+                        context.push(AppRoutes.legalDocument(slug)),
                   ),
                 ],
               ),

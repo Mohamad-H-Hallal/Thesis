@@ -1,4 +1,4 @@
-# Phase 7 — Release Candidate and Pilot
+# Phase 7 - Release Candidate and Pilot
 
 ## Status
 

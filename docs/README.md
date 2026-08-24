@@ -1,5 +1,22 @@
 # Monorepo Docs
 
+- `realtime-protocol.md`: versioned invalidation envelope, scopes, reliability,
+  authorization, and compatibility.
+- `realtime-operations.md`: configuration, deployment, monitoring, rollout,
+  rollback, and verification for realtime v2.
+- `legal/OWNER_AND_COUNSEL_QUESTIONNAIRE.md`: fill-in answer sheet for the
+  unresolved production Privacy Notice, Terms, deletion/attribution, vendor,
+  map, AI, store and Lebanese-law decisions.
+- `legal/LEGAL_DECISIONS_REQUIRED.md`: authoritative legal release blockers and
+  recorded owner decisions.
+- `legal/PRIVACY_REQUEST_RUNBOOK.md`: protected request triage, fulfillment,
+  evidence and failure handling.
+- `legal/CONTENT_MODERATION_RUNBOOK.md`: non-automatic report review and use of
+  existing authoritative content workflows.
+- `legal/PERSONAL_DATA_EXPORT.md`: isolated encrypted export and download-grant
+  design.
+- `legal/ACCOUNT_DELETION_AND_PSEUDONYMIZATION.md`: reviewed deletion,
+  responsibility transfer, tombstones, masked labels and production gates.
 - `FINAL_HANDOVER_AND_DEPLOYMENT_GUIDE.md`: consolidated final handover, deployment, audit, and manual-testing guide.
 - `project-plan.md`: phased delivery plan for the delivered non-AI MVP; AI/GEE classification remains future thesis or production integration scope.
 - `phase-1/01-scope-baseline.md`: scope baseline for the delivered non-AI MVP.

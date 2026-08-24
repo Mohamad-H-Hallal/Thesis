@@ -11,6 +11,10 @@ class ExportFileActions {
     await _invoke('openFile', <String, dynamic>{'path': path});
   }
 
+  static Future<void> revealFile(String path) async {
+    await _invoke('revealFile', <String, dynamic>{'path': path});
+  }
+
   static Future<void> shareFile({
     required String path,
     String? subject,

@@ -59,11 +59,13 @@ class AuthSession {
     required this.accessToken,
     required this.refreshToken,
     required this.user,
+    this.legalAcceptanceRequired = false,
   });
 
   final String accessToken;
   final String refreshToken;
   final AppUser user;
+  final bool legalAcceptanceRequired;
 }
 
 class PasswordResetRequestResult {

@@ -17,6 +17,9 @@ import '../../features/exports/presentation/screens/exports_dashboard_screen.dar
 import '../../features/imports/presentation/screens/import_detail_screen.dart';
 import '../../features/imports/presentation/screens/import_map_screen.dart';
 import '../../features/imports/presentation/screens/imports_screen.dart';
+import '../../features/legal/presentation/screens/legal_document_screen.dart';
+import '../../features/legal/presentation/screens/legal_acceptance_screen.dart';
+import '../../features/legal/presentation/screens/privacy_center_screen.dart';
 import '../../features/admin/presentation/screens/project_form_screen.dart';
 import '../../features/ai/presentation/screens/project_ai_screen.dart';
 import '../../features/map/presentation/screens/add_feature_screen.dart';
@@ -51,6 +54,11 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
           path == AppRoutes.forgotPassword ||
           path == AppRoutes.resetPassword;
       final isSplash = path == AppRoutes.splash;
+      final isPublicLegalRoute = path.startsWith('/legal/');
+
+      if (isPublicLegalRoute) {
+        return null;
+      }
 
       if (auth.status == AuthStatus.checking) {
         return isSplash ? null : _splashRedirectFor(state.uri);
@@ -84,6 +92,15 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
           return AppRoutes.login;
         }
         return _loginRedirectFor(state.uri);
+      }
+
+      if (auth.session!.legalAcceptanceRequired) {
+        return path == AppRoutes.legalAcceptance
+            ? null
+            : AppRoutes.legalAcceptance;
+      }
+      if (path == AppRoutes.legalAcceptance) {
+        return _postAuthRedirectTarget(currentUri: state.uri, user: user);
       }
 
       if (isSplash || isAuthRoute || path == AppRoutes.app) {
@@ -121,8 +138,12 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
       ),
       GoRoute(
         path: AppRoutes.verifyContact,
-        pageBuilder: (_, state) =>
-            _buildPage(state, const ContactVerificationScreen()),
+        pageBuilder: (_, state) => _buildPage(
+          state,
+          ContactVerificationScreen(
+            startedFromLogin: state.uri.queryParameters['source'] == 'login',
+          ),
+        ),
       ),
       GoRoute(
         path: AppRoutes.forgotPassword,
@@ -137,6 +158,23 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         ),
       ),
       GoRoute(
+        path: '/legal/:slug',
+        pageBuilder: (_, state) => _buildPage(
+          state,
+          LegalDocumentScreen(slug: state.pathParameters['slug'] ?? ''),
+        ),
+      ),
+      GoRoute(
+        path: AppRoutes.privacyCenter,
+        pageBuilder: (_, state) =>
+            _buildPage(state, const PrivacyCenterScreen()),
+      ),
+      GoRoute(
+        path: AppRoutes.legalAcceptance,
+        pageBuilder: (_, state) =>
+            _buildPage(state, const LegalAcceptanceScreen()),
+      ),
+      GoRoute(
         path: AppRoutes.app,
         pageBuilder: (_, state) => _buildPage(
           state,
@@ -148,6 +186,7 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
         AppRoutes.users,
         AppRoutes.categories,
         AppRoutes.adminCreation,
+        AppRoutes.privacyModeration,
         AppRoutes.contributorRequests,
         AppRoutes.projects,
         AppRoutes.assignedProjects,
@@ -284,7 +323,10 @@ GoRouter createRouter(Ref ref, {Listenable? refreshListenable}) {
                     await ref
                         .read(reviewRepositoryProvider)
                         .reviewFeature(featureId: item.id, status: 'rejected');
-                    ref.read(workflowRefreshTickProvider.notifier).state++;
+                    final scope = RealtimeScope('reviews', item.projectId);
+                    ref
+                        .read(realtimeScopeRevisionProvider(scope).notifier)
+                        .state++;
                     if (context.mounted) {
                       AppSnackbar.showSuccess(
                         context,
@@ -584,6 +626,7 @@ Set<String> _allowedPathsForUser(AppUser user) {
       AppRoutes.users,
       AppRoutes.categories,
       AppRoutes.adminCreation,
+      AppRoutes.privacyModeration,
       AppRoutes.contributorRequests,
       AppRoutes.projects,
       AppRoutes.assignments,
@@ -592,6 +635,7 @@ Set<String> _allowedPathsForUser(AppUser user) {
       AppRoutes.exports,
       AppRoutes.notifications,
       AppRoutes.profile,
+      AppRoutes.privacyCenter,
       '/app/imports/',
       '/app/categories/',
       '/app/projects/',
@@ -611,6 +655,7 @@ Set<String> _allowedPathsForUser(AppUser user) {
         AppRoutes.exports,
         AppRoutes.notifications,
         AppRoutes.profile,
+        AppRoutes.privacyCenter,
         '/app/imports/',
         '/app/categories/',
         '/app/projects/',
@@ -620,6 +665,7 @@ Set<String> _allowedPathsForUser(AppUser user) {
         AppRoutes.projects,
         AppRoutes.notifications,
         AppRoutes.profile,
+        AppRoutes.privacyCenter,
         '/app/projects/',
       };
     case UserRole.contributor:
@@ -631,6 +677,7 @@ Set<String> _allowedPathsForUser(AppUser user) {
         AppRoutes.submissions,
         AppRoutes.notifications,
         AppRoutes.profile,
+        AppRoutes.privacyCenter,
         '/app/imports/',
         '/app/projects/',
         AppRoutes.addFeature,

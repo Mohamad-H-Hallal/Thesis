@@ -39,6 +39,95 @@ import {
   makeFeatureMediaCleanupJobsAvailable,
   processFeatureMediaCleanupJobs,
 } from '../services/featureMediaCleanup.service';
+import { publishRealtimeChanges } from '../realtime/realtimeEvents';
+import type { RealtimePublishInput } from '../realtime/realtimeProtocol';
+
+const featureRealtimeInputs = ({
+  projectId,
+  featureId,
+  action,
+  originSessionId,
+  includeReviews = false,
+}: {
+  projectId: string;
+  featureId?: string | null;
+  action: string;
+  originSessionId?: string | null;
+  includeReviews?: boolean;
+}): RealtimePublishInput[] => [
+  {
+    scopeType: 'features',
+    scopeId: projectId,
+    action,
+    entityType: 'feature',
+    entityId: featureId,
+    projectId,
+    originSessionId,
+    audience: { kind: 'project', projectId, access: 'readers' },
+  },
+  ...(featureId
+    ? [
+        {
+          scopeType: 'feature',
+          scopeId: featureId,
+          action,
+          entityType: 'feature',
+          entityId: featureId,
+          projectId,
+          originSessionId,
+          audience: { kind: 'project' as const, projectId, access: 'readers' as const },
+        },
+      ]
+    : []),
+  {
+    scopeType: 'project',
+    scopeId: projectId,
+    action: 'feature_changed',
+    entityType: 'feature',
+    entityId: featureId,
+    projectId,
+    originSessionId,
+    audience: { kind: 'project', projectId, access: 'readers' },
+  },
+  ...(includeReviews
+    ? [
+        {
+          scopeType: 'reviews',
+          scopeId: projectId,
+          action,
+          entityType: 'feature',
+          entityId: featureId,
+          projectId,
+          originSessionId,
+          audience: { kind: 'project' as const, projectId, access: 'members' as const },
+        },
+        {
+          scopeType: 'reviews',
+          scopeId: 'all',
+          action,
+          entityType: 'feature',
+          entityId: featureId,
+          projectId,
+          originSessionId,
+          audience: { kind: 'admins' as const },
+        },
+      ]
+    : []),
+];
+
+const notificationRealtimeInput = (
+  userId: string,
+  projectId: string,
+  originSessionId?: string | null,
+): RealtimePublishInput => ({
+  scopeType: 'notifications',
+  scopeId: userId,
+  action: 'created',
+  entityType: 'notification',
+  projectId,
+  originSessionId,
+  audience: { kind: 'user', userId },
+});
 
 interface Pagination {
   page: number;
@@ -474,7 +563,7 @@ const getAllFeatures = async (req: Request, res: Response): Promise<void> => {
     SELECT sf.id, sf.project_id, p.name as project_name, sf.status, sf.attributes,
            sf.collected_at, sf.submitted_at,
            ST_AsGeoJSON(sf.geom) as geometry,
-           u.full_name as collected_by,
+           COALESCE(u.full_name, u.masked_contributor_label, 'Former contributor') as collected_by,
            (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) as photo_count
     FROM spatial_feature sf
     JOIN project p ON sf.project_id = p.id
@@ -713,8 +802,8 @@ const getFeature = async (req: Request, res: Response): Promise<void> => {
               ),
               '[]'::json
             ) as photos,
-            u.full_name as collected_by,
-            r.full_name as reviewed_by,
+            COALESCE(u.full_name, u.masked_contributor_label, 'Former contributor') as collected_by,
+            COALESCE(r.full_name, r.masked_contributor_label, 'Former reviewer') as reviewed_by,
             p.name as project_name
      FROM spatial_feature sf
      LEFT JOIN "user" u ON sf.collected_by_user_id = u.id
@@ -966,6 +1055,15 @@ const createFeature = async (req: Request, res: Response): Promise<void> => {
         payloadHash,
         entityIds: [id],
       });
+      await publishRealtimeChanges(
+        featureRealtimeInputs({
+          projectId: project_id,
+          featureId: id,
+          action: 'created',
+          originSessionId: req.authSessionId,
+        }),
+        client,
+      );
       return { row: inserted.rows[0], alreadySynchronized: false };
     });
 
@@ -1018,8 +1116,9 @@ const createFeature = async (req: Request, res: Response): Promise<void> => {
     user: req.user as Express.UserContext,
   });
 
-  const result = await query(
-    `INSERT INTO spatial_feature (
+  const result = await transaction(async (client: QueryExecutor) => {
+    const inserted = await client.query(
+      `INSERT INTO spatial_feature (
       id, project_id, collected_by_user_id, geom, attributes,
       accuracy_meters, collected_offline, status
     ) VALUES (
@@ -1033,15 +1132,26 @@ const createFeature = async (req: Request, res: Response): Promise<void> => {
       'draft'
     )
     RETURNING id, status, version, collected_at, ST_AsGeoJSON(geom) AS geometry`,
-    [
-      id ?? null,
-      project_id,
-      req.user?.id,
-      JSON.stringify(normalizedGeometry),
-      JSON.stringify(normalizedAttributes),
-      null,
-    ],
-  );
+      [
+        id ?? null,
+        project_id,
+        req.user?.id,
+        JSON.stringify(normalizedGeometry),
+        JSON.stringify(normalizedAttributes),
+        null,
+      ],
+    );
+    await publishRealtimeChanges(
+      featureRealtimeInputs({
+        projectId: project_id,
+        featureId: inserted.rows[0].id,
+        action: 'created',
+        originSessionId: req.authSessionId,
+      }),
+      client,
+    );
+    return inserted;
+  });
 
   logger.info('Feature created:', {
     featureId: result.rows[0].id,
@@ -1064,7 +1174,7 @@ const updateFeature = async (req: Request, res: Response): Promise<void> => {
   const isOfflineSyncRequest = requestHasOfflineSyncSignal(req);
 
   const featureCheck = await query(
-    `SELECT id, status, collected_by_user_id, project_id, collected_offline
+    `SELECT id, status, version, collected_by_user_id, project_id, collected_offline
      FROM spatial_feature
      WHERE id = $1`,
     [featureId],
@@ -1238,6 +1348,15 @@ const updateFeature = async (req: Request, res: Response): Promise<void> => {
         payloadHash,
         entityIds: [featureId],
       });
+      await publishRealtimeChanges(
+        featureRealtimeInputs({
+          projectId: lockedFeature.project_id,
+          featureId,
+          action: 'updated',
+          originSessionId: req.authSessionId,
+        }),
+        client,
+      );
       return { row: updated.rows[0], alreadySynchronized: false };
     });
 
@@ -1343,6 +1462,15 @@ const updateFeature = async (req: Request, res: Response): Promise<void> => {
           409,
         );
       }
+      await publishRealtimeChanges(
+        featureRealtimeInputs({
+          projectId: lockedFeature.project_id,
+          featureId,
+          action: 'updated',
+          originSessionId: req.authSessionId,
+        }),
+        client,
+      );
       return updated.rows[0];
     });
 
@@ -1376,8 +1504,18 @@ const updateFeature = async (req: Request, res: Response): Promise<void> => {
   }
 
   const onlineBody = assertPlainObject(req.body, 'Feature update');
-  assertOnlyAllowedKeys(onlineBody, new Set(['attributes', 'geom']), 'Feature update');
+  assertOnlyAllowedKeys(
+    onlineBody,
+    new Set(['attributes', 'geom', 'expected_version']),
+    'Feature update',
+  );
   assertOfflinePayloadSize(onlineBody);
+  if (
+    expected_version !== undefined &&
+    (!Number.isSafeInteger(expected_version) || expected_version < 1)
+  ) {
+    throw new AppError('Feature version is invalid.', 422);
+  }
   if (
     attributes &&
     typeof attributes === 'object' &&
@@ -1397,24 +1535,54 @@ const updateFeature = async (req: Request, res: Response): Promise<void> => {
     await assertGeometryAcceptedByPostgis({ query }, normalizedGeometry);
   }
 
-  const result = await query(
-    `
-    UPDATE spatial_feature
-    SET attributes = COALESCE($1, attributes),
-        geom = CASE
-          WHEN $2::text IS NULL THEN geom
-          ELSE ST_SetSRID(ST_GeomFromGeoJSON($2), 4326)
-        END,
-        version = version + 1
-    WHERE id = $3
-    RETURNING id, status, version, ST_AsGeoJSON(geom) as geometry, attributes
-  `,
-    [
-      normalizedAttributes === null ? null : JSON.stringify(normalizedAttributes),
-      normalizedGeometry === null ? null : JSON.stringify(normalizedGeometry),
-      featureId,
-    ],
-  );
+  const result = await transaction(async (client: QueryExecutor) => {
+    const updated = await client.query(
+      `UPDATE spatial_feature
+       SET attributes = COALESCE($1, attributes),
+           geom = CASE
+             WHEN $2::text IS NULL THEN geom
+             ELSE ST_SetSRID(ST_GeomFromGeoJSON($2), 4326)
+           END,
+           version = version + 1
+       WHERE id = $3
+         AND ($4::integer IS NULL OR version = $4)
+       RETURNING id, status, version, ST_AsGeoJSON(geom) as geometry, attributes`,
+      [
+        normalizedAttributes === null ? null : JSON.stringify(normalizedAttributes),
+        normalizedGeometry === null ? null : JSON.stringify(normalizedGeometry),
+        featureId,
+        expected_version ?? null,
+      ],
+    );
+    if (!updated.rows[0]) {
+      const current = await client.query('SELECT version FROM spatial_feature WHERE id = $1', [
+        featureId,
+      ]);
+      if (current.rows[0]) {
+        throw new AppError(
+          'This feature changed after the form was opened. Review the latest server version before saving again.',
+          409,
+          {
+            code: 'ENTITY_VERSION_CONFLICT',
+            disposition: 'conflict',
+            retryable: false,
+            currentVersion: Number(current.rows[0].version),
+          },
+        );
+      }
+      throw new AppError('Feature not found', 404);
+    }
+    await publishRealtimeChanges(
+      featureRealtimeInputs({
+        projectId: feature.project_id,
+        featureId,
+        action: 'updated',
+        originSessionId: req.authSessionId,
+      }),
+      client,
+    );
+    return updated;
+  });
 
   logger.info('Feature updated:', { featureId, userId: req.user?.id });
 
@@ -1501,6 +1669,16 @@ const deleteFeature = async (req: Request, res: Response): Promise<void> => {
       [featureId],
     );
     await client.query('DELETE FROM spatial_feature WHERE id = $1', [featureId]);
+    await publishRealtimeChanges(
+      featureRealtimeInputs({
+        projectId: feature.project_id,
+        featureId,
+        action: 'deleted',
+        originSessionId: req.authSessionId,
+        includeReviews: feature.status !== 'draft',
+      }),
+      client,
+    );
     return photoPaths.rows
       .flatMap((photo) => [photo.file_path, photo.thumbnail_path])
       .filter(
@@ -1700,6 +1878,21 @@ const submitFeature = async (req: Request, res: Response): Promise<void> => {
         payloadHash,
         entityIds: [featureId],
       });
+      await publishRealtimeChanges(
+        [
+          ...featureRealtimeInputs({
+            projectId: feature.project_id,
+            featureId,
+            action: 'submitted',
+            originSessionId: req.authSessionId,
+            includeReviews: true,
+          }),
+          ...adminUsers.rows.map((admin) =>
+            notificationRealtimeInput(admin.id, feature.project_id, req.authSessionId),
+          ),
+        ],
+        client,
+      );
       return { alreadySubmitted: false, offline: true };
     }
 
@@ -1801,6 +1994,21 @@ const submitFeature = async (req: Request, res: Response): Promise<void> => {
         ],
       );
     }
+    await publishRealtimeChanges(
+      [
+        ...featureRealtimeInputs({
+          projectId: feature.project_id,
+          featureId,
+          action: 'submitted',
+          originSessionId: req.authSessionId,
+          includeReviews: true,
+        }),
+        ...adminUsers.rows.map((admin) =>
+          notificationRealtimeInput(admin.id, feature.project_id, req.authSessionId),
+        ),
+      ],
+      client,
+    );
     return { alreadySubmitted: false, offline: false };
   });
 
@@ -1889,6 +2097,23 @@ const reviewFeature = async (req: Request, res: Response): Promise<void> => {
           review_notes,
         }),
       ],
+    );
+    await publishRealtimeChanges(
+      [
+        ...featureRealtimeInputs({
+          projectId: featureCheck.rows[0].project_id,
+          featureId,
+          action: status,
+          originSessionId: req.authSessionId,
+          includeReviews: true,
+        }),
+        notificationRealtimeInput(
+          featureCheck.rows[0].collected_by_user_id,
+          featureCheck.rows[0].project_id,
+          req.authSessionId,
+        ),
+      ],
+      client,
     );
   });
 
@@ -2077,8 +2302,8 @@ const findFeaturesByBbox = async (req: Request, res: Response): Promise<void> =>
            sf.reviewed_at,
            sf.review_notes,
            sf.version,
-           collector.full_name AS collected_by,
-           reviewer.full_name AS reviewed_by,
+           COALESCE(collector.full_name, collector.masked_contributor_label, 'Former contributor') AS collected_by,
+           COALESCE(reviewer.full_name, reviewer.masked_contributor_label, 'Former reviewer') AS reviewed_by,
            (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) AS photo_count,
            ${geometrySql} AS geometry
     FROM spatial_feature sf
@@ -2206,8 +2431,8 @@ const findFeaturesTile = async (req: Request, res: Response): Promise<void> => {
                   sf.reviewed_at,
                   sf.review_notes,
                   sf.version,
-                  collector.full_name AS collected_by,
-                  reviewer.full_name AS reviewed_by,
+                  COALESCE(collector.full_name, collector.masked_contributor_label, 'Former contributor') AS collected_by,
+                  COALESCE(reviewer.full_name, reviewer.masked_contributor_label, 'Former reviewer') AS reviewed_by,
                   (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) AS photo_count,
                   CASE
                     WHEN GeometryType(sf.geom) IN ('POLYGON', 'MULTIPOLYGON') THEN ST_PointOnSurface(sf.geom)
@@ -2293,8 +2518,8 @@ const findFeaturesTile = async (req: Request, res: Response): Promise<void> => {
                 sf.reviewed_at,
                 sf.review_notes,
                 sf.version,
-                collector.full_name AS collected_by,
-                reviewer.full_name AS reviewed_by,
+                COALESCE(collector.full_name, collector.masked_contributor_label, 'Former contributor') AS collected_by,
+                COALESCE(reviewer.full_name, reviewer.masked_contributor_label, 'Former reviewer') AS reviewed_by,
                 (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) AS photo_count,
                 ${geometrySql} AS geometry,
                 false AS is_aggregate,
@@ -2530,6 +2755,14 @@ const batchCreateFeatures = async (req: Request, res: Response): Promise<void> =
       payloadHash,
       entityIds,
     });
+    await publishRealtimeChanges(
+      featureRealtimeInputs({
+        projectId,
+        action: 'bulk_created',
+        originSessionId: req.authSessionId,
+      }),
+      client,
+    );
     return { rows: results, alreadySynchronized: false };
   });
 

@@ -244,6 +244,15 @@ class _FakeImportsRepository implements ImportsRepository {
   Future<GisImportJob> uploadImport({
     required String projectId,
     required PlatformFile file,
+    ImportSourceProvenance? provenance,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<GisImportJob> updateImportProvenance({
+    required String importId,
+    required ImportSourceProvenance provenance,
   }) {
     throw UnimplementedError();
   }
@@ -341,6 +350,13 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Import history'), findsOneWidget);
+    await tester.ensureVisible(find.text('Dataset source and reuse rights'));
+    await tester.tap(find.text('Dataset source and reuse rights'));
+    await tester.pumpAndSettle();
+    final provenanceCheckbox = tester.widget<CheckboxListTile>(
+      find.byKey(const Key('import-provenance-confirmation')),
+    );
+    expect(provenanceCheckbox.value, isFalse);
     expect(find.text('GIS imports'), findsNothing);
     expect(find.text('No imports submitted yet'), findsNothing);
   });

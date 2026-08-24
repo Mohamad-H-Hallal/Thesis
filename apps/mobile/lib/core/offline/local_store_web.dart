@@ -750,6 +750,22 @@ class MemoryLocalStore implements LocalStore {
   }
 
   @override
+  Future<void> purgeAccountData(String ownerUserId) async {
+    if (ownerUserId.trim().isEmpty) {
+      throw ArgumentError.value(ownerUserId, 'ownerUserId');
+    }
+    await discardRejectedSyncItemsForOwner(ownerUserId);
+    _projects.removeWhere((key, _) => key.startsWith('$ownerUserId:'));
+    _offlinePackages.removeWhere(
+      (key, package) =>
+          package.ownerUserId == ownerUserId || key.startsWith('$ownerUserId:'),
+    );
+    _offlineProjectPackages.removeWhere(
+      (_, package) => package.ownerUserId == ownerUserId,
+    );
+  }
+
+  @override
   Future<void> markSyncFailure(
     SyncQueueItem item, {
     required String error,

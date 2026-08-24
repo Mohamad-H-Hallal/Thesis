@@ -151,6 +151,14 @@ class MockImportsRepository implements ImportsRepository {
   }
 
   @override
+  Future<GisImportJob> updateImportProvenance({
+    required String importId,
+    required ImportSourceProvenance provenance,
+  }) async {
+    return (await fetchImportDetails(importId)).job;
+  }
+
+  @override
   Future<ImportMapData> fetchImportMapData({
     required String importId,
     required String projectId,
@@ -523,6 +531,7 @@ class MockImportsRepository implements ImportsRepository {
   Future<GisImportJob> uploadImport({
     required String projectId,
     required PlatformFile file,
+    ImportSourceProvenance? provenance,
   }) async {
     final id = 'mock-import-${Random().nextInt(999999)}';
     final now = DateTime.now();

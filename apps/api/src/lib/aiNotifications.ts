@@ -1,5 +1,6 @@
 import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { query } from '../config/database';
+import { publishRealtimeChange } from '../realtime/realtimeEvents';
 
 type QueryExecutor = Pick<PoolClient, 'query'> | typeof query;
 
@@ -45,11 +46,28 @@ const createAiNotification = async (
      RETURNING id`,
     [input.userId, input.title, input.message, JSON.stringify(metadata), input.eventKey],
   );
-  return (result.rowCount ?? 0) > 0;
+  const notificationId = result.rows[0]?.id as string | undefined;
+  if (notificationId) {
+    await publishRealtimeChange(
+      {
+        scopeType: 'notifications',
+        scopeId: input.userId,
+        action: 'created',
+        entityType: 'notification',
+        entityId: notificationId,
+        audience: { kind: 'user', userId: input.userId },
+      },
+      typeof executor === 'function' ? undefined : executor,
+    );
+  }
+  return notificationId != null;
 };
 
-const notifyAiRunStatus = async (runId: string): Promise<void> => {
-  const result = await query<{
+const notifyAiRunStatus = async (
+  runId: string,
+  executor: QueryExecutor = query,
+): Promise<string | null> => {
+  const result = await runQuery<{
     id: string;
     project_id: string;
     project_name: string;
@@ -58,6 +76,7 @@ const notifyAiRunStatus = async (runId: string): Promise<void> => {
     started_by: string | null;
     message: string | null;
   }>(
+    executor,
     `SELECT ar.id,
             ar.project_id,
             p.name AS project_name,
@@ -72,7 +91,7 @@ const notifyAiRunStatus = async (runId: string): Promise<void> => {
   );
   const run = result.rows[0];
   if (!run?.started_by) {
-    return;
+    return null;
   }
 
   const notification =
@@ -97,10 +116,10 @@ const notifyAiRunStatus = async (runId: string): Promise<void> => {
           : null;
 
   if (!notification) {
-    return;
+    return null;
   }
 
-  await createAiNotification(query, {
+  const created = await createAiNotification(executor, {
     userId: run.started_by,
     eventKey: `ai_run:${run.id}:${notification.eventStatus}`,
     title: notification.title,
@@ -112,6 +131,7 @@ const notifyAiRunStatus = async (runId: string): Promise<void> => {
       ai_run_status: run.status,
     },
   });
+  return created ? run.started_by : null;
 };
 
 const notifyAiValidationTaskAssigned = async (
@@ -166,7 +186,8 @@ const notifyAdminsAboutAiValidationSubmission = async (
     contributor_name: string;
   }>(
     executor,
-    `SELECT p.name AS project_name, u.full_name AS contributor_name
+    `SELECT p.name AS project_name,
+            COALESCE(u.full_name, u.masked_contributor_label, 'Former contributor') AS contributor_name
      FROM project p
      JOIN "user" u ON u.id = $2
      WHERE p.id = $1`,

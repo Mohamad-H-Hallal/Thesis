@@ -91,6 +91,27 @@ class AppEnv {
     return _parseBool(raw, fallback: false);
   }
 
+  static bool get realtimeV2Enabled {
+    const raw = String.fromEnvironment('REALTIME_V2_ENABLED', defaultValue: '');
+    return _parseBool(raw, fallback: true);
+  }
+
+  static bool get realtimeLegacyBroadcastEnabled {
+    const raw = String.fromEnvironment(
+      'REALTIME_LEGACY_BROADCAST_ENABLED',
+      defaultValue: '',
+    );
+    return _parseBool(raw, fallback: true);
+  }
+
+  static bool get realtimePollingFallbackEnabled {
+    const raw = String.fromEnvironment(
+      'REALTIME_POLLING_FALLBACK_ENABLED',
+      defaultValue: '',
+    );
+    return _parseBool(raw, fallback: false);
+  }
+
   static bool get pushNotificationsRequested {
     const raw = String.fromEnvironment(
       'PUSH_NOTIFICATIONS_ENABLED',
@@ -113,6 +134,31 @@ class AppEnv {
       defaultValue: '',
     );
     return _parseBool(raw, fallback: false);
+  }
+
+  static bool get licensedEsriOfflineBasemapEnabled {
+    const raw = String.fromEnvironment(
+      'LICENSED_ESRI_OFFLINE_BASEMAP_ENABLED',
+      defaultValue: '',
+    );
+    return _parseBool(raw, fallback: false);
+  }
+
+  static String get mapProviderUserAgent {
+    const value = String.fromEnvironment(
+      'MAP_PROVIDER_USER_AGENT',
+      defaultValue: 'TerraLeb-development (privacy contact not configured)',
+    );
+    return value.trim();
+  }
+
+  static String get streetTileUrlTemplate {
+    const fallback = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+    const value = String.fromEnvironment(
+      'MAP_STREET_TILE_URL',
+      defaultValue: fallback,
+    );
+    return value.trim().isEmpty ? fallback : value.trim();
   }
 
   static String get flavorName => flavor.name;

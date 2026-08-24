@@ -94,6 +94,7 @@ class ApiImportsRepository implements ImportsRepository {
   Future<GisImportJob> uploadImport({
     required String projectId,
     required PlatformFile file,
+    ImportSourceProvenance? provenance,
   }) async {
     if ((file.path == null || file.path!.trim().isEmpty) &&
         (file.bytes == null || file.bytes!.isEmpty)) {
@@ -104,7 +105,10 @@ class ApiImportsRepository implements ImportsRepository {
     try {
       final response = await _apiClient.dio.post<Map<String, dynamic>>(
         '$_basePath/project/$projectId/upload',
-        data: FormData.fromMap(<String, dynamic>{'file': multipart}),
+        data: FormData.fromMap(<String, dynamic>{
+          ...?provenance?.toFields(),
+          'file': multipart,
+        }),
       );
       final row = Map<String, dynamic>.from(
         response.data?['data'] as Map? ?? const <String, dynamic>{},
@@ -157,6 +161,29 @@ class ApiImportsRepository implements ImportsRepository {
       throw userFacingDioMessage(
         error,
         fallback: 'Unable to load this GIS import right now.',
+      );
+    }
+  }
+
+  @override
+  Future<GisImportJob> updateImportProvenance({
+    required String importId,
+    required ImportSourceProvenance provenance,
+  }) async {
+    try {
+      final response = await _apiClient.dio.put<Map<String, dynamic>>(
+        '$_basePath/$importId/provenance',
+        data: provenance.toFields(),
+      );
+      return _toImportJob(
+        Map<String, dynamic>.from(
+          response.data?['data'] as Map? ?? const <String, dynamic>{},
+        ),
+      );
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to save this import provenance right now.',
       );
     }
   }
@@ -580,6 +607,18 @@ class ApiImportsRepository implements ImportsRepository {
       fileType: (row['file_type'] as String?) ?? 'geojson',
       sourceCrs: row['source_crs'] as String?,
       sourceLayerName: row['source_layer_name'] as String?,
+      sourceProvider: row['source_provider'] as String?,
+      sourceDatasetName: row['source_dataset_name'] as String?,
+      sourceDatasetDate: _toOptionalDate(row['source_dataset_date']),
+      sourceAccuracyStatement: row['source_accuracy_statement'] as String?,
+      sourceLicenseOrAuthority: row['source_license_or_authority'] as String?,
+      sourceAttribution: row['source_attribution'] as String?,
+      sourceTermsUrl: row['source_terms_url'] as String?,
+      sourceRedistributionRules: row['source_redistribution_rules'] as String?,
+      provenanceConfirmedAt: _toOptionalDate(row['provenance_confirmed_at']),
+      provenanceConfirmedByUserId:
+          row['provenance_confirmed_by_user_id'] as String?,
+      provenanceComplete: row['provenance_complete'] == true,
       status: (row['status'] as String?) ?? 'uploaded',
       geometryCount: _toInt(row['geometry_count']),
       pendingFeatureCount: _toInt(row['pending_feature_count']),

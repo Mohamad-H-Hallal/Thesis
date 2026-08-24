@@ -183,6 +183,16 @@ services:
         "-lc",
         "sh /workspace/apps/api/docker/dev-entrypoint.sh npm run workloads:worker",
       ]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -r tsx/cjs src/jobs/checkWorkloadWorkerHealth.ts",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     volumes:
       - .:/workspace
       - api_node_modules:/workspace/apps/api/node_modules

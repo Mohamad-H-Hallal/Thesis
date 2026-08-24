@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>TerraLeb uses the camera only when you choose to capture field or validation evidence for an authorized project.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>TerraLeb accesses photos only when you choose images to attach as field or validation evidence for an authorized project.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

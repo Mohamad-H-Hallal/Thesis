@@ -36,6 +36,7 @@ abstract class NotificationsRepository {
     required String platform,
     String? deviceLabel,
     String? appVersion,
+    bool showSensitivePreview = false,
   });
 
   Future<void> unregisterDeviceToken(String token);

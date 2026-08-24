@@ -1,5 +1,6 @@
 import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { query } from '../config/database';
+import { publishRealtimeChange } from '../realtime/realtimeEvents';
 
 type QueryExecutor = Pick<PoolClient, 'query'> | typeof query;
 
@@ -31,14 +32,32 @@ const createWorkflowNotificationOnce = async (
     message: string;
     metadata: Record<string, unknown>;
   },
-): Promise<void> => {
-  await runQuery(
+): Promise<string | null> => {
+  const result = await runQuery<{ id: string }>(
     executor,
     `INSERT INTO notification (user_id, type, title, message, metadata)
      VALUES ($1, $2::notification_type, $3, $4, $5::jsonb)
-     ON CONFLICT DO NOTHING`,
+     ON CONFLICT DO NOTHING
+     RETURNING id`,
     [userId, type, title, message, JSON.stringify({ ...metadata, event_key: eventKey })],
   );
+  return result.rows[0]?.id ?? null;
+};
+
+const publishNotificationChange = async (
+  executor: QueryExecutor,
+  userId: string,
+  notificationId: string,
+): Promise<void> => {
+  const input = {
+    scopeType: 'notifications',
+    scopeId: userId,
+    action: 'created',
+    entityType: 'notification',
+    entityId: notificationId,
+    audience: { kind: 'user' as const, userId },
+  };
+  await publishRealtimeChange(input, typeof executor === 'function' ? undefined : executor);
 };
 
 const notifyProjectStatusChanged = async (
@@ -83,7 +102,7 @@ const notifyProjectStatusChanged = async (
     if (recipient.user_id === actorUserId) {
       continue;
     }
-    await createWorkflowNotificationOnce(executor, {
+    const notificationId = await createWorkflowNotificationOnce(executor, {
       userId: recipient.user_id,
       type: 'project_event',
       eventKey: `${eventKey}:${recipient.user_id}`,
@@ -96,6 +115,9 @@ const notifyProjectStatusChanged = async (
         status,
       },
     });
+    if (notificationId) {
+      await publishNotificationChange(executor, recipient.user_id, notificationId);
+    }
   }
 };
 

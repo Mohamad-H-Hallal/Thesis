@@ -15,7 +15,7 @@ final aiSettingsProvider = FutureProvider.family<AiProjectSettings, String>((
   ref,
   projectId,
 ) async {
-  ref.watch(workflowRefreshTickProvider);
+  watchRealtimeScope(ref, RealtimeScope('ai', projectId));
   return ref.read(aiRepositoryProvider).fetchSettings(projectId: projectId);
 });
 
@@ -24,7 +24,7 @@ final aiReadinessProvider =
       ref,
       query,
     ) async {
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('ai', query.projectId));
       return ref
           .read(aiRepositoryProvider)
           .fetchReadiness(
@@ -40,7 +40,7 @@ final aiRunsProvider =
       ref,
       query,
     ) async {
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('ai', query.projectId));
       return ref
           .read(aiRepositoryProvider)
           .fetchRunsPage(
@@ -55,7 +55,7 @@ final aiProjectRunsProvider = FutureProvider.family<List<AiRun>, String>((
   ref,
   projectId,
 ) async {
-  ref.watch(workflowRefreshTickProvider);
+  watchRealtimeScope(ref, RealtimeScope('ai', projectId));
   const pageSize = 100;
   var page = 1;
   final runs = <AiRun>[];
@@ -79,7 +79,7 @@ final aiProjectRunsProvider = FutureProvider.family<List<AiRun>, String>((
 });
 
 final aiRunProvider = FutureProvider.family<AiRun, String>((ref, runId) async {
-  ref.watch(workflowRefreshTickProvider);
+  watchRealtimeScope(ref, RealtimeScope('ai_run', runId));
   return ref.read(aiRepositoryProvider).fetchRun(runId: runId);
 });
 
@@ -103,7 +103,7 @@ final aiRunMetricsProvider = FutureProvider.family<List<AiRunMetric>, String>((
   ref,
   runId,
 ) async {
-  ref.watch(workflowRefreshTickProvider);
+  watchRealtimeScope(ref, RealtimeScope('ai_run', runId));
   return ref.read(aiRepositoryProvider).fetchRunMetrics(runId: runId);
 });
 
@@ -111,7 +111,7 @@ final aiRunLayersProvider = FutureProvider.family<List<AiOutputLayer>, String>((
   ref,
   runId,
 ) async {
-  ref.watch(workflowRefreshTickProvider);
+  watchRealtimeScope(ref, RealtimeScope('ai_run', runId));
   return ref.read(aiRepositoryProvider).fetchRunLayers(runId: runId);
 });
 
@@ -120,7 +120,7 @@ final aiRunValidationSummaryProvider =
       AiRunPredictionValidationSummary,
       ({String projectId, String runId})
     >((ref, query) async {
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('ai_run', query.runId));
       return ref
           .read(aiRepositoryProvider)
           .fetchRunValidationSummary(
@@ -131,7 +131,7 @@ final aiRunValidationSummaryProvider =
 
 final publishedAiLayersProvider =
     FutureProvider.family<List<AiOutputLayer>, String>((ref, projectId) async {
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('ai', projectId));
       if (projectId.trim().isEmpty) {
         return const <AiOutputLayer>[];
       }
@@ -166,7 +166,7 @@ final aiPredictionFeatureDetailsProvider =
       AiPredictionFeatureDetails,
       ({String projectId, String runId, String predictionId})
     >((ref, query) async {
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('ai', query.projectId));
       return ref
           .read(aiRepositoryProvider)
           .fetchPredictionDetails(
@@ -181,7 +181,7 @@ final aiPredictionFeatureValidationsProvider =
       List<AiPredictionFeatureValidation>,
       ({String projectId, String predictionId})
     >((ref, query) async {
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('ai', query.projectId));
       return ref
           .read(aiRepositoryProvider)
           .fetchPredictionValidations(
@@ -226,13 +226,13 @@ final aiRunLogsProvider =
       ref,
       runId,
     ) async {
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('ai_run', runId));
       return ref.read(aiRepositoryProvider).fetchRunLogsPage(runId: runId);
     });
 
 final aiRunReviewsProvider =
     FutureProvider.family<List<AiReviewDecision>, String>((ref, runId) async {
-      ref.watch(workflowRefreshTickProvider);
+      watchRealtimeScope(ref, RealtimeScope('ai_run', runId));
       return ref.read(aiRepositoryProvider).fetchRunReviews(runId: runId);
     });
 
@@ -241,7 +241,13 @@ final myAiValidationTasksProvider =
       AiPredictionValidationTaskList,
       AiPredictionValidationTasksQuery
     >((ref, query) async {
-      ref.watch(workflowRefreshTickProvider);
+      final userId =
+          ref.watch(authControllerProvider).session?.user.id ?? 'none';
+      watchRealtimeScope(ref, RealtimeScope('notifications', userId));
+      final projectId = query.projectId?.trim();
+      if (projectId != null && projectId.isNotEmpty) {
+        watchRealtimeScope(ref, RealtimeScope('ai', projectId));
+      }
       return ref
           .read(aiRepositoryProvider)
           .fetchMyValidationTasks(
@@ -257,7 +263,6 @@ final projectAiValidationTasksProvider =
       AiPredictionValidationTaskList,
       AiPredictionValidationTasksQuery
     >((ref, query) async {
-      ref.watch(workflowRefreshTickProvider);
       final projectId = query.projectId?.trim();
       if (projectId == null || projectId.isEmpty) {
         return const AiPredictionValidationTaskList(
@@ -271,6 +276,7 @@ final projectAiValidationTasksProvider =
           noSpatialFeatureWrites: true,
         );
       }
+      watchRealtimeScope(ref, RealtimeScope('ai', projectId));
       return ref
           .read(aiRepositoryProvider)
           .fetchProjectValidationTasks(
@@ -285,6 +291,8 @@ final projectAiValidationTasksProvider =
 
 final aiValidationTaskProvider =
     FutureProvider.family<AiPredictionValidationTask, String>((ref, taskId) {
-      ref.watch(workflowRefreshTickProvider);
+      final userId =
+          ref.watch(authControllerProvider).session?.user.id ?? 'none';
+      watchRealtimeScope(ref, RealtimeScope('notifications', userId));
       return ref.read(aiRepositoryProvider).fetchValidationTask(taskId: taskId);
     });

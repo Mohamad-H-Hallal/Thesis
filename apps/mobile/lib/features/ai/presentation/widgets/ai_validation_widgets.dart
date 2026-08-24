@@ -11,6 +11,7 @@ import '../../../../core/router/route_paths.dart';
 import '../../../../core/utils/lebanon_time.dart';
 import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../projects/domain/project.dart';
@@ -549,20 +550,22 @@ class _AiValidationSubmissionDialogState
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: _submitting ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton.icon(
-          onPressed: _submitting ? null : _submit,
-          icon: _submitting
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.fact_check_outlined),
-          label: Text(_submitting ? 'Submitting...' : 'Submit'),
+        AppDialogActions(
+          cancel: TextButton(
+            onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          confirm: FilledButton.icon(
+            onPressed: _submitting ? null : _submit,
+            icon: _submitting
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.fact_check_outlined),
+            label: Text(_submitting ? 'Submitting...' : 'Submit'),
+          ),
         ),
       ],
     );
@@ -608,7 +611,7 @@ class _AiValidationSubmissionDialogState
               'ui_phase': 'mobile_phase_s2',
             },
           );
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('ai', widget.task.projectId));
       if (!mounted) {
         return;
       }
@@ -732,20 +735,22 @@ class _AiValidationReviewDialogState
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: _submitting ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton.icon(
-          onPressed: _submitting ? null : _review,
-          icon: _submitting
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : Icon(rejecting ? Icons.cancel_outlined : Icons.check),
-          label: Text(_submitting ? 'Saving...' : 'Save review'),
+        AppDialogActions(
+          cancel: TextButton(
+            onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          confirm: FilledButton.icon(
+            onPressed: _submitting ? null : _review,
+            icon: _submitting
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(rejecting ? Icons.cancel_outlined : Icons.check),
+            label: Text(_submitting ? 'Saving...' : 'Save'),
+          ),
         ),
       ],
     );
@@ -772,7 +777,7 @@ class _AiValidationReviewDialogState
             reason: reason.isEmpty ? null : reason,
             submissionId: widget.task.latestSubmission?.id,
           );
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('ai', widget.task.projectId));
       if (!mounted) {
         return;
       }
@@ -847,20 +852,22 @@ class _AiValidationAssignDialogState
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: _submitting ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton.icon(
-          onPressed: _submitting ? null : _assign,
-          icon: _submitting
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.assignment_ind_outlined),
-          label: Text(_submitting ? 'Assigning...' : 'Assign'),
+        AppDialogActions(
+          cancel: TextButton(
+            onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          confirm: FilledButton.icon(
+            onPressed: _submitting ? null : _assign,
+            icon: _submitting
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.assignment_ind_outlined),
+            label: Text(_submitting ? 'Assigning...' : 'Assign'),
+          ),
         ),
       ],
     );
@@ -882,7 +889,7 @@ class _AiValidationAssignDialogState
       await ref
           .read(aiRepositoryProvider)
           .assignValidationTask(taskId: widget.task.id, assignedTo: assignee);
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('ai', widget.task.projectId));
       if (!mounted) {
         return;
       }

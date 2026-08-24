@@ -37,6 +37,7 @@ class OfflineProjectDownloadResult {
     required this.baseMapDownloaded,
     required this.baseMapAlreadyComplete,
     this.tileSummary,
+    this.baseMapUnavailableReason,
   });
 
   final OfflineProjectPackage projectPackage;
@@ -45,6 +46,7 @@ class OfflineProjectDownloadResult {
   final bool baseMapDownloaded;
   final bool baseMapAlreadyComplete;
   final OfflineTileDownloadSummary? tileSummary;
+  final String? baseMapUnavailableReason;
 }
 
 class OfflineProjectDownloadService {
@@ -125,6 +127,25 @@ class OfflineProjectDownloadService {
       ownerUserId: ownerUserId,
       isCurrent: true,
     );
+    if (!_tileCacheManager.licensedEsriOfflineBasemapEnabled) {
+      onProgress?.call(
+        const OfflineProjectDownloadProgress(
+          label:
+              'Project data saved. Satellite basemap download is unavailable until offline-use rights are approved.',
+          completedUnits: 2,
+          totalUnits: 2,
+        ),
+      );
+      return OfflineProjectDownloadResult(
+        projectPackage: effectiveProjectPackage,
+        mapPackage: satellitePackage,
+        projectPackageChanged: projectChanged,
+        baseMapDownloaded: false,
+        baseMapAlreadyComplete: false,
+        baseMapUnavailableReason:
+            'Satellite basemap download is disabled until documented offline-use rights are approved.',
+      );
+    }
     final hasCompleteSatelliteMap = await _tileCacheManager
         .hasCompleteLebanonContributionBaseMap(
           package: satellitePackage,

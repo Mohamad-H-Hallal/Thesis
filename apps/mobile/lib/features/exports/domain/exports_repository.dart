@@ -2,6 +2,10 @@ import 'export_job.dart';
 import '../../../core/pagination/paginated_result.dart';
 
 abstract class ExportsRepository {
+  Future<List<ExportCollector>> fetchProjectCollectors({
+    required String projectId,
+  });
+
   Future<List<ExportJob>> fetchJobs({required String requestedByUserId});
 
   Future<PaginatedResult<ExportJob>> fetchJobsPage({

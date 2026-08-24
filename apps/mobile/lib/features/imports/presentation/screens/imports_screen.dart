@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/design_tokens.dart';
+import '../../../../core/config/app_env.dart';
 import '../../../../core/network/api_error_message.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
@@ -15,6 +16,7 @@ import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_search_action_bar.dart';
 import '../../../../core/widgets/app_snackbar.dart';
+import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../auth/domain/auth_models.dart';
@@ -44,6 +46,16 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
   ];
 
   final ScrollController _scrollController = ScrollController();
+  final TextEditingController _sourceProviderController =
+      TextEditingController();
+  final TextEditingController _datasetNameController = TextEditingController();
+  final TextEditingController _datasetDateController = TextEditingController();
+  final TextEditingController _accuracyController = TextEditingController();
+  final TextEditingController _licenseController = TextEditingController();
+  final TextEditingController _attributionController = TextEditingController();
+  final TextEditingController _termsUrlController = TextEditingController();
+  final TextEditingController _redistributionController =
+      TextEditingController();
   static const Duration _refreshInterval = Duration(seconds: 8);
   String? _selectedCategory;
   String? _selectedProjectId;
@@ -52,6 +64,8 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
   PlatformFile? _selectedFile;
   bool _isUploading = false;
   bool _showFilters = false;
+  bool _showSourceProvenance = false;
+  bool _provenanceConfirmed = false;
   String _statusFilter = 'all';
   Timer? _refreshTimer;
   Future<void> Function()? _refreshImports;
@@ -60,6 +74,14 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
   void dispose() {
     _refreshTimer?.cancel();
     _scrollController.dispose();
+    _sourceProviderController.dispose();
+    _datasetNameController.dispose();
+    _datasetDateController.dispose();
+    _accuracyController.dispose();
+    _licenseController.dispose();
+    _attributionController.dispose();
+    _termsUrlController.dispose();
+    _redistributionController.dispose();
     super.dispose();
   }
 
@@ -500,6 +522,95 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
             ),
           ],
           const SizedBox(height: AppSpacing.sm),
+          ListTile(
+            key: const Key('import-source-provenance'),
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Dataset source and reuse rights'),
+            subtitle: const Text(
+              'Required before imported features can be approved or redistributed.',
+            ),
+            trailing: Icon(
+              _showSourceProvenance ? Icons.expand_less : Icons.expand_more,
+            ),
+            onTap: () => setState(() {
+              _showSourceProvenance = !_showSourceProvenance;
+            }),
+          ),
+          if (_showSourceProvenance) ...[
+            AppTextField(
+              label: 'Source provider or owner *',
+              controller: _sourceProviderController,
+              textCapitalization: TextCapitalization.words,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            AppTextField(
+              label: 'Dataset name *',
+              controller: _datasetNameController,
+              textCapitalization: TextCapitalization.sentences,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            AppTextField(
+              label: 'Dataset date (YYYY-MM-DD)',
+              controller: _datasetDateController,
+              keyboardType: TextInputType.datetime,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            AppTextField(
+              label: 'Accuracy or quality statement',
+              controller: _accuracyController,
+              textCapitalization: TextCapitalization.sentences,
+              minLines: 2,
+              maxLines: 4,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            AppTextField(
+              label: 'License, permission, or other authority *',
+              controller: _licenseController,
+              textCapitalization: TextCapitalization.sentences,
+              minLines: 2,
+              maxLines: 4,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            AppTextField(
+              label: 'Required attribution',
+              controller: _attributionController,
+              textCapitalization: TextCapitalization.sentences,
+              minLines: 2,
+              maxLines: 4,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            AppTextField(
+              label: 'License or terms URL',
+              controller: _termsUrlController,
+              keyboardType: TextInputType.url,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            AppTextField(
+              label: 'Redistribution and publication rules *',
+              controller: _redistributionController,
+              textCapitalization: TextCapitalization.sentences,
+              minLines: 2,
+              maxLines: 4,
+            ),
+            CheckboxListTile(
+              key: const Key('import-provenance-confirmation'),
+              contentPadding: EdgeInsets.zero,
+              value: _provenanceConfirmed,
+              controlAffinity: ListTileControlAffinity.leading,
+              onChanged: _isUploading
+                  ? null
+                  : (value) => setState(() {
+                      _provenanceConfirmed = value ?? false;
+                    }),
+              title: const Text(
+                'I confirm this source information is complete and that the project has authority to use and redistribute the data as stated.',
+              ),
+              subtitle: const Text(
+                'This records an attestation; it does not replace legal or license review.',
+              ),
+            ),
+          ],
+          const SizedBox(height: AppSpacing.sm),
           DecoratedBox(
             decoration: BoxDecoration(
               borderRadius: AppRadii.md,
@@ -577,6 +688,28 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
     if (projectId == null || file == null) {
       return;
     }
+    if (!_provenanceConfirmed ||
+        _sourceProviderController.text.trim().isEmpty ||
+        _datasetNameController.text.trim().isEmpty ||
+        _licenseController.text.trim().isEmpty ||
+        _redistributionController.text.trim().isEmpty) {
+      AppSnackbar.showError(
+        context,
+        'Complete the required dataset source, authority, redistribution, and confirmation fields.',
+      );
+      return;
+    }
+
+    final provenance = ImportSourceProvenance(
+      provider: _sourceProviderController.text,
+      datasetName: _datasetNameController.text,
+      datasetDate: _datasetDateController.text,
+      accuracyStatement: _accuracyController.text,
+      licenseOrAuthority: _licenseController.text,
+      attribution: _attributionController.text,
+      termsUrl: _termsUrlController.text,
+      redistributionRules: _redistributionController.text,
+    );
 
     setState(() {
       _isUploading = true;
@@ -584,16 +717,32 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
     try {
       final job = await ref
           .read(importsRepositoryProvider)
-          .uploadImport(projectId: projectId, file: file);
+          .uploadImport(
+            projectId: projectId,
+            file: file,
+            provenance: provenance,
+          );
       if (!mounted) {
         return;
       }
       setState(() {
         _isUploading = false;
         _selectedFile = null;
+        _provenanceConfirmed = false;
         _statusFilter = 'all';
       });
-      bumpWorkflowRefresh(ref);
+      _sourceProviderController.clear();
+      _datasetNameController.clear();
+      _datasetDateController.clear();
+      _accuracyController.clear();
+      _licenseController.clear();
+      _attributionController.clear();
+      _termsUrlController.clear();
+      _redistributionController.clear();
+      bumpRealtimeScope(
+        ref,
+        importsListRealtimeScope(ref.read(authControllerProvider).session),
+      );
       AppSnackbar.showSuccess(
         context,
         job.status == 'uploaded'
@@ -721,6 +870,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
   }
 
   void _configureAutoRefresh(bool enabled) {
+    enabled = enabled && AppEnv.realtimePollingFallbackEnabled;
     if (!enabled) {
       _refreshTimer?.cancel();
       _refreshTimer = null;

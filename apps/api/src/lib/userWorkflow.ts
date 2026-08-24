@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import type { EnvConfig } from '../config/env';
 import { query } from '../config/database';
 import { isPhoneAssuranceSatisfied } from '../services/phoneAssurance.service';
+import { publishRealtimeChanges } from '../realtime/realtimeEvents';
 const logger = require('../utils/logger');
 
 type QueryExecutor = Pick<PoolClient, 'query'> | typeof query;
@@ -59,12 +60,34 @@ const createNotification = async (
     message: string;
     metadata: Record<string, unknown>;
   },
-): Promise<void> => {
-  await runQuery(
+): Promise<string> => {
+  const result = await runQuery<{ id: string }>(
     executor,
     `INSERT INTO notification (user_id, type, title, message, metadata)
-     VALUES ($1, $2::notification_type, $3, $4, $5::jsonb)`,
+     VALUES ($1, $2::notification_type, $3, $4, $5::jsonb)
+     RETURNING id`,
     [userId, type, title, message, JSON.stringify(metadata)],
+  );
+  return result.rows[0].id;
+};
+
+const publishContributorNotification = async (
+  executor: QueryExecutor,
+  userId: string,
+  notificationId: string,
+): Promise<void> => {
+  await publishRealtimeChanges(
+    [
+      {
+        scopeType: 'notifications',
+        scopeId: userId,
+        action: 'created',
+        entityType: 'notification',
+        entityId: notificationId,
+        audience: { kind: 'user', userId },
+      },
+    ],
+    typeof executor === 'function' ? undefined : executor,
   );
 };
 
@@ -95,7 +118,7 @@ const notifyActiveAdminsAboutContributorRequest = async (
 ): Promise<void> => {
   const admins = await getActiveAdminUsers(executor);
   for (const admin of admins) {
-    await createNotification(executor, {
+    const notificationId = await createNotification(executor, {
       userId: admin.id,
       type: 'contributor_request',
       title: 'Contributor approval pending',
@@ -106,7 +129,21 @@ const notifyActiveAdminsAboutContributorRequest = async (
         requester_email: email,
       },
     });
+    await publishContributorNotification(executor, admin.id, notificationId);
   }
+  await publishRealtimeChanges(
+    [
+      {
+        scopeType: 'users',
+        scopeId: 'all',
+        action: 'contributor_request_created',
+        entityType: 'user',
+        entityId: userId,
+        audience: { kind: 'admins' },
+      },
+    ],
+    typeof executor === 'function' ? undefined : executor,
+  );
 };
 
 const notifyContributorRequestSubmitted = async (
@@ -121,7 +158,7 @@ const notifyContributorRequestSubmitted = async (
     email: string;
   },
 ): Promise<void> => {
-  await createNotification(executor, {
+  const notificationId = await createNotification(executor, {
     userId,
     type: 'contributor_request',
     title: 'Contributor request submitted',
@@ -134,6 +171,7 @@ const notifyContributorRequestSubmitted = async (
       request_status: 'pending',
     },
   });
+  await publishContributorNotification(executor, userId, notificationId);
 };
 
 const getContributorAccessState = async (

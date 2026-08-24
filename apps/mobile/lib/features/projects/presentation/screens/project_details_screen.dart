@@ -9,15 +9,18 @@ import '../../../../core/router/route_paths.dart';
 import '../../../../core/utils/lebanon_time.dart';
 import '../../../../core/widgets/animated_reveal.dart';
 import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_dialog_controller_host.dart';
 import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
+import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/widgets/section_header.dart';
 import '../../../../core/widgets/status_chip.dart';
 import '../../../ai/presentation/ai_permissions.dart';
 import '../../../ai/presentation/widgets/project_ai_panel.dart';
 import '../../../auth/domain/auth_models.dart';
 import '../../../map/presentation/widgets/project_quick_map_card.dart';
+import '../../../legal/presentation/legal_providers.dart';
 import '../../domain/project.dart';
 
 class ProjectDetailsScreen extends ConsumerStatefulWidget {
@@ -33,6 +36,123 @@ class ProjectDetailsScreen extends ConsumerStatefulWidget {
 class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
   bool _updatingVisibility = false;
   bool _requestingAccess = false;
+  bool _reportingContent = false;
+
+  Future<void> _reportProjectContent(ProjectSummary project) async {
+    var reason = 'privacy';
+    final submission = await showDialog<({String reason, String description})>(
+      context: context,
+      builder: (dialogContext) => AppDialogControllerHost(
+        initialValues: const [''],
+        builder: (dialogContext, controllers) => StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            title: const Text('Report project content'),
+            content: SizedBox(
+              width: 520,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: reason,
+                    decoration: const InputDecoration(labelText: 'Reason'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'privacy',
+                        child: Text('Privacy concern'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'sensitive_location',
+                        child: Text('Sensitive location'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'unauthorized_content',
+                        child: Text('Unauthorized content'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'copyright_or_license',
+                        child: Text('Copyright or license'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'misleading_or_inaccurate',
+                        child: Text('Misleading or inaccurate'),
+                      ),
+                      DropdownMenuItem(value: 'other', child: Text('Other')),
+                    ],
+                    onChanged: (value) => setDialogState(() {
+                      reason = value ?? reason;
+                    }),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  AppTextField(
+                    label: reason == 'other' ? 'Details' : 'Details (optional)',
+                    hint:
+                        'Do not include unnecessary personal or sensitive data.',
+                    controller: controllers.single,
+                    minLines: 3,
+                    maxLines: 6,
+                    maxLength: 2000,
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              AppDialogActions(
+                cancel: TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                confirm: FilledButton(
+                  onPressed: () => Navigator.of(
+                    dialogContext,
+                  ).pop((reason: reason, description: controllers.single.text)),
+                  child: const Text('Submit'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (submission == null || !mounted) return;
+    if (submission.reason == 'other' &&
+        submission.description.trim().length < 10) {
+      AppSnackbar.showError(
+        context,
+        'Describe the issue in at least 10 characters.',
+      );
+      return;
+    }
+    setState(() => _reportingContent = true);
+    try {
+      await ref
+          .read(legalRepositoryProvider)
+          .reportContent(
+            projectId: project.id,
+            entityType: 'project',
+            entityId: project.id,
+            reasonCode: submission.reason,
+            description: submission.description,
+          );
+      if (mounted) {
+        AppSnackbar.showSuccess(
+          context,
+          'Report submitted to the authorized moderation queue.',
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        AppSnackbar.showError(
+          context,
+          userFacingErrorMessage(
+            error,
+            fallback: 'Unable to submit the report.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _reportingContent = false);
+    }
+  }
 
   Future<void> _toggleViewerVisibility(bool value) async {
     setState(() {
@@ -46,7 +166,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
             projectId: widget.projectId,
             visibleToViewers: value,
           );
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('project', widget.projectId));
       if (mounted) {
         AppSnackbar.showSuccess(
           context,
@@ -86,7 +206,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
             projectId: widget.projectId,
             visibleToContributors: value,
           );
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('project', widget.projectId));
       if (mounted) {
         AppSnackbar.showSuccess(
           context,
@@ -130,7 +250,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
             ),
             confirm: FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Send request'),
+              child: const Text('Send'),
             ),
           ),
         ],
@@ -146,7 +266,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
       await ref
           .read(projectsRepositoryProvider)
           .requestProjectAccess(projectId: widget.projectId);
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('project', widget.projectId));
       if (mounted) {
         AppSnackbar.showSuccess(
           context,
@@ -180,14 +300,13 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
         ),
         actions: [
           AppDialogActions(
-            buttonWidth: 150,
             cancel: TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Keep request'),
+              child: const AppDialogActionLabel('Keep'),
             ),
             confirm: FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Cancel request'),
+              child: const AppDialogActionLabel('Cancel'),
             ),
           ),
         ],
@@ -203,7 +322,7 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
       await ref
           .read(projectsRepositoryProvider)
           .cancelProjectAccessRequest(projectId: widget.projectId);
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('project', widget.projectId));
       if (mounted) {
         AppSnackbar.showSuccess(
           context,
@@ -404,6 +523,18 @@ class _ProjectDetailsScreenState extends ConsumerState<ProjectDetailsScreen> {
                             icon: const Icon(Icons.upload_file_outlined),
                             label: const Text('Imports'),
                           ),
+                        OutlinedButton.icon(
+                          key: const Key('report-project-content'),
+                          onPressed: _reportingContent
+                              ? null
+                              : () => _reportProjectContent(project),
+                          icon: const Icon(Icons.flag_outlined),
+                          label: Text(
+                            _reportingContent
+                                ? 'Submitting...'
+                                : 'Report content',
+                          ),
+                        ),
                       ],
                     ),
                     if (canRequestAccess ||

@@ -15,11 +15,13 @@ import '../../../../core/network/api_error_message.dart';
 import '../../../../core/offline/local_models.dart';
 import '../../../../core/offline/local_store.dart';
 import '../../../../core/providers/providers.dart';
+import '../../../../core/realtime/realtime_edit_guard.dart';
 import '../../../../core/utils/lebanon_time.dart';
 import '../../../../core/utils/lebanese_phone.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
@@ -33,6 +35,7 @@ import '../../domain/lebanon_map.dart';
 import '../../domain/map_feature.dart';
 import '../../domain/feature_workflow_repository.dart';
 import '../widgets/feature_photo_gallery.dart';
+import '../widgets/basemap_attribution.dart';
 
 class AddFeatureCaptureSeed {
   const AddFeatureCaptureSeed({
@@ -113,9 +116,12 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
   String? _selectedProjectId;
   String? _selectedGeometryType;
   String? _currentDraftFeatureId;
+  String? _guardedFeatureId;
+  int _currentDraftVersion = 1;
   String? _hydratedDraftId;
   VoidCallback? _pendingGeometryMapAction;
   bool _captureSeedApplied = false;
+  late final RealtimeEditGuardRegistry _editGuardRegistry;
 
   final Map<String, TextEditingController> _attributeControllers =
       <String, TextEditingController>{};
@@ -143,11 +149,38 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
   @override
   void initState() {
     super.initState();
+    _editGuardRegistry = ref.read(realtimeEditGuardRegistryProvider);
     // Map-launched collection already has geometry, so never flash the legacy
     // geometry form before the workflow hydrates the selected project/draft.
     _currentStep = (widget.captureSeed != null || widget.draftFeatureId != null)
         ? 1
         : 0;
+  }
+
+  @override
+  void dispose() {
+    final guardedFeatureId = _guardedFeatureId;
+    if (guardedFeatureId != null) {
+      _editGuardRegistry.unregister('feature', guardedFeatureId);
+    }
+    for (final controller in _attributeControllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  void _guardDraftEdits(String? featureId) {
+    if (_guardedFeatureId == featureId) {
+      return;
+    }
+    final previous = _guardedFeatureId;
+    if (previous != null) {
+      _editGuardRegistry.unregister('feature', previous);
+    }
+    _guardedFeatureId = featureId;
+    if (featureId != null && featureId.isNotEmpty) {
+      _editGuardRegistry.register('feature', featureId);
+    }
   }
 
   bool get _isEditingDraft =>
@@ -179,14 +212,6 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     setState(() {
       _currentStep -= 1;
     });
-  }
-
-  @override
-  void dispose() {
-    for (final controller in _attributeControllers.values) {
-      controller.dispose();
-    }
-    super.dispose();
   }
 
   void _handleGeometryMapReady() {
@@ -358,8 +383,10 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
         ..addAll(geometryVertices);
       _currentStep = (captureSeed == null && draftFeature == null) ? 0 : 1;
       _currentDraftFeatureId = draftFeature?.id;
+      _currentDraftVersion = draftFeature?.version ?? 1;
       _hydratedDraftId = draftFeature?.id;
     });
+    _guardDraftEdits(draftFeature?.id);
     if (captureSeed != null) {
       _captureSeedApplied = true;
     }
@@ -808,10 +835,11 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
         );
         featureId = feature.id;
       } else {
-        await repository.updateDraft(
+        _currentDraftVersion = await repository.updateDraft(
           featureId: featureId,
           geometry: geometry,
           attributes: attributes,
+          expectedVersion: _currentDraftVersion,
         );
       }
 
@@ -841,7 +869,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
               _pendingPhotos.map((photo) => photo.filePath),
             );
       }
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('features', project.id));
 
       if (!mounted) {
         return;
@@ -902,19 +930,15 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
           'Delete this draft feature? This cannot be undone.',
         ),
         actions: [
-          AppActionButtons(
-            maxColumns: 2,
-            fillRows: true,
-            children: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('Delete'),
-              ),
-            ],
+          AppDialogActions(
+            cancel: TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            confirm: FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete'),
+            ),
           ),
         ],
       ),
@@ -926,7 +950,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
     setState(() => _isSaving = true);
     try {
       await ref.read(featureWorkflowRepositoryProvider).deleteDraft(featureId);
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('features', project.id));
       if (!mounted) {
         return;
       }
@@ -1045,7 +1069,7 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
       rethrow;
     }
     await ref.read(syncControllerProvider.notifier).refreshStatus();
-    bumpWorkflowRefresh(ref);
+    bumpRealtimeScope(ref, RealtimeScope('features', project.id));
 
     if (mounted) {
       _returnToProjectMap(
@@ -1806,12 +1830,15 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 softWrap: true,
               ),
               const SizedBox(height: AppSpacing.sm),
-              OutlinedButton.icon(
-                onPressed: _isSaving
-                    ? null
-                    : () => _pickPhotos(selectedProject),
-                icon: const Icon(Icons.add_a_photo_outlined),
-                label: const Text('Add Photos'),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _isSaving
+                      ? null
+                      : () => _pickPhotos(selectedProject),
+                  icon: const Icon(Icons.add_a_photo_outlined),
+                  label: const Text('Add Photos'),
+                ),
               ),
               const SizedBox(height: AppSpacing.sm),
               if (_uploadedPhotos.isEmpty && _pendingPhotos.isEmpty)
@@ -1885,7 +1912,9 @@ class _AddFeatureScreenState extends ConsumerState<AddFeatureScreen> {
                 ...attributes.entries.map(
                   (entry) => Padding(
                     padding: const EdgeInsets.only(bottom: 6),
-                    child: Text('${entry.key}: ${entry.value ?? '—'}'),
+                    child: Text(
+                      '${entry.key}: ${entry.value ?? 'Not provided'}',
+                    ),
                   ),
                 ),
             ],
@@ -2149,6 +2178,7 @@ class _GeometryCaptureMapCard extends ConsumerWidget {
                               )
                               .toList(growable: false),
                         ),
+                        BasemapAttribution(style: basemapStyle),
                       ],
                     );
                   },

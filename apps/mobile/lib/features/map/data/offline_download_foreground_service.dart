@@ -183,19 +183,6 @@ class OfflineDownloadForegroundService {
     if (notificationPermission != NotificationPermission.granted) {
       await FlutterForegroundTask.requestNotificationPermission();
     }
-
-    if (defaultTargetPlatform != TargetPlatform.android) {
-      return;
-    }
-
-    try {
-      if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
-        await FlutterForegroundTask.requestIgnoreBatteryOptimization();
-      }
-    } catch (_) {
-      // Battery-optimization exemption improves reliability but is not required
-      // to start the foreground service.
-    }
   }
 
   static String _trimProjectName(String projectName) {

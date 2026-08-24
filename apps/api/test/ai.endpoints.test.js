@@ -140,6 +140,24 @@ const createProjectFixture = async (
     visibleToContributors: true,
   });
   await activateProject({ token: admin.token, projectId: project.id });
+  await pool.query(
+    `INSERT INTO project_ai_governance (
+       project_id,
+       training_data_use_authorized,
+       training_authority_basis,
+       training_approval_reference,
+       training_authorized_at,
+       training_authorized_by,
+       publication_authorized,
+       publication_authority_basis,
+       publication_approval_reference,
+       publication_authorized_at,
+       publication_authorized_by
+     )
+     VALUES ($1, TRUE, 'test_fixture', 'AI-ENDPOINT-TEST', CURRENT_TIMESTAMP, $2,
+             TRUE, 'test_fixture', 'AI-PUBLICATION-TEST', CURRENT_TIMESTAMP, $2)`,
+    [project.id, admin.user.id],
+  );
 
   return {
     admin,
@@ -1153,6 +1171,32 @@ describe('AI backend endpoints phase B', () => {
     expect(updateResponse.body.data.label_field).toBe('feature_type');
     expect(updateResponse.body.data.min_samples_per_class).toBe(2);
     expect(updateResponse.body.data.model_preferences.models).toEqual(['random_forest']);
+  });
+
+  test('blocks AI training until a protected administrator records separate authority', async () => {
+    const { admin, project } = await createStartableAiProjectFixture(
+      'AI Separate Training Authority',
+    );
+
+    const governance = await request(app)
+      .put(`${API_PREFIX}/projects/${project.id}/ai/governance`)
+      .set(authHeader(admin.token))
+      .send({
+        training_data_use_authorized: false,
+        publication_authorized: false,
+      })
+      .expect(200);
+
+    expect(governance.body.data.training_data_use_authorized).toBe(false);
+    expect(governance.body.data.training_authority_basis).toBeNull();
+
+    const start = await request(app)
+      .post(`${API_PREFIX}/projects/${project.id}/ai/runs`)
+      .set(authHeader(admin.token))
+      .send({})
+      .expect(409);
+
+    expect(start.body.error.code).toBe('AI_TRAINING_AUTHORIZATION_REQUIRED');
   });
 
   test('rejects MLP model preference for new AI settings', async () => {

@@ -8,6 +8,13 @@ class ExportFileActions {
     );
   }
 
+  static Future<void> revealFile(String path) async {
+    throw PlatformException(
+      code: 'UNSUPPORTED_PLATFORM',
+      message: 'Use the browser downloads list to locate this file.',
+    );
+  }
+
   static Future<void> shareFile({
     required String path,
     String? subject,

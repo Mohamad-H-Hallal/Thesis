@@ -29,6 +29,9 @@
     "openapi:check": "node scripts/check-openapi.js",
     "production:config:check": "node ../../scripts/verify-production-config.js",
     "observability:config:check": "node ../../scripts/verify-production-config.js --runtime",
+    "legal:readiness:check": "node ../../scripts/verify-legal-readiness.js",
+    "legal:readiness:report": "node ../../scripts/verify-legal-readiness.js --allow-incomplete",
+    "test:legal-readiness": "node --test ../../scripts/verify-legal-readiness.test.js",
     "database:grants:check": "node ../../scripts/test-runtime-db-grants.js",
     "database:full-chain:check": "npm run build && node ../../scripts/test-runtime-db-grants.js --full-schema",
     "lint": "eslint src test",
@@ -48,7 +51,7 @@
     "notifications:run": "tsx src/jobs/runNotificationMaintenance.ts",
     "workloads:worker": "tsx src/jobs/runWorkloadWorker.ts",
     "phase11:staging": "npm run migrate && npm run seed:staging && npm run staging:verify",
-    "release:gate": "npm run production:config:check && npm run openapi:check && npm run lint && npm run typecheck && npm run database:full-chain:check && npm run test:ci && npm run test:perf && npm run audit:prod",
+    "release:gate": "npm run legal:readiness:check && npm run production:config:check && npm run openapi:check && npm run lint && npm run typecheck && npm run database:full-chain:check && npm run test:ci && npm run test:perf && npm run audit:prod",
     "migrate:prod": "node dist/db/migrate.js"
   },
   "keywords": [

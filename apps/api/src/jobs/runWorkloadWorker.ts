@@ -10,6 +10,7 @@ import {
   stopWorkloadWorker,
   waitForWorkloadWorkerIdle,
 } from './workloadWorker';
+import { startWorkloadWorkerHealth, stopWorkloadWorkerHealth } from './workloadWorkerHealth';
 
 const env = validateWorkloadWorkerEnv();
 let shuttingDown = false;
@@ -20,6 +21,7 @@ const shutdown = async (signal: string): Promise<void> => {
   }
   shuttingDown = true;
   logger.info('Workload worker shutting down', { signal });
+  await stopWorkloadWorkerHealth();
   stopWorkloadWorker();
   await waitForWorkloadWorkerIdle();
   await closePool();
@@ -28,12 +30,15 @@ const shutdown = async (signal: string): Promise<void> => {
 const start = async (): Promise<void> => {
   const pending = await getPendingMigrations();
   if (pending.length > 0) {
-    throw new Error(`Workload worker refuses to start with pending migrations: ${pending.join(', ')}`);
+    throw new Error(
+      `Workload worker refuses to start with pending migrations: ${pending.join(', ')}`,
+    );
   }
   if (!(await testConnection())) {
     throw new Error('Workload worker failed to connect to the database');
   }
   startWorkloadWorker();
+  await startWorkloadWorkerHealth();
   logger.info('Durable workload worker started', {
     mode: env.WORKLOAD_WORKER_MODE,
   });

@@ -124,6 +124,12 @@ services:
       - api_uploads:/app/apps/api/uploads
       - api_exports:/app/apps/api/exports
     command: ["node", "dist/jobs/runWorkloadWorker.js"]
+    healthcheck:
+      test: ["CMD", "node", "dist/jobs/checkWorkloadWorkerHealth.js"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
   nginx:

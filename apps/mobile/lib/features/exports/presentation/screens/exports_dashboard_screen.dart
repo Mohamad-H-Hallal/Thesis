@@ -10,11 +10,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../../../core/constants/design_tokens.dart';
+import '../../../../core/config/app_env.dart';
 import '../../../../core/pagination/paginated_list_controller.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/utils/lebanon_time.dart';
 import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_empty_state.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/progressive_list_section.dart';
@@ -24,6 +26,7 @@ import '../../../auth/presentation/controllers/auth_controller.dart';
 import '../../../map/domain/app_tile_provider.dart';
 import '../../../map/domain/lebanon_map.dart';
 import '../../../map/domain/map_geometry.dart';
+import '../../../map/presentation/widgets/basemap_attribution.dart';
 import '../../../projects/domain/project.dart';
 import '../../domain/export_job.dart';
 import '../export_file_actions.dart';
@@ -58,6 +61,7 @@ class _ExportsDashboardScreenState
   final TextEditingController _bboxController = TextEditingController();
   Map<String, dynamic>? _selectedExportPolygon;
   String? _selectedFeatureType;
+  String? _selectedCollectorUserId;
   bool _exportAiPredictions = false;
   Timer? _jobsRefreshTimer;
   String? _fromDateError;
@@ -67,6 +71,9 @@ class _ExportsDashboardScreenState
   @override
   void initState() {
     super.initState();
+    if (!AppEnv.realtimePollingFallbackEnabled) {
+      return;
+    }
     _jobsRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (!mounted) {
         return;
@@ -151,6 +158,9 @@ class _ExportsDashboardScreenState
             orElse: () => null,
           );
           if (project != null) {
+            if (_selectedProjectId != project.id) {
+              _selectedCollectorUserId = null;
+            }
             _selectedCategoryId = project.categoryId;
             _selectedProjectId = project.id;
             _selectedProjectName = widget.fixedProjectName ?? project.name;
@@ -168,6 +178,17 @@ class _ExportsDashboardScreenState
           (project) => project?.id == _selectedProjectId,
           orElse: () => null,
         );
+        final collectorsAsync = selectedProject == null
+            ? null
+            : ref.watch(exportCollectorsProvider(selectedProject.id));
+        final exportCollectors =
+            collectorsAsync?.valueOrNull ?? const <ExportCollector>[];
+        final selectedCollectorUserId =
+            exportCollectors.any(
+              (collector) => collector.userId == _selectedCollectorUserId,
+            )
+            ? _selectedCollectorUserId
+            : null;
         final featureTypeOptions = _featureTypeOptions(selectedProject);
         final canExportAiPredictions =
             session?.user.isProtectedSuperAdmin == true &&
@@ -368,6 +389,7 @@ class _ExportsDashboardScreenState
                               _selectedProjectId = null;
                               _selectedProjectName = '';
                               _selectedFeatureType = null;
+                              _selectedCollectorUserId = null;
                               _exportAiPredictions = false;
                               _selectedExportPolygon = null;
                             });
@@ -401,6 +423,7 @@ class _ExportsDashboardScreenState
                                 _selectedProjectId = null;
                                 _selectedProjectName = '';
                                 _selectedFeatureType = null;
+                                _selectedCollectorUserId = null;
                                 _exportAiPredictions = false;
                                 _selectedExportPolygon = null;
                               });
@@ -413,6 +436,7 @@ class _ExportsDashboardScreenState
                               _selectedProjectId = project.id;
                               _selectedProjectName = project.name;
                               _selectedFeatureType = null;
+                              _selectedCollectorUserId = null;
                               _exportAiPredictions = false;
                               _selectedExportPolygon = null;
                             });
@@ -420,6 +444,63 @@ class _ExportsDashboardScreenState
                         ),
                       ],
                     ),
+                  const SizedBox(height: AppSpacing.sm),
+                  DropdownButtonFormField<String?>(
+                    key: ValueKey(
+                      'export-collector-${selectedProject?.id ?? 'none'}-${exportCollectors.length}',
+                    ),
+                    initialValue: selectedCollectorUserId,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: 'Collector',
+                      suffixIcon: collectorsAsync?.isLoading == true
+                          ? const Padding(
+                              padding: EdgeInsets.all(14),
+                              child: SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            )
+                          : collectorsAsync?.hasError == true
+                          ? IconButton(
+                              tooltip: 'Retry collectors',
+                              onPressed: selectedProject == null
+                                  ? null
+                                  : () => ref.invalidate(
+                                      exportCollectorsProvider(
+                                        selectedProject.id,
+                                      ),
+                                    ),
+                              icon: const Icon(Icons.refresh),
+                            )
+                          : null,
+                    ),
+                    items: <DropdownMenuItem<String?>>[
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('All collectors'),
+                      ),
+                      ...exportCollectors.map(
+                        (collector) => DropdownMenuItem<String?>(
+                          value: collector.userId,
+                          child: Text(
+                            '${collector.displayName} (${collector.contributionCount})',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                    ],
+                    onChanged:
+                        selectedProject == null ||
+                            useAiPredictionExport ||
+                            collectorsAsync?.isLoading == true
+                        ? null
+                        : (value) {
+                            setState(() => _selectedCollectorUserId = value);
+                          },
+                  ),
                   const SizedBox(height: AppSpacing.sm),
                   DropdownButtonFormField<String?>(
                     initialValue: _selectedFeatureType,
@@ -454,6 +535,7 @@ class _ExportsDashboardScreenState
                           _exportAiPredictions = value ?? false;
                           if (_exportAiPredictions) {
                             _selectedFeatureType = null;
+                            _selectedCollectorUserId = null;
                           }
                         });
                       },
@@ -677,7 +759,10 @@ class _ExportsDashboardScreenState
                   onRefresh: () => _refreshJobs(jobsQuery),
                   onRetry: () async {
                     await controller.retryFailedExport(job.id);
-                    bumpWorkflowRefresh(ref);
+                    bumpRealtimeScope(
+                      ref,
+                      RealtimeScope('exports', session!.user.id),
+                    );
                     if (context.mounted) {
                       AppSnackbar.showSuccess(
                         context,
@@ -687,7 +772,10 @@ class _ExportsDashboardScreenState
                   },
                   onDownload: () async {
                     await _handleDownload(controller, job.id);
-                    bumpWorkflowRefresh(ref);
+                    bumpRealtimeScope(
+                      ref,
+                      RealtimeScope('exports', session!.user.id),
+                    );
                   },
                   onOpen: job.localFilePath?.trim().isNotEmpty == true
                       ? () => _openDownloadedFile(job.localFilePath!)
@@ -734,6 +822,7 @@ class _ExportsDashboardScreenState
   void _resetExportFilters() {
     setState(() {
       _selectedFeatureType = null;
+      _selectedCollectorUserId = null;
       _exportAiPredictions = false;
       _selectedFormat = ExportFormat.geojson;
       _fromDateController.clear();
@@ -766,9 +855,11 @@ class _ExportsDashboardScreenState
             'Exports can be requested after this project has at least one approved feature.',
           ),
           actions: [
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('OK'),
+            AppDialogActions.single(
+              confirm: FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('OK'),
+              ),
             ),
           ],
         ),
@@ -798,13 +889,19 @@ class _ExportsDashboardScreenState
         if (!useAiPredictionExport &&
             (_selectedFeatureType?.trim().isNotEmpty ?? false))
           'feature_type': _selectedFeatureType!.trim(),
+        if (!useAiPredictionExport &&
+            (_selectedCollectorUserId?.trim().isNotEmpty ?? false))
+          'collector_user_id': _selectedCollectorUserId!.trim(),
         if (_selectedExportPolygon != null)
           'export_polygon': jsonEncode(_selectedExportPolygon),
       },
     );
     if (mounted && success) {
       setState(() => _selectedExportPolygon = null);
-      bumpWorkflowRefresh(ref);
+      final userId = ref.read(authControllerProvider).session?.user.id;
+      if (userId != null) {
+        bumpRealtimeScope(ref, RealtimeScope('exports', userId));
+      }
       AppSnackbar.showSuccess(context, 'Export request added to queue.');
       return;
     }
@@ -1091,6 +1188,7 @@ class _ExportsDashboardScreenState
         !validProjectIds.contains(_selectedProjectId)) {
       _selectedProjectId = null;
       _selectedProjectName = '';
+      _selectedCollectorUserId = null;
     } else {
       if (_selectedProjectId == null) {
         _selectedProjectName = '';
@@ -1448,6 +1546,10 @@ class _ExportAreaPickerDialogState extends State<_ExportAreaPickerDialog> {
                                 ),
                               ),
                           ],
+                        ),
+                        BasemapAttribution(
+                          style: _basemapStyle,
+                          bottomInset: toolsBottom,
                         ),
                       ],
                     ),
@@ -1955,6 +2057,9 @@ class _ExportJobCard extends StatelessWidget {
     final toDate = job.exportParameters['date_to']?.toString().trim();
     final bbox = job.exportParameters['bbox']?.toString().trim();
     final featureType = job.exportParameters['feature_type']?.toString().trim();
+    final collectorName = job.exportParameters['collector_display_name']
+        ?.toString()
+        .trim();
     final exportPolygon = job.exportParameters['export_polygon']
         ?.toString()
         .trim();
@@ -1983,6 +2088,14 @@ class _ExportJobCard extends StatelessWidget {
     }
     if (featureType != null && featureType.isNotEmpty) {
       chips.add(Chip(label: Text('Type $featureType')));
+    }
+    if (collectorName != null && collectorName.isNotEmpty) {
+      chips.add(
+        Chip(
+          avatar: const Icon(Icons.person_outline, size: 16),
+          label: Text(collectorName),
+        ),
+      );
     }
 
     return chips;

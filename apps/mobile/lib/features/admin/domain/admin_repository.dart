@@ -88,6 +88,7 @@ abstract class AdminRepository {
     required String name,
     String? description,
     String? iconUrl,
+    int? expectedVersion,
   });
 
   Future<ProjectSummary> createProject(ProjectProvisioningInput input);
@@ -95,6 +96,7 @@ abstract class AdminRepository {
   Future<ProjectSummary> updateProject({
     required String projectId,
     required ProjectProvisioningInput input,
+    int? expectedVersion,
   });
 
   Future<ProjectSummary> updateProjectStatus({

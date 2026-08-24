@@ -102,6 +102,25 @@ server {
         return 404;
     }
 
+    location = /api/v1/realtime/workflow {
+        limit_req zone=api_per_ip burst=10 nodelay;
+        limit_conn connections_per_ip 10;
+        proxy_pass http://gis_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host ${PUBLIC_HOSTNAME};
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Request-ID $request_id;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 75s;
+        proxy_read_timeout 75s;
+    }
+
     location /api/ {
         limit_req zone=api_per_ip burst=60 nodelay;
         proxy_pass http://gis_api;

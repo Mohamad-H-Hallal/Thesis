@@ -1,4 +1,4 @@
-# Phase 5 — Production Infrastructure and Observability
+# Phase 5 - Production Infrastructure and Observability
 
 Status: repository gate complete. PR
 [#12](https://github.com/Mohamad-H-Hallal/Thesis/pull/12) merged into protected

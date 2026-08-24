@@ -1,4 +1,4 @@
-# Phase 0 — Clean Release Baseline
+# Phase 0 - Clean Release Baseline
 
 Status: complete. The dependency, offline-security, and toolchain changes were
 kept in separate pull requests, independently verified, and merged into

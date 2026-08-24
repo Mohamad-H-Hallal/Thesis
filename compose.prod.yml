@@ -294,6 +294,12 @@ services:
       db-security:
         condition: service_completed_successfully
     command: ["node", "dist/jobs/runWorkloadWorker.js"]
+    healthcheck:
+      test: ["CMD", "node", "dist/jobs/checkWorkloadWorkerHealth.js"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
     stop_grace_period: 45s
     read_only: true

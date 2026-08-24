@@ -57,6 +57,32 @@ services:
       - api_uploads:/workspace/apps/api/uploads
       - api_exports:/workspace/apps/api/exports
 
+  workload-worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile.dev
+    working_dir: /workspace/apps/api
+    environment:
+      MIGRATIONS_DIR: /workspace/infra/migrations
+    command:
+      [
+        "sh",
+        "-lc",
+        "sh /workspace/apps/api/docker/dev-entrypoint.sh npm run workloads:worker",
+      ]
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    volumes:
+      - .:/workspace
+      - api_node_modules:/workspace/apps/api/node_modules
+      - api_uploads:/workspace/apps/api/uploads
+      - api_exports:/workspace/apps/api/exports
+
   nginx:
     ports:
       - "8088:8080"

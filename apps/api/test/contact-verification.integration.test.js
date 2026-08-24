@@ -545,7 +545,7 @@ describe('contact ownership verification API', () => {
     ).toBeTruthy();
   });
 
-  test('protected-super-admin-created admins are active through an explicit exemption', async () => {
+  test('protected-super-admin-created admins cannot enter before contact verification', async () => {
     const protectedAdmin = await createAdminUser({
       email: process.env.SUPER_ADMIN_EMAIL,
       phone: '71901234',
@@ -567,14 +567,20 @@ describe('contact ownership verification API', () => {
       email_verified_at: null,
       phone_verified_at: null,
     });
-    expect(created.body.data.contact_verification_exempted_at).toBeTruthy();
-    expect(created.body.data.contact_verification_exempted_by).toBe(protectedAdmin.user.id);
+    expect(created.body.data.contact_verification_exempted_at).toBeNull();
+    expect(created.body.data.contact_verification_exempted_by).toBeNull();
 
     const login = await request(app)
       .post(`${API_PREFIX}/auth/login`)
       .send({ email: invitedEmail, password: 'Passw0rd!123' });
-    expect(login.status).toBe(200);
-    expect(login.body.data.token).toBeTruthy();
+    expect(login.status).toBe(403);
+    expect(login.body.error.code).toBe('CONTACT_VERIFICATION_REQUIRED');
+    expect(login.body.data.token).toBeUndefined();
+    expect(login.body.data.verification_token).toBeTruthy();
+    expect(login.body.data.verification).toMatchObject({
+      next_step: 'email',
+      email_verified: false,
+    });
     const challenges = await pool.query(
       `SELECT COUNT(*)::int AS count
        FROM contact_verification_challenge

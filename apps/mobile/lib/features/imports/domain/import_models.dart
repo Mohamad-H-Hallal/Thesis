@@ -69,6 +69,17 @@ class GisImportJob {
     required this.fileType,
     this.sourceCrs,
     this.sourceLayerName,
+    this.sourceProvider,
+    this.sourceDatasetName,
+    this.sourceDatasetDate,
+    this.sourceAccuracyStatement,
+    this.sourceLicenseOrAuthority,
+    this.sourceAttribution,
+    this.sourceTermsUrl,
+    this.sourceRedistributionRules,
+    this.provenanceConfirmedAt,
+    this.provenanceConfirmedByUserId,
+    this.provenanceComplete = false,
     required this.status,
     required this.geometryCount,
     required this.pendingFeatureCount,
@@ -105,6 +116,17 @@ class GisImportJob {
   final String fileType;
   final String? sourceCrs;
   final String? sourceLayerName;
+  final String? sourceProvider;
+  final String? sourceDatasetName;
+  final DateTime? sourceDatasetDate;
+  final String? sourceAccuracyStatement;
+  final String? sourceLicenseOrAuthority;
+  final String? sourceAttribution;
+  final String? sourceTermsUrl;
+  final String? sourceRedistributionRules;
+  final DateTime? provenanceConfirmedAt;
+  final String? provenanceConfirmedByUserId;
+  final bool provenanceComplete;
   final String status;
   final int geometryCount;
   final int pendingFeatureCount;
@@ -127,6 +149,44 @@ class GisImportJob {
 
   bool get canBeReviewed =>
       status == 'pending_review' || status == 'partially_approved';
+}
+
+class ImportSourceProvenance {
+  const ImportSourceProvenance({
+    required this.provider,
+    required this.datasetName,
+    this.datasetDate,
+    this.accuracyStatement,
+    required this.licenseOrAuthority,
+    this.attribution,
+    this.termsUrl,
+    required this.redistributionRules,
+  });
+
+  final String provider;
+  final String datasetName;
+  final String? datasetDate;
+  final String? accuracyStatement;
+  final String licenseOrAuthority;
+  final String? attribution;
+  final String? termsUrl;
+  final String redistributionRules;
+
+  Map<String, dynamic> toFields() => <String, dynamic>{
+    'source_provider': provider.trim(),
+    'source_dataset_name': datasetName.trim(),
+    if (datasetDate?.trim().isNotEmpty ?? false)
+      'source_dataset_date': datasetDate!.trim(),
+    if (accuracyStatement?.trim().isNotEmpty ?? false)
+      'source_accuracy_statement': accuracyStatement!.trim(),
+    'source_license_or_authority': licenseOrAuthority.trim(),
+    if (attribution?.trim().isNotEmpty ?? false)
+      'source_attribution': attribution!.trim(),
+    if (termsUrl?.trim().isNotEmpty ?? false)
+      'source_terms_url': termsUrl!.trim(),
+    'source_redistribution_rules': redistributionRules.trim(),
+    'provenance_confirmed': true,
+  };
 }
 
 class ImportPreviewSummary {

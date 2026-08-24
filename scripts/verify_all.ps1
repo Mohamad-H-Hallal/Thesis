@@ -1,11 +1,12 @@
 param(
   [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')),
   [string]$ComposeFile = 'compose.prod.yml',
+  [string]$EvidenceDir = '',
   [switch]$SkipMobileBuild
 )
 
 $ErrorActionPreference = 'Stop'
-$evidenceDir = Join-Path $RepoRoot 'docs/handover/evidence'
+$evidenceDir = if ($EvidenceDir) { $EvidenceDir } else { Join-Path $RepoRoot 'docs/handover/evidence' }
 New-Item -ItemType Directory -Force $evidenceDir | Out-Null
 
 function Invoke-Step {
@@ -34,6 +35,7 @@ Invoke-Step -Name 'Dev PostGIS for backend tests' -Command 'docker compose up -d
 
 $apiDir = Join-Path $RepoRoot 'apps/api'
 Invoke-Step -Name 'API npm ci' -Command 'npm ci' -WorkDir $apiDir -LogFile (Join-Path $evidenceDir 'verify-backend-npm-ci.log')
+Invoke-Step -Name 'Legal readiness report (expected to remain blocked until approvals)' -Command 'npm run legal:readiness:report' -WorkDir $apiDir -LogFile (Join-Path $evidenceDir 'verify-legal-readiness.log')
 Invoke-Step -Name 'API lint' -Command 'npm run lint' -WorkDir $apiDir -LogFile (Join-Path $evidenceDir 'verify-backend-lint.log')
 Invoke-Step -Name 'API typecheck' -Command 'npm run typecheck' -WorkDir $apiDir -LogFile (Join-Path $evidenceDir 'verify-backend-typecheck.log')
 Invoke-Step -Name 'API tests' -Command 'npm run test:ci' -WorkDir $apiDir -LogFile (Join-Path $evidenceDir 'verify-backend-test-ci.log')

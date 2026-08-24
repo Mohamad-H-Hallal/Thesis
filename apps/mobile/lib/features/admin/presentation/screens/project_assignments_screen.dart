@@ -81,7 +81,7 @@ class _ProjectAssignmentsScreenState
             userId: user.id,
             role: 'contributor',
           );
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('project', widget.projectId));
       if (mounted) {
         AppSnackbar.showSuccess(
           context,
@@ -135,7 +135,7 @@ class _ProjectAssignmentsScreenState
     setState(() => _isSaving = true);
     try {
       await ref.read(adminRepositoryProvider).removeAssignment(assignment.id);
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('project', widget.projectId));
       if (mounted) {
         AppSnackbar.showSuccess(
           context,
@@ -199,7 +199,7 @@ class _ProjectAssignmentsScreenState
       await ref
           .read(adminRepositoryProvider)
           .updateAssignmentStatus(assignmentId: assignment.id, status: status);
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, RealtimeScope('project', widget.projectId));
       if (mounted) {
         AppSnackbar.showSuccess(
           context,

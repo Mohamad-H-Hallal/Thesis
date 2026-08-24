@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../../../core/config/app_env.dart';
 import '../../../../core/constants/design_tokens.dart';
 import '../../../../core/providers/providers.dart';
+import '../../../../core/realtime/realtime_edit_guard.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_action_buttons.dart';
 import '../../../../core/widgets/app_button.dart';
@@ -36,10 +37,26 @@ class _CategoryFormScreenState extends ConsumerState<CategoryFormScreen> {
   bool _initialized = false;
   bool _isSaving = false;
   bool _isUploadingIcon = false;
+  int _categoryVersion = 1;
   final ImagePicker _imagePicker = ImagePicker();
+  late final RealtimeEditGuardRegistry _editGuardRegistry;
+
+  @override
+  void initState() {
+    super.initState();
+    _editGuardRegistry = ref.read(realtimeEditGuardRegistryProvider);
+    final categoryId = widget.categoryId;
+    if (categoryId != null && categoryId.isNotEmpty) {
+      _editGuardRegistry.register('category', categoryId);
+    }
+  }
 
   @override
   void dispose() {
+    final categoryId = widget.categoryId;
+    if (categoryId != null && categoryId.isNotEmpty) {
+      _editGuardRegistry.unregister('category', categoryId);
+    }
     _nameController.dispose();
     _descriptionController.dispose();
     _iconUrlController.dispose();
@@ -62,6 +79,7 @@ class _CategoryFormScreenState extends ConsumerState<CategoryFormScreen> {
     _nameController.text = category.name;
     _descriptionController.text = category.description ?? '';
     _iconUrlController.text = category.iconUrl ?? '';
+    _categoryVersion = category.version;
     _initialized = true;
   }
 
@@ -84,6 +102,7 @@ class _CategoryFormScreenState extends ConsumerState<CategoryFormScreen> {
             _descriptionController.text,
           ),
           iconUrl: AuthFormValidators.normalize(_iconUrlController.text),
+          expectedVersion: _categoryVersion,
         );
       } else {
         await repository.createCategory(
@@ -97,7 +116,7 @@ class _CategoryFormScreenState extends ConsumerState<CategoryFormScreen> {
 
       ref.invalidate(projectCategoriesProvider);
       ref.invalidate(paginatedProjectCategoriesProvider);
-      bumpWorkflowRefresh(ref);
+      bumpRealtimeScope(ref, const RealtimeScope('categories', 'all'));
       if (!mounted) {
         return;
       }

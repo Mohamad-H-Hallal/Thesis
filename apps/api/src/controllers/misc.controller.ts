@@ -24,6 +24,82 @@ import {
 import { assertPhoneAccountCapacity } from '../services/phoneAccountLimit.service';
 import { isContactAssuranceSatisfied } from '../services/contactAssurancePolicy.service';
 import { revokeAllUserSessions } from '../services/authSession.service';
+import { publishRealtimeChanges } from '../realtime/realtimeEvents';
+import type { RealtimePublishInput } from '../realtime/realtimeProtocol';
+
+const categoryRealtimeInputs = (
+  categoryId: string,
+  action: string,
+  originSessionId?: string | null,
+): RealtimePublishInput[] => [
+  {
+    scopeType: 'categories',
+    scopeId: 'all',
+    action,
+    entityType: 'category',
+    entityId: categoryId,
+    originSessionId,
+    audience: { kind: 'all_authenticated' },
+  },
+  {
+    scopeType: 'projects',
+    scopeId: 'all',
+    action: 'category_options_changed',
+    entityType: 'category',
+    entityId: categoryId,
+    originSessionId,
+    audience: { kind: 'all_authenticated' },
+  },
+];
+
+const notificationRealtimeInput = (
+  userId: string,
+  action: string,
+  notificationId?: string | null,
+  originSessionId?: string | null,
+): RealtimePublishInput => ({
+  scopeType: 'notifications',
+  scopeId: userId,
+  action,
+  entityType: 'notification',
+  entityId: notificationId,
+  originSessionId,
+  audience: { kind: 'user', userId },
+});
+
+const userRealtimeInputs = ({
+  userId,
+  action,
+  originSessionId,
+  includeNotification = false,
+}: {
+  userId: string;
+  action: string;
+  originSessionId?: string | null;
+  includeNotification?: boolean;
+}): RealtimePublishInput[] => [
+  {
+    scopeType: 'users',
+    scopeId: 'all',
+    action,
+    entityType: 'user',
+    entityId: userId,
+    originSessionId,
+    audience: { kind: 'admins' },
+  },
+  {
+    scopeType: 'user',
+    scopeId: userId,
+    action,
+    entityType: 'user',
+    entityId: userId,
+    originSessionId,
+    audience: { kind: 'user', userId },
+  },
+  ...(includeNotification
+    ? [notificationRealtimeInput(userId, 'changed', null, originSessionId)]
+    : []),
+];
 
 const getSupportSettingsRow = async () => {
   await query(`
@@ -91,9 +167,9 @@ const ensureCurrentOfflineMapRow = async () => {
 
 const getUserForAdminMutation = async (userId: string) => {
   const result = await query(
-    `SELECT id, email, full_name, phone, role, is_active
+    `SELECT id, email, full_name, phone, role, is_active, account_status
      FROM "user"
-     WHERE id = $1`,
+     WHERE id = $1 AND account_status <> 'deleted'`,
     [userId],
   );
 
@@ -206,12 +282,19 @@ const categoryController = {
   create: async (req, res) => {
     const { name, description, icon_url } = req.body;
 
-    const result = await query(
-      `INSERT INTO project_category (name, description, icon_url)
-       VALUES ($1, $2, $3)
-       RETURNING *`,
-      [name, description, icon_url],
-    );
+    const result = await transaction(async (client) => {
+      const created = await client.query(
+        `INSERT INTO project_category (name, description, icon_url)
+         VALUES ($1, $2, $3)
+         RETURNING *`,
+        [name, description, icon_url],
+      );
+      await publishRealtimeChanges(
+        categoryRealtimeInputs(created.rows[0].id, 'created', req.authSessionId),
+        client,
+      );
+      return created;
+    });
 
     logger.info('Category created:', { categoryId: result.rows[0].id });
 
@@ -225,7 +308,7 @@ const categoryController = {
   // Update category (admin only)
   update: async (req, res) => {
     const { categoryId } = req.params;
-    const { name, description, icon_url } = req.body;
+    const { name, description, icon_url, expected_version } = req.body;
 
     const updates: string[] = [];
     const params: unknown[] = [];
@@ -251,11 +334,43 @@ const categoryController = {
       throw new AppError('No fields to update', 400);
     }
 
+    updates.push('version = version + 1');
     params.push(categoryId);
-    const result = await query(
-      `UPDATE project_category SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
-      params,
-    );
+    const whereConditions = [`id = $${paramIndex}`];
+    if (expected_version !== undefined) {
+      params.push(expected_version);
+      whereConditions.push(`version = $${paramIndex + 1}`);
+    }
+    const result = await transaction(async (client) => {
+      const updated = await client.query(
+        `UPDATE project_category
+         SET ${updates.join(', ')}
+         WHERE ${whereConditions.join(' AND ')}
+         RETURNING *`,
+        params,
+      );
+      if (updated.rows.length === 0 && expected_version !== undefined) {
+        const latest = await client.query(
+          'SELECT version FROM project_category WHERE id = $1',
+          [categoryId],
+        );
+        if (latest.rows[0]) {
+          throw new AppError('Category changed after this form was opened.', 409, {
+            code: 'ENTITY_VERSION_CONFLICT',
+            disposition: 'conflict',
+            retryable: false,
+            currentVersion: Number(latest.rows[0].version),
+          });
+        }
+      }
+      if (updated.rows.length > 0) {
+        await publishRealtimeChanges(
+          categoryRealtimeInputs(categoryId, 'updated', req.authSessionId),
+          client,
+        );
+      }
+      return updated;
+    });
 
     if (result.rows.length === 0) {
       throw new AppError('Category not found', 404);
@@ -297,9 +412,19 @@ const categoryController = {
   delete: async (req, res) => {
     const { categoryId } = req.params;
 
-    const result = await query('DELETE FROM project_category WHERE id = $1 RETURNING id', [
-      categoryId,
-    ]);
+    const result = await transaction(async (client) => {
+      const deleted = await client.query(
+        'DELETE FROM project_category WHERE id = $1 RETURNING id',
+        [categoryId],
+      );
+      if (deleted.rows.length > 0) {
+        await publishRealtimeChanges(
+          categoryRealtimeInputs(categoryId, 'deleted', req.authSessionId),
+          client,
+        );
+      }
+      return deleted;
+    });
 
     if (result.rows.length === 0) {
       throw new AppError('Category not found', 404);
@@ -340,8 +465,9 @@ const settingsController = {
     const { support_email, support_phone, office_hours, help_text } = req.body;
     await getSupportSettingsRow();
 
-    const result = await query(
-      `INSERT INTO app_support_settings (
+    const result = await transaction(async (client) => {
+      const updated = await client.query(
+        `INSERT INTO app_support_settings (
          id, support_email, support_phone, office_hours, help_text, updated_at, updated_by_user_id
        )
        VALUES (1, $1, $2, $3, $4, CURRENT_TIMESTAMP, $5)
@@ -353,14 +479,30 @@ const settingsController = {
              updated_at = CURRENT_TIMESTAMP,
              updated_by_user_id = EXCLUDED.updated_by_user_id
        RETURNING id, support_email, support_phone, office_hours, help_text, updated_at, updated_by_user_id`,
-      [
-        support_email ?? null,
-        support_phone ?? null,
-        office_hours ?? null,
-        help_text ?? null,
-        req.user?.id ?? null,
-      ],
-    );
+        [
+          support_email ?? null,
+          support_phone ?? null,
+          office_hours ?? null,
+          help_text ?? null,
+          req.user?.id ?? null,
+        ],
+      );
+      await publishRealtimeChanges(
+        [
+          {
+            scopeType: 'settings',
+            scopeId: 'support',
+            action: 'updated',
+            entityType: 'support_settings',
+            entityId: 'support',
+            originSessionId: req.authSessionId,
+            audience: { kind: 'all_authenticated' },
+          },
+        ],
+        client,
+      );
+      return updated;
+    });
 
     res.json({
       success: true,
@@ -446,12 +588,21 @@ const notificationController = {
   markAsRead: async (req, res) => {
     const { notificationId } = req.params;
 
-    const result = await query(
-      `UPDATE notification SET is_read = true 
+    const result = await transaction(async (client) => {
+      const updated = await client.query(
+        `UPDATE notification SET is_read = true
        WHERE id = $1 AND user_id = $2 
        RETURNING *`,
-      [notificationId, req.user.id],
-    );
+        [notificationId, req.user.id],
+      );
+      if (updated.rows.length > 0) {
+        await publishRealtimeChanges(
+          [notificationRealtimeInput(req.user.id, 'read', notificationId, req.authSessionId)],
+          client,
+        );
+      }
+      return updated;
+    });
 
     if (result.rows.length === 0) {
       throw new AppError('Notification not found', 404);
@@ -467,13 +618,22 @@ const notificationController = {
   markAsUnread: async (req, res) => {
     const { notificationId } = req.params;
 
-    const result = await query(
-      `UPDATE notification
+    const result = await transaction(async (client) => {
+      const updated = await client.query(
+        `UPDATE notification
        SET is_read = false
        WHERE id = $1 AND user_id = $2
        RETURNING *`,
-      [notificationId, req.user.id],
-    );
+        [notificationId, req.user.id],
+      );
+      if (updated.rows.length > 0) {
+        await publishRealtimeChanges(
+          [notificationRealtimeInput(req.user.id, 'unread', notificationId, req.authSessionId)],
+          client,
+        );
+      }
+      return updated;
+    });
 
     if (result.rows.length === 0) {
       throw new AppError('Notification not found', 404);
@@ -488,9 +648,18 @@ const notificationController = {
 
   // Mark all notifications as read
   markAllAsRead: async (req, res) => {
-    await query('UPDATE notification SET is_read = true WHERE user_id = $1 AND is_read = false', [
-      req.user.id,
-    ]);
+    await transaction(async (client) => {
+      const updated = await client.query(
+        'UPDATE notification SET is_read = true WHERE user_id = $1 AND is_read = false',
+        [req.user.id],
+      );
+      if ((updated.rowCount ?? 0) > 0) {
+        await publishRealtimeChanges(
+          [notificationRealtimeInput(req.user.id, 'all_read', null, req.authSessionId)],
+          client,
+        );
+      }
+    });
 
     res.json({
       success: true,
@@ -502,10 +671,19 @@ const notificationController = {
   delete: async (req, res) => {
     const { notificationId } = req.params;
 
-    const result = await query(
-      'DELETE FROM notification WHERE id = $1 AND user_id = $2 RETURNING id',
-      [notificationId, req.user.id],
-    );
+    const result = await transaction(async (client) => {
+      const deleted = await client.query(
+        'DELETE FROM notification WHERE id = $1 AND user_id = $2 RETURNING id',
+        [notificationId, req.user.id],
+      );
+      if (deleted.rows.length > 0) {
+        await publishRealtimeChanges(
+          [notificationRealtimeInput(req.user.id, 'deleted', notificationId, req.authSessionId)],
+          client,
+        );
+      }
+      return deleted;
+    });
 
     if (result.rows.length === 0) {
       throw new AppError('Notification not found', 404);
@@ -539,6 +717,7 @@ const notificationController = {
       .toLowerCase();
     const deviceLabel = String(req.body?.device_label ?? '').trim();
     const appVersion = String(req.body?.app_version ?? '').trim();
+    const showSensitivePreview = req.body?.show_sensitive_preview === true;
 
     const result = await query(
       `INSERT INTO push_device_registration (
@@ -547,28 +726,32 @@ const notificationController = {
          platform,
          device_label,
          app_version,
+         show_sensitive_preview,
          notifications_enabled,
          invalidated_at,
          last_seen_at,
          updated_at
        )
-       VALUES ($1, $2, $3::push_notification_platform, $4, $5, TRUE, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       VALUES ($1, $2, $3::push_notification_platform, $4, $5, $6, TRUE, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
        ON CONFLICT (token) DO UPDATE
        SET user_id = EXCLUDED.user_id,
            platform = EXCLUDED.platform,
            device_label = EXCLUDED.device_label,
            app_version = EXCLUDED.app_version,
+           show_sensitive_preview = EXCLUDED.show_sensitive_preview,
            notifications_enabled = TRUE,
            invalidated_at = NULL,
            last_seen_at = CURRENT_TIMESTAMP,
            updated_at = CURRENT_TIMESTAMP
-       RETURNING id, token, platform, device_label, app_version, notifications_enabled, last_seen_at`,
+       RETURNING id, token, platform, device_label, app_version, show_sensitive_preview,
+                 notifications_enabled, last_seen_at`,
       [
         req.user.id,
         token,
         platform,
         deviceLabel.length > 0 ? deviceLabel : null,
         appVersion.length > 0 ? appVersion : null,
+        showSensitivePreview,
       ],
     );
 
@@ -699,7 +882,7 @@ const userController = {
     let queryText = `
       SELECT u.id,
              u.email,
-             u.full_name,
+             COALESCE(u.full_name, u.masked_contributor_label, 'Former contributor') AS full_name,
              u.phone,
              u.role,
              u.created_at,
@@ -746,7 +929,7 @@ const userController = {
           AND pa.role = 'contributor'
           AND pa.status = 'approved'
       ) approved_assignment_summary ON TRUE
-      WHERE 1=1
+      WHERE u.account_status <> 'deleted'
     `;
 
     const params: unknown[] = [];
@@ -821,7 +1004,7 @@ const userController = {
         ORDER BY al.created_at DESC
         LIMIT 1
       ) latest_account_state ON TRUE
-      WHERE 1=1
+      WHERE u.account_status <> 'deleted'
     `;
 
     const countParams: unknown[] = [];
@@ -917,7 +1100,7 @@ const userController = {
       `SELECT id, email, full_name, phone, role, created_at, last_login, is_active,
               profile_picture_url
        FROM "user"
-       WHERE id = $1`,
+       WHERE id = $1 AND account_status <> 'deleted'`,
       [userId],
     );
 
@@ -1012,6 +1195,16 @@ const userController = {
       if (is_active === false && updated.rows.length === 1) {
         await revokeAllUserSessions(userId, 'admin_deactivated', client);
       }
+      if (updated.rows.length === 1) {
+        await publishRealtimeChanges(
+          userRealtimeInputs({
+            userId,
+            action: is_active === false ? 'deactivated' : is_active === true ? 'reactivated' : 'updated',
+            originSessionId: req.authSessionId,
+          }),
+          client,
+        );
+      }
       return updated;
     });
 
@@ -1063,18 +1256,26 @@ const userController = {
         [userId],
       );
       await revokeAllUserSessions(userId, 'admin_blocked', client);
+      await notifyAccountAccessChanged(client, {
+        userId,
+        eventKey: `account:${userId}:blocked:${Date.now()}`,
+        title: 'Account access blocked',
+        message:
+          'An administrator blocked your TerraLeb account. Contact support if you believe this was unexpected.',
+        accountState: 'blocked',
+        role: targetUser.role,
+        changedByUserId: req.user?.id,
+      });
+      await publishRealtimeChanges(
+        userRealtimeInputs({
+          userId,
+          action: 'blocked',
+          originSessionId: req.authSessionId,
+          includeNotification: true,
+        }),
+        client,
+      );
       return updated;
-    });
-
-    await notifyAccountAccessChanged(query, {
-      userId,
-      eventKey: `account:${userId}:blocked:${Date.now()}`,
-      title: 'Account access blocked',
-      message:
-        'An administrator blocked your TerraLeb account. Contact support if you believe this was unexpected.',
-      accountState: 'blocked',
-      role: targetUser.role,
-      changedByUserId: req.user?.id,
     });
 
     res.json({
@@ -1123,22 +1324,33 @@ const userController = {
       );
     }
 
-    const result = await query(
-      `UPDATE "user"
-       SET is_active = TRUE, account_status = 'active'
-       WHERE id = $1
-       RETURNING id, email, full_name, phone, role, is_active`,
-      [userId],
-    );
-
-    await notifyAccountAccessChanged(query, {
-      userId,
-      eventKey: `account:${userId}:unblocked:${Date.now()}`,
-      title: 'Account access restored',
-      message: 'An administrator restored access to your TerraLeb account.',
-      accountState: 'active',
-      role: targetUser.role,
-      changedByUserId: req.user?.id,
+    const result = await transaction(async (client) => {
+      const updated = await client.query(
+        `UPDATE "user"
+         SET is_active = TRUE, account_status = 'active'
+         WHERE id = $1
+         RETURNING id, email, full_name, phone, role, is_active`,
+        [userId],
+      );
+      await notifyAccountAccessChanged(client, {
+        userId,
+        eventKey: `account:${userId}:unblocked:${Date.now()}`,
+        title: 'Account access restored',
+        message: 'An administrator restored access to your TerraLeb account.',
+        accountState: 'active',
+        role: targetUser.role,
+        changedByUserId: req.user?.id,
+      });
+      await publishRealtimeChanges(
+        userRealtimeInputs({
+          userId,
+          action: 'unblocked',
+          originSessionId: req.authSessionId,
+          includeNotification: true,
+        }),
+        client,
+      );
+      return updated;
     });
 
     res.json({
@@ -1294,6 +1506,26 @@ const userController = {
         changedByUserId: req.user?.id,
       });
 
+      await publishRealtimeChanges(
+        [
+          ...userRealtimeInputs({
+            userId,
+            action: 'role_changed',
+            originSessionId: req.authSessionId,
+            includeNotification: true,
+          }),
+          {
+            scopeType: 'assignments',
+            scopeId: 'all',
+            action: 'role_change_assignments_updated',
+            entityType: 'assignment',
+            originSessionId: req.authSessionId,
+            audience: { kind: 'admins' },
+          },
+        ],
+        client,
+      );
+
       return {
         ...updated.rows[0],
         approved_assignment_count: 0,
@@ -1336,22 +1568,30 @@ const userController = {
         [userId],
       );
       await revokeAllUserSessions(userId, 'admin_deactivated', client);
+      await notifyAccountAccessChanged(client, {
+        userId,
+        eventKey: `account:${userId}:deactivated:${Date.now()}`,
+        title: 'Account deactivated',
+        message: 'An administrator deactivated your TerraLeb account.',
+        accountState: 'inactive',
+        role: targetUser.role,
+        changedByUserId: req.user?.id,
+      });
+      await publishRealtimeChanges(
+        userRealtimeInputs({
+          userId,
+          action: 'deactivated',
+          originSessionId: req.authSessionId,
+          includeNotification: true,
+        }),
+        client,
+      );
       return updated;
     });
 
     if (result.rows.length === 0) {
       throw new AppError('User not found', 404);
     }
-
-    await notifyAccountAccessChanged(query, {
-      userId,
-      eventKey: `account:${userId}:deactivated:${Date.now()}`,
-      title: 'Account deactivated',
-      message: 'An administrator deactivated your TerraLeb account.',
-      accountState: 'inactive',
-      role: targetUser.role,
-      changedByUserId: req.user?.id,
-    });
 
     logger.info('User deactivated:', { userId, deactivatedBy: req.user.id });
 
@@ -1493,7 +1733,7 @@ const userController = {
       if (normalizedPhone) {
         await assertPhoneAccountCapacity(client, normalizedPhone.e164);
       }
-      return client.query(
+      const created = await client.query(
         `INSERT INTO "user"
            (email, email_original, email_canonical, password_hash, full_name,
             phone, phone_e164, phone_format_validated_at, phone_validation_method,
@@ -1502,7 +1742,7 @@ const userController = {
          VALUES ($1, $1, $2, $3, $4, $5::text, $5::text,
                  CASE WHEN $5::text IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END,
                  CASE WHEN $5::text IS NULL THEN NULL ELSE 'libphonenumber_max' END,
-                 'admin', TRUE, 'active', NULL, CURRENT_TIMESTAMP, $6)
+                 'admin', TRUE, 'active', CURRENT_TIMESTAMP, NULL, NULL)
          RETURNING id, email, email_original, email_canonical, email_verified_at,
                    full_name, phone, phone_e164, phone_verified_at, role, is_active,
                    account_status, auth_version, created_at,
@@ -1513,9 +1753,17 @@ const userController = {
           passwordHash,
           full_name,
           normalizedPhone?.e164 ?? null,
-          req.user.id,
         ],
       );
+      await publishRealtimeChanges(
+        userRealtimeInputs({
+          userId: created.rows[0].id,
+          action: 'created',
+          originSessionId: req.authSessionId,
+        }),
+        client,
+      );
+      return created;
     });
 
     logger.info('Admin user created by protected super administrator', {
@@ -1525,7 +1773,7 @@ const userController = {
 
     res.status(201).json({
       success: true,
-      message: 'Admin account created and activated.',
+      message: 'Admin account created. Contact verification is required before sign-in.',
       data: {
         ...result.rows[0],
         is_protected_super_admin: false,
@@ -1583,6 +1831,16 @@ const userController = {
         },
       });
 
+      await publishRealtimeChanges(
+        userRealtimeInputs({
+          userId,
+          action: 'contributor_approved',
+          originSessionId: req.authSessionId,
+          includeNotification: true,
+        }),
+        client,
+      );
+
       return result.rows[0];
     });
 
@@ -1633,6 +1891,16 @@ const userController = {
           request_status: 'rejected',
         },
       });
+
+      await publishRealtimeChanges(
+        userRealtimeInputs({
+          userId,
+          action: 'contributor_rejected',
+          originSessionId: req.authSessionId,
+          includeNotification: true,
+        }),
+        client,
+      );
 
       return result.rows[0];
     });

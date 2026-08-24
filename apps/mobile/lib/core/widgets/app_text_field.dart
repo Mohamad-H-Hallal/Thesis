@@ -23,6 +23,7 @@ class AppTextField extends StatelessWidget {
     this.onChanged,
     this.minLines,
     this.maxLines,
+    this.maxLength,
     super.key,
   });
 
@@ -46,6 +47,7 @@ class AppTextField extends StatelessWidget {
   final ValueChanged<String>? onChanged;
   final int? minLines;
   final int? maxLines;
+  final int? maxLength;
 
   @override
   Widget build(BuildContext context) {
@@ -66,6 +68,7 @@ class AppTextField extends StatelessWidget {
       onChanged: onChanged,
       minLines: obscureText ? 1 : minLines,
       maxLines: obscureText ? 1 : maxLines,
+      maxLength: maxLength,
       textAlignVertical: (minLines != null || maxLines != null)
           ? TextAlignVertical.top
           : null,

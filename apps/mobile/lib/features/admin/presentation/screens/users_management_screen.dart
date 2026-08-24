@@ -67,7 +67,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
                 user.role == UserRole.admin
                     ? 'Revert'
                     : hasAssignments
-                    ? 'Promote and Unassign'
+                    ? 'Promote'
                     : 'Promote',
               ),
             ),
@@ -173,7 +173,7 @@ class _UsersManagementScreenState extends ConsumerState<UsersManagementScreen> {
   }
 
   void _invalidate() {
-    bumpWorkflowRefresh(ref);
+    bumpRealtimeScope(ref, const RealtimeScope('users', 'all'));
   }
 
   @override

@@ -232,6 +232,7 @@ class ProjectSummary {
     required this.name,
     required this.category,
     this.categoryId,
+    this.version = 1,
     required this.status,
     this.approvedFeatures = 0,
     this.rejectedFeatures = 0,
@@ -265,6 +266,7 @@ class ProjectSummary {
   final String name;
   final String category;
   final String? categoryId;
+  final int version;
   final String status;
   final int approvedFeatures;
   final int rejectedFeatures;

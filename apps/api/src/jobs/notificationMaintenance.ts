@@ -1,5 +1,7 @@
 import { synchronizeProjectStatuses } from '../lib/projectLifecycle';
 import { deliverPendingPushNotifications } from '../lib/pushNotificationDelivery';
+import { runApprovedRetentionCleanup } from '../services/dataRetention.service';
+import { deleteExpiredPrivacyExportArtifacts } from '../services/privacyExport.service';
 const logger = require('../utils/logger');
 
 const runNotificationMaintenance = async (): Promise<{
@@ -14,6 +16,8 @@ const runNotificationMaintenance = async (): Promise<{
 }> => {
   await synchronizeProjectStatuses();
   const pushSummary = await deliverPendingPushNotifications();
+  const expiredPrivacyExports = await deleteExpiredPrivacyExportArtifacts();
+  const retentionSummary = await runApprovedRetentionCleanup('scheduled');
 
   logger.info('Notification maintenance completed', {
     emailAttempted: 0,
@@ -24,6 +28,9 @@ const runNotificationMaintenance = async (): Promise<{
     pushDelivered: pushSummary.delivered,
     pushFailed: pushSummary.failed,
     pushSkipped: pushSummary.skipped,
+    retentionPolicies: retentionSummary.policyCount,
+    retentionAffectedRows: retentionSummary.affectedRows,
+    expiredPrivacyExports,
   });
 
   return {

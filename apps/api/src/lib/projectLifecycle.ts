@@ -1,6 +1,7 @@
-const { query } = require('../config/database');
+const { query, transaction } = require('../config/database');
 const { AppError } = require('../middleware/error');
 import { notifyProjectStatusChanged } from './workflowNotifications';
+import { publishRealtimeChanges } from '../realtime/realtimeEvents';
 
 const publicVisibleStatuses = ['draft', 'active', 'paused', 'completed'] as const;
 const projectScheduleReminderKinds = [
@@ -32,10 +33,10 @@ const assertProjectStatusTransition = (currentStatus: string, nextStatus: string
 };
 
 const todayIsoDate = (): string => {
-  const now = new Date();
-  const month = `${now.getMonth() + 1}`.padStart(2, '0');
-  const day = `${now.getDate()}`.padStart(2, '0');
-  return `${now.getFullYear()}-${month}-${day}`;
+  // PostgreSQL DATE comparisons in this service use CURRENT_DATE. The
+  // deployment database runs in UTC, so using the host's local calendar date
+  // here can create a several-hour activation gap around local midnight.
+  return new Date().toISOString().slice(0, 10);
 };
 
 const normalizeProjectDateInput = (value: unknown): string | null => {
@@ -162,8 +163,9 @@ const synchronizeProjectStatuses = async (
     params.push(projectId);
   }
 
-  const changedProjects = await query(
-    `
+  await transaction(async (client) => {
+    const changed = await client.query(
+      `
       WITH candidates AS (
         SELECT id,
                status AS previous_status,
@@ -195,24 +197,49 @@ const synchronizeProjectStatuses = async (
         AND candidates.next_status <> candidates.previous_status
       RETURNING p.id, p.name, candidates.previous_status, p.status
     `,
-    params,
-  );
+      params,
+    );
 
-  for (const project of changedProjects.rows as Array<{
-    id: string;
-    name: string;
-    previous_status: string;
-    status: string;
-  }>) {
-    await notifyProjectStatusChanged(query, {
-      projectId: project.id,
-      projectName: project.name,
-      previousStatus: project.previous_status,
-      status: project.status,
-      actorUserId,
-      eventKey: `project_status:scheduled:${project.id}:${project.previous_status}:${project.status}:${todayIsoDate()}`,
-    });
-  }
+    for (const project of changed.rows as Array<{
+      id: string;
+      name: string;
+      previous_status: string;
+      status: string;
+    }>) {
+      await notifyProjectStatusChanged(client, {
+        projectId: project.id,
+        projectName: project.name,
+        previousStatus: project.previous_status,
+        status: project.status,
+        actorUserId,
+        eventKey: `project_status:scheduled:${project.id}:${project.previous_status}:${project.status}:${todayIsoDate()}`,
+      });
+      await publishRealtimeChanges(
+        [
+          {
+            scopeType: 'projects',
+            scopeId: 'all',
+            action: 'scheduled_status_changed',
+            entityType: 'project',
+            entityId: project.id,
+            projectId: project.id,
+            audience: { kind: 'all_authenticated' },
+          },
+          {
+            scopeType: 'project',
+            scopeId: project.id,
+            action: 'scheduled_status_changed',
+            entityType: 'project',
+            entityId: project.id,
+            projectId: project.id,
+            audience: { kind: 'project', projectId: project.id, access: 'readers' },
+          },
+        ],
+        client,
+      );
+    }
+    return changed;
+  });
 
   await synchronizeProjectScheduleNotifications(projectId);
 };
@@ -269,61 +296,93 @@ const synchronizeProjectScheduleNotifications = async (projectId?: string): Prom
     }
 
     const staleKinds = projectScheduleReminderKinds.filter((kind) => !desiredKinds.has(kind));
-    if (staleKinds.length > 0) {
-      await query(
-        `DELETE FROM notification
-         WHERE type = 'assignment'
-           AND metadata->>'project_id' = $1
-           AND metadata->>'schedule_reminder_kind' = ANY($2::text[])`,
-        [project.id, staleKinds],
-      );
-    }
-
-    for (const kind of desiredKinds) {
-      const title =
-        kind === 'starts_tomorrow'
-          ? 'Project starts tomorrow'
-          : kind === 'paused_ends_tomorrow'
-            ? 'Paused project reaches its end date tomorrow'
-            : 'Project completes tomorrow';
-      const message =
-        kind === 'starts_tomorrow'
-          ? `${project.name} starts tomorrow and will move into active collection.`
-          : kind === 'paused_ends_tomorrow'
-            ? `${project.name} is paused and reaches its end date tomorrow. Review the schedule if it should stay paused longer.`
-            : `${project.name} reaches its end date tomorrow and will move into completed status.`;
-      const metadata = JSON.stringify({
-        project_id: project.id,
-        project_name: project.name,
-        schedule_reminder_kind: kind,
-        target_date: kind === 'starts_tomorrow' ? project.start_date : project.end_date,
-      });
-
-      for (const admin of adminsResult.rows as Array<{ id: string }>) {
-        await query(
-          `INSERT INTO notification (user_id, type, title, message, metadata)
-           SELECT $1, 'assignment'::notification_type, $2, $3, $4::jsonb
-           WHERE NOT EXISTS (
-             SELECT 1
-             FROM notification
-             WHERE user_id = $1
-               AND type = 'assignment'
-               AND metadata->>'project_id' = $5
-               AND metadata->>'schedule_reminder_kind' = $6
-               AND metadata->>'target_date' = $7
-           )`,
-          [
-            admin.id,
-            title,
-            message,
-            metadata,
-            project.id,
-            kind,
-            kind === 'starts_tomorrow' ? project.start_date : project.end_date,
-          ],
+    await transaction(async (client) => {
+      if (staleKinds.length > 0) {
+        const deleted = await client.query(
+          `DELETE FROM notification
+           WHERE type = 'assignment'
+             AND metadata->>'project_id' = $1
+             AND metadata->>'schedule_reminder_kind' = ANY($2::text[])
+           RETURNING id, user_id`,
+          [project.id, staleKinds],
+        );
+        await publishRealtimeChanges(
+          deleted.rows.map((notification) => ({
+            scopeType: 'notifications',
+            scopeId: notification.user_id,
+            action: 'deleted',
+            entityType: 'notification',
+            entityId: notification.id,
+            projectId: project.id,
+            audience: { kind: 'user' as const, userId: notification.user_id },
+          })),
+          client,
         );
       }
-    }
+
+      for (const kind of desiredKinds) {
+        const title =
+          kind === 'starts_tomorrow'
+            ? 'Project starts tomorrow'
+            : kind === 'paused_ends_tomorrow'
+              ? 'Paused project reaches its end date tomorrow'
+              : 'Project completes tomorrow';
+        const message =
+          kind === 'starts_tomorrow'
+            ? `${project.name} starts tomorrow and will move into active collection.`
+            : kind === 'paused_ends_tomorrow'
+              ? `${project.name} is paused and reaches its end date tomorrow. Review the schedule if it should stay paused longer.`
+              : `${project.name} reaches its end date tomorrow and will move into completed status.`;
+        const metadata = JSON.stringify({
+          project_id: project.id,
+          project_name: project.name,
+          schedule_reminder_kind: kind,
+          target_date: kind === 'starts_tomorrow' ? project.start_date : project.end_date,
+        });
+
+        for (const admin of adminsResult.rows as Array<{ id: string }>) {
+          const inserted = await client.query(
+            `INSERT INTO notification (user_id, type, title, message, metadata)
+             SELECT $1, 'assignment'::notification_type, $2, $3, $4::jsonb
+             WHERE NOT EXISTS (
+               SELECT 1
+               FROM notification
+               WHERE user_id = $1
+                 AND type = 'assignment'
+                 AND metadata->>'project_id' = $5
+                 AND metadata->>'schedule_reminder_kind' = $6
+                 AND metadata->>'target_date' = $7
+             )
+             RETURNING id`,
+            [
+              admin.id,
+              title,
+              message,
+              metadata,
+              project.id,
+              kind,
+              kind === 'starts_tomorrow' ? project.start_date : project.end_date,
+            ],
+          );
+          if (inserted.rows[0]) {
+            await publishRealtimeChanges(
+              [
+                {
+                  scopeType: 'notifications',
+                  scopeId: admin.id,
+                  action: 'created',
+                  entityType: 'notification',
+                  entityId: inserted.rows[0].id,
+                  projectId: project.id,
+                  audience: { kind: 'user', userId: admin.id },
+                },
+              ],
+              client,
+            );
+          }
+        }
+      }
+    });
   }
 };
 

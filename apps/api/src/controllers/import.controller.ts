@@ -29,6 +29,8 @@ import {
 } from '../services/uploadQuarantine.service';
 import { storageAdapter } from '../services/storageAdapter.service';
 import { enqueueWorkloadJob } from '../services/workloadQueue.service';
+import { publishRealtimeChanges } from '../realtime/realtimeEvents';
+import type { RealtimePublishInput } from '../realtime/realtimeProtocol';
 
 const LEBANON_BOUNDS = {
   minLon: 35.094,
@@ -38,6 +40,103 @@ const LEBANON_BOUNDS = {
 };
 const LEBANON_BUFFER_DEGREES = 0.2;
 const IMPORT_DETAIL_PREVIEW_LIMIT = 20;
+
+const importRealtimeInputs = ({
+  importId,
+  projectId,
+  uploadedByUserId,
+  action,
+  originSessionId,
+  notificationChanged = false,
+  featuresChanged = false,
+}: {
+  importId: string;
+  projectId: string;
+  uploadedByUserId: string;
+  action: string;
+  originSessionId?: string | null;
+  notificationChanged?: boolean;
+  featuresChanged?: boolean;
+}): RealtimePublishInput[] => [
+  {
+    scopeType: 'import',
+    scopeId: importId,
+    action,
+    entityType: 'import',
+    entityId: importId,
+    projectId,
+    originSessionId,
+    audience: { kind: 'scope_subscribers' },
+  },
+  {
+    scopeType: 'imports',
+    scopeId: uploadedByUserId,
+    action,
+    entityType: 'import',
+    entityId: importId,
+    projectId,
+    originSessionId,
+    audience: { kind: 'user', userId: uploadedByUserId },
+  },
+  {
+    scopeType: 'imports',
+    scopeId: 'all',
+    action,
+    entityType: 'import',
+    entityId: importId,
+    projectId,
+    originSessionId,
+    audience: { kind: 'admins' },
+  },
+  {
+    scopeType: 'imports_project',
+    scopeId: projectId,
+    action,
+    entityType: 'import',
+    entityId: importId,
+    projectId,
+    originSessionId,
+    audience: { kind: 'project', projectId, access: 'project_admins' },
+  },
+  ...(notificationChanged
+    ? [
+        {
+          scopeType: 'notifications',
+          scopeId: uploadedByUserId,
+          action: 'created',
+          entityType: 'notification',
+          entityId: importId,
+          projectId,
+          originSessionId,
+          audience: { kind: 'user' as const, userId: uploadedByUserId },
+        },
+      ]
+    : []),
+  ...(featuresChanged
+    ? [
+        {
+          scopeType: 'features',
+          scopeId: projectId,
+          action: 'bulk_changed',
+          entityType: 'feature',
+          entityId: importId,
+          projectId,
+          originSessionId,
+          audience: { kind: 'project' as const, projectId, access: 'readers' as const },
+        },
+        {
+          scopeType: 'reviews',
+          scopeId: projectId,
+          action: 'bulk_changed',
+          entityType: 'review',
+          entityId: importId,
+          projectId,
+          originSessionId,
+          audience: { kind: 'project' as const, projectId, access: 'project_admins' as const },
+        },
+      ]
+    : []),
+];
 const IMPORT_QUICK_MAP_PREVIEW_LIMIT = 500;
 const IMPORT_QUICK_MAP_SIMPLIFY_TOLERANCE_DEGREES = 0.00005;
 const IMPORT_MAP_TILE_LOW_ZOOM_LIMIT = 300;
@@ -69,6 +168,10 @@ const IMPORT_PROCESSING_STALE_AFTER_MS = Number.parseInt(
   process.env.IMPORT_PROCESSING_STALE_AFTER_MS ?? String(5 * 60 * 1000),
   10,
 );
+const importProvenanceEnforcementEnabled = (): boolean =>
+  ['1', 'true', 'yes'].includes(
+    String(process.env.IMPORT_PROVENANCE_ENFORCEMENT_ENABLED ?? 'false').toLowerCase(),
+  );
 
 const normalizeMapZoom = (zoomRaw: unknown, fallback = 11): number => {
   const parsed = Number.parseFloat(String(zoomRaw ?? fallback));
@@ -273,6 +376,16 @@ type ImportJobRow = {
   file_type: ImportFileType;
   source_crs: string | null;
   source_layer_name: string | null;
+  source_provider: string | null;
+  source_dataset_name: string | null;
+  source_dataset_date: string | null;
+  source_accuracy_statement: string | null;
+  source_license_or_authority: string | null;
+  source_attribution: string | null;
+  source_terms_url: string | null;
+  source_redistribution_rules: string | null;
+  provenance_confirmed_at: string | null;
+  provenance_confirmed_by_user_id: string | null;
   status: string;
   geometry_count: number;
   pending_feature_count: number;
@@ -297,6 +410,130 @@ type ImportJobAccessRow = ImportJobRow & {
   uploaded_by_email: string;
   uploaded_by_role: string;
   project_collection_form_schema?: Record<string, unknown>;
+};
+
+const normalizeProvenanceText = (
+  value: unknown,
+  label: string,
+  { required = false, maxLength = 1000 }: { required?: boolean; maxLength?: number } = {},
+): string | null => {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  if (required && normalized.length === 0) {
+    throw new AppError(`${label} is required.`, 400, {
+      code: 'IMPORT_PROVENANCE_REQUIRED',
+      disposition: 'permanent_rejection',
+      retryable: false,
+    });
+  }
+  if (normalized.length > maxLength) {
+    throw new AppError(`${label} must be ${maxLength} characters or fewer.`, 400, {
+      code: 'IMPORT_PROVENANCE_INVALID',
+      disposition: 'permanent_rejection',
+      retryable: false,
+    });
+  }
+  return normalized.length > 0 ? normalized : null;
+};
+
+const normalizeImportSourceProvenance = (body: Record<string, unknown>): ImportSourceProvenance => {
+  const confirmation = body.provenance_confirmed;
+  if (confirmation !== true && String(confirmation).toLowerCase() !== 'true') {
+    throw new AppError(
+      'Confirm that the source, authority, attribution, and redistribution information is complete.',
+      400,
+      { code: 'IMPORT_PROVENANCE_CONFIRMATION_REQUIRED' },
+    );
+  }
+
+  const sourceDatasetDate = normalizeProvenanceText(body.source_dataset_date, 'Dataset date', {
+    maxLength: 10,
+  });
+  if (sourceDatasetDate) {
+    const parsed = new Date(`${sourceDatasetDate}T00:00:00.000Z`);
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(sourceDatasetDate) ||
+      Number.isNaN(parsed.getTime()) ||
+      parsed.toISOString().slice(0, 10) !== sourceDatasetDate
+    ) {
+      throw new AppError('Dataset date must be a valid date in YYYY-MM-DD format.', 400, {
+        code: 'IMPORT_PROVENANCE_INVALID',
+      });
+    }
+  }
+
+  const sourceTermsUrl = normalizeProvenanceText(body.source_terms_url, 'Source terms URL', {
+    maxLength: 2048,
+  });
+  if (sourceTermsUrl) {
+    let parsed: URL;
+    try {
+      parsed = new URL(sourceTermsUrl);
+    } catch {
+      throw new AppError('Source terms URL must be a valid HTTPS or HTTP URL.', 400, {
+        code: 'IMPORT_PROVENANCE_INVALID',
+      });
+    }
+    if (!['https:', 'http:'].includes(parsed.protocol)) {
+      throw new AppError('Source terms URL must use HTTPS or HTTP.', 400, {
+        code: 'IMPORT_PROVENANCE_INVALID',
+      });
+    }
+  }
+
+  return {
+    sourceProvider: normalizeProvenanceText(body.source_provider, 'Source provider', {
+      required: true,
+      maxLength: 240,
+    })!,
+    sourceDatasetName: normalizeProvenanceText(body.source_dataset_name, 'Dataset name', {
+      required: true,
+      maxLength: 240,
+    })!,
+    sourceDatasetDate,
+    sourceAccuracyStatement: normalizeProvenanceText(
+      body.source_accuracy_statement,
+      'Accuracy statement',
+      { maxLength: 1000 },
+    ),
+    sourceLicenseOrAuthority: normalizeProvenanceText(
+      body.source_license_or_authority,
+      'License or other authority',
+      { required: true, maxLength: 1000 },
+    )!,
+    sourceAttribution: normalizeProvenanceText(body.source_attribution, 'Required attribution', {
+      maxLength: 1000,
+    }),
+    sourceTermsUrl,
+    sourceRedistributionRules: normalizeProvenanceText(
+      body.source_redistribution_rules,
+      'Redistribution rules',
+      { required: true, maxLength: 1000 },
+    )!,
+  };
+};
+
+const importSourceProvenanceJson = (job: ImportJobRow): Record<string, unknown> => ({
+  provider: job.source_provider,
+  dataset_name: job.source_dataset_name,
+  dataset_date: job.source_dataset_date,
+  accuracy_statement: job.source_accuracy_statement,
+  license_or_authority: job.source_license_or_authority,
+  attribution: job.source_attribution,
+  terms_url: job.source_terms_url,
+  redistribution_rules: job.source_redistribution_rules,
+  import_job_id: job.id,
+  confirmed_at: job.provenance_confirmed_at,
+});
+
+type ImportSourceProvenance = {
+  sourceProvider: string;
+  sourceDatasetName: string;
+  sourceDatasetDate: string | null;
+  sourceAccuracyStatement: string | null;
+  sourceLicenseOrAuthority: string;
+  sourceAttribution: string | null;
+  sourceTermsUrl: string | null;
+  sourceRedistributionRules: string;
 };
 
 type ImportFeatureRow = {
@@ -2390,6 +2627,22 @@ const mapImportJobRow = (row: ImportJobRow | ImportJobAccessRow) => ({
   file_type: row.file_type,
   source_crs: row.source_crs,
   source_layer_name: row.source_layer_name,
+  source_provider: row.source_provider,
+  source_dataset_name: row.source_dataset_name,
+  source_dataset_date: row.source_dataset_date,
+  source_accuracy_statement: row.source_accuracy_statement,
+  source_license_or_authority: row.source_license_or_authority,
+  source_attribution: row.source_attribution,
+  source_terms_url: row.source_terms_url,
+  source_redistribution_rules: row.source_redistribution_rules,
+  provenance_confirmed_at: row.provenance_confirmed_at,
+  provenance_confirmed_by_user_id: row.provenance_confirmed_by_user_id,
+  provenance_complete:
+    Boolean(row.provenance_confirmed_at) &&
+    Boolean(row.source_provider?.trim()) &&
+    Boolean(row.source_dataset_name?.trim()) &&
+    Boolean(row.source_license_or_authority?.trim()) &&
+    Boolean(row.source_redistribution_rules?.trim()),
   status: row.status,
   geometry_count: row.geometry_count,
   pending_feature_count: row.pending_feature_count,
@@ -2803,13 +3056,23 @@ const failImportJob = async (
         status: 'failed',
       },
     });
+    await publishRealtimeChanges(
+      importRealtimeInputs({
+        importId: importJobId,
+        projectId,
+        uploadedByUserId,
+        action: 'failed',
+        notificationChanged: true,
+      }),
+      client,
+    );
   });
 };
 
 const processImportJob = async (importJobId: string): Promise<void> => {
   const jobResult = await query(
     `SELECT gij.*, p.name AS project_name,
-            uploader.full_name AS uploaded_by_name
+            COALESCE(uploader.full_name, uploader.masked_contributor_label, 'Former contributor') AS uploaded_by_name
      FROM gis_import_job gij
      JOIN project p ON p.id = gij.project_id
      JOIN "user" uploader ON uploader.id = gij.uploaded_by_user_id
@@ -3032,6 +3295,16 @@ const processImportJob = async (importJobId: string): Promise<void> => {
           },
         });
       }
+      await publishRealtimeChanges(
+        importRealtimeInputs({
+          importId: importJobId,
+          projectId: job.project_id,
+          uploadedByUserId: job.uploaded_by_user_id,
+          action: finalStatus,
+          notificationChanged: finalStatus === 'failed',
+        }),
+        client,
+      );
     });
   } catch (error) {
     const message =
@@ -3078,9 +3351,20 @@ const claimNextImportJob = async (): Promise<string | null> => {
            processing_message = 'Processing uploaded GIS data'
        FROM candidate
        WHERE gij.id = candidate.id
-       RETURNING gij.id`,
+       RETURNING gij.id, gij.uploaded_by_user_id, gij.project_id`,
       [staleCutoff],
     );
+    if (result.rows[0]) {
+      await publishRealtimeChanges(
+        importRealtimeInputs({
+          importId: result.rows[0].id,
+          projectId: result.rows[0].project_id,
+          uploadedByUserId: result.rows[0].uploaded_by_user_id,
+          action: 'processing',
+        }),
+        client,
+      );
+    }
     return result.rows[0]?.id ?? null;
   });
 };
@@ -3166,10 +3450,10 @@ const fetchImportJobWithAccess = async (importId: string, user: Express.UserCont
   const result = await query(
     `SELECT gij.*, p.name AS project_name,
             p.collection_form_schema AS project_collection_form_schema,
-            uploader.full_name AS uploaded_by_name,
+            COALESCE(uploader.full_name, uploader.masked_contributor_label, 'Former contributor') AS uploaded_by_name,
             uploader.email AS uploaded_by_email,
             uploader.role AS uploaded_by_role,
-            reviewer.full_name AS reviewed_by_name
+            COALESCE(reviewer.full_name, reviewer.masked_contributor_label, 'Former reviewer') AS reviewed_by_name
      FROM gis_import_job gij
      JOIN project p ON p.id = gij.project_id
      JOIN "user" uploader ON uploader.id = gij.uploaded_by_user_id
@@ -3232,8 +3516,8 @@ const listImports = async (req: Request, res: Response): Promise<void> => {
   const whereSql = whereClauses.join(' AND ');
   const listSql = `
     SELECT gij.*, p.name AS project_name,
-           uploader.full_name AS uploaded_by_name,
-           reviewer.full_name AS reviewed_by_name
+           COALESCE(uploader.full_name, uploader.masked_contributor_label, 'Former contributor') AS uploaded_by_name,
+           COALESCE(reviewer.full_name, reviewer.masked_contributor_label, 'Former reviewer') AS reviewed_by_name
     FROM gis_import_job gij
     JOIN project p ON p.id = gij.project_id
     JOIN "user" uploader ON uploader.id = gij.uploaded_by_user_id
@@ -3274,7 +3558,7 @@ const getImportDetails = async (req: Request, res: Response): Promise<void> => {
   const lebanonEnvelopeSql = `ST_MakeEnvelope(${LEBANON_BOUNDS.minLon - LEBANON_BUFFER_DEGREES}, ${LEBANON_BOUNDS.minLat - LEBANON_BUFFER_DEGREES}, ${LEBANON_BOUNDS.maxLon + LEBANON_BUFFER_DEGREES}, ${LEBANON_BOUNDS.maxLat + LEBANON_BUFFER_DEGREES}, 4326)`;
 
   const previewResult = await query(
-    `SELECT gif.*, reviewer.full_name AS reviewed_by_name,
+    `SELECT gif.*, COALESCE(reviewer.full_name, reviewer.masked_contributor_label, 'Former reviewer') AS reviewed_by_name,
             CASE WHEN gif.geom IS NULL THEN NULL ELSE ST_AsGeoJSON(gif.geom) END AS geometry
      FROM gis_import_feature gif
      LEFT JOIN "user" reviewer ON reviewer.id = gif.reviewed_by_user_id
@@ -3315,7 +3599,7 @@ const getImportDetails = async (req: Request, res: Response): Promise<void> => {
             gic.author_user_id,
             gic.comment_text,
             gic.created_at,
-            u.full_name AS author_name,
+            COALESCE(u.full_name, u.masked_contributor_label, 'Former contributor') AS author_name,
             u.role AS author_role
      FROM gis_import_comment gic
      LEFT JOIN gis_import_feature gif ON gif.id = gic.import_feature_id
@@ -3686,7 +3970,7 @@ const fetchImportMapLayerData = async ({
                   gif.duplicate_feature_id,
                   gif.approved_feature_id,
                   gif.reviewed_by_user_id,
-                  reviewer.full_name AS reviewed_by_name,
+                  COALESCE(reviewer.full_name, reviewer.masked_contributor_label, 'Former reviewer') AS reviewed_by_name,
                   gif.reviewed_at,
                   gif.approved_at,
                   gif.review_reason,
@@ -3714,8 +3998,8 @@ const fetchImportMapLayerData = async ({
                     sf.status,
                     GeometryType(sf.geom) AS source_geometry_type,
                     sf.attributes,
-                    collector.full_name AS collected_by,
-                    reviewer.full_name AS reviewed_by,
+                    COALESCE(collector.full_name, collector.masked_contributor_label, 'Former contributor') AS collected_by,
+                    COALESCE(reviewer.full_name, reviewer.masked_contributor_label, 'Former reviewer') AS reviewed_by,
                     sf.review_notes,
                     sf.collected_at,
                     sf.submitted_at,
@@ -3805,8 +4089,8 @@ const fetchImportMapLayerData = async ({
                   GeometryType(sf.geom) AS source_geometry_type,
                   ${projectGeometrySql} AS geometry,
                   sf.attributes,
-                  collector.full_name AS collected_by,
-                  reviewer.full_name AS reviewed_by,
+                  COALESCE(collector.full_name, collector.masked_contributor_label, 'Former contributor') AS collected_by,
+                  COALESCE(reviewer.full_name, reviewer.masked_contributor_label, 'Former reviewer') AS reviewed_by,
                   sf.review_notes,
                   sf.collected_at,
                   sf.submitted_at,
@@ -3874,7 +4158,7 @@ const getImportFeatureDetails = async (req: Request, res: Response): Promise<voi
   await fetchImportJobWithAccess(importId, req.user as Express.UserContext);
 
   const result = await query(
-    `SELECT gif.*, reviewer.full_name AS reviewed_by_name,
+    `SELECT gif.*, COALESCE(reviewer.full_name, reviewer.masked_contributor_label, 'Former reviewer') AS reviewed_by_name,
             CASE WHEN gif.geom IS NULL THEN NULL ELSE ST_AsGeoJSON(gif.geom) END AS geometry
      FROM gis_import_feature gif
      LEFT JOIN "user" reviewer ON reviewer.id = gif.reviewed_by_user_id
@@ -4038,7 +4322,7 @@ const listImportFeatures = async (req: Request, res: Response): Promise<void> =>
            gif.duplicate_feature_id,
            gif.approved_feature_id,
            gif.reviewed_by_user_id,
-           reviewer.full_name AS reviewed_by_name,
+           COALESCE(reviewer.full_name, reviewer.masked_contributor_label, 'Former reviewer') AS reviewed_by_name,
            gif.reviewed_at,
            gif.approved_at,
            gif.review_reason,
@@ -4094,6 +4378,19 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
   if (!req.file) {
     throw new AppError('A GIS file is required.', 400);
   }
+  const hasProvenanceSubmission =
+    req.body?.provenance_confirmed != null ||
+    [
+      'source_provider',
+      'source_dataset_name',
+      'source_dataset_date',
+      'source_accuracy_statement',
+      'source_license_or_authority',
+      'source_attribution',
+      'source_terms_url',
+      'source_redistribution_rules',
+    ].some((key) => typeof req.body?.[key] === 'string' && req.body[key].trim().length > 0);
+  let sourceProvenance: ImportSourceProvenance | null = null;
 
   const fileType = inferImportFileType(req.file.originalname);
   const quarantineFilename = path.basename(req.file.filename);
@@ -4121,6 +4418,14 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
       inferred_file_type: fileType,
     },
   });
+  try {
+    sourceProvenance = hasProvenanceSubmission
+      ? normalizeImportSourceProvenance(req.body as Record<string, unknown>)
+      : null;
+  } catch (error) {
+    await keepUploadQuarantined(quarantineId, 'UPLOAD_PROVENANCE_REJECTED');
+    throw error;
+  }
 
   const hasAccess = await hasProjectImportAccess(projectId, currentUser);
   if (!hasAccess) {
@@ -4207,12 +4512,27 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
          file_type,
          source_crs,
          source_layer_name,
+         source_provider,
+         source_dataset_name,
+         source_dataset_date,
+         source_accuracy_statement,
+         source_license_or_authority,
+         source_attribution,
+         source_terms_url,
+         source_redistribution_rules,
+         provenance_confirmed_at,
+         provenance_confirmed_by_user_id,
          status,
          file_metadata,
          validation_summary,
          processing_message
        ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9::gis_import_file_type, NULL, NULL, 'uploaded', $10::jsonb, '{}'::jsonb, 'Import queued for background processing'
+         $1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8,
+         $9::gis_import_file_type, NULL, NULL,
+         $10, $11, $12::date, $13, $14, $15, $16, $17,
+         CASE WHEN $10::text IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END,
+         CASE WHEN $10::text IS NULL THEN NULL ELSE $2::uuid END,
+         'uploaded', $18::jsonb, '{}'::jsonb, 'Import queued for background processing'
        )
        RETURNING id`,
         [
@@ -4225,6 +4545,14 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
           req.file.size,
           fileChecksum,
           fileType,
+          sourceProvenance?.sourceProvider ?? null,
+          sourceProvenance?.sourceDatasetName ?? null,
+          sourceProvenance?.sourceDatasetDate ?? null,
+          sourceProvenance?.sourceAccuracyStatement ?? null,
+          sourceProvenance?.sourceLicenseOrAuthority ?? null,
+          sourceProvenance?.sourceAttribution ?? null,
+          sourceProvenance?.sourceTermsUrl ?? null,
+          sourceProvenance?.sourceRedistributionRules ?? null,
           JSON.stringify({
             file_name: req.file.originalname,
             file_size_bytes: req.file.size,
@@ -4266,8 +4594,8 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
 
       const detailResult = await client.query(
         `SELECT gij.*, p.name AS project_name,
-              uploader.full_name AS uploaded_by_name,
-              reviewer.full_name AS reviewed_by_name
+              COALESCE(uploader.full_name, uploader.masked_contributor_label, 'Former contributor') AS uploaded_by_name,
+              COALESCE(reviewer.full_name, reviewer.masked_contributor_label, 'Former reviewer') AS reviewed_by_name
        FROM gis_import_job gij
        JOIN project p ON p.id = gij.project_id
        JOIN "user" uploader ON uploader.id = gij.uploaded_by_user_id
@@ -4281,6 +4609,18 @@ const uploadImport = async (req: Request, res: Response): Promise<void> => {
         quarantineId,
         releasedPath: releasedReference,
       });
+
+      await publishRealtimeChanges(
+        importRealtimeInputs({
+          importId: importJobId,
+          projectId,
+          uploadedByUserId: currentUser.id,
+          action: 'uploaded',
+          originSessionId: req.authSessionId,
+          notificationChanged: true,
+        }),
+        client,
+      );
 
       return detailResult.rows[0];
     });
@@ -4346,7 +4686,7 @@ const listImportComments = async (req: Request, res: Response): Promise<void> =>
             gic.author_user_id,
             gic.comment_text,
             gic.created_at,
-            u.full_name AS author_name,
+            COALESCE(u.full_name, u.masked_contributor_label, 'Former contributor') AS author_name,
             u.role AS author_role
      FROM gis_import_comment gic
      LEFT JOIN gis_import_feature gif ON gif.id = gic.import_feature_id
@@ -4434,13 +4774,25 @@ const addImportComment = async (req: Request, res: Response): Promise<void> => {
               gic.author_user_id,
               gic.comment_text,
               gic.created_at,
-              u.full_name AS author_name,
+              COALESCE(u.full_name, u.masked_contributor_label, 'Former contributor') AS author_name,
               u.role AS author_role
        FROM gis_import_comment gic
        LEFT JOIN gis_import_feature gif ON gif.id = gic.import_feature_id
        JOIN "user" u ON u.id = gic.author_user_id
        WHERE gic.id = $1`,
       [insertResult.rows[0].id],
+    );
+
+    await publishRealtimeChanges(
+      importRealtimeInputs({
+        importId,
+        projectId: job.project_id,
+        uploadedByUserId: job.uploaded_by_user_id,
+        action: 'comment_created',
+        originSessionId: req.authSessionId,
+        notificationChanged: job.uploaded_by_user_id !== currentUser.id,
+      }),
+      client,
     );
 
     return commentResult.rows[0] as ImportCommentRow;
@@ -4450,6 +4802,84 @@ const addImportComment = async (req: Request, res: Response): Promise<void> => {
     success: true,
     message: 'Import comment saved successfully.',
     data: mapImportCommentRow(createdComment),
+  });
+};
+
+const updateImportProvenance = async (req: Request, res: Response): Promise<void> => {
+  const importId = req.params.importId;
+  const currentUser = req.user as Express.UserContext;
+  const job = await fetchImportJobWithAccess(importId, currentUser);
+  const canReview = await canReviewImportJob(job, currentUser);
+  if (job.uploaded_by_user_id !== currentUser.id && !canReview) {
+    throw new AppError('You are not allowed to update this import provenance.', 403);
+  }
+  if (job.approved_feature_count > 0) {
+    throw new AppError(
+      'Provenance cannot be replaced after imported features have been approved. Reject the approved features first or use the governed correction workflow.',
+      409,
+      { code: 'IMPORT_PROVENANCE_LOCKED' },
+    );
+  }
+
+  const provenance = normalizeImportSourceProvenance(req.body as Record<string, unknown>);
+  const updatedJob = await transaction(async (client: any) => {
+    await client.query(
+      `UPDATE gis_import_job
+       SET source_provider = $2,
+           source_dataset_name = $3,
+           source_dataset_date = $4::date,
+           source_accuracy_statement = $5,
+           source_license_or_authority = $6,
+           source_attribution = $7,
+           source_terms_url = $8,
+           source_redistribution_rules = $9,
+           provenance_confirmed_at = CURRENT_TIMESTAMP,
+           provenance_confirmed_by_user_id = $10,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [
+        importId,
+        provenance.sourceProvider,
+        provenance.sourceDatasetName,
+        provenance.sourceDatasetDate,
+        provenance.sourceAccuracyStatement,
+        provenance.sourceLicenseOrAuthority,
+        provenance.sourceAttribution,
+        provenance.sourceTermsUrl,
+        provenance.sourceRedistributionRules,
+        currentUser.id,
+      ],
+    );
+    const detailResult = await client.query(
+      `SELECT gij.*, p.name AS project_name,
+              COALESCE(uploader.full_name, uploader.masked_contributor_label, 'Former contributor') AS uploaded_by_name,
+              COALESCE(reviewer.full_name, reviewer.masked_contributor_label, 'Former reviewer') AS reviewed_by_name,
+              uploader.email AS uploaded_by_email,
+              uploader.role AS uploaded_by_role
+       FROM gis_import_job gij
+       JOIN project p ON p.id = gij.project_id
+       JOIN "user" uploader ON uploader.id = gij.uploaded_by_user_id
+       LEFT JOIN "user" reviewer ON reviewer.id = gij.reviewed_by_user_id
+       WHERE gij.id = $1`,
+      [importId],
+    );
+    await publishRealtimeChanges(
+      importRealtimeInputs({
+        importId,
+        projectId: job.project_id,
+        uploadedByUserId: job.uploaded_by_user_id,
+        action: 'provenance_updated',
+        originSessionId: req.authSessionId,
+      }),
+      client,
+    );
+    return detailResult.rows[0] as ImportJobAccessRow;
+  });
+
+  res.json({
+    success: true,
+    message: 'Import provenance saved.',
+    data: mapImportJobRow(updatedJob),
   });
 };
 
@@ -4480,6 +4910,26 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
     ? [...new Set(featureIds.map((value) => String(value).trim()).filter(Boolean))]
     : [];
   const reviewFilters = normalizeImportReviewFilters(rawFilters);
+
+  if (
+    status === 'approved' &&
+    importProvenanceEnforcementEnabled() &&
+    (!job.provenance_confirmed_at ||
+      !job.source_provider?.trim() ||
+      !job.source_dataset_name?.trim() ||
+      !job.source_license_or_authority?.trim() ||
+      !job.source_redistribution_rules?.trim())
+  ) {
+    throw new AppError(
+      'Complete and attest the dataset source, license or authority, and redistribution metadata before approval.',
+      409,
+      {
+        code: 'IMPORT_PROVENANCE_REQUIRED',
+        disposition: 'permanent_rejection',
+        retryable: false,
+      },
+    );
+  }
 
   const updatedJob = await transaction(async (client: any) => {
     const allowedStatuses =
@@ -4524,6 +4974,7 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
         `Imported from ${job.original_filename}${normalizedReason ? ` (${normalizedReason})` : ''}`,
         normalizedReason,
         SUPPORTED_SPATIAL_FEATURE_GEOMETRY_TYPES,
+        JSON.stringify(importSourceProvenanceJson(job)),
       ];
       await client.query(
         `WITH target AS (
@@ -4594,8 +5045,9 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
              geom,
              attributes,
              status,
-             source,
-             submitted_at,
+              source,
+              source_provenance,
+              submitted_at,
              reviewed_by_user_id,
              review_notes,
              reviewed_at,
@@ -4612,8 +5064,9 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
                       NOT IN ('accuracy', 'accuracymeter', 'accuracymeters')
                   ), '{}'::jsonb),
                   'approved',
-                  'import',
-                  CURRENT_TIMESTAMP,
+                   'import',
+                   $${baseParamIndex + 7}::jsonb,
+                   CURRENT_TIMESTAMP,
                   $${baseParamIndex + 3},
                   $${baseParamIndex + 4},
                   CURRENT_TIMESTAMP,
@@ -4679,8 +5132,8 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
 
     const refreshedResult = await client.query(
       `SELECT gij.*, p.name AS project_name,
-              uploader.full_name AS uploaded_by_name,
-              reviewer.full_name AS reviewed_by_name
+              COALESCE(uploader.full_name, uploader.masked_contributor_label, 'Former contributor') AS uploaded_by_name,
+              COALESCE(reviewer.full_name, reviewer.masked_contributor_label, 'Former reviewer') AS reviewed_by_name
        FROM gis_import_job gij
        JOIN project p ON p.id = gij.project_id
        JOIN "user" uploader ON uploader.id = gij.uploaded_by_user_id
@@ -4707,8 +5160,8 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
 
     const finalJobResult = await client.query(
       `SELECT gij.*, p.name AS project_name,
-              uploader.full_name AS uploaded_by_name,
-              reviewer.full_name AS reviewed_by_name
+              COALESCE(uploader.full_name, uploader.masked_contributor_label, 'Former contributor') AS uploaded_by_name,
+              COALESCE(reviewer.full_name, reviewer.masked_contributor_label, 'Former reviewer') AS reviewed_by_name
        FROM gis_import_job gij
        JOIN project p ON p.id = gij.project_id
        JOIN "user" uploader ON uploader.id = gij.uploaded_by_user_id
@@ -4750,6 +5203,19 @@ const reviewImport = async (req: Request, res: Response): Promise<void> => {
       });
     }
 
+    await publishRealtimeChanges(
+      importRealtimeInputs({
+        importId,
+        projectId: finalJob.project_id,
+        uploadedByUserId: finalJob.uploaded_by_user_id,
+        action: finalJob.status,
+        originSessionId: req.authSessionId,
+        notificationChanged: finalJob.status !== 'pending_review',
+        featuresChanged: true,
+      }),
+      client,
+    );
+
     return finalJob;
   });
 
@@ -4780,6 +5246,7 @@ module.exports = {
   downloadImport,
   listImportComments,
   addImportComment,
+  updateImportProvenance,
   reviewImport,
   startImportProcessingLoop,
   stopImportProcessingLoop,

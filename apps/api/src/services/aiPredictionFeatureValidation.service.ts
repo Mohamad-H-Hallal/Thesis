@@ -5,6 +5,61 @@ import {
   notifyAiPredictionReviewed,
   notifyAiPredictionValidationSubmitted,
 } from '../lib/aiNotifications';
+import { publishRealtimeChanges } from '../realtime/realtimeEvents';
+
+const publishPredictionValidationChange = async (
+  client: PoolClient,
+  {
+    projectId,
+    runId,
+    predictionId,
+    action,
+    featureId,
+  }: {
+    projectId: string;
+    runId: string;
+    predictionId: string;
+    action: string;
+    featureId?: string | null;
+  },
+): Promise<void> => {
+  await publishRealtimeChanges(
+    [
+      {
+        scopeType: 'ai',
+        scopeId: projectId,
+        action,
+        entityType: 'ai_validation',
+        entityId: predictionId,
+        projectId,
+        audience: { kind: 'project', projectId, access: 'members' },
+      },
+      {
+        scopeType: 'ai_run',
+        scopeId: runId,
+        action,
+        entityType: 'ai_validation',
+        entityId: predictionId,
+        projectId,
+        audience: { kind: 'project', projectId, access: 'members' },
+      },
+      ...(featureId
+        ? [
+            {
+              scopeType: 'features',
+              scopeId: projectId,
+              action: 'ai_validation_feature_changed',
+              entityType: 'feature',
+              entityId: featureId,
+              projectId,
+              audience: { kind: 'project' as const, projectId, access: 'readers' as const },
+            },
+          ]
+        : []),
+    ],
+    client,
+  );
+};
 
 type JsonRecord = Record<string, unknown>;
 
@@ -219,7 +274,7 @@ const loadPredictionForProject = async ({
             p.admin_validation_status,
             p.admin_note,
             p.admin_reviewed_by,
-            admin_user.full_name AS admin_reviewed_by_name,
+            COALESCE(admin_user.full_name, admin_user.masked_contributor_label, 'Former reviewer') AS admin_reviewed_by_name,
             p.admin_reviewed_at,
             p.approved_class,
             p.promoted_spatial_feature_id,
@@ -311,7 +366,7 @@ const listValidationsForPrediction = async (predictionId: string, client?: PoolC
             v.ai_run_id,
             v.ai_prediction_feature_id,
             v.contributor_user_id,
-            contributor.full_name AS contributor_full_name,
+            COALESCE(contributor.full_name, contributor.masked_contributor_label, 'Former contributor') AS contributor_full_name,
             v.validation_result,
             v.corrected_class,
             v.note,
@@ -346,7 +401,7 @@ const myValidationForPrediction = async ({
             v.ai_run_id,
             v.ai_prediction_feature_id,
             v.contributor_user_id,
-            contributor.full_name AS contributor_full_name,
+            COALESCE(contributor.full_name, contributor.masked_contributor_label, 'Former contributor') AS contributor_full_name,
             v.validation_result,
             v.corrected_class,
             v.note,
@@ -617,6 +672,12 @@ const createPredictionFeatureValidation = async (
       projectId: input.projectId,
       predictionId: input.predictionId,
       submittedBy: input.submittedBy,
+    });
+    await publishPredictionValidationChange(client, {
+      projectId: prediction.project_id,
+      runId: prediction.ai_run_id,
+      predictionId: prediction.id,
+      action: 'prediction_validation_submitted',
     });
     return predictionDetailsPayload({ prediction: refreshed, user, client });
   });
@@ -906,6 +967,13 @@ const reviewPredictionFeature = async (
       projectId: input.projectId,
       predictionId: input.predictionId,
       reviewStatus: input.approvalStatus,
+    });
+    await publishPredictionValidationChange(client, {
+      projectId: prediction.project_id,
+      runId: prediction.ai_run_id,
+      predictionId: prediction.id,
+      action: 'prediction_reviewed',
+      featureId: promotedSpatialFeatureId ?? prediction.promoted_spatial_feature_id,
     });
     return predictionDetailsPayload({ prediction: refreshed, user, client });
   });

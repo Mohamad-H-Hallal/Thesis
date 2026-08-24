@@ -8,6 +8,9 @@ import {
   renewWorkloadLease,
   type WorkloadJob,
 } from '../services/workloadQueue.service';
+import { publishRealtimeChanges } from '../realtime/realtimeEvents';
+import { processAccountDeletion } from '../services/accountDeletion.service';
+import { processPersonalDataExport } from '../services/privacyExport.service';
 const logger = require('../utils/logger');
 const { processImportJob } = require('../controllers/import.controller');
 const { processExport } = require('../controllers/export.controller');
@@ -35,11 +38,19 @@ const workloadEntityIsTerminal = async (job: WorkloadJob): Promise<boolean> => {
     }
     return !['uploaded', 'processing'].includes(result.rows[0].status);
   }
-  const result = await query(`SELECT status FROM shapefile_export WHERE id = $1`, [job.entity_id]);
-  if (result.rowCount === 0) {
-    return true;
+  if (job.kind === 'project_export') {
+    const result = await query(`SELECT status FROM shapefile_export WHERE id = $1`, [job.entity_id]);
+    if (result.rowCount === 0) {
+      return true;
+    }
+    return ['completed', 'failed'].includes(result.rows[0].status);
   }
-  return ['completed', 'failed'].includes(result.rows[0].status);
+  if (job.kind === 'privacy_access_export') {
+    const result = await query(`SELECT status FROM privacy_export_artifact WHERE id = $1`, [job.entity_id]);
+    return result.rowCount === 0 || ['ready', 'expired', 'deleted'].includes(result.rows[0].status);
+  }
+  const result = await query(`SELECT status FROM account_deletion_execution WHERE id = $1`, [job.entity_id]);
+  return result.rowCount === 0 || result.rows[0].status === 'completed';
 };
 
 const processWorkloadJob = async (job: WorkloadJob): Promise<void> => {
@@ -49,6 +60,16 @@ const processWorkloadJob = async (job: WorkloadJob): Promise<void> => {
 
   if (job.kind === 'gis_import') {
     await processImportJob(job.entity_id);
+    return;
+  }
+
+  if (job.kind === 'privacy_access_export') {
+    await processPersonalDataExport(job.entity_id);
+    return;
+  }
+
+  if (job.kind === 'account_deletion') {
+    await processAccountDeletion(job.entity_id);
     return;
   }
 
@@ -102,6 +123,184 @@ const finalizeDeadLetterEntity = async (job: WorkloadJob, error: unknown): Promi
           }),
         ],
       );
+      await publishRealtimeChanges(
+        [
+          {
+            scopeType: 'imports',
+            scopeId: result.rows[0].uploaded_by_user_id,
+            action: 'failed',
+            entityType: 'import',
+            entityId: job.entity_id,
+            projectId: result.rows[0].project_id,
+            audience: { kind: 'user', userId: result.rows[0].uploaded_by_user_id },
+          },
+          {
+            scopeType: 'imports',
+            scopeId: 'all',
+            action: 'failed',
+            entityType: 'import',
+            entityId: job.entity_id,
+            projectId: result.rows[0].project_id,
+            audience: { kind: 'admins' },
+          },
+          {
+            scopeType: 'notifications',
+            scopeId: result.rows[0].uploaded_by_user_id,
+            action: 'created',
+            entityType: 'notification',
+            entityId: job.entity_id,
+            projectId: result.rows[0].project_id,
+            audience: { kind: 'user', userId: result.rows[0].uploaded_by_user_id },
+          },
+        ],
+        client,
+      );
+    });
+    return;
+  }
+
+  if (job.kind === 'privacy_access_export') {
+    await transaction(async (client) => {
+      const artifact = await client.query(
+        `UPDATE privacy_export_artifact
+         SET status = 'failed', failure_code = 'WORKLOAD_RETRIES_EXHAUSTED',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND status NOT IN ('ready', 'expired', 'deleted')
+           AND failure_code IS DISTINCT FROM 'WORKLOAD_RETRIES_EXHAUSTED'
+         RETURNING privacy_request_id, user_id`,
+        [job.entity_id],
+      );
+      if (!artifact.rows[0]) return;
+      const request = await client.query<{ status: string }>(
+        `SELECT status FROM privacy_request WHERE id = $1 FOR UPDATE`,
+        [artifact.rows[0].privacy_request_id],
+      );
+      await client.query(
+        `UPDATE privacy_request
+         SET status = 'failed', failed_at = CURRENT_TIMESTAMP,
+             failure_code = 'WORKLOAD_RETRIES_EXHAUSTED',
+             last_user_visible_message = 'Your export needs privacy-team attention before it can be retried.',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND status <> 'completed'`,
+        [artifact.rows[0].privacy_request_id],
+      );
+      if (request.rows[0]?.status !== 'failed') {
+        await client.query(
+          `INSERT INTO privacy_request_status_history
+             (request_id, from_status, to_status, actor_kind, user_visible_message, internal_note)
+           VALUES ($1, $2, 'failed', 'worker',
+                   'Your export needs privacy-team attention before it can be retried.',
+                   'Workload retries were exhausted.')`,
+          [artifact.rows[0].privacy_request_id, request.rows[0]?.status ?? null],
+        );
+      }
+      const notification = await client.query<{ id: string }>(
+        `INSERT INTO notification (user_id, type, title, message, metadata)
+         VALUES ($1, 'account_event', 'Data export needs attention',
+                 'Your data export could not be prepared. The privacy team can retry it.',
+                 $2::JSONB)
+         RETURNING id`,
+        [
+          artifact.rows[0].user_id,
+          JSON.stringify({ privacy_request_id: artifact.rows[0].privacy_request_id }),
+        ],
+      );
+      await publishRealtimeChanges(
+        [
+          {
+            scopeType: 'privacy_requests', scopeId: artifact.rows[0].user_id,
+            action: 'export_failed', entityType: 'privacy_request',
+            entityId: artifact.rows[0].privacy_request_id,
+            audience: { kind: 'user', userId: artifact.rows[0].user_id },
+          },
+          {
+            scopeType: 'privacy_admin_queue', scopeId: 'all',
+            action: 'request_failed', entityType: 'privacy_request',
+            entityId: artifact.rows[0].privacy_request_id,
+            audience: { kind: 'protected_admins' },
+          },
+          {
+            scopeType: 'notifications', scopeId: artifact.rows[0].user_id,
+            action: 'created', entityType: 'notification',
+            entityId: notification.rows[0].id,
+            audience: { kind: 'user', userId: artifact.rows[0].user_id },
+          },
+        ],
+        client,
+      );
+    });
+    return;
+  }
+
+  if (job.kind === 'account_deletion') {
+    await transaction(async (client) => {
+      const execution = await client.query(
+        `UPDATE account_deletion_execution
+         SET status = 'failed', failure_code = 'WORKLOAD_RETRIES_EXHAUSTED',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND status <> 'completed'
+           AND failure_code IS DISTINCT FROM 'WORKLOAD_RETRIES_EXHAUSTED'
+         RETURNING privacy_request_id, user_id`,
+        [job.entity_id],
+      );
+      if (!execution.rows[0]) return;
+      const request = await client.query<{ status: string }>(
+        `SELECT status FROM privacy_request WHERE id = $1 FOR UPDATE`,
+        [execution.rows[0].privacy_request_id],
+      );
+      await client.query(
+        `UPDATE privacy_request
+         SET status = 'failed', failed_at = CURRENT_TIMESTAMP,
+             failure_code = 'WORKLOAD_RETRIES_EXHAUSTED',
+             last_user_visible_message = 'Deletion is paused for privacy-team review. Your account remains unchanged.',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND status <> 'completed'`,
+        [execution.rows[0].privacy_request_id],
+      );
+      if (request.rows[0]?.status !== 'failed') {
+        await client.query(
+          `INSERT INTO privacy_request_status_history
+             (request_id, from_status, to_status, actor_kind, user_visible_message, internal_note)
+           VALUES ($1, $2, 'failed', 'worker',
+                   'Deletion is paused for privacy-team review. Your account remains unchanged.',
+                   'Workload retries were exhausted.')`,
+          [execution.rows[0].privacy_request_id, request.rows[0]?.status ?? null],
+        );
+      }
+      const notification = await client.query<{ id: string }>(
+        `INSERT INTO notification (user_id, type, title, message, metadata)
+         VALUES ($1, 'account_event', 'Deletion request needs attention',
+                 'Your account is unchanged while the privacy team reviews the request.',
+                 $2::JSONB)
+         RETURNING id`,
+        [
+          execution.rows[0].user_id,
+          JSON.stringify({ privacy_request_id: execution.rows[0].privacy_request_id }),
+        ],
+      );
+      await publishRealtimeChanges(
+        [
+          {
+            scopeType: 'privacy_requests', scopeId: execution.rows[0].user_id,
+            action: 'deletion_failed', entityType: 'privacy_request',
+            entityId: execution.rows[0].privacy_request_id,
+            audience: { kind: 'user', userId: execution.rows[0].user_id },
+          },
+          {
+            scopeType: 'privacy_admin_queue', scopeId: 'all',
+            action: 'request_failed', entityType: 'privacy_request',
+            entityId: execution.rows[0].privacy_request_id,
+            audience: { kind: 'protected_admins' },
+          },
+          {
+            scopeType: 'notifications', scopeId: execution.rows[0].user_id,
+            action: 'created', entityType: 'notification',
+            entityId: notification.rows[0].id,
+            audience: { kind: 'user', userId: execution.rows[0].user_id },
+          },
+        ],
+        client,
+      );
     });
     return;
   }
@@ -139,6 +338,38 @@ const finalizeDeadLetterEntity = async (job: WorkloadJob, error: unknown): Promi
           dead_letter: true,
         }),
       ],
+    );
+    await publishRealtimeChanges(
+      [
+        {
+          scopeType: 'exports',
+          scopeId: result.rows[0].requested_by_user_id,
+          action: 'failed',
+          entityType: 'export',
+          entityId: job.entity_id,
+          projectId: result.rows[0].project_id,
+          audience: { kind: 'user', userId: result.rows[0].requested_by_user_id },
+        },
+        {
+          scopeType: 'exports',
+          scopeId: 'all',
+          action: 'failed',
+          entityType: 'export',
+          entityId: job.entity_id,
+          projectId: result.rows[0].project_id,
+          audience: { kind: 'admins' },
+        },
+        {
+          scopeType: 'notifications',
+          scopeId: result.rows[0].requested_by_user_id,
+          action: 'created',
+          entityType: 'notification',
+          entityId: job.entity_id,
+          projectId: result.rows[0].project_id,
+          audience: { kind: 'user', userId: result.rows[0].requested_by_user_id },
+        },
+      ],
+      client,
     );
   });
 };

@@ -22,6 +22,7 @@ import '../utils/auth_form_validators.dart';
 import '../utils/auth_input_formatters.dart';
 import '../widgets/auth_viewport.dart';
 import '../widgets/auth_error_banner.dart';
+import '../widgets/auth_legal_links.dart';
 import '../widgets/lebanese_mobile_field.dart';
 
 class SignupScreen extends ConsumerStatefulWidget {
@@ -48,6 +49,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
   UserRole _selectedRole = UserRole.contributor;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
+  bool _acceptedMandatoryPolicies = false;
   String? _formLevelError;
   String? _emailFieldError;
   String? _phoneFieldError;
@@ -126,6 +128,12 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
     if (!_formKey.currentState!.validate()) {
       return;
     }
+    if (!_acceptedMandatoryPolicies) {
+      setState(() {
+        _formLevelError = 'Accept the required policies to continue.';
+      });
+      return;
+    }
 
     FocusScope.of(context).unfocus();
     TextInput.finishAutofillContext();
@@ -152,7 +160,9 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
       // Mock authentication is an explicit local UI-fixture mode and has no
       // delivery provider. Real builds always verify contact ownership.
       context.go(
-        AppEnv.useMockAuth ? AppRoutes.login : AppRoutes.verifyContact,
+        AppEnv.useMockAuth
+            ? AppRoutes.login
+            : AppRoutes.contactVerification(fromLogin: false),
       );
       return;
     }
@@ -430,13 +440,37 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                                 ),
                           ),
                           const SizedBox(height: AppSpacing.sm),
+                          SignupPolicyAcceptance(
+                            value: _acceptedMandatoryPolicies,
+                            onChanged: isLoading
+                                ? null
+                                : (value) => setState(() {
+                                    _acceptedMandatoryPolicies = value == true;
+                                    if (_acceptedMandatoryPolicies &&
+                                        _formLevelError?.contains(
+                                              'Terms of Use',
+                                            ) ==
+                                            true) {
+                                      _formLevelError = null;
+                                    }
+                                  }),
+                            hasError:
+                                !_acceptedMandatoryPolicies &&
+                                _formLevelError?.contains('Terms of Use') ==
+                                    true,
+                            onOpenDocument: (slug) =>
+                                context.push(AppRoutes.legalDocument(slug)),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
                           AppButton(
                             label: _selectedRole == UserRole.contributor
                                 ? 'Request contributor access'
                                 : 'Create viewer account',
                             icon: Icons.person_add,
                             isLoading: isLoading,
-                            onPressed: isLoading ? null : _submit,
+                            onPressed: isLoading || !_acceptedMandatoryPolicies
+                                ? null
+                                : _submit,
                           ),
                         ],
                       ),

@@ -10,6 +10,7 @@ import '../../../../core/providers/providers.dart';
 import '../../../../core/router/route_paths.dart';
 import '../../../../core/widgets/app_button.dart';
 import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_dialog_actions.dart';
 import '../../../../core/widgets/app_scaffold.dart';
 import '../../../../core/widgets/app_snackbar.dart';
 import '../../../../core/widgets/app_text_field.dart';
@@ -19,7 +20,9 @@ import '../../domain/contact_verification_models.dart';
 import '../widgets/auth_viewport.dart';
 
 class ContactVerificationScreen extends ConsumerStatefulWidget {
-  const ContactVerificationScreen({super.key});
+  const ContactVerificationScreen({this.startedFromLogin = false, super.key});
+
+  final bool startedFromLogin;
 
   @override
   ConsumerState<ContactVerificationScreen> createState() =>
@@ -34,6 +37,7 @@ class _ContactVerificationScreenState
   bool _loading = true;
   int _resendSeconds = 0;
   Timer? _timer;
+  bool _exitDialogVisible = false;
 
   @override
   void initState() {
@@ -186,27 +190,73 @@ class _ContactVerificationScreenState
     context.go('${AppRoutes.login}?notice=$notice&success=true');
   }
 
-  Future<void> _backToSignup() async {
+  Future<bool> _confirmExit({
+    required String title,
+    required String message,
+    required String confirmLabel,
+  }) async {
+    if (_exitDialogVisible) {
+      return false;
+    }
+    _exitDialogVisible = true;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Return to signup?'),
-        content: const Text(
-          'This removes the unfinished account and its verification code. You can then correct the email, phone, or any other signup detail and create the account again.',
-        ),
+        title: Text(title),
+        content: Text(message),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Stay here'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Remove and return'),
+          AppDialogActions(
+            cancel: TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Stay'),
+            ),
+            confirm: FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(confirmLabel),
+            ),
           ),
         ],
       ),
     );
-    if (confirmed != true || !mounted) return;
+    _exitDialogVisible = false;
+    return confirmed == true;
+  }
+
+  Future<void> _backToLogin() async {
+    final confirmed = await _confirmExit(
+      title: 'Leave verification?',
+      message: 'Return to login? Your verification progress will be saved.',
+      confirmLabel: 'Login',
+    );
+    if (!confirmed || !mounted) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await ref
+          .read(contactVerificationRepositoryProvider)
+          .clearPendingSession();
+      if (!mounted) return;
+      _timer?.cancel();
+      _codeController.clear();
+      TextInput.finishAutofillContext(shouldSave: false);
+      ref
+          .read(authControllerProvider.notifier)
+          .clearTransientAuthenticationAttempt();
+      context.go(AppRoutes.login);
+    } catch (error) {
+      _showFailure(error);
+    }
+  }
+
+  Future<void> _backToSignup() async {
+    final confirmed = await _confirmExit(
+      title: 'Return to signup?',
+      message: 'This will remove the unfinished account and verification code.',
+      confirmLabel: 'Remove',
+    );
+    if (!confirmed || !mounted) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -216,10 +266,28 @@ class _ContactVerificationScreenState
           .read(contactVerificationRepositoryProvider)
           .cancelPendingSignup();
       if (!mounted) return;
+      ref
+          .read(authControllerProvider.notifier)
+          .clearTransientAuthenticationAttempt();
       context.go(AppRoutes.signup);
     } catch (error) {
       _showFailure(error);
     }
+  }
+
+  Future<void> _handleBack() async {
+    if (_exitDialogVisible) {
+      return;
+    }
+    final state = _state;
+    final isInitialSignupStep =
+        state?.nextStep == ContactVerificationStep.email ||
+        state?.nextStep == ContactVerificationStep.phoneFormat;
+    if (!widget.startedFromLogin && isInitialSignupStep) {
+      await _backToSignup();
+      return;
+    }
+    await _backToLogin();
   }
 
   @override
@@ -230,11 +298,18 @@ class _ContactVerificationScreenState
     final masked = emailStep ? state?.maskedEmail : state?.maskedPhone;
     return PopScope(
       canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          unawaited(_handleBack());
+        }
+      },
       child: AppScaffold(
         title: emailStep
             ? 'Email verification'
             : formatStep
-            ? 'Complete signup'
+            ? widget.startedFromLogin
+                  ? 'Complete verification'
+                  : 'Complete signup'
             : 'Verify your mobile number',
         showOfflineBanner: false,
         body: AuthViewport(
@@ -251,7 +326,9 @@ class _ContactVerificationScreenState
                       emailStep
                           ? 'Verify your email'
                           : formatStep
-                          ? 'Finishing signup'
+                          ? widget.startedFromLogin
+                                ? 'Finishing verification'
+                                : 'Finishing signup'
                           : 'Verify your mobile number',
                       style: Theme.of(context).textTheme.headlineSmall,
                       textAlign: TextAlign.center,
@@ -321,20 +398,11 @@ class _ContactVerificationScreenState
                       ),
                     ],
                     TextButton(
-                      onPressed: _loading
-                          ? null
-                          : emailStep || formatStep
-                          ? _backToSignup
-                          : () async {
-                              await ref
-                                  .read(contactVerificationRepositoryProvider)
-                                  .clearPendingSession();
-                              if (context.mounted) context.go(AppRoutes.login);
-                            },
+                      onPressed: _exitDialogVisible ? null : _handleBack,
                       child: Text(
-                        emailStep || formatStep
+                        !widget.startedFromLogin && (emailStep || formatStep)
                             ? 'Back to signup'
-                            : 'Cancel and sign out',
+                            : 'Back to login',
                       ),
                     ),
                   ],

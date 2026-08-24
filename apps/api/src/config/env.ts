@@ -29,6 +29,14 @@ export interface EnvConfig {
   CORS_CREDENTIALS: boolean;
   API_VERSION_PREFIX: string;
   ENABLE_LEGACY_API_PREFIX: boolean;
+  REALTIME_V2_ENABLED: boolean;
+  REALTIME_LEGACY_BROADCAST_ENABLED: boolean;
+  REALTIME_POLLING_FALLBACK_ENABLED: boolean;
+  REALTIME_AUTH_TIMEOUT_MS: number;
+  REALTIME_HEARTBEAT_INTERVAL_MS: number;
+  REALTIME_MAX_CONNECTIONS_PER_USER: number;
+  REALTIME_MAX_CONNECTIONS_PER_IP: number;
+  REALTIME_MAX_BUFFERED_BYTES: number;
   RATE_LIMIT_WINDOW_MS: number;
   RATE_LIMIT_MAX_REQUESTS: number;
   RATE_LIMIT_AUTH_MAX_REQUESTS: number;
@@ -44,6 +52,9 @@ export interface EnvConfig {
   RATE_LIMIT_NOTIFICATION_MAX_REQUESTS: number;
   RATE_LIMIT_PASSWORD_RESET_MAX_REQUESTS: number;
   RATE_LIMIT_VERIFICATION_MAX_REQUESTS: number;
+  RATE_LIMIT_PRIVACY_REQUEST_MAX_REQUESTS: number;
+  RATE_LIMIT_PUBLIC_PRIVACY_REQUEST_MAX_REQUESTS: number;
+  RATE_LIMIT_CONTENT_REPORT_MAX_REQUESTS: number;
   WORKLOAD_WORKER_MODE: 'inline' | 'external' | 'disabled';
   WORKLOAD_WORKER_CONCURRENCY: number;
   WORKLOAD_POLL_INTERVAL_MS: number;
@@ -84,12 +95,26 @@ export interface EnvConfig {
   EXPORT_DIR: string;
   EXPORT_RETENTION_DAYS: number;
   EXPORT_CLEANUP_INTERVAL_HOURS: number;
+  PRIVACY_EXPORT_DIR: string;
+  PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64: string;
+  PRIVACY_EXPORT_ENCRYPTION_KEY_ID: string;
+  PRIVACY_EXPORT_TTL_HOURS: number | null;
+  PRIVACY_EXPORT_RETENTION_APPROVAL_REFERENCE: string;
+  PRIVACY_EXPORT_MAX_BYTES: number;
+  ACCOUNT_DELETION_EXECUTION_ENABLED: boolean;
+  ACCOUNT_DELETION_POLICY_APPROVAL_REFERENCE: string;
+  ACCOUNT_DELETION_RETENTION_APPROVAL_REFERENCE: string;
+  MASKED_CONTRIBUTOR_POLICY_APPROVAL_REFERENCE: string;
   NOTIFICATION_MAINTENANCE_INTERVAL_MINUTES: number;
   PUSH_NOTIFICATIONS_ENABLED: boolean;
   ANDROID_PUSH_NOTIFICATIONS_ENABLED: boolean;
   IOS_PUSH_NOTIFICATIONS_ENABLED: boolean;
   NOTIFICATION_PUSH_BATCH_SIZE: number;
   NOTIFICATION_PUSH_MAX_ATTEMPTS: number;
+  LEGAL_ENFORCEMENT_ENABLED: boolean;
+  LEGAL_DRAFTS_PUBLIC_ENABLED: boolean;
+  LEGAL_COUNSEL_APPROVAL_REFERENCE: string;
+  IMPORT_PROVENANCE_ENFORCEMENT_ENABLED: boolean;
   FIREBASE_SERVICE_ACCOUNT_JSON: string;
   FIREBASE_SERVICE_ACCOUNT_BASE64: string;
   FIREBASE_SERVICE_ACCOUNT_PATH: string;
@@ -154,6 +179,13 @@ export interface WorkloadWorkerEnvConfig {
   DB_MAX_CONNECTIONS: number;
   WORKLOAD_WORKER_MODE: 'inline' | 'external' | 'disabled';
   WORKLOAD_HARD_EXIT_ON_TIMEOUT: boolean;
+  PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64: string;
+  PRIVACY_EXPORT_TTL_HOURS: number | null;
+  PRIVACY_EXPORT_RETENTION_APPROVAL_REFERENCE: string;
+  ACCOUNT_DELETION_EXECUTION_ENABLED: boolean;
+  ACCOUNT_DELETION_POLICY_APPROVAL_REFERENCE: string;
+  ACCOUNT_DELETION_RETENTION_APPROVAL_REFERENCE: string;
+  MASKED_CONTRIBUTOR_POLICY_APPROVAL_REFERENCE: string;
   LOG_PRETTY: boolean;
   LOG_TO_FILE: boolean;
   LOG_DIR: string;
@@ -180,13 +212,17 @@ const envSchema = Joi.object({
   JWT_SECRET: Joi.string().min(32).required(),
   JWT_SECRET_CURRENT: Joi.string().min(32).optional(),
   JWT_SECRET_PREVIOUS: Joi.string().allow('').default(''),
-  JWT_EXPIRE: Joi.string().pattern(/^\d+[smhd]$/).default('15m'),
+  JWT_EXPIRE: Joi.string()
+    .pattern(/^\d+[smhd]$/)
+    .default('15m'),
   JWT_ISSUER: Joi.string().trim().min(3).max(200).default('terraleb-api'),
   JWT_AUDIENCE: Joi.string().trim().min(3).max(200).default('terraleb-mobile'),
   JWT_REFRESH_SECRET: Joi.string().min(32).required(),
   JWT_REFRESH_SECRET_CURRENT: Joi.string().min(32).optional(),
   JWT_REFRESH_SECRET_PREVIOUS: Joi.string().allow('').default(''),
-  JWT_REFRESH_EXPIRE: Joi.string().pattern(/^\d+[smhd]$/).default('30d'),
+  JWT_REFRESH_EXPIRE: Joi.string()
+    .pattern(/^\d+[smhd]$/)
+    .default('30d'),
 
   CORS_ORIGIN: Joi.string().allow('').default(''),
   CORS_STRICT: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(true),
@@ -203,6 +239,29 @@ const envSchema = Joi.object({
     .falsy('false')
     .falsy('0')
     .default(true),
+  REALTIME_V2_ENABLED: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(true),
+  REALTIME_LEGACY_BROADCAST_ENABLED: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(true),
+  REALTIME_POLLING_FALLBACK_ENABLED: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(false),
+  REALTIME_AUTH_TIMEOUT_MS: Joi.number().integer().min(1000).max(30000).default(5000),
+  REALTIME_HEARTBEAT_INTERVAL_MS: Joi.number().integer().min(10000).max(120000).default(30000),
+  REALTIME_MAX_CONNECTIONS_PER_USER: Joi.number().integer().min(1).max(50).default(5),
+  REALTIME_MAX_CONNECTIONS_PER_IP: Joi.number().integer().min(1).max(500).default(30),
+  REALTIME_MAX_BUFFERED_BYTES: Joi.number().integer().min(16384).max(16777216).default(262144),
   RATE_LIMIT_WINDOW_MS: Joi.number()
     .integer()
     .min(1000)
@@ -224,6 +283,9 @@ const envSchema = Joi.object({
   RATE_LIMIT_NOTIFICATION_MAX_REQUESTS: Joi.number().integer().min(1).default(30),
   RATE_LIMIT_PASSWORD_RESET_MAX_REQUESTS: Joi.number().integer().min(1).default(5),
   RATE_LIMIT_VERIFICATION_MAX_REQUESTS: Joi.number().integer().min(1).default(20),
+  RATE_LIMIT_PRIVACY_REQUEST_MAX_REQUESTS: Joi.number().integer().min(1).default(10),
+  RATE_LIMIT_PUBLIC_PRIVACY_REQUEST_MAX_REQUESTS: Joi.number().integer().min(1).default(5),
+  RATE_LIMIT_CONTENT_REPORT_MAX_REQUESTS: Joi.number().integer().min(1).default(20),
   WORKLOAD_WORKER_MODE: Joi.string().valid('inline', 'external', 'disabled').default('inline'),
   WORKLOAD_WORKER_CONCURRENCY: Joi.number().integer().min(1).max(16).default(2),
   WORKLOAD_POLL_INTERVAL_MS: Joi.number().integer().min(100).max(60000).default(1000),
@@ -308,6 +370,24 @@ const envSchema = Joi.object({
   EXPORT_DIR: Joi.string().default('./exports'),
   EXPORT_RETENTION_DAYS: Joi.number().integer().min(1).default(7),
   EXPORT_CLEANUP_INTERVAL_HOURS: Joi.number().integer().min(1).default(24),
+  PRIVACY_EXPORT_DIR: Joi.string().trim().allow('').default(''),
+  PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64: Joi.string().trim().base64().allow('').default(''),
+  PRIVACY_EXPORT_ENCRYPTION_KEY_ID: Joi.string()
+    .trim()
+    .pattern(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/)
+    .default('primary'),
+  PRIVACY_EXPORT_TTL_HOURS: Joi.number().integer().min(1).max(168).allow(null).default(null),
+  PRIVACY_EXPORT_RETENTION_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
+  PRIVACY_EXPORT_MAX_BYTES: Joi.number().integer().min(1024).default(50 * 1024 * 1024),
+  ACCOUNT_DELETION_EXECUTION_ENABLED: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(false),
+  ACCOUNT_DELETION_POLICY_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
+  ACCOUNT_DELETION_RETENTION_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
+  MASKED_CONTRIBUTOR_POLICY_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
   NOTIFICATION_MAINTENANCE_INTERVAL_MINUTES: Joi.number().integer().min(1).default(60),
   PUSH_NOTIFICATIONS_ENABLED: Joi.boolean()
     .truthy('true')
@@ -329,6 +409,25 @@ const envSchema = Joi.object({
     .default(false),
   NOTIFICATION_PUSH_BATCH_SIZE: Joi.number().integer().min(1).max(500).default(100),
   NOTIFICATION_PUSH_MAX_ATTEMPTS: Joi.number().integer().min(1).max(20).default(5),
+  LEGAL_ENFORCEMENT_ENABLED: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(false),
+  LEGAL_DRAFTS_PUBLIC_ENABLED: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(true),
+  LEGAL_COUNSEL_APPROVAL_REFERENCE: Joi.string().allow('').max(240).default(''),
+  IMPORT_PROVENANCE_ENFORCEMENT_ENABLED: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(false),
   FIREBASE_SERVICE_ACCOUNT_JSON: Joi.string().allow('').default(''),
   FIREBASE_SERVICE_ACCOUNT_BASE64: Joi.string().allow('').default(''),
   FIREBASE_SERVICE_ACCOUNT_PATH: Joi.string().allow('').default(''),
@@ -462,9 +561,7 @@ const durationSeconds = (value: string): number => {
   if (!match) {
     return Number.POSITIVE_INFINITY;
   }
-  const unitSeconds = ({ s: 1, m: 60, h: 3600, d: 86400 } as Record<string, number>)[
-    match[2]
-  ];
+  const unitSeconds = ({ s: 1, m: 60, h: 3600, d: 86400 } as Record<string, number>)[match[2]];
   if (!unitSeconds) {
     return Number.POSITIVE_INFINITY;
   }
@@ -501,7 +598,9 @@ const validateEnv = (source: NodeJS.ProcessEnv = process.env): EnvConfig => {
     value.JWT_REFRESH_SECRET_CURRENT,
     value.JWT_REFRESH_SECRET_PREVIOUS,
   );
-  if ([...configuredAccessSecrets, ...configuredRefreshSecrets].some((secret) => secret.length < 32)) {
+  if (
+    [...configuredAccessSecrets, ...configuredRefreshSecrets].some((secret) => secret.length < 32)
+  ) {
     throw new Error(
       'Environment validation failed: every current and previous JWT secret must be at least 32 characters',
     );
@@ -559,6 +658,38 @@ const validateEnv = (source: NodeJS.ProcessEnv = process.env): EnvConfig => {
   }
 
   if (value.NODE_ENV === 'production') {
+    const privacyExportKey = Buffer.from(value.PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64, 'base64');
+    if (
+      privacyExportKey.length !== 32 ||
+      value.PRIVACY_EXPORT_TTL_HOURS == null ||
+      !value.PRIVACY_EXPORT_RETENTION_APPROVAL_REFERENCE
+    ) {
+      throw new Error(
+        'Environment validation failed: production privacy exports require a 32-byte base64 encryption key, an approved TTL, and its approval reference',
+      );
+    }
+    if (
+      value.ACCOUNT_DELETION_EXECUTION_ENABLED &&
+      [
+        value.ACCOUNT_DELETION_POLICY_APPROVAL_REFERENCE,
+        value.ACCOUNT_DELETION_RETENTION_APPROVAL_REFERENCE,
+        value.MASKED_CONTRIBUTOR_POLICY_APPROVAL_REFERENCE,
+      ].some((reference: string) => !reference)
+    ) {
+      throw new Error(
+        'Environment validation failed: enabled account deletion requires policy, retention, and masked-attribution approval references',
+      );
+    }
+    if (value.LEGAL_DRAFTS_PUBLIC_ENABLED) {
+      throw new Error(
+        'Environment validation failed: production must not expose draft legal documents',
+      );
+    }
+    if (value.LEGAL_ENFORCEMENT_ENABLED && !String(value.LEGAL_COUNSEL_APPROVAL_REFERENCE).trim()) {
+      throw new Error(
+        'Environment validation failed: enabled legal enforcement requires an approval reference',
+      );
+    }
     if (durationSeconds(value.JWT_EXPIRE) > 60 * 60) {
       throw new Error(
         'Environment validation failed: production access tokens must expire within 1 hour',
@@ -777,6 +908,18 @@ const workloadWorkerEnvSchema = Joi.object({
     .falsy('false')
     .falsy('0')
     .default(false),
+  PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64: Joi.string().trim().base64().allow('').default(''),
+  PRIVACY_EXPORT_TTL_HOURS: Joi.number().integer().min(1).max(168).allow(null).default(null),
+  PRIVACY_EXPORT_RETENTION_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
+  ACCOUNT_DELETION_EXECUTION_ENABLED: Joi.boolean()
+    .truthy('true')
+    .truthy('1')
+    .falsy('false')
+    .falsy('0')
+    .default(false),
+  ACCOUNT_DELETION_POLICY_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
+  ACCOUNT_DELETION_RETENTION_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
+  MASKED_CONTRIBUTOR_POLICY_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),
   LOG_PRETTY: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(true),
   LOG_TO_FILE: Joi.boolean().truthy('true').truthy('1').falsy('false').falsy('0').default(false),
   LOG_DIR: Joi.string().trim().min(1).default('./logs/api'),
@@ -798,6 +941,28 @@ const validateWorkloadWorkerEnv = (
   }
 
   if (value.NODE_ENV === 'production') {
+    const privacyExportKey = Buffer.from(value.PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64, 'base64');
+    if (
+      privacyExportKey.length !== 32 ||
+      value.PRIVACY_EXPORT_TTL_HOURS == null ||
+      !value.PRIVACY_EXPORT_RETENTION_APPROVAL_REFERENCE
+    ) {
+      throw new Error(
+        'Workload worker environment validation failed: privacy export key, approved TTL, and approval reference are required',
+      );
+    }
+    if (
+      value.ACCOUNT_DELETION_EXECUTION_ENABLED &&
+      [
+        value.ACCOUNT_DELETION_POLICY_APPROVAL_REFERENCE,
+        value.ACCOUNT_DELETION_RETENTION_APPROVAL_REFERENCE,
+        value.MASKED_CONTRIBUTOR_POLICY_APPROVAL_REFERENCE,
+      ].some((reference: string) => !reference)
+    ) {
+      throw new Error(
+        'Workload worker environment validation failed: enabled deletion requires policy, retention, and masked-attribution approval references',
+      );
+    }
     if (unsafeProductionSecret(value.DB_PASSWORD)) {
       throw new Error(
         'Workload worker environment validation failed: DB_PASSWORD is insecure or a placeholder',

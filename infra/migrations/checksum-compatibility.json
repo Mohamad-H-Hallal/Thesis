@@ -40,6 +40,22 @@
         "9b78cedc65491950be7bb69684e7bcc28128fb603c23f98ca0531d339b28d4e5"
       ],
       "reason": "The pre-release development database applied an earlier working-copy revision; migration 0055 reconciles the final workflow notification types, delivery policy, and idempotency index."
+    },
+    {
+      "filename": "0059_compliance_governance.sql",
+      "sourceChecksum": "c2a69755d125e883850b4f74c5e783e17074bb67261e7454fc66e7d880d554a0",
+      "acceptedChecksums": [
+        "b10c0a3eda8b1114d4544edc25ea389c48ed1f57738c2ab7126617668ce424ae"
+      ],
+      "reason": "The pre-release development database applied the initial compliance schema before retention execution, GIS provenance, and project AI governance extensions were added; migration 0060 idempotently reconciles those extensions."
+    },
+    {
+      "filename": "0064_one_active_privacy_request_per_user.sql",
+      "sourceChecksum": "412d261b4cba5c74ab599ff63a394e02bff77f5e1adbdec1eacdb22002874d17",
+      "acceptedChecksums": [
+        "35b42d970a3cf9baefb79d16aa88f47590b2512fd3d596b9932b9ccbf130db86"
+      ],
+      "reason": "The pre-release development database applied a global per-user uniqueness draft; migration 0065 restores the intended per-user, per-request-type rule."
     }
   ]
 }

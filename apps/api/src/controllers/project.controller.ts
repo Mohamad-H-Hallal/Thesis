@@ -12,10 +12,45 @@ import {
 import { normalizeCollectionFormSchema } from '../lib/projectSchema';
 import { serializePhotoForClient } from '../lib/photoMedia';
 import { notifyProjectStatusChanged } from '../lib/workflowNotifications';
+import { publishRealtimeChanges } from '../realtime/realtimeEvents';
+import type { RealtimePublishInput } from '../realtime/realtimeProtocol';
 
 const projectAccessScopes = ['public', 'assigned', 'all'] as const;
 type ProjectAccessScope = (typeof projectAccessScopes)[number];
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const projectRealtimeInputs = ({
+  projectId,
+  action,
+  originSessionId,
+  publicAudience,
+}: {
+  projectId: string;
+  action: string;
+  originSessionId?: string | null;
+  publicAudience: boolean;
+}): RealtimePublishInput[] => [
+  {
+    scopeType: 'projects',
+    scopeId: 'all',
+    action,
+    entityType: 'project',
+    entityId: projectId,
+    projectId,
+    originSessionId,
+    audience: publicAudience ? { kind: 'all_authenticated' } : { kind: 'admins' },
+  },
+  {
+    scopeType: 'project',
+    scopeId: projectId,
+    action,
+    entityType: 'project',
+    entityId: projectId,
+    projectId,
+    originSessionId,
+    audience: { kind: 'project', projectId, access: 'readers' },
+  },
+];
 
 const publicVisibilityColumnForRole = (
   role: string,
@@ -86,7 +121,7 @@ const getAllProjects = async (req, res) => {
 
   let queryText = `
     SELECT DISTINCT p.*, pc.name as category_name,
-           u.full_name as created_by_name,
+           COALESCE(u.full_name, u.masked_contributor_label, 'Former contributor') as created_by_name,
            (SELECT COUNT(*)
             FROM spatial_feature sf
             WHERE sf.project_id = p.id
@@ -318,7 +353,7 @@ const getProject = async (req, res) => {
 
   const result = await query(
     `SELECT p.*, pc.name as category_name,
-            u.full_name as created_by_name,
+            COALESCE(u.full_name, u.masked_contributor_label, 'Former contributor') as created_by_name,
             (SELECT COUNT(*) FROM spatial_feature WHERE project_id = p.id AND status = 'approved') as approved_features,
             (SELECT COUNT(*) FROM spatial_feature WHERE project_id = p.id AND status = 'pending_review') as pending_features,
             (SELECT COUNT(*) FROM spatial_feature WHERE project_id = p.id AND status = 'rejected') as rejected_features,
@@ -532,29 +567,41 @@ const createProject = async (req, res) => {
     requestedEndDate: end_date,
   });
 
-  const createdProjectResult = await query(
-    `INSERT INTO project (
-        created_by_user_id, category_id, name, description, objectives,
-        status, start_date, end_date, collection_form_schema,
-        requires_photos, min_photos, max_photos, visible_to_viewers, visible_to_contributors
-      ) VALUES ($1, $2, $3, $4, $5, 'draft', $6, $7, $8, $9, $10, $11, $12, $13)
-      RETURNING *`,
-    [
-      req.user.id,
-      category_id,
-      name,
-      description,
-      objectives,
-      normalizedSchedule.startDate,
-      normalizedSchedule.endDate,
-      JSON.stringify(normalizedCollectionFormSchema),
-      requires_photos,
-      min_photos,
-      max_photos,
-      visible_to_viewers,
-      visible_to_contributors,
-    ],
-  );
+  const createdProjectResult = await transaction(async (client) => {
+    const inserted = await client.query(
+      `INSERT INTO project (
+          created_by_user_id, category_id, name, description, objectives,
+          status, start_date, end_date, collection_form_schema,
+          requires_photos, min_photos, max_photos, visible_to_viewers, visible_to_contributors
+        ) VALUES ($1, $2, $3, $4, $5, 'draft', $6, $7, $8, $9, $10, $11, $12, $13)
+        RETURNING *`,
+      [
+        req.user.id,
+        category_id,
+        name,
+        description,
+        objectives,
+        normalizedSchedule.startDate,
+        normalizedSchedule.endDate,
+        JSON.stringify(normalizedCollectionFormSchema),
+        requires_photos,
+        min_photos,
+        max_photos,
+        visible_to_viewers,
+        visible_to_contributors,
+      ],
+    );
+    await publishRealtimeChanges(
+      projectRealtimeInputs({
+        projectId: inserted.rows[0].id,
+        action: 'created',
+        originSessionId: req.authSessionId,
+        publicAudience: visible_to_viewers || visible_to_contributors,
+      }),
+      client,
+    );
+    return inserted;
+  });
   const createdProject = createdProjectResult.rows[0];
   await synchronizeProjectStatuses(createdProject.id, req.user.id);
   const synchronizedProjectResult = await query('SELECT * FROM project WHERE id = $1', [
@@ -591,6 +638,7 @@ const updateProject = async (req, res) => {
     max_photos,
     visible_to_viewers,
     visible_to_contributors,
+    expected_version,
   } = req.body;
 
   await synchronizeProjectStatuses(projectId, req.user.id);
@@ -600,7 +648,9 @@ const updateProject = async (req, res) => {
   let paramIndex = 1;
 
   const currentProjectResult = await query(
-    'SELECT id, name, status, category_id, start_date, end_date FROM project WHERE id = $1',
+    `SELECT id, name, status, category_id, start_date, end_date,
+            visible_to_viewers, visible_to_contributors
+     FROM project WHERE id = $1`,
     [projectId],
   );
   if (currentProjectResult.rows.length === 0) {
@@ -705,28 +755,63 @@ const updateProject = async (req, res) => {
     throw new AppError('No fields to update', 400);
   }
 
+  updates.push('version = version + 1');
   params.push(projectId);
+  const whereConditions = [`id = $${paramIndex}`];
+  if (expected_version !== undefined) {
+    params.push(expected_version);
+    whereConditions.push(`version = $${paramIndex + 1}`);
+  }
   const queryText = `
     UPDATE project
     SET ${updates.join(', ')}
-    WHERE id = $${paramIndex}
+    WHERE ${whereConditions.join(' AND ')}
     RETURNING *
   `;
 
-  const result = await query(queryText, params);
+  const result = await transaction(async (client) => {
+    const updated = await client.query(queryText, params);
+    if (updated.rows.length === 0 && expected_version !== undefined) {
+      const latest = await client.query('SELECT version FROM project WHERE id = $1', [projectId]);
+      if (latest.rows[0]) {
+        throw new AppError('Project changed after this form was opened.', 409, {
+          code: 'ENTITY_VERSION_CONFLICT',
+          disposition: 'conflict',
+          retryable: false,
+          currentVersion: Number(latest.rows[0].version),
+        });
+      }
+    }
+    await publishRealtimeChanges(
+      projectRealtimeInputs({
+        projectId,
+        action: status !== undefined ? 'status_changed' : 'updated',
+        originSessionId: req.authSessionId,
+        publicAudience:
+          Boolean(currentProject.visible_to_viewers) ||
+          Boolean(currentProject.visible_to_contributors) ||
+          visible_to_viewers === true ||
+          visible_to_contributors === true,
+      }),
+      client,
+    );
+    return updated;
+  });
   await synchronizeProjectStatuses(projectId, req.user.id);
   const synchronizedProjectResult = await query('SELECT * FROM project WHERE id = $1', [projectId]);
   const synchronizedProject = synchronizedProjectResult.rows[0] ?? result.rows[0];
 
   if (currentProject.status !== synchronizedProject.status) {
-    await notifyProjectStatusChanged(query, {
-      projectId,
-      projectName: synchronizedProject.name,
-      previousStatus: currentProject.status,
-      status: synchronizedProject.status,
-      actorUserId: req.user.id,
-      eventKey: `project_status:manual:${projectId}:${currentProject.status}:${synchronizedProject.status}:${Date.now()}`,
-    });
+    await transaction((client) =>
+      notifyProjectStatusChanged(client, {
+        projectId,
+        projectName: synchronizedProject.name,
+        previousStatus: currentProject.status,
+        status: synchronizedProject.status,
+        actorUserId: req.user.id,
+        eventKey: `project_status:manual:${projectId}:${currentProject.status}:${synchronizedProject.status}:${Date.now()}`,
+      }),
+    );
   }
 
   logger.info('Project updated:', { projectId, userId: req.user.id });
@@ -760,7 +845,7 @@ const deleteProject = async (req, res) => {
       [projectId],
     );
 
-    await client.query(
+    const notifications = await client.query(
       `INSERT INTO notification (user_id, type, title, message, metadata)
        SELECT pa.user_id,
               'assignment',
@@ -769,7 +854,8 @@ const deleteProject = async (req, res) => {
               $3::jsonb
        FROM project_assignment pa
        WHERE pa.project_id = $1
-         AND pa.status = 'approved'`,
+         AND pa.status = 'approved'
+       RETURNING id, user_id`,
       [
         projectId,
         `${projectStatusResult.rows[0].name} was archived and moved out of active operations.`,
@@ -779,6 +865,28 @@ const deleteProject = async (req, res) => {
           status: 'archived',
         }),
       ],
+    );
+
+    await publishRealtimeChanges(
+      [
+        ...projectRealtimeInputs({
+          projectId,
+          action: 'archived',
+          originSessionId: req.authSessionId,
+          publicAudience: true,
+        }),
+        ...notifications.rows.map((notification) => ({
+          scopeType: 'notifications',
+          scopeId: notification.user_id,
+          action: 'created',
+          entityType: 'notification',
+          entityId: notification.id,
+          projectId,
+          originSessionId: req.authSessionId,
+          audience: { kind: 'user' as const, userId: notification.user_id },
+        })),
+      ],
+      client,
     );
 
     return archived.rows[0];
@@ -838,8 +946,8 @@ const getProjectFeatures = async (req, res) => {
            sf.collected_at, sf.submitted_at, sf.reviewed_at,
            sf.review_notes,
            ST_AsGeoJSON(sf.geom) as geometry,
-           u.full_name as collected_by,
-           r.full_name as reviewed_by,
+           COALESCE(u.full_name, u.masked_contributor_label, 'Former contributor') as collected_by,
+           COALESCE(r.full_name, r.masked_contributor_label, 'Former reviewer') as reviewed_by,
            (SELECT COUNT(*) FROM photo WHERE feature_id = sf.id) as photo_count,
            COALESCE(
              (

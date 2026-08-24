@@ -378,15 +378,20 @@ class ApiAdminRepository implements AdminRepository {
     required String name,
     String? description,
     String? iconUrl,
+    int? expectedVersion,
   }) async {
     return _run(() async {
+      final payload = <String, dynamic>{
+        'name': name,
+        'description': description,
+        'icon_url': iconUrl,
+      };
+      if (expectedVersion != null) {
+        payload['expected_version'] = expectedVersion;
+      }
       final response = await _apiClient.dio.put<Map<String, dynamic>>(
         '$_categoriesBasePath/$categoryId',
-        data: <String, dynamic>{
-          'name': name,
-          'description': description,
-          'icon_url': iconUrl,
-        },
+        data: payload,
       );
       final row = Map<String, dynamic>.from(
         response.data?['data'] as Map? ?? const <String, dynamic>{},
@@ -429,7 +434,11 @@ class ApiAdminRepository implements AdminRepository {
         return createdProject;
       }
 
-      return updateProject(projectId: createdProject.id, input: input);
+      return updateProject(
+        projectId: createdProject.id,
+        input: input,
+        expectedVersion: createdProject.version,
+      );
     }, fallback: 'Unable to create project.');
   }
 
@@ -437,11 +446,16 @@ class ApiAdminRepository implements AdminRepository {
   Future<ProjectSummary> updateProject({
     required String projectId,
     required ProjectProvisioningInput input,
+    int? expectedVersion,
   }) async {
     return _run(() async {
+      final payload = _projectPayload(input);
+      if (expectedVersion != null) {
+        payload['expected_version'] = expectedVersion;
+      }
       final response = await _apiClient.dio.put<Map<String, dynamic>>(
         '$_projectsBasePath/$projectId',
-        data: _projectPayload(input),
+        data: payload,
       );
       final row = Map<String, dynamic>.from(
         response.data?['data'] as Map? ?? const <String, dynamic>{},
@@ -735,6 +749,7 @@ class ApiAdminRepository implements AdminRepository {
       description: row['description'] as String?,
       iconUrl: row['icon_url'] as String?,
       createdAt: _toDateTime(row['created_at']),
+      version: _toInt(row['version']) ?? 1,
     );
   }
 
@@ -756,6 +771,7 @@ class ApiAdminRepository implements AdminRepository {
       name: (row['name'] as String?) ?? 'Unnamed project',
       category: (row['category_name'] as String?) ?? 'Uncategorized',
       categoryId: row['category_id'] as String?,
+      version: _toInt(row['version']) ?? 1,
       status: (row['status'] as String?) ?? 'draft',
       approvedFeatures:
           _toInt(row['approved_features']) ??

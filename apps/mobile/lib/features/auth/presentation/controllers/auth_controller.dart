@@ -167,6 +167,13 @@ class AuthController extends StateNotifier<AuthState> {
     await _finishLogout();
   }
 
+  void clearTransientAuthenticationAttempt() {
+    if (!mounted || state.isAuthenticated) {
+      return;
+    }
+    state = const AuthState.unauthenticated();
+  }
+
   void completeContactVerification(AuthSession session) {
     if (!mounted) return;
     state = AuthState.authenticated(session);
@@ -278,6 +285,7 @@ class AuthController extends StateNotifier<AuthState> {
         accessToken: rotated.accessToken,
         refreshToken: rotated.refreshToken,
         user: currentSession.user,
+        legalAcceptanceRequired: currentSession.legalAcceptanceRequired,
       ),
     );
   }
@@ -304,6 +312,7 @@ class AuthController extends StateNotifier<AuthState> {
           accessToken: session.accessToken,
           refreshToken: session.refreshToken,
           user: updatedUser,
+          legalAcceptanceRequired: session.legalAcceptanceRequired,
         ),
       );
     } catch (error) {
@@ -318,6 +327,19 @@ class AuthController extends StateNotifier<AuthState> {
       );
       rethrow;
     }
+  }
+
+  void markLegalAcceptanceCurrent() {
+    final session = state.session;
+    if (session == null || !session.legalAcceptanceRequired) return;
+    state = AuthState.authenticated(
+      AuthSession(
+        accessToken: session.accessToken,
+        refreshToken: session.refreshToken,
+        user: session.user,
+        legalAcceptanceRequired: false,
+      ),
+    );
   }
 
   String _messageFromError(Object error) {

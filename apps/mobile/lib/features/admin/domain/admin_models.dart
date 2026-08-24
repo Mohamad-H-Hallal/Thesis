@@ -5,10 +5,7 @@ enum ContributorRequestStatus { pending, rejected }
 enum UserAccountState { active, pending, rejected, blocked, inactive }
 
 class ContributorRequestsQuery {
-  const ContributorRequestsQuery({
-    required this.status,
-    this.query,
-  });
+  const ContributorRequestsQuery({required this.status, this.query});
 
   final ContributorRequestStatus status;
   final String? query;
@@ -25,12 +22,7 @@ class ContributorRequestsQuery {
 }
 
 class ManagedUsersQuery {
-  const ManagedUsersQuery({
-    this.query,
-    this.role,
-    this.state,
-    this.isActive,
-  });
+  const ManagedUsersQuery({this.query, this.role, this.state, this.isActive});
 
   final String? query;
   final UserRole? role;
@@ -51,10 +43,7 @@ class ManagedUsersQuery {
 }
 
 class ManagedAssignmentsQuery {
-  const ManagedAssignmentsQuery({
-    this.status,
-    this.query,
-  });
+  const ManagedAssignmentsQuery({this.status, this.query});
 
   final String? status;
   final String? query;
@@ -94,10 +83,7 @@ class ProjectAssignmentsQuery {
 }
 
 class AvailableContributorsQuery {
-  const AvailableContributorsQuery({
-    required this.projectId,
-    this.query,
-  });
+  const AvailableContributorsQuery({required this.projectId, this.query});
 
   final String projectId;
   final String? query;
@@ -213,6 +199,7 @@ class ProjectCategorySummary {
     this.description,
     this.iconUrl,
     this.createdAt,
+    this.version = 1,
   });
 
   final String id;
@@ -220,6 +207,7 @@ class ProjectCategorySummary {
   final String? description;
   final String? iconUrl;
   final DateTime? createdAt;
+  final int version;
 }
 
 class ProjectProvisioningInput {

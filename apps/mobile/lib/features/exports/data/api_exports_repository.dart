@@ -18,6 +18,36 @@ class ApiExportsRepository implements ExportsRepository {
   String get _exportsBasePath => '${AppEnv.apiVersionPrefix}/exports';
 
   @override
+  Future<List<ExportCollector>> fetchProjectCollectors({
+    required String projectId,
+  }) async {
+    try {
+      final response = await _apiClient.dio.get<Map<String, dynamic>>(
+        '$_exportsBasePath/project/$projectId/collectors',
+      );
+      final rows = (response.data?['data'] as List? ?? const <dynamic>[]);
+      return rows
+          .map((row) {
+            final value = Map<String, dynamic>.from(row as Map);
+            return ExportCollector(
+              userId: value['user_id'] as String? ?? '',
+              displayName:
+                  value['display_name'] as String? ?? 'Former contributor',
+              contributionCount:
+                  (value['contribution_count'] as num?)?.toInt() ?? 0,
+            );
+          })
+          .where((collector) => collector.userId.isNotEmpty)
+          .toList(growable: false);
+    } on DioException catch (error) {
+      throw userFacingDioMessage(
+        error,
+        fallback: 'Unable to load project collectors.',
+      );
+    }
+  }
+
+  @override
   Future<List<ExportJob>> fetchJobs({required String requestedByUserId}) async {
     final page = await fetchJobsPage(
       requestedByUserId: requestedByUserId,

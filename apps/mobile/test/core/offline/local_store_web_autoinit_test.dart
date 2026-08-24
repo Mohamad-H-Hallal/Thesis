@@ -87,4 +87,92 @@ void main() {
       });
     },
   );
+
+  test(
+    'account purge removes only the deleted owner data and is idempotent',
+    () async {
+      final store = MemoryLocalStore();
+      final now = DateTime.utc(2026, 8, 16);
+      LocalDraftFeature draft(String owner, String id) => LocalDraftFeature(
+        id: id,
+        ownerUserId: owner,
+        projectId: 'project-$owner',
+        projectName: 'Project $owner',
+        geometryType: 'Point',
+        geometryJson: '{"type":"Point","coordinates":[35.5,33.9]}',
+        attributesJson: '{}',
+        photos: const <DraftPhoto>[],
+        status: 'draft',
+        localVersion: 1,
+        updatedAt: now,
+      );
+      ProjectSummary project(String id) => ProjectSummary(
+        id: id,
+        name: 'Project $id',
+        category: 'Test',
+        status: 'active',
+        assignedCollectors: 0,
+        pendingReviews: 0,
+        description: 'Owner-scoped cache',
+      );
+
+      await store.upsertDraft(draft('owner-a', 'draft-a'), enqueueSync: true);
+      await store.upsertDraft(draft('owner-b', 'draft-b'), enqueueSync: true);
+      await store.cacheProjectsForOwner(
+        ownerUserId: 'owner-a',
+        projects: <ProjectSummary>[project('project-a')],
+      );
+      await store.cacheProjectsForOwner(
+        ownerUserId: 'owner-b',
+        projects: <ProjectSummary>[project('project-b')],
+      );
+      await store.upsertOfflineMapPackage(
+        OfflineMapPackage(
+          ownerUserId: 'owner-a',
+          version: 'map-a',
+          zoomLevelMin: 7,
+          zoomLevelMax: 10,
+          lastUpdatedAt: now,
+          isCurrent: true,
+        ),
+      );
+      await store.upsertOfflineMapPackage(
+        OfflineMapPackage(
+          ownerUserId: 'owner-b',
+          version: 'map-b',
+          zoomLevelMin: 7,
+          zoomLevelMax: 10,
+          lastUpdatedAt: now,
+          isCurrent: true,
+        ),
+      );
+
+      await store.purgeAccountData('owner-a');
+      await store.purgeAccountData('owner-a');
+
+      expect(await store.getDraftsForOwner(ownerUserId: 'owner-a'), isEmpty);
+      expect(await store.getSyncItemsForOwner('owner-a'), isEmpty);
+      expect(
+        await store.getCachedProjectsForOwner(ownerUserId: 'owner-a'),
+        isEmpty,
+      );
+      expect(
+        await store.getCurrentOfflineMapPackage(ownerUserId: 'owner-a'),
+        isNull,
+      );
+      expect(
+        await store.getDraftsForOwner(ownerUserId: 'owner-b'),
+        hasLength(1),
+      );
+      expect(await store.getSyncItemsForOwner('owner-b'), hasLength(1));
+      expect(
+        await store.getCachedProjectsForOwner(ownerUserId: 'owner-b'),
+        hasLength(1),
+      );
+      expect(
+        await store.getCurrentOfflineMapPackage(ownerUserId: 'owner-b'),
+        isNotNull,
+      );
+    },
+  );
 }

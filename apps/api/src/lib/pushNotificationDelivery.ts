@@ -16,6 +16,7 @@ type PushDeliveryRow = {
   message: string;
   platform: 'android' | 'ios';
   device_registration_id: string;
+  show_sensitive_preview: boolean;
 };
 
 const markPushDeliveryStatus = async (
@@ -87,7 +88,8 @@ const claimPendingPushDeliveries = async (
                  n.title,
                  n.message,
                  pdr.platform,
-                 npd.device_registration_id`,
+                 npd.device_registration_id,
+                 pdr.show_sensitive_preview`,
       [maxAttempts, limit],
     );
 
@@ -158,6 +160,7 @@ const deliverPendingPushNotifications = async (): Promise<{
         title: delivery.title,
         message: delivery.message,
         notificationId: delivery.notification_id,
+        showSensitivePreview: delivery.show_sensitive_preview,
       });
 
       delivered += 1;

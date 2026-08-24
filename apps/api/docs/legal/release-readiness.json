@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "reviewedAt": "2026-08-16",
+  "productionAuthorized": false,
+  "counselApproval": {
+    "approved": false,
+    "approvalReference": null
+  },
+  "decisions": {
+    "legalOperatorController": false,
+    "controllerProcessorRoles": false,
+    "targetTerritoriesAndDistribution": false,
+    "minimumAgeAndMinors": false,
+    "privacyContact": false,
+    "hostingRegionsAndSubprocessors": false,
+    "retentionMatrix": false,
+    "retainedInstitutionalRecordBasis": false,
+    "maskedContributorDisplayPolicy": false,
+    "photosPreciseLocationFreeTextTreatment": false,
+    "backupAgeingPeriod": false,
+    "contributorAndDeletionNoticeWording": false,
+    "mapAndOfflineRights": false,
+    "gisOwnershipAndPublication": false,
+    "aiTrainingAndPublication": false,
+    "governingLawAndDisputes": false,
+    "requiredLanguages": false,
+    "lebanonLaw81Formalities": false
+  },
+  "storeDisclosures": {
+    "appleApproved": false,
+    "googlePlayApproved": false
+  },
+  "platformReadiness": {
+    "accountDeletionVerified": false,
+    "iosPurposeStringsVerified": false,
+    "privacyManifestInventoryVerified": false,
+    "productionIdentifiersVerified": false,
+    "privacyRightsFulfillmentVerified": false,
+    "retentionAutomationVerified": false,
+    "notificationPrivacyVerified": false,
+    "ugcModerationVerified": false,
+    "accessibilityVerified": false,
+    "softwareLicenseAndSbomVerified": false,
+    "importProvenanceEnforcementVerified": false
+  },
+  "mapSources": {
+    "openstreetmapOnlineReviewed": false,
+    "esriOnlineLicensed": false,
+    "esriOfflineLicensed": false,
+    "attributionVerified": false
+  },
+  "notes": [
+    "This file intentionally blocks public production until accountable owners and counsel approve the recorded decisions.",
+    "Do not change booleans without an immutable evidence reference and review of the exact deployed policy/configuration.",
+    "Owner decision recorded 2026-08-13: the app is intended to be offered and targeted only in Lebanon. The territory/distribution gate remains false until counsel approval and store configuration evidence are recorded.",
+    "Owner product direction recorded 2026-08-16: direct account identifiers are erased and justified institutional records retain a pseudonymous masked contributor label such as A. H.; this is not legal anonymity.",
+    "Production deletion execution remains disabled until counsel or the designated legal owner approves the record basis, exact retained fields, visibility, retention, photos/location/free-text treatment, backup ageing, and user-facing wording."
+  ]
+}

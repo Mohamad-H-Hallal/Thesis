@@ -437,6 +437,8 @@ adb reverse tcp:3000 tcp:3000
 flutter run -d <device-id> --dart-define=APP_FLAVOR=dev --dart-define=API_BASE_URL=http://127.0.0.1:3000
 ```
 - If `API_BASE_URL` is omitted in `dev`, Android now defaults to `http://10.0.2.2:3000`; web keeps `http://localhost:3000`.
+- The `flutter_map` OpenStreetMap notice is an informational debug warning, not an API connection error. Development uses the public OSM street tiles with visible attribution, an app-specific user agent, and no bulk offline download.
+- Production builds should provide an organization-approved tile service with `--dart-define=MAP_STREET_TILE_URL=<licensed-or-self-hosted-template>` and an identifiable contact value with `--dart-define=MAP_PROVIDER_USER_AGENT=<app-and-contact>`.
 - If the emulator shows `offline`, restart ADB:
 ```powershell
 adb kill-server

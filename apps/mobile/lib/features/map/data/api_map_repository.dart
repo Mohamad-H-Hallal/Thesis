@@ -413,6 +413,7 @@ class ApiMapRepository {
       isSummary: item['is_summary'] as bool? ?? false,
       isAggregate: item['is_aggregate'] as bool? ?? false,
       clusterCount: math.max(1, _toInt(item['cluster_count']) ?? 1),
+      version: _toInt(item['version']) ?? 1,
     );
   }
 
@@ -444,6 +445,7 @@ class ApiMapRepository {
       isSummary: true,
       isAggregate: properties['is_aggregate'] as bool? ?? false,
       clusterCount: math.max(1, _toInt(properties['cluster_count']) ?? 1),
+      version: _toInt(properties['version']) ?? 1,
     );
   }
 

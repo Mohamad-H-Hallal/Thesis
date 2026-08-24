@@ -50,14 +50,8 @@ void main() {
       projectId: 'proj-2',
     );
     expect(page.total, 1);
-    expect(
-      page.items.first.status,
-      ExportJobStatus.pending,
-    );
-    expect(
-      notifications.where((m) => m.startsWith('Export queued')).length,
-      1,
-    );
+    expect(page.items.first.status, ExportJobStatus.pending);
+    expect(notifications.where((m) => m.startsWith('Export queued')).length, 1);
   });
 
   test('failed export can be retried', () async {

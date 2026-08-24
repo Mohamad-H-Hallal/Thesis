@@ -314,6 +314,28 @@ describe('Phase 10 E2E workflow', () => {
       expect(reviewResponse.status).toBe(200);
     }
 
+    const collectorsResponse = await request(app)
+      .get(`${API_PREFIX}/exports/project/${project.id}/collectors`)
+      .set(authHeader(admin.token));
+    expect(collectorsResponse.status).toBe(200);
+    expect(collectorsResponse.body.data).toEqual([
+      expect.objectContaining({
+        user_id: contributor.user.id,
+        display_name: 'Phase10 Contributor',
+        contribution_count: 3,
+      }),
+    ]);
+
+    const zeroContributionCollector = await request(app)
+      .post(`${API_PREFIX}/exports/project/${project.id}`)
+      .set(authHeader(admin.token))
+      .send({
+        status_filter: ['approved'],
+        format: 'geojson',
+        collector_user_id: admin.user.id,
+      });
+    expect(zeroContributionCollector.status).toBe(409);
+
     const exportRequestResponse = await request(app)
       .post(`${API_PREFIX}/exports/project/${project.id}`)
       .set(authHeader(admin.token))
@@ -321,6 +343,7 @@ describe('Phase 10 E2E workflow', () => {
         status_filter: ['approved'],
         format: 'geojson',
         include_photos: true,
+        collector_user_id: contributor.user.id,
       });
 
     expect(exportRequestResponse.status).toBe(202);
@@ -1225,6 +1248,18 @@ describe('Phase 10 E2E workflow', () => {
     const readme = readmeEntry.getData().toString('utf8');
     expect(readme).not.toContain('accuracy_meters');
     expect(readme).not.toContain('accuracy:');
+    expect(readme).toContain('Important Notices:');
+    expect(readme).toContain('not a cadastral record');
+    const metadata = JSON.parse(
+      getZipEntry(zip, 'metadata.json').getData().toString('utf8'),
+    );
+    expect(metadata.important_notices).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('not a cadastral record'),
+        expect.stringContaining('preserve required source attribution'),
+      ]),
+    );
+    expect(metadata.source_provenance).toEqual([]);
 
     const manifest = JSON.parse(
       getZipEntry(zip, 'photos_manifest.json').getData().toString('utf8'),

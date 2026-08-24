@@ -1,4 +1,4 @@
-# Phase 2C — Storage Migration and Reconciliation Runbook
+# Phase 2C - Storage Migration and Reconciliation Runbook
 
 This runbook controls storage inventory, legacy-reference migration, rollback,
 and reviewed orphan quarantine. It does not provide a permanent-delete
