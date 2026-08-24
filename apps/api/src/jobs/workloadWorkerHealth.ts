@@ -8,8 +8,10 @@ const WORKLOAD_WORKER_MAX_HEALTH_AGE_MS = 60_000;
 
 let healthInterval: NodeJS.Timeout | null = null;
 
-const writeWorkloadWorkerHealth = async (): Promise<void> => {
-  await fs.writeFile(WORKLOAD_WORKER_HEALTH_FILE, String(Date.now()), {
+const writeWorkloadWorkerHealth = async (
+  writtenAt: number | string = Date.now(),
+): Promise<void> => {
+  await fs.writeFile(WORKLOAD_WORKER_HEALTH_FILE, String(writtenAt), {
     encoding: 'utf8',
     mode: 0o600,
   });

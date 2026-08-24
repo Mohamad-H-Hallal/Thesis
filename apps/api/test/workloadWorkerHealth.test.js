@@ -1,10 +1,8 @@
-const fs = require('node:fs/promises');
-
 const {
-  WORKLOAD_WORKER_HEALTH_FILE,
   isWorkloadWorkerHealthFresh,
   startWorkloadWorkerHealth,
   stopWorkloadWorkerHealth,
+  writeWorkloadWorkerHealth,
 } = require('../src/jobs/workloadWorkerHealth');
 
 describe('workload worker health marker', () => {
@@ -13,7 +11,7 @@ describe('workload worker health marker', () => {
   });
 
   test('is unhealthy until the worker starts and removes its marker on stop', async () => {
-    await fs.rm(WORKLOAD_WORKER_HEALTH_FILE, { force: true });
+    await stopWorkloadWorkerHealth();
     expect(await isWorkloadWorkerHealthFresh()).toBe(false);
 
     await startWorkloadWorkerHealth();
@@ -24,10 +22,10 @@ describe('workload worker health marker', () => {
   });
 
   test('rejects stale and malformed markers', async () => {
-    await fs.writeFile(WORKLOAD_WORKER_HEALTH_FILE, String(Date.now() - 5_000), 'utf8');
+    await writeWorkloadWorkerHealth(Date.now() - 5_000);
     expect(await isWorkloadWorkerHealthFresh(1_000)).toBe(false);
 
-    await fs.writeFile(WORKLOAD_WORKER_HEALTH_FILE, 'not-a-timestamp', 'utf8');
+    await writeWorkloadWorkerHealth('not-a-timestamp');
     expect(await isWorkloadWorkerHealthFresh()).toBe(false);
   });
 });

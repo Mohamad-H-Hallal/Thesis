@@ -183,29 +183,34 @@ const parseDocument = (value: unknown, index: number): LegalDocument => {
 
 const loadLegalCatalog = (): LegalCatalog => {
   const filePath = resolveCatalogPath();
-  const stat = fs.statSync(filePath);
-  if (stat.size > maxCatalogBytes) {
-    throw new Error('Legal document catalog exceeds the 512 KB safety limit');
-  }
-  if (cachedCatalog?.filePath === filePath && cachedCatalog.modifiedAtMs === stat.mtimeMs) {
-    return cachedCatalog.catalog;
-  }
-  const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, unknown>;
-  if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.documents)) {
-    throw new Error('Unsupported legal document catalog schema');
-  }
-  const documents = parsed.documents.map(parseDocument);
-  const identities = new Set<string>();
-  for (const document of documents) {
-    const identity = `${document.type}:${document.locale}:${document.version}`;
-    if (identities.has(identity)) {
-      throw new Error(`Duplicate legal document identity: ${identity}`);
+  const descriptor = fs.openSync(filePath, 'r');
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (stat.size > maxCatalogBytes) {
+      throw new Error('Legal document catalog exceeds the 512 KB safety limit');
     }
-    identities.add(identity);
+    if (cachedCatalog?.filePath === filePath && cachedCatalog.modifiedAtMs === stat.mtimeMs) {
+      return cachedCatalog.catalog;
+    }
+    const parsed = JSON.parse(fs.readFileSync(descriptor, 'utf8')) as Record<string, unknown>;
+    if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.documents)) {
+      throw new Error('Unsupported legal document catalog schema');
+    }
+    const documents = parsed.documents.map(parseDocument);
+    const identities = new Set<string>();
+    for (const document of documents) {
+      const identity = `${document.type}:${document.locale}:${document.version}`;
+      if (identities.has(identity)) {
+        throw new Error(`Duplicate legal document identity: ${identity}`);
+      }
+      identities.add(identity);
+    }
+    const catalog = { schemaVersion: 1, documents };
+    cachedCatalog = { filePath, modifiedAtMs: stat.mtimeMs, catalog };
+    return catalog;
+  } finally {
+    fs.closeSync(descriptor);
   }
-  const catalog = { schemaVersion: 1, documents };
-  cachedCatalog = { filePath, modifiedAtMs: stat.mtimeMs, catalog };
-  return catalog;
 };
 
 const environmentFlag = (name: string, fallback: boolean): boolean => {
