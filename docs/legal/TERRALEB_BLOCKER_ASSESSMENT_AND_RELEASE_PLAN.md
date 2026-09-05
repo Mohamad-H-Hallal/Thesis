@@ -1,5 +1,9 @@
 # TerraLeb legal, privacy, platform and release blocker assessment
 
+> The active deployment/evidence sequence is now
+> `TERRALEB_DIGITALOCEAN_PHASES_0_8_EXECUTION_PLAN.md`; the finding taxonomy
+> and unresolved external-evidence rules in this assessment remain applicable.
+
 > **Owner decisions now available:** the companion
 > [`TERRALEB_OWNER_DECISIONS_AND_BLOCKER_CLOSURE_FORM.md`](TERRALEB_OWNER_DECISIONS_AND_BLOCKER_CLOSURE_FORM.md)
 > supplies the proportional Lebanon-only v1 owner-policy answers, the complete

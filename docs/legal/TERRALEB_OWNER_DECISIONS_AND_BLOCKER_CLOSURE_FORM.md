@@ -1,5 +1,9 @@
 # TerraLeb owner decisions and blocker-closure form
 
+> Hosting/provider sections are superseded by
+> `TERRALEB_DIGITALOCEAN_HOSTING_DECISION_V2.md`; non-hosting owner-policy
+> decisions remain in force.
+
 Status: **owner policy adopted on 2026-09-05; production remains fail-closed pending external evidence**
 
 Prepared: **2026-08-16; owner direction revised 2026-08-18 and adopted 2026-09-05**

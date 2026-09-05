@@ -66,6 +66,7 @@ const alloyMediumPolicyPath = path.join(
 );
 const nginxTemplatePath = path.join(root, 'infra', 'nginx', 'production.conf.template');
 const observabilityPath = path.join(root, 'infra', 'observability');
+const digitalOceanTerraformPath = path.join(root, 'infra', 'digitalocean', 'terraform');
 
 const read = (filePath) => fs.readFileSync(filePath, 'utf8');
 const assert = (condition, message) => {
@@ -80,6 +81,12 @@ const apiDockerfile = read(apiDockerfilePath);
 const apiEntrypoint = read(apiEntrypointPath);
 const apiEnvSchema = read(apiEnvSchemaPath);
 const productionEnvExample = read(productionEnvExamplePath);
+const digitalOceanTerraform = ['versions.tf', 'variables.tf', 'main.tf', 'outputs.tf']
+  .map((fileName) => read(path.join(digitalOceanTerraformPath, fileName)))
+  .join('\n');
+const digitalOceanCloudInit = read(
+  path.join(digitalOceanTerraformPath, 'cloud-init.yaml.tftpl'),
+);
 const databaseDockerfile = read(databaseDockerfilePath);
 const certbotDockerfile = read(certbotDockerfilePath);
 const prometheusDockerfile = read(prometheusDockerfilePath);
@@ -399,8 +406,9 @@ for (const [variable, secretName] of [
   ['API_DOCS_TOKEN', 'api_docs_token'],
   ['PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64', 'privacy_export_encryption_key'],
   ['VERIFICATION_HMAC_SECRET', 'verification_hmac_secret'],
-  ['STORAGE_S3_ACCESS_KEY_ID', 'oci_s3_access_key_id'],
-  ['STORAGE_S3_SECRET_ACCESS_KEY', 'oci_s3_secret_access_key'],
+  ['STORAGE_S3_ACCESS_KEY_ID', 'spaces_s3_access_key_id'],
+  ['STORAGE_S3_SECRET_ACCESS_KEY', 'spaces_s3_secret_access_key'],
+  ['STORAGE_S3_CUSTOMER_KEY_BASE64', 'spaces_s3_customer_key'],
   ['ARCGIS_CLIENT_ID', 'arcgis_client_id'],
   ['ARCGIS_CLIENT_SECRET', 'arcgis_client_secret'],
 ]) {
@@ -420,10 +428,13 @@ assert(
       'BACKUP_ENCRYPTION_KEY_BASE64_FILE: /run/secrets/backup_encryption_key',
     ) &&
     productionCompose.includes(
-      'STORAGE_S3_ACCESS_KEY_ID_FILE: /run/secrets/oci_backup_s3_access_key_id',
+      'STORAGE_S3_ACCESS_KEY_ID_FILE: /run/secrets/spaces_backup_s3_access_key_id',
     ) &&
     productionCompose.includes(
-      'STORAGE_S3_SECRET_ACCESS_KEY_FILE: /run/secrets/oci_backup_s3_secret_access_key',
+      'STORAGE_S3_SECRET_ACCESS_KEY_FILE: /run/secrets/spaces_backup_s3_secret_access_key',
+    ) &&
+    productionCompose.includes(
+      'STORAGE_S3_CUSTOMER_KEY_BASE64_FILE: /run/secrets/spaces_backup_s3_customer_key',
     ),
   'Dedicated encrypted database-backup secret wiring is incomplete',
 );
@@ -432,16 +443,34 @@ const backupSection = productionCompose
   ?.split(/\n  nginx:\s*\n/, 1)[0];
 assert(backupSection, 'Encrypted database-backup service is missing');
 assert(
-  !/(oci_s3_access_key_id|oci_s3_secret_access_key|privacy_export_encryption_key)/i.test(
+  !/(spaces_s3_access_key_id|spaces_s3_secret_access_key|spaces_s3_customer_key|privacy_export_encryption_key)/i.test(
     backupSection,
   ),
   'Database backups must use credentials and an encryption key separate from application storage',
 );
 assert(
   /^STORAGE_DRIVER=s3$/m.test(productionEnvExample) &&
-    /^STORAGE_S3_REGION=me-jeddah-1$/m.test(productionEnvExample) &&
-    /^STORAGE_S3_SERVER_SIDE_ENCRYPTION=AES256$/m.test(productionEnvExample),
-  'Production object storage must use the encrypted OCI Jeddah S3-compatible driver',
+    /^STORAGE_S3_PROVIDER=digitalocean_spaces$/m.test(productionEnvExample) &&
+    /^STORAGE_S3_ENDPOINT=https:\/\/fra1\.digitaloceanspaces\.com$/m.test(productionEnvExample) &&
+    /^STORAGE_S3_REGION=fra1$/m.test(productionEnvExample) &&
+    /^STORAGE_S3_FORCE_PATH_STYLE=false$/m.test(productionEnvExample) &&
+    /^STORAGE_S3_SERVER_SIDE_ENCRYPTION=SSE-C$/m.test(productionEnvExample) &&
+    /^STORAGE_S3_CUSTOMER_KEY_BASE64=$/m.test(productionEnvExample),
+  'Production object storage must use private DigitalOcean Spaces in FRA1 with SSE-C',
+);
+assert(
+  digitalOceanTerraform.includes('version = "2.100.0"') &&
+    digitalOceanTerraform.includes('default     = "fra1"') &&
+    digitalOceanTerraform.includes('default     = "s-4vcpu-8gb"') &&
+    digitalOceanTerraform.includes('acl           = "private"') &&
+    digitalOceanTerraform.includes('force_destroy = false') &&
+    digitalOceanTerraform.includes('noncurrent_version_expiration') &&
+    digitalOceanTerraform.includes('days = 35') &&
+    digitalOceanTerraform.includes('prevent_destroy = true') &&
+    digitalOceanTerraform.includes('source_addresses = var.operator_ssh_cidrs') &&
+    digitalOceanCloudInit.includes('for cidr in operator_ssh_cidrs') &&
+    !digitalOceanCloudInit.includes('[ufw, allow, OpenSSH]'),
+  'DigitalOcean IaC must retain its pinned provider, reviewed size/region, private buckets, and destruction/SSH safeguards',
 );
 assert(
   /^REALTIME_V2_ENABLED=true$/m.test(productionEnvExample) &&
@@ -464,9 +493,11 @@ const aiServerSection = productionCompose
 assert(aiServerSection, 'Hardened production AI service is missing');
 assert(
   aiServerSection.includes('image: ${AI_SERVER_IMAGE:') &&
+    aiServerSection.includes('profiles: ["ai-local"]') &&
     aiServerSection.includes('AI_DRY_RUN: "false"') &&
     aiServerSection.includes('GEE_PRIVATE_KEY_PATH: /run/secrets/gee_service_account') &&
     aiServerSection.includes('AI_INTERNAL_API_SECRET') &&
+    aiServerSection.includes('GEE_PROJECT_ID is required for the ai-local profile') &&
     aiServerSection.includes('read_only: true') &&
     aiServerSection.includes('no-new-privileges:true') &&
     !/^\s*ports:/m.test(aiServerSection),

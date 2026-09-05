@@ -1,0 +1,7 @@
+# Do not put tokens, Spaces secrets, private keys, or sensitive identifiers here.
+region               = "fra1"
+droplet_size         = "s-4vcpu-8gb"
+droplet_image        = "ubuntu-24-04-x64"
+owner_ssh_public_key = "ssh-ed25519 REPLACE_WITH_PUBLIC_KEY_ONLY terraleb-owner"
+operator_ssh_cidrs   = ["203.0.113.10/32"]
+bucket_name_prefix   = "terraleb-prod-replace"

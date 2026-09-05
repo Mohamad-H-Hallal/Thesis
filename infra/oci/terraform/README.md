@@ -1,5 +1,9 @@
 # TerraLeb OCI production infrastructure
 
+> Historical provider option only. It was superseded by
+> `infra/digitalocean/terraform` on 2026-09-05 before any OCI resource was
+> created. Do not apply this module without a new reviewed provider decision.
+
 This module provisions the reviewed baseline in OCI Saudi Arabia West (Jeddah):
 
 - one `VM.Standard.E4.Flex` x86 instance with 4 OCPU/32 GB by default; the lower-cost `VM.Standard.A1.Flex` 6 OCPU/32 GB path remains available only after the complete pinned stack passes ARM64 validation;

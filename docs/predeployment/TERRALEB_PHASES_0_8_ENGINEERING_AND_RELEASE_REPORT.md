@@ -1,5 +1,10 @@
 # TerraLeb Phases 0–8 engineering and release report
 
+> Historical report for the OCI-targeted implementation. Hosting, cost,
+> storage-provider and pending manual-step sections were superseded on
+> 2026-09-05 by `docs/legal/TERRALEB_DIGITALOCEAN_PHASES_0_8_EXECUTION_PLAN.md`.
+> Test and implementation evidence remains part of the audit trail.
+
 Report date: 2026-09-05
 Release scope: Android and web v1, Lebanon
 Repository baseline: `handover-ready` at `abafdf6`, with all reviewed pre-existing worktree changes preserved

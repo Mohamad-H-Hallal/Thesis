@@ -1,5 +1,10 @@
 # TerraLeb Phase 7 engineering verification
 
+> Hosting portions superseded on 2026-09-05 by
+> `TERRALEB_DIGITALOCEAN_PHASES_0_8_EXECUTION_PLAN.md` and
+> `phase-2-digitalocean-storage-and-backup-runbook.md`. Historical local test
+> evidence remains valid; OCI-specific staging/cost statements are inactive.
+
 Recorded: 2026-08-26
 Release scope: Android and web v1, Lebanon
 Status: local engineering verification substantially complete; provider-backed staging and release authorization remain blocked
