@@ -112,34 +112,38 @@ const decryptDatabaseBackup = async ({
   key: Buffer;
 }): Promise<{ plaintextSha256: string; plaintextBytes: number }> => {
   validateBackupKey(key);
-  const stat = await fs.stat(encryptedPath);
   const headerBytes = BACKUP_MAGIC.length + BACKUP_IV_BYTES;
-  if (stat.size <= headerBytes + BACKUP_TAG_BYTES) {
-    throw new Error('BACKUP_ENVELOPE_INVALID');
-  }
   const handle = await fs.open(encryptedPath, 'r');
-  const header = Buffer.alloc(headerBytes);
-  const tag = Buffer.alloc(BACKUP_TAG_BYTES);
   try {
-    await handle.read(header, 0, header.length, 0);
-    await handle.read(tag, 0, tag.length, stat.size - tag.length);
+    const stat = await handle.stat();
+    if (stat.size <= headerBytes + BACKUP_TAG_BYTES) {
+      throw new Error('BACKUP_ENVELOPE_INVALID');
+    }
+    const header = Buffer.alloc(headerBytes);
+    const tag = Buffer.alloc(BACKUP_TAG_BYTES);
+    const headerRead = await handle.read(header, 0, header.length, 0);
+    const tagRead = await handle.read(tag, 0, tag.length, stat.size - tag.length);
+    if (headerRead.bytesRead !== header.length || tagRead.bytesRead !== tag.length) {
+      throw new Error('BACKUP_ENVELOPE_INVALID');
+    }
+    if (!header.subarray(0, BACKUP_MAGIC.length).equals(BACKUP_MAGIC)) {
+      throw new Error('BACKUP_ENVELOPE_VERSION_UNSUPPORTED');
+    }
+    const iv = header.subarray(BACKUP_MAGIC.length);
+    const decipher = createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    await pipeline(
+      handle.createReadStream({
+        autoClose: false,
+        start: headerBytes,
+        end: stat.size - BACKUP_TAG_BYTES - 1,
+      }),
+      decipher,
+      createWriteStream(plaintextPath, { flags: 'wx', mode: 0o600 }),
+    );
   } finally {
     await handle.close();
   }
-  if (!header.subarray(0, BACKUP_MAGIC.length).equals(BACKUP_MAGIC)) {
-    throw new Error('BACKUP_ENVELOPE_VERSION_UNSUPPORTED');
-  }
-  const iv = header.subarray(BACKUP_MAGIC.length);
-  const decipher = createDecipheriv('aes-256-gcm', key, iv);
-  decipher.setAuthTag(tag);
-  await pipeline(
-    createReadStream(encryptedPath, {
-      start: headerBytes,
-      end: stat.size - BACKUP_TAG_BYTES - 1,
-    }),
-    decipher,
-    createWriteStream(plaintextPath, { flags: 'wx', mode: 0o600 }),
-  );
   const plaintextStat = await fs.stat(plaintextPath);
   return {
     plaintextSha256: await hashFile(plaintextPath),
