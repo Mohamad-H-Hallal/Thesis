@@ -72,16 +72,20 @@ class _StaticAuthController extends AuthController {
 class _AdminLegalRepository extends LegalRepository {
   _AdminLegalRepository({
     this.privacyStatus = 'submitted',
+    this.privacyType = PrivacyRequestType.accessExport,
     this.reportStatus = 'submitted',
   });
 
   final now = DateTime.utc(2026, 8, 16, 10);
   final String privacyStatus;
+  final PrivacyRequestType privacyType;
   final String reportStatus;
+  String? submittedUnfinishedWorkDecision;
+  String? submittedResponsibilityDecision;
 
   PrivacyAdminRequest get privacyRequest => PrivacyAdminRequest(
     id: 'request-1',
-    type: PrivacyRequestType.accessExport,
+    type: privacyType,
     status: privacyStatus,
     requesterLabel: 'Test User',
     requesterContact: 'test.user@example.com',
@@ -185,6 +189,19 @@ class _AdminLegalRepository extends LegalRepository {
     String? outcomeCode,
     String? userMessage,
   }) async => contentReport;
+
+  @override
+  Future<PrivacyAdminRequest> updatePrivacyAdminRequest({
+    required String requestId,
+    required String status,
+    String? userMessage,
+    String? unfinishedWorkDecision,
+    String? responsibilityDecision,
+  }) async {
+    submittedUnfinishedWorkDecision = unfinishedWorkDecision;
+    submittedResponsibilityDecision = responsibilityDecision;
+    return privacyRequest;
+  }
 
   @override
   Future<void> acceptCurrentDocuments(List<LegalDocument> documents) async {}
@@ -358,6 +375,66 @@ void main() {
     expect(find.textContaining('Internal note'), findsNothing);
     expect(find.textContaining('Transfer'), findsNothing);
   });
+
+  testWidgets(
+    'deletion approval requires explicit non-default handling decisions',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(320, 720));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = _AdminLegalRepository(
+        privacyStatus: 'in_review',
+        privacyType: PrivacyRequestType.deletion,
+      );
+      await tester.pumpWidget(
+        _app(
+          const AppUser(
+            id: 'protected-admin',
+            fullName: 'Protected Admin',
+            email: 'protected@example.com',
+            role: UserRole.admin,
+            isProtectedSuperAdmin: true,
+          ),
+          repository: repository,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Review'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Update'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Unfinished work'), findsOneWidget);
+      expect(find.text('Responsibilities'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(find.widgetWithText(FilledButton, 'Save'))
+            .onPressed,
+        isNull,
+      );
+
+      await tester.tap(find.byType(DropdownButtonFormField<String>).at(1));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Discard drafts and unapproved work').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(DropdownButtonFormField<String>).at(2));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Release assignments and open cases').last);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('permanently removed'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(find.widgetWithText(FilledButton, 'Save'))
+            .onPressed,
+        isNotNull,
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+      expect(repository.submittedUnfinishedWorkDecision, 'discard_unapproved');
+      expect(repository.submittedResponsibilityDecision, 'release');
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'report review uses the project title and a brief decision form',

@@ -2955,7 +2955,13 @@ class _ImportPreviewMapCardState extends ConsumerState<_ImportPreviewMapCard> {
                                       LebanonMapConfig.basemapUrlTemplate(
                                         _style,
                                       ),
-                                  tileProvider: appNetworkTileProvider(),
+                                  fallbackUrl:
+                                      LebanonMapConfig.fallbackUrlTemplate(
+                                        _style,
+                                      ),
+                                  tileProvider: appNetworkTileProvider(
+                                    apiClient: ref.read(apiClientProvider),
+                                  ),
                                   userAgentPackageName: 'lb.gov.gis_collector',
                                 ),
                               if (LebanonMapConfig.shouldRenderTileLayers &&
@@ -2968,7 +2974,9 @@ class _ImportPreviewMapCardState extends ConsumerState<_ImportPreviewMapCard> {
                                       LebanonMapConfig.referenceLabelUrlTemplate(
                                         _style,
                                       )!,
-                                  tileProvider: appNetworkTileProvider(),
+                                  tileProvider: appNetworkTileProvider(
+                                    apiClient: ref.read(apiClientProvider),
+                                  ),
                                   userAgentPackageName: 'lb.gov.gis_collector',
                                 ),
                               PolygonLayer(polygons: _polygons(drawable)),

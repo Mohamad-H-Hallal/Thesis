@@ -10,6 +10,7 @@ import '../../../core/network/api_error_message.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/pagination/paginated_result.dart';
 import '../domain/map_feature.dart';
+import '../domain/lebanon_map.dart';
 
 class ApiMapRepository {
   ApiMapRepository(this._apiClient);
@@ -321,7 +322,17 @@ class ApiMapRepository {
         lastUpdatedAt: _toDateTime(row['last_updated_at']) ?? DateTime.now(),
         tileCount: _toInt(row['tile_count']),
         sizeBytes: _toInt(row['size_bytes']),
+        artifactSizeBytes: _toInt(row['size_bytes']),
         tileSource: row['tile_source'] as String?,
+        artifactSha256: row['artifact_sha256'] as String?,
+        artifactContentType: row['artifact_content_type'] as String?,
+        downloadPath: row['download_path'] as String?,
+        sourceAttribution: row['source_attribution'] as String?,
+        sourceAcquisitionStart: _toDateTime(row['source_acquisition_start']),
+        sourceAcquisitionEnd: _toDateTime(row['source_acquisition_end']),
+        sourceResolutionMeters: (row['source_resolution_meters'] as num?)
+            ?.toDouble(),
+        sourceTermsUrl: row['source_terms_url'] as String?,
         isCurrent: (row['is_current'] as bool?) ?? true,
       );
     } on DioException catch (error) {
@@ -334,6 +345,23 @@ class ApiMapRepository {
             'Unable to load offline map metadata right now. Please try again.',
       );
     }
+  }
+
+  Future<MapProviderConfiguration> fetchMapProviderConfiguration() async {
+    final response = await _apiClient.dio.get<Map<String, dynamic>>(
+      '${AppEnv.apiVersionPrefix}/maps/provider',
+    );
+    final payload = response.data ?? const <String, dynamic>{};
+    final row = Map<String, dynamic>.from(
+      payload['data'] as Map? ?? const <String, dynamic>{},
+    );
+    return MapProviderConfiguration(
+      hybridEnabled: row['hybrid_enabled'] == true,
+      hybridAttribution:
+          (row['hybrid_attribution'] as String?)?.trim().isNotEmpty == true
+          ? (row['hybrid_attribution'] as String).trim()
+          : '© Esri and imagery providers',
+    );
   }
 
   Future<MapFeatureSummary> fetchProjectFeatureById({

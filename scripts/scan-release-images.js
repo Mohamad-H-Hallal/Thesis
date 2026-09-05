@@ -34,7 +34,6 @@ const alloyMediumPolicy = JSON.parse(
   ),
 );
 const expectedAlloyFindings = [
-  'CVE-2026-34040|github.com/docker/docker|v28.5.2+incompatible',
   'CVE-2026-41567|github.com/docker/docker|v28.5.2+incompatible',
   'CVE-2026-42306|github.com/docker/docker|v28.5.2+incompatible',
 ];

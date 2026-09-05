@@ -58,6 +58,8 @@ abstract class LegalRepository {
     required String requestId,
     required String status,
     String? userMessage,
+    String? unfinishedWorkDecision,
+    String? responsibilityDecision,
   }) => throw UnsupportedError('Privacy administration is not available.');
 
   Future<PaginatedResult<ContentReportRecord>> fetchContentReportsForAdmin({

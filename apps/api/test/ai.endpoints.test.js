@@ -1773,7 +1773,9 @@ describe('AI backend endpoints phase B', () => {
     expect(startPayload.callback_url).toBe(
       `http://callback-api.test/api/v1/ai/runs/${startedRunId}/callback`,
     );
-    expect(startPayload.callback_secret).toBe('test-ai-callback-secret');
+    expect(startPayload.callback_secret).toBeNull();
+    expect(startPayload.requested_by).toBeNull();
+    expect(JSON.stringify(startPayload)).not.toContain(admin.email);
 
     const statusResponse = await request(app)
       .get(`${API_PREFIX}/projects/${project.id}/ai/runs/${startedRunId}/status`)

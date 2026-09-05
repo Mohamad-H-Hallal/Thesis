@@ -30,10 +30,7 @@ describe('local storage adapter and read-only inventory', () => {
 
   test('contains references, writes atomically, and copies only with matching checksums', async () => {
     const sourceReference = adapter.reference('uploads', '.private/imports/source.geojson');
-    const destinationReference = adapter.reference(
-      'uploads',
-      '.private/migrated/source.geojson',
-    );
+    const destinationReference = adapter.reference('uploads', '.private/migrated/source.geojson');
     const payload = Buffer.from('{"type":"FeatureCollection","features":[]}');
 
     const source = await adapter.writeAtomic(sourceReference, payload);
@@ -73,6 +70,10 @@ describe('local storage adapter and read-only inventory', () => {
 
     expect(adapter.resolve('storage://uploads/../outside')).toBeNull();
     expect(adapter.resolve(path.join(tempRoot, 'outside.txt'))).toBeNull();
+    const range = await adapter.openReadRange(sourceReference, { start: 2, end: 7 }, ['uploads']);
+    const rangeChunks = [];
+    for await (const chunk of range) rangeChunks.push(Buffer.from(chunk));
+    expect(Buffer.concat(rangeChunks)).toEqual(payload.subarray(2, 8));
   });
 
   test('rejects symbolic-link traversal for reads, writes, and removal', async () => {
@@ -175,9 +176,7 @@ describe('local storage adapter and read-only inventory', () => {
       missing_reference: 1,
       unresolved_reference: 1,
     });
-    expect(
-      report.files.find((file) => file.reference === orphan),
-    ).toEqual(
+    expect(report.files.find((file) => file.reference === orphan)).toEqual(
       expect.objectContaining({
         classification: 'unreferenced',
         sha256: expect.stringMatching(/^[0-9a-f]{64}$/),

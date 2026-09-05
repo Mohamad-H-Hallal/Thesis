@@ -127,11 +127,11 @@ class OfflineProjectDownloadService {
       ownerUserId: ownerUserId,
       isCurrent: true,
     );
-    if (!_tileCacheManager.licensedEsriOfflineBasemapEnabled) {
+    if (!satellitePackage.isProviderNeutralPackageReady) {
       onProgress?.call(
         const OfflineProjectDownloadProgress(
           label:
-              'Project data saved. Satellite basemap download is unavailable until offline-use rights are approved.',
+              'Project data saved. No verified offline imagery package is published yet.',
           completedUnits: 2,
           totalUnits: 2,
         ),
@@ -143,7 +143,7 @@ class OfflineProjectDownloadService {
         baseMapDownloaded: false,
         baseMapAlreadyComplete: false,
         baseMapUnavailableReason:
-            'Satellite basemap download is disabled until documented offline-use rights are approved.',
+            'No verified TerraLeb offline imagery package is published yet.',
       );
     }
     final hasCompleteSatelliteMap = await _tileCacheManager
@@ -165,7 +165,7 @@ class OfflineProjectDownloadService {
           onProgress?.call(
             OfflineProjectDownloadProgress(
               label:
-                  'Saving full Lebanon satellite base map ${progress.completedTiles}/${progress.requestedTiles} - ${progress.downloadedTiles} new - ${progress.skippedTiles} already saved${progress.failedTiles > 0 ? ' - ${progress.failedTiles} failed' : ''}',
+                  'Saving Lebanon offline imagery ${progress.completedTiles}/${progress.requestedTiles}${progress.skippedTiles > 0 ? ' - already saved' : ''}',
               completedUnits: progress.completedTiles,
               totalUnits: progress.requestedTiles,
             ),
@@ -184,8 +184,8 @@ class OfflineProjectDownloadService {
     onProgress?.call(
       OfflineProjectDownloadProgress(
         label: needsBaseMapDownload
-            ? 'Satellite base map saved.'
-            : 'Satellite base map is already up to date.',
+            ? 'Offline imagery saved. ${satellitePackage.sourceResolutionMeters?.toStringAsFixed(0) ?? '10'} m orientation imagery; ${satellitePackage.sourceAttribution ?? 'Copernicus and OpenStreetMap sources'}.'
+            : 'Offline imagery is already up to date.',
         completedUnits: 2,
         totalUnits: 2,
       ),

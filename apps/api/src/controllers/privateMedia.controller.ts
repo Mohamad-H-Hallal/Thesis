@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { pipeline } from 'node:stream/promises';
 import { query } from '../config/database';
 import { publicVisibleStatuses, synchronizeProjectStatuses } from '../lib/projectLifecycle';
 import { AppError } from '../middleware/error';
@@ -134,11 +135,12 @@ const servePrivateMedia = async (
     throw new AppError('You do not have access to this media', 403);
   }
 
-  let filePath: string | null = null;
+  let mediaReference: string | null = null;
+  let mediaInfo: Awaited<ReturnType<typeof storageAdapter.info>> | null = null;
   for (const reference of mediaReferences(directory, storageName)) {
     try {
-      const info = await storageAdapter.locate(reference, ['uploads']);
-      filePath = info.localPath;
+      mediaInfo = await storageAdapter.info(reference, ['uploads']);
+      mediaReference = reference;
       break;
     } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
@@ -146,19 +148,18 @@ const servePrivateMedia = async (
       }
     }
   }
-  if (!filePath) {
+  if (!mediaReference || !mediaInfo) {
     throw new AppError('Media file not found', 404);
   }
 
   res.set({
     'Cache-Control': 'private, no-store',
     'X-Content-Type-Options': 'nosniff',
+    'Content-Type': mediaInfo.contentType ?? 'image/jpeg',
+    'Content-Length': String(mediaInfo.size),
     'Content-Disposition': `inline; filename="${storageName}"`,
   });
-  // The new private storage root intentionally contains a `.private` path
-  // segment. The candidate path and generated filename have already passed
-  // strict root-containment and allowlist checks above.
-  res.sendFile(filePath, { dotfiles: 'allow' });
+  await pipeline(await storageAdapter.openReadStream(mediaReference, ['uploads']), res);
 };
 
 const getAiValidationMedia = async (req: Request, res: Response): Promise<void> =>

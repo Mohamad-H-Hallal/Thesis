@@ -8,19 +8,6 @@
   "statements": [
     {
       "vulnerability": {
-        "name": "CVE-2026-34040"
-      },
-      "products": [
-        {
-          "@id": "pkg:golang/github.com/docker/docker@v28.5.2%2Bincompatible"
-        }
-      ],
-      "status": "not_affected",
-      "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "The affected Docker daemon authorization handler is not executed. Alloy reaches this module through cAdvisor client imports; this deployment reads container log files and has no Docker control socket."
-    },
-    {
-      "vulnerability": {
         "name": "CVE-2026-41567"
       },
       "products": [

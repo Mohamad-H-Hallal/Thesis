@@ -1,8 +1,8 @@
 # TerraLeb owner decisions and blocker-closure form
 
-Status: **revised owner-policy proposal; production remains fail-closed**
+Status: **owner policy adopted on 2026-09-05; production remains fail-closed pending external evidence**
 
-Prepared: **2026-08-16; owner direction revised 2026-08-18**
+Prepared: **2026-08-16; owner direction revised 2026-08-18 and adopted 2026-09-05**
 
 Territorial scope: **Lebanon only**
 
@@ -65,7 +65,7 @@ TerraLeb v1 will use the following conservative operating model:
 | AI | AI service available in production; disabled by default for every project; only the protected super-admin may enable a project, start a run, validate results, and decide whether to publish | Preserves the intended AI workflow while preventing automatic or contributor-triggered processing. AI receives approved project GIS inputs, not account credentials/contact/session data. |
 | Maps | Preserve the verified workflow: Street online, Hybrid online, and the existing Hybrid offline option; make each delivery path provider-compliant instead of removing a feature | Online OSM may be used within its tile policy. Online Hybrid uses an approved ArcGIS account/token and attribution. Offline Hybrid uses a TerraLeb-controlled Copernicus Sentinel-2 package with OSM-derived labels. The app does not currently provide an offline OSM Street download. |
 | Authentication | Email verification plus format-validated phone number at v1; no SMS provider until one is approved | Matches current `PHONE_ASSURANCE_MODE=format_only` and avoids pretending the number was possession-verified. |
-| Hosting | Use OCI Saudi Arabia West (Jeddah) as the recommended low-cost regional initial target: A1 ARM 4 OCPU/32 GB after compatibility proof, with E4 x86 in the same region as fallback; retain Hetzner EU as the lowest-cost non-regional alternative and AWS Bahrain as the managed/regional growth option | The complete Compose stack needs more than 16 GB. Jeddah must pass Lebanon latency, capacity and full-container compatibility tests before purchase. |
+| Hosting | Use OCI Saudi Arabia West (Jeddah), `VM.Standard.E4.Flex`, 4 OCPU/32 GB, 300 GB balanced block storage and private object/archive storage for v1 | The ARM64 API image passed, but the pinned PostGIS production image has no ARM64 manifest; the documented E4 x86 fallback is therefore the selected deployable architecture. Jeddah still requires live capacity, latency and price verification before purchase. |
 | Deletion | Reviewed deletion for all supported users except the protected super-admin identity; accepted GIS/provenance stays, while drafts, pending submissions and other unapproved project content are removed once the protected administrator approves deletion | Protects official project integrity without unnecessarily retaining unfinished user work. |
 | Attribution after deletion | Delete direct identifiers; retain justified project records under a one-time masked contributor label such as `A. H.` | Reduces identification without falsely calling the record anonymous. |
 | Public attribution | Default public layers/exports to the generic label `Contributor`; masked initials are limited to authorized project members, protected administrators, and justified institutional records | Reduces re-identification risk while retaining internal accountability. |
@@ -84,9 +84,9 @@ configuration toggle.
 
 | Question | TerraLeb answer | Closure requirement |
 |---|---|---|
-| Exact legal operator/controller | **EXTERNAL FACT:** `[ENTER EXACT REGISTERED LEGAL NAME AND LEGAL FORM]` | Must be the entity/person that controls the store account, contracts with vendors, publishes the policies, and can answer privacy requests. |
-| Registration/public-body reference | **EXTERNAL FACT:** `[ENTER REGISTRATION OR FOUNDING AUTHORITY; OR DOCUMENT WHY NONE EXISTS]` | Do not write “NCRS”, “CNRS”, a ministry, or a company unless that body has accepted the role. |
-| Official address | **EXTERNAL FACT:** `[ENTER SERVICEABLE PHYSICAL ADDRESS IN LEBANON]` | Must be real and approved for public notices. |
+| Exact legal operator/controller | **EXTERNAL FACT NOT YET SUPPLIED; RELEASE BLOCKED** | Must be the entity/person that controls the store account, contracts with vendors, publishes the policies, and can answer privacy requests. |
+| Registration/public-body reference | **EXTERNAL FACT NOT YET SUPPLIED; RELEASE BLOCKED** | Do not write “NCRS”, “CNRS”, a ministry, or a company unless that body has accepted the role. |
+| Official address | **EXTERNAL FACT NOT YET SUPPLIED; RELEASE BLOCKED** | Must be real and approved for public notices. |
 | General contact | **OWNER-DECIDED:** `support@terraleb.lb`; public phone optional | Domain must first be registered and controlled by the operator. Use a monitored replacement if this domain is not acquired. |
 | Privacy contact | **OWNER-DECIDED:** `privacy@terraleb.lb` | Must route to a trained person with absence coverage and a case queue. |
 | Responsible role | **OWNER-DECIDED:** `TerraLeb Privacy and Security Owner` | Name the actual accountable person internally before launch. |
@@ -167,7 +167,7 @@ The minimum v1 vendor model is:
 
 | Capability | Selected solution | Data/region rule | Status |
 |---|---|---|---|
-| API/worker/container hosting | **Cost decision pending:** AWS Bahrain for managed regional resilience, or the recommended low-cost initial deployment on Hetzner Cloud in Germany/Finland | The final selected country and provider must be disclosed and contracted | **OWNER SELECTION; EXTERNAL CONTRACT REQUIRED** |
+| API/worker/container hosting | OCI Saudi Arabia West (Jeddah), E4 Flex x86, 4 OCPU/32 GB | Production application data stays in the selected Jeddah tenancy; live support-access and subprocessor facts must match the executed OCI terms | **OWNER SELECTED; EXTERNAL ACCOUNT/CONTRACT EVIDENCE REQUIRED** |
 | PostgreSQL/PostGIS | Start inside the hardened single-host Compose deployment for the low-cost pilot; move to a dedicated/managed database when measured load or uptime requires it | Private networking; encryption at rest/in transit; off-host encrypted backups | **ENGINEERING/CONTRACT** |
 | Object storage | Private S3-compatible object storage supplied by the selected provider | Photos/imports/exports; authenticated or signed short-lived access only | **ENGINEERING/CONTRACT** |
 | Backups | Same-region encrypted, separate-account/immutable controls where feasible | Natural expiry after 35 days; restore suppression for deleted identities | **ENGINEERING** |
@@ -526,7 +526,7 @@ approval and evidence layers are all true. Editing JSON booleans is not closure.
 | `targetTerritoriesAndDistribution` | Lebanon-only; Android/web; iOS deferred | Store-country and deployment evidence. |
 | `minimumAgeAndMinors` | 18+; minors prohibited | Implement/test age confirmation and publish wording. |
 | `privacyContact` | `privacy@terraleb.lb`, monitored owner role | Register domain, provision mailbox, run request test. |
-| `hostingRegionsAndSubprocessors` | OCI Jeddah A1/32 GB is the selected regional initial target after ARM proof; OCI E4 x86 is its regional fallback; Hetzner EU remains the lowest-cost non-regional alternative; FCM/Play and GEE are the other enabled external services; no SMS/analytics | Create the operator tenancy, test Lebanon latency/capacity, execute terms/DPA and record account/region/architecture evidence. |
+| `hostingRegionsAndSubprocessors` | OCI Jeddah E4 Flex x86, 4 OCPU/32 GB is selected because the pinned PostGIS image has no ARM64 manifest; FCM/Play, ArcGIS, SMTP and GEE are the other conditional external services; no SMS/analytics | Create the operator tenancy, test Lebanon latency/capacity, execute terms/DPA and record account/region/architecture evidence. |
 | `retentionMatrix` | Schedule in section 6 | Counsel ratification, configuration and cleanup evidence. |
 | `retainedInstitutionalRecordBasis` | Retain narrowly for project integrity/institution authority | Institution agreement and counsel conclusion. |
 | `maskedContributorDisplayPolicy` | Initials internally; generic `Contributor` publicly | Implement visibility policy and regression tests. |
@@ -764,16 +764,15 @@ evidence would create a false release record and weaken TerraLeb's position.
 
 ## Owner approval block
 
-This document can be adopted by the real owner after filling the external facts:
+The product-policy choices in this document were adopted through the owner's
+explicit repository work instruction on 2026-09-05 and are restated in
+`TERRALEB_OWNER_POLICY_DECISION_RECORD_V1.md`. No policy exception was requested.
 
-- Legal operator: `[REQUIRED]`
-- Authorized owner name and role: `[REQUIRED]`
-- Approval date: `[REQUIRED]`
-- Version/hash approved: `[REQUIRED]`
-- Exceptions accepted: `[NONE, OR LIST WITH OWNER/EXPIRY]`
-- Signature/evidence reference: `[REQUIRED]`
-- Lebanese counsel and role: `[REQUIRED FOR FINAL POLICIES/LAW CONCLUSIONS]`
-- Counsel approval date/reference: `[REQUIRED]`
+The final release record still requires the actual legal operator, authorized
+person and role, counsel identity and role, dated signatures/approval references,
+and the exact approved document/build/configuration hashes. These are external
+facts, not unanswered product-policy choices, and remain clearly blocked rather
+than represented by fill-in placeholders.
 
 Until those fields, the engineering work and the evidence are complete,
 `productionAuthorized` must remain `false`.

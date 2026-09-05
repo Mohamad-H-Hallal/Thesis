@@ -4,7 +4,7 @@ ARG PROMETHEUS_COMMIT=73ff57ce2b8161059ac7fe5188f03f1c3d22b29a
 ARG PROMETHEUS_SOURCE_SHA256=322276709c16cb3c22a4d01d244beb91f0380a257699358d2a20ac7086d7256c
 
 WORKDIR /src
-RUN apk add --no-cache 'bash=5.3.9-r1' 'gzip=1.14-r2' \
+RUN apk add --no-cache 'bash=5.3.9-r1' 'gzip=1.14-r3' \
   && wget -qO source.tar.gz \
       "https://github.com/prometheus/prometheus/archive/${PROMETHEUS_COMMIT}.tar.gz" \
   && echo "${PROMETHEUS_SOURCE_SHA256}  source.tar.gz" | sha256sum -c - \
@@ -30,7 +30,7 @@ RUN cd web/ui \
   && cd ../.. \
   && scripts/compress_assets.sh
 
-FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build
+FROM golang:1.26.6-alpine@sha256:3889b425f035be855a72fb4755265311293b6d414521f0a519d819df32222d83 AS build
 
 ARG PROMETHEUS_COMMIT=73ff57ce2b8161059ac7fe5188f03f1c3d22b29a
 ARG PROMETHEUS_SOURCE_SHA256=322276709c16cb3c22a4d01d244beb91f0380a257699358d2a20ac7086d7256c
@@ -42,15 +42,19 @@ RUN wget -qO source.tar.gz \
   && tar -xzf source.tar.gz --strip-components=1 \
   && rm source.tar.gz
 
-# Prometheus 3.13.1 predates two July 2026 Go dependency advisories. Keep the
+# Prometheus 3.13.1 predates later 2026 Go dependency advisories. Keep the
 # signed upstream source fixed while moving only the affected modules to their
 # first patched releases.
 RUN go get \
-      golang.org/x/text@v0.39.0 \
-      google.golang.org/grpc@v1.82.1 \
+      golang.org/x/crypto@v0.55.0 \
+      golang.org/x/mod@v0.40.0 \
+      golang.org/x/text@v0.41.0 \
+      google.golang.org/grpc@v1.83.1 \
   && go mod tidy \
-  && test "$(go list -m -f '{{.Version}}' golang.org/x/text)" = "v0.39.0" \
-  && test "$(go list -m -f '{{.Version}}' google.golang.org/grpc)" = "v1.82.1"
+  && test "$(go list -m -f '{{.Version}}' golang.org/x/crypto)" = "v0.55.0" \
+  && test "$(go list -m -f '{{.Version}}' golang.org/x/mod)" = "v0.40.0" \
+  && test "$(go list -m -f '{{.Version}}' golang.org/x/text)" = "v0.41.0" \
+  && test "$(go list -m -f '{{.Version}}' google.golang.org/grpc)" = "v1.83.1"
 
 COPY --from=ui /src/web/ui/embed.go /src/web/ui/embed.go
 COPY --from=ui /src/web/ui/static /src/web/ui/static

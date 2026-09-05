@@ -497,7 +497,10 @@ describe('Project workflow access and feature visibility', () => {
     );
     expect(assignedContributorResponse.status).toBe(200);
     expect(assignedContributorResponse.body.data.project.id).toBe(project.id);
-    expect(assignedContributorResponse.body.data.base_map.version).toBeTruthy();
+    expect(assignedContributorResponse.body.data.base_map).toBeNull();
+    expect(assignedContributorResponse.body.data.package_version).toContain(
+      'no-offline-basemap',
+    );
   });
 
   test('offline sync rejects stale contributor assignments before writes', async () => {

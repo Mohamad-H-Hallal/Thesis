@@ -1,17 +1,9 @@
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes,
-  randomUUID,
-} from 'node:crypto';
-import fs from 'node:fs';
-import fsPromises from 'node:fs/promises';
-import path from 'node:path';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { Transform, type TransformCallback, type Readable } from 'node:stream';
 import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { query, transaction } from '../config/database';
 import { publishRealtimeChanges } from '../realtime/realtimeEvents';
+import { storageAdapter } from './storageAdapter.service';
 import { enqueueWorkloadJob } from './workloadQueue.service';
 
 interface QueryExecutor {
@@ -35,10 +27,17 @@ interface PrivacyExportArtifactRow {
   expires_at: Date | string | null;
 }
 
-const forbiddenExportKeyPattern = /^(?:password(?:_hash)?|.*token.*|auth_version|secret|private_key|internal_.*|resolution_summary|authorization)$/i;
+const forbiddenExportKeyPattern =
+  /^(?:password(?:_hash)?|.*token.*|auth_version|secret|private_key|internal_.*|resolution_summary|authorization)$/i;
+const internalIdentifierValuePattern =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
+const nonUserFacingExportKeyPattern =
+  /^(?:id|.*_id|uuid|guid|geometry|location|exif_data|evidence|source_provenance|validation_warnings|validation_errors|export_parameters|file_size_bytes|checksum_sha256|source_identifier|.*_path|.*_reference|artifact_.*|storage_.*)$/i;
 
-const sha256 = (value: Buffer | string): string =>
-  createHash('sha256').update(value).digest('hex');
+const isNonUserFacingExportKey = (key: string): boolean =>
+  nonUserFacingExportKeyPattern.test(key) || /Id$/.test(key);
+
+const sha256 = (value: Buffer | string): string => createHash('sha256').update(value).digest('hex');
 
 class Sha256VerificationTransform extends Transform {
   private readonly digest = createHash('sha256');
@@ -108,19 +107,15 @@ const assertPrivacyExportPolicyConfigured = (): void => {
   }
 };
 
-const exportDirectory = (): string =>
-  path.resolve(
-    process.env.PRIVACY_EXPORT_DIR?.trim() ||
-      path.join(process.env.EXPORT_DIR?.trim() || './exports', 'privacy-data'),
-  );
-
-const assertSafeArtifactPath = (filePath: string): string => {
-  const base = exportDirectory();
-  const resolved = path.resolve(filePath);
-  if (resolved !== base && !resolved.startsWith(`${base}${path.sep}`)) {
+const assertSafeArtifactReference = (reference: string): string => {
+  const resolved = storageAdapter.resolve(reference, ['exports']);
+  if (
+    !resolved ||
+    !['privacy-data/', 'privacy/'].some((prefix) => resolved.key.startsWith(prefix))
+  ) {
     throw new Error('PRIVACY_EXPORT_PATH_INVALID');
   }
-  return resolved;
+  return reference.trim();
 };
 
 const assertNoForbiddenKeys = (value: unknown, pathParts: string[] = []): void => {
@@ -173,13 +168,45 @@ const humanizeExportKey = (value: string): string =>
     .replace(/^Exif\b/, 'EXIF')
     .replace(/^Ai\b/, 'AI');
 
-const isTechnicalExportField = (key: string): boolean =>
-  key === 'id' ||
-  key.endsWith('_id') ||
-  key === 'geometry' ||
-  key === 'location' ||
-  key === 'checksum_sha256' ||
-  key === 'source_identifier';
+const sanitizeUserFacingExportValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => sanitizeUserFacingExportValue(entry))
+      .filter((entry) => entry !== undefined);
+  }
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([key]) => !isNonUserFacingExportKey(key))
+        .map(([key, entry]) => [key, sanitizeUserFacingExportValue(entry)])
+        .filter(([, entry]) => entry !== undefined),
+    );
+  }
+  if (typeof value === 'string') {
+    return value.replace(internalIdentifierValuePattern, 'Internal reference removed');
+  }
+  return value;
+};
+
+const displayStructuredExportValue = (value: unknown, depth = 0): string => {
+  if (Array.isArray(value)) {
+    if (value.length === 0) return 'None';
+    return value
+      .map((entry) => displayStructuredExportValue(entry, depth + 1))
+      .join(depth === 0 ? '\n' : ', ');
+  }
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) return 'None';
+    return entries
+      .map(
+        ([key, entry]) =>
+          `${humanizeExportKey(key)}: ${displayStructuredExportValue(entry, depth + 1)}`,
+      )
+      .join('\n');
+  }
+  return displayExportValue(value, 'value');
+};
 
 const displayExportValue = (value: unknown, key: string): string => {
   if (value === null || value === undefined || value === '') {
@@ -197,7 +224,16 @@ const displayExportValue = (value: unknown, key: string): string => {
   }
   if (
     typeof value === 'string' &&
-    ['status', 'role', 'request_type', 'document_type', 'entity_type', 'reason_code', 'outcome_code', 'file_status'].includes(key)
+    [
+      'status',
+      'role',
+      'request_type',
+      'document_type',
+      'entity_type',
+      'reason_code',
+      'outcome_code',
+      'file_status',
+    ].includes(key)
   ) {
     return humanizeExportKey(value);
   }
@@ -212,9 +248,9 @@ const displayExportValue = (value: unknown, key: string): string => {
     }
   }
   if (typeof value === 'object') {
-    return JSON.stringify(value, null, 2);
+    return displayStructuredExportValue(value);
   }
-  return String(value);
+  return String(value).replace(internalIdentifierValuePattern, 'Internal reference removed');
 };
 
 const renderExportFields = (entries: [string, unknown][]): string =>
@@ -227,20 +263,14 @@ const renderExportFields = (entries: [string, unknown][]): string =>
     .join('');
 
 const renderExportRecord = (record: unknown, index: number, total: number): string => {
-  if (!record || typeof record !== 'object' || Array.isArray(record)) {
-    return `<article class="record"><dl>${renderExportFields([['value', record]])}</dl></article>`;
+  const sanitized = sanitizeUserFacingExportValue(record);
+  if (!sanitized || typeof sanitized !== 'object' || Array.isArray(sanitized)) {
+    return `<article class="record"><dl>${renderExportFields([['value', sanitized]])}</dl></article>`;
   }
-  const entries = Object.entries(record as Record<string, unknown>);
-  const primary = entries.filter(([key]) => !isTechnicalExportField(key));
-  const technical = entries.filter(([key]) => isTechnicalExportField(key));
+  const entries = Object.entries(sanitized as Record<string, unknown>);
   return `<article class="record">
     ${total > 1 ? `<h3>Record ${index + 1}</h3>` : ''}
-    <dl>${renderExportFields(primary)}</dl>
-    ${
-      technical.length
-        ? `<details><summary>Technical details</summary><dl>${renderExportFields(technical)}</dl></details>`
-        : ''
-    }
+    ${entries.length ? `<dl>${renderExportFields(entries)}</dl>` : '<p class="empty">No user-facing details were recorded.</p>'}
   </article>`;
 };
 
@@ -256,7 +286,9 @@ const renderPersonalDataHtml = (payload: Record<string, unknown>): string => {
         <div class="section-heading"><h2>${escapeHtml(label)}</h2><span>${records.length} ${records.length === 1 ? 'record' : 'records'}</span></div>
         ${
           records.length
-            ? records.map((record, index) => renderExportRecord(record, index, records.length)).join('')
+            ? records
+                .map((record, index) => renderExportRecord(record, index, records.length))
+                .join('')
             : '<p class="empty">No records in this section.</p>'
         }
       </section>`;
@@ -302,10 +334,7 @@ const renderPersonalDataHtml = (payload: Record<string, unknown>): string => {
     .field { min-width: 0; }
     dt { color: #607068; font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
     dd { margin: 3px 0 0; overflow-wrap: anywhere; }
-    dd.structured { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .85rem; background: #f5f7f5; border-radius: 9px; padding: 9px; }
-    details { margin-top: 14px; border: 1px solid #e1e7e2; border-radius: 10px; padding: 10px 12px; }
-    summary { cursor: pointer; color: #286449; font-weight: 700; }
-    details dl { margin-top: 12px; }
+    dd.structured { white-space: pre-wrap; background: #f5f7f5; border-radius: 9px; padding: 9px; }
     footer { color: #66736a; text-align: center; font-size: .82rem; padding: 8px; }
     @media (max-width: 540px) { main { width: min(100% - 16px, 980px); margin-top: 8px; } header, section { padding: 16px; border-radius: 14px; } .section-heading { align-items: flex-start; } dl { grid-template-columns: 1fr; } }
     @media print { body { background: #fff; } main { width: 100%; margin: 0; } header, section { box-shadow: none; break-inside: avoid; } details { display: block; } }
@@ -316,7 +345,7 @@ const renderPersonalDataHtml = (payload: Record<string, unknown>): string => {
   <header>
     <h1>TerraLeb personal data report</h1>
     <p class="meta">Generated ${escapeHtml(generatedAt)} in Lebanon time</p>
-    <p class="notice">This report contains data linked to your account and your recorded activity. Empty sections mean that no matching records were found.</p>
+    <p class="notice">This report contains information linked to your account and recorded activity. Internal database identifiers, security information, storage details, and system-only metadata are not included.</p>
     <div class="summary">${summary}</div>
   </header>
   ${sections}
@@ -352,46 +381,67 @@ const buildPersonalDataPayload = async (
     contentReports,
     auditActivity,
   ] = await Promise.all([
-    rows(executor, `SELECT id, email_original AS email, full_name, phone_e164 AS phone,
+    rows(
+      executor,
+      `SELECT email_original AS email, full_name, phone_e164 AS phone,
                            role, account_status, created_at, last_login,
                            email_verified_at, phone_verified_at
-                    FROM "user" WHERE id = $1`, userId),
-    rows(executor, `SELECT document_type, document_version, locale, accepted_at,
+                    FROM "user" WHERE id = $1`,
+      userId,
+    ),
+    rows(
+      executor,
+      `SELECT document_type, document_version, locale, accepted_at,
                            withdrawn_at, superseded_at
-                    FROM legal_acceptance WHERE user_id = $1 ORDER BY accepted_at`, userId),
-    rows(executor, `SELECT id, request_type, status, request_details, requested_at,
+                    FROM legal_acceptance WHERE user_id = $1 ORDER BY accepted_at`,
+      userId,
+    ),
+    rows(
+      executor,
+      `SELECT request_type, status, request_details, requested_at,
                            acknowledged_at, completed_at, cancelled_at,
                            resolution_code, last_user_visible_message
-                    FROM privacy_request WHERE user_id = $1 ORDER BY requested_at`, userId),
-    rows(executor, `SELECT assignment.id, assignment.project_id,
-                           project.name AS project_title, assignment.role,
+                    FROM privacy_request WHERE user_id = $1 ORDER BY requested_at`,
+      userId,
+    ),
+    rows(
+      executor,
+      `SELECT project.name AS project_name, assignment.role,
                            assignment.status, assignment.assigned_date,
                            assignment.approved_date, assignment.created_at
                     FROM project_assignment assignment
                     LEFT JOIN project ON project.id = assignment.project_id
-                    WHERE assignment.user_id = $1 ORDER BY assignment.created_at`, userId),
-    rows(executor, `SELECT feature.id, feature.project_id,
-                           project.name AS project_title,
-                           ST_AsGeoJSON(feature.geom)::JSONB AS geometry,
+                    WHERE assignment.user_id = $1 ORDER BY assignment.created_at`,
+      userId,
+    ),
+    rows(
+      executor,
+      `SELECT project.name AS project_name,
                            feature.attributes, feature.status, feature.collected_at,
                            feature.submitted_at, feature.reviewed_at,
                            feature.accuracy_meters, feature.collected_offline,
-                           feature.synced_at, feature.version, feature.source_provenance
+                           feature.synced_at
                     FROM spatial_feature feature
                     LEFT JOIN project ON project.id = feature.project_id
                     WHERE feature.collected_by_user_id = $1
-                    ORDER BY feature.collected_at`, userId),
-    rows(executor, `SELECT ph.id, ph.feature_id, project.name AS project_title,
-                           ST_AsGeoJSON(ph.location)::JSONB AS location,
-                           ph.accuracy_meters, ph.taken_at, ph.exif_data, ph.file_size_bytes,
-                           ph.status, ph.display_order, ph.uploaded_at
+                    ORDER BY feature.collected_at`,
+      userId,
+    ),
+    rows(
+      executor,
+      `SELECT project.name AS project_name,
+                           ph.accuracy_meters, ph.taken_at,
+                           ph.status, ph.uploaded_at
                     FROM photo ph
                     JOIN spatial_feature feature ON feature.id = ph.feature_id
                     LEFT JOIN project ON project.id = feature.project_id
-                    WHERE feature.collected_by_user_id = $1 ORDER BY ph.uploaded_at`, userId),
-    rows(executor, `SELECT job.id, job.project_id, project.name AS project_title,
-                           job.original_filename, job.file_size_bytes,
-                           job.file_checksum_sha256 AS checksum_sha256,
+                    WHERE feature.collected_by_user_id = $1 ORDER BY ph.uploaded_at`,
+      userId,
+    ),
+    rows(
+      executor,
+      `SELECT project.name AS project_name,
+                           job.original_filename,
                            job.status, job.uploaded_at, job.processed_at, job.reviewed_at,
                            job.geometry_count AS feature_count, job.source_provider,
                            job.source_dataset_name, job.source_dataset_date,
@@ -400,57 +450,87 @@ const buildPersonalDataPayload = async (
                            job.source_redistribution_rules
                     FROM gis_import_job job
                     LEFT JOIN project ON project.id = job.project_id
-                    WHERE job.uploaded_by_user_id = $1 ORDER BY job.uploaded_at`, userId),
-    rows(executor, `SELECT feature.id, feature.import_job_id, feature.source_index,
-                           feature.source_identifier, feature.display_title,
+                    WHERE job.uploaded_by_user_id = $1 ORDER BY job.uploaded_at`,
+      userId,
+    ),
+    rows(
+      executor,
+      `SELECT project.name AS project_name, feature.display_title,
                            feature.source_feature_name, feature.geometry_type,
-                           ST_AsGeoJSON(feature.geom)::JSONB AS geometry,
                            feature.attributes, feature.status,
-                           feature.validation_warnings, feature.validation_errors,
                            feature.review_reason, feature.created_at,
                            feature.reviewed_at, feature.approved_at
                     FROM gis_import_feature feature
                     JOIN gis_import_job job ON job.id = feature.import_job_id
+                    LEFT JOIN project ON project.id = job.project_id
                     WHERE job.uploaded_by_user_id = $1
-                    ORDER BY job.uploaded_at, feature.source_index`, userId),
-    rows(executor, `SELECT export_job.id, export_job.project_id,
-                           project.name AS project_title,
+                    ORDER BY job.uploaded_at, feature.source_index`,
+      userId,
+    ),
+    rows(
+      executor,
+      `SELECT project.name AS project_name,
                            export_job.requested_at, export_job.completed_at,
-                           export_job.feature_count, export_job.export_parameters,
-                           export_job.status, export_job.file_size_bytes,
+                           export_job.feature_count, export_job.status,
                            export_job.file_status, export_job.retention_expires_at,
                            export_job.retention_expired_at
                     FROM shapefile_export export_job
                     LEFT JOIN project ON project.id = export_job.project_id
                     WHERE export_job.requested_by_user_id = $1
-                    ORDER BY export_job.requested_at`, userId),
-    rows(executor, `SELECT comment.id, comment.import_job_id,
-                           project.name AS project_title, comment.comment_text,
+                    ORDER BY export_job.requested_at`,
+      userId,
+    ),
+    rows(
+      executor,
+      `SELECT project.name AS project_name, comment.comment_text,
                            comment.created_at
                     FROM gis_import_comment comment
                     JOIN gis_import_job job ON job.id = comment.import_job_id
                     LEFT JOIN project ON project.id = job.project_id
-                    WHERE comment.author_user_id = $1 ORDER BY comment.created_at`, userId),
-    rows(executor, `SELECT id, validation_task_id, result, corrected_class, note, evidence,
-                           linked_feature_id, status, created_at, reviewed_at
-                    FROM ai_prediction_validation_submission
-                    WHERE submitted_by = $1 ORDER BY created_at`, userId),
-    rows(executor, `SELECT id, type, title, is_read, created_at, read_at
-                    FROM notification WHERE user_id = $1 ORDER BY created_at`, userId),
-    rows(executor, `SELECT report.id, report.project_id,
-                           project.name AS project_title, report.entity_type,
-                           report.entity_id, report.reason_code, report.description,
+                    WHERE comment.author_user_id = $1 ORDER BY comment.created_at`,
+      userId,
+    ),
+    rows(
+      executor,
+      `SELECT project.name AS project_name, submission.result,
+                           submission.corrected_class, submission.note,
+                           submission.status, submission.created_at,
+                           submission.reviewed_at
+                    FROM ai_prediction_validation_submission submission
+                    JOIN ai_prediction_validation_task task
+                      ON task.id = submission.validation_task_id
+                    LEFT JOIN project ON project.id = task.project_id
+                    WHERE submission.submitted_by = $1
+                    ORDER BY submission.created_at`,
+      userId,
+    ),
+    rows(
+      executor,
+      `SELECT title, is_read, created_at, read_at
+                    FROM notification WHERE user_id = $1 ORDER BY created_at`,
+      userId,
+    ),
+    rows(
+      executor,
+      `SELECT project.name AS project_name, report.entity_type,
+                           report.reason_code, report.description,
                            report.status, report.user_visible_message,
                            report.outcome_code, report.created_at,
                            report.updated_at, report.resolved_at
                     FROM content_report report
                     LEFT JOIN project ON project.id = report.project_id
-                    WHERE report.reporter_user_id = $1 ORDER BY report.created_at`, userId),
-    rows(executor, `SELECT id, action_type, entity_type, entity_id, created_at
-                    FROM audit_log WHERE user_id = $1 ORDER BY created_at`, userId),
+                    WHERE report.reporter_user_id = $1 ORDER BY report.created_at`,
+      userId,
+    ),
+    rows(
+      executor,
+      `SELECT action_type, entity_type, created_at
+                    FROM audit_log WHERE user_id = $1 ORDER BY created_at`,
+      userId,
+    ),
   ]);
 
-  const data = {
+  const data = sanitizeUserFacingExportValue({
     profile: profile[0] ?? null,
     legal_acceptances: legalAcceptances,
     privacy_requests: privacyRequests,
@@ -465,19 +545,21 @@ const buildPersonalDataPayload = async (
     notification_index: notifications,
     submitted_content_reports: contentReports,
     audit_activity_index: auditActivity,
-  };
+  }) as Record<string, unknown>;
   const counts = Object.fromEntries(
-    Object.entries(data).map(([key, value]) => [key, Array.isArray(value) ? value.length : value ? 1 : 0]),
+    Object.entries(data).map(([key, value]) => [
+      key,
+      Array.isArray(value) ? value.length : value ? 1 : 0,
+    ]),
   );
   const payload = {
     manifest: {
       format: 'TerraLeb personal data export',
-      format_version: 'terraleb-personal-data-v2',
+      format_version: 'terraleb-personal-data-v3',
       generated_at: new Date().toISOString(),
-      subject_user_id: userId,
       notes: [
         'This export contains data linked to your TerraLeb account and your own recorded activity.',
-        'Security secrets, authorization internals, confidential moderation notes, and other users’ personal data are excluded.',
+        'Internal database identifiers, security and storage details, confidential moderation notes, and other users’ personal data are excluded.',
       ],
       record_counts: counts,
     },
@@ -517,6 +599,10 @@ const schedulePersonalDataExport = async (
 };
 
 const processPersonalDataExport = async (artifactId: string): Promise<void> => {
+  const plannedReference = storageAdapter.reference(
+    'exports',
+    `privacy-data/${artifactId}-${randomBytes(12).toString('hex')}.html.enc`,
+  );
   const claimed = await transaction(async (client) => {
     const result = await client.query<PrivacyExportArtifactRow>(
       `SELECT artifact.*, request.status AS request_status
@@ -535,9 +621,13 @@ const processPersonalDataExport = async (artifactId: string): Promise<void> => {
     }
     await client.query(
       `UPDATE privacy_export_artifact
-       SET status = 'generating', failure_code = NULL, updated_at = CURRENT_TIMESTAMP
+       SET status = 'generating', encrypted_file_path = $2,
+           encryption_iv = NULL, encryption_auth_tag = NULL,
+           encryption_key_id = NULL, plaintext_sha256 = NULL,
+           encrypted_size_bytes = NULL, generated_at = NULL,
+           expires_at = NULL, failure_code = NULL, updated_at = CURRENT_TIMESTAMP
        WHERE id = $1`,
-      [artifactId],
+      [artifactId, plannedReference],
     );
     await client.query(
       `UPDATE privacy_request
@@ -551,7 +641,10 @@ const processPersonalDataExport = async (artifactId: string): Promise<void> => {
          (request_id, from_status, to_status, actor_kind, user_visible_message)
        VALUES ($1, $2, 'processing', 'worker',
                'We are preparing your personal-data export.')`,
-      [artifact.privacy_request_id, (artifact as PrivacyExportArtifactRow & { request_status: string }).request_status],
+      [
+        artifact.privacy_request_id,
+        (artifact as PrivacyExportArtifactRow & { request_status: string }).request_status,
+      ],
     );
     return artifact;
   });
@@ -559,9 +652,16 @@ const processPersonalDataExport = async (artifactId: string): Promise<void> => {
     return;
   }
 
-  let temporaryPath: string | null = null;
-  let completedPath: string | null = null;
+  let completedReference: string | null = null;
   try {
+    if (claimed.encrypted_file_path) {
+      const priorReference = assertSafeArtifactReference(claimed.encrypted_file_path);
+      await storageAdapter.remove(priorReference).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT' && !String(error.message).includes('not found')) {
+          throw error;
+        }
+      });
+    }
     const { payload, counts } = await buildPersonalDataPayload({ query }, claimed.user_id);
     const plaintext = Buffer.from(renderPersonalDataHtml(payload), 'utf8');
     const maxBytes = Number.parseInt(process.env.PRIVACY_EXPORT_MAX_BYTES ?? '52428800', 10);
@@ -573,21 +673,15 @@ const processPersonalDataExport = async (artifactId: string): Promise<void> => {
     const cipher = createCipheriv('aes-256-gcm', key, iv);
     const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
     const tag = cipher.getAuthTag();
-    const directory = exportDirectory();
-    await fsPromises.mkdir(directory, { recursive: true, mode: 0o700 });
-    const finalPath = assertSafeArtifactPath(path.join(directory, `${artifactId}.html.enc`));
-    temporaryPath = assertSafeArtifactPath(path.join(directory, `.${artifactId}.${randomUUID()}.tmp`));
-    await fsPromises.writeFile(temporaryPath, encrypted, { mode: 0o600, flag: 'wx' });
-    await fsPromises.rename(temporaryPath, finalPath);
-    temporaryPath = null;
-    completedPath = finalPath;
+    completedReference = plannedReference;
+    const storedArtifact = await storageAdapter.writeExclusive(plannedReference, encrypted);
     const expiresAt = new Date(Date.now() + artifactTtlHours() * 60 * 60 * 1000);
 
     await transaction(async (client) => {
       const updated = await client.query(
         `UPDATE privacy_export_artifact
          SET status = 'ready', encrypted_file_path = $2,
-             format_version = 'terraleb-personal-data-v2',
+              format_version = 'terraleb-personal-data-v3',
              content_type = 'text/html; charset=utf-8',
              encryption_algorithm = 'AES-256-GCM', encryption_key_id = $3,
              encryption_iv = $4, encryption_auth_tag = $5,
@@ -598,7 +692,7 @@ const processPersonalDataExport = async (artifactId: string): Promise<void> => {
          RETURNING id`,
         [
           artifactId,
-          finalPath,
+          plannedReference,
           keyId,
           iv,
           tag,
@@ -608,7 +702,11 @@ const processPersonalDataExport = async (artifactId: string): Promise<void> => {
           expiresAt,
         ],
       );
-      if (updated.rowCount !== 1 || !fs.existsSync(finalPath)) {
+      if (
+        updated.rowCount !== 1 ||
+        storedArtifact.size !== encrypted.length ||
+        storedArtifact.sha256 !== sha256(encrypted)
+      ) {
         throw new Error('PRIVACY_EXPORT_ARTIFACT_VALIDATION_FAILED');
       }
       await client.query(
@@ -668,19 +766,22 @@ const processPersonalDataExport = async (artifactId: string): Promise<void> => {
         client,
       );
     });
-    completedPath = null;
+    completedReference = null;
   } catch (error) {
-    if (temporaryPath) {
-      await fsPromises.unlink(temporaryPath).catch(() => undefined);
+    if (completedReference) {
+      await storageAdapter.remove(completedReference).catch(() => undefined);
     }
-    if (completedPath) {
-      await fsPromises.unlink(completedPath).catch(() => undefined);
-    }
-    const code = String(error instanceof Error ? error.message : error).split(':')[0].slice(0, 120);
+    const code = String(error instanceof Error ? error.message : error)
+      .split(':')[0]
+      .slice(0, 120);
     await transaction(async (client) => {
       await client.query(
         `UPDATE privacy_export_artifact
-         SET status = 'failed', failure_code = $2, updated_at = CURRENT_TIMESTAMP
+         SET status = 'failed', encrypted_file_path = NULL,
+             encryption_iv = NULL, encryption_auth_tag = NULL,
+             encryption_key_id = NULL, plaintext_sha256 = NULL,
+             encrypted_size_bytes = NULL, generated_at = NULL,
+             expires_at = NULL, failure_code = $2, updated_at = CURRENT_TIMESTAMP
          WHERE id = $1`,
         [artifactId, code],
       );
@@ -699,19 +800,16 @@ const processPersonalDataExport = async (artifactId: string): Promise<void> => {
 
 const createExportDownloadGrant = async (
   executor: QueryExecutor,
-  {
-    requestId,
-    userId,
-    sessionId,
-  }: { requestId: string; userId: string; sessionId: string },
+  { requestId, userId, sessionId }: { requestId: string; userId: string; sessionId: string },
 ): Promise<{ artifactId: string; token: string; expiresAt: string }> => {
   const artifact = await executor.query<{ id: string }>(
     `SELECT artifact.id
      FROM privacy_export_artifact artifact
      JOIN privacy_request request ON request.id = artifact.privacy_request_id
      WHERE request.id = $1 AND request.user_id = $2
-       AND request.status = 'completed' AND artifact.status = 'ready'
-       AND artifact.expires_at > CURRENT_TIMESTAMP`,
+        AND request.status = 'completed' AND artifact.status = 'ready'
+        AND artifact.format_version = 'terraleb-personal-data-v3'
+        AND artifact.expires_at > CURRENT_TIMESTAMP`,
     [requestId, userId],
   );
   if (!artifact.rows[0]) {
@@ -728,14 +826,17 @@ const createExportDownloadGrant = async (
   return { artifactId: artifact.rows[0].id, token, expiresAt: expiresAt.toISOString() };
 };
 
-const consumeExportDownloadGrant = async (
-  {
-    artifactId,
-    userId,
-    sessionId,
-    token,
-  }: { artifactId: string; userId: string; sessionId: string; token: string },
-): Promise<{
+const consumeExportDownloadGrant = async ({
+  artifactId,
+  userId,
+  sessionId,
+  token,
+}: {
+  artifactId: string;
+  userId: string;
+  sessionId: string;
+  token: string;
+}): Promise<{
   stream: Readable;
   filename: string;
   expectedSha256: string;
@@ -752,10 +853,11 @@ const consumeExportDownloadGrant = async (
          AND download_grant.token_hash = $4
          AND download_grant.used_at IS NULL
          AND download_grant.expires_at > CURRENT_TIMESTAMP
-         AND artifact.id = download_grant.artifact_id
-         AND artifact.user_id = download_grant.user_id
-         AND artifact.status = 'ready' AND artifact.expires_at > CURRENT_TIMESTAMP
-       RETURNING artifact.*`,
+          AND artifact.id = download_grant.artifact_id
+          AND artifact.user_id = download_grant.user_id
+          AND artifact.status = 'ready' AND artifact.expires_at > CURRENT_TIMESTAMP
+          AND artifact.format_version = 'terraleb-personal-data-v3'
+        RETURNING artifact.*`,
       [artifactId, userId, sessionId, sha256(token)],
     );
     return grant.rows[0] ?? null;
@@ -768,21 +870,20 @@ const consumeExportDownloadGrant = async (
   ) {
     throw new Error('PRIVACY_EXPORT_DOWNLOAD_GRANT_INVALID');
   }
-  const filePath = assertSafeArtifactPath(artifact.encrypted_file_path);
-  await fsPromises.access(filePath, fs.constants.R_OK);
+  const artifactReference = assertSafeArtifactReference(artifact.encrypted_file_path);
+  await storageAdapter.info(artifactReference, ['exports']);
   const { key, keyId } = configuredEncryptionKey();
   if (artifact.encryption_key_id !== keyId) {
     throw new Error('PRIVACY_EXPORT_ENCRYPTION_KEY_UNAVAILABLE');
   }
   const decipher = createDecipheriv('aes-256-gcm', key, artifact.encryption_iv);
   decipher.setAuthTag(artifact.encryption_auth_tag);
-  const verifiedStream = fs
-    .createReadStream(filePath)
+  const verifiedStream = (await storageAdapter.openReadStream(artifactReference, ['exports']))
     .pipe(decipher)
     .pipe(new Sha256VerificationTransform(artifact.plaintext_sha256));
   return {
     stream: verifiedStream,
-    filename: `terraleb-personal-data-${artifact.privacy_request_id}.${artifact.content_type.startsWith('text/html') ? 'html' : 'json'}`,
+    filename: `terraleb-personal-data.${artifact.content_type.startsWith('text/html') ? 'html' : 'json'}`,
     expectedSha256: artifact.plaintext_sha256,
     contentType: artifact.content_type,
   };
@@ -799,9 +900,9 @@ const deleteExpiredPrivacyExportArtifacts = async (): Promise<number> => {
   let deleted = 0;
   for (const artifact of expired.rows) {
     if (artifact.encrypted_file_path) {
-      const safePath = assertSafeArtifactPath(artifact.encrypted_file_path);
-      await fsPromises.unlink(safePath).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== 'ENOENT') {
+      const safeReference = assertSafeArtifactReference(artifact.encrypted_file_path);
+      await storageAdapter.remove(safeReference).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT' && !String(error.message).includes('not found')) {
           throw error;
         }
       });

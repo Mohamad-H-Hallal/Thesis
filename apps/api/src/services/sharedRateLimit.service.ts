@@ -36,6 +36,7 @@ let redisClient: RedisClientType | null = null;
 let redisConnectionPromise: Promise<void> | null = null;
 let rateLimitBackendClosed = false;
 const pendingRedisCommands = new Set<Promise<unknown>>();
+const localDailyCounters = new Map<string, { count: number; expiresAtMs: number }>();
 
 const configureRateLimitBackend = (config: RateLimitBackendConfig): void => {
   const nextMode = config.RATE_LIMIT_STORE === 'redis' ? 'redis' : 'memory';
@@ -198,6 +199,47 @@ const getRateLimitBackendReadiness = async (): Promise<{
   }
 };
 
+const consumeSharedDailyQuota = async ({
+  namespace,
+  limit,
+  now = new Date(),
+}: {
+  namespace: string;
+  limit: number;
+  now?: Date;
+}): Promise<{ allowed: boolean; count: number; resetAt: Date }> => {
+  if (!/^[a-z0-9-]{1,80}$/.test(namespace) || !Number.isSafeInteger(limit) || limit < 1) {
+    throw new Error('Shared daily quota configuration is invalid');
+  }
+
+  const resetAt = new Date(now);
+  resetAt.setUTCHours(24, 0, 0, 0);
+  const day = now.toISOString().slice(0, 10);
+  const key = `gis-daily-quota:${namespace}:${day}`;
+
+  if (configuredMode !== 'redis') {
+    const current = localDailyCounters.get(key);
+    const count = current && current.expiresAtMs > now.getTime() ? current.count + 1 : 1;
+    localDailyCounters.set(key, { count, expiresAtMs: resetAt.getTime() });
+    return { allowed: count <= limit, count, resetAt };
+  }
+
+  if (rateLimitBackendClosed) {
+    throw new RateLimitBackendUnavailableError();
+  }
+  const client = getOrCreateRedisClient();
+  try {
+    await ensureRedisClientReady(client);
+    const count = await client.incr(key);
+    if (count === 1) {
+      await client.expireAt(key, Math.ceil(resetAt.getTime() / 1000));
+    }
+    return { allowed: count <= limit, count, resetAt };
+  } catch (error) {
+    throw new RateLimitBackendUnavailableError(error instanceof Error ? error.message : undefined);
+  }
+};
+
 const closeRateLimitBackend = async (): Promise<void> => {
   rateLimitBackendClosed = true;
   if (!redisClient) {
@@ -230,4 +272,5 @@ export {
   getRateLimitBackendReadiness,
   initializeRateLimitBackend,
   isRateLimitBackendUnavailableError,
+  consumeSharedDailyQuota,
 };

@@ -1,4 +1,4 @@
-FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build
+FROM golang:1.26.6-alpine@sha256:3889b425f035be855a72fb4755265311293b6d414521f0a519d819df32222d83 AS build
 
 ARG LOKI_COMMIT=b318f2829f0ae2094ab3a1e90780450e9e4b03be
 ARG LOKI_SOURCE_SHA256=c9f0a926613e30615807c21d32fbc8956449b9aa519fab1024bc59f40f80879d
@@ -15,8 +15,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
   success=false; \
   for attempt in 1 2 3; do \
     if go get \
-        golang.org/x/text@v0.39.0 \
-        google.golang.org/grpc@v1.82.1 \
+        golang.org/x/crypto@v0.55.0 \
+        golang.org/x/mod@v0.40.0 \
+        golang.org/x/text@v0.41.0 \
+        google.golang.org/grpc@v1.83.1 \
       && go mod tidy \
       && go mod vendor; then \
       success=true; \
@@ -26,8 +28,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     sleep $((attempt * 5)); \
   done; \
   test "${success}" = true \
-  && test "$(go list -m -f '{{.Version}}' golang.org/x/text)" = "v0.39.0" \
-  && test "$(go list -m -f '{{.Version}}' google.golang.org/grpc)" = "v1.82.1"
+  && test "$(go list -m -f '{{.Version}}' golang.org/x/crypto)" = "v0.55.0" \
+  && test "$(go list -m -f '{{.Version}}' golang.org/x/mod)" = "v0.40.0" \
+  && test "$(go list -m -f '{{.Version}}' golang.org/x/text)" = "v0.41.0" \
+  && test "$(go list -m -f '{{.Version}}' google.golang.org/grpc)" = "v1.83.1"
 
 ARG VERSION=3.7.4-phase6.1
 ARG REVISION=b318f282

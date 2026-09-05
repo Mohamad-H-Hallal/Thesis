@@ -272,6 +272,7 @@ class SupportContactSettings {
     required this.supportPhone,
     required this.officeHours,
     required this.helpText,
+    this.hybridBasemapEnabled = true,
     this.updatedAt,
   });
 
@@ -279,6 +280,7 @@ class SupportContactSettings {
   final String? supportPhone;
   final String? officeHours;
   final String? helpText;
+  final bool hybridBasemapEnabled;
   final DateTime? updatedAt;
 
   bool get isConfigured =>

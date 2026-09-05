@@ -138,8 +138,7 @@ class ApiProjectsRepository implements ProjectsRepository {
             (data['package_version'] as String?) ?? 'project-package-v1',
         appResourcesVersion:
             (data['app_resources_version'] as String?) ?? 'mobile-offline-v1',
-        baseMapVersion:
-            (baseMap['version'] as String?) ?? 'lebanon-satellite-v1',
+        baseMapVersion: (baseMap['version'] as String?) ?? 'no-offline-basemap',
         downloadedAt: _toDateTime(data['downloaded_at']) ?? now,
         refreshedAt: now,
       );

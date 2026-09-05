@@ -37,7 +37,7 @@ export type AiServerStartPayload = {
   project_id: string;
   settings: JsonRecord;
   callback_url: string;
-  callback_secret: string;
+  callback_secret: string | null;
   requested_by: string | null;
   metadata: JsonRecord;
 };
@@ -53,6 +53,7 @@ type AiServerConfig = {
   baseUrl: string;
   timeoutMs: number;
   callbackSecret: string;
+  internalApiSecret: string;
   appPublicApiUrl: string;
   callbackBaseUrl: string;
 };
@@ -94,6 +95,10 @@ export const loadAiServerConfigFromEnv = (): AiServerConfig => {
     baseUrl: normalizeBaseUrl(envString('AI_SERVER_URL')),
     timeoutMs: parseAiServerTimeoutMs(process.env.AI_SERVER_TIMEOUT_MS),
     callbackSecret: envString('AI_CALLBACK_SECRET', 'dev-ai-callback-secret-change-me'),
+    internalApiSecret: envString(
+      'AI_INTERNAL_API_SECRET',
+      'dev-ai-internal-secret-change-me',
+    ),
     appPublicApiUrl,
     callbackBaseUrl: stripTrailingSlash(configuredCallbackBaseUrl || appPublicApiUrl),
   };
@@ -161,6 +166,7 @@ class AiServerClient {
         method,
         headers: {
           Accept: 'application/json',
+          'X-TerraLeb-Internal-Secret': this.config.internalApiSecret,
           ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         },
         body: body === undefined ? undefined : JSON.stringify(body),

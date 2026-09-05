@@ -37,6 +37,45 @@ void main() {
   });
 
   group('ApiProjectsRepository', () {
+    test('marks an unpublished offline basemap as unavailable', () async {
+      final dio = Dio(BaseOptions(baseUrl: 'http://localhost:3000'));
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            handler.resolve(
+              Response<Map<String, dynamic>>(
+                requestOptions: options,
+                statusCode: 200,
+                data: const <String, dynamic>{
+                  'success': true,
+                  'data': <String, dynamic>{
+                    'package_version':
+                        'project-id:active:v1.0:photos-optional:0:5:no-offline-basemap',
+                    'app_resources_version': 'mobile-offline-v1',
+                    'downloaded_at': '2026-08-26T00:00:00.000Z',
+                    'project': <String, dynamic>{
+                      'id': 'project-id',
+                      'name': 'Offline project',
+                      'status': 'active',
+                    },
+                    'base_map': null,
+                  },
+                },
+              ),
+            );
+          },
+        ),
+      );
+
+      final repository = ApiProjectsRepository(ApiClient(dio: dio));
+      final package = await repository.fetchOfflinePackage(
+        projectId: 'project-id',
+        ownerUserId: 'contributor-id',
+      );
+
+      expect(package.baseMapVersion, 'no-offline-basemap');
+    });
+
     test(
       'parses project pages with numeric collection schema version',
       () async {

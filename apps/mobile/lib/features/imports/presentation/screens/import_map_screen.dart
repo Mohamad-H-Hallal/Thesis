@@ -373,7 +373,12 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
                       urlTemplate: LebanonMapConfig.basemapUrlTemplate(
                         _basemapStyle,
                       ),
-                      tileProvider: appNetworkTileProvider(),
+                      fallbackUrl: LebanonMapConfig.fallbackUrlTemplate(
+                        _basemapStyle,
+                      ),
+                      tileProvider: appNetworkTileProvider(
+                        apiClient: ref.read(apiClientProvider),
+                      ),
                       userAgentPackageName: 'lb.gov.gis_collector',
                     ),
                   if (LebanonMapConfig.shouldRenderTileLayers &&
@@ -385,7 +390,9 @@ class _ImportMapScreenState extends ConsumerState<ImportMapScreen> {
                       urlTemplate: LebanonMapConfig.referenceLabelUrlTemplate(
                         _basemapStyle,
                       )!,
-                      tileProvider: appNetworkTileProvider(),
+                      tileProvider: appNetworkTileProvider(
+                        apiClient: ref.read(apiClientProvider),
+                      ),
                       userAgentPackageName: 'lb.gov.gis_collector',
                     ),
                   if (_showApprovedProjectContext) ...[
@@ -2572,8 +2579,7 @@ class _ImportMapFloatingPanel extends StatelessWidget {
                             children: [
                               Text(
                                 projectName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                                softWrap: true,
                                 style: theme.textTheme.titleSmall?.copyWith(
                                   fontWeight: FontWeight.w700,
                                   height: 1.15,

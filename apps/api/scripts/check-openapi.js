@@ -61,6 +61,7 @@ const routeFiles = [
       notificationRouter: `${expectedPrefix}/notifications`,
       settingsRouter: `${expectedPrefix}/settings`,
       offlineMapRouter: `${expectedPrefix}/offline-map`,
+      mapProviderRouter: `${expectedPrefix}/maps`,
       userRouter: `${expectedPrefix}/users`,
     },
   },

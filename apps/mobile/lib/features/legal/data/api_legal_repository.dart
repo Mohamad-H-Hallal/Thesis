@@ -363,6 +363,8 @@ class ApiLegalRepository extends LegalRepository {
     required String requestId,
     required String status,
     String? userMessage,
+    String? unfinishedWorkDecision,
+    String? responsibilityDecision,
   }) async {
     try {
       final response = await _apiClient.dio.patch<Map<String, dynamic>>(
@@ -371,6 +373,8 @@ class ApiLegalRepository extends LegalRepository {
           'status': status,
           if (userMessage?.trim().isNotEmpty ?? false)
             'user_message': userMessage!.trim(),
+          'unfinished_work_decision': ?unfinishedWorkDecision,
+          'responsibility_decision': ?responsibilityDecision,
         },
       );
       return PrivacyAdminRequest.fromJson(

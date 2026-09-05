@@ -194,7 +194,7 @@ void main() {
 
       expect(result.projectPackageChanged, isTrue);
       expect(result.baseMapDownloaded, isFalse);
-      expect(result.baseMapUnavailableReason, contains('offline-use rights'));
+      expect(result.baseMapUnavailableReason, contains('No verified TerraLeb'));
       expect(
         await store.getOfflineProjectPackage(
           ownerUserId: 'contributor-1',
@@ -228,6 +228,14 @@ void main() {
         version: 'shared-base-v1',
         zoomLevelMin: 7,
         zoomLevelMax: 15,
+        tileCount: 10,
+        sizeBytes: 1024,
+        artifactSizeBytes: 1024,
+        tileSource: 'copernicus_sentinel2_osm_labels',
+        artifactSha256:
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        artifactContentType: 'application/zip',
+        downloadPath: '/offline-map/current/download',
         lastUpdatedAt: DateTime.utc(2026, 7, 22),
         isCurrent: true,
       );

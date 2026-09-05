@@ -18,6 +18,7 @@ const {
   renderPersonalDataHtml,
 } = require('../src/services/privacyExport.service');
 const { processAccountDeletion } = require('../src/services/accountDeletion.service');
+const { storageAdapter } = require('../src/services/storageAdapter.service');
 
 describe('privacy execution pipelines', () => {
   let protectedAdmin;
@@ -33,13 +34,19 @@ describe('privacy execution pipelines', () => {
   };
 
   test('renders a self-contained readable report without executable user markup', () => {
+    const hiddenUuid = '9a5f1ea7-1df1-4b56-9d73-682a829c86f8';
     const html = renderPersonalDataHtml({
       manifest: {
         generated_at: '2026-08-24T12:00:00.000Z',
         record_counts: { profile: 1, submitted_content_reports: 0 },
       },
       data: {
-        profile: { full_name: '<script>alert("unsafe")</script>', role: 'viewer' },
+        profile: {
+          id: hiddenUuid,
+          full_name: '<script>alert("unsafe")</script>',
+          role: 'viewer',
+          metadata: { project_id: hiddenUuid, project_name: 'Readable project' },
+        },
         submitted_content_reports: [],
       },
     });
@@ -49,6 +56,10 @@ describe('privacy execution pipelines', () => {
     expect(html).toContain('&lt;script&gt;alert(&quot;unsafe&quot;)&lt;/script&gt;');
     expect(html).not.toContain('<script>');
     expect(html).not.toMatch(/<script\b/i);
+    expect(html).toContain('Readable project');
+    expect(html).not.toContain(hiddenUuid);
+    expect(html).not.toContain('Technical details');
+    expect(html).not.toMatch(/<summary>/i);
   });
 
   beforeAll(async () => {
@@ -70,9 +81,8 @@ describe('privacy execution pipelines', () => {
       `SELECT encrypted_file_path FROM privacy_export_artifact
        WHERE encrypted_file_path IS NOT NULL`,
     );
-    const fs = require('node:fs/promises');
     for (const artifact of artifacts.rows) {
-      await fs.unlink(artifact.encrypted_file_path).catch(() => undefined);
+      await storageAdapter.remove(artifact.encrypted_file_path).catch(() => undefined);
     }
     await shutdown();
   });
@@ -137,11 +147,7 @@ describe('privacy execution pipelines', () => {
       `INSERT INTO content_report
          (reporter_user_id, project_id, entity_type, entity_id, reason_code, description, status)
        VALUES ($1, $2, 'project', $2, 'privacy', $3, 'submitted')`,
-      [
-        subject.user.id,
-        project.id,
-        'Include this activity in the export workflow test.',
-      ],
+      [subject.user.id, project.id, 'Include this activity in the export workflow test.'],
     );
 
     const importJob = await pool.query(
@@ -196,6 +202,17 @@ describe('privacy execution pipelines', () => {
       `SELECT id FROM privacy_export_artifact WHERE privacy_request_id = $1`,
       [created.body.data.id],
     );
+    const orphanedReference = storageAdapter.reference(
+      'exports',
+      `privacy-data/${artifact.rows[0].id}-interrupted.html.enc`,
+    );
+    await storageAdapter.writeExclusive(orphanedReference, Buffer.from('interrupted-attempt'));
+    await pool.query(
+      `UPDATE privacy_export_artifact
+       SET status = 'generating', encrypted_file_path = $2
+       WHERE id = $1`,
+      [artifact.rows[0].id, orphanedReference],
+    );
     await processPersonalDataExport(artifact.rows[0].id);
 
     const ready = await pool.query(
@@ -211,10 +228,13 @@ describe('privacy execution pipelines', () => {
         encryption_iv: expect.any(Buffer),
         encryption_auth_tag: expect.any(Buffer),
         plaintext_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
-        format_version: 'terraleb-personal-data-v2',
+        format_version: 'terraleb-personal-data-v3',
         content_type: 'text/html; charset=utf-8',
       }),
     );
+    expect(ready.rows[0].encrypted_file_path).toMatch(/^storage:\/\/exports\/privacy-data\//);
+    expect(ready.rows[0].encrypted_file_path).not.toBe(orphanedReference);
+    await expect(storageAdapter.exists(orphanedReference, ['exports'])).resolves.toBe(false);
 
     const isolated = await request(app)
       .post(`${API_PREFIX}/privacy/requests/${created.body.data.id}/export-grant`)
@@ -240,12 +260,45 @@ describe('privacy execution pipelines', () => {
     expect(download.text).toContain('Imported contribution');
     expect(download.text).toContain('Privacy export activity project');
     expect(download.text).not.toContain(other.email);
+    expect(download.text).not.toContain(subject.user.id);
+    expect(download.text).not.toContain(project.id);
+    expect(download.text).not.toContain(created.body.data.id);
+    expect(download.text).not.toContain(importJob.rows[0].id);
+    expect(download.text).not.toContain('Technical details');
+    expect(download.text).not.toMatch(
+      /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i,
+    );
+    expect(download.headers['content-disposition']).not.toContain(created.body.data.id);
 
     const replay = await request(app)
       .get(grant.body.data.download_path)
       .set('X-Privacy-Export-Grant', grant.body.data.grant_token)
       .set(authHeader(subjectSession.token));
     expect(replay.status).toBe(403);
+
+    const grantCreatedBeforeLegacyDowngrade = await request(app)
+      .post(`${API_PREFIX}/privacy/requests/${created.body.data.id}/export-grant`)
+      .set(authHeader(subjectSession.token))
+      .send({ current_password: subject.password });
+    expect(grantCreatedBeforeLegacyDowngrade.status).toBe(201);
+
+    await pool.query(
+      `UPDATE privacy_export_artifact SET format_version = 'terraleb-personal-data-v2'
+       WHERE id = $1`,
+      [artifact.rows[0].id],
+    );
+
+    const legacyDownload = await request(app)
+      .get(grantCreatedBeforeLegacyDowngrade.body.data.download_path)
+      .set('X-Privacy-Export-Grant', grantCreatedBeforeLegacyDowngrade.body.data.grant_token)
+      .set(authHeader(subjectSession.token));
+    expect(legacyDownload.status).toBe(403);
+
+    const legacyGrant = await request(app)
+      .post(`${API_PREFIX}/privacy/requests/${created.body.data.id}/export-grant`)
+      .set(authHeader(subjectSession.token))
+      .send({ current_password: subject.password });
+    expect(legacyGrant.status).toBe(409);
   });
 
   test('pseudonymizes a completed administrator deletion without changing project attribution', async () => {
@@ -273,6 +326,8 @@ describe('privacy execution pipelines', () => {
       .send({
         status: 'approved',
         user_message: 'Your deletion request was approved and scheduled.',
+        unfinished_work_decision: 'require_resolution',
+        responsibility_decision: 'release',
       });
     expect(scheduled.status).toBe(200);
     expect(scheduled.body.data.status).toBe('scheduled');
@@ -344,6 +399,22 @@ describe('privacy execution pipelines', () => {
        RETURNING id`,
       [project.id, subject.user.id, protectedAdmin.user.id],
     );
+    const unfinishedContribution = await pool.query(
+      `INSERT INTO spatial_feature
+         (project_id, collected_by_user_id, geom, attributes, status)
+       VALUES ($1, $2, ST_SetSRID(ST_MakePoint(35.51, 33.91), 4326),
+               '{"source":"unfinished"}'::JSONB, 'draft')
+       RETURNING id`,
+      [project.id, subject.user.id],
+    );
+    await pool.query(
+      `INSERT INTO photo (feature_id, file_path, status)
+       VALUES ($1, $2, 'pending')`,
+      [
+        unfinishedContribution.rows[0].id,
+        `storage://uploads/.private/feature-photos/${unfinishedContribution.rows[0].id}.jpg`,
+      ],
+    );
     await pool.query(`UPDATE spatial_feature SET review_notes = $2 WHERE id = $1`, [
       contribution.rows[0].id,
       `Reviewed contribution by ${subject.user.full_name}`,
@@ -397,10 +468,30 @@ describe('privacy execution pipelines', () => {
     expect(created.status).toBe(201);
     await startPrivacyReview(created.body.data.id);
 
-    const scheduled = await request(app)
+    const noDecision = await request(app)
       .patch(`${API_PREFIX}/privacy/admin/requests/${created.body.data.id}`)
       .set(authHeader(protectedAdmin.token))
       .send({ status: 'approved' });
+    expect(noDecision.status).toBe(422);
+
+    const resolveFirst = await request(app)
+      .patch(`${API_PREFIX}/privacy/admin/requests/${created.body.data.id}`)
+      .set(authHeader(protectedAdmin.token))
+      .send({
+        status: 'approved',
+        unfinished_work_decision: 'require_resolution',
+        responsibility_decision: 'release',
+      });
+    expect(resolveFirst.status).toBe(409);
+
+    const scheduled = await request(app)
+      .patch(`${API_PREFIX}/privacy/admin/requests/${created.body.data.id}`)
+      .set(authHeader(protectedAdmin.token))
+      .send({
+        status: 'approved',
+        unfinished_work_decision: 'discard_unapproved',
+        responsibility_decision: 'release',
+      });
     expect(scheduled.status).toBe(200);
     expect(scheduled.body.data.status).toBe('scheduled');
 
@@ -438,6 +529,29 @@ describe('privacy execution pipelines', () => {
       collected_by_user_id: subject.user.id,
       status: 'approved',
     });
+    expect(
+      Number(
+        (
+          await pool.query(`SELECT COUNT(*) FROM spatial_feature WHERE id = $1`, [
+            unfinishedContribution.rows[0].id,
+          ])
+        ).rows[0].count,
+      ),
+    ).toBe(0);
+    const deletionEvidence = await pool.query(
+      `SELECT unfinished_work_decision, responsibility_decision, discard_counts,
+              artifact_cleanup_completed_at
+         FROM account_deletion_execution WHERE privacy_request_id = $1`,
+      [created.body.data.id],
+    );
+    expect(deletionEvidence.rows[0]).toEqual(
+      expect.objectContaining({
+        unfinished_work_decision: 'discard_unapproved',
+        responsibility_decision: 'release',
+        artifact_cleanup_completed_at: expect.any(Date),
+      }),
+    );
+    expect(Number(deletionEvidence.rows[0].discard_counts.unapproved_features)).toBe(1);
     expect(
       Number(
         (

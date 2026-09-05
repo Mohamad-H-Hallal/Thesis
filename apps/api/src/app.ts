@@ -41,6 +41,7 @@ const {
   categoryRouter,
   notificationRouter,
   offlineMapRouter,
+  mapProviderRouter,
   settingsRouter,
   userRouter,
 } = require('./routes/index');
@@ -292,6 +293,7 @@ const buildApp = (env) => {
         categories: `${normalizedApiPrefix}/categories`,
         notifications: `${normalizedApiPrefix}/notifications`,
         offlineMap: `${normalizedApiPrefix}/offline-map`,
+        maps: `${normalizedApiPrefix}/maps`,
         settings: `${normalizedApiPrefix}/settings`,
         legal: `${normalizedApiPrefix}/legal`,
         privacy: `${normalizedApiPrefix}/privacy`,
@@ -321,6 +323,7 @@ const buildApp = (env) => {
     app.use(`${prefix}/categories`, categoryRouter);
     app.use(`${prefix}/notifications`, notificationRouter);
     app.use(`${prefix}/offline-map`, offlineMapRouter);
+    app.use(`${prefix}/maps`, mapProviderRouter);
     app.use(`${prefix}/settings`, settingsRouter);
     app.use(`${prefix}/users`, userRouter);
     app.get(prefix, metadataHandler);

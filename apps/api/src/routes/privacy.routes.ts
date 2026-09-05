@@ -140,6 +140,10 @@ privacyRouter.patch(
   body('status').isIn(['in_review', 'approved', 'rejected']),
   body('user_message').optional().isString().isLength({ max: 1000 }),
   body('resolution_code').optional().isString().isLength({ max: 120 }),
+  body('unfinished_work_decision')
+    .optional()
+    .isIn(['require_resolution', 'discard_unapproved']),
+  body('responsibility_decision').optional().isIn(['release', 'confirmed_transferred']),
   validate,
   auditAction({
     actionType: 'update',

@@ -777,9 +777,13 @@ const normalizeAiModelPreferences = (
   const primarySource = satelliteSources[0] ?? 'sentinel2';
   const primaryFrame = satelliteTimeframes[primarySource];
   const primarySeason = primaryFrame?.seasons[0];
+  const legacyModels = Array.isArray(raw.models)
+    ? raw.models
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => normalizePreferredAiModel(item, { strict: options.strictModel }))
+    : [];
 
   return {
-    ...raw,
     preferred_model: normalizePreferredAiModel(raw.preferred_model, {
       strict: options.strictModel,
     }),
@@ -789,12 +793,30 @@ const normalizeAiModelPreferences = (
     feature_inputs: featureInputs,
     selected_feature_inputs: featureInputs,
     selected_extracted_features: featureInputs,
+    models: legacyModels,
     satellite_source: primarySource,
     target_year: primaryFrame?.map_year ?? normalizeYear(raw.target_year ?? raw.year),
     season: primarySeason?.season ?? normalizeSeason(raw.season) ?? 'growing',
     date_from: primarySeason?.from_date ?? normalizeDateString(raw.date_from ?? raw.from_date),
     date_to: primarySeason?.to_date ?? normalizeDateString(raw.date_to ?? raw.to_date),
+    national_scope_enabled: raw.national_scope_enabled === true,
+    national_scope_warning_acknowledged: raw.national_scope_warning_acknowledged === true,
+    national_mode_allowed: raw.national_mode_allowed === true,
+    lebanon_boundary_configured: raw.lebanon_boundary_configured === true,
+    pipeline_supports_national_scope: raw.pipeline_supports_national_scope === true,
+    backend_bridge_supports_national_scope: raw.backend_bridge_supports_national_scope === true,
+    python_pipeline_supports_national_scope: raw.python_pipeline_supports_national_scope === true,
+    national_regional_coverage_configured:
+      raw.national_regional_coverage_configured === true,
+    national_sample_spread_confirmed: raw.national_sample_spread_confirmed === true,
+    national_imbalance_review_supported: raw.national_imbalance_review_supported === true,
+    national_validation_plan_recorded: raw.national_validation_plan_recorded === true,
   };
+};
+
+const positiveAiLimit = (name: string, fallback: number): number => {
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
 const nationalRequirement = ({
@@ -2617,7 +2639,6 @@ const buildAiServerRunPayload = ({
   scopeType,
   scopeGeometry,
   readiness,
-  currentUserId,
   executionMode,
   minSamplesPerClass,
 }: {
@@ -2633,7 +2654,6 @@ const buildAiServerRunPayload = ({
   scopeType: string;
   scopeGeometry: unknown;
   readiness: Record<string, any>;
-  currentUserId: string | null;
   executionMode: string;
   minSamplesPerClass: number;
 }): AiServerStartPayload => {
@@ -2680,6 +2700,7 @@ const buildAiServerRunPayload = ({
       model_preferences: modelPreferences,
       execution_mode: executionMode,
       dry_run: executionMode === 'dry_run' || executionMode === 'mock',
+      max_estimated_cost_usd: positiveAiLimit('AI_MAX_ESTIMATED_COST_USD_PER_RUN', 25),
       safety_flags: {
         national_scope_enabled: readiness.national_scope_enabled === true,
         allow_spatial_feature_writes: false,
@@ -2687,14 +2708,15 @@ const buildAiServerRunPayload = ({
       },
     },
     callback_url: aiServerClient.callbackUrl(runId),
-    callback_secret: aiServerClient.callbackSecret(),
-    requested_by: currentUserId,
+    callback_secret: null,
+    requested_by: null,
     metadata: {
       app_backend_run_id: runId,
       execution_mode: executionMode,
       readiness_status: readiness.status,
       training_samples_area_type: aiAreaTypeFromScope(scopeType),
       prediction_area_type: aiAreaTypeFromScope(scopeType),
+      data_contract_version: 1,
     },
   };
 };
@@ -3380,7 +3402,47 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
     .slice(0, 10)}`;
   const createdRun = await transaction(async (client: PoolClient) => {
     if (shouldStart) {
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext('terraleb-ai-capacity'))`);
       await client.query('SELECT id FROM project WHERE id = $1 FOR UPDATE', [projectId]);
+      const capacity = await client.query<{
+        active_count: number;
+        project_daily_count: number;
+      }>(
+        `SELECT
+           COUNT(*) FILTER (
+             WHERE status IN (
+               'created', 'queued', 'starting', 'running', 'cancelling',
+               'extracting_features', 'training', 'evaluating', 'classifying'
+             )
+           )::int AS active_count,
+           COUNT(*) FILTER (
+             WHERE project_id = $1
+               AND status <> 'draft'
+               AND created_at >= date_trunc('day', CURRENT_TIMESTAMP)
+           )::int AS project_daily_count
+         FROM ai_run`,
+        [projectId],
+      );
+      if (
+        Number(capacity.rows[0]?.active_count ?? 0) >=
+        positiveAiLimit('AI_MAX_CONCURRENT_RUNS', 2)
+      ) {
+        throw new AppError('The AI service is at its concurrent run limit. Try again later.', 429, {
+          code: 'AI_CONCURRENT_RUN_LIMIT_REACHED',
+          disposition: 'temporary_rejection',
+          retryable: true,
+        });
+      }
+      if (
+        Number(capacity.rows[0]?.project_daily_count ?? 0) >=
+        positiveAiLimit('AI_MAX_RUNS_PER_PROJECT_PER_DAY', 4)
+      ) {
+        throw new AppError('This project reached its daily AI run limit.', 429, {
+          code: 'AI_PROJECT_DAILY_RUN_LIMIT_REACHED',
+          disposition: 'temporary_rejection',
+          retryable: true,
+        });
+      }
       const activeRun = await client.query(
         `SELECT id, display_name, status, created_at
          FROM ai_run
@@ -3581,10 +3643,14 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
           dry_run: shouldStart && (aiServerHealth?.dry_run === true || aiServerStartDryRun),
           real_run: shouldStart && aiServerHealth?.dry_run !== true && !aiServerStartDryRun,
           real_ai_execution: shouldStart,
-          regional_ai_execution_requested: regionalExecutionModes.includes(executionMode),
-          scientific_limitations: [],
-          requested_by: currentUser.id,
-          requested_status: requestedStatus ?? status,
+           regional_ai_execution_requested: regionalExecutionModes.includes(executionMode),
+           scientific_limitations: [],
+           requested_by: currentUser.id,
+           max_estimated_cost_usd: positiveAiLimit(
+             'AI_MAX_ESTIMATED_COST_USD_PER_RUN',
+             25,
+           ),
+           requested_status: requestedStatus ?? status,
         }),
       ],
     );
@@ -3656,7 +3722,6 @@ const createProjectAiRun = async (req: Request, res: Response): Promise<void> =>
       scopeType,
       scopeGeometry,
       readiness,
-      currentUserId: currentUser.id,
       executionMode,
       minSamplesPerClass,
     });

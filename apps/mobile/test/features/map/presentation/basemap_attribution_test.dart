@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lebanese_gis_mobile/features/map/domain/lebanon_map.dart';
 import 'package:lebanese_gis_mobile/features/map/presentation/widgets/basemap_attribution.dart';
@@ -10,14 +11,16 @@ void main() {
   ) async {
     for (final style in LebanonBasemapStyle.values) {
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: FlutterMap(
-              options: MapOptions(
-                initialCenter: LebanonMapConfig.center,
-                initialZoom: LebanonMapConfig.quickInitialZoom,
+        ProviderScope(
+          child: MaterialApp(
+            home: Scaffold(
+              body: FlutterMap(
+                options: MapOptions(
+                  initialCenter: LebanonMapConfig.center,
+                  initialZoom: LebanonMapConfig.quickInitialZoom,
+                ),
+                children: [BasemapAttribution(style: style)],
               ),
-              children: [BasemapAttribution(style: style)],
             ),
           ),
         ),
@@ -40,14 +43,16 @@ void main() {
   ) async {
     Future<double> pumpWithInset(double bottomInset) async {
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: SizedBox(
-              width: 320,
-              height: 500,
-              child: BasemapAttribution(
-                style: LebanonBasemapStyle.street,
-                bottomInset: bottomInset,
+        ProviderScope(
+          child: MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 320,
+                height: 500,
+                child: BasemapAttribution(
+                  style: LebanonBasemapStyle.street,
+                  bottomInset: bottomInset,
+                ),
               ),
             ),
           ),

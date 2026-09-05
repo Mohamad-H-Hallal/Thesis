@@ -37,7 +37,15 @@ load_secret_var API_DOCS_TOKEN
 load_secret_var SMTP_PASS
 load_secret_var SUPER_ADMIN_PASSWORD
 load_secret_var AI_CALLBACK_SECRET
+load_secret_var AI_INTERNAL_API_SECRET
 load_secret_var FIREBASE_SERVICE_ACCOUNT_JSON
 load_secret_var FIREBASE_SERVICE_ACCOUNT_BASE64
+load_secret_var PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64
+load_secret_var VERIFICATION_HMAC_SECRET
+load_secret_var STORAGE_S3_ACCESS_KEY_ID
+load_secret_var STORAGE_S3_SECRET_ACCESS_KEY
+load_secret_var ARCGIS_CLIENT_ID
+load_secret_var ARCGIS_CLIENT_SECRET
+load_secret_var BACKUP_ENCRYPTION_KEY_BASE64
 
 exec "$@"

@@ -56,6 +56,7 @@ jobs:
       ANDROID_APPLICATION_ID: ${{ vars.ANDROID_APPLICATION_ID }}
       ANDROID_VERSION_CODE: ${{ vars.ANDROID_VERSION_CODE }}
       RC_API_BASE_URL: ${{ vars.RC_API_BASE_URL }}
+      MAP_PROVIDER_USER_AGENT: ${{ vars.MAP_PROVIDER_USER_AGENT }}
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
       ANDROID_GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.ANDROID_GOOGLE_SERVICES_JSON_BASE64 }}
       TERRALEB_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -194,6 +195,15 @@ jobs:
         working-directory: apps/mobile
         run: flutter pub get --enforce-lockfile
 
+      - name: Generate dependency license inventory
+        env:
+          SOURCE_COMMIT: ${{ steps.source.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          mkdir -p release/out
+          node scripts/generate-dependency-license-report.js \
+            --output release/out/dependency-licenses.json
+
       - name: Build signed Android App Bundle
         working-directory: apps/mobile
         shell: bash
@@ -205,6 +215,8 @@ jobs:
             --build-number "$ANDROID_VERSION_CODE" \
             --dart-define=APP_FLAVOR=staging \
             --dart-define=API_BASE_URL="$RC_API_BASE_URL" \
+            --dart-define=MAP_PROVIDER_USER_AGENT="$MAP_PROVIDER_USER_AGENT" \
+            --dart-define=MAP_HYBRID_USE_API_PROXY=true \
             --dart-define=USE_MOCK_AUTH=false \
             --dart-define=USE_MOCK_DATA=false
           mkdir -p "$GITHUB_WORKSPACE/release/out"
@@ -229,6 +241,8 @@ jobs:
             --release \
             --dart-define=APP_FLAVOR=staging \
             --dart-define=API_BASE_URL="$RC_API_BASE_URL" \
+            --dart-define=MAP_PROVIDER_USER_AGENT="$MAP_PROVIDER_USER_AGENT" \
+            --dart-define=MAP_HYBRID_USE_API_PROXY=true \
             --dart-define=USE_MOCK_AUTH=false \
             --dart-define=USE_MOCK_DATA=false
           (

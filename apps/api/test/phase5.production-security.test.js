@@ -31,6 +31,23 @@ const validProductionEnv = (overrides = {}) => ({
   REDIS_PASSWORD: 'R6d2M8p4V9x1K7s3',
   WORKLOAD_WORKER_MODE: 'external',
   WORKLOAD_HARD_EXIT_ON_TIMEOUT: 'true',
+  REALTIME_V2_ENABLED: 'true',
+  REALTIME_LEGACY_BROADCAST_ENABLED: 'false',
+  REALTIME_POLLING_FALLBACK_ENABLED: 'false',
+  STORAGE_DRIVER: 's3',
+  STORAGE_S3_ENDPOINT: 'https://fixture.compat.objectstorage.me-jeddah-1.oraclecloud.com',
+  STORAGE_S3_REGION: 'me-jeddah-1',
+  STORAGE_S3_ACCESS_KEY_ID: validFixtureCredential('oci-access-fixture'),
+  STORAGE_S3_SECRET_ACCESS_KEY: validFixtureCredential('oci-secret-fixture'),
+  STORAGE_S3_UPLOADS_BUCKET: 'terraleb-fixture-uploads',
+  STORAGE_S3_EXPORTS_BUCKET: 'terraleb-fixture-exports',
+  STORAGE_S3_OFFLINE_BUCKET: 'terraleb-fixture-offline',
+  STORAGE_S3_AI_BUCKET: 'terraleb-fixture-ai',
+  STORAGE_S3_BACKUPS_BUCKET: 'terraleb-fixture-backups',
+  STORAGE_S3_PREFIX: 'terraleb-fixture',
+  STORAGE_MAX_OBJECT_BYTES: String(5 * 1024 * 1024 * 1024),
+  OFFLINE_PACKAGE_MAX_BYTES: String(5 * 1024 * 1024 * 1024),
+  MAP_PROVIDER_USER_AGENT: 'TerraLeb-test/1.0 (+https://collector.gis.gov.lb/map-support)',
   LOG_PRETTY: 'false',
   LOG_TO_FILE: 'false',
   API_DOCS_ENABLED: 'false',
@@ -58,7 +75,10 @@ const validProductionEnv = (overrides = {}) => ({
   PRIVACY_EXPORT_RETENTION_APPROVAL_REFERENCE: 'approved-retention-policy-2026',
   LEGAL_DRAFTS_PUBLIC_ENABLED: 'false',
   APP_PUBLIC_API_URL: 'https://collector.gis.gov.lb',
+  AI_PIPELINE_ENABLED: 'true',
+  AI_SERVER_URL: 'http://ai-server:8000',
   AI_CALLBACK_SECRET: 'C9v3N7m1Q5x8K2d6R4t0W9y7',
+  AI_INTERNAL_API_SECRET: validFixtureCredential('ai-internal-fixture'),
   ...overrides,
 });
 
@@ -124,6 +144,15 @@ describe('Phase 5 production security controls', () => {
     [{ SMTP_USER: 'replace-with-smtp-username' }, 'SMTP_USER'],
     [{ PHONE_VERIFICATION_PROVIDER: 'mock' }, 'PHONE_VERIFICATION_PROVIDER=twilio_verify'],
     [{ VERIFICATION_HMAC_SECRET: 'replace-with-secret' }, 'VERIFICATION_HMAC_SECRET'],
+    [{ STORAGE_DRIVER: 'local' }, 'STORAGE_DRIVER=s3'],
+    [{ STORAGE_S3_REGION: 'eu-frankfurt-1' }, 'region me-jeddah-1'],
+    [
+      { STORAGE_S3_SECRET_ACCESS_KEY: 'replace-with-storage-secret' },
+      'OCI S3 credentials',
+    ],
+    [{ REALTIME_LEGACY_BROADCAST_ENABLED: 'true' }, 'legacy broadcasting'],
+    [{ REALTIME_POLLING_FALLBACK_ENABLED: 'true' }, 'polling fallback disabled'],
+    [{ AI_PIPELINE_ENABLED: 'false' }, 'production AI requires'],
   ])('rejects insecure production override %j', (override, expectedMessage) => {
     expect(() => validateEnv(validProductionEnv(override))).toThrow(expectedMessage);
   });
@@ -145,9 +174,7 @@ describe('Phase 5 production security controls', () => {
 
   test('requires explicit policy evidence before enabling account deletion', () => {
     expect(() =>
-      validateEnv(
-        validProductionEnv({ ACCOUNT_DELETION_EXECUTION_ENABLED: 'true' }),
-      ),
+      validateEnv(validProductionEnv({ ACCOUNT_DELETION_EXECUTION_ENABLED: 'true' })),
     ).toThrow('enabled account deletion requires');
 
     const env = validateEnv(
@@ -156,9 +183,34 @@ describe('Phase 5 production security controls', () => {
         ACCOUNT_DELETION_POLICY_APPROVAL_REFERENCE: 'deletion-policy-2026',
         ACCOUNT_DELETION_RETENTION_APPROVAL_REFERENCE: 'retention-policy-2026',
         MASKED_CONTRIBUTOR_POLICY_APPROVAL_REFERENCE: 'masked-label-policy-2026',
+        RETAINED_GIS_RECORDS_APPROVAL_REFERENCE: 'retained-gis-policy-2026',
+        ACCEPTED_MEDIA_LOCATION_APPROVAL_REFERENCE: 'media-location-policy-2026',
+        FREE_TEXT_TREATMENT_APPROVAL_REFERENCE: 'free-text-policy-2026',
+        BACKUP_AGEING_APPROVAL_REFERENCE: 'backup-ageing-policy-2026',
       }),
     );
     expect(env.ACCOUNT_DELETION_EXECUTION_ENABLED).toBe(true);
+  });
+
+  test('requires operator-owned credentials before ArcGIS online maps are enabled', () => {
+    expect(() =>
+      validateEnv(
+        validProductionEnv({
+          ARCGIS_ONLINE_ENABLED: 'true',
+          ARCGIS_CLIENT_ID: '',
+          ARCGIS_CLIENT_SECRET: '',
+        }),
+      ),
+    ).toThrow('operator-owned credentials');
+
+    const env = validateEnv(
+      validProductionEnv({
+        ARCGIS_ONLINE_ENABLED: 'true',
+        ARCGIS_CLIENT_ID: validFixtureCredential('arcgis-client'),
+        ARCGIS_CLIENT_SECRET: validFixtureCredential('arcgis-secret'),
+      }),
+    );
+    expect(env.ARCGIS_ONLINE_ENABLED).toBe(true);
   });
 
   test('workload worker validates only its required credential boundary', () => {
@@ -171,6 +223,17 @@ describe('Phase 5 production security controls', () => {
       DB_PASSWORD: 'G7m4Q2v9N8s6K3x1',
       WORKLOAD_WORKER_MODE: 'external',
       WORKLOAD_HARD_EXIT_ON_TIMEOUT: 'true',
+      STORAGE_DRIVER: 's3',
+      STORAGE_S3_ENDPOINT: 'https://fixture.compat.objectstorage.me-jeddah-1.oraclecloud.com',
+      STORAGE_S3_REGION: 'me-jeddah-1',
+      STORAGE_S3_ACCESS_KEY_ID: validFixtureCredential('oci-access-fixture'),
+      STORAGE_S3_SECRET_ACCESS_KEY: validFixtureCredential('oci-secret-fixture'),
+      STORAGE_S3_UPLOADS_BUCKET: 'terraleb-fixture-uploads',
+      STORAGE_S3_EXPORTS_BUCKET: 'terraleb-fixture-exports',
+      STORAGE_S3_OFFLINE_BUCKET: 'terraleb-fixture-offline',
+      STORAGE_S3_AI_BUCKET: 'terraleb-fixture-ai',
+      STORAGE_S3_BACKUPS_BUCKET: 'terraleb-fixture-backups',
+      STORAGE_S3_PREFIX: 'terraleb-fixture',
       PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64: Buffer.alloc(32, 7).toString('base64'),
       PRIVACY_EXPORT_TTL_HOURS: '24',
       PRIVACY_EXPORT_RETENTION_APPROVAL_REFERENCE: 'approved-retention-policy-2026',

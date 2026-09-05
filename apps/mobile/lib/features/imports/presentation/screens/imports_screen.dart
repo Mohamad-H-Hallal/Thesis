@@ -348,6 +348,7 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                       DropdownButtonFormField<String?>(
                         initialValue: _selectedAdminProjectId,
                         isExpanded: true,
+                        itemHeight: null,
                         decoration: const InputDecoration(
                           labelText: 'Project filter',
                         ),
@@ -359,9 +360,11 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
                           ...adminProjects.map(
                             (project) => DropdownMenuItem<String?>(
                               value: project.id,
-                              child: Text(
-                                project.name,
-                                overflow: TextOverflow.ellipsis,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 10,
+                                ),
+                                child: Text(project.name, softWrap: true),
                               ),
                             ),
                           ),
@@ -502,14 +505,15 @@ class _ImportsScreenState extends ConsumerState<ImportsScreen> {
             DropdownButtonFormField<String>(
               initialValue: _selectedProjectId,
               isExpanded: true,
+              itemHeight: null,
               decoration: const InputDecoration(labelText: 'Project'),
               items: filteredProjects
                   .map(
                     (project) => DropdownMenuItem<String>(
                       value: project.id,
-                      child: Text(
-                        project.name,
-                        overflow: TextOverflow.ellipsis,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        child: Text(project.name, softWrap: true),
                       ),
                     ),
                   )

@@ -1273,6 +1273,7 @@ class _SupportSettingsDialogState
   final _phoneFormatter = LebanesePhoneFormatter();
 
   bool _isSubmitting = false;
+  late bool _hybridBasemapEnabled;
   String? _dialogError;
 
   @override
@@ -1284,6 +1285,7 @@ class _SupportSettingsDialogState
     );
     _hoursController.text = widget.settings.officeHours ?? '';
     _helpController.text = widget.settings.helpText ?? '';
+    _hybridBasemapEnabled = widget.settings.hybridBasemapEnabled;
   }
 
   @override
@@ -1326,6 +1328,7 @@ class _SupportSettingsDialogState
             supportPhone: normalizedPhone.isEmpty ? null : normalizedPhone,
             officeHours: normalizedHours.isEmpty ? null : normalizedHours,
             helpText: normalizedHelpText.isEmpty ? null : normalizedHelpText,
+            hybridBasemapEnabled: _hybridBasemapEnabled,
           );
       if (!mounted) {
         return;
@@ -1404,6 +1407,19 @@ class _SupportSettingsDialogState
                   controller: _helpController,
                   minLines: 3,
                   maxLines: 6,
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Satellite map'),
+                  subtitle: const Text(
+                    'Turn off during a provider outage or quota issue.',
+                  ),
+                  value: _hybridBasemapEnabled,
+                  onChanged: _isSubmitting
+                      ? null
+                      : (value) =>
+                            setState(() => _hybridBasemapEnabled = value),
                 ),
               ],
             ),

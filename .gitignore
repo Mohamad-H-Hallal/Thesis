@@ -10,6 +10,12 @@ logs/
 !docs/handover/evidence/*.log
 secrets/*.txt
 secrets/**/*.txt
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform.tfvars
+*.auto.tfvars
 secrets/*.json
 secrets/**/*.json
 !secrets/README.md
@@ -28,6 +34,10 @@ release/out/
 **/node_modules/
 **/dist/
 **/coverage/
+
+# Python
+**/__pycache__/
+*.py[cod]
 
 # Flutter
 **/.dart_tool/

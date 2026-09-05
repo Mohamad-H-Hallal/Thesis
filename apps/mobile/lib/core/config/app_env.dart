@@ -144,6 +144,19 @@ class AppEnv {
     return _parseBool(raw, fallback: false);
   }
 
+  static bool get hybridMapUsesApiProxy {
+    const raw = String.fromEnvironment(
+      'MAP_HYBRID_USE_API_PROXY',
+      defaultValue: '',
+    );
+    return _parseBool(raw, fallback: flavor != AppFlavor.dev);
+  }
+
+  static String get mapApiBaseUrl {
+    final base = apiBaseUrl.replaceFirst(RegExp(r'/+$'), '');
+    return '$base$apiVersionPrefix/maps';
+  }
+
   static String get mapProviderUserAgent {
     const value = String.fromEnvironment(
       'MAP_PROVIDER_USER_AGENT',

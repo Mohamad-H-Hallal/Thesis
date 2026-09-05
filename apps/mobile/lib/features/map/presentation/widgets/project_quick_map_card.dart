@@ -158,7 +158,15 @@ class _ProjectQuickMapCardState extends ConsumerState<ProjectQuickMapCard> {
                                             LebanonMapConfig.basemapUrlTemplate(
                                               _previewBasemapStyle,
                                             ),
-                                        tileProvider: appNetworkTileProvider(),
+                                        fallbackUrl:
+                                            LebanonMapConfig.fallbackUrlTemplate(
+                                              _previewBasemapStyle,
+                                            ),
+                                        tileProvider: appNetworkTileProvider(
+                                          apiClient: ref.read(
+                                            apiClientProvider,
+                                          ),
+                                        ),
                                         userAgentPackageName:
                                             'lb.gov.gis_collector',
                                       ),
@@ -173,7 +181,11 @@ class _ProjectQuickMapCardState extends ConsumerState<ProjectQuickMapCard> {
                                             LebanonMapConfig.referenceLabelUrlTemplate(
                                               _previewBasemapStyle,
                                             )!,
-                                        tileProvider: appNetworkTileProvider(),
+                                        tileProvider: appNetworkTileProvider(
+                                          apiClient: ref.read(
+                                            apiClientProvider,
+                                          ),
+                                        ),
                                         userAgentPackageName:
                                             'lb.gov.gis_collector',
                                       ),

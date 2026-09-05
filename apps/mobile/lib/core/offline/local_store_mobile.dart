@@ -40,7 +40,7 @@ class SqliteLocalStore
   Future<void>? _initialization;
   final Uuid _uuid = const Uuid();
   String? _offlinePhotoRootPath;
-  static const _dbVersion = 9;
+  static const _dbVersion = 10;
 
   @override
   Future<void> initialize() async {
@@ -168,6 +168,9 @@ class SqliteLocalStore
           await _quarantineLegacyUnownedRows(db);
           await _migrateDraftPhotosToOwnedStorage(db);
           await _migrateDraftPhotosToEncryptedStorage(db);
+        }
+        if (oldVersion < 10) {
+          await _addOfflinePackageEvidenceColumns(db);
         }
       },
     );
@@ -517,7 +520,16 @@ class SqliteLocalStore
         last_updated_at TEXT NOT NULL,
         tile_count INTEGER,
         size_bytes INTEGER,
+        artifact_size_bytes INTEGER,
         tile_source TEXT,
+        artifact_sha256 TEXT,
+        artifact_content_type TEXT,
+        download_path TEXT,
+        source_attribution TEXT,
+        source_acquisition_start TEXT,
+        source_acquisition_end TEXT,
+        source_resolution_meters REAL,
+        source_terms_url TEXT,
         is_current INTEGER NOT NULL,
         PRIMARY KEY (owner_user_id, version)
       );
@@ -547,6 +559,24 @@ class SqliteLocalStore
     await db.execute(
       'CREATE INDEX idx_offline_project_packages_base_map ON offline_project_packages(owner_user_id, base_map_version);',
     );
+  }
+
+  Future<void> _addOfflinePackageEvidenceColumns(DatabaseExecutor db) async {
+    for (final definition in <String>[
+      'artifact_sha256 TEXT',
+      'artifact_size_bytes INTEGER',
+      'artifact_content_type TEXT',
+      'download_path TEXT',
+      'source_attribution TEXT',
+      'source_acquisition_start TEXT',
+      'source_acquisition_end TEXT',
+      'source_resolution_meters REAL',
+      'source_terms_url TEXT',
+    ]) {
+      await db.execute(
+        'ALTER TABLE offline_map_packages ADD COLUMN $definition',
+      );
+    }
   }
 
   Future<void> _createProjectCacheTable(DatabaseExecutor db) async {

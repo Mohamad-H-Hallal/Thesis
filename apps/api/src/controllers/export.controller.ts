@@ -3,6 +3,7 @@ const { AppError } = require('../middleware/error');
 const logger = require('../utils/logger');
 const fs = require('fs').promises;
 const path = require('path');
+const { pipeline } = require('node:stream/promises');
 const AdmZip = require('adm-zip');
 import { sanitizeManagedFeatureAttributes } from '../lib/featureAttributes';
 import { isProtectedSuperAdminEmail } from '../lib/userWorkflow';
@@ -140,7 +141,11 @@ const markExportFileExpired = async (exportId: string, fileDeletedAt = new Date(
        WHERE id = $1
          AND status = 'completed'
        RETURNING requested_by_user_id, project_id`,
-      [exportId, fileDeletedAt, 'Export completed, but the file expired. Regenerate it to download again.'],
+      [
+        exportId,
+        fileDeletedAt,
+        'Export completed, but the file expired. Regenerate it to download again.',
+      ],
     );
     if (result.rowCount === 1) {
       await publishRealtimeChanges(
@@ -577,10 +582,7 @@ const requestExport = async (req, res) => {
     await enqueueWorkloadJob(client, {
       kind: 'project_export',
       entityId: inserted.rows[0].id,
-      maxAttempts: Math.max(
-        1,
-        Number.parseInt(process.env.WORKLOAD_MAX_ATTEMPTS ?? '3', 10) || 3,
-      ),
+      maxAttempts: Math.max(1, Number.parseInt(process.env.WORKLOAD_MAX_ATTEMPTS ?? '3', 10) || 3),
     });
     await publishRealtimeChanges(
       exportRealtimeInputs({
@@ -867,7 +869,10 @@ const processExport = async (exportId, projectName) => {
           .map((feature: any) => feature.source_provenance)
           .filter(
             (item: unknown) =>
-              item && typeof item === 'object' && !Array.isArray(item) && Object.keys(item).length > 0,
+              item &&
+              typeof item === 'object' &&
+              !Array.isArray(item) &&
+              Object.keys(item).length > 0,
           )
           .map((item: unknown) => [JSON.stringify(item), item]),
       ).values(),
@@ -936,10 +941,7 @@ const processExport = async (exportId, projectName) => {
     await zipDirectory(exportPath, zipPath);
 
     const stagedZip = await storageAdapter.info(zipPath, ['exports']);
-    publishedExportReference = storageAdapter.reference(
-      'exports',
-      `completed/${exportName}.zip`,
-    );
+    publishedExportReference = storageAdapter.reference('exports', `completed/${exportName}.zip`);
     const publishedZip = await storageAdapter.copyVerified(
       stagedZip.reference,
       publishedExportReference,
@@ -966,13 +968,7 @@ const processExport = async (exportId, projectName) => {
              retention_expired_at = NULL,
              retention_expires_at = CURRENT_TIMESTAMP + ($4::int * INTERVAL '1 day')
          WHERE id = $5`,
-        [
-          publishedExportReference,
-          features.rows.length,
-          fileSizeBytes,
-          RETENTION_DAYS,
-          exportId,
-        ],
+        [publishedExportReference, features.rows.length, fileSizeBytes, RETENTION_DAYS, exportId],
       );
 
       await client.query(
@@ -989,7 +985,7 @@ const processExport = async (exportId, projectName) => {
             format: format,
             status: 'completed',
           }),
-          ],
+        ],
       );
       await publishRealtimeChanges(
         exportRealtimeInputs({
@@ -1248,11 +1244,7 @@ const attachExportPhotos = async (exportPath: string, features: any[]) => {
         const source = await storageAdapter.locate(sourcePath, ['uploads']);
         const extension = path.extname(source.localPath).toLowerCase() || '.jpg';
         const fileName = `${sanitizeZipSegment(photo.id)}${extension}`;
-        const relativePath = path.posix.join(
-          'photos',
-          sanitizeZipSegment(feature.id),
-          fileName,
-        );
+        const relativePath = path.posix.join('photos', sanitizeZipSegment(feature.id), fileName);
         const destinationPath = path.join(
           exportPath,
           'photos',
@@ -1277,6 +1269,8 @@ const attachExportPhotos = async (exportPath: string, features: any[]) => {
           photoId: photo.id,
           error: error.message,
         });
+      } finally {
+        await storageAdapter.releaseLocalCopy(sourcePath, ['uploads']).catch(() => undefined);
       }
     }
     feature.photo_paths = paths;
@@ -1842,9 +1836,9 @@ const downloadExport = async (req, res) => {
   }
 
   // Check if file exists
-  let resolvedExport: Awaited<ReturnType<typeof storageAdapter.locate>>;
+  let resolvedExport: Awaited<ReturnType<typeof storageAdapter.info>>;
   try {
-    resolvedExport = await storageAdapter.locate(exportData.file_path, ['exports']);
+    resolvedExport = await storageAdapter.info(exportData.file_path, ['exports']);
   } catch (_error) {
     logger.error('Export file not accessible:', { exportId });
     const completedAt = exportData.completed_at ? new Date(exportData.completed_at) : null;
@@ -1874,12 +1868,14 @@ const downloadExport = async (req, res) => {
   const format = exportData.export_parameters?.format || 'geojson';
   logger.info('Downloading export:', { exportId, format });
 
-  // Send file
-  res.download(resolvedExport.localPath, (err) => {
-    if (err) {
-      logger.error('Download error:', { exportId, error: err });
-    }
+  res.set({
+    'Cache-Control': 'private, no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Type': resolvedExport.contentType ?? 'application/zip',
+    'Content-Length': String(resolvedExport.size),
+    'Content-Disposition': `attachment; filename="terraleb-export-${exportId}.zip"`,
   });
+  await pipeline(await storageAdapter.openReadStream(exportData.file_path, ['exports']), res);
 };
 
 // Delete old exports (cleanup job)

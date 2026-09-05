@@ -3,6 +3,7 @@ import { query, transaction } from '../config/database';
 import { isProtectedSuperAdminEmail } from '../lib/userWorkflow';
 import { publishRealtimeChanges } from '../realtime/realtimeEvents';
 import { buildMaskedContributorLabel } from './privacyIdentity.service';
+import { storageAdapter } from './storageAdapter.service';
 import { enqueueWorkloadJob } from './workloadQueue.service';
 
 interface QueryExecutor {
@@ -24,7 +25,16 @@ interface AccountDeletionEligibility {
   protected_account: boolean;
   role: string;
   blockers: AccountDeletionBlocker[];
+  counts: Record<string, number>;
   manual_review_required: true;
+}
+
+type UnfinishedWorkDecision = 'require_resolution' | 'discard_unapproved';
+type ResponsibilityDecision = 'release' | 'confirmed_transferred';
+
+interface AccountDeletionDecision {
+  unfinishedWorkDecision: UnfinishedWorkDecision;
+  responsibilityDecision: ResponsibilityDecision;
 }
 
 interface DeletionUserRow {
@@ -51,7 +61,7 @@ const blockerDefinitions: Array<{
   {
     key: 'pending_contribution_count',
     code: 'PENDING_CONTRIBUTION_REVIEWS',
-    message: 'Draft and submitted contributions must be synchronized or reviewed first.',
+    message: 'Draft, submitted, or rejected contributions must be resolved first.',
   },
   {
     key: 'unresolved_import_count',
@@ -102,6 +112,10 @@ const assertAccountDeletionPolicyConfigured = (): void => {
     process.env.ACCOUNT_DELETION_POLICY_APPROVAL_REFERENCE,
     process.env.ACCOUNT_DELETION_RETENTION_APPROVAL_REFERENCE,
     process.env.MASKED_CONTRIBUTOR_POLICY_APPROVAL_REFERENCE,
+    process.env.RETAINED_GIS_RECORDS_APPROVAL_REFERENCE,
+    process.env.ACCEPTED_MEDIA_LOCATION_APPROVAL_REFERENCE,
+    process.env.FREE_TEXT_TREATMENT_APPROVAL_REFERENCE,
+    process.env.BACKUP_AGEING_APPROVAL_REFERENCE,
   ];
   if (!executionEnabled || requiredReferences.some((value) => !String(value ?? '').trim())) {
     throw new Error('ACCOUNT_DELETION_POLICY_APPROVAL_REQUIRED');
@@ -119,13 +133,15 @@ const getAccountDeletionEligibility = async (
        (SELECT COUNT(*)::INT FROM project_assignment
         WHERE user_id = $1 AND status IN ('pending', 'approved')) AS assignment_count,
        (SELECT COUNT(*)::INT FROM spatial_feature
-        WHERE collected_by_user_id = $1 AND status IN ('draft', 'pending_review')) AS pending_contribution_count,
+        WHERE collected_by_user_id = $1 AND status <> 'approved') AS pending_contribution_count,
+       (SELECT COUNT(*)::INT FROM spatial_feature
+        WHERE collected_by_user_id = $1 AND status = 'approved') AS accepted_contribution_count,
        (SELECT COUNT(*)::INT FROM gis_import_job
-        WHERE uploaded_by_user_id = $1 AND status IN ('uploaded', 'processing', 'pending_review')) AS unresolved_import_count,
+        WHERE uploaded_by_user_id = $1 AND status NOT IN ('approved', 'partially_approved')) AS unresolved_import_count,
        (SELECT COUNT(*)::INT FROM shapefile_export
-        WHERE requested_by_user_id = $1 AND status IN ('pending', 'processing')) AS unresolved_export_count,
+        WHERE requested_by_user_id = $1 AND status <> 'completed') AS unresolved_export_count,
        (SELECT COUNT(*)::INT FROM ai_run
-        WHERE started_by = $1 AND status NOT IN ('published', 'failed', 'cancelled')) AS active_ai_run_count,
+        WHERE started_by = $1 AND status <> 'published') AS active_ai_run_count,
        (SELECT COUNT(*)::INT FROM ai_prediction_validation_task
         WHERE assigned_to = $1 AND status IN ('open', 'assigned', 'in_progress', 'submitted'))
          +
@@ -145,18 +161,13 @@ const getAccountDeletionEligibility = async (
     [user.id],
   );
   const counts = countsResult.rows[0] ?? {};
+  const numericCounts = Object.fromEntries(
+    Object.entries(counts).map(([key, value]) => [key, Number(value ?? 0)]),
+  );
   let blockers = blockerDefinitions.flatMap((definition) => {
     const count = Number(counts[definition.key] ?? 0);
     return count > 0 ? [{ code: definition.code, count, message: definition.message }] : [];
   });
-  if (user.role === 'admin') {
-    const automaticallyReleased = new Set([
-      'ACTIVE_PROJECT_OWNERSHIP',
-      'ACTIVE_AI_RESPONSIBILITIES',
-      'ASSIGNED_PRIVACY_OR_MODERATION_CASES',
-    ]);
-    blockers = blockers.filter((blocker) => !automaticallyReleased.has(blocker.code));
-  }
   if (user.role === 'contributor' && requestDetails?.offline_data_resolved !== true) {
     blockers.push({
       code: 'OFFLINE_DATA_CONFIRMATION_REQUIRED',
@@ -170,18 +181,58 @@ const getAccountDeletionEligibility = async (
     protected_account: protectedAccount,
     role: user.role,
     blockers,
+    counts: numericCounts,
     manual_review_required: true,
   };
 };
 
+const remainingBlockersForDecision = (
+  eligibility: AccountDeletionEligibility,
+  decision: AccountDeletionDecision,
+): AccountDeletionBlocker[] => {
+  const discardable = new Set([
+    'ACTIVE_PROJECT_ASSIGNMENTS',
+    'PENDING_CONTRIBUTION_REVIEWS',
+    'UNRESOLVED_IMPORTS',
+    'UNRESOLVED_EXPORTS',
+    'ACTIVE_AI_RUNS',
+  ]);
+  const releasable = new Set([
+    'ACTIVE_PROJECT_ASSIGNMENTS',
+    'ACTIVE_AI_RESPONSIBILITIES',
+    'ASSIGNED_PRIVACY_OR_MODERATION_CASES',
+  ]);
+  return eligibility.blockers.filter((blocker) => {
+    if (blocker.code === 'ACTIVE_PROJECT_OWNERSHIP') {
+      return false;
+    }
+    if (
+      decision.unfinishedWorkDecision === 'discard_unapproved' &&
+      discardable.has(blocker.code)
+    ) {
+      return false;
+    }
+    if (decision.responsibilityDecision === 'release' && releasable.has(blocker.code)) {
+      return false;
+    }
+    return true;
+  });
+};
+
 const scheduleAccountDeletion = async (
   executor: PoolClient,
-  { requestId, userId }: { requestId: string; userId: string },
+  {
+    requestId,
+    userId,
+    unfinishedWorkDecision,
+    responsibilityDecision,
+  }: { requestId: string; userId: string } & AccountDeletionDecision,
 ): Promise<string> => {
   assertAccountDeletionPolicyConfigured();
   const execution = await executor.query<{ id: string }>(
-    `INSERT INTO account_deletion_execution (privacy_request_id, user_id, status)
-     VALUES ($1, $2, 'scheduled')
+    `INSERT INTO account_deletion_execution
+       (privacy_request_id, user_id, status, unfinished_work_decision, responsibility_decision)
+     VALUES ($1, $2, 'scheduled', $3, $4)
      ON CONFLICT (privacy_request_id) DO UPDATE
        SET status = CASE
              WHEN account_deletion_execution.status = 'failed' THEN 'scheduled'
@@ -191,9 +242,11 @@ const scheduleAccountDeletion = async (
              WHEN account_deletion_execution.status = 'failed' THEN NULL
              ELSE account_deletion_execution.failure_code
            END,
+           unfinished_work_decision = EXCLUDED.unfinished_work_decision,
+           responsibility_decision = EXCLUDED.responsibility_decision,
            updated_at = CURRENT_TIMESTAMP
      RETURNING id`,
-    [requestId, userId],
+    [requestId, userId, unfinishedWorkDecision, responsibilityDecision],
   );
   await enqueueWorkloadJob(executor, {
     kind: 'account_deletion',
@@ -207,6 +260,7 @@ const releaseOperationalResponsibilities = async (
   client: PoolClient,
   userId: string,
 ): Promise<void> => {
+  await client.query(`DELETE FROM project_assignment WHERE user_id = $1`, [userId]);
   await client.query(
     `UPDATE privacy_request SET assigned_to_user_id = NULL, updated_at = CURRENT_TIMESTAMP
      WHERE assigned_to_user_id = $1 AND status NOT IN ('completed', 'cancelled', 'rejected')`,
@@ -227,6 +281,179 @@ const releaseOperationalResponsibilities = async (
      WHERE assigned_to = $1 AND status IN ('open', 'assigned', 'in_review')`,
     [userId],
   );
+};
+
+const collectStorageReferences = (value: unknown, references: Set<string>): void => {
+  if (typeof value === 'string') {
+    if (storageAdapter.resolve(value)) {
+      references.add(value);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectStorageReferences(item, references));
+    return;
+  }
+  if (value && typeof value === 'object') {
+    Object.values(value as Record<string, unknown>).forEach((item) =>
+      collectStorageReferences(item, references),
+    );
+  }
+};
+
+const queueUnapprovedArtifactCleanup = async (
+  client: PoolClient,
+  executionId: string,
+  userId: string,
+): Promise<number> => {
+  const rows = await client.query<{ storage_reference: string | null }>(
+    `SELECT photo.file_path AS storage_reference
+       FROM photo
+       JOIN spatial_feature feature ON feature.id = photo.feature_id
+      WHERE feature.collected_by_user_id = $1 AND feature.status <> 'approved'
+     UNION
+     SELECT photo.thumbnail_path
+       FROM photo
+       JOIN spatial_feature feature ON feature.id = photo.feature_id
+      WHERE feature.collected_by_user_id = $1 AND feature.status <> 'approved'
+     UNION
+     SELECT job.file_path FROM gis_import_job job
+      WHERE job.uploaded_by_user_id = $1
+        AND job.status IN ('uploaded', 'processing', 'pending_review', 'rejected', 'failed')
+     UNION
+     SELECT export.file_path FROM shapefile_export export
+      WHERE export.requested_by_user_id = $1 AND export.status <> 'completed'
+     UNION
+     SELECT layer.storage_path
+       FROM ai_output_layer layer
+       JOIN ai_run run ON run.id = layer.ai_run_id
+      WHERE run.started_by = $1 AND run.status <> 'published'
+     UNION
+     SELECT quarantine.storage_path FROM upload_quarantine_record quarantine
+      WHERE quarantine.uploaded_by_user_id = $1 AND quarantine.disposition = 'quarantined'
+     UNION
+     SELECT artifact.encrypted_file_path FROM privacy_export_artifact artifact
+      WHERE artifact.user_id = $1 AND artifact.encrypted_file_path IS NOT NULL
+     UNION
+     SELECT account.profile_picture_url FROM "user" account WHERE account.id = $1`,
+    [userId],
+  );
+  const references = new Set<string>();
+  rows.rows.forEach((row) => {
+    const reference = row.storage_reference?.trim();
+    if (reference && storageAdapter.resolve(reference)) references.add(reference);
+  });
+  const aiArtifacts = await client.query<{ artifacts: unknown; metadata: unknown }>(
+    `SELECT artifacts, metadata FROM ai_run
+      WHERE started_by = $1 AND status <> 'published'`,
+    [userId],
+  );
+  aiArtifacts.rows.forEach((row) => {
+    collectStorageReferences(row.artifacts, references);
+    collectStorageReferences(row.metadata, references);
+  });
+  if (references.size === 0) {
+    return 0;
+  }
+  await client.query(
+    `INSERT INTO account_deletion_artifact_cleanup (execution_id, storage_reference)
+     SELECT $1, reference FROM UNNEST($2::TEXT[]) AS reference
+     ON CONFLICT (execution_id, storage_reference) DO NOTHING`,
+    [executionId, [...references]],
+  );
+  return references.size;
+};
+
+const discardUnapprovedWork = async (
+  client: PoolClient,
+  userId: string,
+): Promise<Record<string, number>> => {
+  await client.query(
+    `UPDATE workload_job
+        SET status = 'succeeded', completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP),
+            lease_expires_at = NULL, worker_id = NULL,
+            last_error = 'Cancelled by approved account deletion.'
+      WHERE status IN ('queued', 'running')
+        AND (
+          (kind = 'gis_import' AND entity_id IN (
+            SELECT id FROM gis_import_job WHERE uploaded_by_user_id = $1
+              AND status IN ('uploaded', 'processing', 'pending_review', 'rejected', 'failed')
+          ))
+          OR (kind = 'project_export' AND entity_id IN (
+            SELECT id FROM shapefile_export WHERE requested_by_user_id = $1
+              AND status <> 'completed'
+          ))
+        )`,
+    [userId],
+  );
+  const assignments = await client.query(`DELETE FROM project_assignment WHERE user_id = $1`, [
+    userId,
+  ]);
+  const features = await client.query(
+    `DELETE FROM spatial_feature WHERE collected_by_user_id = $1 AND status <> 'approved'`,
+    [userId],
+  );
+  const imports = await client.query(
+    `DELETE FROM gis_import_job WHERE uploaded_by_user_id = $1
+       AND status IN ('uploaded', 'processing', 'pending_review', 'rejected', 'failed')`,
+    [userId],
+  );
+  const exports = await client.query(
+    `DELETE FROM shapefile_export WHERE requested_by_user_id = $1 AND status <> 'completed'`,
+    [userId],
+  );
+  const aiRuns = await client.query(
+    `DELETE FROM ai_run WHERE started_by = $1 AND status <> 'published'`,
+    [userId],
+  );
+  const quarantine = await client.query(
+    `DELETE FROM upload_quarantine_record
+      WHERE uploaded_by_user_id = $1 AND disposition = 'quarantined'`,
+    [userId],
+  );
+  return {
+    project_assignments: assignments.rowCount ?? 0,
+    unapproved_features: features.rowCount ?? 0,
+    unfinished_imports: imports.rowCount ?? 0,
+    unfinished_exports: exports.rowCount ?? 0,
+    unpublished_ai_runs: aiRuns.rowCount ?? 0,
+    quarantined_uploads: quarantine.rowCount ?? 0,
+  };
+};
+
+const removeQueuedDeletionArtifacts = async (executionId: string): Promise<void> => {
+  const pending = await query<{ id: string; storage_reference: string }>(
+    `SELECT id, storage_reference FROM account_deletion_artifact_cleanup
+      WHERE execution_id = $1 AND status <> 'deleted'
+      ORDER BY created_at, id`,
+    [executionId],
+  );
+  for (const artifact of pending.rows) {
+    try {
+      await storageAdapter.remove(artifact.storage_reference).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+      });
+      await query(
+        `UPDATE account_deletion_artifact_cleanup
+            SET status = 'deleted', attempt_count = attempt_count + 1,
+                last_error_code = NULL, deleted_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1`,
+        [artifact.id],
+      );
+    } catch (error) {
+      const code = String((error as { name?: string; code?: string })?.code ??
+        (error as { name?: string })?.name ?? 'STORAGE_DELETE_FAILED').slice(0, 120);
+      await query(
+        `UPDATE account_deletion_artifact_cleanup
+            SET status = 'failed', attempt_count = attempt_count + 1,
+                last_error_code = $2, deleted_at = NULL, updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1`,
+        [artifact.id, code],
+      );
+      throw new Error('ACCOUNT_DELETION_ARTIFACT_CLEANUP_FAILED');
+    }
+  }
 };
 
 const scheduleFreeTextReview = async (
@@ -431,12 +658,134 @@ const scrubStructuredIdentity = async (
       ],
     );
   }
+
+  const featureRows = await client.query<{
+    id: string;
+    attributes: unknown;
+    source_provenance: unknown;
+    contributor_validation_summary: unknown;
+  }>(
+    `SELECT id, attributes, source_provenance, contributor_validation_summary
+       FROM spatial_feature
+      WHERE collected_by_user_id = $1 AND status = 'approved'
+      FOR UPDATE`,
+    [userId],
+  );
+  for (const row of featureRows.rows) {
+    await client.query(
+      `UPDATE spatial_feature
+          SET attributes = $2::JSONB, source_provenance = $3::JSONB,
+              contributor_validation_summary = $4::JSONB
+        WHERE id = $1`,
+      [
+        row.id,
+        JSON.stringify(scrubStructuredValue(row.attributes, maskedLabel, identifiers)),
+        JSON.stringify(scrubStructuredValue(row.source_provenance, maskedLabel, identifiers)),
+        JSON.stringify(
+          scrubStructuredValue(row.contributor_validation_summary, maskedLabel, identifiers),
+        ),
+      ],
+    );
+  }
+
+  const photoRows = await client.query<{ id: string; exif_data: unknown }>(
+    `SELECT photo.id, photo.exif_data
+       FROM photo
+       JOIN spatial_feature feature ON feature.id = photo.feature_id
+      WHERE feature.collected_by_user_id = $1 AND feature.status = 'approved'
+      FOR UPDATE OF photo`,
+    [userId],
+  );
+  for (const row of photoRows.rows) {
+    await client.query(`UPDATE photo SET exif_data = $2::JSONB WHERE id = $1`, [
+      row.id,
+      row.exif_data == null
+        ? null
+        : JSON.stringify(scrubStructuredValue(row.exif_data, maskedLabel, identifiers)),
+    ]);
+  }
+
+  const importRows = await client.query<{
+    id: string;
+    original_filename: string;
+    file_metadata: unknown;
+    validation_summary: unknown;
+  }>(
+    `SELECT id, original_filename, file_metadata, validation_summary
+       FROM gis_import_job
+      WHERE uploaded_by_user_id = $1
+      FOR UPDATE`,
+    [userId],
+  );
+  for (const row of importRows.rows) {
+    await client.query(
+      `UPDATE gis_import_job
+          SET original_filename = $2, file_metadata = $3::JSONB,
+              validation_summary = $4::JSONB
+        WHERE id = $1`,
+      [
+        row.id,
+        scrubIdentityText(row.original_filename, maskedLabel, identifiers),
+        JSON.stringify(scrubStructuredValue(row.file_metadata, maskedLabel, identifiers)),
+        JSON.stringify(scrubStructuredValue(row.validation_summary, maskedLabel, identifiers)),
+      ],
+    );
+  }
+
+  const exportRows = await client.query<{ id: string; export_parameters: unknown }>(
+    `SELECT id, export_parameters FROM shapefile_export
+      WHERE requested_by_user_id = $1 FOR UPDATE`,
+    [userId],
+  );
+  for (const row of exportRows.rows) {
+    await client.query(`UPDATE shapefile_export SET export_parameters = $2::JSONB WHERE id = $1`, [
+      row.id,
+      JSON.stringify(scrubStructuredValue(row.export_parameters, maskedLabel, identifiers)),
+    ]);
+  }
+
+  const aiRows = await client.query<{ id: string; metadata: unknown; artifacts: unknown }>(
+    `SELECT id, metadata, artifacts FROM ai_run WHERE started_by = $1 FOR UPDATE`,
+    [userId],
+  );
+  for (const row of aiRows.rows) {
+    await client.query(
+      `UPDATE ai_run SET metadata = $2::JSONB, artifacts = $3::JSONB WHERE id = $1`,
+      [
+        row.id,
+        JSON.stringify(scrubStructuredValue(row.metadata, maskedLabel, identifiers)),
+        JSON.stringify(scrubStructuredValue(row.artifacts, maskedLabel, identifiers)),
+      ],
+    );
+  }
+
+  const quarantineRows = await client.query<{
+    id: string;
+    original_filename: string;
+    metadata: unknown;
+  }>(
+    `SELECT id, original_filename, metadata FROM upload_quarantine_record
+      WHERE uploaded_by_user_id = $1 FOR UPDATE`,
+    [userId],
+  );
+  for (const row of quarantineRows.rows) {
+    await client.query(
+      `UPDATE upload_quarantine_record
+          SET original_filename = $2, metadata = $3::JSONB
+        WHERE id = $1`,
+      [
+        row.id,
+        scrubIdentityText(row.original_filename, maskedLabel, identifiers),
+        JSON.stringify(scrubStructuredValue(row.metadata, maskedLabel, identifiers)),
+      ],
+    );
+  }
 };
 
 const processAccountDeletion = async (executionId: string): Promise<void> => {
   try {
     assertAccountDeletionPolicyConfigured();
-    await transaction(async (client) => {
+    const coreState = await transaction(async (client) => {
       const result = await client.query<
         {
           execution_id: string;
@@ -444,11 +793,15 @@ const processAccountDeletion = async (executionId: string): Promise<void> => {
           privacy_request_id: string;
           user_id: string;
           request_details: Record<string, unknown>;
+          unfinished_work_decision: UnfinishedWorkDecision;
+          responsibility_decision: ResponsibilityDecision;
+          masked_contributor_label: string | null;
         } & DeletionUserRow
       >(
         `SELECT execution.id AS execution_id, execution.status AS execution_status,
                 execution.privacy_request_id, execution.user_id,
-                request.request_details,
+                execution.unfinished_work_decision, execution.responsibility_decision,
+                execution.masked_contributor_label, request.request_details,
                 account.id, account.email, account.full_name, account.phone,
                 account.phone_e164, account.role, account.account_status, account.is_active
          FROM account_deletion_execution execution
@@ -459,47 +812,61 @@ const processAccountDeletion = async (executionId: string): Promise<void> => {
         [executionId],
       );
       const row = result.rows[0];
-      if (!row || row.execution_status === 'completed' || row.account_status === 'deleted') {
-        return;
-      }
+      if (!row || row.execution_status === 'completed') return 'completed' as const;
+      if (row.account_status === 'deleted') return 'cleanup' as const;
       if (isProtectedSuperAdminEmail(row.email)) {
         throw new Error('PROTECTED_ACCOUNT_DELETION_FORBIDDEN');
       }
-      if (!row.full_name) {
-        throw new Error('ACCOUNT_DELETION_IDENTITY_UNAVAILABLE');
-      }
+      if (!row.full_name) throw new Error('ACCOUNT_DELETION_IDENTITY_UNAVAILABLE');
+
       await client.query(
         `UPDATE account_deletion_execution
-         SET status = 'processing', attempt_count = attempt_count + 1,
-             failure_code = NULL, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $1`,
+            SET status = 'processing', attempt_count = attempt_count + 1,
+                failure_code = NULL, updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1`,
         [executionId],
       );
       await client.query(
         `UPDATE privacy_request
-         SET status = 'processing', execution_started_at = COALESCE(execution_started_at, CURRENT_TIMESTAMP),
-             failed_at = NULL, failure_code = NULL, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $1`,
+            SET status = 'processing', execution_started_at = COALESCE(execution_started_at, CURRENT_TIMESTAMP),
+                failed_at = NULL, failure_code = NULL, updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1`,
         [row.privacy_request_id],
       );
 
+      const decision: AccountDeletionDecision = {
+        unfinishedWorkDecision: row.unfinished_work_decision,
+        responsibilityDecision: row.responsibility_decision,
+      };
       const eligibility = await getAccountDeletionEligibility(
         { id: row.user_id, email: row.email, role: row.role },
         client,
         row.request_details,
       );
-      if (eligibility.blockers.length > 0) {
-        throw new Error(`ACCOUNT_DELETION_INELIGIBLE:${eligibility.blockers[0].code}`);
+      const remainingBlockers = remainingBlockersForDecision(eligibility, decision);
+      if (remainingBlockers.length > 0) {
+        throw new Error(`ACCOUNT_DELETION_INELIGIBLE:${remainingBlockers[0].code}`);
       }
       await client.query(
         `UPDATE account_deletion_execution SET eligibility_checked_at = CURRENT_TIMESTAMP WHERE id = $1`,
         [executionId],
       );
 
-      await releaseOperationalResponsibilities(client, row.user_id);
+      if (decision.responsibilityDecision === 'release') {
+        await releaseOperationalResponsibilities(client, row.user_id);
+      }
+      const artifactCount = await queueUnapprovedArtifactCleanup(client, executionId, row.user_id);
+      const discardCounts =
+        decision.unfinishedWorkDecision === 'discard_unapproved'
+          ? await discardUnapprovedWork(client, row.user_id)
+          : {};
       await client.query(
-        `UPDATE account_deletion_execution SET responsibilities_released_at = CURRENT_TIMESTAMP WHERE id = $1`,
-        [executionId],
+        `UPDATE account_deletion_execution
+            SET responsibilities_released_at = CURRENT_TIMESTAMP,
+                discard_counts = $2::JSONB,
+                discard_completed_at = CURRENT_TIMESTAMP
+          WHERE id = $1`,
+        [executionId, JSON.stringify({ ...discardCounts, storage_artifacts: artifactCount })],
       );
 
       const maskedLabel = buildMaskedContributorLabel(row.full_name);
@@ -511,38 +878,31 @@ const processAccountDeletion = async (executionId: string): Promise<void> => {
       });
       await client.query(
         `UPDATE account_deletion_execution
-         SET masked_contributor_label = $2, free_text_review_scheduled_at = CURRENT_TIMESTAMP
-         WHERE id = $1`,
+            SET masked_contributor_label = $2, free_text_review_scheduled_at = CURRENT_TIMESTAMP
+          WHERE id = $1`,
         [executionId, maskedLabel],
       );
 
       await publishRealtimeChanges(
         [
           {
-            scopeType: 'user',
-            scopeId: row.user_id,
-            action: 'account_deletion_completed',
-            entityType: 'user',
-            entityId: row.user_id,
+            scopeType: 'user', scopeId: row.user_id, action: 'session_revoked',
+            entityType: 'user', entityId: row.user_id,
             audience: { kind: 'user', userId: row.user_id },
           },
           {
-            scopeType: 'privacy_admin_queue',
-            scopeId: 'all',
-            action: 'deletion_completed',
-            entityType: 'privacy_request',
-            entityId: row.privacy_request_id,
+            scopeType: 'privacy_admin_queue', scopeId: 'all', action: 'deletion_processing',
+            entityType: 'privacy_request', entityId: row.privacy_request_id,
             audience: { kind: 'protected_admins' },
           },
         ],
         client,
       );
-
       await client.query(
         `UPDATE auth_session
-         SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP),
-             revocation_reason = COALESCE(revocation_reason, 'account_deleted')
-         WHERE user_id = $1 AND revoked_at IS NULL`,
+            SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP),
+                revocation_reason = COALESCE(revocation_reason, 'account_deleted')
+          WHERE user_id = $1 AND revoked_at IS NULL`,
         [row.user_id],
       );
       await client.query(
@@ -551,15 +911,19 @@ const processAccountDeletion = async (executionId: string): Promise<void> => {
       );
       await client.query(`DELETE FROM push_device_registration WHERE user_id = $1`, [row.user_id]);
       await client.query(`DELETE FROM password_reset_request WHERE user_id = $1`, [row.user_id]);
-      await client.query(`DELETE FROM contact_verification_challenge WHERE user_id = $1`, [
-        row.user_id,
-      ]);
-      await client.query(`DELETE FROM contact_verification_audit_event WHERE user_id = $1`, [
-        row.user_id,
-      ]);
+      await client.query(`DELETE FROM contact_verification_challenge WHERE user_id = $1`, [row.user_id]);
+      await client.query(`DELETE FROM contact_verification_audit_event WHERE user_id = $1`, [row.user_id]);
       await client.query(`DELETE FROM notification WHERE user_id = $1`, [row.user_id]);
+      await client.query(`DELETE FROM offline_sync_receipt WHERE user_id = $1`, [row.user_id]);
+      await client.query(`DELETE FROM privacy_export_download_grant WHERE user_id = $1`, [row.user_id]);
       await client.query(
-        `DELETE FROM spatial_feature WHERE collected_by_user_id = $1 AND status = 'draft'`,
+        `UPDATE privacy_export_artifact
+            SET status = 'deleted', encrypted_file_path = NULL, encryption_algorithm = NULL,
+                encryption_key_id = NULL, encryption_iv = NULL, encryption_auth_tag = NULL,
+                plaintext_sha256 = NULL, encrypted_size_bytes = NULL,
+                record_counts = '{}'::JSONB, deleted_at = CURRENT_TIMESTAMP,
+                failure_code = NULL, updated_at = CURRENT_TIMESTAMP
+          WHERE user_id = $1`,
         [row.user_id],
       );
 
@@ -570,66 +934,86 @@ const processAccountDeletion = async (executionId: string): Promise<void> => {
       });
       await client.query(
         `UPDATE account_deletion_execution
-         SET structured_snapshots_scrubbed_at = CURRENT_TIMESTAMP
-         WHERE id = $1`,
+            SET structured_snapshots_scrubbed_at = CURRENT_TIMESTAMP
+          WHERE id = $1`,
         [executionId],
       );
-
       await client.query(
-        `INSERT INTO backup_account_deletion_schedule
-           (privacy_request_id, user_id, status)
+        `INSERT INTO backup_account_deletion_schedule (privacy_request_id, user_id, status)
          VALUES ($1, $2, 'awaiting_approved_policy')
          ON CONFLICT (privacy_request_id) DO NOTHING`,
         [row.privacy_request_id, row.user_id],
       );
       await client.query(
-        `UPDATE account_deletion_execution
-         SET backup_expiry_scheduled_at = CURRENT_TIMESTAMP
-         WHERE id = $1`,
+        `UPDATE account_deletion_execution SET backup_expiry_scheduled_at = CURRENT_TIMESTAMP WHERE id = $1`,
         [executionId],
       );
-
       await client.query(
         `UPDATE "user"
-         SET email = NULL, email_original = NULL, email_canonical = NULL,
-             password_hash = NULL, full_name = NULL, phone = NULL, phone_e164 = NULL,
-             email_verified_at = NULL, phone_verified_at = NULL,
-             phone_format_validated_at = NULL, phone_validation_method = NULL,
-             contact_verification_exempted_at = NULL,
-             contact_verification_exempted_by = NULL,
-             pending_email_original = NULL, pending_email_canonical = NULL,
-             pending_phone_e164 = NULL, verification_required_at = NULL,
-             profile_picture_url = NULL, last_login = NULL,
-             is_active = FALSE, account_status = 'deleted', auth_version = auth_version + 1,
-             permanently_deleted_at = CURRENT_TIMESTAMP,
-             masked_contributor_label = $2,
-             deleted_by_privacy_request_id = $3
-         WHERE id = $1 AND account_status <> 'deleted'`,
+            SET email = NULL, email_original = NULL, email_canonical = NULL,
+                password_hash = NULL, full_name = NULL, phone = NULL, phone_e164 = NULL,
+                email_verified_at = NULL, phone_verified_at = NULL,
+                phone_format_validated_at = NULL, phone_validation_method = NULL,
+                contact_verification_exempted_at = NULL, contact_verification_exempted_by = NULL,
+                pending_email_original = NULL, pending_email_canonical = NULL,
+                pending_phone_e164 = NULL, verification_required_at = NULL,
+                profile_picture_url = NULL, last_login = NULL,
+                is_active = FALSE, account_status = 'deleted', auth_version = auth_version + 1,
+                permanently_deleted_at = CURRENT_TIMESTAMP, masked_contributor_label = $2,
+                deleted_by_privacy_request_id = $3
+          WHERE id = $1 AND account_status <> 'deleted'`,
         [row.user_id, maskedLabel, row.privacy_request_id],
       );
       await client.query(
         `UPDATE account_deletion_execution
-         SET direct_identifiers_erased_at = CURRENT_TIMESTAMP
-         WHERE id = $1`,
+            SET direct_identifiers_erased_at = CURRENT_TIMESTAMP,
+                account_tombstoned_at = CURRENT_TIMESTAMP
+          WHERE id = $1`,
         [executionId],
       );
       await client.query(`DELETE FROM auth_session WHERE user_id = $1`, [row.user_id]);
+      return 'cleanup' as const;
+    });
 
+    if (coreState === 'completed') return;
+    await removeQueuedDeletionArtifacts(executionId);
+    await transaction(async (client) => {
+      const execution = await client.query<{
+        privacy_request_id: string;
+        user_id: string;
+        masked_contributor_label: string;
+        status: string;
+      }>(
+        `SELECT privacy_request_id, user_id, masked_contributor_label, status
+           FROM account_deletion_execution WHERE id = $1 FOR UPDATE`,
+        [executionId],
+      );
+      const row = execution.rows[0];
+      if (!row || row.status === 'completed') return;
+      const remaining = await client.query<{ count: number }>(
+        `SELECT COUNT(*)::INT AS count FROM account_deletion_artifact_cleanup
+          WHERE execution_id = $1 AND status <> 'deleted'`,
+        [executionId],
+      );
+      if (Number(remaining.rows[0]?.count ?? 0) > 0) {
+        throw new Error('ACCOUNT_DELETION_ARTIFACT_CLEANUP_INCOMPLETE');
+      }
       await client.query(
         `UPDATE account_deletion_execution
-         SET status = 'completed', completed_at = CURRENT_TIMESTAMP,
-             failure_code = NULL, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $1`,
+            SET status = 'completed', artifact_cleanup_completed_at = CURRENT_TIMESTAMP,
+                completed_at = CURRENT_TIMESTAMP, failure_code = NULL,
+                updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1`,
         [executionId],
       );
       await client.query(
         `UPDATE privacy_request
-         SET status = 'completed', completed_at = CURRENT_TIMESTAMP,
-             resolution_code = 'account_deleted',
-             resolution_summary = 'Credentials and direct account identifiers were erased; approved institutional records retain only a masked contributor label.',
-             last_user_visible_message = 'Your TerraLeb account was deleted.',
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = $1`,
+            SET status = 'completed', completed_at = CURRENT_TIMESTAMP,
+                resolution_code = 'account_deleted',
+                resolution_summary = 'Credentials, direct identifiers, and approved discarded work were erased; accepted institutional GIS records retain only a masked contributor label.',
+                last_user_visible_message = 'Your TerraLeb account was deleted.',
+                updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1`,
         [row.privacy_request_id],
       );
       await client.query(
@@ -638,20 +1022,32 @@ const processAccountDeletion = async (executionId: string): Promise<void> => {
             resolution_code, resolution_summary)
          VALUES ($1, 'processing', 'completed', 'worker',
                  'Your TerraLeb account was deleted.', 'account_deleted',
-                 'Mandatory deletion stages completed; backup expiry awaits the approved backup policy.')`,
+                 'Mandatory database, storage, session, and backup-scheduling stages completed.')`,
         [row.privacy_request_id],
       );
       await client.query(
-        `INSERT INTO audit_log
-           (user_id, action_type, entity_type, entity_id, new_values)
+        `INSERT INTO audit_log (user_id, action_type, entity_type, entity_id, new_values)
          VALUES (NULL, 'delete', 'user', $1,
-                 jsonb_build_object(
-                   'privacy_request_id', $2::TEXT,
+                 jsonb_build_object('privacy_request_id', $2::TEXT,
                    'account_state', 'deleted_tombstone',
                    'masked_contributor_label', $3::TEXT,
-                   'mandatory_stages_completed', TRUE
-                 ))`,
-        [row.user_id, row.privacy_request_id, maskedLabel],
+                   'mandatory_stages_completed', TRUE))`,
+        [row.user_id, row.privacy_request_id, row.masked_contributor_label],
+      );
+      await publishRealtimeChanges(
+        [
+          {
+            scopeType: 'user', scopeId: row.user_id, action: 'account_deletion_completed',
+            entityType: 'user', entityId: row.user_id,
+            audience: { kind: 'user', userId: row.user_id },
+          },
+          {
+            scopeType: 'privacy_admin_queue', scopeId: 'all', action: 'deletion_completed',
+            entityType: 'privacy_request', entityId: row.privacy_request_id,
+            audience: { kind: 'protected_admins' },
+          },
+        ],
+        client,
       );
     });
   } catch (error) {
@@ -659,24 +1055,30 @@ const processAccountDeletion = async (executionId: string): Promise<void> => {
       .split(':')[0]
       .slice(0, 120);
     await transaction(async (client) => {
-      const execution = await client.query<{ privacy_request_id: string }>(
+      const execution = await client.query<{ privacy_request_id: string; user_id: string }>(
         `UPDATE account_deletion_execution
          SET status = 'failed', failure_code = $2, updated_at = CURRENT_TIMESTAMP
          WHERE id = $1 AND status <> 'completed'
-         RETURNING privacy_request_id`,
+          RETURNING privacy_request_id, user_id`,
         [executionId, code],
       );
       if (execution.rows[0]) {
+        const account = await client.query<{ account_status: string }>(
+          `SELECT account_status FROM "user" WHERE id = $1`,
+          [execution.rows[0].user_id],
+        );
+        const tombstoned = account.rows[0]?.account_status === 'deleted';
         await client.query(
           `UPDATE privacy_request
            SET status = CASE WHEN status = 'completed' THEN status ELSE 'failed' END,
                failed_at = CASE WHEN status = 'completed' THEN failed_at ELSE CURRENT_TIMESTAMP END,
                failure_code = CASE WHEN status = 'completed' THEN failure_code ELSE $2 END,
-               last_user_visible_message = CASE WHEN status = 'completed' THEN last_user_visible_message
-                 ELSE 'Deletion is paused for privacy-team review. Your account was not partially deleted.' END,
+                last_user_visible_message = CASE WHEN status = 'completed' THEN last_user_visible_message
+                  WHEN $3::BOOLEAN THEN 'Your account access was removed. Protected cleanup is paused and will be retried.'
+                  ELSE 'Deletion is paused for privacy-team review. Your account remains active.' END,
                updated_at = CURRENT_TIMESTAMP
            WHERE id = $1`,
-          [execution.rows[0].privacy_request_id, code],
+          [execution.rows[0].privacy_request_id, code, tombstoned],
         );
       }
     });
@@ -687,7 +1089,14 @@ const processAccountDeletion = async (executionId: string): Promise<void> => {
 export {
   getAccountDeletionEligibility,
   processAccountDeletion,
+  remainingBlockersForDecision,
   scheduleAccountDeletion,
   scrubStructuredValue,
 };
-export type { AccountDeletionBlocker, AccountDeletionEligibility };
+export type {
+  AccountDeletionBlocker,
+  AccountDeletionDecision,
+  AccountDeletionEligibility,
+  ResponsibilityDecision,
+  UnfinishedWorkDecision,
+};

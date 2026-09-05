@@ -5524,7 +5524,7 @@ class _MapInfoPill extends StatelessWidget {
   }
 }
 
-class _AiPreviewMap extends StatelessWidget {
+class _AiPreviewMap extends ConsumerWidget {
   const _AiPreviewMap({
     required this.mapController,
     required this.basemapStyle,
@@ -5550,7 +5550,7 @@ class _AiPreviewMap extends StatelessWidget {
   final void Function(MapCamera camera, bool hasGesture) onPositionChanged;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final center = LebanonMapConfig.center;
     final labelOverlayUrl = LebanonMapConfig.referenceLabelUrlTemplate(
       basemapStyle,
@@ -5573,7 +5573,10 @@ class _AiPreviewMap extends StatelessWidget {
           TileLayer(
             key: ValueKey<String>('ai_preview_basemap_${basemapStyle.name}'),
             urlTemplate: LebanonMapConfig.basemapUrlTemplate(basemapStyle),
-            tileProvider: appNetworkTileProvider(),
+            fallbackUrl: LebanonMapConfig.fallbackUrlTemplate(basemapStyle),
+            tileProvider: appNetworkTileProvider(
+              apiClient: ref.read(apiClientProvider),
+            ),
             tileDisplay: const TileDisplay.fadeIn(
               duration: Duration(milliseconds: 180),
               startOpacity: 0,
@@ -5589,7 +5592,9 @@ class _AiPreviewMap extends StatelessWidget {
               'ai_preview_label_overlay_${basemapStyle.name}',
             ),
             urlTemplate: labelOverlayUrl,
-            tileProvider: appNetworkTileProvider(),
+            tileProvider: appNetworkTileProvider(
+              apiClient: ref.read(apiClientProvider),
+            ),
             tileDisplay: const TileDisplay.fadeIn(
               duration: Duration(milliseconds: 220),
               startOpacity: 0,
