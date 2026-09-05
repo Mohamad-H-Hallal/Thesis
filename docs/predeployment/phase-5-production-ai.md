@@ -32,7 +32,7 @@ No production image digest exists yet. The located source is real and clean at t
 8. Add callback replay protection using a stable callback event ID and authenticated timestamp/signature or an equivalently reviewed mechanism. Duplicate terminal callbacks must be idempotent.
 9. Prove restart/resume, cancel, GEE failure, callback failure, object-storage failure and disk-full behavior without publishing partial output.
 
-After these source changes are reviewed, build `linux/amd64`, run the complete AI source suite, scan it, push it to the operator-owned private registry and record `AI_SERVER_IMAGE` as `registry/repository@sha256:<64 hex>`. The selected OCI E4 x86 fallback is now the production default because the pinned production PostGIS digest has no ARM64 manifest. A later return to A1/ARM64 requires a reviewed multi-architecture PostGIS image and a full ARM64 database, backup/restore and AI-stack validation; changing only the AI platform would create an unsupported mixed architecture.
+After these source changes are reviewed, build `linux/amd64`, run the complete AI source suite, scan it, push it to the operator-owned private registry and record `AI_SERVER_IMAGE` as `registry/repository@sha256:<64 hex>`. The selected DigitalOcean core and AI paths are x86. The 12 GiB AI service must not run on the 8 GiB core Droplet: deploy it on separately approved private on-demand compute, persist checksum-verified outputs before teardown, and destroy the worker after reconciliation because a powered-off Droplet remains billable. The starting AI worker candidate is 16 GiB; an 8 GiB worker is allowed only after representative profiling and failure tests support a lower memory limit. Separation must not grant general database or Internet access; retain the approved internal authentication and least-privilege project data boundary.
 
 ## Exact allowed input contract
 
@@ -49,7 +49,7 @@ The following are forbidden: names, email, phone, user IDs, credentials, session
 
 - Operator-owned GEE/Google Cloud project, approved edition/plan, service account, asset folder, provider terms and cost/quota limits.
 - Reviewed AI source commit and immutable image digest.
-- Documented E4 x86 staging proof; a future A1 change also requires full-stack ARM64 evidence.
+- Documented DigitalOcean x86 core and on-demand AI staging proof, including private connectivity, teardown/recovery, cost and memory evidence.
 - Dataset/model provenance, exact source dates and licences, evaluation version/results and retraction test evidence.
 - Owner/legal approval for project GIS training and separate publication policy. General or cross-project model training remains prohibited.
 

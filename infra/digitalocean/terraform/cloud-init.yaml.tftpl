@@ -1,0 +1,52 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - ca-certificates
+  - curl
+  - docker-compose-v2
+  - docker.io
+  - fail2ban
+  - jq
+  - unattended-upgrades
+  - ufw
+
+users:
+  - default
+  - name: terraleb
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ${owner_ssh_public_key}
+
+ssh_pwauth: false
+disable_root: true
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-terraleb.conf
+    permissions: "0644"
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      X11Forwarding no
+      AllowTcpForwarding no
+      ClientAliveInterval 300
+      ClientAliveCountMax 2
+
+runcmd:
+  - [systemctl, reload, ssh]
+  - [systemctl, enable, --now, fail2ban]
+  - [systemctl, enable, --now, docker]
+  - [ufw, default, deny, incoming]
+  - [ufw, default, allow, outgoing]
+%{ for cidr in operator_ssh_cidrs ~}
+  - [ufw, allow, from, "${cidr}", to, any, port, "22", proto, tcp]
+%{ endfor ~}
+  - [ufw, allow, "80/tcp"]
+  - [ufw, allow, "443/tcp"]
+  - [ufw, --force, enable]
+
+final_message: "TerraLeb base host initialization completed. Application deployment remains a separate reviewed step."

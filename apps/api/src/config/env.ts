@@ -108,7 +108,9 @@ export interface EnvConfig {
   STORAGE_S3_PREFIX: string;
   STORAGE_S3_REQUEST_TIMEOUT_MS: number;
   STORAGE_S3_MAX_ATTEMPTS: number;
-  STORAGE_S3_SERVER_SIDE_ENCRYPTION: 'AES256';
+  STORAGE_S3_PROVIDER: 'digitalocean_spaces' | 'oci';
+  STORAGE_S3_SERVER_SIDE_ENCRYPTION: 'AES256' | 'SSE-C';
+  STORAGE_S3_CUSTOMER_KEY_BASE64: string;
   EXPORT_DIR: string;
   EXPORT_RETENTION_DAYS: number;
   EXPORT_CLEANUP_INTERVAL_HOURS: number;
@@ -236,7 +238,9 @@ export interface WorkloadWorkerEnvConfig {
   STORAGE_S3_PREFIX: string;
   STORAGE_S3_REQUEST_TIMEOUT_MS: number;
   STORAGE_S3_MAX_ATTEMPTS: number;
-  STORAGE_S3_SERVER_SIDE_ENCRYPTION: 'AES256';
+  STORAGE_S3_PROVIDER: 'digitalocean_spaces' | 'oci';
+  STORAGE_S3_SERVER_SIDE_ENCRYPTION: 'AES256' | 'SSE-C';
+  STORAGE_S3_CUSTOMER_KEY_BASE64: string;
   PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64: string;
   PRIVACY_EXPORT_TTL_HOURS: number | null;
   PRIVACY_EXPORT_RETENTION_APPROVAL_REFERENCE: string;
@@ -454,7 +458,11 @@ const envSchema = Joi.object({
   STORAGE_S3_PREFIX: Joi.string().trim().allow('').max(200).default('terraleb'),
   STORAGE_S3_REQUEST_TIMEOUT_MS: Joi.number().integer().min(1000).max(120000).default(30000),
   STORAGE_S3_MAX_ATTEMPTS: Joi.number().integer().min(1).max(10).default(3),
-  STORAGE_S3_SERVER_SIDE_ENCRYPTION: Joi.string().valid('AES256').default('AES256'),
+  STORAGE_S3_PROVIDER: Joi.string()
+    .valid('digitalocean_spaces', 'oci')
+    .default('digitalocean_spaces'),
+  STORAGE_S3_SERVER_SIDE_ENCRYPTION: Joi.string().valid('AES256', 'SSE-C').default('SSE-C'),
+  STORAGE_S3_CUSTOMER_KEY_BASE64: Joi.string().trim().base64().allow('').default(''),
 
   EXPORT_DIR: Joi.string().default('./exports'),
   EXPORT_RETENTION_DAYS: Joi.number().integer().min(1).default(7),
@@ -717,28 +725,31 @@ const validateProductionStorage = (value: Record<string, unknown>, errorPrefix: 
   if (value.STORAGE_DRIVER !== 's3') {
     throw new Error(`${errorPrefix}: production requires STORAGE_DRIVER=s3`);
   }
-  if (value.STORAGE_S3_REGION !== 'me-jeddah-1') {
-    throw new Error(`${errorPrefix}: OCI production storage must use region me-jeddah-1`);
+  if (value.STORAGE_S3_PROVIDER !== 'digitalocean_spaces') {
+    throw new Error(`${errorPrefix}: production storage provider must be digitalocean_spaces`);
+  }
+  if (value.STORAGE_S3_REGION !== 'fra1') {
+    throw new Error(`${errorPrefix}: DigitalOcean production storage must use region fra1`);
   }
   if (!validateSecureProviderUrl(value.STORAGE_S3_ENDPOINT)) {
     throw new Error(`${errorPrefix}: STORAGE_S3_ENDPOINT must be an HTTPS URL`);
   }
   const endpoint = new URL(String(value.STORAGE_S3_ENDPOINT));
   if (
-    !endpoint.hostname.endsWith('.compat.objectstorage.me-jeddah-1.oraclecloud.com') ||
+    endpoint.hostname !== 'fra1.digitaloceanspaces.com' ||
     endpoint.pathname !== '/' ||
     endpoint.search ||
     endpoint.hash
   ) {
     throw new Error(
-      `${errorPrefix}: STORAGE_S3_ENDPOINT must be the OCI Jeddah S3 compatibility endpoint`,
+      `${errorPrefix}: STORAGE_S3_ENDPOINT must be the DigitalOcean Spaces FRA1 endpoint`,
     );
   }
   if (
     unsafeProductionIdentifier(value.STORAGE_S3_ACCESS_KEY_ID) ||
     unsafeProductionSecret(value.STORAGE_S3_SECRET_ACCESS_KEY)
   ) {
-    throw new Error(`${errorPrefix}: OCI S3 credentials are missing or unsafe`);
+    throw new Error(`${errorPrefix}: DigitalOcean Spaces credentials are missing or unsafe`);
   }
   const bucketPattern = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
   const buckets = [
@@ -756,8 +767,12 @@ const validateProductionStorage = (value: Record<string, unknown>, errorPrefix: 
   if (!/^[A-Za-z0-9][A-Za-z0-9/_-]{0,199}$/.test(String(value.STORAGE_S3_PREFIX))) {
     throw new Error(`${errorPrefix}: STORAGE_S3_PREFIX is invalid`);
   }
-  if (value.STORAGE_S3_SERVER_SIDE_ENCRYPTION !== 'AES256') {
-    throw new Error(`${errorPrefix}: OCI object storage must request AES256 encryption`);
+  if (value.STORAGE_S3_SERVER_SIDE_ENCRYPTION !== 'SSE-C') {
+    throw new Error(`${errorPrefix}: DigitalOcean Spaces must use SSE-C object encryption`);
+  }
+  const customerKey = Buffer.from(String(value.STORAGE_S3_CUSTOMER_KEY_BASE64 ?? ''), 'base64');
+  if (customerKey.length !== 32) {
+    throw new Error(`${errorPrefix}: DigitalOcean Spaces SSE-C requires a 32-byte customer key`);
   }
 };
 
@@ -1218,7 +1233,11 @@ const workloadWorkerEnvSchema = Joi.object({
   STORAGE_S3_PREFIX: Joi.string().trim().allow('').max(200).default('terraleb'),
   STORAGE_S3_REQUEST_TIMEOUT_MS: Joi.number().integer().min(1000).max(120000).default(30000),
   STORAGE_S3_MAX_ATTEMPTS: Joi.number().integer().min(1).max(10).default(3),
-  STORAGE_S3_SERVER_SIDE_ENCRYPTION: Joi.string().valid('AES256').default('AES256'),
+  STORAGE_S3_PROVIDER: Joi.string()
+    .valid('digitalocean_spaces', 'oci')
+    .default('digitalocean_spaces'),
+  STORAGE_S3_SERVER_SIDE_ENCRYPTION: Joi.string().valid('AES256', 'SSE-C').default('SSE-C'),
+  STORAGE_S3_CUSTOMER_KEY_BASE64: Joi.string().trim().base64().allow('').default(''),
   PRIVACY_EXPORT_ENCRYPTION_KEY_BASE64: Joi.string().trim().base64().allow('').default(''),
   PRIVACY_EXPORT_TTL_HOURS: Joi.number().integer().min(1).max(168).allow(null).default(null),
   PRIVACY_EXPORT_RETENTION_APPROVAL_REFERENCE: Joi.string().trim().allow('').max(240).default(''),

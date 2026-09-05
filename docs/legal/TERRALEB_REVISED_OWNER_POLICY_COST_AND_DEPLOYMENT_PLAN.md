@@ -1,5 +1,8 @@
 # TerraLeb revised owner policy, hosting cost and deployment plan
 
+> Hosting/provider sections were superseded on 2026-09-05 by
+> `TERRALEB_DIGITALOCEAN_HOSTING_DECISION_V2.md`. This file is historical.
+
 > **Superseded for execution on 2026-08-25:** use
 > [`TERRALEB_FINAL_PRE_PHASE_8_REAUDIT_AND_EXECUTION_PROMPT.md`](TERRALEB_FINAL_PRE_PHASE_8_REAUDIT_AND_EXECUTION_PROMPT.md).
 > This file remains as historical decision context.

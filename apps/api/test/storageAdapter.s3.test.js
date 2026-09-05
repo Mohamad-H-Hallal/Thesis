@@ -88,7 +88,7 @@ class InMemoryS3Client {
   }
 }
 
-describe('OCI S3-compatible storage adapter', () => {
+describe('S3-compatible storage adapter', () => {
   let tempDirectory;
   let client;
   let adapter;
@@ -97,17 +97,18 @@ describe('OCI S3-compatible storage adapter', () => {
     tempDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'terraleb-s3-adapter-'));
     client = new InMemoryS3Client();
     adapter = new S3StorageAdapter({
-      endpoint: 'https://namespace.compat.objectstorage.me-jeddah-1.oraclecloud.com',
-      region: 'me-jeddah-1',
+      endpoint: 'https://fra1.digitaloceanspaces.com',
+      region: 'fra1',
       accessKeyId: 'fixture-access-key',
       secretAccessKey: 'fixture-secret-key',
-      forcePathStyle: true,
+      forcePathStyle: false,
       prefix: 'terraleb',
       tempDirectory,
       maxObjectBytes: 10 * 1024 * 1024,
       requestTimeoutMs: 30000,
       maxAttempts: 3,
-      serverSideEncryption: 'AES256',
+      serverSideEncryption: 'SSE-C',
+      customerKeyBase64: Buffer.alloc(32, 9).toString('base64'),
       buckets: {
         uploads: 'uploads-private',
         exports: 'exports-private',
@@ -141,7 +142,9 @@ describe('OCI S3-compatible storage adapter', () => {
         Bucket: 'uploads-private',
         Key: 'terraleb/.private/photos/photo.jpg',
         IfNoneMatch: '*',
-        ServerSideEncryption: 'AES256',
+        SSECustomerAlgorithm: 'AES256',
+        SSECustomerKey: Buffer.alloc(32, 9).toString('base64'),
+        SSECustomerKeyMD5: createHash('md5').update(Buffer.alloc(32, 9)).digest('base64'),
       }),
     );
     await expect(adapter.writeExclusive(reference, payload)).rejects.toMatchObject({
@@ -168,6 +171,12 @@ describe('OCI S3-compatible storage adapter', () => {
         constructor.name === 'GetObjectCommand' && input.Range === 'bytes=9-14',
     );
     expect(rangeCommand).toBeDefined();
+    expect(rangeCommand.input).toEqual(
+      expect.objectContaining({
+        SSECustomerAlgorithm: 'AES256',
+        SSECustomerKey: Buffer.alloc(32, 9).toString('base64'),
+      }),
+    );
     expect(reference.startsWith('storage://')).toBe(true);
     expect(reference).not.toContain('http');
   });
@@ -199,5 +208,46 @@ describe('OCI S3-compatible storage adapter', () => {
     await adapter.remove(upload);
     await expect(adapter.exists(upload)).resolves.toBe(false);
     await expect(adapter.exists(output, ['ai'])).resolves.toBe(true);
+  });
+
+  test('fails closed when SSE-C is selected without a valid 32-byte key', () => {
+    expect(
+      () =>
+        new S3StorageAdapter({
+          ...adapter.options,
+          serverSideEncryption: 'SSE-C',
+          customerKeyBase64: Buffer.alloc(16).toString('base64'),
+          client,
+        }),
+    ).toThrow('32-byte customer key');
+  });
+
+  test('keeps provider-managed AES256 compatible without sending write-only headers on reads', async () => {
+    const aesClient = new InMemoryS3Client();
+    const aesAdapter = new S3StorageAdapter({
+      ...adapter.options,
+      serverSideEncryption: 'AES256',
+      customerKeyBase64: undefined,
+      client: aesClient,
+    });
+    const reference = 'storage://uploads/.private/photos/aes.jpg';
+    await aesAdapter.writeExclusive(reference, Buffer.from('provider-managed encryption'));
+
+    await aesAdapter.exists(reference);
+    const readStream = await aesAdapter.openReadStream(reference);
+    await bodyBuffer(readStream);
+
+    const put = aesClient.commands.find(
+      ({ constructor }) => constructor.name === 'PutObjectCommand',
+    );
+    const reads = aesClient.commands.filter(({ constructor }) =>
+      ['HeadObjectCommand', 'GetObjectCommand'].includes(constructor.name),
+    );
+    expect(put.input.ServerSideEncryption).toBe('AES256');
+    expect(reads).not.toHaveLength(0);
+    for (const command of reads) {
+      expect(command.input).not.toHaveProperty('ServerSideEncryption');
+      expect(command.input).not.toHaveProperty('SSECustomerKey');
+    }
   });
 });

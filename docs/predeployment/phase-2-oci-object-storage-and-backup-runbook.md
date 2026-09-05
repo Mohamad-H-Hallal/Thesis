@@ -1,5 +1,8 @@
 # Phase 2 OCI object storage and encrypted backup runbook
 
+> **Historical/inactive as of 2026-09-05.** No OCI resource was created. The
+> active runbook is `phase-2-digitalocean-storage-and-backup-runbook.md`.
+
 TerraLeb production uses five private, versioned OCI Object Storage buckets in `me-jeddah-1`. Application credentials receive only the uploads, exports, offline-package and AI-object permissions required by the API/worker. A different credential pair receives only backup-bucket object permissions. No bucket is public.
 
 Database backups remain separate from PostgreSQL block storage. The ephemeral `database-backup` Compose profile creates a PostgreSQL custom-format dump, validates its catalog, encrypts it with an independent AES-256-GCM key, calculates plaintext and encrypted SHA-256 digests, uploads the encrypted envelope, then uploads a manifest. Plaintext and encrypted working files are removed after the attempt. OCI server-side AES-256 encryption is applied in addition to application encryption.

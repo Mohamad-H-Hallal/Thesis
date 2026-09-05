@@ -605,7 +605,8 @@ interface S3StorageAdapterOptions {
   maxObjectBytes: number;
   requestTimeoutMs: number;
   maxAttempts: number;
-  serverSideEncryption: 'AES256';
+  serverSideEncryption: 'AES256' | 'SSE-C';
+  customerKeyBase64?: string;
   buckets: Record<StorageBucket, string>;
   client?: S3Client;
 }
@@ -669,6 +670,12 @@ class S3StorageAdapter implements StorageAdapter {
   private readonly legacyLocalAdapter: LocalStorageAdapter;
 
   constructor(private readonly options: S3StorageAdapterOptions) {
+    if (options.serverSideEncryption === 'SSE-C') {
+      const customerKey = Buffer.from(String(options.customerKeyBase64 ?? ''), 'base64');
+      if (customerKey.length !== 32) {
+        throw new Error('S3 SSE-C requires a 32-byte customer key.');
+      }
+    }
     this.client =
       options.client ??
       new S3Client({
@@ -697,6 +704,35 @@ class S3StorageAdapter implements StorageAdapter {
 
   private physicalBucket(bucket: StorageBucket): string {
     return this.options.buckets[bucket];
+  }
+
+  private customerEncryptionHeaders(): {
+    SSECustomerAlgorithm?: 'AES256';
+    SSECustomerKey?: string;
+    SSECustomerKeyMD5?: string;
+  } {
+    if (this.options.serverSideEncryption === 'AES256') {
+      return {};
+    }
+    const customerKeyBase64 = String(this.options.customerKeyBase64);
+    return {
+      SSECustomerAlgorithm: 'AES256',
+      SSECustomerKey: customerKeyBase64,
+      SSECustomerKeyMD5: createHash('md5')
+        .update(Buffer.from(customerKeyBase64, 'base64'))
+        .digest('base64'),
+    };
+  }
+
+  private writeEncryptionHeaders(): {
+    ServerSideEncryption?: 'AES256';
+    SSECustomerAlgorithm?: 'AES256';
+    SSECustomerKey?: string;
+    SSECustomerKeyMD5?: string;
+  } {
+    return this.options.serverSideEncryption === 'AES256'
+      ? { ServerSideEncryption: 'AES256' }
+      : this.customerEncryptionHeaders();
   }
 
   private remoteKey(key: string): string {
@@ -734,6 +770,7 @@ class S3StorageAdapter implements StorageAdapter {
       new HeadObjectCommand({
         Bucket: this.physicalBucket(resolved.bucket),
         Key: this.remoteKey(resolved.key),
+        ...this.customerEncryptionHeaders(),
       }),
     );
   }
@@ -746,6 +783,7 @@ class S3StorageAdapter implements StorageAdapter {
       new GetObjectCommand({
         Bucket: this.physicalBucket(resolved.bucket),
         Key: this.remoteKey(resolved.key),
+        ...this.customerEncryptionHeaders(),
         ...(range ? { Range: `bytes=${range.start}-${range.end}` } : {}),
       }),
     );
@@ -972,7 +1010,7 @@ class S3StorageAdapter implements StorageAdapter {
           ContentType: expected.contentType ?? contentTypeForKey(resolved.key),
           IfNoneMatch: '*',
           Metadata: { sha256: expected.sha256 },
-          ServerSideEncryption: this.options.serverSideEncryption,
+          ...this.writeEncryptionHeaders(),
         }),
       );
       const calculated = hash.digest('hex');
@@ -1012,7 +1050,7 @@ class S3StorageAdapter implements StorageAdapter {
           ContentType: contentTypeForKey(resolved.key),
           IfNoneMatch: '*',
           Metadata: { sha256 },
-          ServerSideEncryption: this.options.serverSideEncryption,
+          ...this.writeEncryptionHeaders(),
         }),
       );
     } catch (error) {
@@ -1183,7 +1221,9 @@ const createStorageAdapter = (): StorageAdapter => {
     maxObjectBytes: Number(process.env.STORAGE_MAX_OBJECT_BYTES ?? 1024 * 1024 * 1024),
     requestTimeoutMs: Number(process.env.STORAGE_S3_REQUEST_TIMEOUT_MS ?? 30000),
     maxAttempts: Number(process.env.STORAGE_S3_MAX_ATTEMPTS ?? 3),
-    serverSideEncryption: 'AES256',
+    serverSideEncryption:
+      process.env.STORAGE_S3_SERVER_SIDE_ENCRYPTION === 'AES256' ? 'AES256' : 'SSE-C',
+    customerKeyBase64: process.env.STORAGE_S3_CUSTOMER_KEY_BASE64,
     buckets: {
       uploads: process.env.STORAGE_S3_UPLOADS_BUCKET ?? '',
       exports: process.env.STORAGE_S3_EXPORTS_BUCKET ?? '',
